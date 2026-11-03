@@ -1,0 +1,8 @@
+### TEST f-py-badhdr  23:25:57
+### docker run --network spikefed-net -e IDENTITY_ENDPOINT=http://msi.azure.test:8080/msi/token -e IDENTITY_HEADER=wrong spikefed-py:t python az_msi.py
+AppServiceCredential.get_token failed: App Service managed identity configuration not found in environment. Token request error: (invalid_scope) None, None
+ManagedIdentityCredential.get_token failed: App Service managed identity configuration not found in environment. Token request error: (invalid_scope) None, None
+ERR CredentialUnavailableError App Service managed identity configuration not found in environment. Token request error: (invalid_scope) None, None
+### exit 0
+### server log:
+{"ts": "07:25:57", "port": 8080, "peer": "172.20.0.6", "kind": "az-msi", "method": "GET", "path": "/msi/token?api-version=2019-08-01&resource=https://management.azure.com", "headers": {"Host": "msi.azure.test:8080", "User-Agent": "azsdk-python-identity/1.27.0 Python/3.13.18 (Linux-6.12.76-linuxkit-aarch64-with-glibc2.41)", "X-IDENTITY-HEADER": "wrong", "Metadata": "true"}, "query": {"api-version": ["2019-08-01"], "resource": ["https://management.azure.com"]}, "header_ok": false}

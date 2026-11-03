@@ -1,0 +1,19 @@
+== volumes in iso-b spec:
+egress-token 
+netagent: [{"mountPath":"/var/run/secrets/lenny-egress","name":"egress-token","readOnly":true}]
+runtime: 
+adapter: 
+== netagent in iso-b: ls /var/run/secrets
+total 8
+drwxr-xr-x    3 root     root          4096 Nov  2 04:47 .
+drwxr-xr-x    1 root     root          4096 Nov  2 04:47 ..
+drwxrwxrwt    3 root     root           100 Nov  2 04:47 lenny-egress
+ls: /var/run/secrets/kubernetes.io: No such file or directory
+command terminated with exit code 1
+== automount-on control:
+kube-api-access-5w7xz 
+ca.crt
+namespace
+token
+{"aud": ["https://kubernetes.default.svc.cluster.local"], "iat": 1793594844, "exp": 1825130844, "nbf": 1793594844} exp-iat= 31536000 warnafter= 1793598451
+{"serviceAccountToken":{"expirationSeconds":3607,"path":"token"}}

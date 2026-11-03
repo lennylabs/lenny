@@ -1,0 +1,26 @@
+# 2026-11-02T08:49:57Z label=cilium-baseline
+# netpols in lenny-agents: 
+== client: client 10.244.1.183/32 WORKER_IP=172.18.0.2 CP_IP=172.18.0.3 OTHER_POD_IP=10.244.1.104 GW_POD_IP=10.244.1.85 EGRESS_POD_IP=10.244.0.52
+-- allowed paths
+[A1 egress ClusterIP 10.96.31.28:3128 CONNECT example.com] rc=0 0.11s :: 200 
+[A2 egress pod IP 10.244.0.52:3128 CONNECT example.com] rc=0 0.10s :: 200 
+[A3 proxied DNS ClusterIP 10.96.53.53 UDP (dig lenny-egress.lenny-system.svc)] rc=0 0.01s :: 10.96.31.28 
+[A4 proxied DNS ClusterIP 10.96.53.53 TCP (dig +tcp)] rc=0 0.01s :: 10.96.0.1 
+[A5 resolv.conf resolver (getent lenny-egress.lenny-system)] rc=0 0.00s :: 10.96.31.28       lenny-egress.lenny-system.svc.cluster.local  lenny-egress.lenny-system.svc.cluster.local lenny-egress.
+[A6 resolve egress by name via proxied resolver, then CONNECT example.com] rc=0 0.10s :: 200 
+[A7 gateway ClusterIP 10.96.84.43:8443 (backend on SAME node)] rc=0 0.01s :: 200 
+[A8 gateway pod IP 10.244.1.85:8443 (same node)] rc=0 0.00s :: 200 
+-- denied paths
+[D1 API server ClusterIP 10.96.0.1:443] rc=0 0.01s :: 200 
+[D2 control-plane node IP 172.18.0.3:6443 (API server hostNetwork)] rc=0 0.01s :: 200 
+[D3 worker (own node) IP 172.18.0.2:10250 kubelet] rc=0 0.00s :: 401 
+[D4 control-plane node IP 172.18.0.3:10250 kubelet] rc=0 0.01s :: 401 
+[D5 hostNetwork pod on SAME node 172.18.0.2:9000] rc=0 0.00s :: 200 
+[D6 hostNetwork pod on control-plane 172.18.0.3:9000] rc=0 0.01s :: 200 
+[D7 other-ns pod IP 10.244.1.104:8080 (same node)] rc=0 0.00s :: 200 
+[D8 other-ns Service ClusterIP 10.96.99.99:8080 (backend same node)] rc=0 0.00s :: 200 
+[D9 internet 1.1.1.1:443] rc=0 0.09s :: 301 
+[D10 default kube-dns 10.96.0.10 UDP] rc=0 0.01s :: 10.96.0.1 
+[D11 default kube-dns 10.96.0.10 TCP] rc=0 0.01s :: 10.96.0.1 
+[D12 egress pod IP 10.244.0.52 wrong port 3129] rc=7 0.00s :: curl: (7) Failed to connect to 10.244.0.52 port 3129 after 0 ms: Could not connect to server 000 
+[D13 gateway pod IP 10.244.1.85 wrong port 8080] rc=7 0.00s :: curl: (7) Failed to connect to 10.244.1.85 port 8080 after 0 ms: Could not connect to server 000 

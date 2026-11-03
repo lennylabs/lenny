@@ -1,0 +1,23 @@
+### cold start without a certificate: what does a client see, and does it recover
+ready=LIVE listeners=egress::0.0.0.0:3128 
+client: SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 el
+[2026-11-02 19:55:15.164][1][info][main] [source/server/server.cc:467]   envoy.formatter: envoy.formatter.cel, envoy.formatter.dynamic_modules, envoy.formatter.file_content, envoy.formatter.generic_se
+[2026-11-02 19:55:15.172][1][info][config] [source/server/configuration_impl.cc:132] loading 0 static secret(s)
+[2026-11-02 19:55:15.182][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: unable to add filesystem watch fo
+after certificate appears: SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 el
+### certificate expiry metric
+server.days_until_first_cert_expiring: 89
+server.seconds_until_first_ocsp_response_expiring: 0
+certs admin: [('lenny-egress.lenny-system.svc', '89')]
+### resolver through the TLS proxy hop
+real GitHub : {"bytes":67,"class":"ok","err":"","ms":218,"proto":"v2","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}  truth=ebdc087dc99d
+private raw : {"bytes":65,"class":"ok","err":"","ms":7,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}
+denied      : {"bytes":0,"class":"policy_denied","err":"CONNECT 403","ms":4,"proto":"v2","sha":""}
+hostile big : {"bytes":1048576,"class":"bounded","err":"byte cap","ms":15,"proto":"v2","sha":""}
+plain bench : n=1 c=1 wall=1.504s rate=1/s p50=1.5041s (second Envoy not up yet)
+bench plain : n=800 c=1 wall=922ms rate=868/s p50=1ms p90=1.4ms p99=2.8ms max=21.3ms classes=map[ok:800]
+bench tls   : n=800 c=1 wall=1.288s rate=621/s p50=1.5ms p90=1.9ms p99=3ms max=12.5ms classes=map[ok:800]
+burst tls   : n=3000 c=50 wall=1.36s rate=2206/s p50=20.8ms p90=35.4ms p99=50.5ms max=59.6ms classes=map[ok:3000]
+one stopped : total=300 failed=0 retried=88 p50=9.2ms p99=1.0146s max=1.0296s errs=map[]
+one frozen  : total=300 failed=0 retried=88 p50=8.9ms p99=1.5119s max=1.5164s errs=map[]
+bad cert    : {"bytes":0,"class":"transient","err":"egress path: Post \"https://git.spike/fast.git/git-upload-pack\": proxyconnect tcp: tls: failed to verify certificate: x509: certificate has expired or 

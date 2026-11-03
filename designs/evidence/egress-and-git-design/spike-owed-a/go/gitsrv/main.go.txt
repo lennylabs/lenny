@@ -1,0 +1,102 @@
+// gitsrv: TLS front for stock `git http-backend`, without net/http/cgi, which rejects chunked bodies and buffers output.
+// Each request is logged with its framing so a test can show how git sent the POST.
+//   -v0only  drops Git-Protocol, so the backend speaks protocol v0 (a host that refuses v2).
+//   -fail-v2 STATUS answers a POST carrying Git-Protocol version=2 with STATUS (a host that rejects v2 outright).
+package main
+
+import (
+	"bufio"
+	"flag"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+)
+
+type counter struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+func (c *counter) Read(p []byte) (int, error) { n, e := c.r.Read(p); c.n.Add(int64(n)); return n, e }
+
+func main() {
+	addr := flag.String("addr", ":443", "")
+	root := flag.String("root", "/repos", "")
+	cert := flag.String("cert", "", "")
+	key := flag.String("key", "", "")
+	v0only := flag.Bool("v0only", false, "")
+	failV2 := flag.Int("fail-v2", 0, "")
+	flag.Parse()
+	h := func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		gp := r.Header.Get("Git-Protocol")
+		if *failV2 != 0 && strings.Contains(gp, "version=2") {
+			http.Error(w, "v2 refused", *failV2)
+			return
+		}
+		if *v0only {
+			gp = ""
+		}
+		cmd := exec.Command("git", "http-backend")
+		cmd.Env = append(os.Environ(), "GIT_PROJECT_ROOT="+*root, "GIT_HTTP_EXPORT_ALL=1", "PATH_INFO="+r.URL.Path, "REQUEST_METHOD="+r.Method, "QUERY_STRING="+r.URL.RawQuery,
+			"CONTENT_TYPE="+r.Header.Get("Content-Type"), "HTTP_CONTENT_ENCODING="+r.Header.Get("Content-Encoding"), "GIT_PROTOCOL="+gp, "REMOTE_USER=spike", "REMOTE_ADDR="+r.RemoteAddr)
+		if r.ContentLength >= 0 && len(r.TransferEncoding) == 0 {
+			cmd.Env = append(cmd.Env, "CONTENT_LENGTH="+strconv.FormatInt(r.ContentLength, 10))
+		}
+		cr := &counter{r: r.Body}
+		cmd.Stdin = cr
+		cmd.Stderr = os.Stderr
+		out, err := cmd.StdoutPipe()
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		if err := cmd.Start(); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		br := bufio.NewReader(out)
+		status := 200
+		for {
+			l, err := br.ReadString('\n')
+			if err != nil {
+				break
+			}
+			l = strings.TrimRight(l, "\r\n")
+			if l == "" {
+				break
+			}
+			k, v, _ := strings.Cut(l, ":")
+			v = strings.TrimSpace(v)
+			if strings.EqualFold(k, "Status") {
+				status, _ = strconv.Atoi(strings.Fields(v)[0])
+				continue
+			}
+			w.Header().Add(k, v)
+		}
+		w.WriteHeader(status)
+		f := w.(http.Flusher)
+		buf := make([]byte, 32*1024)
+		var sent int64
+		for {
+			n, e := br.Read(buf)
+			if n > 0 {
+				w.Write(buf[:n])
+				f.Flush()
+				sent += int64(n)
+			}
+			if e != nil {
+				break
+			}
+		}
+		werr := cmd.Wait()
+		log.Printf("%s %s proto=%s status=%d cl=%d te=%v ce=%q gitproto=%q reqbytes=%d respbytes=%d dur=%s err=%v", r.Method, r.URL.RequestURI(), r.Proto, status, r.ContentLength, r.TransferEncoding, r.Header.Get("Content-Encoding"), r.Header.Get("Git-Protocol"), cr.n.Load(), sent, time.Since(start).Round(time.Millisecond), werr)
+	}
+	log.Fatal(http.ListenAndServeTLS(*addr, *cert, *key, http.HandlerFunc(h)))
+}

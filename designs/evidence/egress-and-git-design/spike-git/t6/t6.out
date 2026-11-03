@@ -1,0 +1,21 @@
+case                   | fetch with transfer.fsckObjects=true             | checkout (fsck off)
+dotgit                 | hasDotgit: contains '.git'                       | error: invalid path '.git/post-checkout'
+dotGIT-case            | hasDotgit: contains '.git'                       | error: invalid path '.GIT/config'
+ntfs-git-tilde1        | hasDotgit: contains '.git'                       | error: invalid path 'git~1/config'
+ntfs-trailing          | hasDotgit: contains '.git'                       | error: invalid path '.git. /config'
+hfs-zwnj               | hasDotgit: contains '.git'                       | checked out: .git .git‌ f 
+dotdot                 | hasDotdot: contains '..'                         | error: invalid path '../x'
+dot                    | hasDot: contains '.'                             | error: invalid path './x'
+slash-in-name          | fullPathname: contains full pathnames            | error: invalid path 'a/../../x'
+empty-name             | fatal: empty filename in tree entry              | error: pathspec 'FETCH_HEAD' did not match any file(s) known to git
+dup-entry              | duplicateEntries: contains duplicate file entrie | checked out: .git evil 
+symlink-out            | accepted                                         | checked out: .git f l-abs l-rel 
+gitmodules-symlink     | gitmodulesSymlink: .gitmodules is a symbolic lin | error: invalid path '.gitmodules'
+gitattributes-symlink  | accepted                                         | checked out: .git .gitattributes f 
+gitmodules-name        | gitmodulesName: disallowed submodule name: ../.. | checked out: .git .gitmodules m 
+gitmodules-url         | gitmodulesUrl: disallowed submodule url: --uploa | checked out: .git .gitmodules m 
+gitmodules-path        | accepted                                         | checked out: .git .gitmodules f 
+submodule-name via clone --recurse-submodules: warning: ignoring suspicious submodule name: ../../modules/evil
+submodule-url  via clone --recurse-submodules: warning: ignoring 'submodule.m.url' which may be interpreted as a command-line option: --upload-pack=touch /tmp/pwned
+pwned marker present: no
+defaults: protectNTFS=unset protectHFS=unset (compiled defaults: NTFS true since 2.24.1, HFS true on macOS builds only)

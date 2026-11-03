@@ -1,0 +1,41 @@
+--- gnutls-cli to the IP leaf under DNS-only nc
+*** Fatal error: Error in the certificate.
+- Status: The certificate is NOT trusted. The certificate chain violates the signer's constraints. 
+*** PKI verification of server certificate failed...
+--- certtool --verify-profile on leaf and chain
+	Output: Not verified. The certificate is NOT trusted. The certificate chain violates the signer's constraints. 
+
+Chain verification output: Not verified. The certificate is NOT trusted. The certificate chain violates the signer's constraints. 
+
+	Output: Not verified. The certificate is NOT trusted. The certificate chain violates the signer's constraints. 
+
+Chain verification output: Not verified. The certificate is NOT trusted. The certificate chain violates the signer's constraints. 
+
+
+Chain verification output: Verified. The certificate is trusted. 
+
+--- nss vfychain, legacy then libpkix, each leaf
+allowed : Chain is good! 
+
+allowed -pp: Chain is good! 
+
+denied : Chain is bad!   ERROR -8157: Certificate extension not found. 
+
+denied -pp: Chain is bad!   ERROR -8157: Certificate extension not found. 
+
+sub : Chain is good! 
+
+sub -pp: Chain is good! 
+
+ip : Chain is good! 
+
+ip -pp: Chain is good! 
+
+--- tstclnt reason per target
+allowed.oa.test: HTTP/1.0 200 OK
+denied.oa.test: tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized.
+viaint.oa.test: tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized.
+unk.oa.test: tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized.
+/usr/bin/tstclnt
+-T                   Enable the cert_status extension (OCSP stapling).
+-M                   Test -F allows 0=any (default), 1=only OCSP, 2=only CRL

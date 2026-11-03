@@ -1,0 +1,1 @@
+Host commands issue docker calls only; every test script runs in a container.

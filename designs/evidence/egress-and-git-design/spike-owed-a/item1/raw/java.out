@@ -1,0 +1,10 @@
+java-httpclient https://allowed.oa.test/ OK 200 HTTP_2
+java-httpclient https://denied.oa.test/ OK 200 HTTP_2
+java-httpclient https://sub.allowed.oa.test/ OK 200 HTTP_2
+java-httpclient https://viaint.oa.test/ OK 200 HTTP_2
+java-httpclient https://198.19.50.20/ OK 200 HTTP_2
+java-httpclient https://ctl.oa.test/ OK 200 HTTP_2
+java-httpclient https://unk.oa.test/ REFUSED SunCertPathBuilderException: unable to find valid certification path to requested target
+java-httpclient https://xallowed.oa.test/ OK 200 HTTP_2
+java-httpclient https://xdenied.oa.test/ OK 200 HTTP_2
+java-httpclient https://198.19.50.20:8443/ OK 200 HTTP_2

@@ -1,0 +1,63 @@
+// tunnel: open CONNECT <target> through <proxy> with Basic user:token, then
+// read until EOF (or -max), printing how long the tunnel stayed up.
+// -send N writes a byte to the tunnel every N seconds (client-side activity).
+package main
+
+import (
+	"bufio"
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+func main() {
+	proxy := flag.String("proxy", "198.18.0.10:3128", "")
+	target := flag.String("target", "target.spike:7000", "")
+	cred := flag.String("cred", "agent:good", "")
+	max := flag.Duration("max", 40*time.Second, "")
+	send := flag.Int("send", 0, "")
+	flag.Parse()
+	c, err := net.Dial("tcp", *proxy)
+	if err != nil {
+		fmt.Println("dial:", err)
+		os.Exit(1)
+	}
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", *target, *target,
+		base64.StdEncoding.EncodeToString([]byte(*cred)))
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		fmt.Println("read resp:", err)
+		os.Exit(1)
+	}
+	fmt.Println("CONNECT status:", resp.Status)
+	start := time.Now()
+	if *send > 0 {
+		go func() {
+			for {
+				time.Sleep(time.Duration(*send) * time.Second)
+				if _, err := c.Write([]byte("x")); err != nil {
+					return
+				}
+			}
+		}()
+	}
+	c.SetReadDeadline(start.Add(*max))
+	last := ""
+	buf := make([]byte, 4096)
+	for {
+		n, err := br.Read(buf)
+		if n > 0 {
+			last = strings.TrimSpace(string(buf[:n]))
+		}
+		if err != nil {
+			fmt.Printf("tunnel ended after %.2fs: %v (last=%q)\n", time.Since(start).Seconds(), err, last)
+			return
+		}
+	}
+}

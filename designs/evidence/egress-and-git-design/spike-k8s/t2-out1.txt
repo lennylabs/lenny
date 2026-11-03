@@ -1,0 +1,15 @@
+== iso-b-first
+{"ok":true,"claims":{"iss":"https://kubernetes.default.svc.cluster.local","sub":"system:serviceaccount:spike:agent","aud":["lenny-egress"],"exp":1793595444,"nbf":1793594844,"iat":1793594844,"kubernetes.io":{"namespace":"spike","pod":{"Name":"iso-b","UID":"4c8a3e5a-5b83-4043-8187-d46e81c1bb61"},"node":{"Name":"spike-netagent-control-plane","UID":"28b786f4-4fd9-4e8a-a135-104119a727f0"},"serviceaccount":{"Name":"agent","UID":"f78f12ae-23e4-4d79-99e0-5c50f8094440"}}},"podState":"live"}
+   TokenReview: authenticated=true system:serviceaccount:spike:agent aud=[lenny-egress]
+== iso-d-first
+{"ok":true,"claims":{"iss":"https://kubernetes.default.svc.cluster.local","sub":"system:serviceaccount:spike:agent","aud":["lenny-egress"],"exp":1793595444,"nbf":1793594844,"iat":1793594844,"kubernetes.io":{"namespace":"spike","pod":{"Name":"iso-d","UID":"4c5d8564-cd52-4442-b9ae-150661cedf45"},"node":{"Name":"spike-netagent-control-plane","UID":"28b786f4-4fd9-4e8a-a135-104119a727f0"},"serviceaccount":{"Name":"agent","UID":"f78f12ae-23e4-4d79-99e0-5c50f8094440"}}},"podState":"live"}
+   TokenReview: authenticated=true system:serviceaccount:spike:agent aud=[lenny-egress]
+== default-aud
+{"ok":false,"reason":"aud [https://kubernetes.default.svc.cluster.local]","claims":{"iss":"https://kubernetes.default.svc.cluster.local","sub":"system:serviceaccount:spike:default","aud":["https://kubernetes.default.svc.cluster.local"],"exp":1825130844,"nbf":1793594844,"iat":1793594844,"kubernetes.io":{"namespace":"spike","pod":{"Name":"automount-on","UID":"b884c813-7ade-4799-a75b-852dc3162a93"},"node":{"Name":"spike-netagent-control-plane","UID":"28b786f4-4fd9-4e8a-a135-104119a727f0"},"serviceaccount":{"Name":"default","UID":"c68ba90c-92b9-4328-a417-3bfeff07e484"}}}}
+   TokenReview: authenticated=false [invalid bearer token, token audiences ["https://kubernetes.default.svc.cluster.local"] is invalid for the target audiences ["lenny-egress"]]
+== unbound
+{"ok":false,"reason":"token not pod-bound","claims":{"iss":"https://kubernetes.default.svc.cluster.local","sub":"system:serviceaccount:spike:agent","aud":["lenny-egress"],"exp":1793595619,"nbf":1793595019,"iat":1793595019,"kubernetes.io":{"namespace":"spike","pod":null,"node":null,"serviceaccount":{"Name":"agent","UID":"f78f12ae-23e4-4d79-99e0-5c50f8094440"}}}}
+   TokenReview: authenticated=true system:serviceaccount:spike:agent aud=[lenny-egress]
+== tampered
+{"ok":false,"reason":"signature: crypto/rsa: verification error"}
+   TokenReview: authenticated=false [invalid bearer token, go-jose/go-jose: error in cryptographic primitive]

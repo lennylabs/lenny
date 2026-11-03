@@ -1,0 +1,4 @@
+live-before-rotation                     rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+live-after-rotation                      rc=0   identity=held                   origin=ghes.example.test=USER-FILE-ROTATED:200 refused=
+live-after-suspension                    rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+live-after-reinstated                    rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=

@@ -1,0 +1,13 @@
+body=209 bytes pairs=60 rate=5/s
+ unfiltered p50=2.72ms p90=4.65ms p99=7.91ms
+ filtered   p50=2.92ms p90=4.27ms p99=5.48ms
+ paired difference p50=0.500ms p90=2.402ms
+body=2388 bytes pairs=60 rate=5/s
+ unfiltered p50=3.59ms p90=5.45ms p99=7.79ms
+ filtered   p50=4.52ms p90=6.33ms p99=7.36ms
+ paired difference p50=1.480ms p90=3.148ms
+body=65784 bytes pairs=60 rate=5/s
+ unfiltered p50=5.41ms p90=7.53ms p99=8.51ms
+ filtered   p50=8.60ms p90=11.10ms p99=14.07ms
+ paired difference p50=2.448ms p90=6.947ms
+41668608

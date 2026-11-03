@@ -1,0 +1,49 @@
+   [authz killed at 21:10:00]
+   [authz started at 21:10:15]
+t=  1s done=200  map[200:200] p50=900µs p99=27.9ms open=200 ticks=200 broken=0
+t=  2s done=200  map[200:200] p50=1.1ms p99=23.5ms open=400 ticks=600 broken=0
+t=  3s done=200  map[200:200] p50=1ms p99=17.8ms open=600 ticks=1200 broken=0
+t=  4s done=200  map[200:200] p50=1.1ms p99=3.8ms open=600 ticks=1800 broken=0
+t=  5s done=200  map[200:200] p50=1.4ms p99=3.8ms open=600 ticks=2414 broken=0
+t=  6s done=200  map[200:200] p50=800µs p99=3.4ms open=600 ticks=3019 broken=0
+t=  7s done=201  map[200:201] p50=800µs p99=3.2ms open=601 ticks=3627 broken=0
+t=  8s done=199  map[200:199] p50=800µs p99=3.8ms open=600 ticks=4235 broken=0
+t=  9s done=200  map[200:200] p50=800µs p99=3.6ms open=600 ticks=4843 broken=0
+t= 10s done=184  map[200:176 503:8] p50=900µs p99=3.5ms open=576 ticks=5422 broken=0
+t= 11s done=201  map[503:201] p50=508.7ms p99=998.1ms open=375 ticks=5802 broken=0
+t= 12s done=202  map[503:202] p50=515.5ms p99=1.0038s open=176 ticks=5981 broken=0
+t= 13s done=203  map[503:203] p50=523.6ms p99=1.0072s open=0 ticks=5984 broken=0
+t= 14s done=203  map[503:203] p50=518.9ms p99=1.0047s open=0 ticks=5984 broken=0
+t= 15s done=203  map[503:203] p50=522.7ms p99=1.0103s open=0 ticks=5984 broken=0
+t= 16s done=203  map[503:203] p50=514.1ms p99=1.0038s open=0 ticks=5984 broken=0
+t= 17s done=0    map[] p50=0s p99=0s open=0 ticks=5984 broken=0
+t= 18s done=202  map[503:202] p50=514.1ms p99=1.0026s open=0 ticks=5984 broken=0
+t= 19s done=204  map[503:204] p50=515.6ms p99=1.0103s open=0 ticks=5984 broken=0
+t= 20s done=201  map[503:201] p50=514.7ms p99=1.0088s open=0 ticks=5984 broken=0
+t= 21s done=201  map[503:201] p50=511.6ms p99=1.0124s open=0 ticks=5984 broken=0
+t= 22s done=202  map[503:202] p50=502.8ms p99=997.5ms open=0 ticks=5984 broken=0
+t= 23s done=203  map[503:203] p50=514ms p99=1.0027s open=0 ticks=5984 broken=0
+t= 24s done=201  map[503:201] p50=519.5ms p99=1.0101s open=0 ticks=5984 broken=0
+t= 25s done=203  map[503:203] p50=528.8ms p99=1.0199s open=0 ticks=5984 broken=0
+t= 26s done=203  map[503:203] p50=515.4ms p99=1.0088s open=0 ticks=5984 broken=0
+t= 27s done=381  map[200:177 503:204] p50=64.1ms p99=1.0004s open=177 ticks=6161 broken=0
+t= 28s done=200  map[200:200] p50=800µs p99=10.6ms open=377 ticks=6538 broken=0
+t= 29s done=200  map[200:200] p50=1ms p99=10.2ms open=577 ticks=7115 broken=0
+t= 30s done=200  map[200:200] p50=1.2ms p99=3.5ms open=600 ticks=7717 broken=0
+t= 31s done=200  map[200:200] p50=900µs p99=3.6ms open=600 ticks=8324 broken=0
+t= 32s done=201  map[200:201] p50=900µs p99=3.4ms open=601 ticks=8930 broken=0
+t= 33s done=199  map[200:199] p50=900µs p99=3.4ms open=600 ticks=9539 broken=0
+t= 34s done=200  map[200:200] p50=900µs p99=3.5ms open=600 ticks=10150 broken=0
+t= 35s done=200  map[200:200] p50=900µs p99=3.4ms open=599 ticks=10754 broken=0
+t= 36s done=200  map[200:200] p50=900µs p99=3.6ms open=600 ticks=11359 broken=0
+t= 37s done=200  map[200:200] p50=800µs p99=3.4ms open=600 ticks=11964 broken=0
+t= 38s done=200  map[200:200] p50=800µs p99=3.4ms open=600 ticks=12574 broken=0
+t= 39s done=200  map[200:200] p50=900µs p99=3.6ms open=600 ticks=13183 broken=0
+t= 40s done=200  map[200:200] p50=900µs p99=3.6ms open=599 ticks=13791 broken=0
+t= 41s done=0    map[] p50=0s p99=0s open=400 ticks=14205 broken=0
+t= 42s done=0    map[] p50=0s p99=0s open=200 ticks=14410 broken=0
+t= 43s done=0    map[] p50=0s p99=0s open=0 ticks=14417 broken=0
+SUMMARY attempts=8000 map[200:4753 503:3247] 200-latency p50=900µs p90=2.8ms p99=7.5ms max=38.1ms ticks=14417 broken=0 elapsed=43.0s
+## stats (envoy cpu, mem) min/max:
+8.87% 52.08MiB
+28.74% 56.05MiB

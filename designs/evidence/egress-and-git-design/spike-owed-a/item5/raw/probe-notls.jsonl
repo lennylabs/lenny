@@ -1,0 +1,2 @@
+{"check":"tls","detail":"proxy TLS: tls: first record does not look like a TLS handshake","pass":false,"target":"198.19.50.50:3128"}
+{"verdict":"FAIL","passed":0,"failed":1}

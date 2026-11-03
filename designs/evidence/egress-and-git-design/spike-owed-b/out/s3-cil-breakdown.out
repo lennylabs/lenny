@@ -1,0 +1,24 @@
+ob-cilium-control-plane 7 identity changes; regen lines 2
+ob-cilium-worker 66 identity changes; regen lines 2
+time=2026-11-03T01:03:26.943620626Z level=info msg="Reloaded endpoint BPF program" ciliumEndpointName=agents/s3 ipv4=10.244.1.193 containerID=68ca372d0f k8sPodName=agents/s3 identity=44465 ipv6="" endpointID=1383 containerInterfac
+time=2026-11-03T01:03:26.943900918Z level=info msg="Successful endpoint creation" ciliumEndpointName=agents/s3 ipv4=10.244.1.193 containerID=68ca372d0f k8sPodName=agents/s3 identity=44465 ipv6="" endpointID=1383 containerInterface
+time=2026-11-03T01:04:13.510022509Z level=info msg="Resolving identity labels (non-blocking)" identity=44465 containerInterface="" k8sPodName=agents/x3 ipv4=10.244.1.154 endpointID=1060 ipv6="" containerID=3565c470f5 ciliumEndpoin
+time=2026-11-03T01:04:13.510122176Z level=info msg="Resolving identity labels (non-blocking)" ciliumEndpointName=agents/s3 ipv4=10.244.1.193 containerID=68ca372d0f k8sPodName=agents/s3 identity=44465 ipv6="" endpointID=1383 contai
+time=2026-11-03T01:04:39.719098424Z level=info msg="Identity of endpoint changed" identity=44465 containerInterface="" k8sPodName=agents/x3 ipv4=10.244.1.154 endpointID=1060 ipv6="" containerID=3565c470f5 ciliumEndpointName=agents
+time=2026-11-03T01:04:39.759108591Z level=info msg="Reloaded endpoint BPF program" identity=19730 containerInterface="" k8sPodName=agents/x3 ipv4=10.244.1.154 endpointID=1060 ipv6="" containerID=3565c470f5 ciliumEndpointName=agent
+time=2026-11-03T01:04:42.352895883Z level=info msg="Identity of endpoint changed" ciliumEndpointName=agents/s3 ipv4=10.244.1.193 containerID=68ca372d0f k8sPodName=agents/s3 identity=44465 ipv6="" endpointID=1383 containerInterface
+time=2026-11-03T01:04:42.389143092Z level=info msg="Reloaded endpoint BPF program" ciliumEndpointName=agents/s3 ipv4=10.244.1.193 containerID=68ca372d0f k8sPodName=agents/s3 identity=19730 ipv6="" endpointID=1383 containerInterfac
+STAMP agents/x3 start=1793667853483725842 end=1793667853492033551 code=200 err=<nil>
+STAMP agents/s3 start=1793667853483725634 end=1793667853493198717 code=200 err=<nil>
+1793667831632401846 STATE dropped started=179366783153178297
+1793667879849342674 STATE open started=1793667879848841674
+x3 2026-11-03T01:04:13.492033+00:00
+s3 2026-11-03T01:04:13.493199+00:00
+cilium_identity                                                          type=cluster_local                             
+cilium_identity                                                          type=reserved                                  
+cilium_identity_label_sources                                            source=gen                                     
+cilium_identity_label_sources                                            source=k8s                                     
+cilium_identity_label_sources                                            source=reserved                                
+cilium_identity_updater_timer_duration                                   name=id-alloc-update-policy-maps               
+ob-cilium-worker 11.45% 983.3MiB / 7.75GiB
+ob-cilium-control-plane 17.38% 1.248GiB / 7.75GiB

@@ -1,0 +1,249 @@
+Squid Cache: Version 7.7
+### T1 per-CONNECT decision: an allowed, listed host
+curl: connect=200 http=200 rc=0 t=0.031072 rc=0
+squid access lines added: 1; 1793683422.736     22 198.19.50.10 TCP_TUNNEL/200 2447 CONNECT target.oa.test:443 pod-a.g1 HIER_DIRECT/198.19.50.20 -
+i7: {"allow":1,"credential":1,"decide":1,"deny":0,"pod-a":{"closes":0,"gen":0,"opens":0,"sniClosed":0},"pod-b":{"closes":0,"gen":0,"opens":0,"sniClosed":0},"reports":0}
+### T2 200 sequential new CONNECTs: decisions, proxy lines, and target connections
+ok=200
+netagent before: {"allow":1,"bindingClosed":0,"closes":1,"decide":1,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":1,"proxy403":0,"proxy407":0,"refreshed":0,"sniClosed":0}
+netagent after:  {"allow":201,"bindingClosed":0,"closes":201,"decide":201,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":201,"proxy403":0,"proxy407":0,"refreshed":0,"sniClosed":0}
+squid lines added: 200; target before {"198.19.50.20":1} after {"198.19.50.20":201}
+### T3 denied by the decision, on the identity's list: public.oa.test removed from the decision, still listed at the proxy
+curl: connect=403 http=000 rc=7 t=0.000562 rc=7
+squid lines added: 0; target before {"198.19.50.20":201} after {"198.19.50.20":201}
+body: < HTTP/1.1 403 Forbidden * CONNECT tunnel failed, response 403 
+### T4 allowed by the decision, not on the identity's list (sync lag or a contract failure), and per-identity separation
+pod-a -> other.oa.test (decision allows, pod-a's list lacks it): connect=503 http=000 rc=7 t=0.001711 rc=7
+squid lines added: 1; 1793683424.988      0 198.19.50.10 TCP_DENIED/403 3395 CONNECT other.oa.test:443 pod-a.g1 HIER_NONE/- text/html
+pod-a stats: {"allow":202,"bindingClosed":0,"closes":201,"decide":204,"decideErr":0,"deny":2,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":201,"proxy403":1,"proxy407":0,"refreshed":0,"sniClosed":0}
+reason shown to the client: < HTTP/1.1 503 Service Unavailable
+pod-b -> other.oa.test (listed): connect=200 http=200 rc=0 t=0.007079 rc=0
+pod-b -> target.oa.test (decision allows, pod-b's list lacks it): connect=503 http=000 rc=7 t=0.001534 rc=7
+pod-a -> target.oa.test: connect=200 http=200 rc=0 t=0.003838 rc=0
+pod-b stats: {"allow":2,"bindingClosed":0,"closes":1,"decide":2,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":1,"proxy403":1,"proxy407":0,"refreshed":0,"sniClosed":0}
+### T4b list edit reaches a new CONNECT: add other.oa.test to pod-a, sync every 2 s
+pod-a reached it after attempt 6: connect=200 http=200 rc=0 t=0.003889 rc=0
+### T5 decision service frozen, killed, and back: fail closed
+frozen: connect=503 http=000 rc=7 t=2.002089 rc=7
+squid lines added: 0
+stopped: connect=503 http=000 rc=7 t=2.003061 rc=7
+squid lines added: 0
+recovered at attempt 1: connect=200 http=200 rc=0 t=0.014649 rc=0
+### T6 credential unavailable: a fresh netagent with I8 refusing
+fresh netagent: connect=503 http=000 rc=7 t=0.005635 rc=7
+I8 back: connect=200 http=200 rc=0 t=0.006431 rc=0
+### T7 TLS required: plaintext proxy, wrong CA, wrong server name, no CA, and what crosses the network
+netagent against a plaintext listener: connect=503 http=000 rc=7 t=0.056679 rc=7
+bytes that listener saw (first 96, hex): len 1546 hex 1603010605010006010303fdbbb2afce818befa63fa0bf4ad1a440f6729c0fb9c26a11f3772d1bdb641e70206eb02537
+Proxy-Authorization or the credential in those bytes: 0
+control, the plaintext listener with a client that does not require TLS:
+credential seen in plaintext: 1
+Squid with http_port: connect=503 http=000 rc=7 t=0.016539 rc=7; squid lines added 1; {"allow":1,"bindingClosed":0,"closes":0,"decide":1,"decideErr":0,"deny":0,"direct":0,"grac
+05:24:03.890263 proxy: target.oa.test:443: proxy tls: tls: first record does not look like a TLS handshake
+Squid with a certificate from another CA: connect=503 http=000 rc=7 t=0.011434 rc=7; squid lines added 1
+05:24:05.907981 proxy: target.oa.test:443: proxy tls: tls: failed to verify certificate: x509: certificate is valid for unk.oa.test, not lenny-egress.lenny-system.svc
+server name that does not match: connect=503 http=000 rc=7 t=0.007646 rc=7; squid lines added 1
+05:24:08.003551 proxy: target.oa.test:443: proxy tls: tls: failed to verify certificate: x509: certificate is valid for lenny-egress.lenny-system.svc, not wrong.example
+05:24:08.372593 level 1 requires TLS to the proxy: -proxy-ca is not set
+### T8 407, then one refresh: I8 first hands out a wrong password
+(the stale one was not fetched yet: netagent fetches on the first CONNECT)
+stale from I8, refresh gets the same stale: connect=503 http=000 rc=7 t=0.023868 rc=7
+  {"allow":1,"bindingClosed":0,"closes":0,"decide":1,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":0,"proxy403":0,"proxy407":2,"refreshed":1,"sniClosed":0}
+next CONNECT, refresh gets the good one: connect=200 http=200 rc=0 t=0.014606 rc=0
+  {"allow":2,"bindingClosed":0,"closes":1,"decide":2,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":1,"proxy403":0,"proxy407":3,"refreshed":2,"sniClosed":0}
+### T9 rotation with the design's order, and a retired generation still held by netagent
+overlap: g1 connect=200  g2 connect=200
+netagent still holds g1: connect=200 http=200 rc=0 t=0.010503 rc=0
+g1 retired at the proxy, I8 now releases g2, netagent holds g1 in memory (no binding change)
+  CONNECT 1: connect=503 http=000 rc=7 t=0.001859 rc=7
+  CONNECT 2: connect=503 http=000 rc=7 t=0.001345 rc=7
+  CONNECT 3: connect=503 http=000 rc=7 t=0.001299 rc=7
+  {"allow":4,"bindingClosed":0,"closes":1,"decide":4,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":1,"proxy403":3,"proxy407":0,"refreshed":0,"sniClosed":0}
+  squid: 1793683461.040      0 198.19.50.10 TCP_DENIED/403 3397 CONNECT target.oa.test:443 pod-a.g1 HIER_NONE/- text/html;1793683461.104      0 198.19.50.10 TCP_DENIED/403 3397 CONNECT target.oa.test:443 pod-a.g1 HIER_NONE/- text/html;1793683461.157      0 198.19.50.10 TCP_DENIED/403 3397 CONNECT target.oa.test:443 pod-a.g1 HIER_NONE/- text/html;
+variant with a refresh on 403 too: g1 held: connect=200 http=200 rc=0 t=0.011787 rc=0
+  CONNECT 1 after retirement: connect=200 http=200 rc=0 t=0.006127 rc=0
+  CONNECT 2 after retirement: connect=200 http=200 rc=0 t=0.003649 rc=0
+  {"allow":3,"bindingClosed":0,"closes":3,"decide":3,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":3,"proxy403":1,"proxy407":0,"refreshed":1,"sniClosed":0}
+### T10 server-name fronting: CONNECT to a listed host, TLS naming an unlisted one
+through netagent: connect=200 http=000 rc=35 t=0.012785 rc=35
+  target saw sni=other.oa.test: 0; "sniClosed":1
+control, the same credential straight to Squid: connect=200 http=200
+  target saw sni=other.oa.test: 1
+authority typed in upper case with a trailing dot: connect=200 http=200 rc=0 t=0.004565 rc=0
+tunnel with no TLS: connect=200 http=000 rc=56
+  "sniClosed":2
+### T11 address rule through netagent: the decision allows rebind.oa.test, listed for pod-a, which resolves to 172.30.50.20
+correct-n: connect=503 http=000 rc=7 t=0.001570 rc=7
+  target before {"198.19.50.20":217} after {"198.19.50.20":217}
+### T12 inject through level 1: terminated host, decision per upstream tunnel
+echo through inject: {
+ "headers": {
+  "Accept": [
+   "*/*"
+  ],
+  "Authorization": [
+   "xxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  "User-Agent": [
+   "curl/8.18.0"
+  ]
+ },
+ "host": "api.example.test",
+ "method": "GET",
+ "proto": "HTTP/2.0",
+ "uri": "/echo"
+}
+real secret visible to the client in that body: 0
+ocup received the real secret (scrubbed copy above shows masked): 1
+decisions before "decide":4 after "decide":5
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 ok
+200 
+after 20 requests on one client connection: "decide":5, proxy tunnels "opens":4
+### T13 tunnel lifetime, binding change, and open tunnels at the proxy
+tunnel with a 3 s lifetime ended: 3.010465 rc=56
+  {"allow":1,"bindingClosed":0,"closes":1,"decide":1,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":1,"openTunnels":0,"opens":1,"proxy403":0,"proxy407":0,"refreshed":0,"sniClosed":0}
+binding change at about t=3 s, tunnel ended: 3.084890 rc=56
+  {"allow":6,"bindingClosed":2,"closes":5,"decide":6,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":5,"proxy403":1,"proxy407":0,"refreshed":0,"sniClosed":2}
+a list edit alone: tunnel open before the edit, after the edit
+  new CONNECT after the edit: connect=503 http=000 rc=7 t=0.005428 rc=7
+  the open tunnel lasted: 12.002682 rc=28
+the proxy keeps accepting the identity after the binding ended, from any source: connect=200 http=200
+grace: decision service stopped with a tunnel open, -grace 5s
+  tunnel ended (the long poll must fail first): 22.564949 rc=56
+### T14 reports: opens and closes against the proxy log
+  netagent {"allow":30,"bindingClosed":0,"closes":30,"decide":30,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":30,"proxy403":0,"proxy407":0,"refreshed":0,"sniClosed":0}
+  squid lines added 30
+  i7 {"allow":30,"credential":1,"decide":30,"deny":0,"pod-a":{"closes":31,"gen":0,"opens":30,"sniClosed":0},"pod-b":{"closes":0,"gen":0,"opens":0,"sniClosed":0},"reports":2}
+### T15 proxy stopped
+stopped: connect=503 http=000 rc=7 t=5.007798 rc=7
+  {"allow":9,"bindingClosed":2,"closes":6,"decide":9,"decideErr":0,"deny":0,"direct":0,"grac
+started: connect=503 http=000 rc=7 t=5.007938 rc=7
+### T16 the probe against this Squid with netagent traffic beside it
+preflight:
+   {'check': 'tls', 'pass': False}
+   {'verdict': 'FAIL'}
+full -window 5s:
+    FAIL tls 198.19.50.50:3128 dial: dial tcp 198.19.50.50:3128: i/o timeout
+   verdict FAIL checks passed 0
+full -window 5s -addr-control:
+    FAIL tls 198.19.50.50:3128 dial: dial tcp 198.19.50.50:3128: connect: no route to host
+   verdict FAIL checks passed 0
+netagent traffic beside the probe: 
+probe with -status-only is out of scope here. Broken configurations with netagent's outcome beside the probe's:
+  noauth: probe FAIL ['auth.no-credential', 'auth.invented-credential', 'auth.wrong-password', 'auth.retired-never-cached', 'separation.a-to-b-host', 'separation.b-to-a-host'] | netagent to a listed host: connect=200 http=200 rc=0 t=0.015165 rc=0 | netagent to the private name: connect=503 http=000 rc=7 t=0.001601 rc=7
+  fakeauth: probe FAIL ['auth.invented-credential', 'auth.wrong-password'] | netagent to a listed host: connect=200 http=200 rc=0 t=0.007888 rc=0 | netagent to the private name: connect=503 http=000 rc=7 t=0.001502 rc=7
+  refuseall: probe FAIL ['positive', 'separation.b-own-host', 'address.control-public-sibling', 'sync.canary-host-added (rotation 7, age 16s)'] | netagent to a listed host: connect=503 http=000 rc=7 t=0.004726 rc=7 | netagent to the private name: connect=503 http=000 rc=7 t=0.001359 rc=7
+  noaddr: probe FAIL ['address.private-sibling', 'address.loopback-sibling', 'address.metadata-sibling', 'address.refused', 'address.refused', 'address.refused'] | netagent to a listed host: connect=200 http=200 rc=0 t=0.016516 rc=0 | netagent to the private name: connect=200 http=200 rc=0 t=0.006608 rc=0
+  addrafter: probe FAIL ['address.private-sibling', 'address.loopback-sibling', 'address.metadata-sibling', 'address.refused', 'address.refused', 'address.refused'] | netagent to a listed host: connect=200 http=200 rc=0 t=0.006566 rc=0 | netagent to the private name: connect=200 http=200 rc=0 t=0.005410 rc=0
+  partialaddr-n: probe PASS [] | netagent to a listed host: connect=200 http=200 rc=0 t=0.011369 rc=0 | netagent to the private name: connect=503 http=000 rc=7 t=0.001512 rc=7
+### T17 CONNECT setup cost through netagent at level 1, new connection per request, TLS through to target
+  with decision: rps kind=h1 new=true rate=50 ok=1000 fail=0 p50=3.55ms p99=7.51ms max=33.17ms | squid 64m 38 MiB
+  with decision: rps kind=h1 new=true rate=200 ok=3998 fail=2 p50=2.01ms p99=5.25ms max=19.73ms | squid 140m 39 MiB
+  netagent: {"active":0,"attached":0,"authorityMismatch":0,"connect":5000,"dialErrors":2,"goroutines":9,"heapAlloc":1046784,"heapInu
+  -no-decide: rps kind=h1 new=true rate=50 ok=1000 fail=0 p50=3.17ms p99=6.89ms max=25.6ms | squid 63m 41 MiB
+  -no-decide: rps kind=h1 new=true rate=200 ok=3998 fail=2 p50=2.16ms p99=8.79ms max=40.86ms | squid 155m 43 MiB
+  netagent: {"active":0,"attached":0,"authorityMismatch":0,"connect":5000,"dialErrors":2,"goroutines":9,"heapAlloc":1612696,"heapInu
+### T18 git clone through level 1, opaque tunnel to a git host on the list
+c316892fb22ec01cd0f285207e5c5e5cd62307b2
+hint:
+hint: 	git branch -m <name>
+1
+  netagent: {"allow":2773,"bindingClosed":2,"closes":14,"decide":2773,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":14,"proxy403":7,"proxy407":0,"refreshed":0,"sniClosed":2}
+### done
+
+##### second pass, Mon Nov  2 21:29:08 PST 2026
+### T18 again
+hint: 'development'. The just-created branch can be renamed via this command:
+hint:
+hint: 	git branch -m <name>
+fatal: your current branch 'master' does not have any commit
+HEAD
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+server head: c316892fb22ec01cd0f285207e5c5e5cd62307b2
+### T15 proxy recreated after a stop
+proxy gone: connect=503 http=000 rc=7 t=3.090194 rc=7
+  {"allow":1,"bindingClosed":0,"closes":0,"decide":1,"decideErr":0,"deny":0,"direct":0,"grac
+proxy back at attempt 1: connect=200 http=200 rc=0 t=0.037252 rc=0
+### T12b a terminated host: the upstream tunnel netagent keeps idle, and a decision that has changed
+first client connection: 200
+  decisions "decide":2 -> "decide":3
+  the decision service no longer allows api.example.test
+new client CONNECT 1: connect=200 http=200
+new client CONNECT 2: connect=200 http=200
+new client CONNECT 3: connect=200 http=200
+  decisions now "decide":3, opens "opens":2
+after a binding change closes tunnels: connect=200 http=403
+### T12c a private destination at level 1: the decision returns an address and netagent dials it directly
+private.oa.test: connect=200 http=200 rc=0 t=0.004927 rc=0
+  squid lines added 0, target before {"172.30.50.20":6,"198.19.50.20":10279} after {"172.30.50.20":6,"198.19.50.20":10280}; "direct":1
+### T16 the probe, correct-n, with netagent traffic beside it
+preflight:
+   {'check': 'tls', 'pass': True, 'detail': 'verified against the configured CA'}
+   {'check': 'auth.no-credential', 'pass': True, 'detail': 'status 407'}
+   {'check': 'auth.invented-credential', 'pass': True, 'detail': 'status 407'}
+   {'verdict': 'PASS'}
+full -window 5s:
+   verdict PASS checks passed 15
+full -window 5s -addr-control:
+   verdict PASS checks passed 19
+full -window 5s -addr-control:
+   verdict PASS checks passed 19
+netagent traffic beside the probe: 
+### T16b TLS-required variants through the probe: notls and wrongca
+  notls: preflight FAIL [('tls', 'proxy TLS: tls: first record does not look like a TLS handshake')]
+  wrongca: preflight FAIL [('tls', 'proxy TLS: tls: failed to verify certificate: x509: certificate is val')]
+### done second pass
+
+##### third pass, Mon Nov  2 21:43:02 PST 2026
+   probe verdict PASS checks passed 18
+   probe verdict PASS checks passed 18
+   netagent traffic beside the probe: rps kind=h1 new=true rate=50 ok=1999 fail=1 p50=4.91ms p99=7.39ms max=50.03ms
+### T18 git clone and push through level 1, opaque tunnel
+6b8122d2ed33ca2ed9d12115d3b1578138e9ad09
+hint:
+hint: 	git branch -m <name>
+1
+HEAD
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+fatal: git-http-push failed
+error: failed to push some refs to 'https://other.example.test/r.git'
+push rc=0
+4110ec13b2ec2618630aea19e2f866395380158f
+   server head after the push: 6b8122d2ed33ca2ed9d12115d3b1578138e9ad09
+   netagent: {"allow":2003,"bindingClosed":0,"closes":2001,"decide":2003,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":1,"opens":2002,"proxy403":0,"proxy407":0,"refreshed":0,"sniClosed":0}
+   squid: 1793684633.835     23 198.19.50.10 TCP_TUNNEL/200 2316 CONNECT other.example.test:443 pod-a.g1 HIER_DIRECT/198.19.50.21 ;1793684633.882      4 198.19.50.10 TCP_TUNNEL/200 2282 CONNECT other.example.test:443 pod-a.g1 HIER_DIRECT/198.19.50.21 ;
+### done third pass
+
+##### fourth pass: git, with a server image that has http-backend, Mon Nov  2 21:44:15 PST 2026
+### T18 git clone and push through level 1, opaque tunnel
+53c9b6ac99435423a36bbb06ff788c7a1405e2d3
+2
+53c9b6ac99435423a36bbb06ff788c7a1405e2d3
+push rc=0
+812ea1db3e4387288f6baef65a2b5865a595dcef
+   server head after the push: 812ea1db3e4387288f6baef65a2b5865a595dcef
+   netagent: {"allow":2,"bindingClosed":0,"closes":2,"decide":2,"decideErr":0,"deny":0,"direct":0,"graceClosed":0,"lifetimeClosed":0,"openTunnels":0,"opens":2,"proxy403":0,"proxy407":0,"refreshed":0,"sniClosed":0}
+   squid: 1793684660.147     28 198.19.50.10 TCP_TUNNEL/200 2287 CONNECT other.example.test:443 pod-a.g1 HIER_DIRECT/198.19.50.21 ;1793684660.196     34 198.19.50.10 TCP_TUNNEL/200 1803 CONNECT other.example.test:443 pod-a.g1 HIER_DIRECT/198.19.50.21 ;
+### done fourth pass: git, with a server image that has http-backend

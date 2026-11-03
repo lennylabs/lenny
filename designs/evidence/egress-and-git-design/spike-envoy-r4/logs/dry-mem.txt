@@ -1,0 +1,3 @@
+config args: msd=7200s sit=20s idle=3600s flush=15s
+min=0 t=1s docker=19.22MiB / 7.75GiB cpu=6.67% alloc=9517632 heap=16777216 periodic_log_lines=0 | cluster.dfp.upstream_cx_active: 63 http.egress.downstream_cx_active: 63 http.egress.downstream_rq_active: 63 http.egress.downstream_rq_idle_timeout: 0 http.egress.downstream_rq_max_duration_reached: 0 server.memory_allocated: 6248048 
+min=1 t=62s docker=25.09MiB / 7.75GiB cpu=0.22% alloc=6851136 heap=20971520 periodic_log_lines=602 | cluster.dfp.upstream_cx_active: 0 http.egress.downstream_cx_active: 0 http.egress.downstream_rq_active: 0 http.egress.downstream_rq_idle_timeout: 2 http.egress.downstream_rq_max_duration_reached: 0 server.memory_allocated: 15596872 

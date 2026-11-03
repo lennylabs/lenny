@@ -1,0 +1,229 @@
+### ghes-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@ghes.example.test/acme/widgets.git (fetch)
+### ghes-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### ghes-ssh-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### ghes-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@ghes.example.test/acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### ghes-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@ghes.example.test/acme/widgets.git (fetch)
+and the repository exists.
+### ghes-ssh-added-later-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### ghes-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	git@ghes.example.test:acme/widgets.git (fetch)
+### ghes-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### ghes-scp-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### ghes-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@ghes.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### ghes-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	git@ghes.example.test:acme/widgets.git (fetch)
+and the repository exists.
+### ghes-scp-added-later-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@github.com/acme/widgets.git (fetch)
+### com-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### com-ssh-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@github.com/acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### com-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@github.com/acme/widgets.git (fetch)
+and the repository exists.
+### com-ssh-added-later-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	git@github.com:acme/widgets.git (fetch)
+### com-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### com-scp-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@github.com:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### com-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	git@github.com:acme/widgets.git (fetch)
+and the repository exists.
+### com-scp-added-later-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### gl-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@gitlab.example.test/acme/widgets.git (fetch)
+### gl-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### gl-ssh-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+
+What's new in glab v1.127.0
+  Run: glab whatsnew
+### gl-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@gitlab.example.test/acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### gl-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@gitlab.example.test/acme/widgets.git (fetch)
+and the repository exists.
+### gl-ssh-added-later-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### gl-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	git@gitlab.example.test:acme/widgets.git (fetch)
+### gl-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### gl-scp-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### gl-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@gitlab.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### gl-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	git@gitlab.example.test:acme/widgets.git (fetch)
+and the repository exists.
+### gl-scp-added-later-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### nossh-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	git@nossh.example.test:acme/widgets.git (fetch)
+### nossh-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### nossh-scp-tool rc=0
+$ env GH_HOST=nossh.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### nossh-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@nossh.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### nossh-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	git@nossh.example.test:acme/widgets.git (fetch)
+and the repository exists.
+### nossh-scp-added-later-tool rc=0
+$ env GH_HOST=nossh.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### arb-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@other.example.test/pub/lib.git (fetch)
+### arb-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### arb-ssh-tool rc=0
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### arb-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@other.example.test/pub/lib.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### arb-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@other.example.test/pub/lib.git (fetch)
+and the repository exists.
+### arb-ssh-added-later-tool rc=0
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### arb-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	git@other.example.test:pub/lib.git (fetch)
+### arb-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### arb-scp-tool rc=0
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### arb-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@other.example.test:pub/lib.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### arb-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	git@other.example.test:pub/lib.git (fetch)
+and the repository exists.
+### arb-scp-added-later-tool rc=0
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### otheruser-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	alice@ghes.example.test:acme/widgets.git (fetch)
+### otheruser-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### otheruser-scp-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### otheruser-scp-self-clone rc=128
+$ timeout 20 git clone -q 'alice@ghes.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### otheruser-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	alice@ghes.example.test:acme/widgets.git (fetch)
+and the repository exists.
+### otheruser-scp-added-later-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+script-rc=0

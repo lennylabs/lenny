@@ -1,0 +1,364 @@
+// dec: decision service stand-in. ext_authz (gRPC :9000), Envoy access log service (:9003), an evidence writer that batches records per tenant to an object store with a Postgres manifest and periodic anchors, control on :9002.
+package main
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	alsv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+type rec struct {
+	Stream   string         `json:"stream"`
+	Producer string         `json:"producer"`
+	Sequence uint64         `json:"sequence"`
+	Observed time.Time      `json:"observedAt"`
+	Tenant   string         `json:"tenantId"`
+	Prov     string         `json:"provenance"`
+	Payload  map[string]any `json:"payload"`
+}
+
+var (
+	producer  = os.Getenv("NAME") + "." + strconv.FormatInt(time.Now().UnixMilli(), 36)
+	seqMu     sync.Mutex
+	seqs      = map[string]uint64{}
+	flushEv   = dur("FLUSH", time.Second)
+	maxBuf    = int64(num("MAXBUF", 2_000_000))
+	regulated = map[string]bool{}
+	bound     = dur("REGBOUND", 5*time.Second)
+
+	mu      sync.Mutex
+	buf     = map[string][][]byte{}
+	buffered, droppedT, recordsT, batchesT, putFail, bytesT, gapsT atomic.Int64
+	refused, tunnels, alsMsgs atomic.Int64
+	lastOK  sync.Map // tenant -> time of last durable flush when something was pending
+	oldest  sync.Map // tenant -> oldest unflushed record time
+	mc      *minio.Client
+	pg      *pgxpool.Pool
+)
+
+func dur(k string, d time.Duration) time.Duration {
+	if v := os.Getenv(k); v != "" {
+		x, err := time.ParseDuration(v)
+		if err == nil {
+			return x
+		}
+	}
+	return d
+}
+func num(k string, d int) int {
+	if v := os.Getenv(k); v != "" {
+		var n int
+		fmt.Sscan(v, &n)
+		return n
+	}
+	return d
+}
+
+func emit(stream, tenant string, payload map[string]any) {
+	seqMu.Lock()
+	seqs[tenant+"/"+stream]++
+	sq := seqs[tenant+"/"+stream]
+	seqMu.Unlock()
+	if buffered.Load() >= maxBuf {
+		droppedT.Add(1) // the gap is visible as a missing sequence
+		return
+	}
+	r := rec{Stream: stream, Producer: producer, Sequence: sq, Observed: time.Now().UTC(), Tenant: tenant, Prov: "enforced", Payload: payload}
+	b, _ := json.Marshal(r)
+	mu.Lock()
+	buf[tenant] = append(buf[tenant], b)
+	mu.Unlock()
+	oldest.LoadOrStore(tenant, time.Now())
+	buffered.Add(1)
+	recordsT.Add(1)
+}
+
+// flush writes one object per tenant per stream interval.
+func flush(ctx context.Context) {
+	mu.Lock()
+	cur := buf
+	buf = map[string][][]byte{}
+	mu.Unlock()
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 32)
+	for t, recs := range cur {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(t string, recs [][]byte) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var z bytes.Buffer
+			g := gzip.NewWriter(&z)
+			for _, r := range recs {
+				g.Write(r)
+				g.Write([]byte("\n"))
+			}
+			g.Close()
+			d := sha256.Sum256(z.Bytes())
+			now := time.Now().UTC()
+			key := fmt.Sprintf("%s/evidence/%s/%s-%s-%d.gz", t, now.Format("2006010215"), producer, hex.EncodeToString(d[:6]), now.UnixNano())
+			c, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			_, err := mc.PutObject(c, "evidence", key, bytes.NewReader(z.Bytes()), int64(z.Len()), minio.PutObjectOptions{ContentType: "application/gzip"})
+			if err == nil {
+				_, err = pg.Exec(c, `insert into manifest(tenant, producer, object_key, digest, records, at) values($1,$2,$3,$4,$5,now())`, t, producer, key, hex.EncodeToString(d[:]), len(recs))
+			}
+			if err != nil {
+				putFail.Add(1)
+				mu.Lock()
+				buf[t] = append(recs, buf[t]...) // retry at the next interval
+				mu.Unlock()
+				return
+			}
+			batchesT.Add(1)
+			bytesT.Add(int64(z.Len()))
+			buffered.Add(int64(-len(recs)))
+			mu.Lock()
+			pending := len(buf[t]) > 0
+			mu.Unlock()
+			if !pending {
+				oldest.Delete(t)
+			} else {
+				oldest.Store(t, time.Now())
+			}
+		}(t, recs)
+	}
+	wg.Wait()
+}
+
+func anchor(ctx context.Context) {
+	_, err := pg.Exec(ctx, `insert into anchor(tenant, upto, digest, at)
+	  select tenant, max(id), encode(sha256(string_agg(digest, '' order by id)::bytea),'hex'), now() from manifest m
+	  where id > coalesce((select max(upto) from anchor a where a.tenant=m.tenant),0) group by tenant`)
+	if err != nil {
+		log.Print("anchor: ", err)
+	}
+}
+
+type walItem struct {
+	tenant, did, host string
+	done              chan error
+}
+
+var (
+	walCh    = make(chan walItem, 200000)
+	walLat   = make([]int64, 0, 1<<20)
+	walMu    sync.Mutex
+	walFail  atomic.Int64
+	walOK    atomic.Int64
+	durable  = os.Getenv("DURABLE") != ""
+)
+
+// walLoop group-commits regulated decisions: nothing is allowed until its row is committed.
+func walLoop(ctx context.Context) {
+	tick := dur("WALEVERY", 10*time.Millisecond)
+	for {
+		first := <-walCh
+		batch := []walItem{first}
+		deadline := time.After(tick)
+	fill:
+		for len(batch) < 2000 {
+			select {
+			case it := <-walCh:
+				batch = append(batch, it)
+			case <-deadline:
+				break fill
+			}
+		}
+		rows := make([][]any, len(batch))
+		for i, it := range batch {
+			rows[i] = []any{it.tenant, it.did, it.host}
+		}
+		c, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+		_, err := pg.CopyFrom(c, pgx.Identifier{"evidence_wal"}, []string{"tenant", "decision_id", "authority"}, pgx.CopyFromRows(rows))
+		cancel()
+		if err != nil {
+			walFail.Add(int64(len(batch)))
+		} else {
+			walOK.Add(int64(len(batch)))
+		}
+		for _, it := range batch {
+			it.done <- err
+		}
+	}
+}
+
+type az struct {
+	authv3.UnimplementedAuthorizationServer
+}
+
+func hdr(k, v string) *corev3.HeaderValueOption {
+	return &corev3.HeaderValueOption{Header: &corev3.HeaderValue{Key: k, Value: v}, AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD}
+}
+
+func (s *az) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	h := req.GetAttributes().GetRequest().GetHttp()
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(h.GetHeaders()["proxy-authorization"], "Basic "))
+	_, tenant, _ := strings.Cut(string(raw), ":")
+	if tenant == "" {
+		tenant = "none"
+	}
+	// Regulated tenants: refuse while their records cannot be persisted within the bound.
+	if regulated[tenant] {
+		if v, ok := oldest.Load(tenant); ok && time.Since(v.(time.Time)) > bound {
+			refused.Add(1)
+			return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{Status: &typev3.HttpStatus{Code: typev3.StatusCode(503)}, Body: "evidence unavailable\n"}}}, nil
+		}
+	}
+	id := make([]byte, 16)
+	rand.Read(id)
+	did := hex.EncodeToString(id)
+	if durable && regulated["*"] {
+		it := walItem{tenant, did, h.GetHost(), make(chan error, 1)}
+		var err error
+		select {
+		case walCh <- it:
+			select {
+			case err = <-it.done:
+			case <-time.After(250 * time.Millisecond):
+				err = fmt.Errorf("timeout")
+			}
+		default:
+			err = fmt.Errorf("full")
+		}
+		if err != nil {
+			refused.Add(1)
+			return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.Unavailable)}, HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{Status: &typev3.HttpStatus{Code: typev3.StatusCode(503)}, Body: "evidence unavailable\n"}}}, nil
+		}
+	}
+	emit("egress.decision", tenant, map[string]any{"decisionId": did, "authority": h.GetHost(), "peer": req.GetAttributes().GetSource().GetAddress().GetSocketAddress().GetAddress(), "outcome": "allow", "rule": "spike", "routeTarget": "direct"})
+	md, _ := structpb.NewStruct(map[string]any{"decision_id": did, "tenant": tenant})
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md, HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", "direct")}, HeadersToRemove: []string{"proxy-authorization"}}}}, nil
+}
+
+type als struct {
+	alsv3.UnimplementedAccessLogServiceServer
+}
+
+var (
+	lastEntry atomic.Value
+	sample    = os.Getenv("ALS_SAMPLE") != ""
+)
+
+func (s *als) StreamAccessLogs(st grpc.ClientStreamingServer[alsv3.StreamAccessLogsMessage, alsv3.StreamAccessLogsResponse]) error {
+	for {
+		m, err := st.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		for _, e := range m.GetHttpLogs().GetLogEntry() {
+			alsMsgs.Add(1)
+			cp := e.GetCommonProperties()
+			fm := cp.GetMetadata().GetFilterMetadata()["envoy.filters.http.ext_authz"].GetFields()
+			did := fm["decision_id"].GetStringValue()
+			tn := fm["tenant"].GetStringValue()
+			if tn == "" {
+				tn = "none"
+			}
+			p := map[string]any{
+				"decisionId": did, "logType": cp.GetAccessLogType().String(),
+				"upstreamAddress": cp.GetUpstreamRemoteAddress().GetSocketAddress().GetAddress(), "upstreamPort": cp.GetUpstreamRemoteAddress().GetSocketAddress().GetPortValue(),
+				"sourceAddress": cp.GetUpstreamLocalAddress().GetSocketAddress().GetAddress(), "sourcePort": cp.GetUpstreamLocalAddress().GetSocketAddress().GetPortValue(),
+				"bytesUp": e.GetRequest().GetRequestBodyBytes(), "bytesDown": e.GetResponse().GetResponseBodyBytes(),
+				"wireUp": cp.GetUpstreamWireBytesSent(), "wireDown": cp.GetUpstreamWireBytesReceived(), "start": cp.GetStartTime().AsTime(), "duration": cp.GetTimeToLastDownstreamTxByte().AsDuration().String(),
+				"code": e.GetResponse().GetResponseCode().GetValue(),
+			}
+			if cp.GetAccessLogType().String() == "DownstreamEnd" || cp.GetAccessLogType().String() == "NotSet" {
+				tunnels.Add(1)
+			}
+			if sample {
+				b, _ := json.Marshal(p)
+				lastEntry.Store(string(b))
+			}
+			emit("egress.tunnel", tn, p)
+		}
+	}
+}
+
+func main() {
+	for _, t := range strings.Split(os.Getenv("REGULATED"), ",") {
+		if t != "" {
+			regulated[t] = true
+		}
+	}
+	ctx := context.Background()
+	var err error
+	mc, err = minio.New(os.Getenv("MINIO"), &minio.Options{Creds: credentials.NewStaticV4("minioadmin", "minioadmin", "")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pg, err = pgxpool.New(ctx, os.Getenv("PG"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if durable {
+		go walLoop(ctx)
+	}
+	go func() {
+		for range time.Tick(flushEv) {
+			flush(ctx)
+		}
+	}()
+	go func() {
+		for range time.Tick(dur("ANCHOR", 30*time.Second)) {
+			anchor(ctx)
+		}
+	}()
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "records=%d batches=%d bytes=%d buffered=%d putFail=%d dropped=%d refused=%d tunnelEnds=%d alsEntries=%d walOK=%d walFail=%d\n", recordsT.Load(), batchesT.Load(), bytesT.Load(), buffered.Load(), putFail.Load(), droppedT.Load(), refused.Load(), tunnels.Load(), alsMsgs.Load(), walOK.Load(), walFail.Load())
+		})
+		m.HandleFunc("/last", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, lastEntry.Load()) })
+		m.HandleFunc("/flush", func(w http.ResponseWriter, r *http.Request) { flush(ctx); anchor(ctx); fmt.Fprintln(w, "ok") })
+		log.Fatal(http.ListenAndServe(":9002", m))
+	}()
+	go func() {
+		l, err := net.Listen("tcp", ":9003")
+		if err != nil {
+			log.Fatal(err)
+		}
+		g := grpc.NewServer()
+		alsv3.RegisterAccessLogServiceServer(g, &als{})
+		log.Fatal(g.Serve(l))
+	}()
+	l, err := net.Listen("tcp", ":9000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	g := grpc.NewServer()
+	authv3.RegisterAuthorizationServer(g, &az{})
+	log.Fatal(g.Serve(l))
+}

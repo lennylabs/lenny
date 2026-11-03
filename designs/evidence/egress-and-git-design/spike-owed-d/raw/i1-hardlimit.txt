@@ -1,0 +1,265 @@
+# Mon Nov  2 20:55:56 PST 2026 64 MiB hard limit, memory-swap 64 MiB, no CPU limit, client and poller in other cgroups, idle tick every 10 s
+opaque up=h1 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=9s
+  up_total=489 live_peak=489 live_at_last_stats=467 fail_at_last_stats=0 fail_total=297 readings=43
+    last stats reading: current=64.0 anon=55.4 sock=0.0 kernel=4.5 file=3.7 peak=64.0 MiB goroutines=1417 heapInuse=42.2 stack=10.4 active=471 terminated=0 opaque=471
+    last cgroup reading: current=63.9 peak=64.0 anon=57.9 sock=0.0
+opaque up=h1 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=8s
+  up_total=435 live_peak=435 live_at_last_stats=418 fail_at_last_stats=0 fail_total=265 readings=38
+    last stats reading: current=64.0 anon=55.2 sock=0.0 kernel=4.1 file=4.5 peak=64.0 MiB goroutines=1276 heapInuse=42.7 stack=10.8 active=424 terminated=0 opaque=424
+    last cgroup reading: current=3.9 peak=64.0 anon=58.5 sock=0.0
+opaque up=h1 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=8s
+  up_total=478 live_peak=478 live_at_last_stats=463 fail_at_last_stats=0 fail_total=221 readings=38
+    last stats reading: current=63.9 anon=56.1 sock=0.0 kernel=4.5 file=3.3 peak=64.0 MiB goroutines=1406 heapInuse=43.2 stack=10.6 active=468 terminated=0 opaque=468
+    last cgroup reading: current=5.0 peak=64.0 anon=58.0 sock=0.0
+opaque up=h1 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=22s
+  up_total=1279 live_peak=1279 live_at_last_stats=1260 fail_at_last_stats=0 fail_total=645 readings=93
+    last stats reading: current=63.8 anon=48.9 sock=0.0 kernel=10.6 file=3.3 peak=64.0 MiB goroutines=3805 heapInuse=93.7 stack=15.8 active=1267 terminated=0 opaque=1267
+    last cgroup reading: current=6.4 peak=64.5 anon=51.3 sock=0.2
+opaque up=h1 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=21s
+  up_total=1235 live_peak=1235 live_at_last_stats=1215 fail_at_last_stats=0 fail_total=596 readings=89
+    last stats reading: current=63.9 anon=48.5 sock=0.0 kernel=10.3 file=2.5 peak=64.0 MiB goroutines=3660 heapInuse=90.4 stack=15.4 active=1224 terminated=0 opaque=1223
+    last cgroup reading: current=63.9 peak=64.2 anon=51.6 sock=0.2
+opaque up=h1 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=20s
+  up_total=1296 live_peak=1296 live_at_last_stats=1280 fail_at_last_stats=0 fail_total=538 readings=88
+    last stats reading: current=63.9 anon=49.1 sock=0.0 kernel=10.8 file=2.8 peak=64.1 MiB goroutines=3862 heapInuse=95.2 stack=16.0 active=1286 terminated=0 opaque=1286
+    last cgroup reading: current=4.8 peak=64.2 anon=51.2 sock=0.1
+int-c1-u1 up=h1 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=8s
+  up_total=448 live_peak=448 live_at_last_stats=439 fail_at_last_stats=0 fail_total=230 readings=38
+    last stats reading: current=63.8 anon=55.7 sock=0.0 kernel=4.3 file=4.0 peak=64.0 MiB goroutines=1337 heapInuse=38.2 stack=11.5 active=445 terminated=445 opaque=0
+    last cgroup reading: current=5.4 peak=64.0 anon=57.9 sock=0.0
+int-c1-u1 up=h1 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=9s
+  up_total=440 live_peak=440 live_at_last_stats=421 fail_at_last_stats=0 fail_total=348 readings=42
+    last stats reading: current=63.9 anon=53.0 sock=0.0 kernel=4.2 file=6.5 peak=64.0 MiB goroutines=1284 heapInuse=36.1 stack=11.1 active=427 terminated=427 opaque=0
+    last cgroup reading: current=5.1 peak=64.0 anon=58.3 sock=0.0
+int-c1-u1 up=h1 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=13s
+  up_total=433 live_peak=433 live_at_last_stats=418 fail_at_last_stats=0 fail_total=706 readings=59
+    last stats reading: current=63.9 anon=54.1 sock=0.0 kernel=4.2 file=4.1 peak=64.0 MiB goroutines=1288 heapInuse=38.0 stack=11.2 active=428 terminated=428 opaque=0
+    last cgroup reading: current=3.0 peak=64.0 anon=58.1 sock=0.3
+int-c1-u1 up=h1 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=17s
+  up_total=577 live_peak=577 live_at_last_stats=571 fail_at_last_stats=0 fail_total=947 readings=76
+    last stats reading: current=64.0 anon=54.5 sock=0.0 kernel=5.5 file=3.2 peak=64.0 MiB goroutines=1778 heapInuse=36.7 stack=15.0 active=608 terminated=601 opaque=0
+    last cgroup reading: current=63.7 peak=64.2 anon=56.4 sock=0.6
+int-c1-u1 up=h1 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=15s
+  up_total=586 live_peak=586 live_at_last_stats=581 fail_at_last_stats=0 fail_total=758 readings=67
+    last stats reading: current=63.7 anon=54.1 sock=0.0 kernel=5.4 file=3.0 peak=64.0 MiB goroutines=1767 heapInuse=35.8 stack=14.8 active=593 terminated=592 opaque=0
+    last cgroup reading: current=5.6 peak=64.2 anon=56.5 sock=0.4
+int-c1-u1 up=h1 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=13s
+  up_total=609 live_peak=609 live_at_last_stats=602 fail_at_last_stats=0 fail_total=540 readings=59
+    last stats reading: current=64.0 anon=53.8 sock=0.0 kernel=5.6 file=3.6 peak=64.0 MiB goroutines=1830 heapInuse=36.4 stack=15.0 active=609 terminated=609 opaque=0
+    last cgroup reading: current=3.4 peak=64.0 anon=56.3 sock=0.2
+int-c2-u1 up=h1 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=10s
+  up_total=565 live_peak=565 live_at_last_stats=547 fail_at_last_stats=0 fail_total=309 readings=47
+    last stats reading: current=63.9 anon=55.9 sock=0.0 kernel=3.1 file=4.8 peak=64.0 MiB goroutines=1672 heapInuse=40.1 stack=9.9 active=3 terminated=3 opaque=0
+    last cgroup reading: current=4.0 peak=64.0 anon=59.3 sock=0.0
+int-c2-u1 up=h1 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=13s
+  up_total=567 live_peak=567 live_at_last_stats=560 fail_at_last_stats=0 fail_total=575 readings=59
+    last stats reading: current=64.0 anon=57.8 sock=0.0 kernel=3.2 file=2.3 peak=64.0 MiB goroutines=1732 heapInuse=42.8 stack=10.7 active=3 terminated=4 opaque=0
+    last cgroup reading: current=63.9 peak=64.0 anon=59.2 sock=0.2
+int-c2-u1 up=h1 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=10s
+  up_total=539 live_peak=539 live_at_last_stats=532 fail_at_last_stats=0 fail_total=342 readings=47
+    last stats reading: current=64.0 anon=56.5 sock=0.0 kernel=3.1 file=3.6 peak=64.0 MiB goroutines=1620 heapInuse=41.6 stack=9.7 active=3 terminated=3 opaque=0
+    last cgroup reading: current=63.8 peak=64.0 anon=59.2 sock=0.0
+int-c2-u1 up=h1 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=16s
+  up_total=737 live_peak=737 live_at_last_stats=730 fail_at_last_stats=0 fail_total=689 readings=72
+    last stats reading: current=64.0 anon=55.3 sock=0.0 kernel=3.9 file=3.8 peak=64.0 MiB goroutines=2222 heapInuse=40.7 stack=12.5 active=3 terminated=3 opaque=0
+    last cgroup reading: current=3.9 peak=64.0 anon=58.1 sock=0.5
+int-c2-u1 up=h1 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=13s
+  up_total=729 live_peak=729 live_at_last_stats=729 fail_at_last_stats=0 fail_total=436 readings=59
+    last stats reading: current=63.9 anon=56.3 sock=0.0 kernel=3.9 file=3.1 peak=64.0 MiB goroutines=2215 heapInuse=40.9 stack=12.7 active=3 terminated=3 opaque=0
+    last cgroup reading: current=4.3 peak=64.0 anon=58.3 sock=0.2
+int-c2-u1 up=h1 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=15s
+  up_total=734 live_peak=734 live_at_last_stats=714 fail_at_last_stats=0 fail_total=620 readings=68
+    last stats reading: current=63.8 anon=55.1 sock=0.0 kernel=3.8 file=4.0 peak=64.0 MiB goroutines=2173 heapInuse=39.9 stack=12.3 active=3 terminated=3 opaque=0
+    last cgroup reading: current=3.7 peak=64.0 anon=58.2 sock=0.5
+int-c1-u2 up=h2 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=12s
+  up_total=828 live_peak=828 live_at_last_stats=816 fail_at_last_stats=0 fail_total=228 readings=55
+    last stats reading: current=63.8 anon=56.8 sock=0.0 kernel=4.0 file=3.0 peak=64.0 MiB goroutines=1652 heapInuse=39.6 stack=13.0 active=822 terminated=822 opaque=0
+    last cgroup reading: current=2.2 peak=64.0 anon=58.2 sock=0.0
+int-c1-u2 up=h2 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=14s
+  up_total=869 live_peak=869 live_at_last_stats=866 fail_at_last_stats=0 fail_total=276 readings=60
+    last stats reading: current=63.9 anon=56.6 sock=0.0 kernel=4.2 file=2.1 peak=64.0 MiB goroutines=1750 heapInuse=39.7 stack=13.3 active=873 terminated=872 opaque=0
+    last cgroup reading: current=5.0 peak=64.0 anon=57.8 sock=0.0
+int-c1-u2 up=h2 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=12s
+  up_total=880 live_peak=880 live_at_last_stats=860 fail_at_last_stats=0 fail_total=150 readings=55
+    last stats reading: current=64.0 anon=56.0 sock=0.0 kernel=4.1 file=3.8 peak=64.0 MiB goroutines=1740 heapInuse=39.3 stack=13.2 active=866 terminated=866 opaque=0
+    last cgroup reading: current=3.0 peak=64.0 anon=57.9 sock=0.0
+int-c1-u2 up=h2 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=22s
+  up_total=1193 live_peak=1193 live_at_last_stats=1178 fail_at_last_stats=0 fail_total=687 readings=93
+    last stats reading: current=63.8 anon=53.8 sock=0.0 kernel=5.3 file=3.5 peak=64.0 MiB goroutines=2377 heapInuse=39.9 stack=14.9 active=1184 terminated=1184 opaque=0
+    last cgroup reading: current=2.7 peak=64.0 anon=56.7 sock=0.1
+int-c1-u2 up=h2 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=23s
+  up_total=1175 live_peak=1175 live_at_last_stats=1161 fail_at_last_stats=0 fail_total=789 readings=97
+    last stats reading: current=63.9 anon=54.4 sock=0.0 kernel=5.3 file=3.4 peak=64.0 MiB goroutines=2356 heapInuse=39.7 stack=14.8 active=1176 terminated=1175 opaque=0
+    last cgroup reading: current=2.8 peak=64.2 anon=57.0 sock=0.1
+int-c1-u2 up=h2 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=24s
+  up_total=1158 live_peak=1158 live_at_last_stats=1148 fail_at_last_stats=0 fail_total=1010 readings=106
+    last stats reading: current=63.7 anon=54.9 sock=0.0 kernel=5.2 file=3.4 peak=64.0 MiB goroutines=2328 heapInuse=40.0 stack=14.8 active=1165 terminated=1161 opaque=0
+    last cgroup reading: current=63.9 peak=64.0 anon=57.0 sock=0.2
+int-c2-u2 up=h2 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=18s
+  up_total=1227 live_peak=1227 live_at_last_stats=1206 fail_at_last_stats=0 fail_total=256 readings=77
+    last stats reading: current=63.6 anon=60.0 sock=0.0 kernel=1.0 file=2.4 peak=64.0 MiB goroutines=2445 heapInuse=41.2 stack=16.2 active=5 terminated=5 opaque=0
+    last cgroup reading: current=2.2 peak=64.0 anon=61.6 sock=0.0
+int-c2-u2 up=h2 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=18s
+  up_total=1250 live_peak=1250 live_at_last_stats=1234 fail_at_last_stats=0 fail_total=317 readings=81
+    last stats reading: current=64.0 anon=59.9 sock=0.0 kernel=0.9 file=2.9 peak=64.0 MiB goroutines=2496 heapInuse=40.5 stack=17.6 active=5 terminated=5 opaque=0
+    last cgroup reading: current=1.9 peak=64.0 anon=61.5 sock=0.1
+int-c2-u2 up=h2 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=18s
+  up_total=1184 live_peak=1184 live_at_last_stats=1176 fail_at_last_stats=0 fail_total=408 readings=81
+    last stats reading: current=63.9 anon=60.4 sock=0.0 kernel=1.0 file=2.2 peak=64.0 MiB goroutines=2428 heapInuse=42.3 stack=18.6 active=5 terminated=6 opaque=0
+    last cgroup reading: current=63.8 peak=64.0 anon=61.0 sock=0.0
+int-c2-u2 up=h2 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=28s
+  up_total=1617 live_peak=1617 live_at_last_stats=1598 fail_at_last_stats=0 fail_total=821 readings=118
+    last stats reading: current=63.9 anon=59.4 sock=0.0 kernel=1.1 file=2.5 peak=64.0 MiB goroutines=3274 heapInuse=50.0 stack=20.3 active=7 terminated=12 opaque=0
+    last cgroup reading: current=1.5 peak=64.0 anon=61.1 sock=0.2
+int-c2-u2 up=h2 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=25s
+  up_total=1624 live_peak=1624 live_at_last_stats=1611 fail_at_last_stats=0 fail_total=555 readings=107
+    last stats reading: current=63.8 anon=59.8 sock=0.0 kernel=1.1 file=2.6 peak=64.0 MiB goroutines=3280 heapInuse=50.8 stack=20.4 active=7 terminated=11 opaque=0
+    last cgroup reading: current=2.2 peak=64.0 anon=60.9 sock=0.2
+int-c2-u2 up=h2 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=25s
+  up_total=1725 live_peak=1725 live_at_last_stats=1714 fail_at_last_stats=0 fail_total=422 readings=106
+    last stats reading: current=64.0 anon=58.4 sock=0.0 kernel=1.1 file=3.0 peak=64.0 MiB goroutines=3461 heapInuse=49.8 stack=21.2 active=7 terminated=14 opaque=0
+    last cgroup reading: current=63.8 peak=64.0 anon=61.1 sock=0.1
+gz-c1-u1 up=h1 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=11s
+  up_total=317 live_peak=317 live_at_last_stats=302 fail_at_last_stats=0 fail_total=565 readings=47
+    last stats reading: current=64.0 anon=56.7 sock=0.0 kernel=3.4 file=2.8 peak=64.1 MiB goroutines=967 heapInuse=40.6 stack=9.2 active=335 terminated=334 opaque=0
+    last cgroup reading: current=2.8 peak=64.1 anon=58.5 sock=0.0
+gz-c1-u1 up=h1 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=9s
+  up_total=349 live_peak=349 live_at_last_stats=335 fail_at_last_stats=0 fail_total=417 readings=42
+    last stats reading: current=63.9 anon=55.6 sock=0.0 kernel=3.5 file=4.4 peak=64.0 MiB goroutines=1021 heapInuse=45.4 stack=9.2 active=339 terminated=339 opaque=0
+    last cgroup reading: current=4.2 peak=64.0 anon=58.7 sock=0.0
+gz-c1-u1 up=h1 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=7s
+  up_total=356 live_peak=356 live_at_last_stats=335 fail_at_last_stats=0 fail_total=238 readings=34
+    last stats reading: current=63.6 anon=55.1 sock=0.0 kernel=3.5 file=4.8 peak=64.0 MiB goroutines=1021 heapInuse=43.9 stack=9.0 active=339 terminated=339 opaque=0
+    last cgroup reading: current=4.9 peak=64.0 anon=58.7 sock=0.0
+gz-c1-u1 up=h1 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=13s
+  up_total=464 live_peak=464 live_at_last_stats=445 fail_at_last_stats=0 fail_total=685 readings=59
+    last stats reading: current=63.8 anon=53.6 sock=0.0 kernel=4.4 file=5.0 peak=64.0 MiB goroutines=1350 heapInuse=46.7 stack=11.4 active=449 terminated=449 opaque=0
+    last cgroup reading: current=3.0 peak=64.0 anon=57.7 sock=0.4
+gz-c1-u1 up=h1 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=10s
+  up_total=447 live_peak=447 live_at_last_stats=447 fail_at_last_stats=0 fail_total=431 readings=46
+    last stats reading: current=63.7 anon=55.3 sock=0.0 kernel=4.4 file=3.3 peak=64.0 MiB goroutines=1360 heapInuse=47.1 stack=11.5 active=458 terminated=456 opaque=0
+    last cgroup reading: current=4.0 peak=64.1 anon=57.6 sock=0.0
+gz-c1-u1 up=h1 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=12s
+  up_total=465 live_peak=465 live_at_last_stats=465 fail_at_last_stats=0 fail_total=593 readings=55
+    last stats reading: current=63.9 anon=55.6 sock=0.0 kernel=4.5 file=3.1 peak=64.0 MiB goroutines=1413 heapInuse=49.1 stack=11.9 active=474 terminated=474 opaque=0
+    last cgroup reading: current=2.5 peak=64.1 anon=57.8 sock=0.1
+gz-c2-u1 up=h1 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=6s
+  up_total=357 live_peak=357 live_at_last_stats=353 fail_at_last_stats=0 fail_total=228 readings=34
+    last stats reading: current=63.9 anon=58.5 sock=0.0 kernel=2.3 file=2.9 peak=64.0 MiB goroutines=1079 heapInuse=48.4 stack=6.9 active=2 terminated=2 opaque=0
+    last cgroup reading: current=3.6 peak=64.0 anon=60.1 sock=0.0
+gz-c2-u1 up=h1 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=8s
+  up_total=393 live_peak=393 live_at_last_stats=378 fail_at_last_stats=0 fail_total=292 readings=38
+    last stats reading: current=63.8 anon=56.7 sock=0.0 kernel=2.5 file=4.7 peak=64.0 MiB goroutines=1161 heapInuse=48.4 stack=7.2 active=2 terminated=3 opaque=0
+    last cgroup reading: current=2.7 peak=64.0 anon=60.1 sock=0.0
+gz-c2-u1 up=h1 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=7s
+  up_total=389 live_peak=389 live_at_last_stats=379 fail_at_last_stats=0 fail_total=203 readings=34
+    last stats reading: current=63.9 anon=57.2 sock=0.0 kernel=2.4 file=4.2 peak=64.0 MiB goroutines=1157 heapInuse=47.1 stack=7.2 active=2 terminated=2 opaque=0
+    last cgroup reading: current=3.5 peak=64.0 anon=60.0 sock=0.0
+gz-c2-u1 up=h1 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=16s
+  up_total=538 live_peak=538 live_at_last_stats=533 fail_at_last_stats=0 fail_total=802 readings=67
+    last stats reading: current=64.0 anon=56.1 sock=0.0 kernel=3.1 file=3.6 peak=64.0 MiB goroutines=1622 heapInuse=53.7 stack=9.4 active=3 terminated=4 opaque=0
+    last cgroup reading: current=63.8 peak=64.0 anon=58.8 sock=0.5
+gz-c2-u1 up=h1 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=13s
+  up_total=524 live_peak=524 live_at_last_stats=516 fail_at_last_stats=0 fail_total=629 readings=59
+    last stats reading: current=63.9 anon=56.1 sock=0.0 kernel=3.1 file=3.7 peak=64.0 MiB goroutines=1573 heapInuse=52.1 stack=9.2 active=3 terminated=3 opaque=0
+    last cgroup reading: current=2.1 peak=64.0 anon=58.9 sock=0.3
+gz-c2-u1 up=h1 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=13s
+  up_total=533 live_peak=533 live_at_last_stats=531 fail_at_last_stats=0 fail_total=617 readings=59
+    last stats reading: current=63.8 anon=56.4 sock=0.0 kernel=3.1 file=3.6 peak=64.0 MiB goroutines=1625 heapInuse=53.4 stack=9.7 active=3 terminated=5 opaque=0
+    last cgroup reading: current=3.3 peak=64.0 anon=58.9 sock=0.2
+gz-c1-u2 up=h2 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=9s
+  up_total=602 live_peak=602 live_at_last_stats=586 fail_at_last_stats=0 fail_total=174 readings=42
+    last stats reading: current=63.9 anon=57.3 sock=0.0 kernel=3.2 file=3.4 peak=64.0 MiB goroutines=1191 heapInuse=52.3 stack=12.9 active=592 terminated=592 opaque=0
+    last cgroup reading: current=2.2 peak=64.0 anon=58.9 sock=0.0
+gz-c1-u2 up=h2 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=10s
+  up_total=591 live_peak=591 live_at_last_stats=585 fail_at_last_stats=0 fail_total=278 readings=47
+    last stats reading: current=64.0 anon=58.0 sock=0.0 kernel=3.2 file=2.7 peak=64.0 MiB goroutines=1190 heapInuse=54.8 stack=13.1 active=592 terminated=591 opaque=0
+    last cgroup reading: current=4.4 peak=64.0 anon=59.4 sock=0.0
+gz-c1-u2 up=h2 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=10s
+  up_total=569 live_peak=569 live_at_last_stats=559 fail_at_last_stats=0 fail_total=289 readings=47
+    last stats reading: current=63.9 anon=57.6 sock=0.0 kernel=3.0 file=3.4 peak=64.0 MiB goroutines=1134 heapInuse=50.1 stack=12.4 active=564 terminated=564 opaque=0
+    last cgroup reading: current=2.4 peak=64.0 anon=59.5 sock=0.0
+gz-c1-u2 up=h2 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=18s
+  up_total=750 live_peak=750 live_at_last_stats=740 fail_at_last_stats=0 fail_total=764 readings=76
+    last stats reading: current=64.0 anon=55.4 sock=0.0 kernel=3.8 file=3.8 peak=64.0 MiB goroutines=1499 heapInuse=58.4 stack=15.4 active=746 terminated=746 opaque=0
+    last cgroup reading: current=2.8 peak=64.0 anon=58.6 sock=0.1
+gz-c1-u2 up=h2 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=14s
+  up_total=750 live_peak=750 live_at_last_stats=750 fail_at_last_stats=0 fail_total=489 readings=63
+    last stats reading: current=63.9 anon=56.3 sock=0.0 kernel=3.9 file=2.8 peak=64.0 MiB goroutines=1536 heapInuse=60.1 stack=16.0 active=769 terminated=767 opaque=0
+    last cgroup reading: current=3.0 peak=64.0 anon=58.3 sock=0.1
+gz-c1-u2 up=h2 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=16s
+  up_total=717 live_peak=717 live_at_last_stats=704 fail_at_last_stats=0 fail_total=620 readings=67
+    last stats reading: current=63.9 anon=55.6 sock=0.0 kernel=3.6 file=3.9 peak=64.0 MiB goroutines=1425 heapInuse=55.2 stack=14.7 active=709 terminated=709 opaque=0
+    last cgroup reading: current=2.4 peak=64.0 anon=58.6 sock=0.1
+gz-c2-u2 up=h2 go=unset ramp=100 rep=1 state=[exited oom=true exit=137] wall=14s
+  up_total=915 live_peak=915 live_at_last_stats=910 fail_at_last_stats=0 fail_total=209 readings=60
+    last stats reading: current=63.9 anon=60.6 sock=0.0 kernel=1.1 file=2.0 peak=64.0 MiB goroutines=1846 heapInuse=70.6 stack=13.0 active=4 terminated=4 opaque=0
+    last cgroup reading: current=2.2 peak=64.0 anon=61.5 sock=0.0
+gz-c2-u2 up=h2 go=unset ramp=100 rep=2 state=[exited oom=true exit=137] wall=17s
+  up_total=997 live_peak=997 live_at_last_stats=987 fail_at_last_stats=0 fail_total=424 readings=72
+    last stats reading: current=63.8 anon=59.6 sock=0.0 kernel=1.1 file=2.9 peak=64.0 MiB goroutines=1996 heapInuse=78.3 stack=15.6 active=4 terminated=5 opaque=0
+    last cgroup reading: current=63.9 peak=64.0 anon=61.4 sock=0.1
+gz-c2-u2 up=h2 go=unset ramp=100 rep=3 state=[exited oom=true exit=137] wall=15s
+  up_total=928 live_peak=928 live_at_last_stats=909 fail_at_last_stats=0 fail_total=309 readings=64
+    last stats reading: current=64.0 anon=59.9 sock=0.0 kernel=1.0 file=3.0 peak=64.0 MiB goroutines=1845 heapInuse=71.5 stack=12.8 active=4 terminated=4 opaque=0
+    last cgroup reading: current=2.0 peak=64.0 anon=61.2 sock=0.0
+gz-c2-u2 up=h2 go=50MiB ramp=100 rep=1 state=[exited oom=true exit=137] wall=16s
+  up_total=965 live_peak=965 live_at_last_stats=953 fail_at_last_stats=0 fail_total=354 readings=68
+    last stats reading: current=63.6 anon=59.4 sock=0.0 kernel=1.1 file=2.7 peak=64.0 MiB goroutines=1942 heapInuse=72.1 stack=12.4 active=4 terminated=6 opaque=0
+    last cgroup reading: current=1.8 peak=64.0 anon=0.0 sock=0.0
+gz-c2-u2 up=h2 go=50MiB ramp=100 rep=2 state=[exited oom=true exit=137] wall=20s
+  up_total=1060 live_peak=1060 live_at_last_stats=1037 fail_at_last_stats=0 fail_total=629 readings=85
+    last stats reading: current=63.8 anon=58.9 sock=0.0 kernel=1.1 file=3.4 peak=64.0 MiB goroutines=2105 heapInuse=76.4 stack=13.3 active=5 terminated=6 opaque=0
+    last cgroup reading: current=2.0 peak=64.0 anon=61.1 sock=0.1
+gz-c2-u2 up=h2 go=50MiB ramp=100 rep=3 state=[exited oom=true exit=137] wall=23s
+  up_total=1072 live_peak=1072 live_at_last_stats=1056 fail_at_last_stats=0 fail_total=918 readings=97
+    last stats reading: current=64.0 anon=59.8 sock=0.0 kernel=1.1 file=1.8 peak=64.0 MiB goroutines=2149 heapInuse=81.2 stack=13.8 active=5 terminated=6 opaque=0
+    last cgroup reading: current=1.7 peak=64.3 anon=61.2 sock=0.2
+opaque up=h1 go=unset ramp=20 rep=1 state=[exited oom=true exit=137] wall=29s
+  up_total=502 live_peak=502 live_at_last_stats=500 fail_at_last_stats=0 fail_total=57 readings=124
+    last stats reading: current=64.0 anon=57.7 sock=0.0 kernel=4.7 file=1.4 peak=64.0 MiB goroutines=1509 heapInuse=45.3 stack=11.1 active=503 terminated=0 opaque=503
+    last cgroup reading: current=63.8 peak=64.0 anon=57.9 sock=0.0
+opaque up=h1 go=unset ramp=20 rep=2 state=[exited oom=true exit=137] wall=28s
+  up_total=496 live_peak=496 live_at_last_stats=494 fail_at_last_stats=0 fail_total=42 readings=120
+    last stats reading: current=63.9 anon=57.6 sock=0.0 kernel=4.7 file=1.4 peak=64.0 MiB goroutines=1490 heapInuse=44.7 stack=11.0 active=496 terminated=0 opaque=496
+    last cgroup reading: current=63.9 peak=64.0 anon=58.0 sock=0.0
+opaque up=h1 go=50MiB ramp=20 rep=1 state=[exited oom=true exit=137] wall=72s
+  up_total=1288 live_peak=1288 live_at_last_stats=1283 fail_at_last_stats=0 fail_total=99 readings=294
+    last stats reading: current=63.4 anon=49.7 sock=0.0 kernel=10.8 file=2.2 peak=64.0 MiB goroutines=3864 heapInuse=95.3 stack=16.1 active=1288 terminated=0 opaque=1288
+    last cgroup reading: current=6.3 peak=64.0 anon=51.3 sock=0.1
+opaque up=h1 go=50MiB ramp=20 rep=2 state=[exited oom=true exit=137] wall=71s
+  up_total=1290 live_peak=1290 live_at_last_stats=1286 fail_at_last_stats=0 fail_total=75 readings=290
+    last stats reading: current=63.9 anon=49.7 sock=0.0 kernel=10.8 file=2.9 peak=64.0 MiB goroutines=3871 heapInuse=95.3 stack=16.1 active=1291 terminated=0 opaque=1291
+    last cgroup reading: current=3.8 peak=64.1 anon=0.0 sock=0.4
+int-c1-u1 up=h1 go=unset ramp=20 rep=1 state=[exited oom=true exit=137] wall=27s
+  up_total=469 live_peak=469 live_at_last_stats=465 fail_at_last_stats=0 fail_total=48 readings=115
+    last stats reading: current=64.0 anon=56.9 sock=0.0 kernel=4.5 file=1.7 peak=64.0 MiB goroutines=1413 heapInuse=39.3 stack=12.2 active=471 terminated=470 opaque=0
+    last cgroup reading: current=4.0 peak=64.0 anon=57.9 sock=0.0
+int-c1-u1 up=h1 go=unset ramp=20 rep=2 state=[exited oom=true exit=137] wall=27s
+  up_total=461 live_peak=461 live_at_last_stats=459 fail_at_last_stats=0 fail_total=60 readings=115
+    last stats reading: current=63.9 anon=56.7 sock=0.0 kernel=4.4 file=2.8 peak=64.0 MiB goroutines=1383 heapInuse=40.0 stack=11.8 active=460 terminated=460 opaque=0
+    last cgroup reading: current=3.2 peak=64.0 anon=58.2 sock=0.0
+int-c1-u1 up=h1 go=50MiB ramp=20 rep=1 state=[exited oom=true exit=137] wall=39s
+  up_total=610 live_peak=610 live_at_last_stats=608 fail_at_last_stats=0 fail_total=133 readings=161
+    last stats reading: current=64.0 anon=54.4 sock=0.0 kernel=5.6 file=3.3 peak=64.0 MiB goroutines=1842 heapInuse=36.7 stack=15.2 active=615 terminated=615 opaque=0
+    last cgroup reading: current=3.7 peak=64.0 anon=56.5 sock=0.1
+int-c1-u1 up=h1 go=50MiB ramp=20 rep=2 state=[exited oom=true exit=137] wall=41s
+  up_total=619 live_peak=619 live_at_last_stats=617 fail_at_last_stats=0 fail_total=186 readings=174
+    last stats reading: current=63.8 anon=54.2 sock=0.0 kernel=5.7 file=3.2 peak=64.0 MiB goroutines=1867 heapInuse=36.9 stack=15.3 active=623 terminated=623 opaque=0
+    last cgroup reading: current=3.3 peak=64.0 anon=56.3 sock=0.2
+int-c2-u2 up=h2 go=unset ramp=20 rep=1 state=[exited oom=true exit=137] wall=68s
+  up_total=1235 live_peak=1235 live_at_last_stats=1230 fail_at_last_stats=0 fail_total=75 readings=277
+    last stats reading: current=63.7 anon=59.5 sock=0.0 kernel=1.0 file=2.9 peak=64.0 MiB goroutines=2481 heapInuse=41.4 stack=17.1 active=5 terminated=5 opaque=0
+    last cgroup reading: current=1.3 peak=64.0 anon=61.6 sock=0.0
+int-c2-u2 up=h2 go=unset ramp=20 rep=2 state=[exited oom=true exit=137] wall=65s
+  up_total=1162 live_peak=1162 live_at_last_stats=1156 fail_at_last_stats=0 fail_total=82 readings=264
+    last stats reading: current=63.9 anon=61.0 sock=0.0 kernel=1.0 file=1.4 peak=64.0 MiB goroutines=2335 heapInuse=40.2 stack=16.3 active=5 terminated=5 opaque=0
+    last cgroup reading: current=64.0 peak=64.2 anon=61.7 sock=0.0
+int-c2-u2 up=h2 go=50MiB ramp=20 rep=1 state=[exited oom=true exit=137] wall=86s
+  up_total=1480 live_peak=1480 live_at_last_stats=1478 fail_at_last_stats=0 fail_total=175 readings=350
+    last stats reading: current=63.8 anon=59.9 sock=0.0 kernel=1.1 file=2.2 peak=64.0 MiB goroutines=2985 heapInuse=43.0 stack=18.5 active=6 terminated=6 opaque=0
+    last cgroup reading: current=1.7 peak=64.3 anon=61.1 sock=0.1
+int-c2-u2 up=h2 go=50MiB ramp=20 rep=2 state=[exited oom=true exit=137] wall=89s
+  up_total=1500 live_peak=1500 live_at_last_stats=1500 fail_at_last_stats=0 fail_total=209 readings=362
+    last stats reading: current=63.9 anon=58.4 sock=0.0 kernel=1.1 file=3.5 peak=64.0 MiB goroutines=3030 heapInuse=43.1 stack=18.7 active=8 terminated=8 opaque=0
+    last cgroup reading: current=64.0 peak=64.2 anon=61.1 sock=0.2

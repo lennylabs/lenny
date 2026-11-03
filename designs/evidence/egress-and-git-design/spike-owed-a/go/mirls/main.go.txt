@@ -1,0 +1,598 @@
+// mirls: mirror stand-in for the text under "Ref resolution": it forwards ls-refs upstream, answers from a store for the
+// listed causes, and keeps confirmations. Serves POST /s/<store>/git-upload-pack over TLS. Stores are named by -store flags:
+//   -store NAME=URL[,cred=user:secret]
+// The confirmation index persists in -data/index.json, so it survives a restart. Control on :9200.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type Pair struct {
+	SHA string    `json:"sha"`
+	At  time.Time `json:"at"`
+}
+type StoreState struct {
+	Stopped bool            `json:"stopped"`
+	Pairs   map[string]Pair `json:"pairs"`
+}
+type Store struct {
+	Name, URL, Cred string
+	Upstream        atomic.Int64
+	Coalesced       atomic.Int64
+}
+type cached struct {
+	at     time.Time
+	status int
+	hdr    http.Header
+	body   []byte
+}
+
+var (
+	dataDir, proxyCA, i3URL string
+	hostPool                *x509.CertPool
+	mu                      sync.Mutex
+	stores                  = map[string]*Store{}
+	states                  = map[string]*StoreState{}
+	proxyURL                string
+	proxyAuth               = "lenny:pin"
+	mint                    = "ok"
+	maxAge                  = 6 * time.Hour
+	coalesceFor             = 5 * time.Second
+	upstreamLimit           = 8 * time.Second
+	naiveClear              bool
+	noFetch                 bool
+	i3Calls                 atomic.Int64
+	cache                   = map[string]*cached{}
+	inflight                = map[string]*sync.WaitGroup{}
+	fetching                sync.Map
+)
+
+func persist() {
+	b, _ := json.MarshalIndent(states, "", " ")
+	os.WriteFile(filepath.Join(dataDir, "index.tmp"), b, 0o644)
+	os.Rename(filepath.Join(dataDir, "index.tmp"), filepath.Join(dataDir, "index.json"))
+}
+func load() {
+	b, err := os.ReadFile(filepath.Join(dataDir, "index.json"))
+	if err == nil {
+		json.Unmarshal(b, &states)
+	}
+}
+func state(n string) *StoreState {
+	s := states[n]
+	if s == nil {
+		s = &StoreState{Pairs: map[string]Pair{}}
+		states[n] = s
+	}
+	return s
+}
+func pkt(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
+
+// Upstream result classes.
+type upRes struct {
+	refs    map[string]string // ref name -> commit (peeled for an annotated tag)
+	status  int               // host status
+	connect int               // CONNECT status
+	cause   string            // listed fallback cause, or "" when the answer is passed on
+	err     error
+}
+
+func transport(cs *atomic.Int64) *http.Transport {
+	t := &http.Transport{DisableKeepAlives: true, TLSClientConfig: &tls.Config{RootCAs: hostPool}, TLSHandshakeTimeout: 5 * time.Second}
+	if proxyURL != "" {
+		u, _ := url.Parse(proxyURL)
+		t.Proxy = http.ProxyURL(u)
+		t.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, r *http.Response) error {
+			cs.Store(int64(r.StatusCode))
+			return nil
+		}
+		t.GetProxyConnectHeader = func(context.Context, *url.URL, string) (http.Header, error) {
+			h := http.Header{}
+			h.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(proxyAuth)))
+			return h, nil
+		}
+	}
+	return t
+}
+func call(ctx context.Context, cl *http.Client, st *Store, method, u string, body string, v2 bool) (*http.Response, error) {
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, _ := http.NewRequestWithContext(ctx, method, u, rd)
+	if v2 {
+		req.Header.Set("Git-Protocol", "version=2")
+		req.Header.Set("Content-Type", "application/x-git-upload-pack-request")
+		req.Header.Set("Accept", "application/x-git-upload-pack-result")
+	}
+	req.Header.Set("User-Agent", "git/2.49-lenny-spike")
+	if st.Cred != "" {
+		a, b, _ := strings.Cut(st.Cred, ":")
+		req.SetBasicAuth(a, b)
+	}
+	return cl.Do(req)
+}
+func classifyErr(cs *atomic.Int64, err error) upRes {
+	c := int(cs.Load())
+	r := upRes{connect: c, err: err}
+	switch {
+	case proxyURL != "" && c == 0:
+		r.cause = "no reply from lenny-egress"
+	case c == 503:
+		r.cause = "CONNECT 503"
+	case c != 0 && c != 200:
+		r.cause = "" // CONNECT 403, 502, 407, 429: passed on
+	case errors.Is(err, context.DeadlineExceeded):
+		r.cause = "timeout"
+	default:
+		r.cause = "connection or TLS failure to the host"
+	}
+	return r
+}
+
+// lsUpstream forwards the ls-refs request, with v0 as the fallback for a host that refuses v2.
+func lsUpstream(st *Store, prefixes []string) upRes {
+	ctx, cancel := context.WithTimeout(context.Background(), upstreamLimit)
+	defer cancel()
+	var cs atomic.Int64
+	cl := &http.Client{Transport: transport(&cs), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	defer cl.CloseIdleConnections()
+	st.Upstream.Add(1)
+	body := pkt("command=ls-refs\n") + pkt("agent=lenny/spike\n") + "0001" + pkt("peel\n") + pkt("symrefs\n")
+	for _, p := range prefixes {
+		body += pkt("ref-prefix " + p + "\n")
+	}
+	body += "0000"
+	resp, err := call(ctx, cl, st, "POST", st.URL+"/git-upload-pack", body, true)
+	if err != nil {
+		return classifyErr(&cs, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 200 && strings.Contains(resp.Header.Get("Content-Type"), "x-git-upload-pack-result") {
+		if refs, ok := parseV2(io.LimitReader(resp.Body, 1<<20)); ok {
+			return upRes{refs: refs, status: 200, connect: int(cs.Load())}
+		}
+	} else if s := resp.StatusCode; s == 502 || s == 503 || s == 504 {
+		return upRes{status: s, connect: int(cs.Load()), cause: fmt.Sprintf("host %d", s)}
+	} else if s == 429 {
+		return upRes{status: s, connect: int(cs.Load())}
+	}
+	// v0: GET info/refs.
+	resp2, err := call(ctx, cl, st, "GET", st.URL+"/info/refs?service=git-upload-pack", "", false)
+	if err != nil {
+		return classifyErr(&cs, err)
+	}
+	defer resp2.Body.Close()
+	s := resp2.StatusCode
+	switch {
+	case s == 502 || s == 503 || s == 504:
+		return upRes{status: s, connect: int(cs.Load()), cause: fmt.Sprintf("host %d", s)}
+	case s != 200:
+		return upRes{status: s, connect: int(cs.Load())}
+	}
+	return upRes{refs: parseV0(io.LimitReader(resp2.Body, 32<<20)), status: 200, connect: int(cs.Load())}
+}
+func readPkt(r *bufio.Reader) (string, bool, error) {
+	var h [4]byte
+	if _, err := io.ReadFull(r, h[:]); err != nil {
+		return "", false, err
+	}
+	n, err := strconv.ParseUint(string(h[:]), 16, 16)
+	if err != nil {
+		return "", false, err
+	}
+	if n < 4 {
+		return "", true, nil
+	}
+	b := make([]byte, n-4)
+	_, err = io.ReadFull(r, b)
+	return string(b), false, err
+}
+func parseV2(rd io.Reader) (map[string]string, bool) {
+	r := bufio.NewReader(rd)
+	refs := map[string]string{}
+	for {
+		l, flush, err := readPkt(r)
+		if err != nil {
+			return nil, false
+		}
+		if flush {
+			return refs, true
+		}
+		f := strings.Fields(strings.TrimRight(l, "\n"))
+		if len(f) < 2 || (len(f[0]) != 40 && len(f[0]) != 64) {
+			return nil, false
+		}
+		sha := f[0]
+		for _, a := range f[2:] {
+			if strings.HasPrefix(a, "peeled:") {
+				sha = a[7:]
+			}
+		}
+		refs[f[1]] = sha
+	}
+}
+func parseV0(rd io.Reader) map[string]string {
+	r := bufio.NewReader(rd)
+	refs := map[string]string{}
+	flushes := 0
+	for {
+		l, flush, err := readPkt(r)
+		if err != nil {
+			return refs
+		}
+		if flush {
+			flushes++
+			if flushes >= 2 {
+				return refs
+			}
+			continue
+		}
+		l = strings.TrimRight(l, "\n")
+		if strings.HasPrefix(l, "# service=") {
+			continue
+		}
+		if i := strings.IndexByte(l, 0); i >= 0 {
+			l = l[:i]
+		}
+		f := strings.Fields(l)
+		if len(f) == 2 {
+			if strings.HasSuffix(f[1], "^{}") {
+				refs[strings.TrimSuffix(f[1], "^{}")] = f[0]
+			} else {
+				refs[f[1]] = f[0]
+			}
+		}
+	}
+}
+func storeDir(n string) string { return filepath.Join(dataDir, "stores", n+".git") }
+func storeHas(n, sha string) bool {
+	return exec.Command("git", "--git-dir", storeDir(n), "cat-file", "-e", sha+"^{commit}").Run() == nil
+}
+func fetchStore(st *Store) error {
+	if _, busy := fetching.LoadOrStore(st.Name, true); busy {
+		return nil
+	}
+	defer fetching.Delete(st.Name)
+	d := storeDir(st.Name)
+	if _, err := os.Stat(d); err != nil {
+		if out, err := exec.Command("git", "init", "-q", "--bare", d).CombinedOutput(); err != nil {
+			return fmt.Errorf("init: %s", out)
+		}
+	}
+	args := []string{"--git-dir", d, "-c", "http.sslCAInfo=/c/ca.pem", "-c", "http.proxyAuthMethod=basic"}
+	if st.Cred != "" {
+		args = append(args, "-c", "http.extraHeader=Authorization: Basic "+base64.StdEncoding.EncodeToString([]byte(st.Cred)))
+	}
+	args = append(args, "fetch", "-q", "--prune", st.URL, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*")
+	cmd := exec.Command("git", args...)
+	mu.Lock()
+	if proxyURL != "" {
+		u, _ := url.Parse(proxyURL)
+		u.User = url.UserPassword("lenny", strings.TrimPrefix(proxyAuth, "lenny:"))
+		cmd.Env = append(os.Environ(), "https_proxy="+u.String(), "GIT_TERMINAL_PROMPT=0")
+	}
+	mu.Unlock()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("fetch %s: %v %s", st.Name, err, out)
+		return err
+	}
+	// A successful fetch confirms every ref it brought.
+	refs, _ := exec.Command("git", "--git-dir", d, "for-each-ref", "--format=%(refname) %(objectname) %(*objectname)").Output()
+	mu.Lock()
+	defer mu.Unlock()
+	s := state(st.Name)
+	s.Stopped = false
+	now := time.Now()
+	for _, l := range strings.Split(strings.TrimSpace(string(refs)), "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 2 {
+			sha := f[1]
+			if len(f) == 3 {
+				sha = f[2]
+			}
+			s.Pairs[f[0]] = Pair{sha, now}
+		}
+	}
+	persist()
+	return nil
+}
+func v2Reply(refs map[string]string) []byte {
+	var b bytes.Buffer
+	for k, v := range refs {
+		b.WriteString(pkt(v + " " + k + "\n"))
+	}
+	b.WriteString("0000")
+	return b.Bytes()
+}
+func parsePrefixes(body []byte) ([]string, bool) {
+	r := bufio.NewReader(bytes.NewReader(body))
+	var out []string
+	cmd := false
+	for {
+		l, _, err := readPkt(r)
+		if err != nil {
+			return out, cmd
+		}
+		l = strings.TrimRight(l, "\n")
+		if l == "command=ls-refs" {
+			cmd = true
+		}
+		if strings.HasPrefix(l, "ref-prefix ") {
+			out = append(out, l[11:])
+		}
+	}
+}
+
+// answer implements the mirror's decision, after the I3 check. It returns the status, headers, and body for the caller.
+func answer(st *Store, prefixes []string) (int, http.Header, []byte) {
+	hdr := http.Header{"Content-Type": {"application/x-git-upload-pack-result"}}
+	mu.Lock()
+	m := mint
+	mu.Unlock()
+	var r upRes
+	switch m {
+	case "refused":
+		r = upRes{status: 403, connect: 200} // a refused mint behaves as a host refusal, and it stops the store's fallback
+		hdr.Set("X-Lenny-Cause", "mint refused")
+	case "unavailable":
+		r = upRes{cause: "mint unavailable"}
+	default:
+		r = lsUpstream(st, prefixes)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	s := state(st.Name)
+	switch {
+	case r.refs != nil:
+		s.Stopped = false
+		now := time.Now()
+		for k, v := range r.refs {
+			s.Pairs[k] = Pair{v, now}
+		}
+		// A successful answer that omits a ref clears its pair. Only a ref the request's prefixes cover can be read as omitted,
+		// because ref-prefix narrows the answer. naiveClear drops every pair the answer did not name, to show that failure.
+		for k := range s.Pairs {
+			if _, ok := r.refs[k]; ok {
+				continue
+			}
+			if naiveClear {
+				delete(s.Pairs, k)
+				continue
+			}
+			for _, p := range prefixes {
+				if k == p || strings.HasPrefix(k, p) {
+					delete(s.Pairs, k)
+					break
+				}
+			}
+		}
+		persist()
+		var missing bool
+		for _, v := range r.refs {
+			if !storeHas(st.Name, v) {
+				missing = true
+			}
+		}
+		if missing && !noFetch {
+			go fetchStore(st)
+		}
+		return 200, hdr, v2Reply(r.refs)
+	case r.cause != "":
+		hdr.Set("X-Lenny-Cause", r.cause)
+		if s.Stopped {
+			hdr.Set("X-Lenny-Cause", r.cause+"; fallback stopped")
+			return 503, hdr, []byte("fallback stopped\n")
+		}
+		// Only the most recent pair, within the age limit, and only when the store holds the commit.
+		out := map[string]string{}
+		var when time.Time
+		for k, p := range s.Pairs {
+			for _, pre := range prefixes {
+				if k == pre {
+					if time.Since(p.At) > maxAge {
+						hdr.Set("X-Lenny-Cause", r.cause+"; confirmation too old")
+						continue
+					}
+					if !storeHas(st.Name, p.SHA) {
+						hdr.Set("X-Lenny-Cause", r.cause+"; store lacks the commit")
+						continue
+					}
+					out[k] = p.SHA
+					when = p.At
+				}
+			}
+		}
+		if len(out) == 0 {
+			if hdr.Get("X-Lenny-Cause") == r.cause {
+				hdr.Set("X-Lenny-Cause", r.cause+"; no confirmation")
+			}
+			return 503, hdr, []byte("no store answer\n")
+		}
+		hdr.Set("X-Lenny-Resolved-From-Store", "true")
+		hdr.Set("X-Lenny-Confirmed-At", when.UTC().Format(time.RFC3339))
+		return 200, hdr, v2Reply(out)
+	case r.status == 401 || r.status == 403 || r.status == 404:
+		s.Stopped = true
+		s.Pairs = map[string]Pair{}
+		persist()
+		return r.status, hdr, []byte("upstream refused\n")
+	case r.status != 0:
+		return r.status, hdr, []byte("upstream status passed on\n")
+	default:
+		// A CONNECT status that is not a listed cause, passed on.
+		hdr.Set("X-Lenny-Cause", fmt.Sprintf("CONNECT %d", r.connect))
+		return r.connect, hdr, []byte("egress refused\n")
+	}
+}
+func serve(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/s/"), "/")
+	mu.Lock()
+	st := stores[parts[0]]
+	mu.Unlock()
+	if st == nil || len(parts) != 2 || parts[1] != "git-upload-pack" {
+		http.NotFound(w, r)
+		return
+	}
+	// Second gate: I3 on every request, ahead of the coalescing cache.
+	i3Calls.Add(1)
+	i3c := http.Client{Timeout: time.Second}
+	if resp, err := i3c.Get(i3URL); err != nil {
+		w.Header().Set("X-Lenny-Cause", "decision service unavailable")
+		http.Error(w, "decision service unavailable", 503)
+		return
+	} else {
+		resp.Body.Close()
+	}
+	body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	prefixes, ok := parsePrefixes(body)
+	if !ok {
+		http.Error(w, "ls-refs only", 400)
+		return
+	}
+	key := fmt.Sprintf("%s|%x", st.Name, sha256.Sum256(body))
+	for {
+		mu.Lock()
+		if c := cache[key]; c != nil && time.Since(c.at) < coalesceFor {
+			mu.Unlock()
+			st.Coalesced.Add(1)
+			for k, v := range c.hdr {
+				w.Header()[k] = v
+			}
+			w.Header().Set("X-Lenny-Coalesced", "true")
+			w.WriteHeader(c.status)
+			w.Write(c.body)
+			return
+		}
+		if wg := inflight[key]; wg != nil {
+			mu.Unlock()
+			wg.Wait()
+			continue
+		}
+		wg := &sync.WaitGroup{}
+		wg.Add(1)
+		inflight[key] = wg
+		mu.Unlock()
+		status, hdr, b := answer(st, prefixes)
+		mu.Lock()
+		delete(inflight, key)
+		cache[key] = &cached{time.Now(), status, hdr, b}
+		mu.Unlock()
+		wg.Done()
+		for k, v := range hdr {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(status)
+		w.Write(b)
+		return
+	}
+}
+func control() {
+	m := http.NewServeMux()
+	m.HandleFunc("/set", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		mu.Lock()
+		defer mu.Unlock()
+		if q.Has("proxy") {
+			proxyURL = q.Get("proxy")
+		}
+		if q.Has("mint") {
+			mint = q.Get("mint")
+		}
+		if q.Has("maxage") {
+			maxAge, _ = time.ParseDuration(q.Get("maxage"))
+		}
+		if q.Has("coalesce") {
+			coalesceFor, _ = time.ParseDuration(q.Get("coalesce"))
+			cache = map[string]*cached{}
+		}
+		if q.Has("naive") {
+			naiveClear = q.Get("naive") == "1"
+		}
+		if q.Has("nofetch") {
+			noFetch = q.Get("nofetch") == "1"
+		}
+		if q.Has("cred") {
+			if st := stores[q.Get("store")]; st != nil {
+				st.Cred = q.Get("cred")
+			}
+		}
+		fmt.Fprintln(w, "ok")
+	})
+	m.HandleFunc("/state", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		n := r.URL.Query().Get("store")
+		st := stores[n]
+		b, _ := json.Marshal(map[string]any{"state": state(n), "upstream": st.Upstream.Load(), "coalesced": st.Coalesced.Load(), "i3": i3Calls.Load()})
+		w.Write(b)
+		fmt.Fprintln(w)
+	})
+	m.HandleFunc("/fetch", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		st := stores[r.URL.Query().Get("store")]
+		mu.Unlock()
+		fmt.Fprintln(w, fetchStore(st))
+	})
+	log.Fatal(http.ListenAndServe(":9200", m))
+}
+
+type multi []string
+
+func (m *multi) String() string     { return "" }
+func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
+func main() {
+	var ss multi
+	flag.Var(&ss, "store", "")
+	flag.StringVar(&dataDir, "data", "/data", "")
+	flag.StringVar(&proxyURL, "proxy", "", "")
+	flag.StringVar(&i3URL, "i3", "", "")
+	ca := flag.String("ca", "/c/ca.pem", "")
+	cert := flag.String("cert", "", "")
+	key := flag.String("key", "", "")
+	flag.Parse()
+	hostPool = x509.NewCertPool()
+	b, _ := os.ReadFile(*ca)
+	hostPool.AppendCertsFromPEM(b)
+	os.MkdirAll(filepath.Join(dataDir, "stores"), 0o755)
+	load()
+	for _, s := range ss {
+		n, rest, _ := strings.Cut(s, "=")
+		p := strings.Split(rest, ",")
+		st := &Store{Name: n, URL: p[0]}
+		for _, kv := range p[1:] {
+			if strings.HasPrefix(kv, "cred=") {
+				st.Cred = kv[5:]
+			}
+		}
+		stores[n] = st
+	}
+	_ = net.IPv4zero
+	go control()
+	log.Fatal(http.ListenAndServeTLS(":8443", *cert, *key, http.HandlerFunc(serve)))
+}

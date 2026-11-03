@@ -1,0 +1,2 @@
+[{"hosts":["api.example.test"],"header":"Authorization","value":"Bearer ACME-REAL-9f2c71","secret":"ACME-REAL-9f2c71"},
+ {"hosts":["vcs.example.test"],"header":"Authorization","value":"Basic eC1hY2Nlc3MtdG9rZW46VkNTLVJFQUwtODhlZTA1","secret":"VCS-REAL-88ee05","vcs":true}]

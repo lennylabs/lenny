@@ -1,0 +1,344 @@
+// Package ev holds what the evidence programs share: the envelope, realistic payloads, TLS helpers, and the tenant hash.
+package ev
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"hash/fnv"
+	"io"
+	mrand "math/rand/v2"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Rec is the common envelope from the design's "Evidence streams".
+type Rec struct {
+	Stream        string          `json:"stream"`
+	SchemaVersion int             `json:"schemaVersion"`
+	Producer      string          `json:"producer"`
+	Incarnation   string          `json:"incarnation"`
+	Sequence      uint64          `json:"sequence"`
+	SequenceEnd   uint64          `json:"sequenceEnd,omitempty"` // a chunk, aggregate, or gap: the last sequence it covers
+	Kind          string          `json:"kind,omitempty"`    // "", "gap", or "denial_aggregate"
+	ObservedAt    time.Time       `json:"observedAt"`
+	TenantId      string          `json:"tenantId"`
+	PoolId        string          `json:"poolId,omitempty"`
+	PodUid        string          `json:"podUid,omitempty"`
+	SessionId     string          `json:"sessionId,omitempty"`
+	Environment   string          `json:"environment,omitempty"`
+	TraceId       string          `json:"traceId,omitempty"`
+	Provenance    string          `json:"provenance"`
+	PayloadKeyRef string          `json:"payloadKeyRef,omitempty"`
+	Payload       json.RawMessage `json:"payload"`
+}
+
+func Hash(s string) uint32 {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return h.Sum32()
+}
+
+// Replica hashes a tenant to an ingest replica.
+func Replica(tenant string, n int) int { return int(Hash(tenant) % uint32(n)) }
+
+// UUIDFrom returns a stable UUID-formatted value for a seed.
+func UUIDFrom(seed string) string {
+	h1, h2 := fnv.New64a(), fnv.New64()
+	h1.Write([]byte(seed))
+	h2.Write([]byte(seed))
+	var b [16]byte
+	copy(b[:8], h1.Sum(nil))
+	copy(b[8:], h2.Sum(nil))
+	x := hex.EncodeToString(b[:])
+	return x[:8] + "-" + x[8:12] + "-" + x[12:16] + "-" + x[16:20] + "-" + x[20:]
+}
+
+func RandHex(r *mrand.Rand, n int) string {
+	const c = "0123456789abcdef"
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = c[r.IntN(16)]
+	}
+	return string(b)
+}
+
+var vendors = []string{"amazonaws.com", "cloudfront.net", "githubusercontent.com", "googleapis.com", "azure.com", "blob.core.windows.net", "openai.azure.com", "anthropic.com", "npmjs.org", "pypi.org", "pythonhosted.org", "docker.io", "gcr.io", "cloudflare.com", "fastly.net", "akamaized.net", "okta.com", "datadoghq.com", "sentry.io", "slack.com"}
+var words = []string{"api", "prod", "eu-west-1", "us-east-1", "ap-southeast-2", "cdn", "assets", "storage", "registry", "objects", "uploads", "edge", "internal", "static", "svc", "data", "ml", "inference", "ingest", "telemetry"}
+
+// Host returns an authority drawn from a long-tailed population: most are short vendor names, some carry a
+// hashed label as CDNs and object stores do, and about one in a hundred approaches the length bound.
+func Host(r *mrand.Rand) string {
+	v := vendors[r.IntN(len(vendors))]
+	switch p := r.IntN(100); {
+	case p < 45:
+		return words[r.IntN(len(words))] + "." + v
+	case p < 80:
+		return fmt.Sprintf("%s.%s.%s", words[r.IntN(len(words))], words[r.IntN(len(words))], v)
+	case p < 99:
+		return fmt.Sprintf("%s-%s.%s.%s", RandHex(r, 12), words[r.IntN(len(words))], words[r.IntN(len(words))], v)
+	default:
+		var sb strings.Builder
+		for sb.Len() < 200 {
+			sb.WriteString(RandHex(r, 30))
+			sb.WriteByte('.')
+		}
+		sb.WriteString(v)
+		return sb.String()
+	}
+}
+
+var rules = []string{"tenant-policy/engineering-default/allow-registries", "platform/baseline/deny-metadata", "tenant-policy/ml-team/allow-model-apis", "pool-overlay/warm-default/allow-package-mirrors", "tenant-policy/security/credential-pinned/llm", "platform/shadow-2026-q4/observe"}
+
+// Session gives a tenant a stable small set of sessions, pods, pools, and traces.
+func Session(tenant string, n int) (session, pod, pool, trace string) {
+	s := fmt.Sprintf("%s/%d", tenant, n)
+	session, pod, pool = UUIDFrom("s"+s), UUIDFrom("p"+s), "pool-"+UUIDFrom("o"+tenant)[:18]
+	x := UUIDFrom("t" + s)
+	trace = strings.ReplaceAll(x, "-", "")
+	return
+}
+
+// DecisionPayload follows the design's egress.decision field list.
+func DecisionPayload(r *mrand.Rand, did, authority, peer, outcome string) json.RawMessage {
+	shadow := ""
+	if r.IntN(10) == 0 {
+		shadow = "deny"
+	}
+	b, _ := json.Marshal(map[string]any{"decisionId": did, "authority": authority, "port": 443, "peerAddress": peer, "outcome": outcome,
+		"rule": rules[r.IntN(len(rules))], "routeTarget": "direct", "egressGroup": "group-" + RandHex(r, 6), "shadowOutcome": shadow})
+	return b
+}
+
+// TunnelPayload follows the design's egress.tunnel field list.
+func TunnelPayload(did, upAddr string, srcAddr string, srcPort uint32, start, end time.Time, up, down uint64, how string) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"decisionId": did, "upstreamAddress": upAddr, "sourceAddress": srcAddr, "upstreamSourcePort": srcPort, "start": start.UTC().Format(time.RFC3339Nano), "end": end.UTC().Format(time.RFC3339Nano), "bytesUp": up, "bytesDown": down, "endedBy": how})
+	return b
+}
+
+// ClientTLS builds an mTLS client config from a leaf directory and CA file.
+func ClientTLS(dir, ca, serverName string) *tls.Config {
+	c, err := tls.LoadX509KeyPair(dir+"/tls.crt", dir+"/tls.key")
+	if err != nil {
+		panic(err)
+	}
+	b, err := os.ReadFile(ca)
+	if err != nil {
+		panic(err)
+	}
+	p := x509.NewCertPool()
+	p.AppendCertsFromPEM(b)
+	return &tls.Config{Certificates: []tls.Certificate{c}, RootCAs: p, ServerName: serverName, NextProtos: []string{"h2"}}
+}
+
+// PGPool connects through the pooler in transaction mode: no prepared statements survive a checkout, so it uses
+// pgx's parameterized exec mode and no session state.
+func PGPool(ctx context.Context, url string, maxConns int32) *pgxpool.Pool {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		panic(err)
+	}
+	cfg.MaxConns = maxConns
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	p, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
+// Hour is the object prefix and manifest key for a time.
+func Hour(t time.Time) string { return t.UTC().Format("2006010215") }
+
+const Schema = `
+create role lenny_evidence login password 'p';
+create or replace function lenny_tenant_guard() returns trigger language plpgsql as $$
+declare v text := current_setting('app.current_tenant', true);
+begin
+  if v is null or v = '' or v = '__unset__' or not (v = '__all__' or v ~ '^[a-zA-Z0-9_-]{1,128}$') then
+    raise exception 'tenant context missing' using errcode = 'P0001';
+  end if;
+  if tg_op = 'DELETE' then return old; end if;
+  return new;
+end $$;
+create table manifest(
+  id bigserial primary key, batch_id text not null, tenant_id text not null, stream text not null, hour text not null,
+  producer text not null, incarnation text not null, seq_first bigint not null, seq_last bigint not null,
+  time_first timestamptz not null, time_last timestamptz not null, object_key text not null, digest text not null,
+  bytes bigint not null, raw_bytes bigint not null, records int not null, compacted boolean not null default false, parts jsonb,
+  held boolean not null default false, anchored boolean not null default false, writer text not null default '', created_at timestamptz not null default now(),
+  session text not null default '', parts_digest text, parts_count int);
+create index manifest_tsh on manifest(tenant_id, stream, hour);
+create index manifest_hs on manifest(hour, stream);
+create index manifest_anch on manifest(tenant_id) where not anchored;
+create table evidence_wal(id bigserial primary key, replica int not null, tenant_id text not null, rec text not null, at timestamptz not null default now());
+create index evidence_wal_r on evidence_wal(replica, id);
+create table audit_chain(tenant_id text not null, seq bigint not null, kind text not null, digest text not null, prev text not null, hash text not null, detail jsonb, at timestamptz not null default now(), primary key(tenant_id, seq));
+create table evidence_session_keys(key_ref text primary key, tenant_id text not null, session_id text not null, gen int not null, key bytea, destroyed_at timestamptz);
+create unique index evidence_session_keys_live on evidence_session_keys(tenant_id, session_id) where destroyed_at is null;
+create table evidence_writers(writer text primary key, replica int not null default 0, started_at timestamptz not null default now(), closed_at timestamptz);
+create table evidence_consumers(consumer text not null, tenant_id text not null, stream text not null, cursor jsonb not null, updated_at timestamptz not null default now(), primary key(consumer, tenant_id, stream));
+create table evidence_consumer_reg(consumer text primary key, registered_at timestamptz not null default now());
+create table evidence_consumer_loss(consumer text not null, tenant_id text not null, stream text not null, batch text not null, seq_first bigint, seq_last bigint, at timestamptz not null default now());
+create table tenant_routes(tenant_id text not null, producer text not null, primary key(tenant_id, producer));
+do $$ declare t text; begin foreach t in array array['manifest','evidence_wal','audit_chain','evidence_session_keys'] loop
+  execute format('alter table %I enable row level security', t);
+  execute format($p$create policy tenant_rw on %I using (current_setting('app.current_tenant', true) = '__all__' or tenant_id = current_setting('app.current_tenant', true)) with check (current_setting('app.current_tenant', true) = '__all__' or tenant_id = current_setting('app.current_tenant', true))$p$, t);
+  execute format('create trigger guard before insert or update or delete on %I for each row execute function lenny_tenant_guard()', t);
+end loop; end $$;
+grant select, insert, update, delete on manifest, evidence_wal, audit_chain, evidence_session_keys, tenant_routes, evidence_writers, evidence_consumers, evidence_consumer_reg, evidence_consumer_loss to lenny_evidence;
+grant usage on all sequences in schema public to lenny_evidence;
+`
+
+// Hash64 seeds a tenant's generator.
+func Hash64(s string) uint64 {
+	h := fnv.New64a()
+	h.Write([]byte(s))
+	return h.Sum64()
+}
+
+// NewIncarnation returns a value that differs across restarts and across replicas that start in the same millisecond.
+func NewIncarnation(prefix string) string {
+	b := make([]byte, 3)
+	rand.Read(b)
+	return fmt.Sprintf("%s%x-%s", prefix, time.Now().UnixMilli(), hex.EncodeToString(b))
+}
+
+// DecisionID encodes the producer, incarnation, and sequence, per the design, so a 403's identifier resolves to the record or aggregate that holds it.
+func DecisionID(producer, inc string, seq uint64) string {
+	return producer + "." + inc + "." + strconv.FormatUint(seq, 10)
+}
+func ParseDecisionID(s string) (producer, inc string, seq uint64, err error) {
+	f := strings.Split(s, ".")
+	if len(f) != 3 {
+		return "", "", 0, errors.New("not a decision identifier")
+	}
+	seq, err = strconv.ParseUint(f[2], 10, 64)
+	return f[0], f[1], seq, err
+}
+
+// PosKey is a stable position. On a stream encrypted per session it includes the session.
+func PosKey(tenant, stream, producer, inc, session string) string {
+	k := tenant + " " + stream + " " + producer + " " + inc
+	if session != "" {
+		k += " " + session
+	}
+	return k
+}
+
+// Part is one original batch inside a compacted object.
+type Part struct {
+	Batch       string    `json:"b"`
+	Producer    string    `json:"p"`
+	Incarnation string    `json:"i"`
+	Session     string    `json:"s,omitempty"`
+	SeqF        int64     `json:"f"`
+	SeqL        int64     `json:"l"`
+	TF          time.Time `json:"tf"`
+	TL          time.Time `json:"tl"`
+	Off         int64     `json:"o"`
+	Len         int64     `json:"n"`
+	Digest      string    `json:"d"`
+	Recs        int       `json:"r"`
+	Raw         int64     `json:"w"`
+}
+
+const footerMagic = "LNYIDX01"
+
+// PartsDigest is the digest a compacted row keeps of its ordered part list.
+func PartsDigest(parts []Part) string {
+	h := sha256.New()
+	for _, p := range parts {
+		fmt.Fprintf(h, "%s %s %d %d\n", p.Batch, p.Digest, p.Off, p.Len)
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// AppendIndex writes the part list after the concatenated batches: gzip of JSON, then its length in 8 bytes, then a magic value.
+func AppendIndex(buf *bytes.Buffer, parts []Part) int {
+	var z bytes.Buffer
+	g := gzip.NewWriter(&z)
+	json.NewEncoder(g).Encode(parts)
+	g.Close()
+	n := z.Len()
+	buf.Write(z.Bytes())
+	var l [8]byte
+	binary.BigEndian.PutUint64(l[:], uint64(n))
+	buf.Write(l[:])
+	buf.WriteString(footerMagic)
+	return n + 16
+}
+
+// ParseIndex reads the index from the object's tail. It returns the part list, or asks for more bytes.
+func ParseIndex(tail []byte) ([]Part, int, error) {
+	if len(tail) < 16 || string(tail[len(tail)-8:]) != footerMagic {
+		return nil, 0, errors.New("no index footer")
+	}
+	n := int(binary.BigEndian.Uint64(tail[len(tail)-16 : len(tail)-8]))
+	if n+16 > len(tail) {
+		return nil, n + 16, nil
+	}
+	g, err := gzip.NewReader(bytes.NewReader(tail[len(tail)-16-n : len(tail)-16]))
+	if err != nil {
+		return nil, 0, err
+	}
+	b, err := io.ReadAll(g)
+	if err != nil {
+		return nil, 0, err
+	}
+	var p []Part
+	return p, 0, json.Unmarshal(b, &p)
+}
+
+// Ranges is a sorted set of delivered sequence ranges for one position. Unlike a high-water mark it holds a record that arrives after a later one.
+type Ranges [][2]uint64
+
+func (r Ranges) Covers(a, b uint64) bool {
+	for _, x := range r {
+		if x[0] <= a && b <= x[1] {
+			return true
+		}
+	}
+	return false
+}
+func (r Ranges) Add(a, b uint64) Ranges {
+	out := make(Ranges, 0, len(r)+1)
+	placed := false
+	for _, x := range r {
+		switch {
+		case x[1]+1 < a:
+			out = append(out, x)
+		case b+1 < x[0]:
+			if !placed {
+				out = append(out, [2]uint64{a, b})
+				placed = true
+			}
+			out = append(out, x)
+		default:
+			if x[0] < a {
+				a = x[0]
+			}
+			if x[1] > b {
+				b = x[1]
+			}
+		}
+	}
+	if !placed {
+		out = append(out, [2]uint64{a, b})
+	}
+	return out
+}

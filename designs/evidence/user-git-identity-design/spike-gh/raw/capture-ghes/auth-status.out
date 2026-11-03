@@ -1,0 +1,6 @@
+ghes.example.test
+  ✓ Logged in to ghes.example.test account alice (GH_ENTERPRISE_TOKEN)
+  - Active account: true
+  - Git operations protocol: https
+  - Token: **************
+rc=0

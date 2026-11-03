@@ -1,0 +1,58 @@
+## A: origin=https://github.com/org/lfsrepo, insteadOf only
+   Endpoint=http://127.0.0.1:7077/https/github.com/org/lfsrepo.git/info/lfs (auth=none)
+## B: + pushInsteadOf to /P/
+   Endpoint=http://127.0.0.1:7077/https/github.com/org/lfsrepo.git/info/lfs (auth=none)
+## C: + remote.origin.pushurl
+   Endpoint=http://127.0.0.1:7077/https/github.com/org/lfsrepo.git/info/lfs (auth=none)
+## D: scp remote git@github.com:org/lfsrepo.git
+   Endpoint=http://127.0.0.1:7077/scp/github.com:org/lfsrepo.git/info/lfs (auth=none)
+## E: explicit lfs.url=https://lfs.example.com/org/repo
+   Endpoint=http://127.0.0.1:7077/https/lfs.example.com/org/repo (auth=none)
+## F: git lfs push (upload) and fetch (download), HTTPS_PROXY=logger:7078
+LFS: Put "https://storage.example.com/lfs/985a23fd0f9172907013fa8ca9dcdb00b8e50576c8bc443af7bf61c7bab59c26": Not Found
+LFS: Get "https://storage.example.com/lfs/985a23fd0f9172907013fa8ca9dcdb00b8e50576c8bc443af7bf61c7bab59c26": Not Found
+error: failed to fetch some objects from 'http://127.0.0.1:7077/https/github.com/org/lfsrepo.git/info/lfs'
+## G: lfs push with scp remote
+hint: You can disable this check with: `git config lfs.allowincompletepush true`
+== request log
+7077 GET /https/github.com/org/lfsrepo/info/refs?service=git-upload-pack op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/locks/verify op= None ref= {'name': 'refs/heads/main'}
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 POST /https/github.com/org/lfsrepo.git/info/lfs/objects/batch op= download ref= {'name': 'refs/heads/main'}
+7078 CONNECT storage.example.com:443 op= None ref= None
+7077 GET /scp/github.com:org/lfsrepo.git/info/refs?service=git-upload-pack op= None ref= None
+7077 POST /scp/github.com:org/lfsrepo.git/info/lfs/locks/verify op= None ref= {'name': 'refs/heads/main'}
+7077 POST /scp/github.com:org/lfsrepo.git/info/lfs/objects/batch op= upload ref= {'name': 'refs/heads/main'}

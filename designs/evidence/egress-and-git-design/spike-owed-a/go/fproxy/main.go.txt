@@ -1,0 +1,75 @@
+// fproxy: a CONNECT proxy whose replies are set from outside, to produce CONNECT statuses and silence.
+// :3128 CONNECT, :9101 /set?mode=pass|status:NNN|blackhole, and /set?dial=host:port to pin the dial target.
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+func main() {
+	var mu sync.Mutex
+	mode, dial := "pass", ""
+	go func() {
+		http.HandleFunc("/set", func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			if v := r.URL.Query().Get("mode"); v != "" {
+				mode = v
+			}
+			if v := r.URL.Query().Get("dial"); v != "" {
+				dial = v
+			}
+			fmt.Fprintln(w, mode, dial)
+			mu.Unlock()
+		})
+		log.Fatal(http.ListenAndServe(":9101", nil))
+	}()
+	l, err := net.Listen("tcp", ":3128")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go func() {
+			defer c.Close()
+			br := bufio.NewReader(c)
+			req, err := http.ReadRequest(br)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			m, d := mode, dial
+			mu.Unlock()
+			switch {
+			case strings.HasPrefix(m, "status:"):
+				fmt.Fprintf(c, "HTTP/1.1 %s Injected\r\nContent-Length: 0\r\n\r\n", m[7:])
+				return
+			case m == "blackhole":
+				time.Sleep(30 * time.Second)
+				return
+			}
+			if d == "" {
+				d = req.Host
+			}
+			u, err := net.DialTimeout("tcp", d, 2*time.Second)
+			if err != nil {
+				fmt.Fprint(c, "HTTP/1.1 503 Dial\r\nContent-Length: 0\r\n\r\n")
+				return
+			}
+			defer u.Close()
+			fmt.Fprint(c, "HTTP/1.1 200 OK\r\n\r\n")
+			go io.Copy(u, br)
+			io.Copy(c, u)
+		}()
+	}
+}

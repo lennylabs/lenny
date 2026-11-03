@@ -1,0 +1,224 @@
+### ghes-clone rc=0
+$ cd /tmp/tmp.Petx99WvJC && git clone -q https://ghes.example.test/acme/widgets.git ghes && cd ghes && git checkout -q -b feature-L-1793730983-ghes && echo x > n && git add n && git commit -qm n && git push -q -u origin HEAD 2>&1 && git remote -v && git config --get remote.origin.url
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+https://ghes.example.test/acme/widgets.git
+### ghes-repo-view rc=1
+$ gh repo view --json url,nameWithOwner,sshUrl 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-create rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-view rc=1
+$ gh pr view --json number,headRefName,state,url,headRepositoryOwner,isCrossRepository 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-view-n rc=1
+$ gh pr view 7 --json number,state 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-list rc=1
+$ gh pr list 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-status rc=1
+$ gh pr status 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-checks rc=1
+$ gh pr checks 7 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-browse rc=1
+$ gh browse -n 2>&1
+unable to determine base repository: none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-reference-noconfig rc=1
+$ GIT_CONFIG_GLOBAL=/dev/null gh pr view --json number,headRefName 2>&1
+no pull requests found for branch "feature-L-1793730983-ghes"
+### ghes-set-default rc=1
+$ gh repo set-default acme/widgets 2>&1; git config --get remote.origin.gh-resolved
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-set-default-view rc=1
+$ gh repo set-default --view 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-pr-checkout rc=1
+$ gh pr checkout 7 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.feature\.'
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+feature-L-1793730983-ghes
+### ghes-pr-checkout-cross rc=0
+$ gh pr checkout 13 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | head -4
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+feature-L-1793730983-ghes
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+### ghes-pr-checkout-cross-maintainer rc=0
+$ gh pr checkout 14 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | tail -2
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+feature-L-1793730983-ghes
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+### ghes-pull-after-cross rc=0
+$ git pull 2>&1 | tail -1
+Already up to date.
+### ghes-repo-clone rc=0
+$ cd /tmp/tmp.Petx99WvJC && gh repo clone acme/widgets ghes-rc 2>&1; git -C ghes-rc remote -v; git -C ghes-rc config --get remote.origin.url
+Cloning into 'ghes-rc'...
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+https://ghes.example.test/acme/widgets.git
+### ghes-repo-clone-fork rc=0
+$ cd /tmp/tmp.Petx99WvJC && gh repo clone alice/widgets ghes-rf 2>&1; git -C ghes-rf remote -v; git -C ghes-rf config --get-regexp '^remote\..*\.url'
+ * [new branch]      main       -> upstream/main
+origin	http://127.0.0.1:3129/https/ghes.example.test/alice/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/alice/widgets.git (push)
+upstream	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+upstream	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+remote.origin.url https://ghes.example.test/alice/widgets.git
+remote.upstream.url https://ghes.example.test/acme/widgets.git
+### ghes-fork-push rc=0
+$ git push -q -u fork HEAD 2>&1 && git remote -v && git rev-parse --abbrev-ref @{u}
+fork	http://127.0.0.1:3129/https/ghes.example.test/alice/widgets.git (fetch)
+fork	http://127.0.0.1:3129/https/ghes.example.test/alice/widgets.git (push)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+fork/featurefork-L-1793730983-ghes
+### ghes-fork-pr-create rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-fork-pr-view rc=1
+$ gh pr view --json number,headRefName,isCrossRepository,headRepositoryOwner 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-unpushed-noninteractive rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### ghes-interactive-push rc=0
+$ python3 -I /t/ptyrun.py 'gh pr create --title t --body b' 2>&1; printf '\n--config--\n'; git config --get-regexp '^branch\.feature-unp'; git remote -v
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+
+--config--
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+### com-clone rc=0
+$ cd /tmp/tmp.Petx99WvJC && git clone -q https://github.com/acme/widgets.git com && cd com && git checkout -q -b feature-L-1793730983-com && echo x > n && git add n && git commit -qm n && git push -q -u origin HEAD 2>&1 && git remote -v && git config --get remote.origin.url
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+https://github.com/acme/widgets.git
+### com-repo-view rc=1
+$ gh repo view --json url,nameWithOwner,sshUrl 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-create rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-view rc=1
+$ gh pr view --json number,headRefName,state,url,headRepositoryOwner,isCrossRepository 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-view-n rc=1
+$ gh pr view 7 --json number,state 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-list rc=1
+$ gh pr list 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-status rc=1
+$ gh pr status 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-checks rc=1
+$ gh pr checks 7 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-browse rc=1
+$ gh browse -n 2>&1
+unable to determine base repository: none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-reference-noconfig rc=1
+$ GIT_CONFIG_GLOBAL=/dev/null gh pr view --json number,headRefName 2>&1
+no pull requests found for branch "feature-L-1793730983-com"
+### com-set-default rc=1
+$ gh repo set-default acme/widgets 2>&1; git config --get remote.origin.gh-resolved
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-set-default-view rc=1
+$ gh repo set-default --view 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-pr-checkout rc=1
+$ gh pr checkout 7 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.feature\.'
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+feature-L-1793730983-com
+### com-pr-checkout-cross rc=0
+$ gh pr checkout 13 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | head -4
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+feature-L-1793730983-com
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+### com-pr-checkout-cross-maintainer rc=0
+$ gh pr checkout 14 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | tail -2
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+feature-L-1793730983-com
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+### com-pull-after-cross rc=0
+$ git pull 2>&1 | tail -1
+Already up to date.
+### com-repo-clone rc=0
+$ cd /tmp/tmp.Petx99WvJC && gh repo clone acme/widgets com-rc 2>&1; git -C com-rc remote -v; git -C com-rc config --get remote.origin.url
+Cloning into 'com-rc'...
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+https://github.com/acme/widgets.git
+### com-repo-clone-fork rc=0
+$ cd /tmp/tmp.Petx99WvJC && gh repo clone alice/widgets com-rf 2>&1; git -C com-rf remote -v; git -C com-rf config --get-regexp '^remote\..*\.url'
+ * [new branch]      main       -> upstream/main
+origin	http://127.0.0.1:3129/https/github.com/alice/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/alice/widgets.git (push)
+upstream	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+upstream	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+remote.origin.url https://github.com/alice/widgets.git
+remote.upstream.url https://github.com/acme/widgets.git
+### com-fork-push rc=0
+$ git push -q -u fork HEAD 2>&1 && git remote -v && git rev-parse --abbrev-ref @{u}
+fork	http://127.0.0.1:3129/https/github.com/alice/widgets.git (fetch)
+fork	http://127.0.0.1:3129/https/github.com/alice/widgets.git (push)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+fork/featurefork-L-1793730983-com
+### com-fork-pr-create rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-fork-pr-view rc=1
+$ gh pr view --json number,headRefName,isCrossRepository,headRepositoryOwner 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-unpushed-noninteractive rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+### com-interactive-push rc=0
+$ python3 -I /t/ptyrun.py 'gh pr create --title t --body b' 2>&1; printf '\n--config--\n'; git config --get-regexp '^branch\.feature-unp'; git remote -v
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+
+--config--
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/github.com/acme/widgets.git (push)
+### gl-clone rc=0
+$ cd /tmp/tmp.Petx99WvJC && git clone -q https://gitlab.example.test/acme/widgets.git l && cd l && git checkout -q -b feature-L-1793730983-l && echo x > n && git add n && git commit -qm n && git push -q -u origin HEAD 2>&1 && git remote -v
+origin	http://127.0.0.1:3129/https/gitlab.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/gitlab.example.test/acme/widgets.git (push)
+### gl-mr-create rc=1
+$ glab mr create --title t --description d --yes 2>&1
+          
+  none of the git remotes configured for this repository correspond to the GITLAB_HOST environment variable. Try      
+  adding a matching remote or unsetting the variable.                                                                 
+                                                                                                                      
+  GITLAB_HOST is currently set to gitlab.example.test                                                                 
+                                                                                                                      
+  Configured remotes: 127.0.0.1:3129.                                                                                 
+### gl-mr-view rc=0
+$ glab mr view 7 2>&1 | head -4
+          
+   ERROR  
+          
+  none of the git remotes configured for this repository correspond to the GITLAB_HOST environment variable. Try      
+### gl-mr-list rc=1
+$ glab mr list 2>&1
+          
+  none of the git remotes configured for this repository correspond to the GITLAB_HOST environment variable. Try      
+  adding a matching remote or unsetting the variable.                                                                 
+                                                                                                                      
+  GITLAB_HOST is currently set to gitlab.example.test                                                                 
+                                                                                                                      
+  Configured remotes: 127.0.0.1:3129.                                                                                 
+### gl-repo-view rc=0
+$ glab repo view 2>&1 | head -3
+          
+   ERROR  
+          
+script-rc=0

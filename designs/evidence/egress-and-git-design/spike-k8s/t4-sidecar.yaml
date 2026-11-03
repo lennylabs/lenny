@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: sidecar, namespace: spike}
+spec:
+  serviceAccountName: agent
+  automountServiceAccountToken: false
+  terminationGracePeriodSeconds: 30
+  securityContext: {runAsNonRoot: true}
+  initContainers:
+  - name: netagent
+    image: alpine:3.22
+    imagePullPolicy: IfNotPresent
+    restartPolicy: Always
+    command: ["/bin/sh","-c"]
+    args:
+    - |
+      ts() { echo "$(date -u +%T) up=$(cut -d" " -f1 /proc/uptime)"; }
+      trap 'echo "$(ts) netagent got TERM"; sleep 3; echo "$(ts) netagent exiting"; exit 1' TERM
+      echo "$(ts) netagent start (restart marker $(cat /shared/.boots 2>/dev/null || echo 0))"
+      sleep 5
+      echo "-----BEGIN CERTIFICATE----- fake-ca $(ts)" > /shared/ca.tmp && mv /shared/ca.tmp /shared/ca.crt
+      echo "$(ts) netagent wrote /shared/ca.crt"
+      while true; do sleep 1; done
+    startupProbe:
+      exec: {command: ["test","-s","/shared/ca.crt"]}
+      periodSeconds: 1
+      failureThreshold: 60
+    securityContext: {runAsUser: 65530, runAsGroup: 65530, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+    volumeMounts: [{name: shared, mountPath: /shared}]
+  containers:
+  - name: runtime
+    image: alpine:3.22
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/sh","-c"]
+    args:
+    - |
+      ts() { echo "$(date -u +%T) up=$(cut -d" " -f1 /proc/uptime)"; }
+      trap 'echo "$(ts) runtime got TERM"; sleep 2; echo "$(ts) runtime exiting"; exit 0' TERM
+      echo "$(ts) runtime start; ca.crt: $(cat /shared/ca.crt 2>&1)"
+      touch /shared/x 2>&1 | sed "s/^/$(ts) runtime write attempt: /"
+      while true; do sleep 1; done
+    securityContext: {runAsUser: 65533, runAsGroup: 65533, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+    volumeMounts: [{name: shared, mountPath: /shared, readOnly: true}]
+  - name: adapter
+    image: alpine:3.22
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/sh","-c"]
+    args:
+    - |
+      ts() { echo "$(date -u +%T) up=$(cut -d" " -f1 /proc/uptime)"; }
+      trap 'echo "$(ts) adapter got TERM"; sleep 1; echo "$(ts) adapter exiting"; exit 0' TERM
+      echo "$(ts) adapter start"
+      while true; do sleep 1; done
+    securityContext: {runAsUser: 65532, runAsGroup: 65532, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+  volumes:
+  - name: shared
+    emptyDir: {medium: Memory, sizeLimit: 1Mi}

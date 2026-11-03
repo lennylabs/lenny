@@ -1,0 +1,98 @@
+// egress: a stand-in for lenny-egress. CONNECT only, the pod credential required, an allowlist of hosts, and a log of every attempt.
+package main
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+func main() {
+	allow := map[string]bool{}
+	covered := map[string]bool{}
+	for _, h := range strings.Split(os.Getenv("COVERED"), ",") {
+		covered[h] = h != ""
+	}
+	for _, h := range strings.Split(os.Getenv("ALLOW"), ",") {
+		allow[h] = true
+	}
+	lf, _ := os.OpenFile(os.Getenv("EGRESS_LOG"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	var mu sync.Mutex
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("agent:good"))
+	ln, err := net.Listen("tcp", ":3128")
+	if err != nil {
+		panic(err)
+	}
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			br := bufio.NewReader(c)
+			r, err := http.ReadRequest(br)
+			if err != nil {
+				return
+			}
+			code := 200
+			host, port, _ := net.SplitHostPort(r.Host)
+			switch {
+			case r.Method != "CONNECT":
+				code = 405
+			case r.Header.Get("Proxy-Authorization") != want:
+				code = 407
+			case !allow[host] || port != "443":
+				code = 403
+			case covered[host] && r.Header.Get("X-Lenny-Terminated") == "":
+				code = 403 // a covered host needs the terminated marker
+			case routeMismatch(host, r.Header.Get("X-Lenny-Route-Assert")):
+				code = 403 // the asserted route differs from the route chosen for that list
+			}
+			mu.Lock()
+			b, _ := json.Marshal(map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "egress": true, "assert": r.Header.Get("X-Lenny-Route-Assert"), "marker": r.Header.Get("X-Lenny-Terminated"), "method": r.Method, "target": r.Host, "code": code, "from": c.RemoteAddr().String()})
+			lf.Write(append(b, 10))
+			mu.Unlock()
+			if code != 200 {
+				fmt.Fprintf(c, "HTTP/1.1 %d refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", code)
+				return
+			}
+			up, err := net.DialTimeout("tcp", r.Host, 5*time.Second)
+			if err != nil {
+				fmt.Fprint(c, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+				return
+			}
+			defer up.Close()
+			fmt.Fprint(c, "HTTP/1.1 200 OK\r\n\r\n")
+			done := make(chan struct{}, 2)
+			go func() { io.Copy(up, br); up.(*net.TCPConn).CloseWrite(); done <- struct{}{} }()
+			go func() { io.Copy(c, up); done <- struct{}{} }()
+			<-done
+			<-done
+		}(c)
+	}
+}
+
+func routeMismatch(host, as string) bool {
+	if as == "" || os.Getenv("ROUTE_FILE") == "" {
+		return false
+	}
+	b, err := os.ReadFile(os.Getenv("ROUTE_FILE"))
+	if err != nil {
+		return true
+	}
+	var m map[string]map[string]string
+	if json.Unmarshal(b, &m) != nil {
+		return true
+	}
+	class, dg, _ := strings.Cut(as, " ")
+	return m[host][class] != dg
+}

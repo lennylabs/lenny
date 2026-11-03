@@ -1,0 +1,28 @@
+{
+ "ghes.example.test": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": false,
+  "suspended": false,
+  "current": "USER-FILE-TOKEN",
+  "noCredential": "challenge"
+ },
+ "github.com": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": false,
+  "suspended": false,
+  "current": "USER-FILE-TOKEN",
+  "noCredential": "challenge"
+ }
+}

@@ -1,0 +1,129 @@
+// corpus: the Go readers of the parser corpus. stdin is a JSON object of id to document; stdout is id to reader to result.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	gl "github.com/graphql-go/graphql/language/ast"
+	glp "github.com/graphql-go/graphql/language/parser"
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/formatter"
+	"github.com/vektah/gqlparser/v2/parser"
+)
+
+type op struct {
+	Type   string   `json:"type"`
+	Name   string   `json:"name"`
+	Fields []string `json:"fields"`
+}
+type res struct {
+	Ops []op   `json:"ops,omitempty"`
+	Err string `json:"err,omitempty"`
+}
+
+func a(ss ast.SelectionSet, d *ast.QueryDocument, seen map[string]bool) []string {
+	var o []string
+	for _, s := range ss {
+		switch x := s.(type) {
+		case *ast.Field:
+			o = append(o, x.Name)
+		case *ast.InlineFragment:
+			o = append(o, a(x.SelectionSet, d, seen)...)
+		case *ast.FragmentSpread:
+			if f := d.Fragments.ForName(x.Name); f != nil && !seen[x.Name] {
+				seen[x.Name] = true
+				o = append(o, a(f.SelectionSet, d, seen)...)
+			}
+		}
+	}
+	return o
+}
+func b(ss *gl.SelectionSet, fr map[string]*gl.FragmentDefinition, seen map[string]bool) []string {
+	var o []string
+	if ss == nil {
+		return o
+	}
+	for _, s := range ss.Selections {
+		switch x := s.(type) {
+		case *gl.Field:
+			o = append(o, x.Name.Value)
+		case *gl.InlineFragment:
+			o = append(o, b(x.SelectionSet, fr, seen)...)
+		case *gl.FragmentSpread:
+			if f := fr[x.Name.Value]; f != nil && !seen[x.Name.Value] {
+				seen[x.Name.Value] = true
+				o = append(o, b(f.SelectionSet, fr, seen)...)
+			}
+		}
+	}
+	return o
+}
+
+func main() {
+	var c map[string]string
+	if err := json.NewDecoder(os.Stdin).Decode(&c); err != nil {
+		panic(err)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "print" { // the filter's own printing of each document it parses
+		out := map[string]string{}
+		for id, doc := range c {
+			if d, err := parser.ParseQuery(&ast.Source{Input: doc}); err == nil {
+				var b bytes.Buffer
+				formatter.NewFormatter(&b, formatter.WithCompacted()).FormatQueryDocument(d)
+				out[id] = b.String()
+			}
+		}
+		e := json.NewEncoder(os.Stdout)
+		e.SetEscapeHTML(false)
+		e.Encode(out)
+		return
+	}
+	out := map[string]map[string]res{}
+	for id, doc := range c {
+		r := map[string]res{}
+		if d, err := parser.ParseQuery(&ast.Source{Input: doc}); err != nil {
+			r["gqlparser"] = res{Err: strings.SplitN(err.Error(), "\n", 2)[0]}
+		} else {
+			x := res{}
+			for _, o := range d.Operations {
+				x.Ops = append(x.Ops, op{string(o.Operation), o.Name, a(o.SelectionSet, d, map[string]bool{})})
+			}
+			r["gqlparser"] = x
+		}
+		func() {
+			defer func() {
+				if v := recover(); v != nil {
+					r["graphql-go"] = res{Err: fmt.Sprint("panic: ", v)}
+				}
+			}()
+			d, err := glp.Parse(glp.ParseParams{Source: doc})
+			if err != nil {
+				r["graphql-go"] = res{Err: strings.SplitN(err.Error(), "\n", 2)[0]}
+				return
+			}
+			fr := map[string]*gl.FragmentDefinition{}
+			for _, n := range d.Definitions {
+				if f, ok := n.(*gl.FragmentDefinition); ok {
+					fr[f.Name.Value] = f
+				}
+			}
+			x := res{}
+			for _, n := range d.Definitions {
+				if o, ok := n.(*gl.OperationDefinition); ok {
+					nm := ""
+					if o.Name != nil {
+						nm = o.Name.Value
+					}
+					x.Ops = append(x.Ops, op{o.Operation, nm, b(o.SelectionSet, fr, map[string]bool{})})
+				}
+			}
+			r["graphql-go"] = x
+		}()
+		out[id] = r
+	}
+	json.NewEncoder(os.Stdout).Encode(out)
+}

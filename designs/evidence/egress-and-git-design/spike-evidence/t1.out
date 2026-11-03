@@ -1,0 +1,20 @@
+Bucket created successfully `m/evidence`.
+### 1. Do the fields exist on the access log stream, for a real tunnel with data
+curl code=200 bytes=5242880 local=198.19.0.30
+{"bytesDown":5262023,"bytesUp":1911,"code":200,"decisionId":"9aee2301ee0b2c8ec1862bdd17e2b5b9","duration":"0s","logType":"DownstreamEnd","sourceAddress":"198.19.0.41","sourcePort":58690,"start":"2026-11-02T22:35:51.480478Z","upstreamAddress":"198.19.0.20","upstreamPort":443,"wireDown":5262023,"wireUp":1911}
+records=3 batches=1 bytes=436 buffered=0 putFail=0 dropped=0 refused=0 tunnelEnds=1 alsEntries=2
+### 2. Throughput with evidence on: 2000 CONNECTs/s, 60 s, 200 tenants, flush 1 s
+flush 1s, 200 tenants rate=2000: SUMMARY attempts=120000 map[200:49767 503:1511 dial:67793 timeout:929] 200-latency p50=3.1ms p90=14.7409s p99=47.4274s m
+   [ev-dec 0.02% 49.15MiB ;ev-minio 0.22% 284.2MiB ;ev-pg 0.09% 80.43MiB ;ev-envoy 0.56% 51.09MiB ;]
+   records=152871 batches=7180 bytes=7664184 buffered=0 putFail=0 dropped=0 refused=0 tunnelEnds=51632 alsEntries=101671
+manifest rows=7180 records=152871 tenants=201
+flush 5s, 200 tenants rate=2000: SUMMARY attempts=120000 map[200:48761 503:4 dial:71162 timeout:73] 200-latency p50=1.3ms p90=8.2887s p99=11.1083s max=46
+   [ev-dec 0.05% 51.07MiB ;ev-minio 0.12% 383.1MiB ;ev-pg 0.00% 144.9MiB ;ev-envoy 1.25% 62.28MiB ;]
+   records=146318 batches=2225 bytes=5355548 buffered=0 putFail=0 dropped=0 refused=0 tunnelEnds=48774 alsEntries=97544
+manifest rows=2225 records=146318
+   verifying
+producer dec1: records=146318 first=1 last=146318 gaps=0 missing=0 duplicates=0
+### baseline: same load with no access log and no writer (flush off is not possible, so the base config and a long flush)
+no ALS, writer discarding rate=2000: SUMMARY attempts=120000 map[200:41203 503:683 dial:77875 timeout:239] 200-latency p50=1ms p90=9.9111s p99=52.4974s max=1
+   [ev-dec 0.00% 24.62MiB ;ev-minio 0.01% 376.1MiB ;ev-pg 0.04% 125.8MiB ;ev-envoy 0.55% 50.45MiB ;]
+   records=1000 batches=0 bytes=0 buffered=1000 putFail=0 dropped=40217 refused=0 tunnelEnds=0 alsEntries=0

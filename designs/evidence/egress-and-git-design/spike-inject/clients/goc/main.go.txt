@@ -1,0 +1,4 @@
+package main
+import ("fmt";"io";"net/http";"os")
+func main(){ req,_:=http.NewRequest("GET","https://api.example.test/acme/check",nil); req.Header.Set("Authorization","Bearer "+os.Getenv("ACME_API_KEY"))
+ r,err:=http.DefaultClient.Do(req); if err!=nil{fmt.Println("go err",err);return}; b,_:=io.ReadAll(r.Body); fmt.Println("go", r.Proto, r.StatusCode, string(b)) }

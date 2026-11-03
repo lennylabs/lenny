@@ -1,0 +1,24 @@
+### com-updateProjectV2 rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{updateProjectV2(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"updateProjectV2":{"clientMutationId":"s-clientMutationId"}}}
+### com-deleteProjectV2 rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{deleteProjectV2(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"deleteProjectV2":{"clientMutationId":"s-clientMutationId"}}}
+### com-addProjectV2ItemById rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{addProjectV2ItemById(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"addProjectV2ItemById":{"clientMutationId":"s-clientMutationId"}}}
+### com-addProjectV2DraftIssue rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{addProjectV2DraftIssue(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"addProjectV2DraftIssue":{"clientMutationId":"s-clientMutationId"}}}
+### com-createProjectV2Field rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{createProjectV2Field(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"createProjectV2Field":{"clientMutationId":"s-clientMutationId"}}}
+### com-updateProjectV2ItemFieldValue rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{updateProjectV2ItemFieldValue(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"updateProjectV2ItemFieldValue":{"clientMutationId":"s-clientMutationId"}}}
+### com-archiveProjectV2Item rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{archiveProjectV2Item(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"archiveProjectV2Item":{"clientMutationId":"s-clientMutationId"}}}
+### com-linkProjectV2ToRepository rc=0
+$ gh api graphql --hostname ${GH_HOST:-github.com} -f query='mutation{linkProjectV2ToRepository(input:{}){clientMutationId}}' 2>&1 | cut -c1-100
+{"data":{"linkProjectV2ToRepository":{"clientMutationId":"s-clientMutationId"}}}

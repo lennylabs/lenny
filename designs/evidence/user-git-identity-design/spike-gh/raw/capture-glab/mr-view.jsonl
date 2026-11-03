@@ -1,0 +1,1 @@
+{"t":"2026-11-03T08:16:11.63528334Z","proto":"HTTP/2.0","method":"GET","uri":"/api/v4/projects/acme%2Fwidgets/merge_requests/7","host":"gitlab.example.test","headers":{"Accept":["application/json"],"Accept-Encoding":["gzip, deflate"],"Private-Token":["GL-REAL-66dd04"],"User-Agent":["glab/v1.127.0 (linux, arm64)"]},"bodyLen":0,"status":200}

@@ -1,0 +1,1 @@
+{"credentialsTtlSeconds": 60, "identities": [{"name": "p1-acme", "hosts": ["target.spike"], "credentials": [{"username": "p1-acme.g1", "verifier": "$5$6I2FstGSD6Tk03eO$8HkBeIvnlRltlST0TsMaUqAPYQ33dyQXd7o2TOMxttC"}]}]}

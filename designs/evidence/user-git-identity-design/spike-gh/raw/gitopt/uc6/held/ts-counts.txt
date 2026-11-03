@@ -1,0 +1,9 @@
+none: Token Service requests 53
+notnamed: Token Service requests 53
+all: Token Service requests 0
+rotated: Token Service requests 0
+suspended: Token Service requests 0
+flagcleared: Token Service requests 0
+norelease: Token Service requests 0
+twopools: Token Service requests 0
+twopoolson: Token Service requests 0

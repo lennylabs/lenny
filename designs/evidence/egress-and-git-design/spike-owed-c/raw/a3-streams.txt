@@ -1,0 +1,128 @@
+### baseline: an opaque tunnel, no scrubbing
+--- other host, opaque, 12 events, 500 ms apart
+event n=5 at=+2.530s lag=700µs auth=""
+end: EOF
+SSE events=12 lag p50=700µs p99=1.4ms max=1.4ms secretLeaks=0 total=5.54s
+
+### window=fixed
+--- 16-byte secret, h1, 12 events, 500 ms apart, 40-byte filler
+proto=HTTP/1.1 status=200 content-encoding=""
+event n=0 at=+0.522s lag=502.8ms auth=""
+event n=1 at=+1.030s lag=509.7ms auth=""
+event n=2 at=+1.530s lag=501.6ms auth=""
+event n=3 at=+2.032s lag=502.7ms auth=""
+event n=4 at=+2.540s lag=508.8ms auth=""
+event n=5 at=+3.040s lag=501.9ms auth=""
+end: EOF
+SSE events=12 lag p50=502.8ms p99=511.5ms max=511.5ms secretLeaks=0 total=5.57s
+--- 16-byte secret, h2, same
+event n=5 at=+3.030s lag=503.1ms auth=""
+end: EOF
+SSE events=12 lag p50=503.4ms p99=510.3ms max=510.3ms secretLeaks=0 total=5.55s
+--- 99-byte secret, h2, token-sized events: 200 events 50 ms apart
+event n=100 at=+5.448s lag=116.4ms auth=""
+end: EOF
+SSE events=200 lag p50=106.5ms p99=118.8ms max=119.1ms secretLeaks=0 total=10.60s
+--- 99-byte secret, h1, token-sized events
+event n=100 at=+5.466s lag=104ms auth=""
+end: EOF
+SSE events=200 lag p50=105.5ms p99=117.9ms max=119ms secretLeaks=0 total=10.55s
+--- 16-byte secret, h2, a 10 s pause before the last event
+proto=HTTP/2.0 status=200 content-encoding=""
+event n=0 at=+0.210s lag=200.8ms auth=""
+event n=1 at=+0.413s lag=202.6ms auth=""
+event n=2 at=+0.616s lag=204.3ms auth=""
+event n=3 at=+10.826s lag=10.2122s auth=""
+event n=4 at=+10.826s lag=2.4ms auth=""
+end: EOF
+SSE events=5 lag p50=202.6ms p99=10.2122s max=10.2122s secretLeaks=0 total=10.83s
+--- 16-byte secret, h1, reflected secret in every event
+event n=5 at=+1.245s lag=207.3ms auth="xxxxxxxxxxxxxxxxxxxxxxx"
+end: EOF
+SSE events=12 lag p50=205.8ms p99=210.2ms max=210.2ms secretLeaks=0 total=2.26s
+--- 16-byte secret, h2, reflected, event written in 5-byte flushed chunks
+event n=5 at=+1.260s lag=212.9ms auth="xxxxxxxxxxxxxxxxxxxxxxx"
+end: EOF
+SSE events=12 lag p50=204.6ms p99=212.9ms max=212.9ms secretLeaks=0 total=2.27s
+--- 99-byte secret, h2, reflected, 7-byte chunks
+event n=5 at=+1.241s lag=203.1ms auth="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+end: EOF
+SSE events=12 lag p50=204ms p99=212ms max=212ms secretLeaks=0 total=2.26s
+--- gzip from upstream with a flush per event, h1 (netagent decodes, scrubs, and re-frames)
+event n=5 at=+3.029s lag=503.3ms auth=""
+end: EOF
+SSE events=12 lag p50=502.7ms p99=511.7ms max=511.7ms secretLeaks=0 total=5.55s
+--- gzip from upstream, h2, reflected
+event n=5 at=+3.048s lag=508.7ms auth="xxxxxxxxxxxxxxxxxxxxxxx"
+end: EOF
+SSE events=12 lag p50=506.1ms p99=511.6ms max=511.6ms secretLeaks=0 total=5.57s
+
+### window=prefix
+--- 16-byte secret, h1, 12 events, 500 ms apart, 40-byte filler
+proto=HTTP/1.1 status=200 content-encoding=""
+event n=0 at=+0.020s lag=300µs auth=""
+event n=1 at=+0.522s lag=1.2ms auth=""
+event n=2 at=+1.023s lag=1.1ms auth=""
+event n=3 at=+1.524s lag=900µs auth=""
+event n=4 at=+2.034s lag=1.2ms auth=""
+event n=5 at=+2.537s lag=900µs auth=""
+end: EOF
+SSE events=12 lag p50=1.1ms p99=1.4ms max=1.4ms secretLeaks=0 total=5.55s
+--- 16-byte secret, h2, same
+event n=5 at=+2.528s lag=1.3ms auth=""
+end: EOF
+SSE events=12 lag p50=1.3ms p99=1.8ms max=1.8ms secretLeaks=0 total=5.55s
+--- 99-byte secret, h2, token-sized events: 200 events 50 ms apart
+event n=100 at=+5.301s lag=800µs auth=""
+end: EOF
+SSE events=200 lag p50=1.2ms p99=2.2ms max=2.8ms secretLeaks=0 total=10.56s
+--- 99-byte secret, h1, token-sized events
+event n=100 at=+5.293s lag=400µs auth=""
+end: EOF
+SSE events=200 lag p50=1.1ms p99=1.9ms max=4.2ms secretLeaks=0 total=10.54s
+--- 16-byte secret, h2, a 10 s pause before the last event
+proto=HTTP/2.0 status=200 content-encoding=""
+event n=0 at=+0.023s lag=800µs auth=""
+event n=1 at=+0.226s lag=600µs auth=""
+event n=2 at=+0.428s lag=1.7ms auth=""
+event n=3 at=+0.630s lag=1.1ms auth=""
+event n=4 at=+10.839s lag=2.7ms auth=""
+end: EOF
+SSE events=5 lag p50=1.1ms p99=2.7ms max=2.7ms secretLeaks=0 total=10.84s
+--- 16-byte secret, h1, reflected secret in every event
+event n=5 at=+1.037s lag=1.4ms auth="xxxxxxxxxxxxxxxxxxxxxxx"
+end: EOF
+SSE events=12 lag p50=1.1ms p99=1.7ms max=1.7ms secretLeaks=0 total=2.27s
+--- 16-byte secret, h2, reflected, event written in 5-byte flushed chunks
+event n=5 at=+1.038s lag=600µs auth="xxxxxxxxxxxxxxxxxxxxxxx"
+end: EOF
+SSE events=12 lag p50=1.2ms p99=2.5ms max=2.5ms secretLeaks=0 total=2.25s
+--- 99-byte secret, h2, reflected, 7-byte chunks
+event n=5 at=+1.031s lag=1.6ms auth="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+end: EOF
+SSE events=12 lag p50=1.5ms p99=2.8ms max=2.8ms secretLeaks=0 total=2.26s
+--- gzip from upstream with a flush per event, h1 (netagent decodes, scrubs, and re-frames)
+event n=5 at=+2.525s lag=900µs auth=""
+end: EOF
+SSE events=12 lag p50=1.4ms p99=1.7ms max=1.7ms secretLeaks=0 total=5.55s
+--- gzip from upstream, h2, reflected
+event n=5 at=+2.525s lag=500µs auth="xxxxxxxxxxxxxxxxxxxxxxx"
+end: EOF
+SSE events=12 lag p50=1.3ms p99=1.7ms max=1.7ms secretLeaks=0 total=5.54s
+
+### CPU limits: five concurrent streams at 20 events/s, prefix window, plus one bulk download at 50m
+limit=0.05: SSE events=400 lag p50=1.2ms p99=6.4ms max=9.4ms secretLeaks=0 total=20.90s
+limit=0.05 with a bulk download beside it: SSE events=400 lag p50=1.3ms p99=198.3ms max=253.3ms secretLeaks=0 total=21.39s
+limit=0.25: SSE events=400 lag p50=1.1ms p99=6ms max=8.6ms secretLeaks=0 total=21.01s
+limit=0.25 with a bulk download beside it: SSE events=400 lag p50=1.6ms p99=76.7ms max=82.1ms secretLeaks=0 total=20.95s
+limit=1: SSE events=400 lag p50=1.2ms p99=7.3ms max=12.5ms secretLeaks=0 total=20.90s
+limit=1 with a bulk download beside it: SSE events=400 lag p50=200µs p99=10ms max=14.9ms secretLeaks=0 total=20.20s
+
+### a five-minute stream through termination, prefix window, reflection every 100th event, memory over time
+t~0s: current 15.9 anon 7.0 MiB goroutines 9 scrubHits 1
+t~60s: current 15.9 anon 7.2 MiB goroutines 9 scrubHits 12
+t~120s: current 16.7 anon 7.2 MiB goroutines 9 scrubHits 23
+t~180s: current 16.9 anon 7.2 MiB goroutines 9 scrubHits 34
+t~240s: current 16.0 anon 7.2 MiB goroutines 9 scrubHits 45
+t~290s: current 16.2 anon 7.2 MiB goroutines 9 scrubHits 56
+event n=5800 at=+306.959s lag=1.1ms auth="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx

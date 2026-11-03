@@ -1,0 +1,53 @@
+=== F2. stopped sync job with the retired check aimed at a host the retired generation could reach
+healthy, details:
+{"check":"sync.canary-rotating","target":"3","pass":true,"detail":"the newest canary is 17s old"}
+{"check":"sync.canary-host-added (rotation 3, age 17s)","target":"canary-3.oa.test:443","pass":true,"detail":"status 200"}
+{"check":"sync.canary-generation-retired (rotation 3, age 17s)","target":"canary-2.oa.test:443","pass":true,"detail":"status 403"}
+killing 13
+t=0.1s PASS 
+t=2.3s PASS 
+t=4.5s PASS 
+t=6.7s PASS 
+t=8.9s PASS 
+t=11.1s PASS 
+t=13.2s PASS 
+t=15.4s PASS 
+t=17.6s PASS 
+t=19.8s PASS 
+t=21.9s PASS 
+t=24.1s PASS 
+t=26.2s PASS 
+t=28.4s FAIL ["sync.canary-host-added (rotation 4, age 15s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 15s)","status 200, wanted [403 407]"] 
+t=30.6s FAIL ["sync.canary-host-added (rotation 4, age 17s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 17s)","status 200, wanted [403 407]"] 
+t=32.7s FAIL ["sync.canary-host-added (rotation 4, age 20s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 20s)","status 200, wanted [403 407]"] 
+t=34.9s FAIL ["sync.canary-host-added (rotation 4, age 22s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 22s)","status 200, wanted [403 407]"] 
+t=37.1s FAIL ["sync.canary-host-added (rotation 4, age 24s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 24s)","status 200, wanted [403 407]"] 
+t=39.2s FAIL ["sync.canary-host-added (rotation 4, age 26s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 26s)","status 200, wanted [403 407]"] 
+t=41.4s FAIL ["sync.canary-host-added (rotation 4, age 28s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 28s)","status 200, wanted [403 407]"] 
+t=43.6s FAIL ["sync.canary-host-added (rotation 4, age 30s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 30s)","status 200, wanted [403 407]"] 
+t=45.8s FAIL ["sync.canary-host-added (rotation 4, age 33s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 33s)","status 200, wanted [403 407]"] 
+t=48.0s FAIL ["sync.canary-host-added (rotation 4, age 35s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 35s)","status 200, wanted [403 407]"] 
+t=50.2s FAIL ["sync.canary-host-added (rotation 4, age 37s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 37s)","status 200, wanted [403 407]"] 
+t=52.4s FAIL ["sync.canary-host-added (rotation 4, age 39s)","status 407, wanted [200]"] ["sync.canary-generation-retired (rotation 4, age 39s)","status 200, wanted [403 407]"] 
+first FAIL at t=28.4 s
+=== H2. the check in front of Squid, Squid with 1 GiB and its memory sampled
+idle: 170.3MiB 
+through Squid check    n=500 fails=0 p50=1.466ms p90=1.786ms p99=20.092ms
+through Squid nocheck  n=500 fails=0 p50=1.468ms p90=1.804ms p99=6.966ms
+squid memory after 1000 tunnels: 386.6MiB 
+through Squid check    n=500 fails=0 p50=1.465ms p90=1.926ms p99=3.848ms
+through Squid nocheck  n=500 fails=0 p50=1.534ms p90=1.916ms p99=3.352ms
+squid memory after 2000 tunnels: 603.3MiB 
+through Squid check    n=500 fails=0 p50=1.6ms p90=2.453ms p99=6.54ms
+through Squid nocheck  n=500 fails=0 p50=1.707ms p90=2.206ms p99=4.279ms
+squid memory after 3000 tunnels: 765.4MiB 
+through Squid check    n=500 fails=0 p50=2.072ms p90=3.423ms p99=12.168ms
+through Squid nocheck  n=500 fails=0 p50=2.034ms p90=3.637ms p99=11.727ms
+squid memory after 4000 tunnels: 960.2MiB 
+through Squid check    n=500 fails=0 p50=2.493ms p90=4.837ms p99=21.477ms
+through Squid nocheck  n=500 fails=0 p50=2.191ms p90=4.651ms p99=22.275ms
+squid memory after 5000 tunnels: 1023MiB 
+squid memory 20 s idle: 1023MiB 
+anon 1025417216 file 897024 sock 8192 slab 41039456 
+10015
+Max open files            1048576              1048576              files     

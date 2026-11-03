@@ -1,0 +1,10 @@
+bun-fetch https://allowed.oa.test/ OK 200
+bun-fetch https://denied.oa.test/ REFUSED Error: permitted subtree violation
+bun-fetch https://sub.allowed.oa.test/ OK 200
+bun-fetch https://viaint.oa.test/ REFUSED Error: permitted subtree violation
+bun-fetch https://198.19.50.20/ OK 200
+bun-fetch https://ctl.oa.test/ OK 200
+bun-fetch https://unk.oa.test/ REFUSED Error: unable to verify the first certificate
+bun-fetch https://xallowed.oa.test/ OK 200
+bun-fetch https://xdenied.oa.test/ REFUSED Error: permitted subtree violation
+bun-fetch https://198.19.50.20:8443/ REFUSED Error: unsupported name constraint type

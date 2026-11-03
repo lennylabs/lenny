@@ -1,0 +1,70 @@
+## family=ALL filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:38070 => http=200 connect=200 time=0.029664s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:38074 => http=200 connect=200 time=0.022209s size=50 
+  http://dual.spike/                 hello from target, you are 198.18.0.10:39342 => http=200 connect=200 time=0.002957s size=45 
+  http://target.spike/               hello from target, you are 198.18.0.10:39346 => http=200 connect=200 time=0.001966s size=45 
+## family=AUTO filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:38082 => http=200 connect=200 time=0.020299s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:38084 => http=200 connect=200 time=0.005046s size=50 
+  http://dual.spike/                 hello from target, you are [2001:db8:1::10]:58540 => http=200 connect=200 time=0.003286s size=50 
+  http://target.spike/               hello from target, you are [2001:db8:1::10]:58550 => http=200 connect=200 time=0.003705s size=50 
+## family=V4_PREFERRED filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:38086 => http=200 connect=200 time=0.014339s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:38088 => http=200 connect=200 time=0.004104s size=50 
+  http://dual.spike/                 hello from target, you are 198.18.0.10:39360 => http=200 connect=200 time=0.001826s size=45 
+  http://target.spike/               hello from target, you are 198.18.0.10:39376 => http=200 connect=200 time=0.001762s size=45 
+## family=V4_ONLY filter=on
+  http://[2001:db8:2::20]/           => http=000 connect=503 time=0.007886s size=0 
+  http://v6only.spike/               => http=000 connect=503 time=0.003471s size=0 
+  http://dual.spike/                 hello from target, you are 198.18.0.10:42302 => http=200 connect=200 time=0.004915s size=45 
+  http://target.spike/               hello from target, you are 198.18.0.10:42304 => http=200 connect=200 time=0.001798s size=45 
+## family=V6_ONLY filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:49078 => http=200 connect=200 time=0.016747s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:49094 => http=200 connect=200 time=0.004060s size=50 
+  http://dual.spike/                 hello from target, you are [2001:db8:1::10]:56850 => http=200 connect=200 time=0.001884s size=50 
+  http://target.spike/               hello from target, you are [2001:db8:1::10]:56866 => http=200 connect=200 time=0.001834s size=50 
+## SSRF v6, family=ALL filter=on
+  http://[fd00:99::5]/               => http=000 connect=503 time=0.007503s size=0 
+  http://ula.spike/                  => http=000 connect=503 time=0.002903s size=0 
+  http://ll.spike/                   => http=000 connect=503 time=0.001346s size=0 
+  http://[fe80::7c5e:4aff:fed3:2b]/  => http=000 connect=503 time=0.001419s size=0 
+  http://loop6.spike:9901/           => http=000 connect=503 time=0.001447s size=0 
+  http://mapped.spike/               => http=000 connect=503 time=0.001381s size=0 
+  http://nat64.spike/                => http=000 connect=503 time=0.001573s size=0 
+  http://[::ffff:198.18.0.20]/       => http=000 connect=503 time=0.001068s size=0 
+  http://[2001:db8:1::20]/           hello from target, you are [2001:db8:1::10]:56870 => http=200 connect=200 time=0.006882s size=50 
+   log [fd00:99::5]:80            503 DF  dns_resolution_failure{address_denied} up=None
+## SSRF v6, family=ALL filter=OFF (control: shows the targets are reachable)
+  http://[fd00:99::5]/               hello from target, you are [fd00:99::10]:59862 => http=200 connect=200 time=0.019478s size=47 
+  http://ula.spike/                  hello from target, you are [fd00:99::10]:59864 => http=200 connect=200 time=0.004291s size=47 
+  http://mapped.spike/               => http=000 connect=503 time=0.001770s size=0 
+  http://[::ffff:198.18.0.20]/       => http=000 connect=503 time=0.001286s size=0 
+## dnsd query log tail
+ 447.410s TypeA ll.spike. -> [] ttl=300
+ 447.410s TypeAAAA ll.spike. -> [fe80::1] ttl=300
+ 447.545s TypeA loop6.spike. -> [] ttl=300
+ 447.545s TypeAAAA loop6.spike. -> [::1] ttl=300
+ 447.611s TypeA mapped.spike. -> [] ttl=300
+ 447.611s TypeAAAA mapped.spike. -> [::ffff:10.99.0.5] ttl=300
+ 447.682s TypeA nat64.spike. -> [] ttl=300
+ 447.682s TypeAAAA nat64.spike. -> [64:ff9b::a63:5] ttl=300
+ 450.222s TypeA ula.spike. -> [] ttl=300
+ 450.223s TypeAAAA ula.spike. -> [fd00:99::5] ttl=300
+ 450.289s TypeA mapped.spike. -> [] ttl=300
+ 450.289s TypeAAAA mapped.spike. -> [::ffff:10.99.0.5] ttl=300
+   off-log [fd00:99::5]:80            200 -   via_upstream up=[fd00:99::5]:80 None
+   off-log [fd00:99::5]:80            200 DC  downstream_remote_disconnect up=[fd00:99::5]:80 None
+   off-log ula.spike:80               200 -   via_upstream up=[fd00:99::5]:80 None
+   off-log ula.spike:80               200 DC  downstream_remote_disconnect up=[fd00:99::5]:80 None
+   off-log mapped.spike:80            503 UF  upstream_reset_before_response_started{remote_connection_failure|immediate_connect_error:_Network_is_unreachable|remote_address:[::ffff:10.99.0.5]:80} up=[::ffff:10.99.0.5]:80 immediate_connect_error:_Network_is_unreachable|remote_address:[::ffff:10.99.0.5]:80
+   off-log [::ffff:198.18.0.20]:80    503 UF  upstream_reset_before_response_started{remote_connection_failure|immediate_connect_error:_Network_is_unreachable|remote_address:[::ffff:198.18.0.20]:80} up=[::ffff:198.18.0.20]:80 immediate_connect_error:_Network_is_unreachable|remote_address:[::ffff:198.18.0.20]:80
+   on-log [fd00:99::5]:80            503 DF  dns_resolution_failure{address_denied} up=None None
+   v4only-log [2001:db8:2::20]:80        503 DF  dns_resolution_failure{cares_failure:Misformatted_domain_name}
+   on-log [fd00:99::5]:80 503 DF dns_resolution_failure{address_denied} None
+   on-log ula.spike:80 503 DF dns_resolution_failure{address_denied} None
+   on-log ll.spike:80 503 DF dns_resolution_failure{address_denied} None
+   on-log [fe80::7c5e:4aff:fed3:2b]:80 503 DF dns_resolution_failure{address_denied} None
+   on-log loop6.spike:9901 503 DF dns_resolution_failure{address_denied} None
+   on-log mapped.spike:80 503 DF dns_resolution_failure{address_denied} None
+   on-log nat64.spike:80 503 DF dns_resolution_failure{address_denied} None
+   on-log [::ffff:198.18.0.20]:80 503 DF dns_resolution_failure{address_denied} None

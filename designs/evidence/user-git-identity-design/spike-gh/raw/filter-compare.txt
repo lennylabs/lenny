@@ -1,0 +1,37 @@
+ same  ghes pr-create-all.jsonl 16 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-assignee.jsonl 7 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-basic.jsonl 5 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-draft.jsonl 5 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-fork-head.jsonl 5 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-label.jsonl 7 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-milestone.jsonl 7 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-nohead.jsonl 5 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-project.jsonl 9 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghes pr-create-reviewer.jsonl 9 requests; real token at the stub: True ; placeholder at the stub: False
+ghes pr create identical: 10 different: 0
+ same  ghcom pr-create-all.jsonl 12 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-assignee.jsonl 4 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-basic.jsonl 3 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-draft.jsonl 3 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-fork-head.jsonl 3 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-label.jsonl 5 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-milestone.jsonl 5 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-nohead.jsonl 3 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-project.jsonl 7 requests; real token at the stub: True ; placeholder at the stub: False
+ same  ghcom pr-create-reviewer.jsonl 4 requests; real token at the stub: True ; placeholder at the stub: False
+ghcom pr create identical: 10 different: 0
+== filtered-ghes: writes that reached the stub
+   GQL mutation addProjectV2ItemById ['pr-create-all', 'pr-create-project', 'pr-edit-meta']
+   GQL mutation createPullRequest ['pr-create-all', 'pr-create-assignee', 'pr-create-basic', 'pr-create-draft', 'pr-create-fork-head', 'pr-create-label', 'pr-create-milestone', 'pr-create-nohead', 'pr-create-project', 'pr-create-reviewer']
+   GQL mutation requestReviews ['pr-create-all', 'pr-create-reviewer']
+   GQL mutation updatePullRequest ['pr-create-all', 'pr-create-assignee', 'pr-create-label', 'pr-create-milestone', 'pr-edit-meta']
+   POST /api/v3/repos/acme/widgets/pulls ['api-rest-post']
+== filtered-ghcom: writes that reached the stub
+   GQL mutation addProjectV2ItemById ['pr-create-all', 'pr-create-project', 'pr-edit-meta']
+   GQL mutation createPullRequest ['pr-create-all', 'pr-create-assignee', 'pr-create-basic', 'pr-create-draft', 'pr-create-fork-head', 'pr-create-label', 'pr-create-milestone', 'pr-create-nohead', 'pr-create-project', 'pr-create-reviewer']
+   GQL mutation replaceActorsForAssignable ['pr-create-all', 'pr-create-assignee', 'pr-edit-meta']
+   GQL mutation requestReviewsByLogin ['pr-create-all', 'pr-create-reviewer', 'pr-edit-meta']
+   GQL mutation updatePullRequest ['pr-create-all', 'pr-create-label', 'pr-create-milestone', 'pr-edit-meta']
+   POST /repos/acme/widgets/pulls ['api-rest-post']
+== gh-attack-ghes: writes that reached the stub
+== gh-attack-ghcom: writes that reached the stub

@@ -1,0 +1,627 @@
+// filter.go: the operation allowlist for a bound host. Everything not listed is refused.
+//
+//	REST: exact method, exact path template, listed query keys, JSON bodies only.
+//	GraphQL: POST to one path, one strict JSON object, a real parser, and every operation's every top-level field checked
+//	(aliases resolved to names, fragments expanded), whichever operation operationName selects.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"regexp"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/formatter"
+	"github.com/vektah/gqlparser/v2/parser"
+)
+
+type restRule struct {
+	Method string   `json:"method"`
+	Path   string   `json:"path"`
+	Query  []string `json:"query,omitempty"`
+	segs   []string
+	q      map[string]bool
+}
+
+type policy struct {
+	RestPrefix    string              `json:"restPrefix"`
+	GraphQLPath   string              `json:"graphqlPath"`
+	Rest          []*restRule         `json:"rest"`
+	Queries       []string            `json:"graphqlQueries"`
+	Mutations     []string            `json:"graphqlMutations"`
+	InputAllow    map[string][]string `json:"mutationInputAllow,omitempty"`
+	Headers       []string            `json:"headers"`
+	MaxBody       int64               `json:"maxBody"`
+	EncodedProj   bool                `json:"encodedProjectSegments,omitempty"` // GitLab: {project} may hold %2F
+	BodyDeny      []string            `json:"bodyDenyRegex,omitempty"`
+	MaxDepth      int                 `json:"maxDepth,omitempty"`         // selection-set nesting bound
+	LexStrict     bool                `json:"lexStrict,omitempty"`        // refuse bytes on which GraphQL readers are known to differ
+	Canonical     bool                `json:"canonicalForward,omitempty"` // forward the filter's own printing of the document
+	q, m, h       map[string]bool
+	bodyDeny      []*regexp.Regexp
+}
+
+func set(l []string, lower bool) map[string]bool {
+	m := map[string]bool{}
+	for _, x := range l {
+		if lower {
+			x = strings.ToLower(x)
+		}
+		m[x] = true
+	}
+	return m
+}
+
+func (p *policy) compile() error {
+	p.q, p.m, p.h = set(p.Queries, false), set(p.Mutations, false), set(p.Headers, true)
+	for _, r := range p.Rest {
+		r.segs = strings.Split(strings.TrimPrefix(p.RestPrefix+r.Path, "/"), "/")
+		if r.Path == "/" {
+			r.segs = strings.Split(strings.TrimPrefix(strings.TrimSuffix(p.RestPrefix, "/")+"/", "/"), "/")
+		}
+		r.q = set(r.Query, false)
+	}
+	for _, s := range p.BodyDeny {
+		re, err := regexp.Compile(s)
+		if err != nil {
+			return err
+		}
+		p.bodyDeny = append(p.bodyDeny, re)
+	}
+	if p.MaxBody == 0 {
+		p.MaxBody = 256 << 10
+	}
+	return nil
+}
+
+var (
+	segSafe  = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+	segProj  = regexp.MustCompile(`^[A-Za-z0-9_.-]+(%2[Ff][A-Za-z0-9_.-]+)*$`)
+	segNum   = regexp.MustCompile(`^[0-9]+$`)
+	queryKey = regexp.MustCompile(`^[A-Za-z0-9_\[\]]+$`)
+)
+
+// methodOverride headers and URL-rewrite headers are named so that the refusal says what it saw; the header allowlist refuses them anyway.
+var overrideHdr = map[string]bool{"x-http-method-override": true, "x-http-method": true, "x-method-override": true, "x-original-url": true, "x-rewrite-url": true, "x-original-method": true, "x-forwarded-path": true, "x-forwarded-uri": true, "x-envoy-original-path": true}
+
+type deny struct {
+	code   int
+	reason string
+}
+
+func (d *deny) Error() string { return d.reason }
+func no(code int, f string, a ...any) *deny {
+	return &deny{code, fmt.Sprintf(f, a...)}
+}
+
+// rawPathQuery gives the path and query as sent, for origin-form and absolute-form alike.
+func rawPathQuery(r *http.Request) (string, string, bool, *deny) {
+	uri := r.RequestURI
+	if uri == "" {
+		uri = r.URL.RequestURI()
+	}
+	if !strings.HasPrefix(uri, "/") {
+		i := strings.Index(uri, "://")
+		if i < 0 {
+			return "", "", false, no(400, "request target is neither origin-form nor absolute-form")
+		}
+		rest := uri[i+3:]
+		j := strings.IndexByte(rest, '/')
+		if j < 0 {
+			return "", "", false, no(400, "absolute-form target without a path")
+		}
+		uri = rest[j:]
+	}
+	if strings.ContainsAny(uri, "#\\;") {
+		return "", "", false, no(403, "path holds a character outside the allowlist grammar")
+	}
+	for i := 0; i < len(uri); i++ {
+		if uri[i] <= 0x20 || uri[i] >= 0x7f {
+			return "", "", false, no(403, "path holds a control or non-ASCII byte")
+		}
+	}
+	p, q, has := strings.Cut(uri, "?")
+	return p, q, has, nil
+}
+
+func (p *policy) matchRest(method, path string) (*restRule, *deny) {
+	segs := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	for _, r := range p.Rest {
+		if r.Method != method || len(r.segs) != len(segs) {
+			continue
+		}
+		ok := true
+		for i, t := range r.segs {
+			s := segs[i]
+			if strings.HasPrefix(t, "{") {
+				switch t {
+				case "{n}":
+					ok = segNum.MatchString(s)
+				case "{project}":
+					ok = (segSafe.MatchString(s) && s != "." && s != "..") || (p.EncodedProj && segProj.MatchString(s) && projParts(s))
+				case "{any}": // a ref or a file name: stays one segment
+					ok = segSafe.MatchString(s) && s != "." && s != ".."
+				default:
+					ok = segSafe.MatchString(s) && s != "." && s != ".."
+				}
+			} else {
+				ok = s == t
+			}
+			if !ok {
+				break
+			}
+		}
+		if ok {
+			return r, nil
+		}
+	}
+	return nil, no(403, "%s %s is not on the allowlist", method, path)
+}
+
+// readBody reads at most MaxBody+1 bytes, so a longer body is refused without being held.
+func (p *policy) readBody(r *http.Request) ([]byte, *deny) {
+	if r.ContentLength > p.MaxBody {
+		return nil, no(413, "body of %d bytes is over the %d byte bound", r.ContentLength, p.MaxBody)
+	}
+	b, err := io.ReadAll(io.LimitReader(r.Body, p.MaxBody+1))
+	if err != nil {
+		return nil, no(400, "body read failed: %v", err)
+	}
+	if int64(len(b)) > p.MaxBody {
+		return nil, no(413, "body is over the %d byte bound", p.MaxBody)
+	}
+	return b, nil
+}
+
+// strictObject parses one JSON object: valid UTF-8, no duplicate keys at the top level, nothing after it.
+func strictObject(b []byte) (map[string]json.RawMessage, *deny) {
+	if !utf8.Valid(b) {
+		return nil, no(400, "body is not valid UTF-8")
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	t, err := dec.Token()
+	if err != nil {
+		return nil, no(400, "malformed JSON")
+	}
+	if t != json.Delim('{') {
+		return nil, no(403, "body must be one JSON object (a batch array is refused)")
+	}
+	out := map[string]json.RawMessage{}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			return nil, no(400, "malformed JSON")
+		}
+		k, _ := kt.(string)
+		if _, dup := out[k]; dup {
+			return nil, no(403, "duplicate JSON key %q", k)
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, no(400, "malformed JSON")
+		}
+		out[k] = v
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, no(400, "malformed JSON")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, no(403, "data after the JSON object")
+	}
+	return out, nil
+}
+
+func topFields(ss ast.SelectionSet, d *ast.QueryDocument, seen map[string]bool, out *[]*ast.Field) *deny {
+	for _, s := range ss {
+		switch x := s.(type) {
+		case *ast.Field:
+			*out = append(*out, x)
+		case *ast.InlineFragment:
+			if e := topFields(x.SelectionSet, d, seen, out); e != nil {
+				return e
+			}
+		case *ast.FragmentSpread:
+			f := d.Fragments.ForName(x.Name)
+			if f == nil {
+				return no(403, "unknown fragment %q", x.Name)
+			}
+			if seen[x.Name] {
+				continue
+			}
+			seen[x.Name] = true
+			if e := topFields(f.SelectionSet, d, seen, out); e != nil {
+				return e
+			}
+		default:
+			return no(403, "unknown selection")
+		}
+	}
+	return nil
+}
+
+func (p *policy) inputKeys(f *ast.Field, vars map[string]json.RawMessage) ([]string, *deny) {
+	var keys []string
+	for _, a := range f.Arguments {
+		if a.Name != "input" {
+			return nil, no(403, "argument %q on %s is not on the allowlist", a.Name, f.Name)
+		}
+		switch a.Value.Kind {
+		case ast.Variable:
+			var m map[string]json.RawMessage
+			if err := json.Unmarshal(vars[a.Value.Raw], &m); err != nil {
+				return nil, no(403, "variable $%s on %s is not an object", a.Value.Raw, f.Name)
+			}
+			for k := range m {
+				keys = append(keys, k)
+			}
+		case ast.ObjectValue:
+			for _, c := range a.Value.Children {
+				keys = append(keys, c.Name)
+			}
+		default:
+			return nil, no(403, "input on %s is neither a variable nor an object", f.Name)
+		}
+	}
+	return keys, nil
+}
+
+// lexCheck refuses a bare CR, other control characters, and the Unicode separators, inside strings and comments too.
+// graphql-ruby's pure-Ruby lexer does not end a comment at a bare CR, and gqlparser does, so a document can read differently to each.
+func lexCheck(doc string) *deny {
+	for i, r := range doc {
+		switch {
+		case r == '\r':
+			if i+1 >= len(doc) || doc[i+1] != '\n' {
+				return no(403, "bare CR in the GraphQL document")
+			}
+		case r == '\t' || r == '\n':
+		case r < 0x20 || r == 0x7f || r == 0x85 || r == 0x2028 || r == 0x2029 || r == 0xfeff:
+			return no(403, "control or separator character U+%04X in the GraphQL document", r)
+		}
+	}
+	return nil
+}
+
+// checkDocument is the GraphQL decision. It does not use operationName to narrow the check.
+func (p *policy) checkDocument(doc, opName string, vars map[string]json.RawMessage) (*ast.QueryDocument, *deny) {
+	d, err := parser.ParseQuery(&ast.Source{Input: doc})
+	if err != nil {
+		return nil, no(400, "GraphQL parse error: %s", strings.SplitN(err.Error(), "\n", 2)[0])
+	}
+	if e := p.checkParsed(d, opName, vars); e != nil {
+		return nil, e
+	}
+	return d, nil
+}
+
+func tooDeep(ss ast.SelectionSet, left int) bool {
+	if len(ss) == 0 {
+		return false
+	}
+	if left == 0 {
+		return true
+	}
+	for _, s := range ss {
+		switch x := s.(type) {
+		case *ast.Field:
+			if tooDeep(x.SelectionSet, left-1) {
+				return true
+			}
+		case *ast.InlineFragment:
+			if tooDeep(x.SelectionSet, left-1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (p *policy) checkParsed(d *ast.QueryDocument, opName string, vars map[string]json.RawMessage) *deny {
+	if p.MaxDepth > 0 {
+		for _, o := range d.Operations {
+			if tooDeep(o.SelectionSet, p.MaxDepth) {
+				return no(403, "selection nesting is over the bound of %d", p.MaxDepth)
+			}
+		}
+		for _, f := range d.Fragments {
+			if tooDeep(f.SelectionSet, p.MaxDepth) {
+				return no(403, "selection nesting in a fragment is over the bound of %d", p.MaxDepth)
+			}
+		}
+	}
+	if len(d.Operations) == 0 {
+		return no(403, "document holds no operation")
+	}
+	nameOK := opName == ""
+	for _, o := range d.Operations {
+		if o.Name == opName {
+			nameOK = true
+		}
+		var allow map[string]bool
+		switch o.Operation {
+		case ast.Query:
+			allow = p.q
+		case ast.Mutation:
+			allow = p.m
+		default:
+			return no(403, "operation type %s is refused", o.Operation)
+		}
+		var fields []*ast.Field
+		if e := topFields(o.SelectionSet, d, map[string]bool{}, &fields); e != nil {
+			return e
+		}
+		if len(fields) == 0 {
+			return no(403, "operation selects no field")
+		}
+		for _, f := range fields {
+			if !allow[f.Name] {
+				return no(403, "%s field %q is not on the allowlist", o.Operation, f.Name)
+			}
+			if o.Operation == ast.Mutation {
+				if la, ok := p.InputAllow[f.Name]; ok {
+					keys, e := p.inputKeys(f, vars)
+					if e != nil {
+						return e
+					}
+					s := set(la, false)
+					for _, k := range keys {
+						if !s[k] {
+							return no(403, "input field %q on %s is not on the allowlist", k, f.Name)
+						}
+					}
+				}
+			}
+		}
+	}
+	if !nameOK {
+		return no(403, "operationName %q names no operation in the document", opName)
+	}
+	// A fragment on Mutation or Subscription that no operation spreads is still refused unless its fields are listed.
+	for _, f := range d.Fragments {
+		if f.TypeCondition == "Subscription" {
+			return no(403, "fragment on Subscription")
+		}
+		if f.TypeCondition == "Mutation" {
+			var fields []*ast.Field
+			if e := topFields(f.SelectionSet, d, map[string]bool{}, &fields); e != nil {
+				return e
+			}
+			for _, x := range fields {
+				if !p.m[x.Name] {
+					return no(403, "mutation field %q in a fragment is not on the allowlist", x.Name)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (p *policy) checkGraphQL(r *http.Request, rawq string, hasq bool) ([]byte, *deny) {
+	if r.Method != "POST" {
+		return nil, no(403, "GraphQL accepts POST only, got %s", r.Method)
+	}
+	if hasq || rawq != "" {
+		return nil, no(403, "GraphQL refuses a URL query")
+	}
+	cts := r.Header["Content-Type"]
+	if len(cts) != 1 {
+		return nil, no(403, "GraphQL needs exactly one Content-Type")
+	}
+	mt, _, err := mime.ParseMediaType(cts[0])
+	if err != nil || mt != "application/json" {
+		return nil, no(403, "GraphQL refuses Content-Type %q", cts[0])
+	}
+	b, e := p.readBody(r)
+	if e != nil {
+		return nil, e
+	}
+	obj, e := strictObject(b)
+	if e != nil {
+		return nil, e
+	}
+	var doc, opName string
+	vars := map[string]json.RawMessage{}
+	for k, v := range obj {
+		switch k {
+		case "query":
+			if err := json.Unmarshal(v, &doc); err != nil {
+				return nil, no(400, "query is not a string")
+			}
+		case "operationName":
+			if string(v) != "null" {
+				if err := json.Unmarshal(v, &opName); err != nil {
+					return nil, no(400, "operationName is not a string")
+				}
+			}
+		case "variables":
+			if string(v) != "null" {
+				if err := json.Unmarshal(v, &vars); err != nil {
+					return nil, no(400, "variables is not an object")
+				}
+			}
+		default:
+			return nil, no(403, "top-level JSON key %q is not on the allowlist", k)
+		}
+	}
+	if doc == "" {
+		return nil, no(400, "query is missing")
+	}
+	if p.LexStrict {
+		if e := lexCheck(doc); e != nil {
+			return nil, e
+		}
+	}
+	d, e := p.checkDocument(doc, opName, vars)
+	if e != nil {
+		return nil, e
+	}
+	if p.Canonical {
+		var pr bytes.Buffer
+		formatter.NewFormatter(&pr, formatter.WithCompacted()).FormatQueryDocument(d)
+		m := map[string]any{"query": pr.String()}
+		if v, ok := obj["variables"]; ok {
+			m["variables"] = v
+		}
+		if v, ok := obj["operationName"]; ok {
+			m["operationName"] = v
+		}
+		var o bytes.Buffer
+		en := json.NewEncoder(&o)
+		en.SetEscapeHTML(false)
+		if err := en.Encode(m); err != nil {
+			return nil, no(500, "canonical encoding failed")
+		}
+		return o.Bytes(), nil
+	}
+	return b, nil
+}
+
+func (p *policy) checkHeaders(r *http.Request) *deny {
+	if r.Header.Get("Upgrade") != "" {
+		return no(403, "upgrade refused on a filtered host")
+	}
+	if len(r.Trailer) > 0 {
+		return no(403, "trailers refused on a filtered host")
+	}
+	for k := range r.Header {
+		lk := strings.ToLower(k)
+		if overrideHdr[lk] {
+			return no(403, "method or URL override header %s refused", k)
+		}
+		switch lk {
+		case "connection":
+			for _, v := range r.Header[k] {
+				for _, t := range strings.Split(v, ",") {
+					t = strings.ToLower(strings.TrimSpace(t))
+					if t != "keep-alive" && t != "close" && t != "" {
+						return no(403, "Connection option %q refused", t)
+					}
+				}
+			}
+			continue
+		case "proxy-connection":
+			continue
+		case "content-encoding":
+			return no(415, "compressed request body refused")
+		}
+		if !p.h[lk] {
+			return no(403, "header %s is not on the allowlist", k)
+		}
+	}
+	return nil
+}
+
+// check returns the body to forward, or a refusal. The caller forwards exactly these bytes with a Content-Length.
+func (p *policy) check(r *http.Request) ([]byte, *deny) {
+	if e := p.checkHeaders(r); e != nil {
+		return nil, e
+	}
+	path, rawq, hasq, e := rawPathQuery(r)
+	if e != nil {
+		return nil, e
+	}
+	if r.URL.Opaque != "" {
+		return nil, no(403, "opaque URL refused")
+	}
+	if strings.Contains(path, "//") || strings.Contains(path, "/./") || strings.Contains(path, "/../") || strings.HasSuffix(path, "/..") || strings.HasSuffix(path, "/.") {
+		return nil, no(403, "path is not in normal form")
+	}
+	// The forwarded request line must be the text this function checked.
+	fw := r.URL.RequestURI()
+	want := path
+	if hasq {
+		want += "?" + rawq
+	}
+	if fw != want {
+		return nil, no(403, "forwarded target %q would differ from the checked target %q", fw, want)
+	}
+	if p.GraphQLPath != "" && path == p.GraphQLPath {
+		return p.checkGraphQL(r, rawq, hasq)
+	}
+	rule, e := p.matchRest(r.Method, path)
+	if e != nil {
+		return nil, e
+	}
+	if rawq != "" {
+		for _, kv := range strings.Split(rawq, "&") {
+			k, _, _ := strings.Cut(kv, "=")
+			if !queryKey.MatchString(k) || !rule.q[k] {
+				return nil, no(403, "query key %q is not on the allowlist for this route", k)
+			}
+		}
+	}
+	switch r.Method {
+	case "GET":
+		if r.ContentLength != 0 || len(r.TransferEncoding) > 0 {
+			return nil, no(403, "GET with a body refused")
+		}
+		return nil, nil
+	}
+	cts := r.Header["Content-Type"]
+	mt := ""
+	if len(cts) == 1 {
+		mt, _, _ = mime.ParseMediaType(cts[0])
+	}
+	if mt != "application/json" {
+		return nil, no(403, "REST body must be application/json")
+	}
+	b, e := p.readBody(r)
+	if e != nil {
+		return nil, e
+	}
+	if _, e := strictObject(b); e != nil {
+		return nil, e
+	}
+	if len(p.bodyDeny) > 0 { // JSON escapes are decoded first, so \u002fmerge is /merge
+		var v any
+		if err := json.Unmarshal(b, &v); err != nil {
+			return nil, no(400, "malformed JSON")
+		}
+		if e := p.denyStrings(v); e != nil {
+			return nil, e
+		}
+	}
+	return b, nil
+}
+
+func (p *policy) denyStrings(v any) *deny {
+	switch x := v.(type) {
+	case string:
+		for _, re := range p.bodyDeny {
+			if m := re.FindString(x); m != "" {
+				return no(403, "a string in the body matches a denied pattern: %q", m)
+			}
+		}
+	case []any:
+		for _, y := range x {
+			if e := p.denyStrings(y); e != nil {
+				return e
+			}
+		}
+	case map[string]any:
+		for _, y := range x {
+			if e := p.denyStrings(y); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+// projParts refuses dot segments and route words inside an encoded project path.
+func projParts(s string) bool {
+	for _, x := range strings.Split(strings.ReplaceAll(s, "%2f", "%2F"), "%2F") {
+		switch x {
+		case ".", "..", "merge_requests", "-":
+			return false
+		}
+	}
+	return true
+}

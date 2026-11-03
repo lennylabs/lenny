@@ -1,0 +1,485 @@
+{
+ "apiVersion": "v1",
+ "kind": "List",
+ "items": [
+  {
+   "apiVersion": "v1",
+   "kind": "Namespace",
+   "metadata": {
+    "name": "spike"
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "ServiceAccount",
+   "metadata": {
+    "name": "agent",
+    "namespace": "spike"
+   },
+   "automountServiceAccountToken": false
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "iso-a",
+    "namespace": "spike",
+    "labels": {
+     "app": "iso"
+    }
+   },
+   "spec": {
+    "serviceAccountName": "agent",
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": false,
+    "securityContext": {
+     "runAsNonRoot": true
+    },
+    "containers": [
+     {
+      "name": "netagent",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "env": [
+       {
+        "name": "NETAGENT_SECRET_ENV",
+        "value": "s3cr3t-in-environ"
+       }
+      ],
+      "command": [
+       "/bin/sh",
+       "-c"
+      ],
+      "args": [
+       "echo \"netagent uid=$(id -u) groups=$(id -G)\"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/\nwhile true; do\n  T=/var/run/secrets/lenny-egress/token\n  echo \"TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)\"\n  sleep 10\ndone"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      },
+      "volumeMounts": [
+       {
+        "name": "egress-token",
+        "mountPath": "/var/run/secrets/lenny-egress",
+        "readOnly": true
+       }
+      ]
+     },
+     {
+      "name": "runtime",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65533,
+       "runAsGroup": 65533,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     },
+     {
+      "name": "adapter",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65532,
+       "runAsGroup": 65532,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     }
+    ],
+    "volumes": [
+     {
+      "name": "egress-token",
+      "projected": {
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "audience": "lenny-egress",
+          "expirationSeconds": 600,
+          "path": "token"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "iso-b",
+    "namespace": "spike",
+    "labels": {
+     "app": "iso"
+    }
+   },
+   "spec": {
+    "serviceAccountName": "agent",
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": true,
+    "securityContext": {
+     "runAsNonRoot": true
+    },
+    "containers": [
+     {
+      "name": "netagent",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "env": [
+       {
+        "name": "NETAGENT_SECRET_ENV",
+        "value": "s3cr3t-in-environ"
+       }
+      ],
+      "command": [
+       "/bin/sh",
+       "-c"
+      ],
+      "args": [
+       "echo \"netagent uid=$(id -u) groups=$(id -G)\"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/\nwhile true; do\n  T=/var/run/secrets/lenny-egress/token\n  echo \"TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)\"\n  sleep 10\ndone"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      },
+      "volumeMounts": [
+       {
+        "name": "egress-token",
+        "mountPath": "/var/run/secrets/lenny-egress",
+        "readOnly": true
+       }
+      ]
+     },
+     {
+      "name": "runtime",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65533,
+       "runAsGroup": 65533,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     },
+     {
+      "name": "adapter",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65532,
+       "runAsGroup": 65532,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     }
+    ],
+    "volumes": [
+     {
+      "name": "egress-token",
+      "projected": {
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "audience": "lenny-egress",
+          "expirationSeconds": 600,
+          "path": "token"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "iso-c",
+    "namespace": "spike",
+    "labels": {
+     "app": "iso"
+    }
+   },
+   "spec": {
+    "serviceAccountName": "agent",
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": true,
+    "securityContext": {
+     "runAsNonRoot": true
+    },
+    "containers": [
+     {
+      "name": "netagent",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "env": [
+       {
+        "name": "NETAGENT_SECRET_ENV",
+        "value": "s3cr3t-in-environ"
+       }
+      ],
+      "command": [
+       "/bin/sh",
+       "-c"
+      ],
+      "args": [
+       "echo \"netagent uid=$(id -u) groups=$(id -G)\"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/\nwhile true; do\n  T=/var/run/secrets/lenny-egress/token\n  echo \"TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)\"\n  sleep 10\ndone"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      },
+      "volumeMounts": [
+       {
+        "name": "egress-token",
+        "mountPath": "/var/run/secrets/lenny-egress",
+        "readOnly": true
+       }
+      ]
+     },
+     {
+      "name": "runtime",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     },
+     {
+      "name": "adapter",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65532,
+       "runAsGroup": 65532,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     }
+    ],
+    "volumes": [
+     {
+      "name": "egress-token",
+      "projected": {
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "audience": "lenny-egress",
+          "expirationSeconds": 600,
+          "path": "token"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "iso-d",
+    "namespace": "spike",
+    "labels": {
+     "app": "iso"
+    }
+   },
+   "spec": {
+    "serviceAccountName": "agent",
+    "automountServiceAccountToken": false,
+    "shareProcessNamespace": true,
+    "securityContext": {
+     "runAsNonRoot": true,
+     "fsGroup": 65530
+    },
+    "containers": [
+     {
+      "name": "netagent",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "env": [
+       {
+        "name": "NETAGENT_SECRET_ENV",
+        "value": "s3cr3t-in-environ"
+       }
+      ],
+      "command": [
+       "/bin/sh",
+       "-c"
+      ],
+      "args": [
+       "echo \"netagent uid=$(id -u) groups=$(id -G)\"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/\nwhile true; do\n  T=/var/run/secrets/lenny-egress/token\n  echo \"TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)\"\n  sleep 10\ndone"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      },
+      "volumeMounts": [
+       {
+        "name": "egress-token",
+        "mountPath": "/var/run/secrets/lenny-egress",
+        "readOnly": true
+       }
+      ]
+     },
+     {
+      "name": "runtime",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65533,
+       "runAsGroup": 65533,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     },
+     {
+      "name": "adapter",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ],
+      "securityContext": {
+       "runAsUser": 65532,
+       "runAsGroup": 65532,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      }
+     }
+    ],
+    "volumes": [
+     {
+      "name": "egress-token",
+      "projected": {
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "audience": "lenny-egress",
+          "expirationSeconds": 600,
+          "path": "token"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "automount-on",
+    "namespace": "spike"
+   },
+   "spec": {
+    "serviceAccountName": "default",
+    "containers": [
+     {
+      "name": "c",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "sleep",
+       "infinity"
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

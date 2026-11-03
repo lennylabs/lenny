@@ -1,0 +1,48 @@
+2026/11/02 05:19:43 http: TLS handshake error from [2001:db8:1::10]:43198: EOF
+2026/11/02 05:21:57 http: TLS handshake error from [2001:db8:1::10]:50894: EOF
+2026/11/02 05:22:15 http: TLS handshake error from [2001:db8:1::10]:35224: EOF
+## gen args: sniplain=deny snitimeout=2s
+  authority target.spike:443, SNI target.spike                   TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::10]:50026 err=<nil> (37.8ms)
+  authority target.spike:443, SNI evil.spike                      err=tls: EOF (119.0ms)
+  authority target.spike:443, no SNI                              err=tls: EOF (117.1ms)
+  authority target.spike:443, SNI TARGET.SPIKE                   TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::10]:50058 err=<nil> (20.6ms)
+  authority TARGET.SPIKE:443, SNI target.spike                    err=tls: EOF (114.6ms)
+  authority 198.18.0.20:443, SNI target.spike                     err=tls: EOF (109.9ms)
+  authority internal.spike:443, SNI internal.spike (SSRF)         err=tls: EOF (116.0ms)
+  authority target.spike:80, plaintext HTTP (client-first)       plain:  err=EOF (115.5ms)
+  authority target.spike:7000, server-first plaintext            server-first:  err=EOF (2116.7ms)
+  ECH public=public.ech.spike, inner SNI target.spike             err=tls: EOF (115.6ms)
+  ECH public=target.spike, inner SNI evil.spike                  TLS ok ech_accepted=true: 200 OK ech-server: inner SNI="evil.spike" err=<nil> (12.5ms)
+  control: direct route, ECH public=public.ech.spike             TLS ok ech_accepted=true: 200 OK ech-server: inner SNI="target.spike" err=<nil> (11.5ms)
+listener.envoy_internal_sni_inspect.downstream_cx_total: 9 listener.envoy_internal_sni_inspect.downstream_pre_cx_timeout: 1 sni_gate.rbac.allowed: 3 sni_gate.rbac.denied: 5 tls_inspector.sni_found: 8 tls_inspector.sni_not_found: 1 tls_inspector.tls_found: 9 tls_inspector.tls_not_found: 1 
+None None None target.spike:443 envoy://sni_inspect/ - 22
+None None None target.spike:443 envoy://sni_inspect/ DC 35
+sni_inspect target.spike target.spike target.spike:443 [2001:db8:1::20]:443 - 14
+None None None target.spike:443 envoy://sni_inspect/ - 11
+sni_inspect evil.spike target.spike target.spike:443 [2001:db8:1::20]:443 - 1
+None None None target.spike:443 envoy://sni_inspect/ - 12
+None None None target.spike:443 envoy://sni_inspect/ - 8
+sni_inspect None target.spike target.spike:443 [2001:db8:1::20]:443 - 1
+None None None target.spike:443 envoy://sni_inspect/ - 9
+None None None target.spike:443 envoy://sni_inspect/ - 11
+None None None target.spike:443 envoy://sni_inspect/ DC 19
+sni_inspect target.spike target.spike target.spike:443 [2001:db8:1::20]:443 - 8
+None None None TARGET.SPIKE:443 envoy://sni_inspect/ - 9
+sni_inspect target.spike TARGET.SPIKE TARGET.SPIKE:443 [2001:db8:1::20]:443 - 1
+None None None TARGET.SPIKE:443 envoy://sni_inspect/ - 11
+None None None 198.18.0.20:443 envoy://sni_inspect/ - 8
+sni_inspect target.spike 198.18.0.20 198.18.0.20:443 198.18.0.20:443 - 1
+None None None 198.18.0.20:443 envoy://sni_inspect/ - 9
+None None None internal.spike:443 envoy://sni_inspect/ - 7
+sni_inspect internal.spike internal.spike internal.spike:443 None UH 1
+None None None internal.spike:443 envoy://sni_inspect/ - 8
+None None None target.spike:80 envoy://sni_inspect/ - 10
+None None None target.spike:80 envoy://sni_inspect/ - 10
+None None None target.spike:7000 envoy://sni_inspect/ - 11
+None None None target.spike:7000 envoy://sni_inspect/ - 2012
+None None None target.spike:8443 envoy://sni_inspect/ - 7
+sni_inspect public.ech.spike target.spike target.spike:8443 [2001:db8:1::20]:8443 - 1
+None None None target.spike:8443 envoy://sni_inspect/ - 9
+None None None target.spike:8444 envoy://sni_inspect/ - 8
+None None None target.spike:8444 envoy://sni_inspect/ DC 11
+sni_inspect target.spike target.spike target.spike:8444 [2001:db8:1::20]:8444 - 3

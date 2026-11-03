@@ -1,0 +1,14 @@
+  cluster.authz.membership_healthy: 2
+  cluster.authz.outlier_detection.ejections_enforced_consecutive_local_origin_failure: 1
+  cluster.authz.outlier_detection.ejections_enforced_total: 1
+  cluster.authz.upstream_cx_active: 4
+  cluster.authz.upstream_cx_destroy: 2
+  cluster.authz.upstream_cx_destroy_local: 2
+  cluster.authz.upstream_cx_total: 6
+  cluster.authz.upstream_rq_2xx: 28539
+  cluster.authz.upstream_rq_5xx: 1461
+  cluster.authz.upstream_rq_timeout: 1461
+  cluster.authz.upstream_rq_total: 30000
+  http.egress.downstream_rq_total: 30000
+  http.egress.ext_authz.error: 1461
+  http.egress.ext_authz.ok: 28539

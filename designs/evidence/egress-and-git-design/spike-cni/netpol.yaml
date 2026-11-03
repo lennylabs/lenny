@@ -1,0 +1,28 @@
+# Default-deny egress for the agents namespace plus the allow policy for the proxied profile.
+# Peers are podSelector-based (with a namespaceSelector on the metadata.name label); no ipBlock.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: default-deny-egress, namespace: lenny-agents}
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: egress-profile-proxied, namespace: lenny-agents}
+spec:
+  podSelector: {matchLabels: {lenny.dev/egress-profile: proxied}}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: lenny-system}}
+      podSelector: {matchLabels: {app: lenny-egress}}
+    ports: [{protocol: TCP, port: 3128}]
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: lenny-dns}}
+      podSelector: {matchLabels: {app: lenny-dns-proxied}}
+    ports: [{protocol: UDP, port: 53}, {protocol: TCP, port: 53}]
+  - to:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: lenny-system}}
+      podSelector: {matchLabels: {app: lenny-gateway}}
+    ports: [{protocol: TCP, port: 8443}]

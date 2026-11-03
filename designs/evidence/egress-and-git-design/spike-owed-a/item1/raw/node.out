@@ -1,0 +1,40 @@
+node-fetch-NODE_EXTRA_CA_CERTS https://allowed.oa.test/ OK 200
+node-fetch-NODE_EXTRA_CA_CERTS https://denied.oa.test/ REFUSED UNSPECIFIED permitted subtree violation
+node-fetch-NODE_EXTRA_CA_CERTS https://sub.allowed.oa.test/ OK 200
+node-fetch-NODE_EXTRA_CA_CERTS https://viaint.oa.test/ REFUSED UNSPECIFIED permitted subtree violation
+node-fetch-NODE_EXTRA_CA_CERTS https://198.19.50.20/ OK 200
+node-fetch-NODE_EXTRA_CA_CERTS https://ctl.oa.test/ OK 200
+node-fetch-NODE_EXTRA_CA_CERTS https://unk.oa.test/ REFUSED UNABLE_TO_VERIFY_LEAF_SIGNATURE unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca
+node-fetch-NODE_EXTRA_CA_CERTS https://xallowed.oa.test/ OK 200
+node-fetch-NODE_EXTRA_CA_CERTS https://xdenied.oa.test/ REFUSED UNSPECIFIED permitted subtree violation
+node-fetch-NODE_EXTRA_CA_CERTS https://198.19.50.20:8443/ REFUSED UNSPECIFIED excluded subtree violation
+node-fetch-use-openssl-ca https://allowed.oa.test/ OK 200
+node-fetch-use-openssl-ca https://denied.oa.test/ REFUSED UNSPECIFIED permitted subtree violation
+node-fetch-use-openssl-ca https://sub.allowed.oa.test/ OK 200
+node-fetch-use-openssl-ca https://viaint.oa.test/ REFUSED UNSPECIFIED permitted subtree violation
+node-fetch-use-openssl-ca https://198.19.50.20/ OK 200
+node-fetch-use-openssl-ca https://ctl.oa.test/ OK 200
+node-fetch-use-openssl-ca https://unk.oa.test/ REFUSED UNABLE_TO_VERIFY_LEAF_SIGNATURE unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca
+node-fetch-use-openssl-ca https://xallowed.oa.test/ OK 200
+node-fetch-use-openssl-ca https://xdenied.oa.test/ REFUSED UNSPECIFIED permitted subtree violation
+node-fetch-use-openssl-ca https://198.19.50.20:8443/ REFUSED UNSPECIFIED excluded subtree violation
+npm-NODE_EXTRA_CA_CERTS https://allowed.oa.test/ OK rc=0
+npm-NODE_EXTRA_CA_CERTS https://denied.oa.test/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-NODE_EXTRA_CA_CERTS https://sub.allowed.oa.test/ OK rc=0
+npm-NODE_EXTRA_CA_CERTS https://viaint.oa.test/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-NODE_EXTRA_CA_CERTS https://198.19.50.20/ OK rc=0
+npm-NODE_EXTRA_CA_CERTS https://ctl.oa.test/ OK rc=0
+npm-NODE_EXTRA_CA_CERTS https://unk.oa.test/ REFUSED rc=1 npm error code UNABLE_TO_VERIFY_LEAF_SIGNATURE npm error errno UNABLE_TO_VERIFY_LEAF_SIGNATURE 
+npm-NODE_EXTRA_CA_CERTS https://xallowed.oa.test/ OK rc=0
+npm-NODE_EXTRA_CA_CERTS https://xdenied.oa.test/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-NODE_EXTRA_CA_CERTS https://198.19.50.20:8443/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-cafile https://allowed.oa.test/ OK rc=0
+npm-cafile https://denied.oa.test/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-cafile https://sub.allowed.oa.test/ OK rc=0
+npm-cafile https://viaint.oa.test/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-cafile https://198.19.50.20/ OK rc=0
+npm-cafile https://ctl.oa.test/ OK rc=0
+npm-cafile https://unk.oa.test/ REFUSED rc=1 npm error code UNABLE_TO_VERIFY_LEAF_SIGNATURE npm error errno UNABLE_TO_VERIFY_LEAF_SIGNATURE 
+npm-cafile https://xallowed.oa.test/ OK rc=0
+npm-cafile https://xdenied.oa.test/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 
+npm-cafile https://198.19.50.20:8443/ REFUSED rc=1 npm error code UNSPECIFIED npm error errno UNSPECIFIED 

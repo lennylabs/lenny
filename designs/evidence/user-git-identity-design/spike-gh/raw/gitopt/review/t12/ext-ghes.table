@@ -1,0 +1,104 @@
+ok-forwarded       rc=0   ghes-pr-create                           writes=createPullRequest,updatePullRequest,requestReviews refused=
+ok-forwarded       rc=0   ghes-pr-edit-title                       writes=updatePullRequest refused=
+ok-forwarded       rc=0   ghes-pr-edit-meta                        writes=updatePullRequest,POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers,addLabelsToL refused=
+ok-forwarded       rc=0   ghes-pr-comment                          writes=addComment refused=
+ok-forwarded       rc=0   ghes-pr-close                            writes=addComment,closePullRequest refused=
+ok-forwarded       rc=0   ghes-pr-reopen                           writes=reopenPullRequest refused=
+ok-forwarded       rc=0   ghes-pr-ready                            writes=markPullRequestReadyForReview refused=
+ok-forwarded       rc=0   ghes-pr-ready-undo                       writes=convertPullRequestToDraft refused=
+ok-forwarded       rc=0   ghes-pr-lock                             writes=lockLockable refused=
+ok-forwarded       rc=0   ghes-pr-unlock                           writes=unlockLockable refused=
+no-write-at-stub   rc=0   ghes-pr-checkout                         writes= refused=
+ok-refused-denied  rc=1   ghes-D-pr-review-approve                 writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-review-comment                 writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-review-changes                 writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge                          writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge-squash                   writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge-rebase                   writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge-admin                    writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge-auto                     writes= refused=mutation field "enablePullRequestAutoMerge" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge-disable-auto             writes= refused=mutation field "disablePullRequestAutoMerge" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-merge-queue                    writes= refused=mutation field "enablePullRequestAutoMerge" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-update-branch                  writes= refused=mutation field "updatePullRequestBranch" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-pr-revert                         writes= refused=mutation field "revertPullRequest" is denied by the preset
+ok-forwarded       rc=0   ghes-issue-create                        writes=createIssue refused=
+ok-forwarded       rc=0   ghes-issue-edit                          writes=addLabelsToLabelable,updateIssue refused=
+ok-forwarded       rc=0   ghes-issue-comment                       writes=addComment refused=
+ok-forwarded       rc=0   ghes-issue-close                         writes=closeIssue refused=
+ok-forwarded       rc=0   ghes-issue-reopen                        writes=reopenIssue refused=
+ok-forwarded       rc=0   ghes-issue-lock                          writes=lockLockable refused=
+ok-forwarded       rc=0   ghes-issue-unlock                        writes=unlockLockable refused=
+ok-forwarded       rc=0   ghes-issue-pin                           writes=pinIssue refused=
+ok-forwarded       rc=0   ghes-issue-unpin                         writes=unpinIssue refused=
+ok-forwarded       rc=0   ghes-issue-delete                        writes=deleteIssue refused=
+ok-forwarded       rc=0   ghes-issue-transfer                      writes=transferIssue refused=
+ok-forwarded       rc=0   ghes-issue-develop                       writes=createLinkedBranch refused=
+ok-forwarded       rc=0   ghes-release-create                      writes=POST /api/v3/repos/acme/widgets/releases refused=
+ok-forwarded       rc=0   ghes-release-edit                        writes=PATCH /api/v3/repos/acme/widgets/releases/1 refused=
+ok-forwarded       rc=0   ghes-release-upload                      writes=POST /api/uploads/x refused=
+ok-forwarded       rc=0   ghes-release-delete-asset                writes=DELETE /a refused=
+ok-forwarded       rc=0   ghes-release-delete                      writes=DELETE /x refused=
+ok-forwarded       rc=0   ghes-repo-create                         writes=createRepository refused=
+ok-forwarded       rc=0   ghes-repo-edit                           writes=PATCH /api/v3/repos/acme/widgets refused=
+ok-forwarded       rc=0   ghes-repo-rename                         writes=PATCH /api/v3/repos/acme/widgets refused=
+ok-forwarded       rc=0   ghes-repo-fork                           writes=POST /api/v3/repos/acme/widgets/forks refused=
+OVER               rc=1   ghes-repo-sync                           writes= refused=POST .../merge-upstream is denied by the preset
+ok-forwarded       rc=0   ghes-repo-archive                        writes=archiveRepository refused=
+ok-forwarded       rc=0   ghes-repo-unarchive                      writes=unarchiveRepository refused=
+ok-forwarded       rc=0   ghes-repo-deploy-key-add                 writes=POST /api/v3/repos/acme/widgets/keys refused=
+ok-forwarded       rc=0   ghes-repo-deploy-key-delete              writes=DELETE /api/v3/repos/acme/widgets/keys/1 refused=
+ok-forwarded       rc=0   ghes-repo-autolink-create                writes=POST /api/v3/repos/acme/widgets/autolinks refused=
+ok-forwarded       rc=0   ghes-repo-delete                         writes=DELETE /api/v3/repos/acme/old refused=
+ok-forwarded       rc=0   ghes-workflow-run                        writes=POST /api/v3/repos/acme/widgets/actions/workflows/1/dispatches refused=
+ok-forwarded       rc=0   ghes-workflow-enable                     writes=PUT /api/v3/repos/acme/widgets/actions/workflows/1/enable refused=
+ok-forwarded       rc=0   ghes-workflow-disable                    writes=PUT /api/v3/repos/acme/widgets/actions/workflows/1/disable refused=
+ok-forwarded       rc=0   ghes-run-cancel                          writes=POST /api/v3/repos/acme/widgets/actions/runs/1/cancel refused=
+ok-forwarded       rc=0   ghes-run-rerun                           writes=POST /api/v3/repos/acme/widgets/actions/runs/1/rerun refused=
+ok-forwarded       rc=0   ghes-run-delete                          writes=DELETE /api/v3/repos/acme/widgets/actions/runs/1 refused=
+ok-forwarded       rc=0   ghes-secret-set                          writes=PUT /api/v3/repos/acme/widgets/actions/secrets/S refused=
+ok-forwarded       rc=0   ghes-secret-delete                       writes=DELETE /api/v3/repos/acme/widgets/actions/secrets/S refused=
+ok-forwarded       rc=0   ghes-variable-set                        writes=POST /api/v3/repos/acme/widgets/actions/variables refused=
+ok-forwarded       rc=0   ghes-variable-delete                     writes=DELETE /api/v3/repos/acme/widgets/actions/variables/V refused=
+ok-forwarded       rc=0   ghes-label-create                        writes=POST /api/v3/repos/acme/widgets/labels refused=
+ok-forwarded       rc=0   ghes-label-edit                          writes=PATCH /api/v3/repos/acme/widgets/labels/bug refused=
+ok-forwarded       rc=0   ghes-label-delete                        writes=DELETE /api/v3/repos/acme/widgets/labels/bug refused=
+ok-forwarded       rc=0   ghes-label-clone                         writes=POST /api/v3/repos/acme/widgets/labels refused=
+ok-forwarded       rc=0   ghes-gist-create                         writes=POST /api/v3/gists refused=
+ok-forwarded       rc=0   ghes-gist-edit                           writes=POST /api/v3/gists/1234 refused=
+ok-forwarded       rc=0   ghes-gist-rename                         writes=POST /api/v3/gists/1234 refused=
+ok-forwarded       rc=0   ghes-gist-delete                         writes=DELETE /api/v3/gists/1234 refused=
+ok-forwarded       rc=1   ghes-project-create                      writes=createProjectV2 refused=
+no-write-at-stub   rc=1   ghes-project-edit                        writes= refused=
+no-write-at-stub   rc=1   ghes-project-item-add                    writes= refused=
+no-write-at-stub   rc=1   ghes-project-item-create                 writes= refused=
+no-write-at-stub   rc=1   ghes-project-field-create                writes= refused=
+no-write-at-stub   rc=1   ghes-project-close                       writes= refused=
+no-write-at-stub   rc=1   ghes-project-delete                      writes= refused=
+no-write-at-stub   rc=0   ghes-discussion-cli                      writes= refused=
+no-write-at-stub   rc=1   ghes-discussion-create                   writes= refused=
+ok-forwarded       rc=0   ghes-discussion-comment                  writes=addDiscussionComment refused=
+ok-forwarded       rc=0   ghes-discussion-edit                     writes=updateDiscussion refused=
+ok-forwarded       rc=0   ghes-discussion-api                      writes=createDiscussion refused=
+ok-forwarded       rc=0   ghes-cache-delete                        writes=DELETE /api/v3/repos/acme/widgets/actions/caches/1 refused=
+ok-forwarded       rc=0   ghes-cache-delete-all                    writes=DELETE /api/v3/repos/acme/widgets/actions/caches/1 refused=
+no-write-at-stub   rc=0   ghes-ruleset-list                        writes= refused=
+ok-forwarded       rc=0   ghes-api-post-issue                      writes=POST /api/v3/repos/acme/widgets/issues refused=
+ok-forwarded       rc=0   ghes-api-patch-pr                        writes=PATCH /api/v3/repos/acme/widgets/pulls/7 refused=
+ok-forwarded       rc=0   ghes-api-post-pr-comment                 writes=POST /api/v3/repos/acme/widgets/issues/7/comments refused=
+OVER               rc=1   ghes-api-put-contents                    writes= refused=PUT .../contents/** is denied by the preset
+OVER               rc=1   ghes-api-delete-branch-protection        writes= refused=DELETE .../branches/{branch}/protection is denied by the preset
+ok-forwarded       rc=0   ghes-api-dispatch                        writes=POST /api/v3/repos/acme/widgets/dispatches refused=
+ok-forwarded       rc=0   ghes-api-gql-addcomment                  writes=addComment refused=
+no-write-at-stub   rc=0   ghes-api-custom-header                   writes= refused=
+ok-refused-denied  rc=1   ghes-D-api-post-review                   writes= refused=POST .../pulls/{n}/reviews is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-post-review-events            writes= refused=POST .../pulls/{n}/reviews/{id}/events is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-put-merge                     writes= refused=PUT .../pulls/{n}/merge is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-update-branch                 writes= refused=PUT .../pulls/{n}/update-branch is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-post-merges                   writes= refused=POST .../merges is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-post-ref                      writes= refused=POST .../git/refs/** is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-patch-ref                     writes= refused=PATCH .../git/refs/** is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-delete-ref                    writes= refused=DELETE .../git/refs/** is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-gql-review                    writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-gql-merge                     writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   ghes-D-api-gql-commit                    writes= refused=mutation field "createCommitOnBranch" is denied by the preset
+TOTAL 103 {'ok-forwarded': 66, 'ok-refused-denied': 23, 'OVER': 3, 'MISS': 0, 'no-write-at-stub': 11}

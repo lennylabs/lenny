@@ -1,0 +1,86 @@
+envoy main ready (envoy/final.json) "version": "b2d89e0ae53916f28770771fbdd49c5c99c5c5a2/1.40.2/Clean/RELEASE/BoringSSL"
+t=0s envoy=running exit=0 cx_active: 5 cx_active: 5 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=1s envoy=running exit=0 cx_active: 116 cx_active: 116 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=2s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=3s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=4s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=6s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=7s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=8s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=9s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=10s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=11s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=12s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=13s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=14s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=15s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=16s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=18s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=19s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=20s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+   [t=20s wallclock 09:17:48.610 applied graceful: OK]
+t=21s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=22s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=23s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=24s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=25s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=26s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=27s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=29s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=30s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=31s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=32s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=33s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=34s envoy=running exit=0 cx_active: 118 cx_active: 118 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=35s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 65 
+t=36s envoy=running exit=0 cx_active: 1 cx_active: 1 active: 1 draining: 0 live: 1 state: 0 total_connections: 65 
+t=37s envoy=running exit=0 cx_active: 1 cx_active: 1 active: 1 draining: 0 live: 1 state: 0 total_connections: 65 
+t=38s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 65 
+t=40s envoy=running exit=0 cx_active: 1 cx_active: 1 active: 1 draining: 0 live: 1 state: 0 total_connections: 65 
+t=41s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 1 
+t=42s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 1 
+t=43s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 1 
+t=44s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 1 
+t=45s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=46s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=47s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=48s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=50s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=51s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=52s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=53s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=54s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=55s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=56s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=57s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=58s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=60s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=61s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=62s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=63s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=64s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=65s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=66s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=67s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=68s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=69s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=70s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+--- soak client:
+start wallclock 09:17:28.524
+t=  10.0s open=200 ticks=1898 (+1898) ended=map[]
+t=  20.0s open=200 ticks=3888 (+1990) ended=map[]
+t=  30.0s open=200 ticks=5888 (+2000) ended=map[]
+t=  40.0s open=0 ticks=6715 (+827) ended=map[EOF (clean close):200]
+t=  50.0s open=0 ticks=6715 (+0) ended=map[EOF (clean close):200]
+t=  60.0s open=0 ticks=6715 (+0) ended=map[EOF (clean close):200]
+t=  70.0s open=0 ticks=6715 (+0) ended=map[EOF (clean close):200]
+SUMMARY n=200 codes=map[200:200] end_reasons=map[EOF (clean close):200] ticks_total=6715 ticks_per_tunnel=[32..35] connect_lat p50=0s p99=10ms lifetime min=31.81s p50=33.23s max=34.98s elapsed=70.1s
+ENDS (tunnels closed by the peer) rel. to start: first=33.48s p50=34.29s last=35.13s; wallclock first=09:18:02.004 last=09:18:03.657
+--- probes (first line of each distinct outcome run):
+probe t=   1.0s 09:17:29.526 -> 200 +data (1.007s)
+probe t=  33.1s 09:18:01.579 -> 200 then EOF (660ms)
+probe t=  34.0s 09:18:02.527 -> 200 +data (1.005s)
+probe t=  41.0s 09:18:09.529 -> dial error: dial tcp 198.19.0.10:3128: connect: connection refused (1ms)
+--- envoy log tail:
+[2026-11-02 09:17:28.076][1][info][main] [source/server/server.cc:467]   envoy.quic.connection_id_generator: envoy.quic.connection_id_generator.quic_lb, envoy.quic.deterministic_connection_id_generato
+[2026-11-02 09:17:28.076][1][info][main] [source/server/server.cc:467]   envoy.filters.network: envoy.echo, envoy.ext_authz, envoy.filters.network.connection_limit, envoy.filters.network.direct_respon

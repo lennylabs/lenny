@@ -1,0 +1,16 @@
+### lfsother-422-clone rc=0
+$ (git clone -q https://gitlab.example.test/acme/lfsother.git c 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+error: external filter 'git-lfs filter-process' failed
+fatal: o.bin: smudge filter lfs failed
+warning: Clone succeeded, but checkout failed.
+You can inspect what was checked out with 'git status'
+and retry with 'git restore --source=HEAD :/'
+
+git-exit=128
+### lfsother-422-push rc=0
+$ (git push origin HEAD:refs/heads/lenny/lfsother-422-13 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsother.git/info/lfs.locksverify true
+[3787061019502a052d533890ab7e99e19638e3b493206fbc4c0efd19b47eec4b] the action names lfs-store.example.test, which netagent cannot deliver a credential to: [422] the action names lfs-store.example.test
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsother.git'
+git-exit=1

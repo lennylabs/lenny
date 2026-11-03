@@ -1,0 +1,6 @@
+dns_cache.egress_dns.host_removed: 1
+dns_cache.egress_dns.num_hosts: 0
+   [21:03:54] GET http://rebind.spike/ -> => http=000 connect=503 time=0.002246s size=0 
+rebind.spike:80 200 - via_upstream 198.18.0.20:80
+rebind.spike:80 200 DC downstream_remote_disconnect 198.18.0.20:80
+rebind.spike:80 503 DF dns_resolution_failure{address_denied} None

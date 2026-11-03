@@ -1,0 +1,2 @@
+lfsothera-422-clone            rc=0     0.1s netagent={'lfs-download:allowed': 2, 'lfs-action-credential:undeliverable': 2} stub={}
+lfsothera-422-push             rc=0     0.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 1, 'lfs-action-credential:undeliverable': 1} stub={}

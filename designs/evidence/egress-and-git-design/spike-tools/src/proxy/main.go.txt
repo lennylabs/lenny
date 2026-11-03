@@ -1,0 +1,72 @@
+// Logging HTTP CONNECT / absolute-form forward proxy for the spike.
+package main
+
+import (
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"time"
+)
+
+func main() {
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pa := r.Header.Get("Proxy-Authorization")
+		if r.Method == http.MethodConnect {
+			log.Printf("CONNECT %s ua=%q proxy-auth=%q from=%s", r.Host, r.Header.Get("User-Agent"), pa, r.RemoteAddr)
+			up, err := net.DialTimeout("tcp", r.Host, 15*time.Second)
+			if err != nil {
+				log.Printf("CONNECT %s dial error: %v", r.Host, err)
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				up.Close()
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			c, buf, err := hj.Hijack()
+			if err != nil {
+				up.Close()
+				return
+			}
+			if buf.Reader.Buffered() > 0 {
+				b, _ := buf.Reader.Peek(buf.Reader.Buffered())
+				up.Write(b)
+			}
+			go func() { io.Copy(up, c); up.Close() }()
+			io.Copy(c, up)
+			c.Close()
+			return
+		}
+		if !r.URL.IsAbs() {
+			log.Printf("ORIGIN-FORM %s %s (not a proxy request) host=%s", r.Method, r.URL, r.Host)
+			http.Error(w, "proxy only", http.StatusBadRequest)
+			return
+		}
+		log.Printf("ABSOLUTE %s %s auth=%q proxy-auth=%q ua=%q", r.Method, r.URL.String(), r.Header.Get("Authorization"), pa, r.Header.Get("User-Agent"))
+		r.RequestURI = ""
+		r.Header.Del("Proxy-Authorization")
+		r.Header.Del("Proxy-Connection")
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			log.Printf("ABSOLUTE %s error: %v", r.URL, err)
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, vs := range resp.Header {
+			for _, v := range vs {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+	})
+	log.Printf("proxy listening on :3128")
+	log.Fatal(http.ListenAndServe(":3128", h))
+}

@@ -1,0 +1,29 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata: {name: ob-egress-group}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions: [{key: lenny.dev/agent-namespace, operator: In, values: ["true"]}]
+    resourceRules:
+    - {apiGroups: [""], apiVersions: ["v1"], operations: ["CREATE","UPDATE"], resources: ["pods","pods/status"], scope: Namespaced}
+  variables:
+  - name: hasNew
+    expression: "has(object.metadata.labels) && 'lenny.dev/egress-group' in object.metadata.labels"
+  - name: hasOld
+    expression: "oldObject != null && has(oldObject.metadata.labels) && 'lenny.dev/egress-group' in oldObject.metadata.labels"
+  validations:
+  - expression: >-
+      (!variables.hasNew && !variables.hasOld) ||
+      (variables.hasNew && variables.hasOld && object.metadata.labels['lenny.dev/egress-group'] == oldObject.metadata.labels['lenny.dev/egress-group']) ||
+      (variables.hasNew && !variables.hasOld && object.metadata.labels['lenny.dev/egress-group'] != '' &&
+       request.userInfo.username in ['system:serviceaccount:lenny-system:lenny-gateway','system:serviceaccount:lenny-system:lenny-controller'])
+    message: "only the gateway and the controller may set lenny.dev/egress-group, and only from unset"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata: {name: ob-egress-group}
+spec:
+  policyName: ob-egress-group
+  validationActions: [Deny]

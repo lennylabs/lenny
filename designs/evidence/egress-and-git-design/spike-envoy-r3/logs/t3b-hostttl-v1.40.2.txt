@@ -1,0 +1,20 @@
+   [21:02:07] dnsd: rebind.spike A=198.18.0.20 ttl=1
+   [21:02:07] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:47962 => http=200 connect=200 time=0.016477s size=45 
+   [21:02:07] dnsd: rebind.spike A=10.99.0.5 ttl=1
+   [21:02:09] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:50170 => http=200 connect=200 time=0.002630s size=45 
+   [21:02:11] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:50186 => http=200 connect=200 time=0.003885s size=45 
+   [21:02:13] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:50198 => http=200 connect=200 time=0.002146s size=45 
+   [21:02:15] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:50206 => http=200 connect=200 time=0.002125s size=45 
+   [21:02:17] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:50214 => http=200 connect=200 time=0.002692s size=45 
+   [21:02:20] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:33366 => http=200 connect=200 time=0.002350s size=45 
+dns_cache.egress_dns.dns_address_filter_out: 6
+dns_cache.egress_dns.host_added: 1
+dns_cache.egress_dns.host_removed: 0
+dns_cache.egress_dns.num_hosts: 1
+## idle for 12 s (longer than host_ttl 5s), then CONNECT
+dns_cache.egress_dns.host_removed: 1
+dns_cache.egress_dns.num_hosts: 0
+   [21:02:32] GET http://rebind.spike/ -> => http=000 connect=503 time=0.004225s size=0 
+rebind.spike:80 200 - via_upstream 198.18.0.20:80
+rebind.spike:80 200 DC downstream_remote_disconnect 198.18.0.20:80
+rebind.spike:80 503 DF dns_resolution_failure{address_denied} None

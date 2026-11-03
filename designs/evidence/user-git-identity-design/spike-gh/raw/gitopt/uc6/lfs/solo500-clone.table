@@ -1,0 +1,1 @@
+solo500-clone-clone            rc=0    71.9s netagent={'lfs-download:allowed': 18, 'lfs-action-credential:held': 18, 'lfs-transfer-get:allowed': 18} stub={'gitlab.ex GET 500': 18}

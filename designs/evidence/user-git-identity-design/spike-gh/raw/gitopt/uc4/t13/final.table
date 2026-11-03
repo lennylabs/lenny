@@ -1,0 +1,68 @@
+ok-forwarded       rc=0   final-mr-create                          writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+no-write-at-stub   rc=0   final-mr-view                            writes= refused=
+no-write-at-stub   rc=0   final-mr-list                            writes= refused=
+ok-refused-denied  rc=0   final-D-mr-approve                       writes= refused=POST /projects/*/merge_requests/*/approve is denied by the preset
+OVER               rc=0   final-mr-revoke-D                        writes= refused=POST /projects/*/merge_requests/*/unapprove is denied by the preset
+ok-refused-denied  rc=0   final-D-mr-merge                         writes= refused=PUT /projects/*/merge_requests/*/merge is denied by the preset
+ok-refused-denied  rc=0   final-D-mr-rebase                        writes= refused=PUT /projects/*/merge_requests/*/rebase is denied by the preset
+ok-forwarded       rc=0   final-mr-note                            writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes refused=
+ok-forwarded       rc=0   final-mr-update                          writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   final-mr-close                           writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   final-issue-create                       writes=POST /api/v4/projects/acme%2Fwidgets/issues refused=
+ok-refused-denied  rc=0   final-D-raw-7-approve                    writes= refused=POST /projects/*/merge_requests/*/approve is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-approve-numeric            writes= refused=POST /projects/*/merge_requests/*/approve is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-approve-fullencoded        writes= refused=a declared encoded segment holds the route word "merge_requests"
+ok-refused-denied  rc=0   final-D-raw-7-approve-case               writes= refused=POST /projects/*/merge_requests/*/approve is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-approve-trailing           writes= refused=POST /projects/*/merge_requests/*/approve is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-unapprove                  writes= refused=POST /projects/*/merge_requests/*/unapprove is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-unapprove-numeric          writes= refused=POST /projects/*/merge_requests/*/unapprove is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-unapprove-fullencoded      writes= refused=a declared encoded segment holds the route word "merge_requests"
+ok-refused-denied  rc=0   final-D-raw-7-unapprove-case             writes= refused=POST /projects/*/merge_requests/*/unapprove is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-unapprove-trailing         writes= refused=POST /projects/*/merge_requests/*/unapprove is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-merge                      writes= refused=PUT /projects/*/merge_requests/*/merge is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-merge-numeric              writes= refused=PUT /projects/*/merge_requests/*/merge is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-merge-fullencoded          writes= refused=a declared encoded segment holds the route word "merge_requests"
+ok-refused-denied  rc=0   final-D-raw-7-merge-case                 writes= refused=PUT /projects/*/merge_requests/*/merge is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-merge-trailing             writes= refused=PUT /projects/*/merge_requests/*/merge is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-rebase                     writes= refused=PUT /projects/*/merge_requests/*/rebase is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-rebase-numeric             writes= refused=PUT /projects/*/merge_requests/*/rebase is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-rebase-fullencoded         writes= refused=a declared encoded segment holds the route word "merge_requests"
+ok-refused-denied  rc=0   final-D-raw-7-rebase-case                writes= refused=PUT /projects/*/merge_requests/*/rebase is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-rebase-trailing            writes= refused=PUT /projects/*/merge_requests/*/rebase is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-reset_approvals            writes= refused=PUT /projects/*/merge_requests/*/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-reset_approvals-numeric    writes= refused=PUT /projects/*/merge_requests/*/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-reset_approvals-fullencoded writes= refused=a declared encoded segment holds the route word "merge_requests"
+ok-refused-denied  rc=0   final-D-raw-7-reset_approvals-case       writes= refused=PUT /projects/*/merge_requests/*/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-reset_approvals-trailing   writes= refused=PUT /projects/*/merge_requests/*/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   final-D-raw-7-cancel_merge_when_pipeline_succeeds writes= refused=POST /projects/*/merge_requests/*/cancel_merge_when_pipeline_succeeds is denied 
+ok-refused-denied  rc=0   final-D-raw-7-cancel_merge_when_pipeline_succeeds-numeric writes= refused=POST /projects/*/merge_requests/*/cancel_merge_when_pipeline_succeeds is denied 
+ok-refused-denied  rc=0   final-D-raw-7-cancel_merge_when_pipeline_succeeds-fullencoded writes= refused=a declared encoded segment holds the route word "merge_requests"
+ok-refused-denied  rc=0   final-D-raw-7-cancel_merge_when_pipeline_succeeds-case writes= refused=POST /projects/*/merge_requests/*/cancel_merge_when_pipeline_succeeds is denied 
+ok-refused-denied  rc=0   final-D-raw-7-cancel_merge_when_pipeline_succeeds-trailing writes= refused=POST /projects/*/merge_requests/*/cancel_merge_when_pipeline_succeeds is denied 
+ok-refused-denied  rc=0   final-D-raw-override                     writes= refused=method override header X-Http-Method-Override refused
+ok-refused-denied  rc=0   final-D-gql-accept                       writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-refused-denied  rc=0   final-D-gql-alias                        writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-refused-denied  rc=0   final-D-gql-fragment                     writes= refused=a mutation's root selections must be fields
+ok-forwarded       rc=0   final-gql-neighbour-set-draft            writes=mergeRequestSetDraft refused=
+ok-forwarded       rc=0   final-raw-neighbour-update               writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+OVER               rc=0   final-T-desc-merge                       writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-desc-approve-line2               writes= refused=a string in the body matches a denied pattern: "/approve"
+OVER               rc=0   final-T-desc-escaped                     writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-desc-cr                          writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-query                            writes= refused=a write takes no query string under this preset
+OVER               rc=0   final-T-form                             writes= refused=a write takes a JSON body under this preset, got "application/x-www-form-urlenco
+OVER               rc=0   final-T-update                           writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-note                             writes= refused=a string in the body matches a denied pattern: "/approve"
+OVER               rc=0   final-T-discussion                       writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-issue-note                       writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-commit-comment                   writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-gql-note                         writes= refused=a string in the document matches a denied pattern: "/approve"
+OVER               rc=0   final-T-gql-note-var                     writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-gql-mr-create                    writes= refused=a string in the document matches a denied pattern: "/merge"
+OVER               rc=0   final-T-glab-create                      writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-glab-note                        writes= refused=a string in the body matches a denied pattern: "/merge"
+ok-forwarded       rc=0   final-T-fp-path-in-desc                  writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+OVER               rc=0   final-T-fp-mention                       writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-codeblock                        writes= refused=a string in the body matches a denied pattern: "/merge"
+OVER               rc=0   final-T-other-action                     writes= refused=a string in the body matches a denied pattern: "/target_branch"
+TOTAL 67 {'ok-forwarded': 8, 'ok-refused-denied': 37, 'OVER': 20, 'MISS': 0, 'no-write-at-stub': 2}

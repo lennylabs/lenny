@@ -1,0 +1,3 @@
+module spike/validator
+
+go 1.26

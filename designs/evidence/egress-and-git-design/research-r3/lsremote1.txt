@@ -1,0 +1,17 @@
+https://github.com/git/git.git => ebdc087dc99d68bb340c282b2ba5f722def28d19	HEAD 
+https://ssh.github.com/git/git.git => fatal: unable to access 'https://ssh.github.com/git/git.git/': LibreSSL SSL_connect: SSL_ERROR_SYSCALL in connection to ssh.github.com:443  
+https://gitlab.com/gitlab-org/gitlab-shell.git => d0811aefc5cc7ee4c55cec08938d4c4606451baf	HEAD 
+https://gitlab.com/gitlab-org/security-products/analyzers/semgrep.git => ae62d4e8112d16d13c20e562f4e1e1ea6aae7eeb	HEAD 
+https://altssh.gitlab.com/gitlab-org/gitlab-shell.git => fatal: unable to access 'https://altssh.gitlab.com/gitlab-org/gitlab-shell.git/': LibreSSL/3.3.6: error:1404B42E:SSL routines:ST_CONNECT:tlsv1 alert protocol version 
+https://bitbucket.org/atlassian/atlassian-connect-express.git => d00fcf7836356c3156b29cb5710e29d6da4c03c9	HEAD 
+https://codeberg.org/forgejo/forgejo.git => a00f3fdf2029236b11b9342b9d5e641b341d4f89	HEAD 633b9601f6b5bf6d8bf348eaa29499147ece57f0	refs/pull/2477/HEAD 
+https://gitea.com/gitea/tea.git => 397e6300ec93937b7745ebcc19b95ca9cb30568b	HEAD 
+https://git.sr.ht/~sircmpwn/scdoc => 24be30ef17d5ca0162f11b35258c8fa2413d556a	HEAD 
+https://gitolite.kernel.org/pub/scm/git/git.git => fatal: unable to access 'https://gitolite.kernel.org/pub/scm/git/git.git/': Send failure: Broken pipe 
+https://git.kernel.org/pub/scm/git/git.git => ebdc087dc99d68bb340c282b2ba5f722def28d19	HEAD 
+https://review.opendev.org/openstack/nova => b2943668af1a36e8c1288abce1bdba7419c0df6a	HEAD 
+https://review.opendev.org/a/openstack/nova => 2026-11-01 20:46:03.732 git-credential-manager[4174:347261798] +[IMKClient subclass]: chose IMKClient_Modern 2026-11-01 20:46:03.732 git-credential-manager[4174:347261798
+https://gerrit.wikimedia.org/mediawiki/core => fatal: repository 'https://gerrit.wikimedia.org/mediawiki/core/' not found 
+https://gerrit.wikimedia.org/r/mediawiki/core => f2d0b8a80c87d4242bd27d29b448a61aea9c7038	HEAD 
+https://android-review.googlesource.com/platform/build => 045a3d6a3e359633a14853a5a5e1e4f2a11cbdae	HEAD 
+https://android.googlesource.com/platform/build => 045a3d6a3e359633a14853a5a5e1e4f2a11cbdae	HEAD 

@@ -1,0 +1,24 @@
+('opaque', 'unset', '100') peak streams [489, 435, 478] median 478 fail before kill 0 oom 3 of 3
+('opaque', '50MiB', '100') peak streams [1279, 1235, 1296] median 1279 fail before kill 0 oom 3 of 3
+('int-c1-u1', 'unset', '100') peak streams [448, 440, 433] median 440 fail before kill 0 oom 3 of 3
+('int-c1-u1', '50MiB', '100') peak streams [577, 586, 609] median 586 fail before kill 0 oom 3 of 3
+('int-c2-u1', 'unset', '100') peak streams [565, 567, 539] median 565 fail before kill 0 oom 3 of 3
+('int-c2-u1', '50MiB', '100') peak streams [737, 729, 734] median 734 fail before kill 0 oom 3 of 3
+('int-c1-u2', 'unset', '100') peak streams [828, 869, 880] median 869 fail before kill 0 oom 3 of 3
+('int-c1-u2', '50MiB', '100') peak streams [1193, 1175, 1158] median 1175 fail before kill 0 oom 3 of 3
+('int-c2-u2', 'unset', '100') peak streams [1227, 1250, 1184] median 1227 fail before kill 0 oom 3 of 3
+('int-c2-u2', '50MiB', '100') peak streams [1617, 1624, 1725] median 1624 fail before kill 0 oom 3 of 3
+('gz-c1-u1', 'unset', '100') peak streams [317, 349, 356] median 349 fail before kill 0 oom 3 of 3
+('gz-c1-u1', '50MiB', '100') peak streams [464, 447, 465] median 464 fail before kill 0 oom 3 of 3
+('gz-c2-u1', 'unset', '100') peak streams [357, 393, 389] median 389 fail before kill 0 oom 3 of 3
+('gz-c2-u1', '50MiB', '100') peak streams [538, 524, 533] median 533 fail before kill 0 oom 3 of 3
+('gz-c1-u2', 'unset', '100') peak streams [602, 591, 569] median 591 fail before kill 0 oom 3 of 3
+('gz-c1-u2', '50MiB', '100') peak streams [750, 750, 717] median 750 fail before kill 0 oom 3 of 3
+('gz-c2-u2', 'unset', '100') peak streams [915, 997, 928] median 928 fail before kill 0 oom 3 of 3
+('gz-c2-u2', '50MiB', '100') peak streams [965, 1060, 1072] median 1060 fail before kill 0 oom 3 of 3
+('opaque', 'unset', '20') peak streams [502, 496] median 499.0 fail before kill 0 oom 2 of 2
+('opaque', '50MiB', '20') peak streams [1288, 1290] median 1289.0 fail before kill 0 oom 2 of 2
+('int-c1-u1', 'unset', '20') peak streams [469, 461] median 465.0 fail before kill 0 oom 2 of 2
+('int-c1-u1', '50MiB', '20') peak streams [610, 619] median 614.5 fail before kill 0 oom 2 of 2
+('int-c2-u2', 'unset', '20') peak streams [1235, 1162] median 1198.5 fail before kill 0 oom 2 of 2
+('int-c2-u2', '50MiB', '20') peak streams [1480, 1500] median 1490.0 fail before kill 0 oom 2 of 2

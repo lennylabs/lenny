@@ -1,0 +1,66 @@
+// mkcerts DIR: a CA pair (ca1, ca2), and server certificates: good, rotated, expired, badsan, otherca, rsa.
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+var serial int64 = 100
+
+func wr(dir, n, typ string, b []byte) {
+	os.WriteFile(filepath.Join(dir, n), pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: b}), 0o644)
+}
+func ca(dir, n string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial++
+	t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: n}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(24 * time.Hour * 365)}
+	d, _ := x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+	c, _ := x509.ParseCertificate(d)
+	wr(dir, n+".pem", "CERTIFICATE", d)
+	return c, k
+}
+func leaf(dir, n string, c *x509.Certificate, ck *ecdsa.PrivateKey, sans []string, nb, na time.Time, useRSA bool) {
+	serial++
+	t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: n}, DNSNames: sans, NotBefore: nb, NotAfter: na, KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
+	os.MkdirAll(filepath.Join(dir, n), 0o755)
+	var pub any
+	if useRSA {
+		k, _ := rsa.GenerateKey(rand.Reader, 2048)
+		pub = &k.PublicKey
+		b, _ := x509.MarshalPKCS8PrivateKey(k)
+		wr(filepath.Join(dir, n), "tls.key", "PRIVATE KEY", b)
+	} else {
+		k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		pub = &k.PublicKey
+		b, _ := x509.MarshalPKCS8PrivateKey(k)
+		wr(filepath.Join(dir, n), "tls.key", "PRIVATE KEY", b)
+	}
+	d, _ := x509.CreateCertificate(rand.Reader, t, c, pub, ck)
+	wr(filepath.Join(dir, n), "tls.crt", "CERTIFICATE", d)
+}
+func main() {
+	dir := os.Args[1]
+	c1, k1 := ca(dir, "ca1")
+	c2, k2 := ca(dir, "ca2")
+	n := time.Now()
+	sans := []string{"lenny-egress.lenny-system.svc", "lenny-git-mirror.lenny-system.svc", "lenny-egress-authz.lenny-system.svc", "*.lenny-system.svc"}
+	y := n.Add(24 * time.Hour * 90)
+	leaf(dir, "envoyclient", c1, k1, []string{"lenny-egress-client.lenny-system.svc"}, n.Add(-time.Hour), y, false)
+	leaf(dir, "othersvc", c1, k1, []string{"lenny-other.lenny-system.svc"}, n.Add(-time.Hour), y, false)
+	leaf(dir, "good", c1, k1, sans, n.Add(-time.Hour), y, false)
+	leaf(dir, "rotated", c1, k1, sans, n.Add(-time.Hour), y, false)
+	leaf(dir, "rsa", c1, k1, sans, n.Add(-time.Hour), y, true)
+	leaf(dir, "ca2leaf", c2, k2, sans, n.Add(-time.Hour), y, false)
+	leaf(dir, "expired", c1, k1, sans, n.Add(-48*time.Hour), n.Add(-time.Hour), false)
+	leaf(dir, "badsan", c1, k1, []string{"wrong.example"}, n.Add(-time.Hour), y, false)
+}

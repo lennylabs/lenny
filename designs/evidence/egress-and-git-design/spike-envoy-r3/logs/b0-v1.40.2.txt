@@ -1,0 +1,49 @@
+envoy v1.40.2 ready (envoy/final.yaml)
+## allow (good) https through tunnel
+hello from target, you are [2001:db8:1::10]:36956
+
+=> http=200 connect=200 time=0.045066s size=50
+## deny (bad)
+curl: (7) CONNECT tunnel failed, response 403
+
+=> http=000 connect=403 time=0.001875s size=0
+## no credential
+## blocked host
+curl: (7) CONNECT tunnel failed, response 403
+
+=> http=000 connect=403 time=0.000888s size=0
+## chain-a (http_11_proxy transport socket via proxy A)
+
+curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+=> http=000 connect=200 time=0.104992s size=0
+## chain-b (forwarded CONNECT to proxy B, credential injected)
+hello from target, you are [2001:db8:1::4]:59750
+
+=> http=200 connect=200 time=0.005508s size=49
+## chain-o (ORIGINAL_DST from header)
+curl: (7) CONNECT tunnel failed, response 503
+
+=> http=000 connect=503 time=0.001434s size=0
+## chain-m (ORIGINAL_DST from ext_authz dynamic metadata)
+hello from target, you are [2001:db8:1::4]:59764
+
+=> http=200 connect=200 time=0.004334s size=49
+## proxy B log (last 6)
+2026/11/02 04:51:20 UPSTREAM peer=198.18.0.10:40820 CONNECT target.spike:443 host=target.spike:443 headers=map[Proxy-Authorization:[Basic dGVuYW50LWdsb2JleDp1cHN0cmVhbS1zZWNyZXQ=]]
+2026/11/02 04:51:20 UPSTREAM tunnel 198.18.0.10:40820 -> [2001:db8:1::20]:443
+2026/11/02 04:51:20 UPSTREAM peer=198.18.0.10:40828 CONNECT target.spike:443 host=target.spike:443 headers=map[Proxy-Authorization:[Basic dGVuYW50LWdsb2JleDp1cHN0cmVhbS1zZWNyZXQ=]]
+2026/11/02 04:51:20 UPSTREAM tunnel 198.18.0.10:40828 -> [2001:db8:1::20]:443
+## fail-closed: authz stopped
+curl: (7) CONNECT tunnel failed, response 503
+
+=> http=000 connect=503 time=1.009732s size=0
+## after authz restart
+
+hello from target, you are [2001:db8:1::10]:36972
+=> http=200 connect=200 time=0.012489s size=50
+## access log
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+    d=json.loads(l); print(d['authority'],d['code'],d['flags'],d['details'],'up='+d['up_host'],d['up_cluster'],'tenant='+d['tenant'],'reason='+d['deny_reason'])
+                                                                                                                                     ~~~~~~~~~^~~~~~~~~~~~~~~~~
+TypeError: can only concatenate str (not "NoneType") to str

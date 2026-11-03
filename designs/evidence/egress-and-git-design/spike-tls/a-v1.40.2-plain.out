@@ -1,0 +1,23 @@
+direct allow, inner TLS                      TLS ok ech_accepted=false: 200 OK hello from target, you are 198.18.0.10:55598 err=<nil> (36.7ms)
+deny token                                   CONNECT 403 Forbidden err=<nil> (10.0ms)
+no credential                                CONNECT 403 Forbidden err=<nil> (14.1ms)
+blocked host                                 CONNECT 403 Forbidden err=<nil> (12.6ms)
+chain forwarded, cred injected               TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::4]:37438 err=<nil> (20.2ms
+chain upstream 407                           CONNECT 407 Proxy Authentication Required err=<nil> (10.7ms)
+chain upstream 403                           CONNECT 403 Forbidden err=<nil> (18.9ms)
+server-name check, match                     TLS ok ech_accepted=false: 200 OK hello from target, you are 198.18.0.10:55602 err=<nil> (24.0ms)
+server-name check, mismatch                   err=tls: EOF (114.8ms)
+server-name check, no name                    err=tls: EOF (111.2ms)
+server-name check, plaintext                 plain:  err=EOF (122.3ms)
+SSRF name to private                         CONNECT 503 Service Unavailable err=<nil> (11.2ms)
+SSRF name to loopback                        CONNECT 503 Service Unavailable err=<nil> (16.7ms)
+SSRF name to metadata                        CONNECT 503 Service Unavailable err=<nil> (9.2ms)
+SSRF literal loopback                        CONNECT 503 Service Unavailable err=<nil> (22.4ms)
+SSRF mapped literal                          CONNECT 503 Service Unavailable err=<nil> (10.7ms)
+IPv6 literal public                          TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:2::10]:55210 err=<nil> (13.7m
+decision service stopped                     CONNECT 503 Service Unavailable err=<nil> (1002.8ms)
+decision service back                        TLS ok ech_accepted=false: 200 OK hello from target, you are 198.18.0.10:55134 err=<nil> (29.7ms)
+-- chained upstream saw (last):
+2026/11/02 19:40:25 UPSTREAM 407 (got "")
+-- access log peer of last direct allow:
+{'peer': '198.18.0.2:52636', 'code': 503, 'tenant': None, 'up_host': None}

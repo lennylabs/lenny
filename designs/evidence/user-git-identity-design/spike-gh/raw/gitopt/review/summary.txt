@@ -1,0 +1,26 @@
+== t15 literal TOTALS [(('com', 'REACHED'), 92), (('com', 'refused'), 18), (('generic', 'REACHED'), 8), (('ghe', 'REACHED'), 58), (('ghe', 'refused'), 18), (('ghes', 'REACHED'), 92), (('ghes', 'refused'), 18), (('gl', 'REACHED'), 82), (('gl', 'refused'), 12)]
+== t15 decode TOTALS [(('com', 'REACHED'), 62), (('com', 'refused'), 48), (('generic', 'REACHED'), 8), (('ghe', 'REACHED'), 28), (('ghe', 'refused'), 48), (('ghes', 'REACHED'), 62), (('ghes', 'refused'), 48), (('gl', 'REACHED'), 38), (('gl', 'refused'), 56)]
+== t15 strict TOTALS [(('com', 'REACHED'), 50), (('com', 'refused'), 60), (('generic', 'REACHED'), 8), (('ghe', 'REACHED'), 16), (('ghe', 'refused'), 60), (('ghes', 'REACHED'), 50), (('ghes', 'refused'), 60), (('gl', 'REACHED'), 20), (('gl', 'refused'), 74)]
+== t15 strictext TOTALS [(('com', 'REACHED'), 50), (('com', 'refused'), 60), (('generic', 'REACHED'), 8), (('ghe', 'REACHED'), 16), (('ghe', 'refused'), 60), (('ghes', 'REACHED'), 50), (('ghes', 'refused'), 60), (('gl', 'REACHED'), 20), (('gl', 'refused'), 74)]
+T15-DONE
+== t18 decode TOTALS [(('com', 'REACHED'), 94), (('com', 'refused'), 26), (('ghes', 'REACHED'), 94), (('ghes', 'refused'), 26)]
+== t18 strictext TOTALS [(('com', 'REACHED'), 25), (('com', 'refused'), 95), (('ghes', 'REACHED'), 25), (('ghes', 'refused'), 95)]
+T18-DONE
+== attack decode ghes: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 980 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 247  === not PASS 
+== attack decode ghcom: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 980 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 247  === not PASS 
+== attack decode ghe: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 980 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 247  === not PASS 
+== attack strict ghes: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 990 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 237  === not PASS 
+== attack strict ghcom: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 990 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 237  === not PASS 
+== attack strict ghe: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 990 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 237  === not PASS 
+ATTACK-DONE
+== t12 strict gh-cli ghes: TOTAL 103 {'ok-forwarded': 69, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 11}
+== t12 strict gh-cli com: TOTAL 103 {'ok-forwarded': 69, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 11}
+== t12 strict gh-deb ghes: TOTAL 103 {'ok-forwarded': 69, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 11}
+== t12 strict gh-deb com: TOTAL 103 {'ok-forwarded': 69, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 11}
+T12-13-17-DONE
+T14-DONE
+== t12 ext ghes: TOTAL 103 {'ok-forwarded': 66, 'ok-refused-denied': 23, 'OVER': 3, 'MISS': 0, 'no-write-at-stub': 11}
+== t12 ext com: TOTAL 103 {'ok-forwarded': 66, 'ok-refused-denied': 23, 'OVER': 3, 'MISS': 0, 'no-write-at-stub': 11}
+T12EXT-DONE
+T16-DONE
+ALL-DONE

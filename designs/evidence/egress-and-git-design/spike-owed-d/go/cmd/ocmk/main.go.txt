@@ -1,0 +1,85 @@
+// ocmk: generates the spike's PKIs.
+//  ocmk all DIR               public test CA and upstream leaf, egress CA and Envoy leaf, evidence CA and leaves, other CA
+//  ocmk leaf CA.pem KEY.pem OUT HOST...   a leaf under a given CA (for the hostile upstream signed by the per-pod CA)
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+var serial int64 = time.Now().Unix()
+
+func wr(p, typ string, b []byte) {
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	if err := os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: b}), 0o644); err != nil {
+		panic(err)
+	}
+}
+func ca(dir, n string) (*x509.Certificate, *ecdsa.PrivateKey) {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial++
+	t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: n}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(24 * 365 * time.Hour)}
+	d, err := x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+	if err != nil {
+		panic(err)
+	}
+	c, _ := x509.ParseCertificate(d)
+	wr(filepath.Join(dir, n+".pem"), "CERTIFICATE", d)
+	kb, _ := x509.MarshalPKCS8PrivateKey(k)
+	wr(filepath.Join(dir, n+"-key.pem"), "PRIVATE KEY", kb)
+	return c, k
+}
+func leaf(dir, n string, c *x509.Certificate, ck *ecdsa.PrivateKey, sans ...string) {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial++
+	t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: sans[0]}, DNSNames: sans, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * 90 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
+	d, err := x509.CreateCertificate(rand.Reader, t, c, &k.PublicKey, ck)
+	if err != nil {
+		panic(err)
+	}
+	wr(filepath.Join(dir, n, "tls.crt"), "CERTIFICATE", d)
+	kb, _ := x509.MarshalPKCS8PrivateKey(k)
+	wr(filepath.Join(dir, n, "tls.key"), "PRIVATE KEY", kb)
+}
+func main() {
+	switch os.Args[1] {
+	case "all":
+		d := os.Args[2]
+		p, pk := ca(d, "pub-ca")
+		leaf(d, "up", p, pk, "*.example.test", "example.test", "attacker.example")
+		e, ek := ca(d, "egress-ca")
+		leaf(d, "envoy", e, ek, "lenny-egress.lenny-system.svc")
+		v, vk := ca(d, "evidence-ca")
+		for _, s := range []string{"lenny-evidence", "lenny-egress-authz", "lenny-git-mirror", "lenny-token-service", "lenny-other"} {
+			leaf(d, s, v, vk, s+".lenny-system.svc")
+		}
+		x, xk := ca(d, "other-ca")
+		leaf(d, "foreign-authz", x, xk, "lenny-egress-authz.lenny-system.svc")
+	case "leaf":
+		cb, _ := os.ReadFile(os.Args[2])
+		kb, _ := os.ReadFile(os.Args[3])
+		cd, _ := pem.Decode(cb)
+		kd, _ := pem.Decode(kb)
+		c, err := x509.ParseCertificate(cd.Bytes)
+		if err != nil {
+			panic(err)
+		}
+		ki, err := x509.ParsePKCS8PrivateKey(kd.Bytes)
+		if err != nil {
+			panic(err)
+		}
+		leaf(filepath.Dir(os.Args[4]), filepath.Base(os.Args[4]), c, ki.(*ecdsa.PrivateKey), os.Args[5:]...)
+	default:
+		fmt.Println("usage")
+	}
+}

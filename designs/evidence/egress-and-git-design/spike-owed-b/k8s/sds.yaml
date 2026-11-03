@@ -1,0 +1,7 @@
+resources:
+- "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.Secret
+  name: server
+  tls_certificate:
+    certificate_chain: {filename: /certs/live/tls.crt}
+    private_key: {filename: /certs/live/tls.key}
+    watched_directory: {path: /certs/live}

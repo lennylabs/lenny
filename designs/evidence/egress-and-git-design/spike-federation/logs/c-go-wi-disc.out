@@ -1,0 +1,8 @@
+### TEST c-go-wi-disc  23:21:58
+### docker run --network spikefed-net --env-file env/azwi.env -e DISABLE_ID=0 -e SLEEP=1 spikefed-go:t go run ./cmd/azwi
+ERR token: WorkloadIdentityCredential: unable to resolve an endpoint: server response error:
+ Get "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https%3A%2F%2Flogin.azure.test%2F22222222-2222-2222-2222-222222222222%2Foauth2%2Fv2.0%2Fauthorize": dial tcp: lookup login.microsoftonline.com on 127.0.0.11:53: server misbehaving. To troubleshoot, visit https://aka.ms/azsdk/go/identity/troubleshoot#workload
+ERR token: WorkloadIdentityCredential: unable to resolve an endpoint: server response error:
+ Get "https://login.microsoftonline.com/common/discovery/instance?api-version=1.1&authorization_endpoint=https%3A%2F%2Flogin.azure.test%2F22222222-2222-2222-2222-222222222222%2Foauth2%2Fv2.0%2Fauthorize": dial tcp: lookup login.microsoftonline.com on 127.0.0.11:53: server misbehaving. To troubleshoot, visit https://aka.ms/azsdk/go/identity/troubleshoot#workload
+### exit 0
+### server log:

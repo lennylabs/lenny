@@ -1,0 +1,83 @@
+
+### Baseline repeat: 2000/s for 180s, all regulated
+   busy: n=168864 codes={'200': 160651, '403': 8213, '503': 1077} p50=0.96 p90=3.29 p99=42.96 p99.9=143.6 max=171.1 ms
+   small: n=168897 codes={'200': 160503, '403': 8394, '503': 1161} p50=0.96 p90=3.29 p99=43.99 p99.9=144.2 max=171.8 ms
+   elapsed 180s ticks=340056 broken=0
+   commits=359911 p50=0.5 p95=4.6 p99=96.4 p99.9=151.2 max=152.4 ms over bound=2249 refused=2238 (0.622%)
+   replica groups=147930 size p50=1 p99=3 commit us p50=308 p99=2522
+   replica groups=178079 size p50=1 p99=3 commit us p50=300 p99=2352
+   wait events in the seconds when refusals rose:
+     43 refused=289 
+     57 refused=308 LWLock:WALWrite|2 IO:WalSync|1 
+     72 refused=2238 
+
+### Drain off: the commit path alone: 2000/s for 180s, all regulated
+   busy: n=168294 codes={'200': 159675, '403': 8619, '503': 1371} p50=0.94 p90=3.11 p99=79.03 p99.9=149.6 max=173.4 ms
+   small: n=168952 codes={'200': 160487, '403': 8465, '503': 1385} p50=0.94 p90=3.13 p99=77.51 p99.9=148.8 max=175.8 ms
+   elapsed 180s ticks=339075 broken=0
+   commits=359924 p50=0.5 p95=5.2 p99=129.9 p99.9=151.2 max=154.0 ms over bound=2782 refused=2756 (0.766%)
+   replica groups=147303 size p50=1 p99=3 commit us p50=305 p99=2344
+   replica groups=178042 size p50=1 p99=3 commit us p50=300 p99=2130
+   wait events in the seconds when refusals rose:
+     36 refused=1732 IO:WalSync|1 
+     65 refused=1903 LWLock:WALWrite|2 IO:WalSync|1 
+     66 refused=2744 
+     80 refused=2756 cpu|2 
+
+### Evidence with 4 CPUs: 2000/s for 180s, all regulated
+   busy: n=168462 codes={'200': 160149, '403': 8313, '503': 1144} p50=0.94 p90=3.17 p99=76.04 p99.9=143.6 max=164.9 ms
+   small: n=169261 codes={'200': 160718, '403': 8543, '503': 1131} p50=0.94 p90=3.20 p99=75.20 p99.9=144.3 max=171.1 ms
+   elapsed 180s ticks=339809 broken=0
+   commits=359907 p50=0.5 p95=4.8 p99=106.1 p99.9=151.1 max=153.1 ms over bound=2287 refused=2275 (0.632%)
+   replica groups=147556 size p50=1 p99=3 commit us p50=305 p99=2552
+   replica groups=177052 size p50=1 p99=3 commit us p50=299 p99=2264
+   wait events in the seconds when refusals rose:
+     36 refused=1544 IO:WalWrite|1 
+     65 refused=2210 IO:WalSync|1 cpu|1 
+     66 refused=2275 IO:WalSync|1 LWLock:WALWrite|1 
+
+### A slower WAL flush, emulated with commit_delay=3 ms (a stand-in for a networked disk): 2000/s for 180s, all regulated
+   busy: n=169925 codes={'200': 161497, '403': 8428, '503': 134} p50=8.35 p90=11.25 p99=55.06 p99.9=123.8 max=168.8 ms
+   small: n=169826 codes={'200': 161292, '403': 8534, '503': 117} p50=8.34 p90=11.25 p99=53.92 p99.9=124.5 max=165.1 ms
+   elapsed 180s ticks=341722 broken=0
+   commits=359894 p50=7.2 p95=10.5 p99=45.3 p99.9=134.5 max=152.4 ms over bound=252 refused=251 (0.070%)
+   replica groups=39495 size p50=4 p99=10 commit us p50=4305 p99=8104
+   replica groups=39567 size p50=5 p99=11 commit us p50=4310 p99=7777
+   wait events in the seconds when refusals rose:
+     43 refused=3 LWLock:WALWrite|1 cpu|1 
+     72 refused=251 cpu|1 
+
+### commit_delay=3 ms, 500/s: 500/s for 120s, all regulated
+   busy: n=27381 codes={'200': 25972, '403': 1409, '503': 96} p50=7.91 p90=10.96 p99=18.37 p99.9=124.4 max=152.3 ms
+   small: n=27424 codes={'200': 26038, '403': 1386, '503': 99} p50=7.84 p90=10.92 p99=18.14 p99.9=126.3 max=152.3 ms
+   elapsed 120s ticks=56759 broken=0
+   commits=59984 p50=7.0 p95=10.3 p99=21.4 p99.9=151.0 max=152.2 ms over bound=196 refused=195 (0.325%)
+   replica groups=21966 size p50=1 p99=3 commit us p50=4412 p99=6336
+   replica groups=23771 size p50=1 p99=3 commit us p50=4514 p99=6510
+   wait events in the seconds when refusals rose:
+     36 refused=165 LWLock:WALWrite|1 cpu|1 
+     50 refused=195 cpu|2 
+
+### Cursor miss: is a sequence out of order across batches?
+   busy: n=50138 codes={'200': 47641, '403': 2497} p50=0.63 p90=1.32 p99=3.39 p99.9=62.6 max=98.4 ms
+   small: n=49863 codes={'200': 47364, '403': 2499} p50=0.63 p90=1.32 p99=3.40 p99.9=62.7 max=101.0 ms
+   elapsed 60s ticks=113890 broken=0
+   batches whose first sequence is at or below an earlier batch's last, per stream: 
+export: delivered=574022 parts skipped by index=0 cursor positions=10000 cursor bytes=735564 26.7s
+  not delivered: t3 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19fa97957 22984 22984
+  not delivered: t3 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19fa97957 22420 22420
+  not delivered: t4 egress.accesslog lenny-egress.lenny-system.svc w1-1a19fa978cb 11306 11306
+  not delivered: t3 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19fa97957 22778 22778
+  not delivered: t3 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19fa97957 22196 22196
+exportcheck: delivered lines=574022 distinct=574022 stored records=575484 duplicates=0 not delivered=1462 delivered but not stored=0
+gaps: positions=10000 records present=575485, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0
+
+### SIGTERM with intake stopped first (the b5 run's handler kept accepting, so it never emptied and docker killed it at 30 s), restart at +15 s: 2,000/s, 120 s
+   stop took 31 s; 04:30:48.940318 <nil>
+   busy: n=112917 codes={'200': 107239, '403': 5678, '503': 6838} p50=0.60 p90=1.33 p99=5.22 p99.9=31.6 max=70.7 ms
+   small: n=119999 codes={'200': 113950, '403': 6049, '503': 182} p50=0.53 p90=1.01 p99=3.42 p99.9=25.6 max=133.0 ms
+   elapsed 120s ticks=221189 broken=0
+gaps: positions=10000 records present=1101729, gaps a consumer sees=17 missing inside them=22766 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=19 records in those tails=191; positions with nothing stored=0 records=0
+   producer: emitted="emitted":657004 dropped="prodDropped":15749 sendFail="sendFail":313 refused="refused":7020
+   writers: w0-1a19fab6e36|f w1-1a19fab6f07|f w1-1a19fad1120|f 

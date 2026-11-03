@@ -1,0 +1,84 @@
+### upstream speaks HTTP/1.1 only: each intercepted stream has its own tunnel to Envoy
+== opaque (client TLS inside) n=100: hold up=100 fail=0 ticks=100 
+   idle current=13.6 anon=4.9 | loaded current=27.6 anon=18.4 sock=0.0 kernel=2.8 peak=28.8 MiB | goroutines=304 heapInuse=10.4 stackInuse=2.7 MiB active=100
+   per stream: current 143.1 KiB, anon 138.1 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 143.9 KiB, anon 138.7 KiB, sock 0.0 KiB, goroutines 3.0
+== intercepted, client h1, upstream h1, scrub on n=100: hold up=100 fail=0 ticks=100 
+   idle current=11.6 anon=3.0 | loaded current=28.8 anon=18.7 sock=0.0 kernel=2.8 peak=29.6 MiB | goroutines=304 heapInuse=9.0 stackInuse=3.1 MiB active=100
+   per stream: current 175.6 KiB, anon 160.7 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 180.5 KiB, anon 161.0 KiB, sock 0.0 KiB, goroutines 3.0
+== opaque (client TLS inside) n=1000: hold up=1000 fail=0 ticks=3000 
+   idle current=13.5 anon=5.0 | loaded current=137.9 anon=121.1 sock=0.0 kernel=9.9 peak=138.4 MiB | goroutines=3004 heapInuse=87.2 stackInuse=20.5 MiB active=1000
+   per stream: current 127.4 KiB, anon 118.9 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 127.0 KiB, anon 119.0 KiB, sock 0.0 KiB, goroutines 3.0
+== intercepted, client h1, upstream h1, scrub on n=1000: hold up=1000 fail=0 ticks=2076 
+   idle current=13.3 anon=4.9 | loaded current=139.4 anon=122.6 sock=0.0 kernel=9.8 peak=140.2 MiB | goroutines=3004 heapInuse=86.9 stackInuse=24.9 MiB active=1000
+   per stream: current 129.1 KiB, anon 120.5 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 131.8 KiB, anon 122.6 KiB, sock 0.0 KiB, goroutines 3.0
+== opaque (client TLS inside) n=5000: hold up=5000 fail=0 ticks=18320 
+   idle current=13.7 anon=4.9 | loaded current=594.5 anon=547.8 sock=0.0 kernel=40.6 peak=596.3 MiB | goroutines=15004 heapInuse=437.8 stackInuse=101.5 MiB active=5000
+   per stream: current 118.9 KiB, anon 111.2 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 120.5 KiB, anon 112.7 KiB, sock 0.0 KiB, goroutines 3.0
+== intercepted, client h1, upstream h1, scrub on n=5000: hold up=5000 fail=0 ticks=18374 
+   idle current=13.8 anon=5.0 | loaded current=583.9 anon=536.1 sock=0.0 kernel=40.5 peak=585.1 MiB | goroutines=15004 heapInuse=396.0 stackInuse=120.6 MiB active=5000
+   per stream: current 116.8 KiB, anon 108.8 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 117.5 KiB, anon 109.6 KiB, sock 0.0 KiB, goroutines 3.0
+== intercepted, client h2, upstream h1, scrub on n=1000: hold up=1000 fail=0 ticks=2036 
+   idle current=13.7 anon=4.9 | loaded current=114.9 anon=101.6 sock=0.0 kernel=6.1 peak=115.7 MiB | goroutines=3012 heapInuse=75.4 stackInuse=17.3 MiB active=4
+   per stream: current 103.6 KiB, anon 98.9 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 105.6 KiB, anon 101.0 KiB, sock 0.0 KiB, goroutines 3.0
+== intercepted, client h1, upstream h1, gzip body decoded n=1000: hold up=1000 fail=0 ticks=2074 
+   idle current=13.6 anon=4.9 | loaded current=192.3 anon=175.4 sock=0.0 kernel=9.9 peak=193.2 MiB | goroutines=3004 heapInuse=123.6 stackInuse=24.5 MiB active=1000
+   per stream: current 182.9 KiB, anon 174.6 KiB, sock 0.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 179.9 KiB, anon 170.8 KiB, sock 0.0 KiB, goroutines 3.0
+### upstream speaks HTTP/2: intercepted streams multiplex onto few tunnels
+== intercepted, client h1, upstream h2, scrub on n=100: hold up=100 fail=0 ticks=100 
+   idle current=13.5 anon=4.9 | loaded current=22.3 anon=12.4 sock=0.0 kernel=2.4 peak=22.8 MiB | goroutines=205 heapInuse=5.7 stackInuse=2.1 MiB active=100
+   per stream: current 89.8 KiB, anon 76.6 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 109.4 KiB, anon 97.4 KiB, sock 0.0 KiB, goroutines 2.0
+== intercepted, client h2, upstream h2, scrub on n=100: hold up=100 fail=0 ticks=100 
+   idle current=13.3 anon=4.9 | loaded current=21.7 anon=12.2 sock=0.0 kernel=2.1 peak=22.0 MiB | goroutines=207 heapInuse=6.6 stackInuse=2.2 MiB active=1
+   per stream: current 85.6 KiB, anon 74.4 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 80.7 KiB, anon 75.4 KiB, sock 0.0 KiB, goroutines 2.0
+== intercepted, client h1, upstream h2, scrub on n=1000: hold up=1000 fail=0 ticks=2064 
+   idle current=15.3 anon=6.9 | loaded current=87.6 anon=74.0 sock=0.0 kernel=5.8 peak=88.0 MiB | goroutines=2008 heapInuse=39.2 stackInuse=13.1 MiB active=1000
+   per stream: current 74.1 KiB, anon 68.7 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 73.8 KiB, anon 61.7 KiB, sock 0.0 KiB, goroutines 2.0
+== intercepted, client h2, upstream h2, scrub on n=1000: hold up=1000 fail=0 ticks=2060 
+   idle current=13.3 anon=5.0 | loaded current=64.1 anon=53.6 sock=0.0 kernel=2.3 peak=66.2 MiB | goroutines=2016 heapInuse=34.0 stackInuse=15.8 MiB active=4
+   per stream: current 52.0 KiB, anon 49.8 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 53.2 KiB, anon 50.0 KiB, sock 0.0 KiB, goroutines 2.0
+== intercepted, client h1, upstream h2, scrub on n=5000: hold up=5000 fail=0 ticks=18344 
+   idle current=13.5 anon=4.9 | loaded current=321.9 anon=294.2 sock=0.0 kernel=20.9 peak=322.9 MiB | goroutines=10024 heapInuse=200.5 stackInuse=66.9 MiB active=5000
+   per stream: current 63.2 KiB, anon 59.2 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 63.3 KiB, anon 59.3 KiB, sock 0.0 KiB, goroutines 2.0
+== intercepted, client h2, upstream h2, scrub on n=5000: hold up=5000 fail=0 ticks=18344 
+   idle current=13.5 anon=4.9 | loaded current=230.8 anon=221.3 sock=0.0 kernel=2.6 peak=231.7 MiB | goroutines=10064 heapInuse=149.2 stackInuse=63.9 MiB active=20
+   per stream: current 44.5 KiB, anon 44.3 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 45.9 KiB, anon 45.6 KiB, sock 0.0 KiB, goroutines 2.0
+== intercepted, client h2, upstream h2, gzip body decoded n=1000: hold up=1000 fail=0 ticks=2076 
+   idle current=15.3 anon=7.0 | loaded current=110.2 anon=100.9 sock=0.0 kernel=2.3 peak=110.9 MiB | goroutines=2016 heapInuse=78.4 stackInuse=14.4 MiB active=4
+   per stream: current 97.1 KiB, anon 96.2 KiB, sock 0.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 99.5 KiB, anon 98.4 KiB, sock 0.0 KiB, goroutines 2.0
+### slow consumer: 20 large responses, client stops reading
+== client stalls, upstream h2, h2-stream-buf=0 (0 is the net/http default) n=20: hold up=20 fail=0 ticks=0 
+   idle current=13.5 anon=4.9 | loaded current=176.9 anon=89.4 sock=78.5 kernel=2.2 peak=178.2 MiB | goroutines=45 heapInuse=84.7 stackInuse=1.1 MiB active=20
+   per stream: current 8365.4 KiB, anon 4325.4 KiB, sock 4017.2 KiB, goroutines 2.0
+   after a forced GC, per stream: current 8380.2 KiB, anon 4332.6 KiB, sock 4017.2 KiB, goroutines 2.0
+== client stalls, upstream h2, h2-stream-buf=262144 (0 is the net/http default) n=20: hold up=20 fail=0 ticks=0 
+   idle current=13.8 anon=4.9 | loaded current=73.6 anon=12.1 sock=52.3 kernel=2.1 peak=74.1 MiB | goroutines=45 heapInuse=6.5 stackInuse=1.0 MiB active=20
+   per stream: current 3058.2 KiB, anon 367.2 KiB, sock 2678.0 KiB, goroutines 2.0
+   after a forced GC, per stream: current 3045.4 KiB, anon 372.0 KiB, sock 2678.0 KiB, goroutines 2.0
+== client stalls, upstream h1 n=20: hold up=20 fail=0 ticks=0 
+   idle current=11.3 anon=2.9 | loaded current=161.9 anon=12.2 sock=140.1 kernel=2.2 peak=162.7 MiB | goroutines=64 heapInuse=6.0 stackInuse=1.1 MiB active=20
+   per stream: current 7710.6 KiB, anon 475.0 KiB, sock 7174.0 KiB, goroutines 3.0
+   after a forced GC, per stream: current 7726.6 KiB, anon 479.2 KiB, sock 7174.0 KiB, goroutines 3.0
+== client stalls, opaque n=20: hold up=20 fail=0 ticks=0 
+   idle current=11.5 anon=3.0 | loaded current=142.2 anon=9.3 sock=123.8 kernel=2.2 peak=143.0 MiB | goroutines=64 heapInuse=4.0 stackInuse=1.0 MiB active=20
+   per stream: current 6692.8 KiB, anon 325.6 KiB, sock 6339.8 KiB, goroutines 3.0
+   after a forced GC, per stream: current 6720.6 KiB, anon 330.4 KiB, sock 6339.8 KiB, goroutines 3.0
+### a 64 MiB hard limit: tunnels until the container dies, GOMEMLIMIT unset and set
+opaque, GOMEMLIMIT unset: state=[exited oom=true] last client line before the end: 
+intercepted h1, GOMEMLIMIT unset: state=[exited oom=true] last client line before the end: 
+opaque, GOMEMLIMIT=50MiB: state=[exited oom=true] last client line before the end: 
+intercepted h1, GOMEMLIMIT=50MiB: state=[exited oom=true] last client line before the end: 

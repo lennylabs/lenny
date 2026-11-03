@@ -1,0 +1,40 @@
+### SIGKILL of one replica at t=120, restart at t=140, load continues to t=240: 2,000/s, 2,500 tenants, 25 regulated
+   replica 1 just before the kill: "buffered":117336624 "records":611342
+   busy: n=235471 codes={'200': 223824, '403': 11647, '503': 4345} p50=0.60 p90=1.34 p99=3.52 p99.9=30.0 max=149.7 ms
+   small: n=240029 codes={'200': 227896, '403': 12133, '503': 93} p50=0.52 p90=0.94 p99=2.38 p99.9=12.4 max=97.1 ms
+   elapsed 240s ticks=451720 broken=0
+  gap t1449 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19f83dede: 47..87
+  gap t88 egress.decision lenny-egress-authz.lenny-system.svc d1a19f83dede: 28..52
+  gap t657 egress.decision lenny-egress-authz.lenny-system.svc d1a19f83dede: 32..59
+gaps: positions=10000 records present=2099385, gaps a consumer sees=2504 missing inside them=101861 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=43 records in those tails=826; positions with nothing stored=0 records=0
+   producer: emitted=1332899 prodDropped=234 sendFail=95 queued=0 commitOK=46041 refused=4438
+   stored records: 2099333 in 30114 rows; writers: w0-1a19f83dd4a,w1-1a19f83de1e,w1-1a19f8611f3
+   writer incarnations (table added by this prototype): w0-1a19f83dd4a|f w1-1a19f83de1e|f w1-1a19f8611f3|f 
+
+### SIGKILL at t=70, the load ends 5 s later, restart afterwards: the tail has no later record to expose it
+   busy: n=73850 codes={'200': 70185, '403': 3665, '503': 982} p50=0.61 p90=1.41 p99=5.33 p99.9=26.9 max=48.3 ms
+   small: n=75066 codes={'200': 71333, '403': 3733, '503': 19} p50=0.53 p90=0.98 p99=3.30 p99.9=22.8 max=129.5 ms
+   elapsed 75s ticks=141518 broken=0
+  gap t2451 egress.decision lenny-egress-authz.lenny-system.svc d1a19f87fddd: 23..27
+  gap t819 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19f87fddd: 59..64
+  gap t989 egress.decision lenny-egress-authz.lenny-system.svc d1a19f87fddd: 30..30
+gaps: positions=9575 records present=662390, gaps a consumer sees=2032 missing inside them=24910 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=294 records in those tails=2425; positions with nothing stored=3 records=158
+   producer: emitted=417140 prodDropped=0 sendFail=10 queued=0 commitOK=14812 refused=1001
+   stored records: 662377 in 14179 rows; writers: w0-1a19f87fc80,w1-1a19f87fd3f,w1-1a19f895c13
+   writer incarnations (table added by this prototype): w0-1a19f87fc80|f w1-1a19f87fd3f|f w1-1a19f895c13|f 
+
+### SIGTERM (graceful) at t=70, restart at t=80, load to t=120
+03:52:51.463119 evidence replica 1 writer w1-1a19f89cffc flush 1m0s size 4194304
+   busy: n=119158 codes={'200': 113322, '403': 5836, '503': 817} p50=0.60 p90=1.36 p99=4.02 p99.9=35.8 max=148.3 ms
+   small: n=119926 codes={'200': 113941, '403': 5985, '503': 20} p50=0.52 p90=0.94 p99=2.57 p99.9=26.0 max=78.0 ms
+   elapsed 120s ticks=227263 broken=0
+  gap t1889 egress.decision lenny-egress-authz.lenny-system.svc d1a19f89d08b: 32..49
+  gap t1234 egress.decision lenny-egress-authz.lenny-system.svc d1a19f89d08b: 34..49
+  gap t662 egress.tunnel lenny-egress-authz.lenny-system.svc d1a19f89d08b: 35..60
+gaps: positions=10000 records present=1030601, gaps a consumer sees=2497 missing inside them=61134 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=15 records in those tails=220; positions with nothing stored=0 records=0
+   producer: emitted=669275 prodDropped=0 sendFail=20 queued=0 commitOK=24335 refused=837
+   stored records: 1030579 in 21261 rows; writers: w0-1a19f89cf6f,w1-1a19f89cffc,w1-1a19f8b71fb
+   writer incarnations (table added by this prototype): w0-1a19f89cf6f|f w1-1a19f89cffc|f w1-1a19f8b71fb|f 

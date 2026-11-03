@@ -1,0 +1,38 @@
+r1-T clone64 run=1 rc=0 ms=521 
+r1-T clone64 run=2 rc=0 ms=484 
+r1-T clone64 run=3 rc=0 ms=482 
+r1-T lsremote10 ms=115
+r1-T push64 rc=0 ms=2626 
+r1-P clone64 run=1 rc=0 ms=498 
+r1-P clone64 run=2 rc=0 ms=474 
+r1-P clone64 run=3 rc=0 ms=476 
+r1-P lsremote10 ms=87
+r1-P push64 rc=0 ms=2543 
+r1-L clone64 run=1 rc=0 ms=489 
+r1-L clone64 run=2 rc=0 ms=491 
+r1-L clone64 run=3 rc=0 ms=472 
+r1-L lsremote10 ms=87
+r1-L push64 rc=0 ms=2513 
+r1-opaque clone64 run=1 rc=0 ms=1647 
+r1-opaque clone64 run=2 rc=0 ms=1611 
+r1-opaque clone64 run=3 rc=0 ms=1644 
+r1-opaque lsremote10 ms=101
+r2-T clone64 run=1 rc=0 ms=480 
+r2-T clone64 run=2 rc=0 ms=476 
+r2-T clone64 run=3 rc=0 ms=472 
+r2-T lsremote10 ms=116
+r2-T push64 rc=0 ms=2531 
+r2-P clone64 run=1 rc=0 ms=499 
+r2-P clone64 run=2 rc=0 ms=468 
+r2-P clone64 run=3 rc=0 ms=468 
+r2-P lsremote10 ms=90
+r2-P push64 rc=0 ms=2606 
+r2-L clone64 run=1 rc=0 ms=491 
+r2-L clone64 run=2 rc=0 ms=468 
+r2-L clone64 run=3 rc=0 ms=472 
+r2-L lsremote10 ms=101
+r2-L push64 rc=0 ms=2573 
+r2-opaque clone64 run=1 rc=0 ms=1619 
+r2-opaque clone64 run=2 rc=0 ms=1633 
+r2-opaque clone64 run=3 rc=0 ms=1619 
+r2-opaque lsremote10 ms=104

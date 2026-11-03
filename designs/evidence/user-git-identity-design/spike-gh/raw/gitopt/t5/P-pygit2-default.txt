@@ -1,0 +1,5 @@
+    raise GitError(message)
+_pygit2.GitError: failed to resolve address for ghes.example.test: Temporary failure in name resolution
+libgit2 1.9.7 features 1727
+clone-dir-absent rc=0
+container-rc=0

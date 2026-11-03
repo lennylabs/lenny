@@ -1,0 +1,6 @@
+I2 TLS, I3 plain: envoy[34.77% 30.16MiB ] SUMMARY attempts=30000 map[200:30000] 200-latency p50=1.1ms p90=1.4ms p99=4ms max=431.5ms ticks=30000 broken=0 elapsed=60.2s
+I2 TLS, I3 TLS  : envoy[36.88% 30.58MiB ] SUMMARY attempts=30000 map[200:30000] 200-latency p50=1.1ms p90=1.6ms p99=166.4ms max=421.6ms ticks=30000 broken=0 elapsed=60.2s
+### I3 fails closed on an untrusted decision service, and on a decision service speaking plaintext
+untrusted: SUMMARY attempts=3 map[503:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 ela
+plaintext: SUMMARY attempts=3 map[503:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 ela
+cleaned

@@ -1,0 +1,183 @@
+Image: "ob-mirror:3" with ID "sha256:6fe042180d3fe91fff11866f80ea81f7de294194ad5
+NAME                 PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+standard (default)   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  50m
+m-unset: phase=Succeeded
+{"terminated":{"containerID":"containerd://04e77a621bb670dafabbf3688b2e1e233c892493a65bdcb8cc0d54a236e5d5bb","exitCode":0,"finishedAt":"2026-11-03T00:34:29Z","reason":"Completed","startedAt":"2026-11-
+
+m-userns: phase=Succeeded
+{"terminated":{"containerID":"containerd://a922d7e65fde77210bb86060f4b8994b1be5dd82f2bc120e7544e5b5838b7567","exitCode":0,"finishedAt":"2026-11-03T00:34:45Z","reason":"Completed","startedAt":"2026-11-
+
+m-stripped: phase=Failed
+{"terminated":{"containerID":"containerd://c80befcb57c9843f05d906627e999294d7a7482ba0d212329fc627315b16ea55","exitCode":2,"finishedAt":"2026-11-03T00:34:47Z","reason":"Error","startedAt":"2026-11-03T0
+
+/var/local-path-provisioner/pvc-cd0548ab-b3eb-4d7c-8e5b-85557b609351_mirror_unset
+/var   ext4   rw,relatime,discard
+total 8
+drwxrwxrwx 4 0 0 4096 Nov  3 00:34 pvc-46ecc562-91c7-4bd3-bbfe-25fc22dc66d6_mirror_userns
+drwxrwxrwx 4 0 0 4096 Nov  3 00:34 pvc-cd0548ab-b3eb-4d7c-8e5b-85557b609351_mirror_unset
+### volume types: ACL behaviour
+mount: /var/ob-noacl: wrong fs type, bad option, bad superblock on /dev/loop0, missing codepage or helper program, or other error.
+       dmesg(1) may have more information after failed mount system call.
+v-emptydir-true: phase=Succeeded
+{"terminated":{"containerID":"containerd://7200ffdb061f4837ba7592734483e96733ad80e49bd3560c01c415ac255162a9","exitCode":0,"finishedAt":"2026-11-03T00:34:51Z","reason":"Completed","startedAt":"2026-11-
+
+v-tmpfs-true: phase=Succeeded
+{"terminated":{"containerID":"containerd://22da3922697de2eae2250aa1f4dcde0c019cb130281fa577aaa795216b9058e0","exitCode":0,"finishedAt":"2026-11-03T00:34:53Z","reason":"Completed","startedAt":"2026-11-
+
+v-noacl-true: phase=Succeeded
+{"terminated":{"containerID":"containerd://05f8b5640df71a56effb1198748f16632e2fc92850080ec74ac8b508c2bbbecd","exitCode":0,"finishedAt":"2026-11-03T00:34:55Z","reason":"Completed","startedAt":"2026-11-
+
+v-localpath-true: phase=Pending
+
+v-emptydir-false: phase=Succeeded
+{"terminated":{"containerID":"containerd://f28807cd632d71155da494709f272f1c04514c0bed3767850020ddce2625013d","exitCode":0,"finishedAt":"2026-11-03T00:37:08Z","reason":"Completed","startedAt":"2026-11-
+
+v-tmpfs-false: phase=Succeeded
+{"terminated":{"containerID":"containerd://6c255f6a0ecfcd3cbd7e2197b5ddffaaae9158c231251102cb1a9bb40c25f5c9","exitCode":0,"finishedAt":"2026-11-03T00:37:11Z","reason":"Completed","startedAt":"2026-11-
+
+v-noacl-false: phase=Succeeded
+{"terminated":{"containerID":"containerd://18bcc928cdbd48fe897b724b3d0fefbb372626b40e6892d559433a6c95ab7931","exitCode":0,"finishedAt":"2026-11-03T00:37:15Z","reason":"Completed","startedAt":"2026-11-
+
+v-localpath-false: phase=Pending
+
+--- out/s5/v-emptydir-false.log
+mkdir: <nil>
+setxattr ACL: <nil>
+read back default ACL: 44 bytes, <nil>
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65534
+    # flags: -s-
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    
+    setfacl-rc=0
+    /dev/vda1      ext4 954976684 76317692 830075160   9% /data
+    /dev/vda1 /data ext4 rw,relatime,idmapped,discard 0 0
+reader-ls-rc=0
+reader under its group only: <nil>
+--- out/s5/v-emptydir-true.log
+mkdir: <nil>
+setxattr ACL: <nil>
+read back default ACL: 44 bytes, <nil>
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65534
+    # flags: -s-
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    
+    setfacl-rc=0
+    /dev/vda1      ext4 954976684 76317212 830075640   9% /data
+    /dev/vda1 /data ext4 rw,relatime,discard 0 0
+reader-ls-rc=0
+reader under its group only: <nil>
+--- out/s5/v-localpath-false.log
+--- out/s5/v-localpath-true.log
+--- out/s5/v-noacl-false.log
+mkdir: <nil>
+setxattr ACL: <nil>
+read back default ACL: 44 bytes, <nil>
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65532
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    
+    setfacl-rc=0
+    /dev/vda1      ext4 954976684 76318012 830074840   9% /data
+    /dev/vda1 /data ext4 rw,relatime,idmapped,discard 0 0
+reader-ls-rc=0
+reader under its group only: <nil>
+--- out/s5/v-noacl-true.log
+mkdir: <nil>
+setxattr ACL: <nil>
+read back default ACL: 44 bytes, <nil>
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65532
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    
+    setfacl-rc=0
+    /dev/vda1      ext4 954976684 76317524 830075328   9% /data
+    /dev/vda1 /data ext4 rw,relatime,discard 0 0
+reader-ls-rc=0
+reader under its group only: <nil>
+--- out/s5/v-tmpfs-false.log
+mkdir: <nil>
+setxattr ACL: access ACL: operation not supported
+read back default ACL: -1 bytes, operation not supported
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65534
+    # flags: -s-
+    user::rwx
+    group::r-x
+    other::---
+    
+    setfacl: /data/s: Operation not supported
+    setfacl-rc=1
+    tmpfs          tmpfs   8126396     0   8126396   0% /data
+    tmpfs /data tmpfs rw,relatime,idmapped,size=8126396k,noswap 0 0
+ls: cannot open directory '/data/s': Permission denied
+reader-ls-rc=2
+reader under its group only: <nil>
+--- out/s5/v-tmpfs-true.log
+mkdir: <nil>
+setxattr ACL: access ACL: operation not supported
+read back default ACL: -1 bytes, operation not supported
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65534
+    # flags: -s-
+    user::rwx
+    group::r-x
+    other::---
+    
+    setfacl: /data/s: Operation not supported
+    setfacl-rc=1
+    tmpfs          tmpfs   8126396     0   8126396   0% /data
+    tmpfs /data tmpfs rw,relatime,size=8126396k,noswap 0 0
+ls: cannot open directory '/data/s': Permission denied
+reader-ls-rc=2
+reader under its group only: <nil>
+umount: /var/ob-noacl: not mounted.

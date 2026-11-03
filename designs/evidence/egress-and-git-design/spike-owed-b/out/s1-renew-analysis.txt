@@ -1,0 +1,76 @@
+### leaf renewals of lenny-egress-tls: Secret write -> file in the pod -> first TLS handshake that shows the new serial
+ serial 6a8a01de: secret->file 0.7 s; file->served 34.22 s
+ serial 735425cd: secret->file 29.77 s; file->served 0.08 s
+ serial 62e0acb7: secret->file 74.8 s; file->served -0.02 s
+ serial 104b613f: secret->file 21.68 s; file->served -0.0 s
+ serial 198e83c1: secret->file None s; file->served None s
+ secret->file: n=4 min=0.70 max=74.80
+ file->served: n=4 min=-0.02 max=34.22
+### client probes
+ c1: FAIL lines=0; 1793663581795654420 summary ok=2399 fail=0
+ c2: FAIL lines=0; 1793663581777476587 summary ok=2399 fail=0
+ c3: FAIL lines=0; 1793663581833029712 summary ok=2399 fail=0
+### soak
+  probe t= 470.0s 23:52:51.921 -> 200 +data (2ms)
+  probe t= 471.0s 23:52:52.922 -> 200 +data (2ms)
+  probe t= 472.0s 23:52:53.922 -> 200 +data (2ms)
+  probe t= 473.0s 23:52:54.922 -> 200 +data (2ms)
+  probe t= 474.0s 23:52:55.922 -> 200 +data (2ms)
+  probe t= 475.0s 23:52:56.923 -> 200 +data (2ms)
+  probe t= 476.0s 23:52:57.922 -> 200 +data (2ms)
+  probe t= 477.0s 23:52:58.922 -> 200 +data (2ms)
+  probe t= 478.0s 23:52:59.923 -> 200 +data (4ms)
+  probe t= 479.0s 23:53:00.921 -> 200 +data (9ms)
+  t= 480.0s open=200 ticks=95780 (+11980) ended=map[]
+  SUMMARY n=200 codes=map[200:200] end_reasons=map[max reached (still open):200] ticks_total=95780 ticks_per_tunnel=[478..480] connect_lat p50=0s p99=20ms lifetime min=7m58.02s p50=7m59s max=8m0s elapse
+### stats
+  sds.egress-ca.version_text: ""
+  sds.server.version_text: ""
+  cluster.authz.ssl.connection_error: 0
+  cluster.authz.ssl.fail_verify_cert_hash: 0
+  cluster.authz.ssl.fail_verify_error: 0
+  cluster.authz.ssl.fail_verify_no_cert: 0
+  cluster.authz.ssl.fail_verify_san: 0
+  cluster.authz.ssl.handshake: 2
+  cluster.authz.update_failure: 0
+  cluster.authz.update_success: 0
+  cluster.authz.upstream_cx_active: 2
+  cluster.authz.upstream_cx_connect_fail: 0
+  cluster.authz.upstream_cx_total: 2
+  cluster.dfp.update_failure: 0
+  cluster.dfp.update_success: 0
+  cluster.origin_md.update_failure: 0
+  cluster.origin_md.update_success: 0
+  listener.0.0.0.0_3128.downstream_cx_active: 0
+  listener.0.0.0.0_3128.downstream_cx_destroy: 8222
+  listener.0.0.0.0_3128.ssl.connection_error: 0
+  listener.0.0.0.0_3128.ssl.fail_verify_cert_hash: 0
+  listener.0.0.0.0_3128.ssl.fail_verify_error: 0
+  listener.0.0.0.0_3128.ssl.fail_verify_no_cert: 0
+  listener.0.0.0.0_3128.ssl.fail_verify_san: 0
+  listener.0.0.0.0_3128.ssl.handshake: 8222
+  sds.egress-ca.init_fetch_timeout: 0
+  sds.egress-ca.key_rotation_failed: 0
+  sds.egress-ca.update_attempt: 1
+  sds.egress-ca.update_failure: 0
+  sds.egress-ca.update_rejected: 0
+  sds.egress-ca.update_success: 1
+  sds.egress-ca.update_time: 1793663067719
+  sds.egress-ca.version: 17241709254077376921
+  sds.server.init_fetch_timeout: 0
+  sds.server.key_rotation_failed: 0
+  sds.server.update_attempt: 1
+  sds.server.update_failure: 0
+  sds.server.update_rejected: 0
+  sds.server.update_success: 1
+  sds.server.update_time: 1793663067719
+  sds.server.version: 17241709254077376921
+  sds.egress-ca.update_duration: No recorded values
+  sds.server.update_duration: No recorded values
+### I3 peers seen by the decision service
+  2026/11/02 23:44:29 I3PEER ts=1793663069083891628 san=lenny-egress.lenny-system.svc serial=6a8a01de50e77a09a107b7ba107e5503368229ce issuer=lenny-egress-ca notAfter=2026-1
+### ConfigMap propagation: PUT returned -> file changed in running pods, no subPath
+ samples=36 writes=12 min=0.1 median=25.8 p90=44.3 max=50.2 s
+ per pod max: {'p1': 50.2, 'p2': 45.3, 'p3': 47.4, 'p4': 31.5, 'p5': 44.3} samples per pod: {'p1': 7, 'p2': 7, 'p3': 8, 'p4': 7, 'p5': 7}
+ note: a write overtaken by the next write before delivery shows no sample for that value
+ subPath control: changes seen: 1 ['1793663101943021129 change sha=cced28c6 certs=[] head="start']

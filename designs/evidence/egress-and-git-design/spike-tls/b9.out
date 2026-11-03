@@ -1,0 +1,18 @@
+### I3 mTLS, SAN allowlist, faults at 500/s
+allowed client: SUMMARY attempts=3 map[200:3] 200-latency p50=4.6ms p90=4.6ms p99=4.6m
+faults: SUMMARY attempts=30000 map[200:30000] 200-latency p50=1.1ms p90=1.5ms p99=3.1ms max=421.5ms ticks=30000 broken=0 elapsed=60.2s
+### no faults, I3 plain against I3 mTLS, 500/s for 30 s, for the p99 the earlier run could not separate
+I3 plain: SUMMARY attempts=15000 map[200:15000] 200-latency p50=1.1ms p90=1.5ms p99=10.7ms max=110.7ms ticks=15000 broken=0 elapse
+I3 mTLS : SUMMARY attempts=15000 map[200:15000] 200-latency p50=1.1ms p90=1.6ms p99=2.8ms max=29.8ms ticks=15000 broken=0 elapsed=
+### a client outside the allowlist, and one with no certificate, are refused by the decision service
+SAN not allowed: SUMMARY attempts=3 map[503:3] 200-latency p50=0s p90=0s p99=0s max=0s 
+Verification: OK 207D2AB3FFFF0000:error:0A00045C:SSL routines:ssl3_read_bytes:tlsv13 alert certificate required:ssl/record/rec_  <- no client certificate
+### readiness through a TLS handshake (kubelet httpGet HTTPS skips verification): states
+valid at start   : state=running /ready=LIVE tlsprobe=200 rc=0 client=[SUMMARY attempts=3 map[503:3] 200-latency p50=0s p90=0s p99=0s max=0s ]
+directory missing: state=running /ready=LIVE tlsprobe=000 rc=35 client=[SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s]
+empty mount      : state=running /ready=LIVE tlsprobe=000 rc=35 client=[SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s]
+keys missing     : state=running /ready=LIVE tlsprobe=000 rc=35 client=[SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s]
+garbage material : state=running /ready=LIVE tlsprobe=000 rc=35 client=[SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s]
+### recovery of the garbage case when valid material arrives
+after valid: /ready=LIVE tlsprobe=200 rc=0 client=[SUMMARY attempts=3 map[503:3] 200-latency p50=0s p90=0s p99=0s max=0s ]
+cleaned

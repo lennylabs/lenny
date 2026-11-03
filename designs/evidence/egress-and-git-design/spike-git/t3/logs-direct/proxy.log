@@ -1,0 +1,31 @@
+2026/11/01 21:53:40 PX GET /https/github.com/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:40 PX POST /https/github.com/org/repo/git-upload-pack cl=181 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:40 PX POST /https/github.com/org/repo/git-upload-pack cl=223 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX GET /https/github.com/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX POST /https/github.com/org/repo/git-upload-pack cl=212 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX GET /https/github.com/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX POST /https/github.com/org/repo/git-upload-pack cl=181 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX POST /https/github.com/org/repo/git-upload-pack cl=243 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX GET /https/github.com/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX POST /https/github.com/org/repo/git-upload-pack cl=181 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:45 PX POST /https/github.com/org/repo/git-upload-pack cl=250 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:50 PX GET /https/github.com/org/repo/info/refs?service=git-receive-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-receive-pack 
+2026/11/01 21:53:50 PX POST /https/github.com/org/repo/git-receive-pack cl=438 te=[] -> host=github.com repo=org/repo svc=git-receive-pack 
+2026/11/01 21:53:51 PX GET /https/github.com/org/repo/info/refs?service=git-receive-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-receive-pack 
+2026/11/01 21:53:52 PX POST /https/github.com/org/repo/git-receive-pack cl=4 te=[] -> host=github.com repo=org/repo svc=git-receive-pack 
+2026/11/01 21:53:52 PX POST /https/github.com/org/repo/git-receive-pack cl=-1 te=[chunked] -> host=github.com repo=org/repo svc=git-receive-pack 
+2026/11/01 21:53:53 PX GET /https/github.com/org/other/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/other svc=git-upload-pack 
+2026/11/01 21:53:53 PX GET /https/github.com/org/repo.git/HEAD cl=0 te=[] -> host= repo= svc= not a smart-HTTP path
+2026/11/01 21:53:53 PX GET /https/github.com/org/repo/../other.git/info/refs?service=git-upload-pack cl=0 te=[] -> host= repo= svc= bad repo path
+2026/11/01 21:53:53 PX GET /https/github.com/org%2Fother.git/info/refs?service=git-upload-pack cl=0 te=[] -> host= repo= svc= encoded path
+2026/11/01 21:53:53 PX GET /https/github.com/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:53 PX POST /https/github.com/org/repo/git-upload-pack cl=181 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:53:53 PX POST /https/github.com/org/repo/git-upload-pack cl=223 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:54:02 PX GET /https/moved301.test/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=moved301.test repo=org/repo svc=git-upload-pack 
+2026/11/01 21:54:02 REDIRECT 301 http://127.0.0.1:8080/moved301/org/repo.git/info/refs?service=git-upload-pack -> http://localhost:8080/org/repo.git/info/refs?service=git-upload-pack
+2026/11/01 21:54:02 PX GET /https/github.com/org/repo.git/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:54:02 PX POST /https/github.com/org/repo.git/git-upload-pack cl=108 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:54:02 PX GET /https/moved307.test/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=moved307.test repo=org/repo svc=git-upload-pack 
+2026/11/01 21:54:02 REDIRECT 307 http://127.0.0.1:8080/moved307/org/repo.git/info/refs?service=git-upload-pack -> http://localhost:8080/org/repo.git/info/refs?service=git-upload-pack
+2026/11/01 21:54:02 PX GET /https/github.com/org/repo.git/info/refs?service=git-upload-pack cl=0 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 
+2026/11/01 21:54:02 PX POST /https/github.com/org/repo.git/git-upload-pack cl=108 te=[] -> host=github.com repo=org/repo svc=git-upload-pack 

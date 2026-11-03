@@ -1,0 +1,175 @@
+bootstrap_extensions:
+- name: envoy.bootstrap.internal_listener
+  typed_config:
+    '@type': type.googleapis.com/envoy.extensions.bootstrap.internal_listener.v3.InternalListener
+listener:
+- name: sni_inspect
+  internal_listener: {}
+  listener_filters:
+  - name: envoy.filters.listener.tls_inspector
+    typed_config:
+      '@type': type.googleapis.com/envoy.extensions.filters.listener.tls_inspector.v3.TlsInspector
+  listener_filters_timeout: 15s
+  continue_on_listener_filters_timeout: true
+  filter_chains:
+  - name: tls
+    filter_chain_match:
+      transport_protocol: tls
+    filters:
+    - name: envoy.filters.network.rbac
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.filters.network.rbac.v3.RBAC
+        stat_prefix: sni_gate
+        rules:
+          action: ALLOW
+          policies:
+            sni-matches-authority:
+              permissions:
+              - any: true
+              principals:
+              - any: true
+              condition:
+                call_expr:
+                  function: _==_
+                  args:
+                  - select_expr:
+                      operand:
+                        ident_expr:
+                          name: connection
+                      field: requested_server_name
+                  - call_expr:
+                      function: string
+                      args:
+                      - call_expr:
+                          function: _[_]
+                          args:
+                          - ident_expr:
+                              name: filter_state
+                          - const_expr:
+                              string_value: lenny.sni_expect
+              cel_config:
+                enable_string_conversion: true
+    - name: envoy.filters.network.sni_dynamic_forward_proxy
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig
+        dns_cache_config:
+          name: egress_dns
+          dns_lookup_family: ALL
+          dns_refresh_rate: 60s
+          dns_min_refresh_rate: 5s
+          host_ttl: 300s
+          resolved_address_filter:
+            ranges:
+            - address_prefix: 0.0.0.0
+              prefix_len: 8
+            - address_prefix: 10.0.0.0
+              prefix_len: 8
+            - address_prefix: 100.64.0.0
+              prefix_len: 10
+            - address_prefix: 127.0.0.0
+              prefix_len: 8
+            - address_prefix: 169.254.0.0
+              prefix_len: 16
+            - address_prefix: 172.16.0.0
+              prefix_len: 12
+            - address_prefix: 192.0.0.0
+              prefix_len: 24
+            - address_prefix: 192.168.0.0
+              prefix_len: 16
+            - address_prefix: 224.0.0.0
+              prefix_len: 4
+            - address_prefix: 240.0.0.0
+              prefix_len: 4
+            - address_prefix: '::'
+              prefix_len: 128
+            - address_prefix: ::1
+              prefix_len: 128
+            - address_prefix: ::ffff:0:0
+              prefix_len: 96
+            - address_prefix: '64:ff9b::'
+              prefix_len: 96
+            - address_prefix: 'fc00::'
+              prefix_len: 7
+            - address_prefix: 'fe80::'
+              prefix_len: 10
+            - address_prefix: 'ff00::'
+              prefix_len: 8
+        port_value: 443
+    - name: envoy.filters.network.tcp_proxy
+      typed_config:
+        '@type': type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+        stat_prefix: sni_gate_tcp
+        cluster: dfp
+cluster:
+- name: sni_gate
+  connect_timeout: 1s
+  load_assignment:
+    cluster_name: sni_gate
+    endpoints:
+    - lb_endpoints:
+      - endpoint:
+          address:
+            envoy_internal_address:
+              server_listener_name: sni_inspect
+  transport_socket:
+    name: envoy.transport_sockets.internal_upstream
+    typed_config:
+      '@type': type.googleapis.com/envoy.extensions.transport_sockets.internal_upstream.v3.InternalUpstreamTransport
+      transport_socket:
+        name: envoy.transport_sockets.raw_buffer
+        typed_config:
+          '@type': type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer
+  circuit_breakers:
+    thresholds:
+    - max_connections: 100000
+      max_pending_requests: 100000
+      max_requests: 100000
+set_filter_state:
+- name: envoy.filters.http.set_filter_state
+  typed_config:
+    '@type': type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config
+    on_request_headers:
+    - object_key: lenny.authority
+      factory_key: envoy.string
+      format_string:
+        text_format_source:
+          inline_string: '%REQ(:AUTHORITY)%'
+        omit_empty_values: true
+      shared_with_upstream: ONCE
+      skip_if_empty: true
+    - object_key: lenny.sni_expect
+      factory_key: envoy.string
+      format_string:
+        text_format_source:
+          inline_string: '%REQ(x-lenny-host)%'
+        omit_empty_values: true
+      shared_with_upstream: ONCE
+      skip_if_empty: true
+    - object_key: envoy.upstream.dynamic_host
+      format_string:
+        text_format_source:
+          inline_string: '%REQ(x-lenny-host)%'
+        omit_empty_values: true
+      shared_with_upstream: ONCE
+      skip_if_empty: true
+    - object_key: envoy.upstream.dynamic_port
+      format_string:
+        text_format_source:
+          inline_string: '%REQ(x-lenny-port)%'
+        omit_empty_values: true
+      shared_with_upstream: ONCE
+      skip_if_empty: true
+route:
+- match:
+    connect_matcher: {}
+    headers:
+    - name: x-lenny-route
+      string_match:
+        exact: sni-gate
+  route:
+    cluster: sni_gate
+    upgrade_configs:
+    - upgrade_type: CONNECT
+      connect_config: {}
+    max_stream_duration:
+      max_stream_duration: 3600s

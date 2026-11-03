@@ -1,0 +1,102 @@
+// hostile: TLS git server stand-in with good and hostile repositories.
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"fmt"
+	"log"
+	"math/big"
+	"net/http"
+	"strings"
+	"time"
+)
+
+func pkt(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
+
+const sha = "0123456789abcdef0123456789abcdef01234567"
+
+func main() {
+	m := http.NewServeMux()
+	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		p := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)
+		switch p[0] {
+		case "fast.git":
+			if strings.HasSuffix(r.URL.Path, "git-upload-pack") {
+				w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+				fmt.Fprint(w, pkt(sha+" refs/heads/main\n")+"0000")
+				return
+			}
+		case "big.git": // unbounded valid advertisement
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+			for i := 0; ; i++ {
+				if _, err := fmt.Fprint(w, pkt(fmt.Sprintf("%s refs/heads/x%012d\n", sha, i))); err != nil {
+					return
+				}
+			}
+		case "slow.git": // drip one line per second, forever
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+			for i := 0; ; i++ {
+				if _, err := fmt.Fprint(w, pkt(fmt.Sprintf("%s refs/heads/s%d\n", sha, i))); err != nil {
+					return
+				}
+				w.(http.Flusher).Flush()
+				time.Sleep(time.Second)
+			}
+		case "hang.git":
+			<-r.Context().Done()
+		case "redirect.git":
+			http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+		case "malformed.git":
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+			fmt.Fprint(w, "zzzzgarbage")
+		case "oversize.git":
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+			fmt.Fprint(w, "ffff"+strings.Repeat("a", 70000))
+		case "v0only.git": // no v2: refuses POST, answers the advertisement
+			if r.Method == "POST" {
+				w.WriteHeader(403)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			fmt.Fprint(w, pkt("# service=git-upload-pack\n")+"0000"+pkt(sha+" HEAD\x00multi_ack\n")+pkt(sha+" refs/heads/main\n")+"0000")
+		case "v0big.git": // no v2: 20 MiB advertisement where the wanted ref sorts first
+			if r.Method == "POST" {
+				w.WriteHeader(403)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			fmt.Fprint(w, pkt("# service=git-upload-pack\n")+"0000"+pkt(sha+" HEAD\x00multi_ack\n")+pkt(sha+" refs/heads/main\n"))
+			for i := 0; i < 300000; i++ {
+				if _, err := fmt.Fprint(w, pkt(fmt.Sprintf("%s refs/pull/%d/head\n", sha, i))); err != nil {
+					return
+				}
+			}
+			fmt.Fprint(w, "0000")
+		case "v0late.git": // no v2: wanted ref sorts after 20 MiB of refs
+			if r.Method == "POST" {
+				w.WriteHeader(403)
+				return
+			}
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			fmt.Fprint(w, pkt("# service=git-upload-pack\n")+"0000"+pkt(sha+" HEAD\x00multi_ack\n"))
+			for i := 0; i < 300000; i++ {
+				if _, err := fmt.Fprint(w, pkt(fmt.Sprintf("%s refs/heads/a%07d\n", sha, i))); err != nil {
+					return
+				}
+			}
+			fmt.Fprint(w, pkt(sha+" refs/heads/main\n")+"0000")
+		case "busy.git":
+			w.WriteHeader(503)
+		}
+	})
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "git.spike"}, DNSNames: []string{"git.spike"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour)}
+	der, _ := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	s := &http.Server{Addr: ":443", Handler: m, TLSConfig: &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}}
+	log.Fatal(s.ListenAndServeTLS("", ""))
+}

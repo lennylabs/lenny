@@ -1,0 +1,18 @@
+-rw-r--r--    1 0        0               46 Nov  2 06:42 /cfg/netrc
+-rw-r--r--    1 0        0               46 Nov  2 06:42 /home/u/.netrc
+--- curl-ownhome
+1000
+200
+--- gnuwget-ownhome
+exit 0
+--- git-ownhome
+1111111111111111111111111111111111111111	refs/heads/main
+exit 0
+--- curl-ownenv
+1000
+401
+--- gnuwget-ownenv
+exit 6
+--- git-ownenv
+fatal: could not read Username for 'http://fake.test': terminal prompts disabled
+exit 128

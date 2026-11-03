@@ -1,0 +1,177 @@
+// dnsd: controllable authoritative DNS for the spike (UDP+TCP :53, control HTTP :8053).
+//
+//	/set?name=rebind.spike&a=1.2.3.4,5.6.7.8&aaaa=2001:db8::1&ttl=1   replace a record set
+//	/del?name=x                                                       remove (NXDOMAIN)
+//	/log                                                              query log since start
+//
+// Every query is logged with a timestamp so the caller can see when Envoy re-resolves.
+package main
+
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/netip"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
+)
+
+type rr struct {
+	a, aaaa []netip.Addr
+	ttl     uint32
+}
+
+var (
+	mu    sync.Mutex
+	table = map[string]rr{}
+	qlog  []string
+	start = time.Now()
+)
+
+func parse(s string) []netip.Addr {
+	var out []netip.Addr
+	for _, p := range strings.Split(s, ",") {
+		if p == "" {
+			continue
+		}
+		if a, err := netip.ParseAddr(p); err == nil {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func set(name, a, aaaa string, ttl uint32) {
+	mu.Lock()
+	defer mu.Unlock()
+	table[strings.ToLower(strings.TrimSuffix(name, "."))+"."] = rr{parse(a), parse(aaaa), ttl}
+}
+
+func answer(q []byte) []byte {
+	var p dnsmessage.Parser
+	h, err := p.Start(q)
+	if err != nil {
+		return nil
+	}
+	qs, err := p.AllQuestions()
+	if err != nil || len(qs) == 0 {
+		return nil
+	}
+	qq := qs[0]
+	name := strings.ToLower(qq.Name.String())
+	mu.Lock()
+	r, ok := table[name]
+	mu.Unlock()
+	rh := dnsmessage.Header{ID: h.ID, Response: true, Authoritative: true, RecursionAvailable: true}
+	if !ok {
+		rh.RCode = dnsmessage.RCodeNameError
+	}
+	b := dnsmessage.NewBuilder(nil, rh)
+	b.EnableCompression()
+	b.StartQuestions()
+	b.Question(qq)
+	b.StartAnswers()
+	var given []string
+	hdr := dnsmessage.ResourceHeader{Name: qq.Name, Class: dnsmessage.ClassINET, TTL: r.ttl}
+	if ok && qq.Type == dnsmessage.TypeA {
+		for _, a := range r.a {
+			hdr.Type = dnsmessage.TypeA
+			b.AResource(hdr, dnsmessage.AResource{A: a.As4()})
+			given = append(given, a.String())
+		}
+	}
+	if ok && qq.Type == dnsmessage.TypeAAAA {
+		for _, a := range r.aaaa {
+			hdr.Type = dnsmessage.TypeAAAA
+			b.AAAAResource(hdr, dnsmessage.AAAAResource{AAAA: a.As16()})
+			given = append(given, a.String())
+		}
+	}
+	out, _ := b.Finish()
+	line := fmt.Sprintf("%8.3fs %s %s -> %v ttl=%d", time.Since(start).Seconds(), qq.Type, name, given, r.ttl)
+	mu.Lock()
+	qlog = append(qlog, line)
+	mu.Unlock()
+	log.Print(line)
+	return out
+}
+
+func main() {
+	pc, err := net.ListenPacket("udp", ":53")
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() {
+		buf := make([]byte, 1500)
+		for {
+			n, addr, err := pc.ReadFrom(buf)
+			if err != nil {
+				continue
+			}
+			if out := answer(append([]byte(nil), buf[:n]...)); out != nil {
+				pc.WriteTo(out, addr)
+			}
+		}
+	}()
+	go func() {
+		l, err := net.Listen("tcp", ":53")
+		if err != nil {
+			log.Fatal(err)
+		}
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				continue
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				var lb [2]byte
+				if _, err := c.Read(lb[:]); err != nil {
+					return
+				}
+				q := make([]byte, int(lb[0])<<8|int(lb[1]))
+				if _, err := c.Read(q); err != nil {
+					return
+				}
+				out := answer(q)
+				c.Write(append([]byte{byte(len(out) >> 8), byte(len(out))}, out...))
+			}(c)
+		}
+	}()
+	// Static names.
+	set("target.spike", "198.18.0.20", "2001:db8:1::20", 300)
+	set("internal.spike", "10.99.0.5", "", 300)
+	set("v6only.spike", "", "2001:db8:2::20", 300)
+	set("ula.spike", "", "fd00:99::5", 300)
+	set("ll.spike", "", "fe80::1", 300)
+	set("loop6.spike", "", "::1", 300)
+	set("mapped.spike", "", "::ffff:10.99.0.5", 300)
+	set("nat64.spike", "", "64:ff9b::a63:5", 300)
+	set("dual.spike", "198.18.0.20", "2001:db8:1::20", 300)
+	set("mixed.spike", "10.99.0.5,198.18.0.20", "", 300)
+	set("rebind.spike", "198.18.0.20", "", 1)
+	http.HandleFunc("/set", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		ttl, _ := strconv.Atoi(q.Get("ttl"))
+		set(q.Get("name"), q.Get("a"), q.Get("aaaa"), uint32(ttl))
+		log.Printf("CTL set %s a=%s aaaa=%s ttl=%d", q.Get("name"), q.Get("a"), q.Get("aaaa"), ttl)
+		fmt.Fprintln(w, "ok")
+	})
+	http.HandleFunc("/del", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		delete(table, strings.ToLower(r.URL.Query().Get("name"))+".")
+		mu.Unlock()
+		fmt.Fprintln(w, "ok")
+	})
+	http.HandleFunc("/log", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		fmt.Fprintln(w, strings.Join(qlog, "\n"))
+	})
+	log.Fatal(http.ListenAndServe(":8053", nil))
+}

@@ -1,0 +1,6 @@
+hosts:
+    gitlab.example.test:
+        token: tok-K8S
+        api_host: gitlab.example.test
+        api_protocol: https
+check_update: false

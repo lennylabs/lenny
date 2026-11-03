@@ -1,0 +1,170 @@
+package main
+
+import (
+	"bytes"
+	"net/http"
+	"encoding/json"
+	"fmt"
+	"os"
+	"testing"
+
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/lexer"
+	"github.com/vektah/gqlparser/v2/parser"
+)
+
+func tokens(doc string) int {
+	l := lexer.New(&ast.Source{Input: doc})
+	n := 0
+	for {
+		t, err := l.ReadToken()
+		if err != nil {
+			return -1
+		}
+		if t.Kind == lexer.EOF {
+			return n
+		}
+		n++
+	}
+}
+
+func rawDepth(ss ast.SelectionSet) int {
+	m := 0
+	for _, s := range ss {
+		n := 1
+		switch x := s.(type) {
+		case *ast.Field:
+			n = 1 + rawDepth(x.SelectionSet)
+		case *ast.InlineFragment:
+			n = 1 + rawDepth(x.SelectionSet)
+		}
+		if n > m {
+			m = n
+		}
+	}
+	return m
+}
+
+// TestCorpus: every document against the stated bounds, one line each, then the maxima.
+func TestCorpus(t *testing.T) {
+	var docs []string
+	b, err := os.ReadFile(os.Getenv("DOCS"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	json.Unmarshal(b, &docs)
+	p := loadP(t, "/t/policy-uc5.json", "ghcom")
+	var maxTok, maxDepth, maxRaw, maxRoot, maxBytes, maxVal int
+	var refused, parseFail, denied int
+	reasons := map[string]int{}
+	for _, d := range docs {
+		if len(d) > maxBytes {
+			maxBytes = len(d)
+		}
+		if n := tokens(d); n > maxTok {
+			maxTok = n
+		}
+		q, err := parser.ParseQuery(&ast.Source{Input: d})
+		if err != nil {
+			parseFail++
+			fmt.Println("PARSEFAIL", err)
+			continue
+		}
+		for _, o := range q.Operations {
+			if x, ok := expandedDepth(o.SelectionSet, q, map[string]int{}, map[string]bool{}); ok && x > maxDepth {
+				maxDepth = x
+			}
+			if x := rawDepth(o.SelectionSet); x > maxRaw {
+				maxRaw = x
+			}
+			if o.Operation == ast.Mutation && len(o.SelectionSet) > maxRoot {
+				maxRoot = len(o.SelectionSet)
+			}
+		}
+		for _, f := range q.Fragments {
+			if x := rawDepth(f.SelectionSet); x > maxRaw {
+				maxRaw = x
+			}
+		}
+		if x := maxValueDepth(q); x > maxVal {
+			maxVal = x
+		}
+		if _, e := p.docCheck(d, ""); e != nil {
+			refused++
+			reasons[e.reason]++
+			if e.code == 403 && len(e.reason) > 14 && e.reason[:14] == "mutation field" {
+				denied++
+			}
+		}
+	}
+	fmt.Printf("documents=%d largestBytes=%d maxTokens=%d maxDepthExpanded=%d maxDepthWithinOneDefinition=%d maxMutationRootFields=%d maxValueDepth=%d parseFailures=%d refused=%d deniedByName=%d\n", len(docs), maxBytes, maxTok, maxDepth, maxRaw, maxRoot, maxVal, parseFail, refused, denied)
+	for r, n := range reasons {
+		fmt.Printf("%4d %s\n", n, r)
+	}
+}
+
+func BenchmarkUC4(b *testing.B) {
+	p := loadP(b, "/t/policy-uc5.json", "ghes")
+	mk := map[string][]byte{}
+	for _, n := range []string{"create", "status", "largest", "body65k", "bound258k"} {
+		if x, err := os.ReadFile("/bodies/body-" + n + ".json"); err == nil {
+			mk[n] = x
+		}
+	}
+	env := func(doc string) []byte { x, _ := json.Marshal(map[string]string{"query": doc}); return x }
+	f := make([]byte, 0, 9000)
+	f = append(f, "query{"...)
+	for i := 0; i < 4093; i++ {
+		f = append(f, "a "...)
+	}
+	mk["tokens4096"] = env(string(append(f, '}')))
+	pad := make([]byte, 65536-9)
+	for i := range pad {
+		pad[i] = 'x'
+	}
+	mk["doc64k-comment"] = env("query{a}#" + string(pad))
+	d := ""
+	for i := 0; i < 31; i++ {
+		d += "a{"
+	}
+	d += "a"
+	for i := 0; i < 31; i++ {
+		d += "}"
+	}
+	mk["depth32"] = env("query{" + d + "}")
+	v := make([]byte, 524288-60)
+	for i := range v {
+		v[i] = 'x'
+	}
+	mk["body512k"] = []byte(`{"query":"query{viewer{login}}","variables":{"a":"` + string(v) + `"}}`)
+	s := "["
+	for i := 0; i < 8000; i++ {
+		s += `{"a":1,"b":"x"},`
+	}
+	mk["variables-40k-nodes"] = []byte(`{"query":"query{viewer{login}}","variables":{"a":` + s + `1]}}`)
+	for n, body := range mk {
+		b.Run(n, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(body)))
+			for i := 0; i < b.N; i++ {
+				r, _ := http.NewRequest("POST", "https://ghes.example.test/api/graphql", bytes.NewReader(body))
+				r.RequestURI = "/api/graphql"
+				r.Header.Set("Content-Type", "application/json")
+				if _, _, e := p.checkUC4(r); e != nil {
+					b.Fatal(e.reason)
+				}
+			}
+		})
+	}
+	r0 := func() *http.Request {
+		r, _ := http.NewRequest("GET", "https://ghes.example.test/api/v3/repos/a/b/pulls/7", nil)
+		r.RequestURI = "/api/v3/repos/a/b/pulls/7"
+		return r
+	}
+	b.Run("rest-get", func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			p.checkUC4(r0())
+		}
+	})
+}

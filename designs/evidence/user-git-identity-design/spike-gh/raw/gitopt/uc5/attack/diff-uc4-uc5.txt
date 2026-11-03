@@ -1,0 +1,6 @@
+# reach under revision 5, refused under the follow-up
+# reach under the follow-up, refused under revision 5
+around / unbound name for the same origin, opaque tunnel
+gql-evasion / fragment unused on Mutation
+gql-evasion / query op spreading Mutation fragment
+gql-path / bad doc under the REST prefix

@@ -1,0 +1,47 @@
+target.spike:443           CONNECT status: 200 OK
+example.com:443            CONNECT status: 200 OK
+evil.spike:9901            CONNECT status: 503 Service Unavailable
+localtest.me:9901          CONNECT status: 503 Service Unavailable
+meta.spike:80              CONNECT status: 503 Service Unavailable
+internal.spike:80          CONNECT status: 503 Service Unavailable
+169.254.169.254:80         CONNECT status: 503 Service Unavailable
+10.0.0.1:443               CONNECT status: 503 Service Unavailable
+10.99.0.5:80               CONNECT status: 503 Service Unavailable
+127.0.0.1:9901             CONNECT status: 503 Service Unavailable
+0.0.0.0:9901               CONNECT status: 503 Service Unavailable
+[::1]:9901                 CONNECT status: 503 Service Unavailable
+[::]:9901                  CONNECT status: 503 Service Unavailable
+[::ffff:127.0.0.1]:9901    CONNECT status: 503 Service Unavailable
+[::ffff:10.99.0.5]:80      CONNECT status: 503 Service Unavailable
+[::ffff:a63:5]:80          CONNECT status: 503 Service Unavailable
+[fe80::1]:80               CONNECT status: 503 Service Unavailable
+2130706433:9901            CONNECT status: 503 Service Unavailable
+0x7f000001:9901            CONNECT status: 503 Service Unavailable
+127.1:9901                 CONNECT status: 503 Service Unavailable
+0177.0.0.1:9901            CONNECT status: 503 Service Unavailable
+localhost:9901             CONNECT status: 503 Service Unavailable
+[64:ff9b::a63:5]:80        CONNECT status: 503 Service Unavailable
+--- access log (authority code flags details upstream_host)
+target.spike:443           200 DC  downstream_remote_disconnect up=[2001:db8:1::20]:443 
+example.com:443            200 DC  downstream_remote_disconnect up=104.20.23.154:443 
+evil.spike:9901            503 DF  dns_resolution_failure{address_denied} up=None 
+localtest.me:9901          503 DF  dns_resolution_failure{address_denied} up=None 
+meta.spike:80              503 DF  dns_resolution_failure{address_denied} up=None 
+internal.spike:80          503 DF  dns_resolution_failure{address_denied} up=None 
+169.254.169.254:80         503 DF  dns_resolution_failure{address_denied} up=None 
+10.0.0.1:443               503 DF  dns_resolution_failure{address_denied} up=None 
+10.99.0.5:80               503 DF  dns_resolution_failure{address_denied} up=None 
+127.0.0.1:9901             503 DF  dns_resolution_failure{address_denied} up=None 
+0.0.0.0:9901               503 DF  dns_resolution_failure{address_denied} up=None 
+[::1]:9901                 503 DF  dns_resolution_failure{address_denied} up=None 
+[::]:9901                  503 DF  dns_resolution_failure{address_denied} up=None 
+[::ffff:127.0.0.1]:9901    503 DF  dns_resolution_failure{address_denied} up=None 
+[::ffff:10.99.0.5]:80      503 DF  dns_resolution_failure{address_denied} up=None 
+[::ffff:a63:5]:80          503 DF  dns_resolution_failure{address_denied} up=None 
+[fe80::1]:80               503 DF  dns_resolution_failure{address_denied} up=None 
+2130706433:9901            503 DF  dns_resolution_failure{cares_norecords:Domain_name_not_found} up=None 
+0x7f000001:9901            503 DF  dns_resolution_failure{cares_norecords:Domain_name_not_found} up=None 
+127.1:9901                 503 DF  dns_resolution_failure{cares_norecords:Domain_name_not_found} up=None 
+0177.0.0.1:9901            503 UF  upstream_reset_before_response_started{connection_timeout} up=177.0.0.1:9901
+localhost:9901             503 DF  dns_resolution_failure{address_denied} up=None
+[64:ff9b::a63:5]:80        503 DF  dns_resolution_failure{address_denied} up=None

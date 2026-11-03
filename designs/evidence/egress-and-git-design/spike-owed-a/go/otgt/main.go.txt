@@ -1,0 +1,59 @@
+// otgt: TLS origin that counts accepted connections per local address (ground truth for "was a connection attempted"),
+// and logs the SNI and version of each handshake. :443 TLS, :9300 /count.
+package main
+
+import (
+	"crypto/tls"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"sync"
+)
+
+var (
+	mu    sync.Mutex
+	conns = map[string]int{}
+)
+
+type cl struct{ net.Listener }
+
+func (l cl) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err == nil {
+		h, _, _ := net.SplitHostPort(c.LocalAddr().String())
+		mu.Lock()
+		conns[h]++
+		mu.Unlock()
+	}
+	return c, err
+}
+func main() {
+	c, err := tls.LoadX509KeyPair(os.Args[1], os.Args[2])
+	if err != nil {
+		log.Fatal(err)
+	}
+	cfg := &tls.Config{Certificates: []tls.Certificate{c}, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}, GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		log.Printf("hello from=%s sni=%q", h.Conn.RemoteAddr(), h.ServerName)
+		return nil, nil
+	}}
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/count", func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			defer mu.Unlock()
+			json.NewEncoder(w).Encode(conns)
+		})
+		log.Fatal(http.ListenAndServe(":9300", m))
+	}()
+	l, err := net.Listen("tcp", ":443")
+	if err != nil {
+		log.Fatal(err)
+	}
+	s := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "ok host=%s sni=%s tls=%x\n", r.Host, r.TLS.ServerName, r.TLS.Version)
+	}), TLSConfig: cfg}
+	log.Fatal(s.ServeTLS(cl{l}, "", ""))
+}

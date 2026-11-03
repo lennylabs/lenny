@@ -1,0 +1,220 @@
+// authz3: r4 decision service, gRPC ext_authz only.
+//
+//	:9000 gRPC envoy.service.auth.v3.Authorization
+//	:9002 control: /delay?ms=N, /count, /reset, /hist (in-flight histogram sampled every 10 ms)
+//
+// NAME (env) is returned in dynamic metadata (key "instance") so the Envoy access log shows which
+// endpoint answered. Token "good" -> allow route direct; "bad" -> 403; none -> 407.
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+var (
+	delayMs     atomic.Int64
+	count       atomic.Int64
+	inflight    atomic.Int64
+	maxInflight atomic.Int64
+	name        = os.Getenv("NAME")
+	histMu      sync.Mutex
+	hist        = map[int64]int{} // in-flight value -> number of 10 ms samples
+)
+
+var tenantMu sync.Mutex
+var tenants = map[string]int{}
+
+type server struct{ authv3.UnimplementedAuthorizationServer }
+
+func hdr(k, v string) *corev3.HeaderValueOption {
+	return &corev3.HeaderValueOption{Header: &corev3.HeaderValue{Key: k, Value: v},
+		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD}
+}
+
+func (s *server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	count.Add(1)
+	n := inflight.Add(1)
+	for {
+		m := maxInflight.Load()
+		if n <= m || maxInflight.CompareAndSwap(m, n) {
+			break
+		}
+	}
+	defer inflight.Add(-1)
+	if d := delayMs.Load(); d > 0 {
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
+	h := req.GetAttributes().GetRequest().GetHttp()
+	pa := h.GetHeaders()["proxy-authorization"]
+	tenant := h.GetHeaders()["x-lenny-tenant"]
+	tenantMu.Lock(); tenants[tenant]++; tenantMu.Unlock()
+	if tenant == "denied" { return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{Status: &typev3.HttpStatus{Code: typev3.StatusCode(403)}, Body: "denied\n"}}}, nil }
+	deny := func(code int, reason string, extra ...string) (*authv3.CheckResponse, error) {
+		md, _ := structpb.NewStruct(map[string]any{"decision": "deny", "reason": reason, "instance": name})
+		hs := []*corev3.HeaderValueOption{hdr("x-lenny-deny-reason", reason)}
+		for i := 0; i+1 < len(extra); i += 2 {
+			hs = append(hs, hdr(extra[i], extra[i+1]))
+		}
+		return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, DynamicMetadata: md,
+			HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{
+				Status: &typev3.HttpStatus{Code: typev3.StatusCode(code)}, Headers: hs, Body: "denied: " + reason + "\n"}}}, nil
+	}
+	if pa == "" {
+		return deny(407, "no-credential", "proxy-authenticate", `Basic realm="lenny-egress"`)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(pa, "Basic "))
+	_, token, _ := strings.Cut(string(raw), ":")
+	if token == "pin" {
+		md, _ := structpb.NewStruct(map[string]any{"decision": "allow", "tenant": "pinned", "route": "private", "private_addr": os.Getenv("PIN"), "instance": name})
+		return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md, HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", "private")}, HeadersToRemove: []string{"proxy-authorization"}}}}, nil
+	}
+	if token != "good" {
+		return deny(403, "lease-invalid")
+	}
+	if strings.HasPrefix(h.GetHost(), "gitlab.initech.internal") {
+		if tenant != "initech" {
+			return deny(403, "not-granted")
+		}
+		md, _ := structpb.NewStruct(map[string]any{"decision": "allow", "tenant": tenant, "route": "private", "private_addr": os.Getenv("PRIV"), "instance": name})
+		return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md, HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", "private")}, HeadersToRemove: []string{"proxy-authorization"}}}}, nil
+	}
+	md, _ := structpb.NewStruct(map[string]any{"decision": "allow", "tenant": "acme", "route": "direct", "instance": name})
+	ok := &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", "direct")}, HeadersToRemove: []string{"proxy-authorization"}}
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md,
+		HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: ok}}, nil
+}
+
+func tenantsH(w http.ResponseWriter, r *http.Request) { tenantMu.Lock(); defer tenantMu.Unlock(); fmt.Fprintln(w, tenants); if r.URL.Query().Get("reset") != "" { tenants = map[string]int{} } }
+
+func main() {
+	go func() {
+		l, err := net.Listen("tcp", ":9000")
+		if err != nil {
+			log.Fatal(err)
+		}
+		var opts []grpc.ServerOption
+		if os.Getenv("TLS_RELOAD") != "" {
+			opts = append(opts, grpc.Creds(credentials.NewTLS(reloadingConfig())))
+		} else if os.Getenv("TLS_CERT") != "" {
+			kp, err := tls.LoadX509KeyPair(os.Getenv("TLS_CERT"), os.Getenv("TLS_KEY"))
+			if err != nil {
+				log.Fatal(err)
+			}
+			cfg := &tls.Config{Certificates: []tls.Certificate{kp}, NextProtos: []string{"h2"}}
+			if f := os.Getenv("TLS_CLIENT_CA"); f != "" {
+				b, err := os.ReadFile(f)
+				if err != nil {
+					log.Fatal(err)
+				}
+				p := x509.NewCertPool()
+				p.AppendCertsFromPEM(b)
+				cfg.ClientCAs = p
+				cfg.ClientAuth = tls.RequireAndVerifyClientCert
+				allowed := strings.Split(os.Getenv("TLS_CLIENT_SANS"), ",")
+				cfg.VerifyPeerCertificate = func(_ [][]byte, chains [][]*x509.Certificate) error {
+					for _, ch := range chains {
+						for _, d := range ch[0].DNSNames {
+							for _, w := range allowed {
+								if d == w {
+									return nil
+								}
+							}
+						}
+					}
+					return fmt.Errorf("client SAN not allowed")
+				}
+			}
+			opts = append(opts, grpc.Creds(credentials.NewTLS(cfg)))
+		}
+		g := grpc.NewServer(opts...)
+		authv3.RegisterAuthorizationServer(g, &server{})
+		hs := health.NewServer()
+		hs.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+		healthpb.RegisterHealthServer(g, hs)
+		log.Fatal(g.Serve(l))
+	}()
+	go func() {
+		for range time.Tick(10 * time.Millisecond) {
+			v := inflight.Load()
+			histMu.Lock()
+			hist[v]++
+			histMu.Unlock()
+		}
+	}()
+	ctl := http.NewServeMux()
+	ctl.HandleFunc("/tenants", tenantsH)
+	ctl.HandleFunc("/delay", func(w http.ResponseWriter, r *http.Request) {
+		v, _ := strconv.Atoi(r.URL.Query().Get("ms"))
+		delayMs.Store(int64(v))
+		log.Printf("CTL delay=%dms", v)
+		fmt.Fprintf(w, "delay=%dms\n", v)
+	})
+	ctl.HandleFunc("/count", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s count=%d inflight=%d max_inflight=%d delay=%dms\n", name, count.Load(), inflight.Load(), maxInflight.Load(), delayMs.Load())
+	})
+	ctl.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
+		count.Store(0)
+		maxInflight.Store(0)
+		histMu.Lock()
+		hist = map[int64]int{}
+		histMu.Unlock()
+		fmt.Fprintln(w, "ok")
+	})
+	ctl.HandleFunc("/hist", func(w http.ResponseWriter, r *http.Request) {
+		histMu.Lock()
+		keys := make([]int64, 0, len(hist))
+		total := 0
+		for k, c := range hist {
+			keys = append(keys, k)
+			total += c
+		}
+		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+		cum := 0
+		p50, p90, p99 := int64(-1), int64(-1), int64(-1)
+		for _, k := range keys {
+			cum += hist[k]
+			f := float64(cum) / float64(total)
+			if p50 < 0 && f >= .5 {
+				p50 = k
+			}
+			if p90 < 0 && f >= .9 {
+				p90 = k
+			}
+			if p99 < 0 && f >= .99 {
+				p99 = k
+			}
+		}
+		fmt.Fprintf(w, "%s samples=%d inflight p50=%d p90=%d p99=%d max=%d (histogram of 10 ms samples)\n", name, total, p50, p90, p99, maxInflight.Load())
+		for _, k := range keys {
+			fmt.Fprintf(w, "  %d: %d\n", k, hist[k])
+		}
+		histMu.Unlock()
+	})
+	log.Printf("authz3 %s grpc :9000 ctl :9002", name)
+	log.Fatal(http.ListenAndServe(":9002", ctl))
+}

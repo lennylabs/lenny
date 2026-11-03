@@ -1,0 +1,28 @@
+### ghe-clone rc=0
+$ git clone -q https://acme.ghe.com/acme/widgets.git c 2>&1; cd c && git checkout -q -b feature-ghe-1793733234 && git commit -q --allow-empty -m e && git push -q -u origin HEAD 2>&1; git remote -v | head -1
+origin	https://acme.ghe.com/acme/widgets.git (fetch)
+### ghe-auth-status rc=0
+$ gh auth status 2>&1 | head -3
+  ✓ Logged in to acme.ghe.com account  (default)
+  - Active account: true
+### ghe-pr-create rc=0
+$ gh pr create --title t --body b --reviewer bob --assignee bob 2>&1
+https://api.acme.ghe.com/acme/widgets/pull/7
+### ghe-pr-view rc=0
+$ gh pr view 7 --json number,url 2>&1
+{"number":7,"url":"https://api.acme.ghe.com/acme/widgets/pull/7"}
+### ghe-pr-list rc=0
+$ gh pr list 2>&1
+
+### ghe-pr-comment rc=0
+$ gh pr comment 7 --body c 2>&1
+https://api.acme.ghe.com/acme/widgets/pull/7#issuecomment-1
+### ghe-D-pr-review rc=0
+$ gh pr review 7 --approve 2>&1 | cut -c1-140
+failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation fie
+### ghe-D-pr-merge rc=0
+$ gh pr merge 7 --merge 2>&1 | cut -c1-140
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\
+### ghe-D-api-merge rc=0
+$ gh api -X PUT repos/acme/widgets/pulls/7/merge 2>&1 | cut -c1-140
+{"message":"refused by the egress operation allowlist: PUT .../pulls/{n}/merge is denied by the preset"}gh: refused by the egress operation 

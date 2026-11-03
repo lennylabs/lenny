@@ -1,0 +1,404 @@
+     3 exp=ref got=ref 1.1 http=403  /graphql.json with a denied mutation                                | path /graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.json with a denied mutation                                | path /graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.json with an allowed query                                 | path /graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.json with an allowed query                                 | path /graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.foo with a denied mutation                                 | path /graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.foo with a denied mutation                                 | path /graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.foo with an allowed query                                  | path /graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.foo with an allowed query                                  | path /graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.json.foo with a denied mutation                            | path /graphql.json.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.json.foo with a denied mutation                            | path /graphql.json.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.json.foo with an allowed query                             | path /graphql.json.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.json.foo with an allowed query                             | path /graphql.json.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.JSON with a denied mutation                                | path /graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.JSON with a denied mutation                                | path /graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql.JSON with an allowed query                                 | path /graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /graphql.JSON with an allowed query                                 | path /graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /graphql with a denied mutation                                     | mutation field "addPullRequestReview" is denied by the preset
+     3 exp=ref got=ref 2   http=403  /graphql with a denied mutation                                     | mutation field "addPullRequestReview" is denied by the preset
+     3 exp=fwd got=fwd 1.1 http=200  /graphql with an allowed query                                     POST /graphql | 
+     3 exp=fwd got=fwd 2   http=200  /graphql with an allowed query                                     POST /graphql | 
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json with a denied mutation                            | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.json with a denied mutation                            | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json with an allowed query                             | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.json with an allowed query                             | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.foo with a denied mutation                             | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.foo with a denied mutation                             | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.foo with an allowed query                              | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.foo with an allowed query                              | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json.foo with a denied mutation                        | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 2   http=403  /api/graphql.json.foo with a denied mutation                        | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json.foo with an allowed query                         | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 2   http=403  /api/graphql.json.foo with an allowed query                         | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.JSON with a denied mutation                            | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.JSON with a denied mutation                            | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.JSON with an allowed query                             | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.JSON with an allowed query                             | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql with a denied mutation                                 | mutation field "addPullRequestReview" is denied by the preset
+     3 exp=ref got=ref 2   http=403  /api/graphql with a denied mutation                                 | mutation field "addPullRequestReview" is denied by the preset
+     3 exp=fwd got=fwd 1.1 http=200  /api/graphql with an allowed query                                 POST /api/graphql | 
+     3 exp=fwd got=fwd 2   http=200  /api/graphql with an allowed query                                 POST /api/graphql | 
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json with a denied mutation                            | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.json with a denied mutation                            | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json with an allowed query                             | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.json with an allowed query                             | path /api/graphql.json is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.foo with a denied mutation                             | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.foo with a denied mutation                             | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.foo with an allowed query                              | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.foo with an allowed query                              | path /api/graphql.foo is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json.foo with a denied mutation                        | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 2   http=403  /api/graphql.json.foo with a denied mutation                        | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.json.foo with an allowed query                         | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 2   http=403  /api/graphql.json.foo with an allowed query                         | path /api/graphql.json.foo is in the GraphQL and API family and no flavour path owns
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.JSON with a denied mutation                            | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.JSON with a denied mutation                            | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql.JSON with an allowed query                             | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 2   http=403  /api/graphql.JSON with an allowed query                             | path /api/graphql.JSON is in the GraphQL and API family and no flavour path owns it
+     3 exp=ref got=ref 1.1 http=403  /api/graphql with a denied mutation                                 | mutation field "mergeRequestAccept" is denied by the preset
+     3 exp=ref got=ref 2   http=403  /api/graphql with a denied mutation                                 | mutation field "mergeRequestAccept" is denied by the preset
+     3 exp=fwd got=fwd 1.1 http=200  /api/graphql with an allowed query                                 POST /api/graphql | 
+     3 exp=fwd got=fwd 2   http=200  /api/graphql with an allowed query                                 POST /api/graphql | 
+     3 exp=fwd got=fwd 1.1 http=201  uploads path exact                                                 POST /api/uploads/repos/acme/widgets/release | 
+     3 exp=fwd got=fwd 2   http=201  uploads path exact                                                 POST /api/uploads/repos/acme/widgets/release | 
+     3 exp=ref got=ref 1.1 http=403  uploads path.json                                                   | path /api/uploads/repos/acme/widgets/releases/1/assets.json is in the GraphQL and AP
+     3 exp=ref got=ref 2   http=403  uploads path.json                                                   | path /api/uploads/repos/acme/widgets/releases/1/assets.json is in the GraphQL and AP
+     3 exp=ref got=ref 1.1 http=403  uploads path.foo                                                    | path /api/uploads/repos/acme/widgets/releases/1/assets.foo is in the GraphQL and API
+     3 exp=ref got=ref 2   http=403  uploads path.foo                                                    | path /api/uploads/repos/acme/widgets/releases/1/assets.foo is in the GraphQL and API
+     3 exp=ref got=ref 1.1 http=403  uploads path.bin.foo                                                | path /api/uploads/repos/acme/widgets/releases/1/assets.bin.foo is in the GraphQL and
+     3 exp=ref got=ref 2   http=403  uploads path.bin.foo                                                | path /api/uploads/repos/acme/widgets/releases/1/assets.bin.foo is in the GraphQL and
+     3 exp=ref got=ref 1.1 http=403  generic /graphql, denied name                                       | mutation field "addComment" is denied by the preset
+     3 exp=ref got=ref 2   http=403  generic /graphql, denied name                                       | mutation field "addComment" is denied by the preset
+     3 exp=fwd got=fwd 1.1 http=200  generic /graphql, allowed                                          POST /graphql | 
+     3 exp=fwd got=fwd 2   http=200  generic /graphql, allowed                                          POST /graphql | 
+     3 exp=ref got=ref 1.1 http=403  generic POST /graphql.json, denied name                             | POST with a final graphql segment on an unlisted path: /graphql.json
+     3 exp=ref got=ref 2   http=403  generic POST /graphql.json, denied name                             | POST with a final graphql segment on an unlisted path: /graphql.json
+     3 exp=ref got=ref 1.1 http=403  generic POST /graphql.foo, denied name                              | POST with a final graphql segment on an unlisted path: /graphql.foo
+     3 exp=ref got=ref 2   http=403  generic POST /graphql.foo, denied name                              | POST with a final graphql segment on an unlisted path: /graphql.foo
+     3 exp=fwd got=fwd 1.1 http=200  generic PUT /graphql.json, denied name, not POST                   PUT /graphql.json | 
+     3 exp=fwd got=fwd 2   http=200  generic PUT /graphql.json, denied name, not POST                   PUT /graphql.json | 
+     3 exp=fwd got=fwd 1.1 http=200  allow rule, exact                                                  GET /rest/api/2/project | 
+     3 exp=fwd got=fwd 2   http=200  allow rule, exact                                                  GET /rest/api/2/project | 
+     3 exp=fwd got=fwd 1.1 http=201  allow rule, POST exact                                             POST /rest/api/2/project | 
+     3 exp=fwd got=fwd 2   http=201  allow rule, POST exact                                             POST /rest/api/2/project | 
+     3 exp=ref got=ref 1.1 http=403  allow rule.json never matches                                       | GET /rest/api/2/project.json matches no allow rule
+     3 exp=ref got=ref 2   http=403  allow rule.json never matches                                       | GET /rest/api/2/project.json matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  allow rule POST.json                                                | POST /rest/api/2/project.json matches no allow rule
+     3 exp=ref got=ref 2   http=403  allow rule POST.json                                                | POST /rest/api/2/project.json matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  allow rule.foo never matches                                        | GET /rest/api/2/project.foo matches no allow rule
+     3 exp=ref got=ref 2   http=403  allow rule.foo never matches                                        | GET /rest/api/2/project.foo matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  allow rule POST.foo                                                 | POST /rest/api/2/project.foo matches no allow rule
+     3 exp=ref got=ref 2   http=403  allow rule POST.foo                                                 | POST /rest/api/2/project.foo matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  allow rule.json.foo never matches                                   | GET /rest/api/2/project.json.foo matches no allow rule
+     3 exp=ref got=ref 2   http=403  allow rule.json.foo never matches                                   | GET /rest/api/2/project.json.foo matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  allow rule POST.json.foo                                            | POST /rest/api/2/project.json.foo matches no allow rule
+     3 exp=ref got=ref 2   http=403  allow rule POST.json.foo                                            | POST /rest/api/2/project.json.foo matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  no rule at all under default deny                                   | GET /x matches no allow rule
+     3 exp=ref got=ref 2   http=403  no rule at all under default deny                                   | GET /x matches no allow rule
+     3 exp=ref got=ref 1.1 http=403  dotted deny, DELETE /files/report.tar                               | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 2   http=403  dotted deny, DELETE /files/report.tar                               | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 1.1 http=403  dotted deny, DELETE /files/report.tar.gz                            | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 2   http=403  dotted deny, DELETE /files/report.tar.gz                            | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 1.1 http=403  dotted deny, DELETE /files/report.tar.gz.bak                        | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 2   http=403  dotted deny, DELETE /files/report.tar.gz.bak                        | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 1.1 http=403  dotted deny, DELETE /files/REPORT.TAR.GZ                            | DELETE /files/report.tar is denied by the preset
+     3 exp=ref got=ref 2   http=403  dotted deny, DELETE /files/REPORT.TAR.GZ                            | DELETE /files/report.tar is denied by the preset
+     3 exp=fwd got=fwd 1.1 http=204  dotted deny, DELETE /files/report.txt                              DELETE /files/report.txt | 
+     3 exp=fwd got=fwd 2   http=204  dotted deny, DELETE /files/report.txt                              DELETE /files/report.txt | 
+     3 exp=fwd got=fwd 1.1 http=204  dotted deny, DELETE /files/report                                  DELETE /files/report | 
+     3 exp=fwd got=fwd 2   http=204  dotted deny, DELETE /files/report                                  DELETE /files/report | 
+     3 exp=fwd got=fwd 1.1 http=204  dotted deny, DELETE /files/report.ta                               DELETE /files/report.ta | 
+     3 exp=fwd got=fwd 2   http=204  dotted deny, DELETE /files/report.ta                               DELETE /files/report.ta | 
+     3 exp=fwd got=fwd 1.1 http=204  dotted deny, DELETE /files/report.tarx                             DELETE /files/report.tarx | 
+     3 exp=fwd got=fwd 2   http=204  dotted deny, DELETE /files/report.tarx                             DELETE /files/report.tarx | 
+     3 exp=fwd got=fwd 1.1 http=204  dotted deny, DELETE /files/x.report.tar                            DELETE /files/x.report.tar | 
+     3 exp=fwd got=fwd 2   http=204  dotted deny, DELETE /files/x.report.tar                            DELETE /files/x.report.tar | 
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, mergeRequestAccept                    | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, mergeRequestAccept                    | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias mergeRequestAccept              | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, mergeRequestAccept                             | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, mergeRequestAccept                             | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming mergeRequestAccept                | a query names the denied mutation field "mergeRequestAccept"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, commitCreate                          | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, commitCreate                          | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias commitCreate                    | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, commitCreate                                   | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, commitCreate                                   | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming commitCreate                      | a query names the denied mutation field "commitCreate"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, branchCreate                          | mutation field "branchCreate" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, branchCreate                          | mutation field "branchCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias branchCreate                    | mutation field "branchCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, branchCreate                                   | mutation field "branchCreate" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, branchCreate                                   | mutation field "branchCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming branchCreate                      | a query names the denied mutation field "branchCreate"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, branchDelete                          | mutation field "branchDelete" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, branchDelete                          | mutation field "branchDelete" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias branchDelete                    | mutation field "branchDelete" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, branchDelete                                   | mutation field "branchDelete" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, branchDelete                                   | mutation field "branchDelete" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming branchDelete                      | a query names the denied mutation field "branchDelete"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, addPullRequestReview                  | mutation field "addPullRequestReview" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, addPullRequestReview                  | mutation field "addPullRequestReview" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias addPullRequestReview            | mutation field "addPullRequestReview" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, addPullRequestReview                           | mutation field "addPullRequestReview" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, addPullRequestReview                           | mutation field "addPullRequestReview" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming addPullRequestReview              | a query names the denied mutation field "addPullRequestReview"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, mergePullRequest                      | mutation field "mergePullRequest" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, mergePullRequest                      | mutation field "mergePullRequest" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias mergePullRequest                | mutation field "mergePullRequest" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, mergePullRequest                               | mutation field "mergePullRequest" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, mergePullRequest                               | mutation field "mergePullRequest" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming mergePullRequest                  | a query names the denied mutation field "mergePullRequest"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, createRef                             | mutation field "createRef" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, createRef                             | mutation field "createRef" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias createRef                       | mutation field "createRef" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, createRef                                      | mutation field "createRef" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, createRef                                      | mutation field "createRef" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming createRef                         | a query names the denied mutation field "createRef"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, createCommitOnBranch                  | mutation field "createCommitOnBranch" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, createCommitOnBranch                  | mutation field "createCommitOnBranch" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias createCommitOnBranch            | mutation field "createCommitOnBranch" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, createCommitOnBranch                           | mutation field "createCommitOnBranch" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, createCommitOnBranch                           | mutation field "createCommitOnBranch" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming createCommitOnBranch              | a query names the denied mutation field "createCommitOnBranch"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, updatePullRequestBranch               | mutation field "updatePullRequestBranch" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, updatePullRequestBranch               | mutation field "updatePullRequestBranch" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias updatePullRequestBranch         | mutation field "updatePullRequestBranch" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, updatePullRequestBranch                        | mutation field "updatePullRequestBranch" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, updatePullRequestBranch                        | mutation field "updatePullRequestBranch" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming updatePullRequestBranch           | a query names the denied mutation field "updatePullRequestBranch"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, approveDeployments                    | mutation field "approveDeployments" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, approveDeployments                    | mutation field "approveDeployments" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias approveDeployments              | mutation field "approveDeployments" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, approveDeployments                             | mutation field "approveDeployments" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, approveDeployments                             | mutation field "approveDeployments" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming approveDeployments                | a query names the denied mutation field "approveDeployments"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, createEnvironment                     | mutation field "createEnvironment" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, createEnvironment                     | mutation field "createEnvironment" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias createEnvironment               | mutation field "createEnvironment" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, createEnvironment                              | mutation field "createEnvironment" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, createEnvironment                              | mutation field "createEnvironment" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming createEnvironment                 | a query names the denied mutation field "createEnvironment"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, createBranchProtectionRule            | mutation field "createBranchProtectionRule" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, createBranchProtectionRule            | mutation field "createBranchProtectionRule" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias createBranchProtectionRule      | mutation field "createBranchProtectionRule" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, createBranchProtectionRule                     | mutation field "createBranchProtectionRule" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, createBranchProtectionRule                     | mutation field "createBranchProtectionRule" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming createBranchProtectionRule        | a query names the denied mutation field "createBranchProtectionRule"
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, createRepositoryRuleset               | mutation field "createRepositoryRuleset" is denied by the preset
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, createRepositoryRuleset               | mutation field "createRepositoryRuleset" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, alias createRepositoryRuleset         | mutation field "createRepositoryRuleset" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, createRepositoryRuleset                        | mutation field "createRepositoryRuleset" is denied by the preset
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, createRepositoryRuleset                        | mutation field "createRepositoryRuleset" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, query naming createRepositoryRuleset           | a query names the denied mutation field "createRepositoryRuleset"
+     4 exp=fwd got=fwd 1.1 http=200  github-deny on a GitLab host, other mutation                       POST /api/graphql | 
+     4 exp=fwd got=fwd 2   http=200  github-deny on a GitLab host, other mutation                       POST /api/graphql | 
+     4 exp=fwd got=fwd 1.1 http=200  github-deny on a GitLab host, query                                POST /api/graphql | 
+     4 exp=fwd got=fwd 2   http=200  github-deny on a GitLab host, query                                POST /api/graphql | 
+     4 exp=fwd got=fwd 1.1 http=200  gitlab-deny on GHES, other mutation                                POST /api/graphql | 
+     4 exp=fwd got=fwd 2   http=200  gitlab-deny on GHES, other mutation                                POST /api/graphql | 
+     4 exp=fwd got=fwd 1.1 http=200  gitlab-deny on GHES, query                                         POST /api/graphql | 
+     4 exp=fwd got=fwd 2   http=200  gitlab-deny on GHES, query                                         POST /api/graphql | 
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, REST POST /api/v4/projects/1/merge_r  | path /api/v4/projects/1/merge_requests/7/approve is in the GraphQL and API family an
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, REST POST /api/v4/projects/1/merge_r  | path /api/v4/projects/1/merge_requests/7/approve is in the GraphQL and API family an
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, REST PUT /api/v4/projects/1/merge_re  | path /api/v4/projects/1/merge_requests/7/merge is in the GraphQL and API family and 
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, REST PUT /api/v4/projects/1/merge_re  | path /api/v4/projects/1/merge_requests/7/merge is in the GraphQL and API family and 
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, REST GET /api/v4/projects/1           | path /api/v4/projects/1 is in the GraphQL and API family and no flavour path owns it
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, REST GET /api/v4/projects/1           | path /api/v4/projects/1 is in the GraphQL and API family and no flavour path owns it
+     4 exp=ref got=ref 1.1 http=403  github-deny on a GitLab host, REST POST /api/v4/projects/1/issues   | path /api/v4/projects/1/issues is in the GraphQL and API family and no flavour path 
+     4 exp=ref got=ref 2   http=403  github-deny on a GitLab host, REST POST /api/v4/projects/1/issues   | path /api/v4/projects/1/issues is in the GraphQL and API family and no flavour path 
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, REST PUT /api/v3/repos/a/b/pulls/7/merge       | path /api/v3/repos/a/b/pulls/7/merge is in the GraphQL and API family and no flavour
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, REST PUT /api/v3/repos/a/b/pulls/7/merge       | path /api/v3/repos/a/b/pulls/7/merge is in the GraphQL and API family and no flavour
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, REST POST /api/v3/repos/a/b/pulls/7/reviews    | path /api/v3/repos/a/b/pulls/7/reviews is in the GraphQL and API family and no flavo
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, REST POST /api/v3/repos/a/b/pulls/7/reviews    | path /api/v3/repos/a/b/pulls/7/reviews is in the GraphQL and API family and no flavo
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, REST GET /api/v3/repos/a/b                     | path /api/v3/repos/a/b is in the GraphQL and API family and no flavour path owns it
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, REST GET /api/v3/repos/a/b                     | path /api/v3/repos/a/b is in the GraphQL and API family and no flavour path owns it
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, REST POST /repos/a/b/pulls/7/reviews           | a write outside the REST prefix, the GraphQL paths, and the uploads path is refused:
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, REST POST /repos/a/b/pulls/7/reviews           | a write outside the REST prefix, the GraphQL paths, and the uploads path is refused:
+     4 exp=ref got=ref 1.1 http=403  gitlab-deny on GHES, REST PUT /repos/a/b/pulls/7/merge              | a write outside the REST prefix, the GraphQL paths, and the uploads path is refused:
+     4 exp=ref got=ref 2   http=403  gitlab-deny on GHES, REST PUT /repos/a/b/pulls/7/merge              | a write outside the REST prefix, the GraphQL paths, and the uploads path is refused:
+     4 exp=ref got=ref 1.1 http=403  own flavour carries mergeRequestAccept                              | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 2   http=403  own flavour carries mergeRequestAccept                              | mutation field "mergeRequestAccept" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  own flavour carries commitCreate                                    | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 2   http=403  own flavour carries commitCreate                                    | mutation field "commitCreate" is denied by the preset
+     4 exp=ref got=ref 1.1 http=403  own flavour carries mergePullRequest                                | mutation field "mergePullRequest" is denied by the preset
+     4 exp=ref got=ref 2   http=403  own flavour carries mergePullRequest                                | mutation field "mergePullRequest" is denied by the preset
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Original-URL: /x                    | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Original-URL: /x                    | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Rewrite-URL: /x                     | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Rewrite-URL: /x                     | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Forwarded-Path: /x                  | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Forwarded-Path: /x                  | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Forwarded-Prefix: /x                | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Forwarded-Prefix: /x                | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Forwarded-Uri: /x                   | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Forwarded-Uri: /x                   | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Envoy-Original-Path: /x             | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Envoy-Original-Path: /x             | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET x-original-url: /x                    | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET x-original-url: /x                    | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test GET X-Original-URL;                       | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test GET X-Original-URL;                       | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules api.example.test POST X-Original-URL                       | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  no rules api.example.test POST X-Original-URL                       | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Original-URL: /x             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Original-URL: /x             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Rewrite-URL: /x              | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Rewrite-URL: /x              | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Forwarded-Path: /x           | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Forwarded-Path: /x           | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Forwarded-Prefix: /x         | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Forwarded-Prefix: /x         | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Forwarded-Uri: /x            | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Forwarded-Uri: /x            | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Envoy-Original-Path: /x      | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Envoy-Original-Path: /x      | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET x-original-url: /x             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET x-original-url: /x             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test GET X-Original-URL;                | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test GET X-Original-URL;                | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  generic rules other.example.test POST X-Original-URL                | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  generic rules other.example.test POST X-Original-URL                | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Original-URL: /x            | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Original-URL: /x            | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Rewrite-URL: /x             | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Rewrite-URL: /x             | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Forwarded-Path: /x          | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Forwarded-Path: /x          | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Forwarded-Prefix: /x        | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Forwarded-Prefix: /x        | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Forwarded-Uri: /x           | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Forwarded-Uri: /x           | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Envoy-Original-Path: /x     | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Envoy-Original-Path: /x     | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET x-original-url: /x            | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET x-original-url: /x            | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test GET X-Original-URL;               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test GET X-Original-URL;               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered ghes.example.test POST X-Original-URL               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered ghes.example.test POST X-Original-URL               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Original-URL: /x                        | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Original-URL: /x                        | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Rewrite-URL: /x                         | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Rewrite-URL: /x                         | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Forwarded-Path: /x                      | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Forwarded-Path: /x                      | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Forwarded-Prefix: /x                    | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Forwarded-Prefix: /x                    | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Forwarded-Uri: /x                       | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Forwarded-Uri: /x                       | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Envoy-Original-Path: /x                 | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Envoy-Original-Path: /x                 | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET x-original-url: /x                        | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET x-original-url: /x                        | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com GET X-Original-URL;                           | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com GET X-Original-URL;                           | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset api.github.com POST X-Original-URL                           | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset api.github.com POST X-Original-URL                           | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Original-URL: /x          | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Original-URL: /x          | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Rewrite-URL: /x           | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Rewrite-URL: /x           | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Forwarded-Path: /x        | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Forwarded-Path: /x        | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Forwarded-Prefix: /x      | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Forwarded-Prefix: /x      | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Forwarded-Uri: /x         | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Forwarded-Uri: /x         | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Envoy-Original-Path: /x   | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Envoy-Original-Path: /x   | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET x-original-url: /x          | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET x-original-url: /x          | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test GET X-Original-URL;             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test GET X-Original-URL;             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  preset, covered gitlab.example.test POST X-Original-URL             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  preset, covered gitlab.example.test POST X-Original-URL             | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Original-URL: /x               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Original-URL: /x               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Rewrite-URL: /x                | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Rewrite-URL: /x                | routing override header X-Rewrite-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Forwarded-Path: /x             | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Forwarded-Path: /x             | routing override header X-Forwarded-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Forwarded-Prefix: /x           | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Forwarded-Prefix: /x           | routing override header X-Forwarded-Prefix refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Forwarded-Uri: /x              | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Forwarded-Uri: /x              | routing override header X-Forwarded-Uri refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Envoy-Original-Path: /x        | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Envoy-Original-Path: /x        | routing override header X-Envoy-Original-Path refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET x-original-url: /x               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET x-original-url: /x               | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com GET X-Original-URL;                  | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com GET X-Original-URL;                  | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  covered, no binding github.com POST X-Original-URL                  | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 2   http=403  covered, no binding github.com POST X-Original-URL                  | routing override header X-Original-Url refused on a terminated host
+     5 exp=ref got=ref 1.1 http=403  no rules, plain absolute-form, X-Original-URL                       | routing override header X-Original-Url refused on a terminated host
+     5 exp=fwd got=fwd 1.1 http=201  no rules, X-HTTP-Method-Override is not on the routing list        POST /plain/path | 
+     5 exp=fwd got=fwd 2   http=201  no rules, X-HTTP-Method-Override is not on the routing list        POST /plain/path | 
+     5 exp=fwd got=fwd 1.1 http=200  no rules, no header                                                GET /plain/path | 
+     5 exp=fwd got=fwd 2   http=200  no rules, no header                                                GET /plain/path | 
+     5 exp=fwd got=fwd 1.1 http=200  opaque host, netagent cannot see it                                GET /plain/path | 
+     5 exp=fwd got=fwd 2   http=200  opaque host, netagent cannot see it                                GET /plain/path | 
+     6 exp=ref got=ref 1.1 http=403  enc POST access_tokens                                              | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc POST access_tokens                                              | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc DELETE access_tokens/1                                          | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc DELETE access_tokens/1                                          | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc POST access_tokens/1/rotate                                     | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc POST access_tokens/1/rotate                                     | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc PUT access_tokens/1                                             | PUT /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc PUT access_tokens/1                                             | PUT /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc DELETE access_tokens/1.json                                     | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc DELETE access_tokens/1.json                                     | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc POST access_tokens.foo                                          | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc POST access_tokens.foo                                          | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=fwd got=fwd 1.1 http=200  enc GET access_tokens                                              GET /api/v4/projects/acme%2Fwidgets/access_t | 
+     6 exp=fwd got=fwd 2   http=200  enc GET access_tokens                                              GET /api/v4/projects/acme%2Fwidgets/access_t | 
+     6 exp=fwd got=fwd 1.1 http=200  enc GET access_tokens/1                                            GET /api/v4/projects/acme%2Fwidgets/access_t | 
+     6 exp=fwd got=fwd 2   http=200  enc GET access_tokens/1                                            GET /api/v4/projects/acme%2Fwidgets/access_t | 
+     6 exp=ref got=ref 1.1 http=403  enc POST deploy_tokens                                              | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc POST deploy_tokens                                              | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc DELETE deploy_tokens/1                                          | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc DELETE deploy_tokens/1                                          | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc POST deploy_tokens/1/rotate                                     | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc POST deploy_tokens/1/rotate                                     | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc PUT deploy_tokens/1                                             | PUT /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc PUT deploy_tokens/1                                             | PUT /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc DELETE deploy_tokens/1.json                                     | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc DELETE deploy_tokens/1.json                                     | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  enc POST deploy_tokens.foo                                          | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  enc POST deploy_tokens.foo                                          | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=fwd got=fwd 1.1 http=200  enc GET deploy_tokens                                              GET /api/v4/projects/acme%2Fwidgets/deploy_t | 
+     6 exp=fwd got=fwd 2   http=200  enc GET deploy_tokens                                              GET /api/v4/projects/acme%2Fwidgets/deploy_t | 
+     6 exp=fwd got=fwd 1.1 http=200  enc GET deploy_tokens/1                                            GET /api/v4/projects/acme%2Fwidgets/deploy_t | 
+     6 exp=fwd got=fwd 2   http=200  enc GET deploy_tokens/1                                            GET /api/v4/projects/acme%2Fwidgets/deploy_t | 
+     6 exp=ref got=ref 1.1 http=403  num POST access_tokens                                              | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num POST access_tokens                                              | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num DELETE access_tokens/1                                          | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num DELETE access_tokens/1                                          | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num POST access_tokens/1/rotate                                     | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num POST access_tokens/1/rotate                                     | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num PUT access_tokens/1                                             | PUT /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num PUT access_tokens/1                                             | PUT /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num DELETE access_tokens/1.json                                     | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num DELETE access_tokens/1.json                                     | DELETE /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num POST access_tokens.foo                                          | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num POST access_tokens.foo                                          | POST /projects/*/access_tokens/** is denied by the preset
+     6 exp=fwd got=fwd 1.1 http=200  num GET access_tokens                                              GET /api/v4/projects/1/access_tokens | 
+     6 exp=fwd got=fwd 2   http=200  num GET access_tokens                                              GET /api/v4/projects/1/access_tokens | 
+     6 exp=fwd got=fwd 1.1 http=200  num GET access_tokens/1                                            GET /api/v4/projects/1/access_tokens/1 | 
+     6 exp=fwd got=fwd 2   http=200  num GET access_tokens/1                                            GET /api/v4/projects/1/access_tokens/1 | 
+     6 exp=ref got=ref 1.1 http=403  num POST deploy_tokens                                              | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num POST deploy_tokens                                              | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num DELETE deploy_tokens/1                                          | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num DELETE deploy_tokens/1                                          | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num POST deploy_tokens/1/rotate                                     | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num POST deploy_tokens/1/rotate                                     | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num PUT deploy_tokens/1                                             | PUT /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num PUT deploy_tokens/1                                             | PUT /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num DELETE deploy_tokens/1.json                                     | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num DELETE deploy_tokens/1.json                                     | DELETE /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 1.1 http=403  num POST deploy_tokens.foo                                          | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=ref got=ref 2   http=403  num POST deploy_tokens.foo                                          | POST /projects/*/deploy_tokens/** is denied by the preset
+     6 exp=fwd got=fwd 1.1 http=200  num GET deploy_tokens                                              GET /api/v4/projects/1/deploy_tokens | 
+     6 exp=fwd got=fwd 2   http=200  num GET deploy_tokens                                              GET /api/v4/projects/1/deploy_tokens | 
+     6 exp=fwd got=fwd 1.1 http=200  num GET deploy_tokens/1                                            GET /api/v4/projects/1/deploy_tokens/1 | 
+     6 exp=fwd got=fwd 2   http=200  num GET deploy_tokens/1                                            GET /api/v4/projects/1/deploy_tokens/1 | 
+TOTALS [(('3', 'fwd', 'fwd'), 26), (('3', 'ref', 'ref'), 88), (('4', 'fwd', 'fwd'), 8), (('4', 'ref', 'ref'), 102), (('5', 'fwd', 'fwd'), 6), (('5', 'ref', 'ref'), 109), (('6', 'fwd', 'fwd'), 16), (('6', 'ref', 'ref'), 48)]

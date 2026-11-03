@@ -1,0 +1,15 @@
+git clone -q https://github.com/org/repo full                rc=0 5.44s 
+git fetch -q origin                                          rc=0 0.01s 
+git clone -q --no-checkout --filter=blob:none https://github.com/org/repo partial rc=0 0.02s 
+   partial: missing blobs=34 size=180KB promisor=true filter=blob:none
+git clone -q --depth 1 https://github.com/org/repo shallow   rc=0 4.90s 
+   shallow: 1 commit(s), shallow file=yes
+git push -q origin HEAD:main                                 rc=0 0.01s 
+git push -q origin HEAD:main                                 rc=0 2.05s 
+   upstream main has l.bin: 1
+git clone -q https://github.com/org/other other              rc=128 0.00s fatal: unable to access 'http://127.0.0.1:7073/https/github.com/org/other/': The requested URL returned error: 403
+   dumb GET HEAD: 400  traversal: 400  encoded: 400
+git clone -q https://github.com/org/repo full2               rc=0 8.56s 
+git ls-remote https://moved301.test/org/repo                 rc=0 0.01s 
+git ls-remote https://moved307.test/org/repo                 rc=0 0.01s 
+proxy RSS KB: start=2836 max=9008 samples=220 VmHWM=9008

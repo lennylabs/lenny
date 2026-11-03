@@ -1,0 +1,15 @@
+04:50:48.076 PROBE validator ok=true state=live reason=
+04:50:48.078 PROBE tokenreview authenticated=true system:serviceaccount:spike:agent aud=[lenny-egress]
+04:50:51.187 WATCH MODIFIED pod spike/victim-slow uid=8b2c30dd-3f76-47dc-a714-62ab199c8fcf deletionTimestamp=2026-11-02T04:51:21Z
+04:50:51.208 PROBE validator ok=true state=terminating reason=
+04:51:21.842 WATCH DELETED pod spike/victim-slow uid=8b2c30dd-3f76-47dc-a714-62ab199c8fcf
+04:51:21.897 PROBE validator ok=false state=gone reason=pod uid not live
+04:51:28.224 PROBE tokenreview authenticated=false [invalid bearer token, service account token has been invalidated]
+04:51:36.220 PROBE validator ok=true state=live reason=
+04:51:36.222 PROBE tokenreview authenticated=true system:serviceaccount:spike:agent aud=[lenny-egress]
+04:51:39.326 WATCH MODIFIED pod spike/victim-fast uid=de08b19c-1dba-42ea-a398-fef0fd6b9cf0 deletionTimestamp=2026-11-02T04:52:09Z
+04:51:39.364 PROBE validator ok=true state=terminating reason=
+04:51:39.910 WATCH DELETED pod spike/victim-fast uid=de08b19c-1dba-42ea-a398-fef0fd6b9cf0
+04:51:39.982 PROBE validator ok=false state=gone reason=pod uid not live
+04:51:46.224 PROBE tokenreview authenticated=false [invalid bearer token, service account token has been invalidated]
+04:52:18.084 PROBE done

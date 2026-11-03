@@ -1,0 +1,3 @@
+Exception in thread "main" org.eclipse.jgit.api.errors.TransportException: https://ghes.example.test/acme/widgets.git: git-upload-pack not permitted on 'https://ghes.example.test/acme/widgets.git/'
+Caused by: org.eclipse.jgit.errors.TransportException: https://ghes.example.test/acme/widgets.git: git-upload-pack not permitted on 'https://ghes.example.test/acme/widgets.git/'
+clone-dir-absent rc=0

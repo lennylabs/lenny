@@ -699,7 +699,7 @@ Each proposal carries the tests for its own surface, at the tiers `test-coverage
 
 ## Spikes owed
 
-Nothing below has been run.
+Nothing below has been run. This document has no evidence folder for that reason. Round 5 of the egress validation, which "Grants" cites for Envoy's lack of an ext_authz response cache, is under `evidence/egress-and-git-design/spike-envoy-r4/`, in `RESULTS.md`.
 
 - **Envoy.** `ORIGINAL_DST` with an upstream TLS context verifying a fixed SAN, an address from ext_authz metadata, a forwarded CONNECT with an injected credential, `custom_response`, and `max_stream_duration`, on 1.40.2 and 1.39.6, plus whether `transport_socket_matches` can select TLS on the existing cluster. A deny with status 503 from ext_authz belongs here too. This is the first spike, because the route depends on it.
 - **Reversed gRPC.** grpc-go serving on a dialed connection, and throughput against raw HTTP/2 on 100 ms of latency.

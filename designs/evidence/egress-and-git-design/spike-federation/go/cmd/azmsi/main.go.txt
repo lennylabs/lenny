@@ -1,0 +1,32 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+)
+
+func main() {
+	ctx := context.Background()
+	var cred azcore.TokenCredential
+	var err error
+	if os.Getenv("MODE") == "default" {
+		cred, err = azidentity.NewDefaultAzureCredential(nil)
+	} else {
+		cred, err = azidentity.NewManagedIdentityCredential(nil)
+	}
+	if err != nil {
+		fmt.Println("ERR ctor:", err)
+		return
+	}
+	t, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{"https://management.azure.com/.default"}})
+	if err != nil {
+		fmt.Println("ERR token:", err)
+		return
+	}
+	fmt.Println("token:", t.Token, "expires:", t.ExpiresOn)
+}

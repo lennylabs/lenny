@@ -1,0 +1,8 @@
+agent:good  n=6000 c=16 3549.7/s results=map[TLS ok ech_accepted=false: 200 OK hello :6000] p50=3.96ms p90=6.63ms p99=13.76ms
+   envoy cpu samples: 0.27% 0.27% 0.27% 0.28% 0.30% 0.30% 0.31% 0.33% 0.34% 0.38% 0.44% 121.11% 
+agent:sni   n=6000 c=16 3634.4/s results=map[TLS ok ech_accepted=false: 200 OK hello :6000] p50=3.97ms p90=6.52ms p99=10.69ms
+   envoy cpu samples: 0.29% 0.29% 0.31% 0.31% 0.31% 0.32% 0.34% 0.35% 0.37% 0.41% 0.41% 110.64% 
+agent:good  n=6000 c=16 3683.9/s results=map[TLS ok ech_accepted=false: 200 OK hello :6000] p50=3.81ms p90=6.49ms p99=12.62ms
+   envoy cpu samples: 0.28% 0.28% 0.29% 0.29% 0.32% 0.35% 0.35% 0.37% 0.40% 0.40% 0.43% 95.40% 
+agent:sni   n=6000 c=16 3764.1/s results=map[TLS ok ech_accepted=false: 200 OK hello :6000] p50=3.81ms p90=6.25ms p99=9.98ms
+   envoy cpu samples: 0.27% 0.28% 0.29% 0.29% 0.30% 0.31% 0.33% 0.34% 0.36% 0.40% 0.42% 108.08% 

@@ -1,0 +1,22 @@
+configmap/ob-prop created
+pod/c1 created
+pod/c2 created
+pod/c3 created
+pod/p1 created
+pod/p2 created
+pod/p3 created
+pod/p4 created
+pod/p5 created
+pod/psub created
+pod/soak created
+pod/writer created
+pod/c1 condition met
+pod/c2 condition met
+pod/c3 condition met
+pod/p1 condition met
+pod/p2 condition met
+pod/p3 condition met
+pod/p4 condition met
+pod/p5 condition met
+pod/psub condition met
+started 23:45:03

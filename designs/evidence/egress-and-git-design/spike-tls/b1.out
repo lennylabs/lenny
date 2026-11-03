@@ -1,0 +1,12 @@
+plain                  rate=500   envoy[34.77% 36.07MiB] SUMMARY attempts=6000 map[200:6000] 200-latency p50=600µs p90=1.5ms p99=5ms max=35.1ms ticks=6000 broken=0 elapsed=12.6s
+tls-resumed            rate=500   envoy[33.94% 36.8MiB] SUMMARY attempts=6000 map[200:6000] 200-latency p50=1ms p90=1.3ms p99=3.6ms max=25.7ms ticks=6000 broken=0 elapsed=12.6s
+tls-full               rate=500   envoy[36.43% 38.12MiB] SUMMARY attempts=6000 map[200:6000] 200-latency p50=1.3ms p90=1.7ms p99=10.6ms max=25.3ms ticks=6000 broken=0 elapsed=12.6s
+plain                  rate=1000  envoy[42.63% 49.35MiB] SUMMARY attempts=12000 map[200:12000] 200-latency p50=800µs p90=1.3ms p99=5.4ms max=23.9ms ticks=12000 broken=0 elapsed=12.6s
+tls-resumed            rate=1000  envoy[51.58% 53.78MiB] SUMMARY attempts=12000 map[200:12000] 200-latency p50=1.2ms p90=1.5ms p99=12.6ms max=56.6ms ticks=12000 broken=0 elapsed=12.6s
+tls-full               rate=1000  envoy[44.12% 56.48MiB] SUMMARY attempts=12000 map[200:12000] 200-latency p50=900µs p90=1.4ms p99=14.3ms max=54.6ms ticks=12000 broken=0 elapsed=12.6s
+plain                  rate=2000  envoy[59.21% 75.37MiB] SUMMARY attempts=24000 map[200:16231 dial:7769] 200-latency p50=1ms p90=1.2ms p99=5.9ms max=33.7ms ticks=16311 broken=0 elapsed=21
+tls-resumed            rate=2000  envoy[83.73% 88.45MiB] SUMMARY attempts=24000 map[200:24000] 200-latency p50=800µs p90=900µs p99=47.5ms max=162.1ms ticks=24000 broken=0 elapsed=12.7s
+tls-full               rate=2000  envoy[79.95% 88.38MiB] SUMMARY attempts=24000 map[200:24000] 200-latency p50=1ms p90=1.1ms p99=21.2ms max=98.1ms ticks=24000 broken=0 elapsed=12.6s
+### 1000 concurrent tunnels, memory
+plain idle=19.12MiB  during=10.35% 72.85MiB  SUMMARY attempts=1000 map[200:1000] 200-latency p50=1.7ms p90=2.7ms p99=23.4ms max=37.2ms ticks=25000 broken=0
+tls idle=20.62MiB  during=11.11% 83.62MiB  SUMMARY attempts=1000 map[200:1000] 200-latency p50=1.7ms p90=2.9ms p99=18.6ms max=31.7ms ticks=25000 broken=0

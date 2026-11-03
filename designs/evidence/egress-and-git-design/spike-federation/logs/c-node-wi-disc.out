@@ -1,0 +1,6 @@
+### TEST c-node-wi-disc  23:20:56
+### docker run --network spikefed-net --env-file env/azwi.env -e DISABLE_ID=0 -e SLEEP=1 -w /napp spikefed-node:t node azwi.js
+call1 ERR CredentialUnavailableError endpoints_resolution_error: See https://aka.ms/msal.js.errors#endpoints_resolution_error for details
+call2 ERR CredentialUnavailableError endpoints_resolution_error: See https://aka.ms/msal.js.errors#endpoints_resolution_error for details
+### exit 0
+### server log:

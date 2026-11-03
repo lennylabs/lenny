@@ -1,0 +1,6 @@
+probing
+victim-slow DELETE issued at 04:50:51.126
+pod "victim-slow" deleted from spike namespace
+probing
+victim-fast DELETE issued at 04:51:39.265
+pod "victim-fast" deleted from spike namespace

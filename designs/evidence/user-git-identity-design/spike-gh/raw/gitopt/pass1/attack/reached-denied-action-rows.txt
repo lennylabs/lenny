@@ -1,0 +1,14 @@
+# Rows reporting REACHED-DENIED-ACTION in the superseded first pass of the deny preset, copied verbatim from
+# pass1/attack/deny-ghes.txt and pass1/attack/deny-ghcom.txt. The full files were left out.
+== deny-ghes.txt
+REACHED-DENIED-ACTION  h1    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true  
+REACHED-DENIED-ACTION  h2    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true  
+REACHED-DENIED-ACTION: 2
+REACHED-DENIED-ACTION  h1    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true   stubURI=POST /api/graphqlx fields=mutation:addPullRequestReview;mutation:addPullRequestReview
+REACHED-DENIED-ACTION  h2    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true   stubURI=POST /api/graphqlx fields=mutation:addPullRequestReview;mutation:addPullRequestReview
+== deny-ghcom.txt
+REACHED-DENIED-ACTION  h1    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true  
+REACHED-DENIED-ACTION  h2    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true  
+REACHED-DENIED-ACTION: 2
+REACHED-DENIED-ACTION  h1    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true   stubURI=POST /graphqlx fields=mutation:addPullRequestReview;mutation:addPullRequestReview
+REACHED-DENIED-ACTION  h2    gql-path / bad doc suffix                                        step=0 exp=refuse status=200 filter=        stub=1 cred=true   stubURI=POST /graphqlx fields=mutation:addPullRequestReview;mutation:addPullRequestReview

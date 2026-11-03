@@ -1,0 +1,130 @@
+python-requests https://allowed.oa.test/ OK 200
+python-httpx-h1 https://allowed.oa.test/ OK 200 HTTP/1.1
+python-httpx-h2 https://allowed.oa.test/ OK 200 HTTP/2
+python-aiohttp https://allowed.oa.test/ OK 200
+python-urllib https://allowed.oa.test/ OK 200
+python-requests https://denied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')))"))
+python-httpx-h1 https://denied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')
+python-httpx-h2 https://denied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')
+python-aiohttp https://denied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)'))
+python-urllib https://denied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)'))
+python-requests https://sub.allowed.oa.test/ OK 200
+python-httpx-h1 https://sub.allowed.oa.test/ OK 200 HTTP/1.1
+python-httpx-h2 https://sub.allowed.oa.test/ OK 200 HTTP/2
+python-aiohttp https://sub.allowed.oa.test/ OK 200
+python-urllib https://sub.allowed.oa.test/ OK 200
+python-requests https://viaint.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')))"))
+python-httpx-h1 https://viaint.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')
+python-httpx-h2 https://viaint.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')
+python-aiohttp https://viaint.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)'))
+python-urllib https://viaint.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)'))
+python-requests https://198.19.50.20/ OK 200
+python-httpx-h1 https://198.19.50.20/ OK 200 HTTP/1.1
+python-httpx-h2 https://198.19.50.20/ OK 200 HTTP/2
+python-aiohttp https://198.19.50.20/ OK 200
+python-urllib https://198.19.50.20/ OK 200
+python-requests https://ctl.oa.test/ OK 200
+python-httpx-h1 https://ctl.oa.test/ OK 200 HTTP/1.1
+python-httpx-h2 https://ctl.oa.test/ OK 200 HTTP/2
+python-aiohttp https://ctl.oa.test/ OK 200
+python-urllib https://ctl.oa.test/ OK 200
+python-requests https://unk.oa.test/ REFUSED certificate verify failed: unable to get local issuer certificate (_ssl.c:1035)')))"))
+python-httpx-h1 https://unk.oa.test/ REFUSED certificate verify failed: unable to get local issuer certificate (_ssl.c:1035)')
+python-httpx-h2 https://unk.oa.test/ REFUSED certificate verify failed: unable to get local issuer certificate (_ssl.c:1035)')
+python-aiohttp https://unk.oa.test/ REFUSED certificate verify failed: unable to get local issuer certificate (_ssl.c:1035)'))
+python-urllib https://unk.oa.test/ REFUSED certificate verify failed: unable to get local issuer certificate (_ssl.c:1035)'))
+python-requests https://xallowed.oa.test/ OK 200
+python-httpx-h1 https://xallowed.oa.test/ OK 200 HTTP/1.1
+python-httpx-h2 https://xallowed.oa.test/ OK 200 HTTP/2
+python-aiohttp https://xallowed.oa.test/ OK 200
+python-urllib https://xallowed.oa.test/ OK 200
+python-requests https://xdenied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')))"))
+python-httpx-h1 https://xdenied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')
+python-httpx-h2 https://xdenied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)')
+python-aiohttp https://xdenied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)'))
+python-urllib https://xdenied.oa.test/ REFUSED certificate verify failed: permitted subtree violation (_ssl.c:1035)'))
+python-requests https://198.19.50.20:8443/ REFUSED certificate verify failed: excluded subtree violation (_ssl.c:1035)')))"))
+python-httpx-h1 https://198.19.50.20:8443/ REFUSED certificate verify failed: excluded subtree violation (_ssl.c:1035)')
+python-httpx-h2 https://198.19.50.20:8443/ REFUSED certificate verify failed: excluded subtree violation (_ssl.c:1035)')
+python-aiohttp https://198.19.50.20:8443/ REFUSED certificate verify failed: excluded subtree violation (_ssl.c:1035)'))
+python-urllib https://198.19.50.20:8443/ REFUSED certificate verify failed: excluded subtree violation (_ssl.c:1035)'))
+git-debian-gnutls https://allowed.oa.test/ OK rc=0
+git-debian-gnutls https://denied.oa.test/ REFUSED rc=128 fatal: unable to access 'https://denied.oa.test/x.git/': server verification failed: certificate error, no details available. (CAfile: /c/bundle.pem CRLfile: none) 
+git-debian-gnutls https://sub.allowed.oa.test/ OK rc=0
+git-debian-gnutls https://viaint.oa.test/ REFUSED rc=128 fatal: unable to access 'https://viaint.oa.test/x.git/': server verification failed: certificate error, no details available. (CAfile: /c/bundle.pem CRLfile: none) 
+git-debian-gnutls https://198.19.50.20/ REFUSED rc=128 fatal: unable to access 'https://198.19.50.20/x.git/': server verification failed: certificate error, no details available. (CAfile: /c/bundle.pem CRLfile: none) 
+git-debian-gnutls https://ctl.oa.test/ OK rc=0
+git-debian-gnutls https://unk.oa.test/ REFUSED rc=128 fatal: unable to access 'https://unk.oa.test/x.git/': server verification failed: certificate signer not trusted. (CAfile: /c/bundle.pem CRLfile: none) 
+git-debian-gnutls https://xallowed.oa.test/ OK rc=0
+git-debian-gnutls https://xdenied.oa.test/ REFUSED rc=128 fatal: unable to access 'https://xdenied.oa.test/x.git/': server verification failed: certificate error, no details available. (CAfile: /c/bundle.pem CRLfile: none) 
+git-debian-gnutls https://198.19.50.20:8443/ REFUSED rc=128 fatal: unable to access 'https://198.19.50.20:8443/x.git/': server verification failed: certificate error, no details available. (CAfile: /c/bundle.pem CRLfile: none) 
+curl-debian-openssl https://allowed.oa.test/ OK rc=0
+curl-debian-openssl https://denied.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: permitted subtree violation More details here: https://curl.se/docs/sslcerts.html 
+curl-debian-openssl https://sub.allowed.oa.test/ OK rc=0
+curl-debian-openssl https://viaint.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: permitted subtree violation More details here: https://curl.se/docs/sslcerts.html 
+curl-debian-openssl https://198.19.50.20/ OK rc=0
+curl-debian-openssl https://ctl.oa.test/ OK rc=0
+curl-debian-openssl https://unk.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: unable to get local issuer certificate More details here: https://curl.se/docs/sslcerts.html 
+curl-debian-openssl https://xallowed.oa.test/ OK rc=0
+curl-debian-openssl https://xdenied.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: permitted subtree violation More details here: https://curl.se/docs/sslcerts.html 
+curl-debian-openssl https://198.19.50.20:8443/ REFUSED rc=60 curl: (60) SSL certificate problem: excluded subtree violation More details here: https://curl.se/docs/sslcerts.html 
+wget-debian-gnutls https://allowed.oa.test/ OK rc=0
+wget-debian-gnutls https://denied.oa.test/ REFUSED rc=5 
+wget-debian-gnutls https://sub.allowed.oa.test/ OK rc=0
+wget-debian-gnutls https://viaint.oa.test/ REFUSED rc=5 
+wget-debian-gnutls https://198.19.50.20/ REFUSED rc=5 
+wget-debian-gnutls https://ctl.oa.test/ OK rc=0
+wget-debian-gnutls https://unk.oa.test/ REFUSED rc=5 
+wget-debian-gnutls https://xallowed.oa.test/ OK rc=0
+wget-debian-gnutls https://xdenied.oa.test/ REFUSED rc=5 
+wget-debian-gnutls https://198.19.50.20:8443/ REFUSED rc=5 
+gnutls-cli https://allowed.oa.test/ OK rc=0
+gnutls-cli https://denied.oa.test/ REFUSED rc=1 *** Fatal error: Error in the certificate. 
+gnutls-cli https://sub.allowed.oa.test/ OK rc=0
+gnutls-cli https://viaint.oa.test/ REFUSED rc=1 *** Fatal error: Error in the certificate. 
+gnutls-cli https://198.19.50.20/ REFUSED rc=1 *** Fatal error: Error in the certificate. 
+gnutls-cli https://ctl.oa.test/ OK rc=0
+gnutls-cli https://unk.oa.test/ REFUSED rc=1 *** Fatal error: Error in the certificate. 
+gnutls-cli https://xallowed.oa.test/ OK rc=0
+gnutls-cli https://xdenied.oa.test/ REFUSED rc=1 *** Fatal error: Error in the certificate. 
+gnutls-cli https://198.19.50.20:8443/ REFUSED rc=1 *** Fatal error: Error in the certificate. 
+pip-default https://allowed.oa.test/ OK rc=0
+pip-default https://denied.oa.test/ REFUSED rc=1 Could not fetch URL https://denied.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (_
+pip-default https://sub.allowed.oa.test/ OK rc=0
+pip-default https://viaint.oa.test/ REFUSED rc=1 Could not fetch URL https://viaint.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (_
+pip-default https://198.19.50.20/ OK rc=0
+pip-default https://ctl.oa.test/ OK rc=0
+pip-default https://unk.oa.test/ REFUSED rc=1 Could not fetch URL https://unk.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certif
+pip-default https://xallowed.oa.test/ OK rc=0
+pip-default https://xdenied.oa.test/ REFUSED rc=1 Could not fetch URL https://xdenied.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (
+pip-default https://198.19.50.20:8443/ REFUSED rc=1 Could not fetch URL https://198.19.50.20:8443/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: excluded subtree violation 
+pip-PIP_CERT https://allowed.oa.test/ OK rc=0
+pip-PIP_CERT https://denied.oa.test/ REFUSED rc=1 Could not fetch URL https://denied.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (_
+pip-PIP_CERT https://sub.allowed.oa.test/ OK rc=0
+pip-PIP_CERT https://viaint.oa.test/ REFUSED rc=1 Could not fetch URL https://viaint.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (_
+pip-PIP_CERT https://198.19.50.20/ OK rc=0
+pip-PIP_CERT https://ctl.oa.test/ OK rc=0
+pip-PIP_CERT https://unk.oa.test/ REFUSED rc=1 Could not fetch URL https://unk.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certif
+pip-PIP_CERT https://xallowed.oa.test/ OK rc=0
+pip-PIP_CERT https://xdenied.oa.test/ REFUSED rc=1 Could not fetch URL https://xdenied.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (
+pip-PIP_CERT https://198.19.50.20:8443/ REFUSED rc=1 Could not fetch URL https://198.19.50.20:8443/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: excluded subtree violation 
+pip-legacy-certs https://allowed.oa.test/ OK rc=0
+pip-legacy-certs https://denied.oa.test/ REFUSED rc=1 Could not fetch URL https://denied.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (_
+pip-legacy-certs https://sub.allowed.oa.test/ OK rc=0
+pip-legacy-certs https://viaint.oa.test/ REFUSED rc=1 Could not fetch URL https://viaint.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (_
+pip-legacy-certs https://198.19.50.20/ OK rc=0
+pip-legacy-certs https://ctl.oa.test/ OK rc=0
+pip-legacy-certs https://unk.oa.test/ REFUSED rc=1 Could not fetch URL https://unk.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certif
+pip-legacy-certs https://xallowed.oa.test/ OK rc=0
+pip-legacy-certs https://xdenied.oa.test/ REFUSED rc=1 Could not fetch URL https://xdenied.oa.test/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: permitted subtree violation (
+pip-legacy-certs https://198.19.50.20:8443/ REFUSED rc=1 Could not fetch URL https://198.19.50.20:8443/simple/oapkg/: There was a problem confirming the ssl certificate: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: excluded subtree violation 
+nss-tstclnt https://allowed.oa.test/ OK rc=0
+nss-tstclnt https://denied.oa.test/ REFUSED rc=1 tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized. 
+nss-tstclnt https://sub.allowed.oa.test/ OK rc=0
+nss-tstclnt https://viaint.oa.test/ REFUSED rc=1 tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized. 
+nss-tstclnt https://198.19.50.20/ OK rc=0
+nss-tstclnt https://ctl.oa.test/ OK rc=0
+nss-tstclnt https://unk.oa.test/ REFUSED rc=1 tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized. 
+nss-tstclnt https://xallowed.oa.test/ OK rc=0
+nss-tstclnt https://xdenied.oa.test/ REFUSED rc=1 tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized. 
+nss-tstclnt https://198.19.50.20:8443/ REFUSED rc=1 tstclnt: authentication of server cert failed: SEC_ERROR_UNKNOWN_ISSUER: Peer's Certificate issuer is not recognized. 

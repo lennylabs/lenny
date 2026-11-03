@@ -1,0 +1,1 @@
+{"version": 1, "credentialsTtlSeconds": 7200, "identities": [{"name": "p1-acme", "hosts": ["git.spike"], "credentials": [{"username": "p1-acme.g1", "verifier": "$5$K0J6mHtFt7a3URWy$s7ExAu03vVF5SX4KUsmptgz2hq8j.FsfuLPQh6OtaLB"}]}]}

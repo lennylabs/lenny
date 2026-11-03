@@ -1,0 +1,42 @@
+pr-create-basic                    rc=0   reqs=3   
+pr-create-draft                    rc=0   reqs=3   
+pr-create-reviewer                 rc=0   reqs=4   
+pr-create-label                    rc=0   reqs=5   
+pr-create-assignee                 rc=0   reqs=4   
+pr-create-milestone                rc=0   reqs=5   
+pr-create-project                  rc=0   reqs=7   
+pr-create-all                      rc=0   reqs=12  
+pr-create-fork-head                rc=0   reqs=3   
+pr-create-nohead                   rc=0   reqs=3   
+pr-view                            rc=0   reqs=2   
+pr-view-cur                        rc=0   reqs=2   
+pr-view-json-all                   rc=0   reqs=2   
+pr-list                            rc=0   reqs=1   
+pr-list-filtered                   rc=0   reqs=2   
+pr-status                          rc=0   reqs=3   
+pr-checks                          rc=0   reqs=4   
+pr-diff                            rc=0   reqs=2   
+pr-comment                         rc=0   reqs=2   
+pr-edit-title                      rc=0   reqs=3   
+pr-edit-meta                       rc=0   reqs=12  
+pr-ready                           rc=0   reqs=2   ✓ Pull request acme/widgets#8 is marked as "ready for review"
+pr-close                           rc=0   reqs=2   ✓ Closed pull request acme/widgets#7 (the title)
+pr-review-approve                  rc=0   reqs=2   
+pr-review-comment                  rc=0   reqs=2   
+pr-review-changes                  rc=0   reqs=2   
+pr-merge                           rc=0   reqs=4   
+pr-merge-squash-del                rc=0   reqs=5   ! warning: not possible to fast-forward to: "main"
+pr-merge-rebase                    rc=0   reqs=4   
+pr-merge-auto                      rc=0   reqs=4   
+pr-merge-admin                     rc=0   reqs=4   
+pr-merge-auto-blocked              rc=0   reqs=4   
+pr-merge-disable-auto              rc=0   reqs=4   
+pr-merge-queue                     rc=0   reqs=4   
+repo-view                          rc=0   reqs=2   
+issue-view                         rc=0   reqs=2   
+auth-status                        rc=0   reqs=2   
+api-rest-get                       rc=0   reqs=1   
+api-rest-paginate                  rc=0   reqs=1   
+api-rest-post                      rc=0   reqs=1   
+api-graphql                        rc=0   reqs=1   
+api-graphql-mut                    rc=0   reqs=1   

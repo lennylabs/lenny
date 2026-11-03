@@ -1,0 +1,16 @@
+STATUS: deployed
+daemon set "cilium" successfully rolled out
+deployment "cilium-operator" successfully rolled out
+IdentityChangeGracePeriod         : 0
+  identity-change-grace-period: 0s
+  tofqdns-idle-connection-grace-period: 0s
+controls: unset->default [STATE open;]; unset->group 120 s [STATE dropped;]; wrong->group 120 s [STATE dropped;]
+other node: n=12 never_opened_in_window=[] dropped_before_all=True regress=0 codes={200}
+   open after call return, s: min=1.30 median=15.21 max=28.79; in stamp order: [28.79, 16.81, 24.14, 26.18, 1.3, 15.2, 21.6, 11.23, 11.38, 15.22, 2.48, 3.3]
+   sample blocking dials started before the stamp: first success lags the path opening by, s: [16.03, 16.18, 16.19, 16.2, 16.29, 16.32]
+same node: n=12 never_opened_in_window=[] dropped_before_all=True regress=0 codes={200}
+   open after call return, s: min=0.25 median=14.95 max=28.84; in stamp order: [26.93, 28.24, 6.21, 22.43, 28.84, 28.51, 0.25, 16.21, 3.77, 13.7, 4.71, 10.91]
+   sample blocking dials started before the stamp: first success lags the path opening by, s: [15.03, 15.4, 15.44, 15.57, 15.72, 16.18]
+time=2026-11-03T01:08:16.099576385Z level=info msg="Identity of endpoint changed" endpointID=342 ipv6="" containerID=86ec33baa0 k8sPodName=agents/x9 ciliumEndpointName=agents/x9 ipv4=10.244.1.91 conta
+time=2026-11-03T01:08:16.277614885Z level=info msg="Identity of endpoint changed" ipv6="" endpointID=3377 containerID=dcff692f12 containerInterface="" ipv4=10.244.1.56 identity=44465 ciliumEndpointNam
+time=2026-11-03T01:08:23.877244708Z level=info msg="Identity of endpoint changed" endpointID=1028 containerInterface="" ciliumEndpointName=agents/s11 ipv6="" containerID=c04c5807fb ipv4=10.244.1.64 k8

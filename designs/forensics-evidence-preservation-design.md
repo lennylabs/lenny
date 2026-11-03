@@ -252,7 +252,7 @@ The tenant's data is copied or marked so that nothing in the tenant's own stores
 | `audit` | A contiguous segment of the tenant's chain for the time range, as canonical tuples with `prev_hash`, `sequence_number`, and `event_schema_version`, plus the tuple before the range. Filtering would break the per-tenant chain, and §12.8 step 13 states that the table has no `user_id` or `session_id` column, so every scope copies every row of the tenant in range, and a reader filters afterwards. Anchor events for held evidence fall in that segment, and a release cannot leave them behind. | Until release |
 | `evidence` | `lenny-evidence` sets the held marker on every manifest row in range, and on new rows while `to` is absent, and reports the rows to the hold. A release recomputes the marker from the remaining holds, since several holds can cover one row. | Until release, after which normal stream retention applies |
 
-**Separate records.** `POST /v1/admin/legal-hold` with `hold: false` calls `ReleaseForSession`, which lists `Records.ActiveForSession` and deletes each object, whether or not a legal hold was ever set, and the handler returns `escrowReleased` when the count is above zero. Security copies therefore never enter those records. They live in `security_hold_items` under the hold, in their own prefix and under their own KEK, and `Releaser` has no path to them, so a tenant admin can neither delete one nor learn of one through that count.
+**Separate records.** `POST /v1/admin/legal-hold` with `hold: false` calls `ReleaseForSession`, which lists `Records.ActiveForSession` and deletes each object, whether or not a legal hold was ever set (F-12.8.64), and the handler returns `escrowReleased` when the count is above zero. Security copies therefore never enter those records. They live in `security_hold_items` under the hold, in their own prefix and under their own KEK, and `Releaser` has no path to them, so a tenant admin can neither delete one nor learn of one through that count.
 
 **Open-ended holds and retention races.** The handler marks manifest rows and starts the copy before it returns, and the sweeper and compactor read the marker in the transaction that deletes or merges. While a hold is active, a worker continues copying:
 
@@ -673,6 +673,18 @@ None was rejected.
 - **Compromised mirror parent.** It can forge `enforced` `git.operation` records (the limit the egress design states), and it can ignore the held flag. The snapshot is the check, taken up to 10 seconds later.
 - **Capture methods untested.** The gVisor and Kata memory captures are unproven on Lenny's node configuration, and an operator should test them before needing them.
 
+## Defects found while verifying
+
+These exist in today's tree independent of this design and are filed in `BUILD-GAPS.md`. No FE proposal closes them.
+
+| Finding | Severity | Defect |
+| :-- | :-- | :-- |
+| F-12.8.64 | Medium | Clearing a session hold deletes escrow objects with no check that a hold covered them, including an artifact held under its own separate hold. FE-3 keeps its security copies out of these records. |
+| F-15.1.73 | Medium | The `POST /v1/admin/legal-hold` body differs between §15.1 and the code, so a client that follows §15.1 is refused. |
+| F-11.7.27 | Medium | §11.7 and the OCSF translator pair four class numbers with the wrong class names. |
+
+The `audit_range` row under "Problem" is already recorded: F-12.8.7 and F-12.8.24 defer the ledger types, and F-12.8.45 records the preflight's coverage.
+
 ## Specification sections affected
 
 - §4.4.3 and §4.4.4: the stuck-checkpoint exit that replaces the liveness probe, and the statement that the size-limit eviction reaches a quarantined pod.
@@ -685,7 +697,7 @@ None was rejected.
 - §10.1: the preservation state beside hold state, and `CH-PRESERVE` accepted during hold.
 - §10.2: the `platform-forensics` role and permission rows.
 - §11.2.1: the `evidence.usage` billing event and `evidenceQuotaBytes`.
-- §11.7: the `forensics.*` events under CMP-058, the anchor retention rule, and a correction of the "6004 File System Activity" class name (OCSF v1.1.0 lists File System Activity as class 1001, and Datastore Activity as 6005).
+- §11.7: the `forensics.*` events under CMP-058, the anchor retention rule, and a correction of the "6004 File System Activity" class name (OCSF v1.1.0 lists File System Activity as class 1001, and Datastore Activity as 6005), filed with the paragraph's other wrong class names as F-11.7.27.
 - §11.8: quarantine, security holds, the reconciler, and the capture runbook as first-responder primitives.
 - §12.2 and §12.6: `pod_quarantines`, `security_holds`, cases, `evidence_session_keys`, and `EvidenceStore`'s escrow operation.
 - §12.8: removal of `audit_range` and `workspace_snapshot` from the ledger in step 0(c) and Phase 3.5(c), a separate security-hold step in teardown, `EnsureCopied` on every deletion path, hold basis and deferred erasure, key destruction, mirror purge, the retention class, and the post-restore gate.
@@ -923,6 +935,8 @@ No validation has run. These come first, because the recommendation rests on the
 ## Sources
 
 Vendor pages describe the vendor's own product. Read on 2026-11-02, and none was tested.
+
+This document has no evidence folder, because no test ran for it. The egress design's stand-in measurement that "Volume and cost" compares against is under `evidence/egress-and-git-design/spike-evidence/`.
 
 **Standards and law**
 

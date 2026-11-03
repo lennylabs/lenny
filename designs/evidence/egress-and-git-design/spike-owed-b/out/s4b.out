@@ -1,0 +1,25 @@
+=== drain on mismatch with the controller holding node read
+state.ValidTransitions reserved->draining allowed: false
+state.ValidTransitions claimed->draining allowed: true
+state.ValidTransitions idle->draining allowed: true
+[idle] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[idle] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=Apply failed with 1 conflict: conflict with "drainh-host" with subresource "status" using lenny.dev/v1alpha1: .status.phase; Sandbox phase 
+[reserved] the pod holds a claim in the design's rebind and routing paths
+[reserved] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[reserved] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=Apply failed with 1 conflict: conflict with "drainh-host" with subresource "status" using lenny.dev/v1alpha1: .status.phase; Sandbox ph
+[claimed] the pod holds a claim in the design's rebind and routing paths
+[claimed] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[claimed] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=Apply failed with 1 conflict: conflict with "drainh-host" with subresource "status" using lenny.dev/v1alpha1: .status.phase; Sandbox pha
+N                P
+drain-claimed    claimed
+drain-idle       idle
+drain-reserved   reserved
+N                G         D
+drain-claimed    group-a   2026-11-03T00:43:22.921532Z
+drain-idle       group-a   2026-11-03T00:43:15.90581Z
+drain-reserved   group-a   2026-11-03T00:43:19.306751Z
+=== the kubelet's identity through pods/status with a raw PATCH, under the chart's rules (resources pods only)
+http=403
+Status pods "st2" is forbidden: node "ob-pki-control-plane" cannot update labels through pod status
+labels in the response: None
+labels now: {"app":"x"}

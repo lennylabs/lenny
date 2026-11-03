@@ -1,0 +1,117 @@
+=== A. reverse lookup in dstdomain: a literal whose PTR falls in a listed wildcard. 198.19.50.66 is not on any list.
+correct: probe-addr -> literal 198.19.50.66 = 200  target connections {"198.19.50.66":1}
+correct-n: probe-addr -> literal 198.19.50.66 = 403  target connections {"198.19.50.66":1}
+=== B. IPv4-mapped and NAT64 literals, with every authenticated CONNECT allowed so only the address rule can refuse
+openlist-norule  [::ffff:127.0.0.1] = 503
+openlist-norule  [::ffff:169.254.169.254] = 503
+openlist-norule  [::ffff:172.30.50.20] = 200
+openlist-norule  [64:ff9b::7f00:1] = 503
+openlist-norule  127.1 = 503
+openlist-norule  2130706433 = 503
+openlist-norule  0x7f.1 = 503
+openlist  [::ffff:127.0.0.1] = 403
+openlist  [::ffff:169.254.169.254] = 403
+openlist  [::ffff:172.30.50.20] = 403
+openlist  [64:ff9b::7f00:1] = 403
+openlist  127.1 = 403
+openlist  2130706433 = 403
+openlist  0x7f.1 = 403
+=== C. a proxy that answers each status and carries no traffic
+status only:
+{"verdict":"PASS","passed":14,"failed":0}
+with a handshake through the tunnel:
+{"check":"positive","detail":"status 200 and then no TLS through the tunnel: EOF","pass":false,"target":"public.oa.test:443"}
+{"verdict":"FAIL","passed":13,"failed":1}
+=== D. the retired generation's status: cached versus never used
+never cached, not in the document: 407
+=== E. a healthy proxy, probed every 2 s for 100 s: both canary rules, apply window 15s, sync every 3s, rotation every 30s
+PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/FAIL PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS PASS/PASS 
+[{"n":1,"at":1793665134.277255},{"n":2,"at":1793665164.2898366},{"n":3,"at":1793665194.304559},{"n":4,"at":1793665224.3135164}]
+2026/11/03 00:20:25| Processing Configuration File: /run/l1/squid.conf (depth 0)
+2026/11/03 00:20:25| Current Directory is /
+synced 4 1793665225.1243975
+=== F. stopped sync job, probed every 2 s with the settled rule
+current rotation 4
+killing 13
+t=0.1s PASS 
+t=2.3s PASS 
+t=4.4s PASS 
+t=6.5s PASS 
+t=8.7s PASS 
+t=10.9s PASS 
+t=13.1s PASS 
+t=15.3s PASS 
+t=17.5s PASS 
+t=19.7s FAIL sync.canary-host-added (rotation 5, age 15s) 
+t=21.8s FAIL sync.canary-host-added (rotation 5, age 17s) 
+t=24.0s FAIL sync.canary-host-added (rotation 5, age 19s) 
+t=26.2s FAIL sync.canary-host-added (rotation 5, age 22s) 
+t=28.4s FAIL sync.canary-host-added (rotation 5, age 24s) 
+t=30.6s FAIL sync.canary-host-added (rotation 5, age 26s) 
+t=32.7s FAIL sync.canary-host-added (rotation 5, age 28s) 
+t=34.9s FAIL sync.canary-host-added (rotation 5, age 30s) 
+t=37.1s FAIL sync.canary-host-added (rotation 5, age 32s) 
+t=39.2s FAIL sync.canary-host-added (rotation 5, age 35s) 
+t=41.4s FAIL sync.canary-host-added (rotation 5, age 37s) 
+t=43.6s FAIL sync.canary-host-added (rotation 5, age 39s) 
+t=45.7s FAIL sync.canary-host-added (rotation 5, age 41s) 
+t=47.9s FAIL sync.canary-host-added (rotation 5, age 43s) 
+t=50.1s FAIL sync.canary-host-added (rotation 6, age 15s) 
+t=52.2s FAIL sync.canary-host-added (rotation 6, age 18s) 
+t=54.4s FAIL sync.canary-host-added (rotation 6, age 20s) 
+first FAIL at t=19.7 s after the sync job stopped
+while stale: statuses of the newest rotation's generation and host, and the retired generation
+{"n":6,"user":"probe-canary.g6","host":"canary-6.oa.test:443","retired":"probe-canary.g4"}
+new generation -> new host: 407  retired generation -> its old host: 403
+2026/11/03 00:20:25| Current Directory is /
+synced 4 1793665225.1243975
+=== G. frozen canary source: nothing to detect until the freshness assertion fires
+{"verdict":"PASS","passed":14,"failed":0}
+{"frozen": true}
+killing 13
+t=0.1s PASS 
+t=2.3s PASS 
+t=4.5s PASS 
+t=6.7s PASS 
+t=8.9s PASS 
+t=11.0s PASS 
+t=13.2s PASS 
+t=15.4s PASS 
+t=17.6s FAIL sync.canary-rotating 
+t=19.7s FAIL sync.canary-rotating 
+t=21.9s FAIL sync.canary-rotating 
+t=24.1s FAIL sync.canary-rotating 
+t=26.2s FAIL sync.canary-rotating 
+t=28.4s FAIL sync.canary-rotating 
+=== H. netagent's check in front of Squid over TLS, Squid correct
+check, match                       OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+check, mismatch                    REFUSED handshake: EOF
+no check, mismatch (stock Squid)   OK tls=304 body="f-8\r\n\r\nok host=target.oa.test:443 sni=other.oa.test tls=304\n"
+check, TLS 1.2 match               OK tls=303 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=303\n"
+check, unlisted host               CONNECT failed: CONNECT 403
+through Squid check    n=500 fails=0 p50=1.592ms p90=2.195ms p99=15.79ms
+through Squid nocheck  n=500 fails=0 p50=1.711ms p90=2.401ms p99=15.734ms
+through Squid check    n=500 fails=0 p50=1.599ms p90=2.063ms p99=6.23ms
+through Squid nocheck  n=500 fails=0 p50=1.706ms p90=2.255ms p99=25.393ms
+through Squid check    n=381 fails=119 p50=1.661ms p90=2.432ms p99=14.038ms
+through Squid nocheck  panic: runtime error: index out of range [0] with length 0
+
+goroutine 1 [running]:
+main.main.func2(...)
+	spike-owed-a/go/hc/main.go:186
+main.main()
+	spike-owed-a/go/hc/main.go:187 +0xaec
+through Squid check    panic: runtime error: index out of range [0] with length 0
+
+goroutine 1 [running]:
+main.main.func2(...)
+	spike-owed-a/go/hc/main.go:186
+main.main()
+	spike-owed-a/go/hc/main.go:187 +0xaec
+through Squid nocheck  n=347 fails=153 p50=1.732ms p90=2.464ms p99=9.044ms
+through Squid check    n=500 fails=0 p50=1.729ms p90=2.28ms p99=3.655ms
+through Squid nocheck  n=500 fails=0 p50=1.695ms p90=2.562ms p99=4.545ms
+1793665747.701      0 198.19.50.31 TCP_DENIED/403 3397 CONNECT public.oa.test:443 probe-b.g1 HIER_NONE/- text/html
+1793665747.702      0 198.19.50.31 TCP_DENIED/403 3387 CONNECT 127.0.0.1:443 - HIER_NONE/- text/html
+1793665747.703      0 198.19.50.31 TCP_DENIED/403 3399 CONNECT 169.254.169.254:443 - HIER_NONE/- text/html
+1793665747.704      0 198.19.50.31 TCP_DENIED/403 3397 CONNECT rebind.oa.test:443 - HIER_NONE/- text/html

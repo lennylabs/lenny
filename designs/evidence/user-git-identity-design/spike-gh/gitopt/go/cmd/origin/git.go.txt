@@ -1,0 +1,353 @@
+package main
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	logf   *os.File
+	logMu  sync.Mutex
+	gitRE  = regexp.MustCompile(`^/(.+?)(\.git)?/(info/refs|git-upload-pack|git-receive-pack|info/lfs/objects/batch|info/lfs/locks|info/lfs/locks/verify|HEAD|objects/.*)$`)
+	lfsObj = regexp.MustCompile(`^/lfs-objects/([0-9a-f]{64})$`)
+	glXfer = regexp.MustCompile(`^/(.+?)\.git/gitlab-lfs/objects/([0-9a-f]{64})(?:/[0-9]+)?$`)
+	lfsAuthObj = regexp.MustCompile(`^/lfs-auth/([0-9a-f]{64})$`)
+)
+
+func logRec(rc rec) {
+	mu.Lock()
+	recs = append(recs, rc)
+	mu.Unlock()
+	writeLog(rc)
+}
+
+func writeLog(v any) {
+	b, _ := json.Marshal(v)
+	logMu.Lock()
+	if logf != nil {
+		logf.Write(append(b, 10))
+	}
+	logMu.Unlock()
+}
+
+type counter struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+func (c *counter) Read(p []byte) (int, error) { n, e := c.r.Read(p); c.n.Add(int64(n)); return n, e }
+
+func tokenOf(r *http.Request) string {
+	a := r.Header.Get("Authorization")
+	if strings.HasPrefix(a, "Basic ") {
+		if b, err := base64.StdEncoding.DecodeString(a[6:]); err == nil {
+			if _, p, ok := strings.Cut(string(b), ":"); ok {
+				return p
+			}
+		}
+	}
+	return strings.TrimPrefix(a, "Bearer ")
+}
+
+func gitRoute(w http.ResponseWriter, r *http.Request) bool {
+	path := r.URL.Path
+	host := strings.ToLower(r.Host)
+	if m := glXfer.FindStringSubmatch(path); m != nil {
+		glTransfer(w, r, m[1], m[2], host)
+		return true
+	}
+	if m := lfsAuthObj.FindStringSubmatch(path); m != nil {
+		ent := map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "lfsAuthObject": true, "method": r.Method, "host": host, "auth": r.Header.Get("Authorization")}
+		if r.Header.Get("Authorization") == "" {
+			w.WriteHeader(401)
+			ent["status"] = 401
+		} else {
+			lfsObject(w, r, m[1], host)
+			ent["status"] = 200
+		}
+		writeLog(ent)
+		return true
+	}
+	if m := lfsObj.FindStringSubmatch(path); m != nil && (strings.HasPrefix(host, "lfs-store") || strings.Contains(r.Header.Get("X-Lfs-Signed"), "ok")) {
+		lfsObject(w, r, m[1], host)
+		return true
+	}
+	if host == "mirror.example.test" {
+		if i := strings.Index(path[1:], "/"); i > 0 {
+			path = path[i+1:]
+		}
+	}
+	m := gitRE.FindStringSubmatch(path)
+	if m == nil {
+		return false
+	}
+	repo, kind := strings.ToLower(m[1]), m[3]
+	tok := tokenOf(r)
+	ent := map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "remote": r.RemoteAddr, "git": true, "proto": r.Proto, "method": r.Method, "uri": r.RequestURI, "host": r.Host, "repo": repo, "kind": kind, "token": tok, "ua": r.Header.Get("User-Agent"), "gitProtocol": r.Header.Get("Git-Protocol"), "te": r.TransferEncoding, "cl": r.ContentLength, "ce": r.Header.Get("Content-Encoding"), "hdrs": r.Header}
+	finish := func(status int, n int64) {
+		ent["status"] = status
+		ent["bodyBytes"] = n
+		writeLog(ent)
+	}
+	write := kind == "git-receive-pack" || r.URL.Query().Get("service") == "git-receive-pack"
+	// the origin's own authorization: the anonymous tier serves pub/ only, a read token reads one repository, and a write token writes one
+	sane := strings.ReplaceAll(repo, "/", "_")
+	ok := tok == "MINT-W-"+sane || (!write && (tok == "MINT-R-"+sane || tok == "MIRROR-SA" || strings.HasPrefix(repo, "pub/")))
+	if repo == "agent/own" && tok == "AGENT-OWN-TOKEN" {
+		ok = true
+	}
+	if strings.HasPrefix(tok, "USER-FILE-") {
+		ok = true
+	}
+	switch repo {
+	case "acme/needauth":
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		w.WriteHeader(401)
+		finish(401, 0)
+		return true
+	case "pub/needauth":
+		if tok != "AGENT-OWN-TOKEN" {
+			w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+			w.WriteHeader(401)
+			finish(401, 0)
+			return true
+		}
+		w.WriteHeader(404)
+		finish(404, 0)
+		return true
+	case "acme/moved":
+		w.Header().Set("Location", "https://"+r.Host+"/acme/widgets.git/"+kind+"?"+r.URL.RawQuery)
+		w.WriteHeader(301)
+		finish(301, 0)
+		return true
+	case "acme/evilredir":
+		w.Header().Set("Location", "https://other.example.test/pub/lib.git/"+kind+"?"+r.URL.RawQuery)
+		w.WriteHeader(302)
+		finish(302, 0)
+		return true
+	case "acme/reflect":
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-Reflect", tok)
+		w.WriteHeader(200)
+		fmt.Fprintf(w, "token seen: %s\n", tok)
+		finish(200, 0)
+		return true
+	}
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		w.WriteHeader(401)
+		finish(401, 0)
+		return true
+	}
+	if strings.HasPrefix(kind, "info/lfs") {
+		b, _ := io.ReadAll(r.Body)
+		if kind == "info/lfs/objects/batch" {
+			lfsBatch(w, r, b, repo, host, ent)
+		} else {
+			w.Header().Set("Content-Type", "application/vnd.git-lfs+json")
+			w.WriteHeader(200)
+			io.WriteString(w, `{"ours":[],"theirs":[]}`)
+		}
+		finish(200, int64(len(b)))
+		return true
+	}
+	if kind == "HEAD" || strings.HasPrefix(kind, "objects/") {
+		w.WriteHeader(404)
+		finish(404, 0)
+		return true
+	}
+	backend(w, r, "/"+repo+".git/"+kind, finish)
+	return true
+}
+
+// lfsBatch answers with an href on the separate storage host, as hosted forges do.
+func lfsBatch(w http.ResponseWriter, r *http.Request, b []byte, repo, host string, ent map[string]any) {
+	var q struct {
+		Operation string `json:"operation"`
+		Objects   []struct {
+			Oid  string `json:"oid"`
+			Size int64  `json:"size"`
+		} `json:"objects"`
+	}
+	json.Unmarshal(b, &q)
+	ent["lfsOp"] = q.Operation
+	var objs []any
+	store := os.Getenv("LFS_STORE")
+	if strings.HasSuffix(repo, "/lfsgl") || strings.HasSuffix(repo, "/lfsother") || strings.HasSuffix(repo, "/lfsvar") || strings.HasSuffix(repo, "/lfsexp") || strings.HasSuffix(repo, "/lfsevil") || strings.HasSuffix(repo, "/lfsothera") || strings.HasSuffix(repo, "/lfsfail") || strings.HasSuffix(repo, "/lfsfail401") {
+		glBatch(w, q.Operation, q.Objects, repo, host, ent)
+		return
+	}
+	for _, o := range q.Objects {
+		act := map[string]any{"href": "https://" + store + "/lfs-objects/" + o.Oid, "header": map[string]string{"X-Lfs-Signed": "ok"}, "expires_in": 3600}
+		key := "download"
+		if q.Operation == "upload" {
+			key = "upload"
+		}
+		objs = append(objs, map[string]any{"oid": o.Oid, "size": o.Size, "authenticated": true, "actions": map[string]any{key: act}})
+	}
+	w.Header().Set("Content-Type", "application/vnd.git-lfs+json")
+	w.WriteHeader(200)
+	json.NewEncoder(w).Encode(map[string]any{"transfer": "basic", "objects": objs})
+}
+
+// glBatch answers in GitLab's form: an action on the same host, under <repo>.git/gitlab-lfs/objects/<oid>, with an Authorization header. The variants test the handling around it.
+func glBatch(w http.ResponseWriter, op string, objects []struct {
+	Oid  string `json:"oid"`
+	Size int64  `json:"size"`
+}, repo, host string, ent map[string]any) {
+	tok := base64.StdEncoding.EncodeToString([]byte("gitlab-lfs:LFSTOKEN-" + strings.ReplaceAll(repo, "/", "_")))
+	ent["lfsForm"] = "gitlab"
+	var objs []any
+	for _, o := range objects {
+		href := "https://" + host + "/" + repo + ".git/gitlab-lfs/objects/" + o.Oid
+		if op == "upload" {
+			href = fmt.Sprintf("%s/%d", href, o.Size)
+		}
+		act := map[string]any{"href": href, "header": map[string]string{"Authorization": "Basic " + tok, "Content-Type": "application/octet-stream"}, "expires_in": 7200}
+		set := "actions"
+		switch {
+		case strings.HasSuffix(repo, "/lfsother"):
+			act["href"] = "https://lfs-store.example.test/lfs-auth/" + o.Oid
+		case strings.HasSuffix(repo, "/lfsothera"):
+			act["href"] = "https://lfs-store.example.test/lfs-auth/" + o.Oid
+		case strings.HasSuffix(repo, "/lfsvar"):
+			set = "_links"
+			act["header"] = map[string]string{"authorization": "Basic " + tok, "Private-Token": "ACTION-PRIVATE-TOKEN", "X-Other": "kept"}
+		case strings.HasSuffix(repo, "/lfsexp"):
+			act["expires_in"] = 1
+		case strings.HasSuffix(repo, "/lfsevil"):
+			act["href"] = "https://" + host + "/acme/lfsgl.git/gitlab-lfs/objects/" + o.Oid
+		}
+		key := "download"
+		if op == "upload" {
+			key = "upload"
+		}
+		objs = append(objs, map[string]any{"oid": o.Oid, "size": o.Size, "authenticated": !strings.HasSuffix(repo, "/lfsothera"), set: map[string]any{key: act}})
+	}
+	w.Header().Set("Content-Type", "application/vnd.git-lfs+json")
+	w.WriteHeader(200)
+	json.NewEncoder(w).Encode(map[string]any{"transfer": "basic", "objects": objs})
+}
+
+func glTransfer(w http.ResponseWriter, r *http.Request, repo, oid, host string) {
+	a := r.Header.Get("Authorization")
+	ent := map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "glTransfer": true, "method": r.Method, "host": host, "repo": repo, "oid": oid[:12], "auth": a}
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("gitlab-lfs:LFSTOKEN-"+strings.ReplaceAll(repo, "/", "_")))
+	if a != want {
+		ent["status"] = 401
+		w.WriteHeader(401)
+		writeLog(ent)
+		return
+	}
+	if strings.HasSuffix(repo, "/lfsfail401") {
+		ent["status"] = 401
+		w.WriteHeader(401)
+		writeLog(ent)
+		return
+	}
+	if strings.HasSuffix(repo, "/lfsfail") {
+		ent["status"] = 500
+		w.WriteHeader(500)
+		writeLog(ent)
+		return
+	}
+	w.Header().Set("X-Reflect", "LFSTOKEN-"+strings.ReplaceAll(repo, "/", "_"))
+	ent["status"] = 200
+	writeLog(ent)
+	lfsObject(w, r, oid, host)
+}
+
+func lfsObject(w http.ResponseWriter, r *http.Request, oid, host string) {
+	p := "/lfs/" + oid
+	ent := map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "lfsObject": true, "method": r.Method, "host": host, "oid": oid[:12]}
+	switch r.Method {
+	case "PUT":
+		f, err := os.Create(p)
+		if err == nil {
+			n, _ := io.Copy(f, r.Body)
+			f.Close()
+			ent["bytes"] = n
+		}
+		w.WriteHeader(200)
+	case "GET":
+		f, err := os.Open(p)
+		if err != nil {
+			w.WriteHeader(404)
+			ent["status"] = 404
+			writeLog(ent)
+			return
+		}
+		defer f.Close()
+		n, _ := io.Copy(w, f)
+		ent["bytes"] = n
+	}
+	writeLog(ent)
+}
+
+// backend runs stock git http-backend without net/http/cgi, which rejects chunked bodies and buffers output.
+func backend(w http.ResponseWriter, r *http.Request, pathInfo string, finish func(int, int64)) {
+	cmd := exec.Command("git", "http-backend")
+	cmd.Env = append(os.Environ(), "GIT_PROJECT_ROOT=/repos", "GIT_HTTP_EXPORT_ALL=1", "PATH_INFO="+pathInfo, "REQUEST_METHOD="+r.Method, "QUERY_STRING="+r.URL.RawQuery,
+		"CONTENT_TYPE="+r.Header.Get("Content-Type"), "HTTP_CONTENT_ENCODING="+r.Header.Get("Content-Encoding"), "GIT_PROTOCOL="+r.Header.Get("Git-Protocol"), "REMOTE_USER=spike", "REMOTE_ADDR="+r.RemoteAddr, "GIT_CONFIG_COUNT=4", "GIT_CONFIG_KEY_0=http.receivepack", "GIT_CONFIG_VALUE_0=true", "GIT_CONFIG_KEY_1=safe.directory", "GIT_CONFIG_VALUE_1=*", "GIT_CONFIG_KEY_2=uploadpack.allowFilter", "GIT_CONFIG_VALUE_2=true", "GIT_CONFIG_KEY_3=uploadpack.allowAnySHA1InWant", "GIT_CONFIG_VALUE_3=true")
+	if r.ContentLength >= 0 && len(r.TransferEncoding) == 0 {
+		cmd.Env = append(cmd.Env, "CONTENT_LENGTH="+strconv.FormatInt(r.ContentLength, 10))
+	}
+	cr := &counter{r: r.Body}
+	cmd.Stdin = cr
+	cmd.Stderr = os.Stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	br := bufio.NewReader(out)
+	status := 200
+	for {
+		l, err := br.ReadString('\n')
+		if err != nil {
+			break
+		}
+		l = strings.TrimRight(l, "\r\n")
+		if l == "" {
+			break
+		}
+		k, v, _ := strings.Cut(l, ":")
+		v = strings.TrimSpace(v)
+		if strings.EqualFold(k, "Status") {
+			status, _ = strconv.Atoi(strings.Fields(v)[0])
+			continue
+		}
+		w.Header().Add(k, v)
+	}
+	w.WriteHeader(status)
+	f := w.(http.Flusher)
+	buf := make([]byte, 32*1024)
+	for {
+		n, e := br.Read(buf)
+		if n > 0 {
+			w.Write(buf[:n])
+			f.Flush()
+		}
+		if e != nil {
+			break
+		}
+	}
+	cmd.Wait()
+	finish(status, cr.n.Load())
+}

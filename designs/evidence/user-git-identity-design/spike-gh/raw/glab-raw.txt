@@ -1,0 +1,32 @@
+ctl mr create                                http=201 rc=0   stub=1 
+ctl mr view, nested group                    http=200 rc=0   stub=1 
+ctl lower-case %2f                           http=200 rc=0   stub=1 
+ctl numeric project                          http=200 rc=0   stub=1 
+description /merge                           http=403 rc=0   stub=0 refused a string in the body matches a denied pattern: "/merge"
+description /approve after text              http=403 rc=0   stub=0 refused a string in the body matches a denied pattern: "\n/approve"
+description JSON-escaped \u002fmerge         http=403 rc=0   stub=0 refused a string in the body matches a denied pattern: "/merge"
+description CR-separated /merge              http=403 rc=0   stub=0 refused a string in the body matches a denied pattern: "\r/merge"
+description in the query                     http=403 rc=0   stub=0 refused query key "description" is not on the allowlist for this route
+form body with description                   http=403 rc=0   stub=0 refused REST body must be application/json
+ordinary path in description                 http=403 rc=0   stub=0 refused a string in the body matches a denied pattern: "\n/usr"
+approve REST                                 http=403 rc=0   stub=0 refused POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/approve is not on the allowlist
+merge REST                                   http=403 rc=0   stub=0 refused PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge is not on the allowlist
+merge fully encoded                          http=403 rc=0   stub=0 refused PUT /api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Fmerge is not on the allowlist
+approve shaped as create                     http=403 rc=0   stub=0 refused POST /api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Fapprove/merge_requests is not on the
+encoded dot dot in project                   http=403 rc=0   stub=0 refused POST /api/v4/projects/acme%2F..%2Fwidgets/merge_requests is not on the allowlist
+double slash                                 http=403 rc=0   stub=0 refused path is not in normal form
+dot dot                                      http=403 rc=0   stub=0 refused path is not in normal form
+trailing slash                               http=403 rc=0   stub=0 refused POST /api/v4/projects/acme%2Fwidgets/merge_requests/ is not on the allowlist
+case change                                  http=403 rc=0   stub=0 refused PUT /api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/MERGE is not on the allowlist
+encoded project slash on merge literal       http=403 rc=0   stub=0 refused PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7%2Fmerge is not on the allowlist
+method override                              http=403 rc=0   stub=0 refused method or URL override header X-Http-Method-Override refused
+HEAD                                         http=403 rc=0   stub=0 refused
+OPTIONS                                      http=403 rc=0   stub=0 refused OPTIONS /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge is not on the allowlist
+GraphQL accept                               http=403 rc=0   stub=0 refused mutation field "mergeRequestAccept" is not on the allowlist
+GraphQL alias                                http=403 rc=0   stub=0 refused mutation field "mergeRequestAccept" is not on the allowlist
+GraphQL create with /merge                   http=403 rc=0   stub=0 refused mutation field "mergeRequestCreate" is not on the allowlist
+GraphQL note /approve                        http=403 rc=0   stub=0 refused mutation field "createNote" is not on the allowlist
+GraphQL batch                                http=403 rc=0   stub=0 refused body must be one JSON object (a batch array is refused)
+GraphQL GET                                  http=403 rc=0   stub=0 refused GraphQL accepts POST only, got GET
+Authorization header added                   http=403 rc=0   stub=0 refused header Authorization is not on the allowlist
+note REST /approve                           http=403 rc=0   stub=0 refused POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes is not on the allowlist

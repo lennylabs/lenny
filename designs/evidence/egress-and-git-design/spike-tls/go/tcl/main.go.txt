@@ -1,0 +1,208 @@
+// loadgen: open CONNECT tunnels through the proxy at a fixed rate, hold each one,
+// and report CONNECT setup latency, status codes, and errors per second and overall.
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"os"
+	"bufio"
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	proxyTLS  = flag.Bool("proxy-tls", false, "TLS to the proxy")
+	proxyCA   = flag.String("proxy-ca", "", "CA file")
+	proxySNI  = flag.String("proxy-sni", "lenny-egress.lenny-system.svc", "")
+	noResume  = flag.Bool("no-resume", false, "disable TLS session resumption")
+	tls12Only = flag.Bool("tls12", false, "")
+	tlsOnce   sync.Once
+	tlsCfg    *tls.Config
+)
+
+func dialProxy(addr string, to time.Duration) (net.Conn, error) {
+	if !*proxyTLS {
+		return net.DialTimeout("tcp", addr, to)
+	}
+	tlsOnce.Do(func() {
+		pool := x509.NewCertPool()
+		b, err := os.ReadFile(*proxyCA)
+		if err != nil {
+			panic(err)
+		}
+		pool.AppendCertsFromPEM(b)
+		tlsCfg = &tls.Config{RootCAs: pool, ServerName: *proxySNI, NextProtos: []string{"http/1.1"}}
+		if !*noResume {
+			tlsCfg.ClientSessionCache = tls.NewLRUClientSessionCache(64)
+		}
+		if *tls12Only {
+			tlsCfg.MaxVersion = tls.VersionTLS12
+		}
+	})
+	d := &tls.Dialer{NetDialer: &net.Dialer{Timeout: to}, Config: tlsCfg}
+	ctx, c := context.WithTimeout(context.Background(), to)
+	defer c()
+	return d.DialContext(ctx, "tcp", addr)
+}
+
+type res struct {
+	at   time.Duration // since start
+	lat  time.Duration
+	code int
+	err  string
+}
+
+func pct(v []time.Duration, p float64) time.Duration {
+	if len(v) == 0 {
+		return 0
+	}
+	i := int(float64(len(v)-1) * p)
+	return v[i]
+}
+
+func main() {
+	proxy := flag.String("proxy", "198.19.0.10:3128", "")
+	target := flag.String("target", "target.spike:7000", "")
+	cred := flag.String("cred", "agent:good", "")
+	rate := flag.Int("rate", 100, "new CONNECTs per second")
+	total := flag.Int("n", 1000, "total tunnels (0 = unlimited until -dur)")
+	dur := flag.Duration("dur", 0, "stop opening after this long")
+	hold := flag.Duration("hold", 30*time.Second, "keep each tunnel open this long")
+	to := flag.Duration("timeout", 10*time.Second, "CONNECT response timeout")
+	bucket := flag.Duration("bucket", time.Second, "reporting bucket")
+	flag.Parse()
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(*cred))
+	start := time.Now()
+	var mu sync.Mutex
+	var all []res
+	var open, ticks, broken atomic.Int64
+	var wg sync.WaitGroup
+	one := func() {
+		defer wg.Done()
+		t0 := time.Now()
+		r := res{at: t0.Sub(start)}
+		defer func() { mu.Lock(); all = append(all, r); mu.Unlock() }()
+		c, err := dialProxy(*proxy, *to)
+		if err != nil {
+			r.err = "dial"
+			return
+		}
+		c.SetDeadline(t0.Add(*to))
+		fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\n\r\n", *target, *target, auth)
+		br := bufio.NewReader(c)
+		resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+		r.lat = time.Since(t0)
+		if err != nil {
+			e := err.Error()
+			switch {
+			case strings.Contains(e, "timeout"):
+				r.err = "timeout"
+			case strings.Contains(e, "EOF"):
+				r.err = "eof"
+			case strings.Contains(e, "reset"):
+				r.err = "reset"
+			default:
+				r.err = e
+			}
+			c.Close()
+			return
+		}
+		r.code = resp.StatusCode
+		if resp.StatusCode != 200 {
+			c.Close()
+			return
+		}
+		open.Add(1)
+		go func() {
+			defer c.Close()
+			defer open.Add(-1)
+			c.SetDeadline(time.Now().Add(*hold))
+			buf := make([]byte, 512)
+			for {
+				n, err := br.Read(buf)
+				if n > 0 {
+					ticks.Add(1)
+				}
+				if err != nil {
+					if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+						broken.Add(1)
+					}
+					return
+				}
+			}
+		}()
+	}
+	stop := make(chan struct{})
+	go func() {
+		tk := time.NewTicker(*bucket)
+		defer tk.Stop()
+		last := 0
+		for {
+			select {
+			case <-stop:
+				return
+			case <-tk.C:
+			}
+			mu.Lock()
+			cur := all[last:]
+			last = len(all)
+			var lats []time.Duration
+			codes := map[string]int{}
+			for _, r := range cur {
+				k := r.err
+				if k == "" {
+					k = fmt.Sprint(r.code)
+					lats = append(lats, r.lat)
+				}
+				codes[k]++
+			}
+			mu.Unlock()
+			sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+			fmt.Printf("t=%6.2fs done=%-4d %v p50=%v p99=%v open=%d ticks=%d broken=%d\n", time.Since(start).Seconds(), len(cur), codes,
+				pct(lats, .5).Round(100*time.Microsecond), pct(lats, .99).Round(100*time.Microsecond), open.Load(), ticks.Load(), broken.Load())
+		}
+	}()
+	iv := time.Second / time.Duration(*rate)
+	next := time.Now()
+	for i := 0; *total == 0 || i < *total; i++ {
+		if *dur > 0 && time.Since(start) > *dur {
+			break
+		}
+		wg.Add(1)
+		go one()
+		next = next.Add(iv)
+		time.Sleep(time.Until(next))
+	}
+	wg.Wait()
+	// Let the holders finish.
+	for open.Load() > 0 {
+		time.Sleep(200 * time.Millisecond)
+	}
+	close(stop)
+	var lats []time.Duration
+	codes := map[string]int{}
+	for _, r := range all {
+		k := r.err
+		if k == "" {
+			k = fmt.Sprint(r.code)
+			if r.code == 200 {
+				lats = append(lats, r.lat)
+			}
+		}
+		codes[k]++
+	}
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	fmt.Printf("SUMMARY attempts=%d %v 200-latency p50=%v p90=%v p99=%v max=%v ticks=%d broken=%d elapsed=%.1fs\n", len(all), codes,
+		pct(lats, .5).Round(100*time.Microsecond), pct(lats, .9).Round(100*time.Microsecond), pct(lats, .99).Round(100*time.Microsecond),
+		pct(lats, 1).Round(100*time.Microsecond), ticks.Load(), broken.Load(), time.Since(start).Seconds())
+}

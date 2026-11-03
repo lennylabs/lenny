@@ -1,0 +1,37 @@
+--- idle after start
+memory.current=3100672 memory.peak=11440128
+--- create at 5 pairs/s, netagent limited to 1 CPU, stub on the same laptop, other batch running
+body=209 bytes pairs=60 rate=5/s
+ unfiltered p50=0.61ms p90=0.91ms p99=1.09ms
+ filtered   p50=0.63ms p90=1.01ms p99=1.45ms
+ paired difference p50=-0.072ms p90=0.574ms
+memory.current=14032896 memory.peak=16293888
+{"active":0,"attached":120,"authorityMismatch":0,"connect":2,"dialErrors":0,"filterAllowed":60,"filterNanos":3699711,"filterRefused":0,"goroutines":6,"heapAlloc":3062912,"heapInuse":4005888,"heapSys":12222464,"numGC":0,"opaque":0,"plain":0,"refused":0,"requests":120,"scrubHits":0,"stackInuse":360448,"sys":16996616,"terminated":2}
+--- largest at 5 pairs/s, netagent limited to 1 CPU, stub on the same laptop, other batch running
+body=2388 bytes pairs=60 rate=5/s
+ unfiltered p50=0.85ms p90=1.27ms p99=3.02ms
+ filtered   p50=1.00ms p90=1.42ms p99=2.37ms
+ paired difference p50=0.055ms p90=0.851ms
+memory.current=16773120 memory.peak=18800640
+{"active":0,"attached":240,"authorityMismatch":0,"connect":4,"dialErrors":0,"filterAllowed":120,"filterNanos":14506835,"filterRefused":0,"goroutines":6,"heapAlloc":1240416,"heapInuse":2457600,"heapSys":12091392,"numGC":3,"opaque":0,"plain":0,"refused":0,"requests":240,"scrubHits":0,"stackInuse":491520,"sys":17930504,"terminated":4}
+--- body65k at 5 pairs/s, netagent limited to 1 CPU, stub on the same laptop, other batch running
+body=65784 bytes pairs=60 rate=5/s
+ unfiltered p50=1.45ms p90=2.68ms p99=6.22ms
+ filtered   p50=2.24ms p90=3.85ms p99=6.90ms
+ paired difference p50=0.936ms p90=2.333ms
+memory.current=17416192 memory.peak=19316736
+{"active":0,"attached":360,"authorityMismatch":0,"connect":6,"dialErrors":0,"filterAllowed":180,"filterNanos":77653044,"filterRefused":0,"goroutines":6,"heapAlloc":2819872,"heapInuse":4022272,"heapSys":12025856,"numGC":20,"opaque":0,"plain":0,"refused":0,"requests":360,"scrubHits":0,"stackInuse":557056,"sys":17930504,"terminated":6}
+--- bound258k at 5 pairs/s, netagent limited to 1 CPU, stub on the same laptop, other batch running
+body=258185 bytes pairs=60 rate=5/s
+ unfiltered p50=3.72ms p90=4.31ms p99=5.29ms
+ filtered   p50=7.97ms p90=11.03ms p99=12.58ms
+ paired difference p50=4.198ms p90=7.527ms
+memory.current=17530880 memory.peak=19812352
+{"active":0,"attached":480,"authorityMismatch":0,"connect":8,"dialErrors":0,"filterAllowed":240,"filterNanos":354403086,"filterRefused":0,"goroutines":6,"heapAlloc":3316112,"heapInuse":4374528,"heapSys":11993088,"numGC":83,"opaque":0,"plain":0,"refused":0,"requests":480,"scrubHits":0,"stackInuse":589824,"sys":17930504,"terminated":8}
+--- tokens256k at 5 pairs/s, netagent limited to 1 CPU, stub on the same laptop, other batch running
+body=260023 bytes pairs=60 rate=5/s
+ unfiltered p50=68.12ms p90=87.99ms p99=93.08ms
+ filtered   p50=85.67ms p90=94.50ms p99=106.39ms
+ paired difference p50=16.727ms p90=33.366ms
+memory.current=71626752 memory.peak=78548992
+{"active":0,"attached":600,"authorityMismatch":0,"connect":10,"dialErrors":0,"filterAllowed":300,"filterNanos":1972928878,"filterRefused":0,"goroutines":6,"heapAlloc":37037592,"heapInuse":38961152,"heapSys":70713344,"numGC":239,"opaque":0,"plain":0,"refused":0,"requests":600,"scrubHits":0,"stackInuse":589824,"sys":77736216,"terminated":10}

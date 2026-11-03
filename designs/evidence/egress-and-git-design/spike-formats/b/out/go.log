@@ -1,0 +1,18 @@
+go version go1.26.7 linux/arm64
+GOAUTH=netrc
+--- go-home600
+# get http://fake.test/t/go-home600/example.com/foo/@v/v1.0.0.info
+# get http://fake.test/t/go-home600/example.com/foo/@v/v1.0.0.info: 401 Unauthorized (0.003s)
+go: example.com/foo@v1.0.0: reading http://fake.test/t/go-home600/example.com/foo/@v/v1.0.0.info: 401 Unauthorized
+--- go-home644
+# get http://fake.test/t/go-home644/example.com/foo/@v/v1.0.0.info
+# get http://fake.test/t/go-home644/example.com/foo/@v/v1.0.0.info: 401 Unauthorized (0.002s)
+go: example.com/foo@v1.0.0: reading http://fake.test/t/go-home644/example.com/foo/@v/v1.0.0.info: 401 Unauthorized
+--- go-env600
+# get http://fake.test/t/go-env600/example.com/foo/@v/v1.0.0.info
+# get http://fake.test/t/go-env600/example.com/foo/@v/v1.0.0.info: 401 Unauthorized (0.002s)
+go: example.com/foo@v1.0.0: reading http://fake.test/t/go-env600/example.com/foo/@v/v1.0.0.info: 401 Unauthorized
+--- go-env644
+# get http://fake.test/t/go-env644/example.com/foo/@v/v1.0.0.info
+# get http://fake.test/t/go-env644/example.com/foo/@v/v1.0.0.info: 401 Unauthorized (0.002s)
+go: example.com/foo@v1.0.0: reading http://fake.test/t/go-env644/example.com/foo/@v/v1.0.0.info: 401 Unauthorized

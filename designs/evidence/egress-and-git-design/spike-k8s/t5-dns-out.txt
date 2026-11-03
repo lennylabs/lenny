@@ -1,0 +1,25 @@
+### alpine (musl) getent + go resolver timings
+getent kubernetes.default -> [10.96.0.1       STREAM kubernetes.default.svc.cluster.local] 10 ms (10ms res)
+getent lenny-egress -> [10.96.48.253    STREAM lenny-egress.spike.svc.cluster.local] 0 ms (10ms res)
+getent lenny-egress.spike.svc.cluster.local -> [10.96.48.253    STREAM lenny-egress.spike.svc.cluster.local] 0 ms (10ms res)
+getent validator.spike -> [10.96.150.24    STREAM validator.spike.svc.cluster.local] 0 ms (10ms res)
+getent kube-dns.kube-system.svc.cluster.local -> [10.96.0.10      STREAM kube-dns.kube-system.svc.cluster.local] 10 ms (10ms res)
+getent example.com -> [NONE] 0 ms (10ms res)
+getent github.com -> [NONE] 0 ms (10ms res)
+getent pypi.org -> [NONE] 0 ms (10ms res)
+getent nonexistent.invalid -> [NONE] 10 ms (10ms res)
+go-lookup kubernetes.default.svc.cluster.local: [10.96.0.1] err=<nil> in 1.310167ms
+go-lookup lenny-egress: [10.96.48.253] err=<nil> in 519.334µs
+go-lookup example.com: [] err=lookup example.com on 10.96.212.202:53: no such host in 796µs
+go-lookup github.com: [] err=lookup github.com on 10.96.212.202:53: no such host in 517.542µs
+### python getaddrinfo timings
+py getaddrinfo kubernetes.default -> ['10.96.0.1'] 27.4 ms
+py getaddrinfo lenny-egress -> ['10.96.48.253'] 0.3 ms
+py getaddrinfo example.com -> gaierror(-2, 'Name or service not known') 0.8 ms
+py getaddrinfo github.com -> gaierror(-2, 'Name or service not known') 1.1 ms
+py getaddrinfo nonexistent.invalid -> gaierror(-2, 'Name or service not known') 0.8 ms
+### node dns.lookup timings
+node lookup kubernetes.default -> ["10.96.0.1"] 4.2 ms
+node lookup lenny-egress -> ["10.96.48.253"] 1.7 ms
+node lookup example.com -> ENOTFOUND 0.6 ms
+node lookup github.com -> ENOTFOUND 0.5 ms

@@ -1,0 +1,6 @@
+[
+ {"hosts":["ghes.example.test"],"header":"Authorization","value":"token GH-REAL-55aa01","secret":"GH-REAL-55aa01","filter":"ghes"},
+ {"hosts":["api.github.com"],"header":"Authorization","value":"token GHCOM-REAL-77cc02","secret":"GHCOM-REAL-77cc02","filter":"ghcom"},
+ {"hosts":["gitlab.example.test"],"header":"Private-Token","value":"GL-REAL-66dd04","secret":"GL-REAL-66dd04","filter":"gitlab"},
+ {"hosts":["api.example.test"],"header":"Authorization","value":"Bearer ACME-REAL-9f2c71","secret":"ACME-REAL-9f2c71"}
+]

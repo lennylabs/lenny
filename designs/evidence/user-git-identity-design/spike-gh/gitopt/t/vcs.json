@@ -1,0 +1,94 @@
+[
+ {
+  "host": "ghes.example.test",
+  "user": "x-access-token",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets",
+   "acme/lib",
+   "acme/lib2",
+   "acme/super",
+   "acme/lfsrepo",
+   "acme/big",
+   "alice/widgets",
+   "acme/moved",
+   "acme/evilredir",
+   "acme/reflect",
+   "acme/needauth",
+   "acme/hostile"
+  ],
+  "writable": [
+   "acme/widgets",
+   "acme/big",
+   "acme/lfsrepo",
+   "alice/widgets"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*",
+   "refs/tags/lenny-*"
+  ]
+ },
+ {
+  "host": "github.com",
+  "user": "x-access-token",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets"
+  ],
+  "writable": [
+   "acme/widgets",
+   "alice/widgets"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ]
+ },
+ {
+  "host": "gitlab.example.test",
+  "user": "oauth2",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets"
+  ],
+  "writable": [
+   "acme/widgets"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ]
+ },
+ {
+  "host": "nossh.example.test",
+  "user": "x-access-token",
+  "sshForm": false,
+  "readable": [
+   "acme/widgets"
+  ],
+  "writable": [
+   "acme/widgets"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ]
+ },
+ {
+  "host": "acme.ghe.com",
+  "user": "x-access-token",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets"
+  ],
+  "writable": [
+   "acme/widgets",
+   "alice/widgets"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ]
+ }
+]

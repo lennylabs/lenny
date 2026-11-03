@@ -1,0 +1,15 @@
+{"check":"tls","detail":"verified against the configured CA","pass":true,"target":"198.19.50.50:3128"}
+{"check":"auth.no-credential","detail":"status 407","pass":true,"target":"public.oa.test:443"}
+{"check":"auth.invented-credential","detail":"status 407","pass":true,"target":"public.oa.test:443"}
+{"check":"auth.wrong-password","detail":"status 407","pass":true,"target":"public.oa.test:443"}
+{"check":"auth.retired-never-cached","detail":"status 407","pass":true,"target":"public.oa.test:443"}
+{"check":"positive","detail":"status 200 and a verified handshake through the tunnel","pass":true,"target":"public.oa.test:443"}
+{"check":"separation.a-to-b-host","detail":"status 403","pass":true,"target":"other.oa.test:443"}
+{"check":"separation.b-own-host","detail":"status 200","pass":true,"target":"other.oa.test:443"}
+{"check":"separation.b-to-a-host","detail":"status 403","pass":true,"target":"public.oa.test:443"}
+{"check":"address.refused","detail":"status 503, wanted [403]","pass":false,"target":"127.0.0.1:443"}
+{"check":"address.refused","detail":"status 503, wanted [403]","pass":false,"target":"169.254.169.254:443"}
+{"check":"address.refused","detail":"status 200, wanted [403]","pass":false,"target":"rebind.oa.test:443"}
+{"check":"sync.canary-rotating","detail":"the newest canary is 1s old","pass":true,"target":"2"}
+{"check":"sync.canary-host-added (rotation 1, age 31s)","detail":"status 200","pass":true,"target":"canary-1.oa.test:443"}
+{"verdict":"FAIL","passed":11,"failed":3}

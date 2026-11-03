@@ -1,0 +1,25 @@
+gh-review-approve                  rc=1   reqs=1   failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress ope
+gh-review-comment                  rc=1   reqs=1   failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress ope
+gh-review-changes                  rc=1   reqs=1   failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress ope
+gh-merge                           rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+gh-merge-squash                    rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+gh-merge-auto                      rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+gh-merge-admin                     rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+api-post-review                    rc=1   reqs=0   gh: refused by the egress operation allowlist: POST /repos/acme/widgets/pulls/7/reviews is not on the allowlis
+api-post-review-ev                 rc=1   reqs=0   gh: refused by the egress operation allowlist: POST /repos/acme/widgets/pulls/7/reviews/1/events is not on the
+api-put-review                     rc=1   reqs=0   gh: refused by the egress operation allowlist: PUT /repos/acme/widgets/pulls/7/reviews/1 is not on the allowli
+api-dismiss-review                 rc=1   reqs=0   gh: refused by the egress operation allowlist: PUT /repos/acme/widgets/pulls/7/reviews/1/dismissals is not on 
+api-del-review                     rc=1   reqs=0   gh: refused by the egress operation allowlist: DELETE /repos/acme/widgets/pulls/7/reviews/1 is not on the allo
+api-get-reviews                    rc=1   reqs=0   gh: refused by the egress operation allowlist: GET /repos/acme/widgets/pulls/7/reviews is not on the allowlist
+api-put-merge                      rc=1   reqs=0   gh: refused by the egress operation allowlist: PUT /repos/acme/widgets/pulls/7/merge is not on the allowlist (
+api-get-merge                      rc=1   reqs=0   gh: refused by the egress operation allowlist: GET /repos/acme/widgets/pulls/7/merge is not on the allowlist (
+api-post-merges                    rc=1   reqs=0   gh: refused by the egress operation allowlist: POST /repos/acme/widgets/merges is not on the allowlist (HTTP 4
+api-update-branch                  rc=1   reqs=0   gh: refused by the egress operation allowlist: PUT /repos/acme/widgets/pulls/7/update-branch is not on the all
+api-patch-pr                       rc=1   reqs=0   gh: refused by the egress operation allowlist: PATCH /repos/acme/widgets/pulls/7 is not on the allowlist (HTTP
+api-patch-ref                      rc=1   reqs=0   gh: refused by the egress operation allowlist: PATCH /repos/acme/widgets/git/refs/heads/main is not on the all
+api-override-hdr                   rc=1   reqs=0   gh: refused by the egress operation allowlist: method or URL override header X-Http-Method-Override refused (H
+api-gql-review                     rc=1   reqs=0   gh: refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist (
+api-gql-alias                      rc=1   reqs=0   gh: refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist (
+api-gql-merge                      rc=1   reqs=0   gh: refused by the egress operation allowlist: mutation field "mergePullRequest" is not on the allowlist (HTTP
+api-gql-auto                       rc=1   reqs=0   gh: refused by the egress operation allowlist: mutation field "enablePullRequestAutoMerge" is not on the allow
+api-gql-allowed                    rc=0   reqs=1   

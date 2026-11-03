@@ -1,0 +1,39 @@
+=== git-lfs gl-other-host-unauth, step limit 8 s
+### gl-other-host-unauth-clone rc=0
+
+### gl-other-host-unauth-lfs-push rc=124
+
+### gl-other-host-unauth-lfs-smudge rc=0
+cmp: b/a.bin: No such file or directory
+leak=0
+   6 netagent lfs-action-authorization dropped upload lfs-store.example.test
+   1 netagent lfs-locks allowed mint
+   6 netagent lfs-upload allowed mint
+   1 stub lfs-store.example.test PUT authObject - 401
+=== git-lfs gl-other-host-auth-8s, step limit 8 s
+### gl-other-host-auth-8s-clone rc=0
+
+### gl-other-host-auth-8s-lfs-push rc=124
+
+### gl-other-host-auth-8s-lfs-smudge rc=0
+cmp: b/a.bin: No such file or directory
+leak=0
+   1 netagent lfs-action-authorization dropped upload lfs-store.example.test
+   1 netagent lfs-locks allowed mint
+   1 netagent lfs-upload allowed mint
+28896 stub lfs-store.example.test PUT authObject - 401
+=== mint-coarse with no live run: info/lfs refused
+POST /acme/lfsgl.git/info/lfs/objects/batch http=403 {"message":"refused by the egress operation allowlist: info/lfs is refused on a mint-coarse provider
+
+GET /acme/lfsgl.git/gitlab-lfs/objects/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb http=403 {"message":"refused by the egress operation allowlist: info/lfs is refused on a mint-coarse provider
+
+### gl-refused-clone rc=0
+
+### gl-refused-lfs-push rc=0
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsgl.git'
+leak=0
+### gl-refused-lfs-smudge rc=0
+cmp: b/a.bin: No such file or directory
+leak=0
+=== CONNECT gate: refused until the first binding generation
+(eval):17: no matches found: pub/lib.git/info/refs?service=git-upload-pack

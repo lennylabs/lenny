@@ -1,0 +1,8 @@
+8 ('ACME-REAL', 'api.example.test')
+7 ('LFSTOKEN', 'gitlab.example.test')
+6 ('NOSSH-REAL', 'nossh.example.test')
+19 ('OTHER-REAL', 'other.example.test')
+115 ('USER-FILE-CURRENT', 'ghes.example.test')
+6 ('USER-FILE-CURRENT', 'github.com')
+52 ('USER-FILE-ROTATED', 'ghes.example.test')
+3 ('USER-FILE-ROTATED', 'github.com')

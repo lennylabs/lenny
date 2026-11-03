@@ -1,0 +1,2 @@
+{"base":{"ref":"main"},"body":"a description","head":{"ref":"feature","sha":"4b825dc6"},"html_url":"https://github.com/acme/widgets/pull/7","id":7,"node_id":"PR_x","number":7,"state":"open","title":"the title","user":{"login":"alice"}}
+rc=0

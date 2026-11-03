@@ -473,26 +473,26 @@ None was rejected.
 
 ## Defects found while verifying
 
-These exist independent of this design. They are for filing in `BUILD-GAPS.md` under the proposal named, and this document does not file them.
+These exist independent of this design. Each is filed in `BUILD-GAPS.md` under the identifier the row names, and the row names the proposal that closes it.
 
 | Severity (proposed) | Defect | Closed by |
 | :-- | :-- | :-- |
-| High | An IdP-verified token's `roles` claim can assert `platform-admin` (`normalizeUserBearer` clears `typ`, `session_id`, `delegation_depth`, and `origin` only), and §10.2 **Role assignment:** permits it. | TS-2 |
-| High | `invalidate` answers `404` for a user with no row, so a user known only through an IdP cannot be stopped, against §11.4's incident-response purpose. | TS-4 |
-| High | `serveBearer` never reads a user's invalidation state, so an invalidated administrator with a live IdP token keeps the admin API. | TS-4 |
-| High | In-pod `lenny/delegate_task` resolves Environments from a principal with no groups, so group members cannot delegate under `deny-all`, and `allow-all` admits every runtime regardless of selectors. | TS-3 |
-| Medium | Experiment routing and the late `PreRoute` segment rewrite a session's runtime after §10.6 admission, so the explicit selector check does not cover the runtime that runs. | TS-3 |
-| Medium | `PUT disabled:false` reverses a disable with no check, a `DELETE`d user keeps its assigned role, and `soft_disable` and `hard_disable` leave impersonation bearers live. | TS-4 |
-| Medium | Tokens from `/v1/oauth/token` carry no groups, so they cannot satisfy an `oidc-group` Environment member. | TS-3 |
-| Medium | Delegated, derived, and replayed sessions have no Environment, so their billing rollup, retention tier, and credential scope ignore it. | TS-3 |
-| Medium | The transparent create path admits any member of any Environment, with no role or selector check. | TS-3 |
-| Medium | Environment deletion has no active-session check, against §15.1. | TS-3 |
-| Medium | `GET /v1/admin/tenants/{id}/rbac-config` returns `introspectionClientSecret`, which the tenant row stores in its JSON configuration with no redaction. | TS-4 |
-| Medium | `introspectionEndpoint` has no address check, and the gateway posts bearers to it. | TS-4 |
-| Medium | The gateway serves no RFC 9728 metadata and no `WWW-Authenticate` challenge, against §10.2's statement that it is an MCP-standard protected resource server. | TS-2 |
-| Medium | No endpoint reverses `hard_disable` or `full_revoke`. | TS-4 |
-| Low | §10.2 and `docs/client-guide/authentication.md` name a `lenny_role` claim, and the code reads `roles`. `docs/tutorials/multi-tenant-setup.md` and `docs/operator-guide/security.md` show `auth.oidc.issuer`, `tenantClaim`, `roleClaim`, `jwksUri`, `audience`, and `auth.issuerUrl`, none of which the chart defines. | TS-2 |
-| Low | `/v1/admin/users` exists in code and is absent from the §15.1 endpoint table. | TS-2 |
+| High | F-10.2.38: an IdP-verified token's `roles` claim can assert `platform-admin` (`normalizeUserBearer` clears `typ`, `session_id`, `delegation_depth`, and `origin` only), and §10.2 **Role assignment:** permits it. | TS-2 |
+| High | F-11.4.19: `invalidate` answers `404` for a user with no row, so a user known only through an IdP cannot be stopped, against §11.4's incident-response purpose. | TS-4 |
+| High | F-11.4.20: `serveBearer` never reads a user's invalidation state, so an invalidated administrator with a live IdP token keeps the admin API. | TS-4 |
+| High | F-10.6.16: in-pod `lenny/delegate_task` resolves Environments from a principal with no groups, so group members cannot delegate under `deny-all`, and `allow-all` admits every runtime regardless of selectors. | TS-3 |
+| Medium | F-10.6.17: experiment routing and the late `PreRoute` segment rewrite a session's runtime after §10.6 admission, so the explicit selector check does not cover the runtime that runs. | TS-3 |
+| Medium | F-11.4.21: `PUT disabled:false` reverses a disable with no check. F-11.4.20 covers a `DELETE`d user that keeps its assigned role. `soft_disable` and `hard_disable` leave impersonation bearers live, which §13.3 rule 6 states as today's behaviour, so TS-4 changes that part and it is not filed. | TS-4 |
+| Medium | F-10.6.18: tokens from `/v1/oauth/token` carry no groups, so they cannot satisfy an `oidc-group` Environment member. | TS-3 |
+| Medium | F-10.6.15: delegated, derived, and replayed sessions have no Environment, so their billing rollup, retention tier, and credential scope ignore it. | TS-3 |
+| Medium | F-10.6.19: the transparent create path admits any member of any Environment, with no role or selector check. | TS-3 |
+| Medium | F-10.6.20: Environment deletion has no active-session check, against §15.1. | TS-3 |
+| Medium | F-10.6.21: `GET /v1/admin/tenants/{id}/rbac-config` returns `introspectionClientSecret`, which the tenant row stores in its JSON configuration with no redaction. | TS-4 |
+| Medium | F-10.6.22: `introspectionEndpoint` has no address check, and the gateway posts bearers to it. | TS-4 |
+| Medium | F-10.2.39: the gateway serves no RFC 9728 metadata and no `WWW-Authenticate` challenge, against §10.2's statement that it is an MCP-standard protected resource server. | TS-2 |
+| Medium | F-11.4.21: no endpoint reverses `hard_disable` or `full_revoke`. | TS-4 |
+| Low | F-10.2.40: §10.2 and `docs/client-guide/authentication.md` name a `lenny_role` claim, and the code reads `roles`. `docs/tutorials/multi-tenant-setup.md` and `docs/operator-guide/security.md` show `auth.oidc.issuer`, `tenantClaim`, `roleClaim`, `jwksUri`, `audience`, and `auth.issuerUrl`, none of which the chart defines. | TS-2 |
+| Low | F-15.1.74: `/v1/admin/users` exists in code and is absent from the §15.1 endpoint table. | TS-2 |
 
 ## Changes requested of egress-and-git-design.md
 
@@ -534,9 +534,9 @@ The sections that `egress-and-git-design.md` lists change first, and the TS-1 ed
 | Label | Proposal | Contents |
 | :-- | :-- | :-- |
 | TS-1 | Environment scoping | The fields, the formulas, enforcement in the gateway, the decision service, the Token Service, and the mirror, the refusal rules including checks after routing, the binding host validator, the delete guard for references, shadow policy evaluation, and the read filters. |
-| TS-2 | Identity model | The specification statement, the broker contract, the protected resource metadata route, the IdP role boundary, claim names, and the §15.1 listing of `/v1/admin/users`. |
-| TS-3 | Session Environment context | Derive, replay, and delegation propagation, the session-based delegation gate, refusal of cross-Environment delegation, groups on exchanged tokens, the active-session delete guard, the transparent create check, and the naming correction. |
-| TS-4 | User lifecycle path | Upsert on invalidate, refusal at authentication including deleted rows, the impersonation cascade on disables, reinstate as the only reversal, ordering, the permission, and `identityProvider` hardening. |
+| TS-2 | Identity model | The specification statement, the broker contract, the protected resource metadata route, the IdP role boundary, claim names, and the §15.1 listing of `/v1/admin/users`. Closes F-10.2.38, F-10.2.39, F-10.2.40, and F-15.1.74. |
+| TS-3 | Session Environment context | Derive, replay, and delegation propagation, the session-based delegation gate, refusal of cross-Environment delegation, groups on exchanged tokens, the active-session delete guard, the transparent create check, and the naming correction. Closes F-10.6.15, F-10.6.16, F-10.6.17, F-10.6.18, F-10.6.19, and F-10.6.20. |
+| TS-4 | User lifecycle path | Upsert on invalidate, refusal at authentication including deleted rows, the impersonation cascade on disables, reinstate as the only reversal, ordering, the permission, and `identityProvider` hardening. Closes F-11.4.19, F-11.4.20, and F-11.4.21, and the read half of F-10.6.21 and the address check of F-10.6.22. |
 | TS-5 | Delegated team administration | Environment `admin` writes to its own Environment's scoped objects, if decision 7 adopts it. |
 
 Dependencies are stated here and in the other design documents. Proposals from different designs can interleave as long as these hold.

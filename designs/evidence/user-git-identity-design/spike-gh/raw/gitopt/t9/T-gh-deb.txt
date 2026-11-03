@@ -1,0 +1,20 @@
+gh version 2.103.3 (2026-10-26)
+glab 1.127.0 (2e352a17e)
+== gh, github.com, rewrite
+Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== gh, github.com, no rewrite
+Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== gh, GH_REPO, rewrite
+Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== gh, GHES, rewrite
+Post "https://ghes.acme.internal/api/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== gh, GHES, no rewrite
+Post "https://ghes.acme.internal/api/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== glab, rewrite
+Failed to create merge request. Created recovery file: /tmp/h/.config/glab-cli/recover/initech/web/mr.json
+Run the command again with the '--recover' option to retry.
+          
+== glab, no rewrite
+Failed to create merge request. Created recovery file: /tmp/h/.config/glab-cli/recover/initech/web/mr.json
+Run the command again with the '--recover' option to retry.
+          

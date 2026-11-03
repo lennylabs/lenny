@@ -1,0 +1,4 @@
+A routine renewal: duration 202 s; ok 3150; failed 0
+B design order: duration 781 s; ok 11700; failed 0
+C clear on Secret re-issue: duration 417 s; ok 5483; failed 817
+D wrong order: duration 211 s; ok 1931; failed 1219

@@ -1,0 +1,5 @@
+GET 4 gitlab.com gitlab-org/gitlab-design tree
+"path":"Main@1x.png"
+"path":"misc/infographics/How_to_Contribute_UI_Code_to_GitLab.pdf"
+"path":"pajamas/pajamas-logo-assets.zip"
+http=200

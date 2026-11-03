@@ -1,0 +1,5 @@
+### TEST e-py-hostonly  23:24:19
+### docker run --network container:spikefed-srv -e GCE_METADATA_HOST=127.0.0.1:8080 -e API_URL=http://127.0.0.1/api/whoami spikefed-py:t python gce_md.py
+ERR default: DefaultCredentialsError Your default credentials were not found. To set up Application Default Credentials, see https://cloud.google.com/docs/authentication/external/set-up-adc for more information.
+### exit 0
+### server log:

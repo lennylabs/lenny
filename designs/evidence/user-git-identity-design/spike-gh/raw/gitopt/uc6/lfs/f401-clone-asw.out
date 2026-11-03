@@ -1,0 +1,3 @@
+### f401-clone-asw-clone rc=124
+$ (git clone -q https://gitlab.example.test/acme/lfsfail401.git c 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+

@@ -1,0 +1,7 @@
+### long500-push-push rc=0
+$ (git push origin HEAD:refs/heads/lenny/long500-push-34 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsfail.git/info/lfs.locksverify true
+Fatal error: Server error: https://gitlab.example.test/acme/lfsfail.git/gitlab-lfs/objects/138f74e976264c60199497a1ee1965e0fb4b61fb5820afafe59e2e5ca2b36df8/2048
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsfail.git'
+git-exit=1

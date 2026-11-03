@@ -1,0 +1,12 @@
+[
+ {"hosts":["api.example.test"],"header":"Authorization","value":"Bearer ACME-REAL-9f2c71","secret":"ACME-REAL-9f2c71"},
+ {"hosts":["ghes.example.test"],"header":"Authorization","value":"token GH-REAL-55aa01","secret":"GH-REAL-55aa01"},
+ {"hosts":["gitlab.example.test"],"header":"Private-Token","value":"GL-REAL-66dd04","secret":"GL-REAL-66dd04"},
+ {"hosts":["registry.example.test"],"header":"Authorization","value":"Bearer NPM-REAL-77bb02","secret":"NPM-REAL-77bb02"},
+ {"hosts":["pypi.example.test"],"header":"Authorization","value":"Basic cHlwaXVzZXI6UFlQSS1SRUFMLTMzY2MwMw==","secret":"PYPI-REAL-33cc03"},
+ {"hosts":["vcs.example.test"],"header":"Authorization","value":"Basic eC1hY2Nlc3MtdG9rZW46VkNTLVJFQUwtODhlZTA1","secret":"VCS-REAL-88ee05","vcs":true},
+ {"hosts":["gitplain.example.test"],"header":"Authorization","value":"Basic eC1hY2Nlc3MtdG9rZW46R0lUUC1SRUFMLTk5ZmYwNg==","secret":"GITP-REAL-99ff06"},
+ {"hosts":["pinned.example.test"],"header":"Authorization","value":"Bearer PIN-REAL-aa1107","secret":"PIN-REAL-aa1107","pinned":true},
+ {"hosts":["llm.example.test"],"header":"Authorization","value":"Bearer sk-LLM-REAL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnop","secret":"sk-LLM-REAL-0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnop"},
+ {"hosts":["hostile.example.test"],"header":"Authorization","value":"Bearer HOST-REAL-bb2208","secret":"HOST-REAL-bb2208"}
+]

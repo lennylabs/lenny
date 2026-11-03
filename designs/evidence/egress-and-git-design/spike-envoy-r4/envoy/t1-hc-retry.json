@@ -1,0 +1,322 @@
+{
+ "admin": {
+  "address": {
+   "socket_address": {
+    "address": "0.0.0.0",
+    "port_value": 9901
+   }
+  }
+ },
+ "cluster_manager": {
+  "outlier_detection": {
+   "event_log_path": "/dev/stdout"
+  }
+ },
+ "layered_runtime": {
+  "layers": [
+   {
+    "name": "static",
+    "static_layer": {
+     "overload": {
+      "global_downstream_max_connections": 50000
+     }
+    }
+   }
+  ]
+ },
+ "static_resources": {
+  "listeners": [
+   {
+    "name": "egress",
+    "address": {
+     "socket_address": {
+      "address": "0.0.0.0",
+      "port_value": 3128
+     }
+    },
+    "filter_chains": [
+     {
+      "filters": [
+       {
+        "name": "envoy.filters.network.http_connection_manager",
+        "typed_config": {
+         "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
+         "stat_prefix": "egress",
+         "codec_type": "HTTP1",
+         "upgrade_configs": [
+          {
+           "upgrade_type": "CONNECT"
+          }
+         ],
+         "stream_idle_timeout": "300s",
+         "delayed_close_timeout": "0.1s",
+         "common_http_protocol_options": {
+          "idle_timeout": "3600s"
+         },
+         "access_log_options": {
+          "flush_log_on_tunnel_successfully_established": true
+         },
+         "http_filters": [
+          {
+           "name": "envoy.filters.http.ext_authz",
+           "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz",
+            "transport_api_version": "V3",
+            "grpc_service": {
+             "envoy_grpc": {
+              "cluster_name": "authz"
+             },
+             "timeout": "0.5s",
+             "retry_policy": {
+              "retry_back_off": {
+               "base_interval": "0.01s",
+               "max_interval": "0.05s"
+              },
+              "num_retries": 2,
+              "retry_on": "connect-failure,reset,refused-stream,unavailable,cancelled,deadline-exceeded",
+              "retry_host_predicate": [
+               {
+                "name": "envoy.retry_host_predicates.previous_hosts",
+                "typed_config": {
+                 "@type": "type.googleapis.com/envoy.extensions.retry.host.previous_hosts.v3.PreviousHostsPredicate"
+                }
+               }
+              ],
+              "host_selection_retry_max_attempts": 3
+             }
+            },
+            "failure_mode_allow": false,
+            "clear_route_cache": true,
+            "status_on_error": {
+             "code": "ServiceUnavailable"
+            }
+           }
+          },
+          {
+           "name": "envoy.filters.http.dynamic_forward_proxy",
+           "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig",
+            "dns_cache_config": {
+             "name": "egress_dns",
+             "dns_lookup_family": "V4_ONLY",
+             "dns_refresh_rate": "60s",
+             "dns_min_refresh_rate": "5s",
+             "host_ttl": "300s"
+            }
+           }
+          },
+          {
+           "name": "envoy.filters.http.router",
+           "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.filters.http.router.v3.Router",
+            "suppress_envoy_headers": true
+           }
+          }
+         ],
+         "route_config": {
+          "name": "egress",
+          "virtual_hosts": [
+           {
+            "name": "all",
+            "domains": [
+             "*"
+            ],
+            "routes": [
+             {
+              "match": {
+               "connect_matcher": {},
+               "headers": [
+                {
+                 "name": "x-lenny-route",
+                 "string_match": {
+                  "exact": "direct"
+                 }
+                }
+               ]
+              },
+              "route": {
+               "cluster": "dfp",
+               "upgrade_configs": [
+                {
+                 "upgrade_type": "CONNECT",
+                 "connect_config": {}
+                }
+               ],
+               "max_stream_duration": {
+                "max_stream_duration": "7200s"
+               }
+              }
+             },
+             {
+              "match": {
+               "connect_matcher": {}
+              },
+              "direct_response": {
+               "status": 403,
+               "body": {
+                "inline_string": "no route decision\n"
+               }
+              }
+             },
+             {
+              "match": {
+               "prefix": "/"
+              },
+              "direct_response": {
+               "status": 405,
+               "body": {
+                "inline_string": "CONNECT only\n"
+               }
+              }
+             }
+            ]
+           }
+          ]
+         },
+         "access_log": [
+          {
+           "name": "envoy.access_loggers.stdout",
+           "typed_config": {
+            "@type": "type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog",
+            "log_format": {
+             "json_format": {
+              "t": "%START_TIME%",
+              "type": "%ACCESS_LOG_TYPE%",
+              "authority": "%REQ(:AUTHORITY)%",
+              "code": "%RESPONSE_CODE%",
+              "flags": "%RESPONSE_FLAGS%",
+              "details": "%RESPONSE_CODE_DETAILS%",
+              "dur_ms": "%DURATION%",
+              "peer": "%DOWNSTREAM_REMOTE_ADDRESS%",
+              "up_host": "%UPSTREAM_HOST%",
+              "rx": "%BYTES_RECEIVED%",
+              "tx": "%BYTES_SENT%",
+              "authz": "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:instance)%",
+              "conn_term": "%CONNECTION_TERMINATION_DETAILS%"
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      ]
+     }
+    ]
+   }
+  ],
+  "clusters": [
+   {
+    "name": "authz",
+    "type": "STATIC",
+    "connect_timeout": "0.25s",
+    "circuit_breakers": {
+     "thresholds": [
+      {
+       "max_connections": 20000,
+       "max_pending_requests": 20000,
+       "max_requests": 20000,
+       "max_retries": 20000
+      }
+     ]
+    },
+    "typed_extension_protocol_options": {
+     "envoy.extensions.upstreams.http.v3.HttpProtocolOptions": {
+      "@type": "type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions",
+      "explicit_http_config": {
+       "http2_protocol_options": {
+        "connection_keepalive": {
+         "interval": "1s",
+         "timeout": "1s"
+        }
+       }
+      }
+     }
+    },
+    "load_assignment": {
+     "cluster_name": "authz",
+     "endpoints": [
+      {
+       "lb_endpoints": [
+        {
+         "endpoint": {
+          "address": {
+           "socket_address": {
+            "address": "198.19.0.11",
+            "port_value": 9000
+           }
+          }
+         }
+        },
+        {
+         "endpoint": {
+          "address": {
+           "socket_address": {
+            "address": "198.19.0.12",
+            "port_value": 9000
+           }
+          }
+         }
+        }
+       ]
+      }
+     ]
+    },
+    "outlier_detection": {
+     "interval": "1s",
+     "base_ejection_time": "10s",
+     "max_ejection_percent": 100,
+     "consecutive_5xx": 3,
+     "enforcing_consecutive_5xx": 100,
+     "consecutive_gateway_failure": 3,
+     "enforcing_consecutive_gateway_failure": 100,
+     "split_external_local_origin_errors": true,
+     "consecutive_local_origin_failure": 3,
+     "enforcing_consecutive_local_origin_failure": 100,
+     "enforcing_success_rate": 0,
+     "enforcing_local_origin_success_rate": 0,
+     "successful_active_health_check_uneject_host": true
+    },
+    "health_checks": [
+     {
+      "timeout": "0.5s",
+      "interval": "1s",
+      "no_traffic_interval": "1s",
+      "unhealthy_threshold": 1,
+      "healthy_threshold": 1,
+      "grpc_health_check": {},
+      "event_log_path": "/dev/stdout"
+     }
+    ]
+   },
+   {
+    "name": "dfp",
+    "connect_timeout": "5s",
+    "lb_policy": "CLUSTER_PROVIDED",
+    "circuit_breakers": {
+     "thresholds": [
+      {
+       "max_connections": 20000,
+       "max_pending_requests": 20000,
+       "max_requests": 20000,
+       "max_retries": 20000
+      }
+     ]
+    },
+    "cluster_type": {
+     "name": "envoy.clusters.dynamic_forward_proxy",
+     "typed_config": {
+      "@type": "type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig",
+      "dns_cache_config": {
+       "name": "egress_dns",
+       "dns_lookup_family": "V4_ONLY",
+       "dns_refresh_rate": "60s",
+       "dns_min_refresh_rate": "5s",
+       "host_ttl": "300s"
+      }
+     }
+    }
+   }
+  ]
+ }
+}

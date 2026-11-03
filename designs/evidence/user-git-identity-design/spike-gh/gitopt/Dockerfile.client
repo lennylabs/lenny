@@ -1,0 +1,2 @@
+FROM alpine:3.22
+RUN apk add --no-cache git git-lfs curl jq python3 openssl coreutils ca-certificates openssh-client

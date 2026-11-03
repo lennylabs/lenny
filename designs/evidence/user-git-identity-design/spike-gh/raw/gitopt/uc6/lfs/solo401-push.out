@@ -1,0 +1,7 @@
+### solo401-push-push rc=0
+$ (git push origin HEAD:refs/heads/lenny/solo401-push-13 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsfail401.git/info/lfs.locksverify true
+LFS: refused by the egress operation allowlist: this transfer failed 3 consecutive times; a new batch response is needed
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsfail401.git'
+git-exit=1

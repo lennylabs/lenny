@@ -1,0 +1,18 @@
+# Counts derived from raw/netagent-client-view-reqlog.jsonl (4.2 MB, left out of the repository).
+# Columns: requests, User-Agent, protocol, credential header as the client sent it, Content-Encoding present.
+# The log spans every run in the first part of the spike.
+  2619  GitHub CLI             HTTP/2.0  token lenny-injected               -
+  2615  attack                 HTTP/1.1  token lenny-injected               -
+  2582  attack                 HTTP/2.0  token lenny-injected               -
+   688  (none)                 HTTP/2.0  token lenny-injected               -
+   234  glab/v1.127.0          HTTP/2.0  Private-Token lenny-injected       -
+   203  (none)                 HTTP/1.1  (none)                             -
+   121  (none)                 HTTP/1.1  token lenny-injected               -
+    93  curl/8.14.1            HTTP/2.0  Private-Token lenny-injected       -
+    71  attack                 HTTP/1.1  token lenny-injected               content-encoding
+    71  attack                 HTTP/2.0  token lenny-injected               content-encoding
+    55  (none)                 HTTP/2.0  (none)                             -
+    22  (none)                 HTTP/1.0  (none)                             -
+     5  git/2.49.1             HTTP/2.0  (none)                             -
+     3  curl/8.14.1            HTTP/2.0  Private-Token Bearer lenny-injected -
+     1  curl/8.14.1            HTTP/2.0  token lenny-injected               -

@@ -1,0 +1,42 @@
+Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/
+STATUS: deployed
+Waiting for daemon set "cilium" rollout to finish: 0 of 2 updated pods are available...
+Waiting for daemon set "cilium" rollout to finish: 1 of 2 updated pods are available...
+daemon set "cilium" successfully rolled out
+deployment "cilium-operator" successfully rolled out
+node/ob-cilium-control-plane condition met
+node/ob-cilium-worker condition met
+Image: "ob-tools:3" with ID "sha256:f62d8a056097676dbe4524b4d9900224b075c61319d6fa4d88d60248edd234e7" not yet present on
+NAME            READY   STATUS    RESTARTS   AGE   IP             NODE                      NOMINATED NODE   R
+default-envoy   1/1     Running   0          19s   10.244.1.59    ob-cilium-worker          <none>           <
+ga-cross        1/1     Running   0          19s   10.244.0.110   ob-cilium-control-plane   <none>           <
+ga-same         1/1     Running   0          19s   10.244.1.49    ob-cilium-worker          <none>           <
+stamper         1/1     Running   0          19s   10.244.0.218   ob-cilium-control-plane   <none>           <
+### controls: 3 s each, from pods that stay unstamped or wrongly stamped
+unset -> default Envoy (no ingress policy): STATE open;
+unset -> group Envoy, other node: STATE dropped;
+unset -> group Envoy, same node: STATE dropped;
+group-b -> group-a Envoy, other node: STATE dropped;
+group-b -> group-a Envoy, same node: STATE dropped;
+### sequential: probe from 2 s before the stamp to 10 s after
+### burst: 12 stamps in parallel, half of each placement
+### after the run: stamped-to-wrong control still dropped
+STATE dropped;
+sequential, other node: n=10 never_opened=['x0', 'x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8', 'x9'] dropped_before_all=True regress=0 codes=[200]
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): []
+sequential, same node: n=10 never_opened=['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's9'] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=6.446 median=6.446 max=6.446; values=[6.446]
+   open after call START  s: min=6.455 median=6.455 max=6.455; call duration max=0.014
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-2.0, 11.222), (0.0, 7.174)]
+burst, other node: n=6 never_opened=['b2', 'b4', 'b6', 'b8', 'b10'] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=6.571 median=6.571 max=6.571; values=[6.571]
+   open after call START  s: min=6.601 median=6.601 max=6.601; call duration max=0.034
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-3.08, 11.18)]
+burst, same node: n=6 never_opened=['b3', 'b5', 'b7', 'b9', 'b11'] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=6.961 median=6.961 max=6.961; values=[6.961]
+   open after call START  s: min=6.981 median=6.981 max=6.981; call duration max=0.020
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-3.07, 11.183)]
+identities carrying the label: 2
+ciliumidentities lines:        9
+crd labels= ces=
+Deleted nodes: ["ob-cilium-control-plane" "ob-cilium-worker"]

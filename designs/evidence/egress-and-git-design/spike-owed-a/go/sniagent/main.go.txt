@@ -1,0 +1,357 @@
+// sniagent: stand-in for netagent's ClientHello check on the egress endpoint. It takes a CONNECT, dials upstream, replies 200,
+// reads the ClientHello from the client before forwarding a byte, and closes the tunnel when the server name differs from the authority.
+//   -check=false              baseline: no read, just a copy
+//   -first-record-only        a hello that does not fit the first TLS record is refused, instead of reassembled across records
+//   -raw-compare              compares the strings as sent, without lower-casing or dropping a trailing dot
+//   -proxy, -proxy-ca, -cred  chain through a level 1 proxy over TLS instead of dialing the authority
+// One JSON line per tunnel goes to stdout. check_us is the time spent after the first byte arrived until the decision, including waiting for later segments;
+// parse_us is the CPU part of it, measured around the parser alone.
+package main
+
+import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+)
+
+var (
+	check     = flag.Bool("check", true, "")
+	firstOnly = flag.Bool("first-record-only", false, "")
+	rawCmp    = flag.Bool("raw-compare", false, "")
+	proxy     = flag.String("proxy", "", "")
+	proxyCA   = flag.String("proxy-ca", "", "")
+	proxySNI  = flag.String("proxy-sni", "lenny-egress.lenny-system.svc", "")
+	cred      = flag.String("cred", "", "")
+	timeout   = flag.Duration("hello-timeout", 5*time.Second, "")
+	listen    = flag.String("listen", ":3128", "")
+	quiet     = flag.Bool("quiet", false, "")
+	proxyPool *x509.CertPool
+)
+
+const maxHello = 64 * 1024
+
+type helloErr string
+
+func (e helloErr) Error() string { return string(e) }
+
+// reader counts Read calls that returned data, so a log line shows how the hello arrived.
+type countConn struct {
+	net.Conn
+	reads int
+	first time.Time
+}
+
+func (c *countConn) Read(p []byte) (int, error) {
+	n, e := c.Conn.Read(p)
+	if n > 0 {
+		c.reads++
+		if c.first.IsZero() {
+			c.first = time.Now()
+		}
+	}
+	return n, e
+}
+
+// readHello consumes whole TLS records until the ClientHello is complete, and returns every byte it read and the hello body.
+func readHello(r io.Reader) (raw []byte, hello []byte, records int, err error) {
+	var hs []byte
+	need := -1
+	for {
+		h := make([]byte, 5)
+		n, e := io.ReadFull(r, h[:1])
+		raw = append(raw, h[:n]...)
+		if e != nil {
+			return raw, nil, records, helloErr("no first byte: " + e.Error())
+		}
+		if h[0] != 0x16 {
+			return raw, nil, records, helloErr(fmt.Sprintf("not a TLS handshake record: first byte 0x%02x", h[0]))
+		}
+		n, e = io.ReadFull(r, h[1:])
+		raw = append(raw, h[1:1+n]...)
+		if e != nil {
+			return raw, nil, records, helloErr("short record header: " + e.Error())
+		}
+		if h[1] != 3 {
+			return raw, nil, records, helloErr("bad record version")
+		}
+		l := int(binary.BigEndian.Uint16(h[3:5]))
+		if l == 0 || l > 16384+256 {
+			return raw, nil, records, helloErr(fmt.Sprintf("bad record length %d", l))
+		}
+		b := make([]byte, l)
+		n, e = io.ReadFull(r, b)
+		raw = append(raw, b[:n]...)
+		if e != nil {
+			return raw, nil, records, helloErr("short record: " + e.Error())
+		}
+		records++
+		hs = append(hs, b...)
+		if len(hs) > maxHello {
+			return raw, nil, records, helloErr("hello above the cap")
+		}
+		if need < 0 && len(hs) >= 4 {
+			if hs[0] != 1 {
+				return raw, nil, records, helloErr("first handshake message is not ClientHello")
+			}
+			need = 4 + int(hs[1])<<16 | int(hs[2])<<8 | int(hs[3])
+			need = 4 + (int(hs[1])<<16 | int(hs[2])<<8 | int(hs[3]))
+			if need > maxHello {
+				return raw, nil, records, helloErr("hello above the cap")
+			}
+		}
+		if need >= 0 && len(hs) >= need {
+			return raw, hs[:need], records, nil
+		}
+		if *firstOnly {
+			return raw, nil, records, helloErr("hello does not fit the first record")
+		}
+	}
+}
+
+// serverName parses a ClientHello body. A duplicate extension or more than one name in the list is refused.
+func serverName(h []byte) (string, bool, error) {
+	bad := errors.New("malformed ClientHello")
+	p := h[4:]
+	if len(p) < 34 {
+		return "", false, bad
+	}
+	p = p[34:]
+	take8 := func() ([]byte, bool) {
+		if len(p) < 1 || len(p) < 1+int(p[0]) {
+			return nil, false
+		}
+		v := p[1 : 1+int(p[0])]
+		p = p[1+int(p[0]):]
+		return v, true
+	}
+	take16 := func(q *[]byte) ([]byte, bool) {
+		b := *q
+		if len(b) < 2 {
+			return nil, false
+		}
+		l := int(binary.BigEndian.Uint16(b))
+		if len(b) < 2+l {
+			return nil, false
+		}
+		v := b[2 : 2+l]
+		*q = b[2+l:]
+		return v, true
+	}
+	if _, ok := take8(); !ok {
+		return "", false, bad
+	}
+	if _, ok := take16(&p); !ok {
+		return "", false, bad
+	}
+	if _, ok := take8(); !ok {
+		return "", false, bad
+	}
+	if len(p) == 0 {
+		return "", false, nil
+	}
+	exts, ok := take16(&p)
+	if !ok {
+		return "", false, bad
+	}
+	name, found := "", false
+	for len(exts) > 0 {
+		if len(exts) < 2 {
+			return "", false, bad
+		}
+		t := binary.BigEndian.Uint16(exts)
+		exts = exts[2:]
+		d, ok := take16(&exts)
+		if !ok {
+			return "", false, bad
+		}
+		if t != 0 {
+			continue
+		}
+		if found {
+			return "", false, errors.New("duplicate server_name extension")
+		}
+		list, ok := take16(&d)
+		if !ok {
+			return "", false, bad
+		}
+		cnt := 0
+		for len(list) > 0 {
+			if len(list) < 1 {
+				return "", false, bad
+			}
+			nt := list[0]
+			list = list[1:]
+			v, ok := take16(&list)
+			if !ok {
+				return "", false, bad
+			}
+			if nt == 0 {
+				cnt++
+				name = string(v)
+			}
+		}
+		if cnt != 1 {
+			return "", false, errors.New("server_name list does not hold one name")
+		}
+		found = true
+	}
+	return name, found, nil
+}
+func norm(s string) string {
+	if *rawCmp {
+		return s
+	}
+	return strings.TrimSuffix(strings.ToLower(s), ".")
+}
+func dialUp(authority string) (net.Conn, int, error) {
+	if *proxy == "" {
+		c, err := net.DialTimeout("tcp", authority, 5*time.Second)
+		if err != nil {
+			return nil, 503, err
+		}
+		return c, 200, nil
+	}
+	raw, err := net.DialTimeout("tcp", *proxy, 5*time.Second)
+	if err != nil {
+		return nil, 503, err
+	}
+	var c net.Conn = raw
+	if proxyPool != nil {
+		t := tls.Client(raw, &tls.Config{RootCAs: proxyPool, ServerName: *proxySNI})
+		if err := t.Handshake(); err != nil {
+			raw.Close()
+			return nil, 503, err
+		}
+		c = t
+	}
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", authority, authority, base64.StdEncoding.EncodeToString([]byte(*cred)))
+	br := bufio.NewReader(c)
+	resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		c.Close()
+		return nil, 502, err
+	}
+	if resp.StatusCode != 200 {
+		c.Close()
+		return nil, resp.StatusCode, fmt.Errorf("proxy %d", resp.StatusCode)
+	}
+	return c, 200, nil
+}
+func handle(c net.Conn) {
+	defer c.Close()
+	c.(*net.TCPConn).SetNoDelay(true)
+	br := bufio.NewReader(c)
+	req, err := http.ReadRequest(br)
+	if err != nil || req.Method != "CONNECT" {
+		return
+	}
+	authority := req.Host
+	host, _, err := net.SplitHostPort(authority)
+	if err != nil {
+		host = authority
+		authority = net.JoinHostPort(host, "443")
+	}
+	up, st, err := dialUp(authority)
+	if err != nil {
+		fmt.Fprintf(c, "HTTP/1.1 %d Upstream\r\nContent-Length: 0\r\n\r\n", st)
+		return
+	}
+	defer up.Close()
+	fmt.Fprint(c, "HTTP/1.1 200 OK\r\n\r\n")
+	rec := map[string]any{"authority": authority}
+	emit := func() {
+		if !*quiet {
+			json.NewEncoder(os.Stdout).Encode(rec)
+		}
+	}
+	var fromClient io.Reader = br
+	if *check {
+		cc := &countConn{Conn: c}
+		c.SetReadDeadline(time.Now().Add(*timeout))
+		// br may hold bytes already; none are expected before the 200.
+		rd := io.MultiReader(io.LimitReader(br, int64(br.Buffered())), cc)
+		start := time.Now()
+		raw, hello, records, err := readHello(rd)
+		rec["hello_bytes"], rec["reads"], rec["records"] = len(raw), cc.reads, records
+		if !cc.first.IsZero() {
+			rec["wait_first_byte_us"] = cc.first.Sub(start).Microseconds()
+			rec["check_us"] = time.Since(cc.first).Microseconds()
+		}
+		if err != nil {
+			rec["result"], rec["reason"] = "closed", err.Error()
+			emit()
+			return
+		}
+		p0 := time.Now()
+		name, found, err := serverName(hello)
+		rec["parse_us"] = float64(time.Since(p0).Nanoseconds()) / 1000
+		rec["sni"] = name
+		switch {
+		case err != nil:
+			rec["result"], rec["reason"] = "closed", err.Error()
+			emit()
+			return
+		case !found:
+			rec["result"], rec["reason"] = "closed", "no server name"
+			emit()
+			return
+		case norm(name) != norm(host):
+			rec["result"], rec["reason"] = "closed", "server name differs from authority"
+			emit()
+			return
+		}
+		rec["result"] = "pass"
+		c.SetReadDeadline(time.Time{})
+		if _, err := up.Write(raw); err != nil {
+			return
+		}
+		fromClient = c
+	} else {
+		rec["result"] = "unchecked"
+	}
+	emit()
+	done := make(chan struct{})
+	go func() { io.Copy(c, up); close(done) }()
+	io.Copy(up, fromClient)
+	if t, ok := up.(*net.TCPConn); ok {
+		t.CloseWrite()
+	} else {
+		up.Close() // a TLS hop to the proxy has no half-close here, so the client's EOF ends the tunnel
+	}
+	<-done
+}
+func main() {
+	flag.Parse()
+	if *proxyCA != "" {
+		b, err := os.ReadFile(*proxyCA)
+		if err != nil {
+			log.Fatal(err)
+		}
+		proxyPool = x509.NewCertPool()
+		proxyPool.AppendCertsFromPEM(b)
+	}
+	l, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go handle(c)
+	}
+}

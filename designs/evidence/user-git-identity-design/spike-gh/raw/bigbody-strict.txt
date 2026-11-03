@@ -1,0 +1,8 @@
+body-x         rc=0 mutationBodyBytesAtStub=65888  
+body-lt        rc=1 mutationBodyBytesAtStub=none  pull request create failed: HTTP 413: refused by the egress operation allowlist: body of 393568 bytes is over the 262144 byte bound (https://ghes.exam
+body-quote     rc=0 mutationBodyBytesAtStub=131424  
+body-e         rc=0 mutationBodyBytesAtStub=131424  
+body-nl        rc=0 mutationBodyBytesAtStub=131424  
+body-emoji     rc=1 mutationBodyBytesAtStub=none  pull request create failed: HTTP 413: refused by the egress operation allowlist: body of 262496 bytes is over the 262144 byte bound (https://ghes.exam
+body-lt-under  rc=0 mutationBodyBytesAtStub=258352  
+body-lt-over   rc=1 mutationBodyBytesAtStub=none  pull request create failed: HTTP 413: refused by the egress operation allowlist: body of 264352 bytes is over the 262144 byte bound (https://ghes.exam

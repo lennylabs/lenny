@@ -1,0 +1,23 @@
+direct allow, inner TLS                      TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::10]:57766 err=<nil> (44.0m
+deny token                                   CONNECT 403 Forbidden err=<nil> (13.3ms)
+no credential                                CONNECT 403 Forbidden err=<nil> (13.7ms)
+blocked host                                 CONNECT 403 Forbidden err=<nil> (13.7ms)
+chain forwarded, cred injected               TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::4]:57192 err=<nil> (19.5ms
+chain upstream 407                           CONNECT 407 Proxy Authentication Required err=<nil> (16.9ms)
+chain upstream 403                           CONNECT 403 Forbidden err=<nil> (12.2ms)
+server-name check, match                     TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::10]:57780 err=<nil> (19.5m
+server-name check, mismatch                   err=tls: EOF (115.5ms)
+server-name check, no name                    err=tls: EOF (114.6ms)
+server-name check, plaintext                 plain:  err=EOF (116.4ms)
+SSRF name to private                         CONNECT 503 Service Unavailable err=<nil> (8.8ms)
+SSRF name to loopback                        CONNECT 503 Service Unavailable err=<nil> (11.3ms)
+SSRF name to metadata                        CONNECT 503 Service Unavailable err=<nil> (8.3ms)
+SSRF literal loopback                        CONNECT 503 Service Unavailable err=<nil> (8.8ms)
+SSRF mapped literal                          CONNECT 503 Service Unavailable err=<nil> (19.5ms)
+IPv6 literal public                          TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:2::10]:58590 err=<nil> (21.7m
+decision service stopped                     CONNECT 503 Service Unavailable err=<nil> (1007.4ms)
+decision service back                        TLS ok ech_accepted=false: 200 OK hello from target, you are [2001:db8:1::10]:44938 err=<nil> (30.2m
+-- chained upstream saw (last):
+2026/11/02 19:40:48 UPSTREAM 407 (got "")
+-- access log peer of last direct allow:
+{'peer': '198.18.0.2:49734', 'code': 503, 'tenant': None, 'up_host': None}

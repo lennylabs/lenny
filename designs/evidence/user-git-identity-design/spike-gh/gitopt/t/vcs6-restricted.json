@@ -1,0 +1,193 @@
+[
+ {
+  "host": "ghes.example.test",
+  "user": "x-access-token",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets",
+   "acme/lib",
+   "acme/lib2",
+   "acme/super",
+   "acme/lfsrepo",
+   "acme/big",
+   "alice/widgets",
+   "acme/moved",
+   "acme/evilredir",
+   "acme/reflect",
+   "acme/needauth",
+   "acme/hostile",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "writable": [
+   "acme/widgets",
+   "acme/big",
+   "acme/lfsrepo",
+   "alice/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*",
+   "refs/tags/lenny-*"
+  ],
+  "lfsTransferDeclared": false,
+  "level": "mint-scoped"
+ },
+ {
+  "host": "github.com",
+  "user": "x-access-token",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "writable": [
+   "acme/widgets",
+   "alice/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ],
+  "lfsTransferDeclared": false,
+  "level": "mint-scoped"
+ },
+ {
+  "host": "gitlab.example.test",
+  "user": "oauth2",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "writable": [
+   "acme/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ],
+  "lfsTransferDeclared": true,
+  "level": "mint-coarse",
+  "lfsLiveRunPassed": true
+ },
+ {
+  "host": "nossh.example.test",
+  "user": "x-access-token",
+  "sshForm": false,
+  "readable": [
+   "acme/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "writable": [
+   "acme/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ],
+  "lfsTransferDeclared": false,
+  "level": "mint-scoped"
+ },
+ {
+  "host": "acme.ghe.com",
+  "user": "x-access-token",
+  "sshForm": true,
+  "readable": [
+   "acme/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "writable": [
+   "acme/widgets",
+   "alice/widgets",
+   "acme/lfsgl",
+   "acme/lfsother",
+   "acme/lfsvar",
+   "acme/lfsexp",
+   "acme/lfsevil",
+   "acme/lfsothera",
+   "acme/lfsfail",
+   "acme/lfsfail401"
+  ],
+  "refPatterns": [
+   "refs/heads/lenny/*",
+   "refs/heads/feature*"
+  ],
+  "lfsTransferDeclared": false,
+  "level": "mint-scoped"
+ },
+ {
+  "host": "assets.example.test",
+  "noPool": true,
+  "readable": [],
+  "writable": [],
+  "refPatterns": [],
+  "user": "x-access-token"
+ }
+]

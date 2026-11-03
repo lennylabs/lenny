@@ -1,0 +1,24 @@
+### Envoy CPU seconds per GiB moved (cgroup), 4 GiB in total
+plain envoy 0.59 cpu-s/GiB; netagent 0.16 cpu-s/GiB
+tls envoy 0.87 cpu-s/GiB; netagent 0.81 cpu-s/GiB
+### decision endpoint kill then freeze under load, 500/s for 60 s
+plain: SUMMARY attempts=30000 map[200:28231 dial:1769] 200-latency p50=1.1ms p90=1.9ms p99=18.6ms max=422.8ms ticks=28231 broken=0 elapsed=60.0s
+tls: SUMMARY attempts=30000 map[200:30000] 200-latency p50=1.1ms p90=1.5ms p99=4.7ms max=422.5ms ticks=30000 broken=0 elapsed=60.2s
+### graceful drain with 100 open tunnels and a fresh CONNECT per second
+plain:
+probe t=  19.0s 19:50:54.082 -> 200 +data (1.005s)
+probe t=  20.0s 19:50:55.087 -> 200 +data (1.005s)
+probe t=  21.0s 19:50:56.092 -> 200 +data (4ms)
+probe t=  22.0s 19:50:57.081 -> 200 +data (1ms)
+SUMMARY n=100 codes=map[200:100] end_reasons=map[EOF (clean close):100] ticks_total=2148 ticks_per_tunnel=[20..23] connect_lat p50=0s p99=20ms lifetime min=19.56s p50=21.
+ENDS (tunnels closed by the peer) rel. to start: first=21.39s p50=22.07s last=23.04s; wallclock first=19:50:56.467 last=19:50:58.121
+tls:
+probe t=  20.0s 19:51:19.273 -> 200 +data (1.008s)
+probe t=  21.0s 19:51:20.282 -> 200 +data (5ms)
+probe t=  22.0s 19:51:21.272 -> 200 +data (2ms)
+probe t=  23.0s 19:51:22.271 -> 200 +data (3ms)
+SUMMARY n=100 codes=map[200:100] end_reasons=map[EOF (clean close):100] ticks_total=2160 ticks_per_tunnel=[20..23] connect_lat p50=0s p99=10ms lifetime min=19.63s p50=21.
+ENDS (tunnels closed by the peer) rel. to start: first=21.41s p50=22.32s last=23.04s; wallclock first=19:51:20.674 last=19:51:22.310
+### tunnel lifetime cap through TLS
+SUMMARY n=20 codes=map[200:20] end_reasons=map[EOF (clean close):20] ticks_total=100 ticks_per_tunnel=[5..5] connect_lat p50=0s p99=10ms lifetime min=5.1s p50=5.11s max=5
+ENDS (tunnels closed by the peer) rel. to start: first=5.11s p50=5.61s last=6.06s; wallclock first=19:51:28.684 last=19:51:29.634

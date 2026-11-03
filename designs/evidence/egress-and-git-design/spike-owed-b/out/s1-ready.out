@@ -1,0 +1,73 @@
+### states after 45 s
+r-valid phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:33Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+r-absent phase=Pending ready=False restarts=0 envoy_state={"waiting":{"reason":"ContainerCreating"}} admin_ready=[error: Internal error occurred: unable t] curl_k=[error: Internal error occurred: unable to upgrade connection]
+    Warning   FailedMount   7     MountVolume.SetUp failed for volume "certs" : secret "r-absent" not found
+r-absentopt phase=Running ready=False restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:33Z"}} admin_ready=[LIVE] curl_k=[000 curlrc=35]
+    Warning   Unhealthy   1     Readiness probe failed: Get "https://10.244.0.27:3443/healthz": read tcp 10.244.0.1:55406->10.244.0.27:3443: read: connection reset by peer
+    Warning   Unhealthy   23    Readiness probe failed: Get "https://10.244.0.27:3443/healthz": EOF
+r-missing phase=Running ready=False restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:33Z"}} admin_ready=[LIVE] curl_k=[000 curlrc=35]
+    Warning   Unhealthy   1     Readiness probe failed: Get "https://10.244.0.29:3443/healthz": read tcp 10.244.0.1:38976->10.244.0.29:3443: read: connection reset by peer
+    Warning   Unhealthy   21    Readiness probe failed: Get "https://10.244.0.29:3443/healthz": EOF
+r-garbage phase=Running ready=False restarts=3 envoy_state={"waiting":{"message":"back-off 40s restarting failed container=envoy  admin_ready=[command terminated with exit code 7] curl_k=[000 curlrc=7]
+    Warning   BackOff     6     Back-off restarting failed container envoy in pod r-garbage_lenny-system(9b3ddcff-d2e6-4ad2-9482-185cff24ef89)
+r-mismatch phase=Running ready=False restarts=3 envoy_state={"waiting":{"message":"back-off 40s restarting failed container=envoy  admin_ready=[command terminated with exit code 7] curl_k=[000 curlrc=7]
+    Warning   BackOff     6     Back-off restarting failed container envoy in pod r-mismatch_lenny-system(6b63f2a3-bdbc-49eb-9907-a6a7377d593a)
+r-expired phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:34Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+### Envoy logs for the broken states
+-- r-absentopt
+[2026-11-02 23:54:33.991][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: Invalid path: /certs/live/tls.crt
+-- r-missing
+[2026-11-02 23:54:34.015][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: Invalid path: /certs/live/tls.crt
+-- r-garbage
+[2026-11-02 23:55:12.901][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: Failed to load certificate chain from <inli
+[2026-11-02 23:55:12.902][1][critical][main] [source/server/server.cc:449] error `Failed to load certificate chain from <inline>` initializing config 'goo.gle/debugonly   
+-- r-mismatch
+[2026-11-02 23:55:05.909][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: Failed to load private key from <inline>, C
+[2026-11-02 23:55:05.910][1][critical][main] [source/server/server.cc:449] error `Failed to load private key from <inline>, Cause: error:0b000074:X.509 certificate routines:OPENSSL_internal:KEY_VALUES_MISMATCH`
+Failed to load private key from <inline>, Cause: error:0b000074:X.509 certificate routines:OPENSSL_internal:KEY_VALUES_MISMATCH
+### heal: Secrets replaced with valid material, measured from the write to Ready
+r-absent Ready 16.3 s after the Secret write
+r-missing Ready 23.8 s after the Secret write
+r-mismatch Ready 27.9 s after the Secret write
+r-garbage Ready 33.4 s after the Secret write
+r-absentopt Ready 37.9 s after the Secret write
+### states after the heal
+r-valid phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:33Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+r-absent phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:55:37Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+    Warning   FailedMount   7     MountVolume.SetUp failed for volume "certs" : secret "r-absent" not found
+r-absentopt phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:33Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+    Warning   Unhealthy   1     Readiness probe failed: Get "https://10.244.0.27:3443/healthz": read tcp 10.244.0.1:55406->10.244.0.27:3443: read: connection reset by peer
+    Warning   Unhealthy   24    Readiness probe failed: Get "https://10.244.0.27:3443/healthz": EOF
+r-missing phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:33Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+    Warning   Unhealthy   1     Readiness probe failed: Get "https://10.244.0.29:3443/healthz": read tcp 10.244.0.1:38976->10.244.0.29:3443: read: connection reset by peer
+    Warning   Unhealthy   22    Readiness probe failed: Get "https://10.244.0.29:3443/healthz": EOF
+r-garbage phase=Running ready=True restarts=4 envoy_state={"running":{"startedAt":"2026-11-02T23:55:53Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+    Warning   BackOff     6     Back-off restarting failed container envoy in pod r-garbage_lenny-system(9b3ddcff-d2e6-4ad2-9482-185cff24ef89)
+r-mismatch phase=Running ready=True restarts=4 envoy_state={"running":{"startedAt":"2026-11-02T23:55:47Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+    Warning   BackOff     6     Back-off restarting failed container envoy in pod r-mismatch_lenny-system(6b63f2a3-bdbc-49eb-9907-a6a7377d593a)
+r-expired phase=Running ready=True restarts=0 envoy_state={"running":{"startedAt":"2026-11-02T23:54:34Z"}} admin_ready=[LIVE] curl_k=[200 curlrc=0]
+### a running, ready pod whose Secret turns invalid keeps its last good certificate and stays ready
+before: serial=6E6999ED9727CED8189A303FD15F85A99D9D1597 notAfter=Nov  3 23:54:25 2026 GMT 
+delivered to the pod after 67 polls
+after:  serial=6E6999ED9727CED8189A303FD15F85A99D9D1597 notAfter=Nov  3 23:54:25 2026 GMT  ready=True
+sds.egress-ca.version_text: ""
+sds.server.version_text: ""
+sds.egress-ca.init_fetch_timeout: 0
+sds.egress-ca.key_rotation_failed: 0
+sds.egress-ca.update_attempt: 1
+sds.egress-ca.update_failure: 0
+sds.egress-ca.update_rejected: 0
+sds.egress-ca.update_success: 1
+sds.egress-ca.update_time: 1793663673773
+sds.egress-ca.version: 17241709254077376921
+sds.server.init_fetch_timeout: 0
+sds.server.key_rotation_failed: 1
+sds.server.update_attempt: 1
+sds.server.update_failure: 0
+sds.server.update_rejected: 0
+sds.server.update_success: 1
+sds.server.update_time: 1793663673772
+sds.server.version: 17241709254077376921
+sds.egress-ca.update_duration: No recorded values
+sds.server.update_duration: No recorded values
+[2026-11-02 23:57:16.865][1][warning][misc] [source/common/secret/sds_api.cc:99] Failed to reload certificates: Failed to load certificate chain from <inline>

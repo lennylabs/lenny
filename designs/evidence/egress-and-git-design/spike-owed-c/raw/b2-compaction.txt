@@ -1,0 +1,48 @@
+<nil>
+<nil>
+   buffered after flush: "buffered":0 "buffered":0
+### gaps, against the producer's truth
+gaps: positions=10000 records present=3167812, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=0 records in those tails=0; positions with nothing stored=0 records=0
+### before compaction
+verify: rows=57622 objects=57622 batches=57622 records=3167692 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=12505 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 6.6s
+### export half (1583846 of 3167692 records), then compact, then resume
+export: delivered=1583846 parts skipped by index=0 cursor positions=10000 cursor bytes=737406 16.6s
+   hour labels: 2026110303
+   held rows for t7: 23
+### compaction
+compact: groups=7497 skipped=0 failed=0 batches merged=57599 bytes=161614843 wall=15.72s par=8 groups/s=476.9 group ms p50=15.0 p99=39.4 max=96.1 cpu=13.92s
+   rows 57622 -> 7520, tenant-stream-hours: 7500
+   held t7 rows after: 23
+   table: before 37150720 bytes, after vacuum full 13598720
+   row size: mean row (pg_column_size)=1557 parts=7.7 max parts=22
+### after compaction: digests, anchors
+verify: rows=7520 objects=7520 batches=57622 records=3167692 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=20002 (compaction 7497) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 4.8s
+### export resumes on stable positions
+export: delivered=1583845 parts skipped by index=23648 cursor positions=10000 cursor bytes=745385 22.3s
+exportcheck: delivered lines=3167691 distinct=3167691 stored records=3167692 duplicates=0 not delivered=1 delivered but not stored=0
+   cursor file bytes: 745385
+### gaps after compaction
+gaps: positions=10000 records present=3167812, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=0 records in those tails=0; positions with nothing stored=0 records=0
+### a late batch into a compacted hour, a second pass
+   busy: n=1984 codes={'200': 1895, '403': 89} p50=1.27 p90=2.23 p99=3.60 p99.9=17.2 max=27.4 ms
+   small: n=2008 codes={'200': 1890, '403': 118} p50=1.29 p90=2.27 p99=3.40 p99.9=11.2 max=21.1 ms
+   elapsed 20s ticks=3785 broken=0
+compact: groups=4059 skipped=3441 failed=0 batches merged=35439 bytes=121077940 wall=4.56s par=8 groups/s=890.6 group ms p50=7.7 p99=29.9 max=129.2 cpu=4.23s
+   rows now: 7500, tenant-stream-hours: 7500
+<nil>
+<nil>
+verify: rows=7500 objects=7500 batches=61923 records=3186766 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=25447 (compaction 11556) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 4.9s
+export: delivered=19074 parts skipped by index=57622 cursor positions=10000 cursor bytes=745413 1.8s
+exportcheck: delivered lines=3186765 distinct=3186765 stored records=3186766 duplicates=0 not delivered=1 delivered but not stored=0
+### tamper: a flipped byte in a compacted object
+flipped a byte in t2459/evidence/egress.decision/2026110303/compacted-0ce7bd76e97761c5.gz
+  OBJECT DIGEST MISMATCH t2459/evidence/egress.decision/2026110303/compacted-0ce7bd76e97761c5.gz
+verify: rows=7500 objects=7500 batches=61917 records=3186627 | object digest mismatches=1 part digest mismatches=0 record count mismatches=0 | chain events=25447 (compaction 11556) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 5.1s
+### tamper: a compactor that drops a batch and rewrites the object and the row
+dropped batch w1-1a19f5d1907-1-d6e384016358ebda from t2093/evidence/egress.tunnel/2026110303/compacted-ba9e58a03eb24910.gz <nil>
+  ANCHOR NAMES A BATCH NOT IN THE MANIFEST t2093 w1-1a19f5d1907-1-d6e384016358ebda
+  ANCHOR DIGEST DOES NOT RECOMPUTE t2093 1 manifest
+  COMPACTION ANCHOR: BATCH ABSENT OR CHANGED t2093 w1-1a19f5d1907-1-d6e384016358ebda
+verify: rows=7500 objects=7500 batches=61916 records=3186575 | object digest mismatches=1 part digest mismatches=0 record count mismatches=0 | chain events=25447 (compaction 11556) bad links=0 anchors not recomputing=1 anchored batches absent=2 | 4.7s

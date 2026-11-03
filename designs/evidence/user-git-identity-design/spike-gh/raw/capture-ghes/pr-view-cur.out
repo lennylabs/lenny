@@ -1,0 +1,16 @@
+title:	the title
+state:	OPEN
+author:	alice (widgets)
+labels:	bug
+assignees:	bob (widgets)
+reviewers:	bob (widgets) (Requested)
+projects:	board (widgets)
+milestone:	the title
+number:	7
+url:	https://ghes.example.test/acme/widgets/pull/7
+additions:	1
+deletions:	1
+auto-merge:	enabled	alice	s-mergemethod
+--
+a description
+rc=0

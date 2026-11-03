@@ -1,0 +1,181 @@
+// proxy: prototype of the adapter's local git endpoint.
+// Maps /<form>/<host>/<repo>/<git-suffix> to an upstream smart-HTTP server, injects
+// Authorization, refuses repositories outside an allowlist and non-smart-HTTP paths,
+// streams request and response bodies, and handles upstream redirects.
+package main
+
+import (
+	"flag"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
+)
+
+var (
+	routes   = map[string]string{} // host -> upstream base URL (default https://host)
+	allow    = map[string]bool{}   // host/repo (no .git)
+	redirect = flag.String("redirect", "rewrite", "passthrough|rewrite")
+	cred     = flag.String("cred", "alice:s3cret", "user:password injected as Basic auth")
+)
+
+var suffixes = []string{"/info/refs", "/git-upload-pack", "/git-receive-pack", "/info/lfs/objects/batch", "/info/lfs/locks", "/info/lfs/locks/verify"}
+
+type target struct{ host, repo, suffix, svc string }
+
+// parse splits the loopback path into host, repository, and git suffix.
+func parse(r *http.Request) (target, string) {
+	var t target
+	if r.URL.RawPath != "" && r.URL.RawPath != r.URL.Path {
+		return t, "encoded path"
+	}
+	p := r.URL.Path
+	form, rest, ok := strings.Cut(strings.TrimPrefix(p, "/"), "/")
+	if !ok {
+		return t, "no form"
+	}
+	var hostport string
+	switch form {
+	case "https", "http":
+		hostport, rest, ok = strings.Cut(rest, "/")
+	case "ssh": // ssh/[user@]host[:port]/path
+		hostport, rest, ok = strings.Cut(rest, "/")
+		if i := strings.LastIndex(hostport, "@"); i >= 0 {
+			hostport = hostport[i+1:]
+		}
+		hostport = strings.TrimSuffix(hostport, ":22")
+	case "scp": // scp/host:path (user "git@" already consumed by insteadOf)
+		hostport, rest, ok = strings.Cut(rest, ":")
+	default:
+		return t, "unknown form " + form
+	}
+	if !ok || hostport == "" || strings.ContainsAny(hostport, "@/") {
+		return t, "bad host"
+	}
+	for _, s := range suffixes {
+		if strings.HasSuffix(rest, s) {
+			t.suffix = s
+			rest = strings.TrimSuffix(rest, s)
+			break
+		}
+	}
+	if t.suffix == "" {
+		return t, "not a smart-HTTP path"
+	}
+	for _, seg := range strings.Split(rest, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return t, "bad repo path"
+		}
+	}
+	t.host, t.repo = strings.ToLower(hostport), strings.TrimSuffix(rest, ".git")
+	switch t.suffix {
+	case "/info/refs":
+		t.svc = r.URL.Query().Get("service")
+		if t.svc != "git-upload-pack" && t.svc != "git-receive-pack" {
+			return t, "dumb protocol refused"
+		}
+	case "/git-upload-pack", "/git-receive-pack":
+		t.svc = t.suffix[1:]
+		if r.Method != "POST" {
+			return t, "method"
+		}
+	default:
+		t.svc = "lfs"
+	}
+	return t, ""
+}
+
+func upstream(host string) *url.URL {
+	if b, ok := routes[host]; ok {
+		u, _ := url.Parse(b)
+		return u
+	}
+	return &url.URL{Scheme: "https", Host: host}
+}
+
+func main() {
+	addr := flag.String("addr", "127.0.0.1:7073", "listen")
+	rt := flag.String("routes", "", "host=base,host=base")
+	al := flag.String("allow", "", "host/repo,host/repo")
+	flag.Parse()
+	for _, kv := range strings.Split(*rt, ",") {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			routes[k] = v
+		}
+	}
+	for _, a := range strings.Split(*al, ",") {
+		allow[strings.TrimSuffix(a, ".git")] = true
+	}
+	user, pass, _ := strings.Cut(*cred, ":")
+
+	rp := &httputil.ReverseProxy{
+		FlushInterval: -1, // flush every write: progress and keepalive packets are not held
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			t := pr.In.Context().Value(ctxKey{}).(target)
+			u := upstream(t.host)
+			pr.Out.URL.Scheme, pr.Out.URL.Host = u.Scheme, u.Host
+			pr.Out.URL.Path = strings.TrimSuffix(u.Path, "/") + "/" + t.repo + ".git" + t.suffix
+			pr.Out.URL.RawPath = ""
+			pr.Out.Host = u.Host
+			pr.Out.Header.Del("Authorization")
+			pr.Out.Header.Del("Cookie")
+			// A real adapter mints a read or write token here according to t.svc.
+			// Spike only: the test credential goes to local upstreams, never to a public host.
+			if user != "" && (strings.HasPrefix(u.Host, "localhost:") || strings.HasPrefix(u.Host, "127.0.0.1:")) {
+				pr.Out.SetBasicAuth(user, pass)
+			}
+			pr.Out.Header.Del("X-Loopback-Host")
+			pr.Out.Header.Set("X-Loopback-Host", pr.In.Host)
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			if resp.StatusCode < 300 || resp.StatusCode > 399 {
+				return nil
+			}
+			loc, err := resp.Request.URL.Parse(resp.Header.Get("Location"))
+			log.Printf("REDIRECT %d %s -> %s", resp.StatusCode, resp.Request.URL, loc)
+			if *redirect == "passthrough" || err != nil {
+				return nil
+			}
+			// Rewrite the Location back into loopback form when it names a host we route,
+			// so git's next requests stay on the adapter; refuse otherwise.
+			// Map the Location back to a route alias only on an exact scheme+host match;
+			// otherwise keep the real host, and refuse a downgrade to plain http.
+			host := loc.Host
+			if loc.Scheme != "https" {
+				host = ""
+			}
+			for h, b := range routes {
+				if bu, _ := url.Parse(b); bu.Scheme == loc.Scheme && bu.Host == loc.Host && strings.HasPrefix(loc.Path, bu.Path) {
+					host, loc.Path = h, strings.TrimPrefix(loc.Path, bu.Path)
+				}
+			}
+			newPath := "/https/" + host + loc.Path
+			fake := &http.Request{Method: "GET", URL: &url.URL{Path: newPath, RawQuery: loc.RawQuery}}
+			t, why := parse(fake)
+			if why != "" || !allow[t.host+"/"+t.repo] {
+				log.Printf("REDIRECT refused: %s %q", newPath, why)
+				resp.StatusCode, resp.Status = 403, "403 Forbidden"
+				resp.Header.Del("Location")
+				return nil
+			}
+			resp.Header.Set("Location", "http://"+resp.Request.Header.Get("X-Loopback-Host")+newPath+"?"+loc.RawQuery)
+			return nil
+		},
+	}
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t, why := parse(r)
+		log.Printf("PX %s %s cl=%d te=%v -> host=%s repo=%s svc=%s %s", r.Method, r.URL.RequestURI(), r.ContentLength, r.TransferEncoding, t.host, t.repo, t.svc, why)
+		if why != "" {
+			http.Error(w, why, 400)
+			return
+		}
+		if !allow[t.host+"/"+t.repo] {
+			http.Error(w, "repository not in session scope", 403)
+			return
+		}
+		r.Header.Set("X-Loopback-Host", r.Host)
+		rp.ServeHTTP(w, r.WithContext(withTarget(r, t)))
+	})
+	log.Fatal(http.ListenAndServe(*addr, h))
+}

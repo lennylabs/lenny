@@ -1,0 +1,145 @@
+165:func (c *Client) Remotes(ctx context.Context) (RemoteSet, error) {
+166:	remoteArgs := []string{"remote", "-v"}
+176:	configArgs := []string{"config", "--get-regexp", `^remote\..*\.gh-resolved$`}
+448:	args := []string{"config", "--get-regexp", fmt.Sprintf("^%s(remote|merge|pushremote|%s)$", prefix, MergeBaseConfig)}
+1003:func parseRemotes(remotesStr []string) RemoteSet {
+func TranslateRemotes(gitRemotes git.RemoteSet, translator Translator) (remotes Remotes) {
+	for _, r := range gitRemotes {
+		var repo ghrepo.Interface
+		if r.FetchURL != nil {
+			repo, _ = ghrepo.FromURL(translator.Translate(r.FetchURL))
+		}
+		if r.PushURL != nil && repo == nil {
+			repo, _ = ghrepo.FromURL(translator.Translate(r.PushURL))
+		}
+		if repo == nil {
+			continue
+		}
+		remotes = append(remotes, &Remote{
+			Remote: r,
+			Repo:   repo,
+		})
+	}
+	return
+}
+func FromURL(u *url.URL) (Interface, error) {
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("no hostname detected")
+	}
+
+	parts := strings.SplitN(strings.Trim(u.Path, "/"), "/", 3)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid path: %s", u.Path)
+	}
+
+	return NewWithHost(parts[0], strings.TrimSuffix(parts[1], ".git"), u.Hostname()), nil
+}
+func ParseURL(rawURL string) (*url.URL, error) {
+	if !isPossibleProtocol(rawURL) &&
+		strings.ContainsRune(rawURL, ':') &&
+		// not a Windows path
+		!strings.ContainsRune(rawURL, '\\') {
+		// support scp-like syntax for ssh protocol
+		rawURL = "ssh://" + strings.Replace(rawURL, ":", "/", 1)
+	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+
+	switch u.Scheme {
+	case "git+https":
+		u.Scheme = "https"
+	case "git+ssh":
+		u.Scheme = "ssh"
+	}
+
+	if u.Scheme != "ssh" {
+		return u, nil
+	}
+
+	if strings.HasPrefix(u.Path, "//") {
+		u.Path = strings.TrimPrefix(u.Path, "/")
+	}
+
+	u.Host = strings.TrimSuffix(u.Host, ":"+u.Port())
+
+	return u, nil
+}
+func IsURL(u string) bool {
+	return strings.HasPrefix(u, "git@") || isSupportedProtocol(u)
+}
+/go/pkg/mod/github.com/cli/cli/v2@v2.103.3/pkg/cmd/factory/remote_resolver.go:84:				rr.remotesError = fmt.Errorf("none of the git remotes configured for this repository correspond to the %s environment variable. Try adding a matching remote or unsetting the variable", src)
+/go/pkg/mod/github.com/cli/cli/v2@v2.103.3/pkg/cmd/factory/remote_resolver.go:90:			rr.remotesError = errors.New("none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`")
+/go/pkg/mod/github.com/cli/cli/v2@v2.103.3/pkg/cmd/repo/setdefault/setdefault.go:183:		return errors.New("none of the git remotes correspond to a valid remote repository")
+/go/pkg/mod/github.com/cli/cli/v2@v2.103.3/pkg/cmd/repo/setdefault/setdefault_test.go:388:			errMsg:  "none of the git remotes correspond to a valid remote repository",
+func (rr *remoteResolver) Resolver() func() (context.Remotes, error) {
+	return func() (context.Remotes, error) {
+		if rr.cachedRemotes != nil || rr.remotesError != nil {
+			return rr.cachedRemotes, rr.remotesError
+		}
+
+		gitRemotes, err := rr.readRemotes()
+		if err != nil {
+			rr.remotesError = err
+			return nil, err
+		}
+		if len(gitRemotes) == 0 {
+			rr.remotesError = errors.New("no git remotes found")
+			return nil, rr.remotesError
+		}
+
+		sshTranslate := rr.urlTranslator
+		if sshTranslate == nil {
+			sshTranslate = ssh.NewTranslator()
+		}
+		resolvedRemotes := context.TranslateRemotes(gitRemotes, sshTranslate)
+
+		cfg, err := rr.getConfig()
+		if err != nil {
+			return nil, err
+		}
+
+		authedHosts := cfg.Authentication().Hosts()
+		if len(authedHosts) == 0 {
+			return nil, errors.New("could not find any host configurations")
+		}
+		defaultHost, src := cfg.Authentication().DefaultHost()
+
+		// Use set to dedupe list of hosts
+		hostsSet := set.NewStringSet()
+		hostsSet.AddValues(authedHosts)
+		hostsSet.AddValues([]string{defaultHost, ghinstance.Default()})
+		hosts := hostsSet.ToSlice()
+
+		// Sort remotes
+		sort.Sort(resolvedRemotes)
+
+		rr.cachedRemotes = resolvedRemotes.FilterByHosts(hosts)
+
+		// Filter again by default host if one is set
+		// For config file default host fallback to cachedRemotes if none match
+		// For environment default host (GH_HOST) do not fallback to cachedRemotes if none match
+		if src != "default" {
+			filteredRemotes := rr.cachedRemotes.FilterByHosts([]string{defaultHost})
+			if isHostEnv(src) || len(filteredRemotes) > 0 {
+				rr.cachedRemotes = filteredRemotes
+			}
+		}
+
+		if len(rr.cachedRemotes) == 0 {
+			if isHostEnv(src) {
+				rr.remotesError = fmt.Errorf("none of the git remotes configured for this repository correspond to the %s environment variable. Try adding a matching remote or unsetting the variable", src)
+				return nil, rr.remotesError
+			} else if cfg.Authentication().HasEnvToken() {
+				rr.remotesError = errors.New("set the GH_HOST environment variable to specify which GitHub host to use")
+				return nil, rr.remotesError
+			}
+			rr.remotesError = errors.New("none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`")
+			return nil, rr.remotesError
+		}
+
+		return rr.cachedRemotes, nil
+	}
+}

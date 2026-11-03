@@ -1,0 +1,32 @@
+### sub-hour duration, as the cert-manager webhook sees it
+namespace/lenny-system created
+namespace/agents created
+issuer.cert-manager.io/lenny-egress-selfsign created
+certificate.cert-manager.io/lenny-egress-ca created
+issuer.cert-manager.io/lenny-egress-ca created
+certificate.cert-manager.io/lenny-egress-ca condition met
+Error from server (Forbidden): error when creating "k8s/shortdur.yaml": admission webhook "webhook.cert-manager.io" denied the request: spec.duration: Invalid value: 600000000000: certificate duration must be greater than 1h0m0s
+certificate.cert-manager.io/lenny-egress created
+certificate.cert-manager.io/lenny-egress-authz created
+certificate.cert-manager.io/lenny-controller created
+certificate.cert-manager.io/lenny-controller condition met
+certificate.cert-manager.io/lenny-egress condition met
+certificate.cert-manager.io/lenny-egress-authz condition met
+certificate.cert-manager.io/lenny-egress-ca condition met
+N                    NB                     NA                     RT                     REV
+lenny-controller     2026-11-02T23:44:25Z   2026-11-03T23:44:25Z   2026-11-02T23:46:25Z   1
+lenny-egress         2026-11-02T23:44:25Z   2026-11-03T23:44:25Z   2026-11-02T23:46:25Z   1
+lenny-egress-authz   2026-11-02T23:44:25Z   2026-11-03T23:44:25Z   2026-11-02T23:46:25Z   1
+lenny-egress-ca      2026-11-02T23:44:25Z   2036-10-30T23:44:25Z   2036-08-01T23:44:25Z   1
+NAME                    READY   AGE
+lenny-egress-ca         True    1s
+lenny-egress-selfsign   True    1s
+kubernetes.io/tls
+subject=CN=lenny-egress.lenny-system.svc
+issuer=CN=lenny-egress-ca
+notBefore=Nov  2 23:44:25 2026 GMT
+notAfter=Nov  3 23:44:25 2026 GMT
+X509v3 Extended Key Usage: 
+    TLS Web Server Authentication, TLS Web Client Authentication
+X509v3 Subject Alternative Name: 
+    DNS:lenny-egress.lenny-system.svc

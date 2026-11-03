@@ -1,0 +1,15 @@
+title:	the title
+state:	open
+author:	alice
+labels:	
+assignees:	
+reviewers:	
+source_branch:	feature
+target_branch:	main
+comments:	0
+number:	7
+url:	https://gitlab.example.test/acme/widgets/-/merge_requests/7
+--
+a description
+This merge request has no comments.
+rc=0

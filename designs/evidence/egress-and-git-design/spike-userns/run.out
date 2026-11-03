@@ -1,0 +1,46 @@
+################ host: phase=Failed
+setpriv: unrecognized option: reuid=65532
+BusyBox v1.37.0 (2025-11-21 22:40:56 UTC) multi-call binary.
+
+Usage: setpriv [OPTIONS] PROG ARGS
+
+Run PROG with different privilege settings
+
+-d,--dump		Show current capabilities
+--nnp,--no-new-privs	Ignore setuid/setgid bits and file capabilities
+--inh-caps CAP,CAP	Set inheritable capabilities
+--ambient-caps CAP,CAP	Set ambient capabilities
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  2m    default-scheduler  Successfully assigned mir/host to lenny-userns-control-plane
+  Normal  Pulled     2m    kubelet            Container image "spike-userns:1" already present on machine and can be accessed by the pod
+  Normal  Created    2m    kubelet            Container created
+  Normal  Started    119s  kubelet            Container started
+################ userns: phase=Failed
+  Type     Reason     Age   From               Message
+  ----     ------     ----  ----               -------
+  Normal   Scheduled  4m5s  default-scheduler  Successfully assigned mir/userns to lenny-userns-control-plane
+  Normal   Pulled     4m4s  kubelet            Container image "spike-userns:1" already present on machine and can be accessed by the pod
+  Normal   Created    4m4s  kubelet            Container created
+  Warning  Failed     4m4s  kubelet            Error: failed to create containerd task: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: er
+################ node view of the same processes
+cat: /proc/0/uid_map: No such file or directory
+host uid_map on node: 
+cat: /proc/0/uid_map: No such file or directory
+userns uid_map on node: 
+################ on-disk owners, as the node sees them
+da
+ls: cannot access '/var/local-path-provisioner/pvc-04d3a604-d674-4f99-88e5-be7261a90ac3_mir_da/a': No such file or directory
+db
+ls: cannot access '/var/local-path-provisioner/pvc-09fbaa69-f90c-4237-aea8-d014c9e15820_mir_db/a': No such file or directory
+################ Pod Security admission (server dry run)
+restricted hostUsers=unset, mirror with three capabilities: forbidden: violates PodSecurity "restricted:latest": unrestricted capabilities (container "mirror" must not include "CHOWN", "SETGID", "SETUID" in securityContext.capabilities
+restricted hostUsers=unset, root with no capabilities  : forbidden: violates PodSecurity "restricted:latest": runAsNonRoot != true (pod or container "mirror" must set securityContext.runAsNonRoot=true), runAsUser=0 (container "mirro
+restricted hostUsers=false, mirror with three capabilities: forbidden: violates PodSecurity "restricted:latest": unrestricted capabilities (container "mirror" must not include "CHOWN", "SETGID", "SETUID" in securityContext.capabilities
+restricted hostUsers=false, root with no capabilities  : pod/p-false created (server dry run) 
+baseline hostUsers=unset, mirror with three capabilities: pod/p-unset created (server dry run) 
+baseline hostUsers=unset, root with no capabilities  : pod/p-unset created (server dry run) 
+baseline hostUsers=false, mirror with three capabilities: pod/p-false created (server dry run) 
+baseline hostUsers=false, root with no capabilities  : pod/p-false created (server dry run) 
+################ Does the three-capability root start work without the exception's capabilities
+Failed

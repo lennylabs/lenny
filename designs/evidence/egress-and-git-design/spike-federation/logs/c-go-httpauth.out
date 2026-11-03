@@ -1,0 +1,5 @@
+### TEST c-go-httpauth  23:26:41
+### docker run --network spikefed-net --env-file env/azwi.env -e AZURE_AUTHORITY_HOST=http://login.azure.test -e SLEEP=1 spikefed-go:t go run ./cmd/azwi
+ERR ctor: cannot use an authority host without https
+### exit 0
+### server log:

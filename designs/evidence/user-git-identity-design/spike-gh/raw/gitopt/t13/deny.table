@@ -1,0 +1,68 @@
+ok-forwarded       rc=0   deny-mr-create                           writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+no-write-at-stub   rc=0   deny-mr-view                             writes= refused=
+no-write-at-stub   rc=0   deny-mr-list                             writes= refused=
+ok-refused-denied  rc=0   deny-D-mr-approve                        writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+OVER               rc=0   deny-mr-revoke-D                         writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   deny-D-mr-merge                          writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-mr-rebase                         writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-forwarded       rc=0   deny-mr-note                             writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes refused=
+ok-forwarded       rc=0   deny-mr-update                           writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   deny-mr-close                            writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   deny-issue-create                        writes=POST /api/v4/projects/acme%2Fwidgets/issues refused=
+ok-refused-denied  rc=0   deny-D-raw-7-approve                     writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-approve-numeric             writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-approve-fullencoded         writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-approve-case                writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-approve-trailing            writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-unapprove                   writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-unapprove-numeric           writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-unapprove-fullencoded       writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-unapprove-case              writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-unapprove-trailing          writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-merge                       writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-merge-numeric               writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-merge-fullencoded           writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-merge-case                  writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-merge-trailing              writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-rebase                      writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-rebase-numeric              writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-rebase-fullencoded          writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-rebase-case                 writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-rebase-trailing             writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-reset_approvals             writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-reset_approvals-numeric     writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-reset_approvals-fullencoded writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-reset_approvals-case        writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-reset_approvals-trailing    writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   deny-D-raw-7-cancel_merge_when_pipeline_succeeds writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   deny-D-raw-7-cancel_merge_when_pipeline_succeeds-numeric writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   deny-D-raw-7-cancel_merge_when_pipeline_succeeds-fullencoded writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   deny-D-raw-7-cancel_merge_when_pipeline_succeeds-case writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   deny-D-raw-7-cancel_merge_when_pipeline_succeeds-trailing writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   deny-D-raw-override                      writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   deny-D-gql-accept                        writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-refused-denied  rc=0   deny-D-gql-alias                         writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-refused-denied  rc=0   deny-D-gql-fragment                      writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-forwarded       rc=0   deny-gql-neighbour-set-draft             writes=mergeRequestSetDraft refused=
+ok-forwarded       rc=0   deny-raw-neighbour-update                writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+OVER               rc=0   deny-T-desc-merge                        writes= refused=a string in the body matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-desc-approve-line2                writes= refused=a string in the body matches a denied text pattern: "\n/approve"
+OVER               rc=0   deny-T-desc-escaped                      writes= refused=a string in the body matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-desc-cr                           writes= refused=a string in the body matches a denied text pattern: "\r/merge"
+OVER               rc=0   deny-T-query                             writes= refused=a query value matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-form                              writes= refused=a form value matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-update                            writes= refused=a string in the body matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-note                              writes= refused=a string in the body matches a denied text pattern: "/approve"
+OVER               rc=0   deny-T-discussion                        writes= refused=a string in the body matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-issue-note                        writes= refused=a string in the body matches a denied text pattern: "/merge"
+ok-forwarded       rc=0   deny-T-commit-comment                    writes=POST /api/v4/projects/acme%2Fwidgets/repository/commits/abc/comme refused=
+OVER               rc=0   deny-T-gql-note                          writes= refused=a literal in createNote matches a denied text pattern: "/approve"
+OVER               rc=0   deny-T-gql-note-var                      writes= refused=a variable of createNote matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-gql-mr-create                     writes= refused=a literal in mergeRequestCreate matches a denied text pattern: "\n/merge"
+OVER               rc=0   deny-T-glab-create                       writes= refused=a string in the body matches a denied text pattern: "/merge"
+OVER               rc=0   deny-T-glab-note                         writes= refused=a string in the body matches a denied text pattern: "/merge"
+ok-forwarded       rc=0   deny-T-fp-path-in-desc                   writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+OVER               rc=0   deny-T-fp-mention                        writes= refused=a string in the body matches a denied text pattern: "\n/merge"
+OVER               rc=0   deny-T-codeblock                         writes= refused=a string in the body matches a denied text pattern: "\n/merge"
+ok-forwarded       rc=0   deny-T-other-action                      writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+TOTAL 67 {'ok-forwarded': 10, 'ok-refused-denied': 37, 'OVER': 18, 'MISS': 0, 'no-write-at-stub': 2}

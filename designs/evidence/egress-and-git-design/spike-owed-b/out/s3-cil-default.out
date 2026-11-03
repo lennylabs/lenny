@@ -1,0 +1,17 @@
+Not sure what to do next? 😅  Check out https://kind.sigs.k8s
+Image: "ob-tools:4" with ID "sha256:b494746dcdc1d0a248b5938cdb784bd80c
+STATUS: deployed
+daemon set "cilium" successfully rolled out
+deployment "cilium-operator" successfully rolled out
+IdentityChangeGracePeriod         : 5000000000
+  tofqdns-idle-connection-grace-period: 0s
+controls: unset->default [STATE open;]; unset->group 120 s [STATE dropped;]; wrong->group 120 s [STATE dropped;]
+other node: n=12 never_opened_in_window=[] dropped_before_all=True regress=0 codes={200}
+   open after call return, s: min=9.00 median=14.25 max=29.40; in stamp order: [10.9, 9.0, 22.92, 26.36, 10.49, 11.68, 22.76, 29.4, 10.04, 17.39, 15.19, 13.31]
+   sample blocking dials started before the stamp: first success lags the path opening by, s: [14.67, 15.48, 15.53, 15.99, 16.14, 16.2]
+same node: n=12 never_opened_in_window=[] dropped_before_all=True regress=0 codes={200}
+   open after call return, s: min=6.85 median=20.10 max=32.89; in stamp order: [17.88, 6.89, 30.65, 28.95, 17.82, 31.61, 32.89, 12.55, 30.2, 6.85, 13.09, 22.32]
+   sample blocking dials started before the stamp: first success lags the path opening by, s: [14.32, 14.71, 15.21, 15.39, 15.89, 16.37]
+time=2026-11-03T01:03:17.888446303Z level=info msg="Identity of endpoint changed" ciliumEndpointName=local-path-storage/local-path-provisioner-67b8995b4b-qv7tc containerID=b3c172f901 ipv6="" k8sPodNam
+time=2026-11-03T01:03:22.954887389Z level=info msg="Identity of endpoint changed" k8sPodName=lenny-system/stamper ciliumEndpointName=lenny-system/stamper containerID=6a72768fee ipv6="" endpointID=186 
+time=2026-11-03T01:03:22.958520305Z level=info msg="Identity of endpoint changed" ipv4=10.244.0.3 ipv6="" k8sPodName=lenny-system/ga-cross containerInterface="" containerID=40fd88ab3d endpointID=41 ci

@@ -1,0 +1,267 @@
+// mhelper: the mirror's mode normalization helper, written to the design's text, and the parent's re-chown walk from the earlier spike.
+//   mhelper normalize STORE -dir 2770 -file 0660 [-reader GID]   runs under the fetch UID, after the sweep
+//   mhelper rechown STORE OWNER                                  runs as the parent, with CAP_CHOWN and the store group
+// The walk uses directory descriptors and never follows a symlink. It cannot change what another UID owns, so it counts those.
+package main
+
+import (
+	"encoding/binary"
+	"flag"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+type st struct {
+	dirs, files, chmods, symlinks, specials, hardlinks, acls, xattrs, notOwned, notOwnedBad, errs int
+	errl                                                                                           []string
+}
+
+var (
+	me                 = os.Geteuid()
+	dirMode, fileMode  uint32
+	reader             uint32
+	policySymlink      = "remove"
+	policyHardlink     = "remove"
+)
+
+func aclBytes(ents [][3]uint32) []byte {
+	b := make([]byte, 4, 4+8*len(ents))
+	binary.LittleEndian.PutUint32(b, 2)
+	for _, e := range ents {
+		x := make([]byte, 8)
+		binary.LittleEndian.PutUint16(x[0:], uint16(e[0]))
+		binary.LittleEndian.PutUint16(x[2:], uint16(e[1]))
+		binary.LittleEndian.PutUint32(x[4:], e[2])
+		b = append(b, x...)
+	}
+	return b
+}
+
+const undefined = 0xffffffff
+
+func storeACL(ownerBits, groupBits, other uint32, isDir bool) []byte {
+	rb, mask := uint32(5), uint32(7)
+	if !isDir {
+		rb, mask = 4, groupBits|4
+	}
+	return aclBytes([][3]uint32{{1, ownerBits, undefined}, {4, groupBits, undefined}, {8, rb, reader}, {16, mask, undefined}, {32, other, undefined}})
+}
+
+func (s *st) err(p string, e error) {
+	s.errs++
+	if len(s.errl) < 12 {
+		s.errl = append(s.errl, p+": "+e.Error())
+	}
+}
+
+// resetXattrs removes planted extended attributes and sets the store's ACL. It works on an O_PATH descriptor, through /proc, so it cannot follow a link.
+func (s *st) resetXattrs(fd int, p string, isDir bool, mode uint32) {
+	proc := "/proc/self/fd/" + strconv.Itoa(fd)
+	buf := make([]byte, 8192)
+	n, err := unix.Listxattr(proc, buf)
+	if err == nil && n > 0 {
+		for _, name := range strings.Split(strings.TrimRight(string(buf[:n]), "\x00"), "\x00") {
+			if name == "" {
+				continue
+			}
+			if strings.HasPrefix(name, "system.posix_acl") {
+				s.acls++
+			} else {
+				s.xattrs++
+			}
+			if e := unix.Removexattr(proc, name); e != nil && e != unix.ENODATA {
+				s.err(p+" remove "+name, e)
+			}
+		}
+	}
+	if reader != 0 {
+		a := storeACL((mode>>6)&7, (mode>>3)&7, mode&7, isDir)
+		if e := unix.Setxattr(proc, "system.posix_acl_access", a, 0); e != nil {
+			s.err(p+" access ACL", e)
+		}
+		if isDir {
+			d := storeACL(7, 7, mode&7, true)
+			if e := unix.Setxattr(proc, "system.posix_acl_default", d, 0); e != nil {
+				s.err(p+" default ACL", e)
+			}
+		}
+	}
+}
+
+func (s *st) walk(dfd int, path string, seen map[uint64]bool) {
+	d, err := unix.Dup(dfd)
+	if err != nil {
+		s.err(path, err)
+		return
+	}
+	f := os.NewFile(uintptr(d), path)
+	names, err := f.Readdirnames(-1)
+	f.Close()
+	if err != nil {
+		s.err(path+" readdir", err)
+	}
+	unix.Seek(dfd, 0, 0)
+	for _, name := range names {
+		p := path + "/" + name
+		var x unix.Stat_t
+		if err := unix.Fstatat(dfd, name, &x, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+			s.err(p, err)
+			continue
+		}
+		t := x.Mode & unix.S_IFMT
+		mine := int(x.Uid) == me
+		switch t {
+		case unix.S_IFLNK:
+			s.symlinks++
+			if e := unix.Unlinkat(dfd, name, 0); e != nil {
+				s.err(p+" unlink", e)
+			}
+			continue
+		case unix.S_IFIFO, unix.S_IFSOCK, unix.S_IFCHR, unix.S_IFBLK:
+			s.specials++
+			if e := unix.Unlinkat(dfd, name, 0); e != nil {
+				s.err(p+" unlink", e)
+			}
+			continue
+		case unix.S_IFDIR:
+			s.dirs++
+			if mine {
+				if x.Mode&0o7777 != dirMode {
+					s.chmods++
+				}
+				// mode first, so a directory the fetch made unreadable can be walked
+				if e := unix.Fchmodat(dfd, name, dirMode, 0); e != nil {
+					s.err(p+" chmod", e)
+				}
+			} else if x.Mode&0o7777 != dirMode {
+				s.notOwned++
+				s.notOwnedBad++
+			} else {
+				s.notOwned++
+			}
+			fd, e := unix.Openat(dfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if e != nil {
+				s.err(p+" open", e)
+				continue
+			}
+			if mine {
+				s.resetXattrs(fd, p, true, dirMode)
+			}
+			s.walk(fd, p, seen)
+			unix.Close(fd)
+		case unix.S_IFREG:
+			s.files++
+			if x.Nlink > 1 {
+				s.hardlinks++
+				if policyHardlink == "remove" {
+					// a hard link cannot be told from the file it names, so any name can go, including the store's own
+					if e := unix.Unlinkat(dfd, name, 0); e != nil {
+						s.err(p+" unlink", e)
+					}
+					continue
+				}
+			}
+			want := fileMode
+			if x.Mode&0o200 == 0 { // git writes packs and loose objects read-only
+				want = fileMode &^ 0o222
+			}
+			if !mine {
+				s.notOwned++
+				if x.Mode&0o7777 != want {
+					s.notOwnedBad++
+				}
+				continue
+			}
+			if x.Mode&0o7777 != want {
+				s.chmods++
+			}
+			if e := unix.Fchmodat(dfd, name, want, 0); e != nil {
+				s.err(p+" chmod", e)
+			}
+			fd, e := unix.Openat(dfd, name, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if e != nil {
+				s.err(p+" open", e)
+				continue
+			}
+			s.resetXattrs(fd, p, false, want)
+			unix.Close(fd)
+		}
+	}
+}
+
+func rechown(dfd int, path string, owner int, s *st) {
+	d, err := unix.Dup(dfd)
+	if err != nil {
+		s.err(path, err)
+		return
+	}
+	f := os.NewFile(uintptr(d), path)
+	ents, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		s.err(path+" readdir", err)
+	}
+	for _, e := range ents {
+		name := e.Name()
+		if e.Type()&os.ModeSymlink != 0 {
+			s.symlinks++
+		}
+		if e.IsDir() {
+			fd, er := unix.Openat(dfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+			if er != nil {
+				s.err(path+"/"+name+" open", er)
+			} else {
+				rechown(fd, path+"/"+name, owner, s)
+				unix.Close(fd)
+			}
+		}
+		if er := unix.Fchownat(dfd, name, owner, -1, unix.AT_SYMLINK_NOFOLLOW); er != nil {
+			s.err(path+"/"+name+" lchown", er)
+		} else {
+			s.chmods++
+		}
+	}
+}
+
+func main() {
+	switch os.Args[1] {
+	case "normalize":
+		fs := flag.NewFlagSet("n", flag.ExitOnError)
+		dm := fs.String("dir", "2770", "")
+		fm := fs.String("file", "0660", "")
+		rd := fs.Uint("reader", 0, "")
+		hl := fs.String("hardlink", "keep", "keep or remove")
+		fs.Parse(os.Args[3:])
+		policyHardlink = *hl
+		v, _ := strconv.ParseUint(*dm, 8, 32)
+		dirMode = uint32(v)
+		v, _ = strconv.ParseUint(*fm, 8, 32)
+		fileMode = uint32(v)
+		reader = uint32(*rd)
+		t0 := time.Now()
+		fd, err := unix.Open(os.Args[2], unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			fmt.Println("open:", err)
+			os.Exit(1)
+		}
+		s := &st{}
+		s.walk(fd, os.Args[2], nil)
+		fmt.Printf("normalize uid=%d %s: dirs=%d files=%d modes-changed=%d symlinks-removed=%d special-files-removed=%d hard-links-seen=%d acl-xattrs-removed=%d other-xattrs-removed=%d not-owned=%d not-owned-with-a-wrong-mode=%d errors=%d in %s %v\n", me, os.Args[2], s.dirs, s.files, s.chmods, s.symlinks, s.specials, s.hardlinks, s.acls, s.xattrs, s.notOwned, s.notOwnedBad, s.errs, time.Since(t0).Round(time.Millisecond), s.errl)
+	case "rechown":
+		owner, _ := strconv.Atoi(os.Args[3])
+		t0 := time.Now()
+		fd, err := unix.Open(os.Args[2], unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if err != nil {
+			fmt.Println("open:", err)
+			os.Exit(1)
+		}
+		s := &st{}
+		rechown(fd, os.Args[2], owner, s)
+		fmt.Printf("rechown %s: chowned=%d symlinks-not-followed=%d errors=%d in %s %v\n", os.Args[2], s.chmods, s.symlinks, s.errs, time.Since(t0).Round(time.Millisecond), s.errl)
+	}
+}

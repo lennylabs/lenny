@@ -1,0 +1,72 @@
+### com-auth-status rc=0
+$ gh auth status
+  - Git operations protocol: https
+  - Token: **************
+### com-repo-view rc=0
+$ gh repo view --json name
+{"name":"widgets"}
+### com-ssh-key-add rc=1
+$ printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF x' > /tmp/k2.pub; gh ssh-key add /tmp/k2.pub --title k
+HTTP 403: refused by the egress operation allowlist: POST /user/keys/** is denied by the preset (https://api.github.com/user/keys)
+### com-ssh-key-delete rc=1
+$ gh ssh-key delete 1 --yes
+HTTP 403: refused by the egress operation allowlist: DELETE /user/keys/** is denied by the preset (https://api.github.com/user/keys/1)
+### com-gpg-key-add rc=1
+$ printf x > /tmp/g.asc; gh gpg-key add /tmp/g.asc
+HTTP 403: refused by the egress operation allowlist: POST /user/gpg_keys/** is denied by the preset (https://api.github.com/user/gpg_keys)
+### com-gpg-key-delete rc=1
+$ gh gpg-key delete 1 --yes
+json: cannot unmarshal object into Go value of type []delete.gpgKey
+### com-secret-set-env rc=0
+$ gh secret set S --env prod --body v
+
+### com-secret-delete-env rc=0
+$ gh secret delete S --env prod
+
+### com-variable-set-env rc=0
+$ gh variable set V --env prod --body v
+
+### com-variable-delete-env rc=0
+$ gh variable delete V --env prod
+
+### com-secret-set-org rc=0
+$ gh secret set S --org acme --body v
+
+### com-repo-edit-automerge rc=0
+$ gh repo edit --enable-auto-merge
+
+### com-pr-create-65536-lt rc=0
+$ git checkout -q -b feature-x2-com-1793739214; git commit -q --allow-empty -m e; git push -q -u origin HEAD; gh pr create --title t --body-file /tmp/lt
+https://github.com/acme/widgets/pull/7
+### com-pr-comment-65536-lt rc=0
+$ gh pr comment 7 --body-file /tmp/lt
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-pr-comment-65536-emoji rc=0
+$ gh pr comment 7 --body-file /tmp/emoji
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-pr-comment-500k rc=0
+$ gh pr comment 7 --body-file /tmp/big
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-pr-edit-20-reviewers rc=0
+$ gh pr edit 7 --add-reviewer a1,a2,a3,a4,a5,a6,a7,a8,a9,a10,a11,a12,a13,a14,a15,a16,a17,a18,a19,a20
+https://github.com/acme/widgets/pull/7
+### com-api-gql-17-root rc=1
+$ gh api graphql -f query='mutation{a0:addComment(input:{}){clientMutationId} a1:addComment(input:{}){clientMutationId} a2:addComment(input:{}){clientMutationId} a3:addComment(input:{}){clientMutationId} a4:addComment(input:{}){clientMutationId} a5:addComment(input:{}){clientMutationId} a6:addComment(input:{}){clientMutationId} a7:addComment(input:{}){clientMutationId} a8:addComment(input:{}){clientMutationId} a9:addComment(input:{}){clientMutationId} a10:addComment(input:{}){clientMutationId} a11:addComment(input:{}){clientMutationId} a12:addComment(input:{}){clientMutationId} a13:addComment(input:{}){clientMutationId} a14:addComment(input:{}){clientMutationId} a15:addComment(input:{}){clientMutationId} a16:addComment(input:{}){clientMutationId}}'
+{"message":"refused by the egress operation allowlist: 17 root fields is over the bound of 16"}gh: refused by the egress operation allowlist: 17 root fields is over the bound of 16 (HTTP 403)
+### com-api-post-query rc=1
+$ gh api -X POST 'repos/acme/widgets/issues?x=1' -f title=t
+{"message":"refused by the egress operation allowlist: a write takes no query string under this preset"}gh: refused by the egress operation allowlist: a write takes no query string under this preset (HTTP 403)
+### com-api-form-input rc=1
+$ printf 'a=b' > /tmp/f; gh api -X POST repos/acme/widgets/issues --input /tmp/f -H 'Content-Type: application/x-www-form-urlencoded'
+{"message":"refused by the egress operation allowlist: a write takes a JSON body under this preset, got \"application/x-www-form-urlencoded\""}gh: refused by the egress operation allowlist: a write takes a JSON body under this preset, got "application/x-www-form-urlencoded" (HTTP 403)
+### com-api-repo-graphql-tools rc=1
+$ gh api repos/acme/graphql-tools
+{"errors":[{"message":"no query"}]}
+gh: no query
+### com-api-repo-graphql-tools-issue rc=1
+$ gh api -X POST repos/acme/graphql-tools/issues -f title=t
+{"errors":[{"message":"no query"}]}
+gh: no query
+### com-api-repositories-alias-merge rc=1
+$ gh api -X PUT repositories/123/pulls/7/merge
+{"message":"refused by the egress operation allowlist: PUT {repo}/pulls/*/merge is denied by the preset"}gh: refused by the egress operation allowlist: PUT {repo}/pulls/*/merge is denied by the preset (HTTP 403)

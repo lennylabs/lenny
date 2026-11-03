@@ -1,0 +1,30 @@
+=== H3. the check in front of Squid, after fixing the stand-in's half-close on the TLS hop
+idle: 172.4MiB 
+through Squid check    n=500 fails=0 p50=1.435ms p90=1.649ms p99=2.714ms
+through Squid nocheck  n=500 fails=0 p50=1.401ms p90=1.569ms p99=2.715ms
+squid memory after 1000 tunnels: 173.3MiB , open fds 15
+through Squid check    n=500 fails=0 p50=1.408ms p90=1.605ms p99=2.509ms
+through Squid nocheck  n=500 fails=0 p50=1.416ms p90=1.549ms p99=2.265ms
+squid memory after 2000 tunnels: 173.4MiB , open fds 15
+through Squid check    n=500 fails=0 p50=1.443ms p90=1.677ms p99=2.777ms
+through Squid nocheck  n=500 fails=0 p50=1.407ms p90=1.618ms p99=2.847ms
+squid memory after 3000 tunnels: 173.3MiB , open fds 15
+through Squid check    n=500 fails=0 p50=1.446ms p90=1.645ms p99=2.7ms
+through Squid nocheck  n=500 fails=0 p50=1.397ms p90=1.499ms p99=2.309ms
+squid memory after 4000 tunnels: 173.4MiB , open fds 15
+through Squid check    n=500 fails=0 p50=1.403ms p90=1.57ms p99=2.782ms
+through Squid nocheck  n=500 fails=0 p50=1.408ms p90=1.544ms p99=2.522ms
+squid memory after 5000 tunnels: 173.3MiB , open fds 15
+=== I. what real clients send for an upper-case or trailing-dot host: the agent compares the raw strings, then normalized
+raw        https://TARGET.OA.TEST/      curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while 
+{"authority":"TARGET.OA.TEST:443","sni":"target.oa.test","result":"closed","reason":"server name differs from authority"}
+raw        https://target.oa.test./     curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while 
+{"authority":"target.oa.test.:443","sni":"target.oa.test","result":"closed","reason":"server name differs from authority"}
+normalized https://TARGET.OA.TEST/      http=200
+{"authority":"TARGET.OA.TEST:443","sni":"target.oa.test","result":"pass","reason":null}
+normalized https://target.oa.test./     http=200
+{"authority":"target.oa.test.:443","sni":"target.oa.test","result":"pass","reason":null}
+requests raw https://TARGET.OA.TEST/ 200
+requests raw https://target.oa.test./ failed SSLError(MaxRetryError("HTTPSConnectionPool(host='target.oa.test.', port=443): Max retries exceeded with url: / (Caused by SSLError(SSLEOFEr
+{"authority":"target.oa.test:443","sni":"target.oa.test","result":"pass","reason":null}
+{"authority":"target.oa.test.:443","sni":"target.oa.test","result":"closed","reason":"server name differs from authority"}

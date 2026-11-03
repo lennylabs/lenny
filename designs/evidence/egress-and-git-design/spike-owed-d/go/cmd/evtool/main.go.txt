@@ -1,0 +1,1383 @@
+// evtool: the compactor, a verifier, the export consumer, the sequence audit, the platform query, a data generator, erasure, and probes.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"math/rand/v2"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"owedc/ev"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+	"golang.org/x/net/http2"
+)
+
+var (
+	mc     *minio.Client
+	pg     *pgxpool.Pool
+	ctx    = context.Background()
+	bucket = "evidence"
+)
+
+type part = ev.Part
+
+var (
+	partsInRow  = os.Getenv("PARTS_IN_ROW") == "1"
+	anchorMode  = envOr("ANCHOR_DETAIL", "list") // "list" names every merged batch in the compaction anchor. "digest" keeps only the digest of the list.
+	nIndexFetch atomic.Int64
+)
+
+func envOr(k, d string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return d
+}
+
+type row struct {
+	id                                  int64
+	batch, tenant, stream, hour, p, i   string
+	key, digest, session, partsDigest   string
+	seqF, seqL                          int64
+	tF, tL                              time.Time
+	bytes, raw                          int64
+	recs                                int
+	compacted, held                     bool
+	parts                               []part
+}
+
+const rowCols = `id,batch_id,tenant_id,stream,hour,producer,incarnation,object_key,digest,seq_first,seq_last,time_first,time_last,bytes,raw_bytes,records,compacted,held,parts,session,coalesce(parts_digest,'')`
+
+func tx(c context.Context, f func(pgx.Tx) error) error {
+	t, err := pg.Begin(c)
+	if err != nil {
+		return err
+	}
+	defer t.Rollback(c)
+	if _, err := t.Exec(c, `select set_config('app.current_tenant','__all__',true)`); err != nil {
+		return err
+	}
+	if err := f(t); err != nil {
+		return err
+	}
+	return t.Commit(c)
+}
+
+func loadRows(where string, args ...any) []row {
+	var out []row
+	err := tx(ctx, func(t pgx.Tx) error {
+		rs, err := t.Query(ctx, `select `+rowCols+` from manifest `+where, args...)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var r row
+			var pj []byte
+			if err := rs.Scan(&r.id, &r.batch, &r.tenant, &r.stream, &r.hour, &r.p, &r.i, &r.key, &r.digest, &r.seqF, &r.seqL, &r.tF, &r.tL, &r.bytes, &r.raw, &r.recs, &r.compacted, &r.held, &pj, &r.session, &r.partsDigest); err != nil {
+				return err
+			}
+			if pj != nil {
+				json.Unmarshal(pj, &r.parts)
+			}
+			out = append(out, r)
+		}
+		return rs.Err()
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	return out
+}
+
+func get(k string, off, n int64) ([]byte, error) {
+	var o minio.GetObjectOptions
+	if n > 0 {
+		o.SetRange(off, off+n-1)
+	}
+	x, err := mc.GetObject(ctx, bucket, k, o)
+	if err != nil {
+		return nil, err
+	}
+	defer x.Close()
+	return io.ReadAll(x)
+}
+
+// rowParts returns a compacted row's part list: from the row in the earlier layout, otherwise from the object's index.
+func rowParts(r *row) ([]part, error) {
+	if !r.compacted || r.parts != nil {
+		return r.parts, nil
+	}
+	nIndexFetch.Add(1)
+	o, err := mc.GetObject(ctx, bucket, r.key, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer o.Close()
+	st, err := o.Stat()
+	if err != nil {
+		return nil, err
+	}
+	n := int64(64 << 10)
+	if n > st.Size {
+		n = st.Size
+	}
+	for {
+		b := make([]byte, n)
+		if _, err := o.ReadAt(b, st.Size-n); err != nil && err != io.EOF {
+			return nil, err
+		}
+		p, need, err := ev.ParseIndex(b)
+		if err != nil {
+			return nil, err
+		}
+		if need == 0 {
+			r.parts = p
+			return p, nil
+		}
+		n = int64(need)
+	}
+}
+
+func cpuSeconds() float64 {
+	var ru syscall.Rusage
+	syscall.Getrusage(syscall.RUSAGE_SELF, &ru)
+	return float64(ru.Utime.Sec+ru.Stime.Sec) + float64(ru.Utime.Usec+ru.Stime.Usec)/1e6
+}
+
+// ----- the compactor
+func cmdCompact(a []string) {
+	fs := flag.NewFlagSet("compact", flag.ExitOnError)
+	hour := fs.String("hour", "", "hour label, all when empty")
+	par := fs.Int("par", 8, "")
+	fs.Parse(a)
+	where := `where hour=$1 and not held order by tenant_id, stream, hour, id`
+	args := []any{*hour}
+	if *hour == "" {
+		where = `where not held order by tenant_id, stream, hour, id`
+		args = nil
+	}
+	t0 := time.Now()
+	rows := loadRows(where, args...)
+	type gk struct{ t, s, h string }
+	groups := map[gk][]row{}
+	for _, r := range rows {
+		k := gk{r.tenant, r.stream, r.hour}
+		groups[k] = append(groups[k], r)
+	}
+	ch := make(chan []row, 64)
+	var nGroups, nSkipped, nIn, nBytes, nFail atomic.Int64
+	var wg sync.WaitGroup
+	var latMu sync.Mutex
+	var lats []int64
+	for i := 0; i < *par; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for g := range ch {
+				tg := time.Now()
+				if len(g) == 1 && g[0].compacted {
+					nSkipped.Add(1)
+					continue
+				}
+				n, b, err := compactGroup(g)
+				if err != nil {
+					nFail.Add(1)
+					log.Printf("compact %s/%s/%s: %v", g[0].tenant, g[0].stream, g[0].hour, err)
+					continue
+				}
+				nGroups.Add(1)
+				nIn.Add(int64(n))
+				nBytes.Add(b)
+				latMu.Lock()
+				lats = append(lats, time.Since(tg).Microseconds())
+				latMu.Unlock()
+			}
+		}()
+	}
+	for _, g := range groups {
+		ch <- g
+	}
+	close(ch)
+	wg.Wait()
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	p := func(q float64) float64 {
+		if len(lats) == 0 {
+			return 0
+		}
+		return float64(lats[int(float64(len(lats)-1)*q)]) / 1000
+	}
+	el := time.Since(t0).Seconds()
+	fmt.Printf("compact: groups=%d skipped=%d failed=%d batches merged=%d bytes=%d wall=%.2fs par=%d groups/s=%.1f group ms p50=%.1f p99=%.1f max=%.1f cpu=%.2fs\n", nGroups.Load(), nSkipped.Load(), nFail.Load(), nIn.Load(), nBytes.Load(), el, *par, float64(nGroups.Load())/el, p(.5), p(.99), p(1), cpuSeconds())
+}
+
+func anchorCompaction(t pgx.Tx, tenant string, parts []part, compDigest, key string) error {
+	// the chain serializes per tenant; streams of one tenant compact concurrently
+	if _, err := t.Exec(ctx, `select pg_advisory_xact_lock(hashtext($1)::bigint)`, tenant); err != nil {
+		return err
+	}
+	h := sha256.New()
+	bs := make([]map[string]string, 0, len(parts))
+	for _, p := range parts {
+		fmt.Fprintf(h, "%s %s\n", p.Batch, p.Digest)
+		if anchorMode == "list" {
+			bs = append(bs, map[string]string{"b": p.Batch, "d": p.Digest})
+		}
+	}
+	fmt.Fprintf(h, "compacted %s %s\n", key, compDigest)
+	d := hex.EncodeToString(h.Sum(nil))
+	var seq int64
+	var prev string
+	if err := t.QueryRow(ctx, `select seq, hash from audit_chain where tenant_id=$1 order by seq desc limit 1 for update`, tenant).Scan(&seq, &prev); err != nil && err != pgx.ErrNoRows {
+		return err
+	}
+	x := sha256.Sum256([]byte(prev + "|compaction|" + d))
+	detail, _ := json.Marshal(map[string]any{"merged": bs, "object": key, "objectDigest": compDigest, "n": len(parts)})
+	_, err := t.Exec(ctx, `insert into audit_chain(tenant_id,seq,kind,digest,prev,hash,detail) values($1,$2,'compaction',$3,$4,$5,$6::jsonb)`, tenant, seq+1, d, prev, hex.EncodeToString(x[:]), string(detail))
+	return err
+}
+
+// compactGroup merges one tenant-hour-stream. Input may hold an earlier compacted row plus late batches.
+func compactGroup(g []row) (int, int64, error) {
+	var buf bytes.Buffer
+	var parts []part
+	raw := int64(0)
+	recs := 0
+	var tF, tL time.Time
+	var seqF, seqL int64
+	for _, r := range g {
+		b, err := get(r.key, 0, 0)
+		if err != nil {
+			return 0, 0, err
+		}
+		s := sha256.Sum256(b)
+		if hex.EncodeToString(s[:]) != r.digest {
+			return 0, 0, fmt.Errorf("source digest mismatch %s", r.key)
+		}
+		base := int64(buf.Len())
+		if r.compacted {
+			rc := r
+			ps, err := rowParts(&rc)
+			if err != nil {
+				return 0, 0, err
+			}
+			end := int64(0)
+			for _, p := range ps {
+				if p.Off+p.Len > end {
+					end = p.Off + p.Len
+				}
+				p.Off += base
+				parts = append(parts, p)
+			}
+			buf.Write(b[:end]) // the batches, without the earlier object's index
+		} else {
+			buf.Write(b)
+			parts = append(parts, part{Batch: r.batch, Producer: r.p, Incarnation: r.i, Session: r.session, SeqF: r.seqF, SeqL: r.seqL, TF: r.tF, TL: r.tL, Off: base, Len: int64(len(b)), Digest: r.digest, Recs: r.recs, Raw: r.raw})
+		}
+		raw += r.raw
+		recs += r.recs
+		if tF.IsZero() || r.tF.Before(tF) {
+			tF = r.tF
+		}
+		if r.tL.After(tL) {
+			tL = r.tL
+		}
+		if seqF == 0 || r.seqF < seqF {
+			seqF = r.seqF
+		}
+		if r.seqL > seqL {
+			seqL = r.seqL
+		}
+	}
+	if os.Getenv("DROP_ONE") == "1" && len(parts) > 1 {
+		// a compromised compactor: it drops the first batch and writes a consistent object, index, row, and anchor
+		first := parts[0]
+		data := buf.Bytes()[first.Len:]
+		var nb bytes.Buffer
+		nb.Write(data)
+		buf = nb
+		parts = parts[1:]
+		for i := range parts {
+			parts[i].Off -= first.Len
+		}
+		recs -= first.Recs
+		raw -= first.Raw
+	}
+	pd := ev.PartsDigest(parts)
+	if !partsInRow {
+		ev.AppendIndex(&buf, parts)
+	}
+	d := sha256.Sum256(buf.Bytes())
+	dg := hex.EncodeToString(d[:])
+	key := fmt.Sprintf("%s/evidence/%s/%s/compacted-%s.gz", g[0].tenant, g[0].stream, g[0].hour, dg[:16])
+	if _, err := mc.PutObject(ctx, bucket, key, bytes.NewReader(buf.Bytes()), int64(buf.Len()), minio.PutObjectOptions{ContentType: "application/gzip", DisableMultipart: true}); err != nil {
+		return 0, 0, err
+	}
+	var pj any
+	if partsInRow {
+		b, _ := json.Marshal(parts)
+		pj = string(b)
+	}
+	ids := make([]int64, len(g))
+	for i, r := range g {
+		ids[i] = r.id
+	}
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+	err = tx(ctx, func(t pgx.Tx) error {
+		// no row may disappear from under the compactor
+		ct, err := t.Exec(ctx, `delete from manifest where id = any($1::bigint[]) and not held`, ids)
+		if err != nil {
+			return err
+		}
+		if int(ct.RowsAffected()) != len(ids) {
+			return fmt.Errorf("source rows changed")
+		}
+		if _, err := t.Exec(ctx, `insert into manifest(batch_id,tenant_id,stream,hour,producer,incarnation,object_key,digest,seq_first,seq_last,time_first,time_last,bytes,raw_bytes,records,compacted,parts,anchored,writer,parts_digest,parts_count) values($1,$2,$3,$4,'*','*',$5,$6,$7,$8,$9,$10,$11,$12,$13,true,$14::jsonb,true,'compactor',$15,$16)`,
+			"compacted-"+dg[:16], g[0].tenant, g[0].stream, g[0].hour, key, dg, seqF, seqL, tF, tL, int64(buf.Len()), raw, recs, pj, pd, len(parts)); err != nil {
+			return err
+		}
+		return anchorCompaction(t, g[0].tenant, parts, dg, key)
+	})
+	if err == nil || !strings.Contains(err.Error(), "23505") { // ingest's anchor can take the same chain position
+		break
+	}
+	time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		mc.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{})
+		return 0, 0, err
+	}
+	for _, r := range g {
+		if r.key != key {
+			mc.RemoveObject(ctx, bucket, r.key, minio.RemoveObjectOptions{})
+		}
+	}
+	return len(parts), int64(buf.Len()), nil
+}
+
+// ----- verifier: every digest recomputes, every anchor recomputes against the manifest as it stands.
+func cmdVerify(a []string) {
+	fs := flag.NewFlagSet("verify", flag.ExitOnError)
+	par := fs.Int("par", 8, "")
+	fs.Parse(a)
+	t0 := time.Now()
+	rows := loadRows(`order by id`)
+	known := map[string]string{}
+	var badIndex atomic.Int64
+	for i := range rows {
+		r := &rows[i]
+		if r.compacted {
+			ps, err := rowParts(r)
+			if err != nil {
+				badIndex.Add(1)
+				fmt.Println("  INDEX UNREADABLE", r.key, err)
+				continue
+			}
+			if r.partsDigest != "" && ev.PartsDigest(ps) != r.partsDigest {
+				badIndex.Add(1)
+				fmt.Println("  PART LIST DIGEST MISMATCH", r.key)
+			}
+			for _, p := range ps {
+				known[p.Batch] = p.Digest
+			}
+		} else {
+			known[r.batch] = r.digest
+		}
+	}
+	// A retention or tenant-deletion event in the chain names what it removed, with the digests.
+	tx(ctx, func(t pgx.Tx) error {
+		rs, err := t.Query(ctx, `select detail from audit_chain where kind='retention'`)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var det []byte
+			if rs.Scan(&det) != nil {
+				continue
+			}
+			var d struct {
+				Removed []struct {
+					B string `json:"b"`
+					D string `json:"d"`
+				} `json:"removed"`
+			}
+			json.Unmarshal(det, &d)
+			for _, x := range d.Removed {
+				if _, ok := known[x.B]; !ok {
+					known[x.B] = x.D
+				}
+			}
+		}
+		return rs.Err()
+	})
+	ch := make(chan row, 64)
+	var objects, parts, recs, badObj, badPart, badRec atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < *par; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range ch {
+				objects.Add(1)
+				b, err := get(r.key, 0, 0)
+				s := sha256.Sum256(b)
+				if err != nil || hex.EncodeToString(s[:]) != r.digest {
+					badObj.Add(1)
+					fmt.Println("  OBJECT DIGEST MISMATCH", r.key)
+					continue
+				}
+				ps := r.parts
+				if !r.compacted {
+					ps = []part{{Off: 0, Len: int64(len(b)), Digest: r.digest, Recs: r.recs}}
+				}
+				for _, p := range ps {
+					parts.Add(1)
+					x := b[p.Off : p.Off+p.Len]
+					s := sha256.Sum256(x)
+					if hex.EncodeToString(s[:]) != p.Digest {
+						badPart.Add(1)
+						fmt.Println("  PART DIGEST MISMATCH", r.key, p.Batch)
+						continue
+					}
+					g, err := gzip.NewReader(bytes.NewReader(x))
+					n := 0
+					if err == nil {
+						sc := bufio.NewScanner(g)
+						sc.Buffer(make([]byte, 1<<20), 16<<20)
+						for sc.Scan() {
+							n++
+						}
+					}
+					recs.Add(int64(n))
+					if n != p.Recs {
+						badRec.Add(1)
+						fmt.Println("  PART RECORD COUNT MISMATCH", r.key, p.Batch, n, p.Recs)
+					}
+				}
+			}
+		}()
+	}
+	for _, r := range rows {
+		ch <- r
+	}
+	close(ch)
+	wg.Wait()
+	// the chain
+	var events, badLink, badDigest, missing, compEvents, digestOnlyAnchors, digestOnlyManifest int
+	byObject := map[string]*row{}
+	for i := range rows {
+		byObject[rows[i].key] = &rows[i]
+	}
+	err := tx(ctx, func(t pgx.Tx) error {
+		rs, err := t.Query(ctx, `select tenant_id,seq,kind,digest,prev,hash,detail from audit_chain order by tenant_id,seq`)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		last := map[string]string{}
+		for rs.Next() {
+			var tn, kind, dg, prev, hs string
+			var seq int64
+			var det []byte
+			if err := rs.Scan(&tn, &seq, &kind, &dg, &prev, &hs, &det); err != nil {
+				return err
+			}
+			events++
+			if last[tn] != prev {
+				badLink++
+			}
+			x := sha256.Sum256([]byte(prev + "|" + kind + "|" + dg))
+			if hex.EncodeToString(x[:]) != hs {
+				badLink++
+			}
+			last[tn] = hs
+			if kind == "retention" {
+				continue
+			}
+			h := sha256.New()
+			if kind == "manifest" {
+				var d struct {
+					Batches []string `json:"batches"`
+				}
+				json.Unmarshal(det, &d)
+				if len(d.Batches) == 0 {
+					digestOnlyManifest++
+					last[tn] = hs
+					continue
+				}
+				for _, b := range d.Batches {
+					k, ok := known[b]
+					if !ok {
+						missing++
+						fmt.Println("  ANCHOR NAMES A BATCH NOT IN THE MANIFEST", tn, b)
+					}
+					fmt.Fprintf(h, "%s %s\n", b, k)
+				}
+			} else {
+				compEvents++
+				var d struct {
+					Merged []struct {
+						B string `json:"b"`
+						D string `json:"d"`
+					} `json:"merged"`
+					Object       string `json:"object"`
+					ObjectDigest string `json:"objectDigest"`
+				}
+				json.Unmarshal(det, &d)
+				if len(d.Merged) == 0 {
+					// a digest-only anchor names no batches, so it recomputes only while the object it named is still there
+					digestOnlyAnchors++
+					r, ok := byObject[d.Object]
+					if !ok {
+						continue // a later compaction replaced the object
+					}
+					ps, _ := rowParts(r)
+					for _, p := range ps {
+						fmt.Fprintf(h, "%s %s\n", p.Batch, p.Digest)
+					}
+					fmt.Fprintf(h, "compacted %s %s\n", d.Object, d.ObjectDigest)
+				} else {
+					for _, m := range d.Merged {
+						if known[m.B] != m.D {
+							missing++
+							fmt.Println("  COMPACTION ANCHOR: BATCH ABSENT OR CHANGED", tn, m.B)
+						}
+						fmt.Fprintf(h, "%s %s\n", m.B, m.D)
+					}
+					fmt.Fprintf(h, "compacted %s %s\n", d.Object, d.ObjectDigest)
+				}
+			}
+			if hex.EncodeToString(h.Sum(nil)) != dg {
+				badDigest++
+				fmt.Println("  ANCHOR DIGEST DOES NOT RECOMPUTE", tn, seq, kind)
+			}
+		}
+		return rs.Err()
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("verify: rows=%d objects=%d batches=%d records=%d | object digest mismatches=%d part digest mismatches=%d record count mismatches=%d | chain events=%d (compaction %d) bad links=%d anchors not recomputing=%d anchored batches absent=%d digest-only compaction anchors=%d digest-only interval anchors=%d index faults=%d index fetches=%d | %.1fs\n", len(rows), objects.Load(), parts.Load(), recs.Load(), badObj.Load(), badPart.Load(), badRec.Load(), events, compEvents, badLink, badDigest, missing, digestOnlyAnchors, digestOnlyManifest, badIndex.Load(), nIndexFetch.Load(), time.Since(t0).Seconds())
+}
+
+func forEachRecord(r row, f func(line []byte, p part) bool) error {
+	if r.compacted {
+		if _, err := rowParts(&r); err != nil {
+			return err
+		}
+	}
+	ps := r.parts
+	if !r.compacted {
+		ps = []part{{Producer: r.p, Incarnation: r.i, Session: r.session, Batch: r.batch, Off: 0, Len: 0, Recs: r.recs}}
+	}
+	for _, p := range ps {
+		b, err := get(r.key, p.Off, p.Len)
+		if err != nil {
+			return err
+		}
+		g, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return err
+		}
+		sc := bufio.NewScanner(g)
+		sc.Buffer(make([]byte, 1<<20), 16<<20)
+		for sc.Scan() {
+			if !f(sc.Bytes(), p) {
+				return nil
+			}
+		}
+	}
+	return nil
+}
+
+// ----- sequence audit: what a consumer can detect. -truth gives the producer's real high-water marks, which a consumer does not have.
+type rng struct{ a, b uint64 }
+
+// sessOf gives the session for a position on a stream encrypted per session.
+func sessOf(line []byte, stream string) string {
+	if stream != "agent.activity" || os.Getenv("SEQ_PER_SESSION") == "0" {
+		return ""
+	}
+	var x struct {
+		SessionId string `json:"sessionId"`
+	}
+	json.Unmarshal(line, &x)
+	return x.SessionId
+}
+
+func auditRanges(where string, split bool) map[string][]rng {
+	rows := loadRows(where)
+	var mu sync.Mutex
+	pos := map[string][]rng{}
+	ch := make(chan row, 64)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range ch {
+				local := map[string][]rng{}
+				err := forEachRecord(r, func(line []byte, _ part) bool {
+					var x struct {
+						Stream, Producer, Incarnation, TenantId, Kind string
+						Sequence, SequenceEnd                         uint64
+					}
+					json.Unmarshal(line, &x)
+					k := ev.PosKey(x.TenantId, x.Stream, x.Producer, x.Incarnation, sessOf(line, x.Stream))
+					l := x.Sequence
+					if x.SequenceEnd > l {
+						l = x.SequenceEnd
+					}
+					if x.Kind == "gap" {
+						k = "GAP " + k
+					}
+					local[k] = append(local[k], rng{x.Sequence, l})
+					return true
+				})
+				if err != nil {
+					log.Printf("read %s: %v", r.key, err)
+				}
+				mu.Lock()
+				for k, v := range local {
+					pos[k] = append(pos[k], v...)
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, r := range rows {
+		ch <- r
+	}
+	close(ch)
+	wg.Wait()
+	return pos
+}
+
+// ----- the export consumer. A cursor maps a stable position to its last delivered sequence. Compaction moves bytes, never positions.
+func cmdExport(a []string) {
+	fs := flag.NewFlagSet("export", flag.ExitOnError)
+	cursorF := fs.String("cursor", "/w/cursor.json", "")
+	max := fs.Int("max", 0, "stop after this many records")
+	out := fs.String("out", "/w/export.txt", "append delivered positions here")
+	fs.Parse(a)
+	cur := map[string]uint64{}
+	if b, err := os.ReadFile(*cursorF); err == nil {
+		json.Unmarshal(b, &cur)
+	}
+	f, err := os.OpenFile(*out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	t0 := time.Now()
+	rows := loadRows(`order by id`)
+	n, skipped := 0, 0
+	stop := false
+	type item struct {
+		seq, last uint64
+		k         string
+	}
+	for _, r := range rows {
+		if stop {
+			break
+		}
+		if r.compacted {
+			if _, err := rowParts(&r); err != nil {
+				log.Fatal(err)
+			}
+		}
+		ps := r.parts
+		if !r.compacted {
+			ps = []part{{Producer: r.p, Incarnation: r.i, Session: r.session, Batch: r.batch, SeqF: r.seqF, SeqL: r.seqL}}
+		}
+		for _, p := range ps {
+			if stop {
+				break
+			}
+			k := ev.PosKey(r.tenant, r.stream, p.Producer, p.Incarnation, p.Session)
+			if uint64(p.SeqL) <= cur[k] {
+				skipped++
+				continue // the index alone says the whole part was delivered
+			}
+			b, err := get(r.key, p.Off, p.Len)
+			if err != nil {
+				log.Fatal(err)
+			}
+			g, err := gzip.NewReader(bytes.NewReader(b))
+			if err != nil {
+				log.Fatal(err)
+			}
+			sc := bufio.NewScanner(g)
+			sc.Buffer(make([]byte, 1<<20), 16<<20)
+			var items []item
+			for sc.Scan() {
+				var x struct {
+					Sequence, SequenceEnd uint64
+				}
+				json.Unmarshal(sc.Bytes(), &x)
+				l := x.Sequence
+				if x.SequenceEnd > l {
+					l = x.SequenceEnd
+				}
+				items = append(items, item{x.Sequence, l, k})
+			}
+			sort.Slice(items, func(i, j int) bool { return items[i].last < items[j].last })
+			for _, it := range items {
+				if it.last <= cur[k] {
+					continue
+				}
+				fmt.Fprintf(w, "%s %d %d\n", k, it.seq, it.last)
+				cur[k] = it.last
+				n++
+				if *max > 0 && n >= *max {
+					stop = true
+					break
+				}
+			}
+		}
+	}
+	b, _ := json.Marshal(cur)
+	os.WriteFile(*cursorF, b, 0o644)
+	fmt.Printf("export: delivered=%d parts skipped by index=%d cursor positions=%d cursor bytes=%d %.1fs\n", n, skipped, len(cur), len(b), time.Since(t0).Seconds())
+}
+
+// exportcheck compares delivered lines against what the manifest now holds.
+func cmdExportCheck(a []string) {
+	fs := flag.NewFlagSet("exportcheck", flag.ExitOnError)
+	in := fs.String("in", "/w/export.txt", "")
+	stream := fs.String("stream", "", "")
+	fs.Parse(a)
+	f, err := os.Open(*in)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	got := map[string]int{}
+	sc := bufio.NewScanner(f)
+	lines := 0
+	for sc.Scan() {
+		got[sc.Text()]++
+		lines++
+	}
+	dups := 0
+	for _, v := range got {
+		if v > 1 {
+			dups += v - 1
+		}
+	}
+	want := map[string]bool{}
+	wh := `order by id`
+	if *stream != "" {
+		wh = `where stream='` + *stream + `' order by id`
+	}
+	pos := auditRanges(wh, false)
+	for k, v := range pos {
+		k = strings.TrimPrefix(k, "GAP ")
+		for _, r := range v {
+			want[fmt.Sprintf("%s %d %d", k, r.a, r.b)] = true
+		}
+	}
+	missing := 0
+	for k := range want {
+		if got[k] == 0 {
+			missing++
+			if missing <= 5 {
+				fmt.Println("  not delivered:", k)
+			}
+		}
+	}
+	extra := 0
+	for k := range got {
+		if !want[k] {
+			extra++
+		}
+	}
+	fmt.Printf("exportcheck: delivered lines=%d distinct=%d stored records=%d duplicates=%d not delivered=%d delivered but not stored=%d\n", lines, len(got), len(want), dups, missing, extra)
+}
+
+// ----- the platform query
+func cmdScan(a []string) {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	hour := fs.String("hour", "", "")
+	addr := fs.String("addr", "", "source (egress) address")
+	port := fs.Int("port", 0, "source port")
+	target := fs.String("target", "", "upstream address")
+	from := fs.String("from", "", "RFC3339")
+	to := fs.String("to", "", "RFC3339")
+	par := fs.Int("par", 4, "")
+	prefilter := fs.Bool("prefilter", true, "byte search before decoding")
+	join := fs.Bool("join", true, "fetch the decision for each hit")
+	fs.Parse(a)
+	var tf, tt time.Time
+	if *from != "" {
+		tf, _ = time.Parse(time.RFC3339, *from)
+		tt, _ = time.Parse(time.RFC3339, *to)
+	}
+	t0 := time.Now()
+	rows := loadRows(`where hour=$1 and stream='egress.tunnel'`, *hour)
+	tMan := time.Since(t0)
+	ch := make(chan row, 64)
+	var objs, zb, rawb, recs, hits, considered atomic.Int64
+	needle := []byte(fmt.Sprintf(`"upstreamSourcePort":%d`, *port)) // the exact comparison follows the decode
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	type hit struct {
+		tenant, did string
+		line        string
+	}
+	var found []hit
+	for i := 0; i < *par; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range ch {
+				objs.Add(1)
+				b, err := get(r.key, 0, 0)
+				if err != nil {
+					log.Printf("get %s: %v", r.key, err)
+					continue
+				}
+				zb.Add(int64(len(b)))
+				g, err := gzip.NewReader(bytes.NewReader(b))
+				if err != nil {
+					continue
+				}
+				sc := bufio.NewScanner(g)
+				sc.Buffer(make([]byte, 1<<20), 16<<20)
+				for sc.Scan() {
+					l := sc.Bytes()
+					recs.Add(1)
+					rawb.Add(int64(len(l)) + 1)
+					if *prefilter && !bytes.Contains(l, needle) {
+						continue
+					}
+					var x struct {
+						TenantId string `json:"tenantId"`
+						Payload  struct {
+							DecisionID string  `json:"decisionId"`
+							Up         string  `json:"upstreamAddress"`
+							Src        string  `json:"sourceAddress"`
+							Port       float64 `json:"upstreamSourcePort"`
+							Start      time.Time `json:"start"`
+							End        time.Time `json:"end"`
+						} `json:"payload"`
+					}
+					if json.Unmarshal(l, &x) != nil {
+						continue
+					}
+					considered.Add(1)
+					p := x.Payload
+					if int(p.Port) != *port || (*addr != "" && p.Src != *addr) || (*target != "" && p.Up != *target) {
+						continue
+					}
+					if !tf.IsZero() && (p.End.Before(tf) || p.Start.After(tt)) {
+						continue
+					}
+					hits.Add(1)
+					mu.Lock()
+					found = append(found, hit{x.TenantId, p.DecisionID, string(l)})
+					mu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, r := range rows {
+		ch <- r
+	}
+	close(ch)
+	wg.Wait()
+	el := time.Since(t0).Seconds()
+	fmt.Printf("scan hour=%s par=%d prefilter=%v: manifest read %s, objects=%d compressed=%.1f MiB raw=%.1f MiB records=%d decoded=%d hits=%d wall=%.1fs cpu=%.1fs throughput=%.0f records/s\n", *hour, *par, *prefilter, tMan.Round(time.Millisecond), objs.Load(), float64(zb.Load())/1048576, float64(rawb.Load())/1048576, recs.Load(), considered.Load(), hits.Load(), el, cpuSeconds(), float64(recs.Load())/el)
+	if *join {
+		for i, h := range found {
+			if i >= 3 {
+				break
+			}
+			t1 := time.Now()
+			auth := ""
+			for _, r := range loadRows(`where hour=$1 and stream='egress.decision' and tenant_id=$2`, *hour, h.tenant) {
+				forEachRecord(r, func(l []byte, _ part) bool {
+					if bytes.Contains(l, []byte(h.did)) {
+						var x struct {
+							Payload struct {
+								Authority string `json:"authority"`
+							} `json:"payload"`
+						}
+						json.Unmarshal(l, &x)
+						auth = x.Payload.Authority
+						return false
+					}
+					return true
+				})
+				if auth != "" {
+					break
+				}
+			}
+			fmt.Printf("  hit: tenant=%s decision=%s authority=%s (join by decision id in %s)\n", h.tenant, h.did, auth, time.Since(t1).Round(time.Millisecond))
+		}
+	}
+}
+
+// ----- a generator for a busy hour, in the same format and with the same payload code as the running system.
+func cmdGen(a []string) {
+	fs := flag.NewFlagSet("gen", flag.ExitOnError)
+	hour := fs.String("hour", "2026110300", "")
+	tenants := fs.Int("tenants", 2500, "")
+	busy := fs.Int("busy", 5, "")
+	share := fs.Float64("busyshare", .5, "")
+	rate := fs.Int("rate", 2000, "CONNECTs per second")
+	secs := fs.Int("secs", 3600, "")
+	compacted := fs.Bool("compacted", true, "")
+	par := fs.Int("par", 8, "")
+	plantPort := fs.Int("plant-port", 43210, "")
+	plantAddr := fs.String("plant-addr", "203.0.113.7", "")
+	plantTarget := fs.String("plant-target", "192.0.2.77", "")
+	plantTenant := fs.String("plant-tenant", "t1777", "")
+	fs.Parse(a)
+	base, err := time.Parse("2006010215", *hour)
+	if err != nil {
+		log.Fatal(err)
+	}
+	type job struct {
+		t      string
+		perSec float64
+	}
+	ch := make(chan job, 64)
+	var wg sync.WaitGroup
+	var nRec, nZ, nRaw, nObj atomic.Int64
+	t0 := time.Now()
+	rowsCh := make(chan []any, 4096)
+	var rw sync.WaitGroup
+	rw.Add(1)
+	nRows := 0
+	go func() {
+		defer rw.Done()
+		var buf [][]any
+		flush := func() {
+			if len(buf) == 0 {
+				return
+			}
+			err := tx(ctx, func(t pgx.Tx) error {
+				var b pgx.Batch
+				for _, r := range buf {
+					b.Queue(`insert into manifest(batch_id,tenant_id,stream,hour,producer,incarnation,object_key,digest,seq_first,seq_last,time_first,time_last,bytes,raw_bytes,records,compacted,parts,anchored,writer) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,true,'gen')`, r...)
+				}
+				return t.SendBatch(ctx, &b).Close()
+			})
+			if err != nil {
+				log.Fatal(err)
+			}
+			nRows += len(buf)
+			buf = buf[:0]
+		}
+		for r := range rowsCh {
+			buf = append(buf, r)
+			if len(buf) >= 500 {
+				flush()
+			}
+		}
+		flush()
+	}()
+	srcAddrs := []string{"203.0.113.5", "203.0.113.6", "203.0.113.7", "203.0.113.8"}
+	for i := 0; i < *par; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var z bytes.Buffer
+			for j := range ch {
+				r := rand.New(rand.NewPCG(ev.Hash64(j.t), 99))
+				inc := "d-gen"
+				prod := "lenny-egress-authz.lenny-system.svc"
+				for _, st := range []string{"egress.decision", "egress.tunnel"} {
+					var whole bytes.Buffer
+					var parts []part
+					seq := uint64(0)
+					rawT := int64(0)
+					recsT := 0
+					put := func(body []byte, p part, sf, sl int64) {
+						if !*compacted {
+							d := sha256.Sum256(body)
+							dg := hex.EncodeToString(d[:])
+							k := fmt.Sprintf("%s/evidence/%s/%s/%s-%d.gz", j.t, st, *hour, inc, sf)
+							if _, err := mc.PutObject(ctx, bucket, k, bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{DisableMultipart: true}); err != nil {
+								log.Fatal(err)
+							}
+							nObj.Add(1)
+							rowsCh <- []any{k, j.t, st, *hour, prod, inc, k, dg, sf, sl, p.TF, p.TL, int64(len(body)), p.Raw, p.Recs, false, nil}
+						}
+					}
+					for m := 0; m < *secs/60; m++ {
+						// expected records for this minute, Poisson-ish for small tenants
+						exp := j.perSec * 60
+						n := int(exp)
+						if r.Float64() < exp-float64(n) {
+							n++
+						}
+						if n == 0 {
+							continue
+						}
+						z.Reset()
+						g, _ := gzip.NewWriterLevel(&z, gzip.DefaultCompression)
+						raw := int64(0)
+						recs := 0
+						tF := base.Add(time.Duration(m) * time.Minute)
+						tL := tF
+						sf := seq + 1
+						for i := 0; i < n; i++ {
+							at := tF.Add(time.Duration(r.Float64() * float64(time.Minute)))
+							if at.After(tL) {
+								tL = at
+							}
+							sess, pod, pool, trace := ev.Session(j.t, r.IntN(4))
+							did := ev.RandHex(r, 32)
+							emit := func(rec *ev.Rec) {
+								b, _ := json.Marshal(rec)
+								g.Write(b)
+								g.Write([]byte{'\n'})
+								raw += int64(len(b)) + 1
+								recs++
+							}
+							if st == "egress.decision" {
+								seq++
+								emit(&ev.Rec{Stream: st, SchemaVersion: 1, Producer: prod, Incarnation: inc, Sequence: seq, ObservedAt: at, TenantId: j.t, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced", Payload: ev.DecisionPayload(r, did, ev.Host(r), "10.42.0."+fmt.Sprint(r.IntN(250)), "allow")})
+							} else {
+								src := srcAddrs[r.IntN(len(srcAddrs))]
+								port := uint32(1024 + r.IntN(64000))
+								up := fmt.Sprintf("192.0.2.%d", r.IntN(250))
+								d := time.Duration(r.ExpFloat64() * float64(5*time.Second))
+								seq++
+								emit(&ev.Rec{Stream: st, SchemaVersion: 1, Producer: prod, Incarnation: inc, Sequence: seq, ObservedAt: at, TenantId: j.t, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced", Payload: ev.TunnelPayload(did, up, src, port, at, at, 0, 0, "DownstreamTunnelSuccessfullyEstablished")})
+								seq++
+								emit(&ev.Rec{Stream: st, SchemaVersion: 1, Producer: prod, Incarnation: inc, Sequence: seq, ObservedAt: at.Add(d), TenantId: j.t, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced", Payload: ev.TunnelPayload(did, up, src, port, at, at.Add(d), uint64(r.IntN(1<<20)), uint64(r.IntN(1<<26)), "DownstreamEnd")})
+							}
+						}
+						if st == "egress.tunnel" && j.t == *plantTenant && m == 30 {
+							// the abuse report's tunnel
+							at := tF.Add(17 * time.Second)
+							seq++
+							b, _ := json.Marshal(&ev.Rec{Stream: st, SchemaVersion: 1, Producer: prod, Incarnation: inc, Sequence: seq, ObservedAt: at, TenantId: j.t, Provenance: "enforced", Payload: ev.TunnelPayload("planted0decision0identifier000001", *plantTarget, *plantAddr, uint32(*plantPort), at, at.Add(2*time.Second), 4096, 8192, "DownstreamEnd")})
+							g.Write(b)
+							g.Write([]byte{'\n'})
+							recs++
+							raw += int64(len(b)) + 1
+						}
+						g.Close()
+						d := sha256.Sum256(z.Bytes())
+						dg := hex.EncodeToString(d[:])
+						p := part{Batch: fmt.Sprintf("b-%s-%s-%d", j.t, st, m), Producer: prod, Incarnation: inc, SeqF: int64(sf), SeqL: int64(seq), TF: tF, TL: tL, Off: int64(whole.Len()), Len: int64(z.Len()), Digest: dg, Recs: recs, Raw: raw}
+						parts = append(parts, p)
+						if *compacted {
+							whole.Write(z.Bytes())
+						} else {
+							put(z.Bytes(), p, int64(sf), int64(seq))
+						}
+						rawT += raw
+						recsT += recs
+						nRec.Add(int64(recs))
+						nRaw.Add(raw)
+						nZ.Add(int64(z.Len()))
+					}
+					if *compacted && whole.Len() > 0 {
+						if !partsInRow {
+							ev.AppendIndex(&whole, parts)
+						}
+						d := sha256.Sum256(whole.Bytes())
+						dg := hex.EncodeToString(d[:])
+						k := fmt.Sprintf("%s/evidence/%s/%s/compacted-%s.gz", j.t, st, *hour, dg[:16])
+						if _, err := mc.PutObject(ctx, bucket, k, bytes.NewReader(whole.Bytes()), int64(whole.Len()), minio.PutObjectOptions{DisableMultipart: whole.Len() < 64<<20}); err != nil {
+							log.Fatal(err)
+						}
+						nObj.Add(1)
+						var pj any
+						if partsInRow {
+							b, _ := json.Marshal(parts)
+							pj = string(b)
+						}
+						rowsCh <- []any{"compacted-" + dg[:16], j.t, st, *hour, "*", "*", k, dg, int64(1), int64(seq), base, base.Add(time.Hour), int64(whole.Len()), rawT, recsT, true, pj}
+					}
+				}
+			}
+		}()
+	}
+	small := (1 - *share) * float64(*rate) / float64(*tenants-*busy)
+	bz := *share * float64(*rate) / float64(*busy)
+	for i := 0; i < *tenants; i++ {
+		x := small
+		if i < *busy {
+			x = bz
+		}
+		ch <- job{fmt.Sprintf("t%d", i), x}
+	}
+	close(ch)
+	wg.Wait()
+	close(rowsCh)
+	rw.Wait()
+	fmt.Printf("gen: hour=%s tenants=%d rate=%d records=%d raw=%.1f MiB compressed=%.1f MiB (%.1f%%) mean record=%.0f bytes objects=%d manifest rows=%d in %.0fs\n", *hour, *tenants, *rate, nRec.Load(), float64(nRaw.Load())/1048576, float64(nZ.Load())/1048576, 100*float64(nZ.Load())/float64(nRaw.Load()), float64(nRaw.Load())/float64(nRec.Load()), nObj.Load(), nRows, time.Since(t0).Seconds())
+}
+
+// ----- tampering, to confirm the verifier fails
+func cmdTamper(a []string) {
+	switch a[0] {
+	case "flip": // flip a byte in a compacted object
+		rs := loadRows(`where compacted order by id limit 1 offset 5`)
+		r := rs[0]
+		b, _ := get(r.key, 0, 0)
+		b[len(b)/2] ^= 1
+		mc.PutObject(ctx, bucket, r.key, bytes.NewReader(b), int64(len(b)), minio.PutObjectOptions{DisableMultipart: true})
+		fmt.Println("flipped a byte in", r.key)
+	case "droppart": // a compactor that drops one batch and rewrites the object, the row, and its digest
+		rs := loadRows(`where compacted and coalesce(parts_count,0) > 1 order by id limit 1`)
+		r := rs[0]
+		b, _ := get(r.key, 0, 0)
+		var buf bytes.Buffer
+		var ps []part
+		if _, err := rowParts(&r); err != nil {
+			log.Fatal(err)
+		}
+		for i, p := range r.parts {
+			if i == 0 {
+				continue
+			}
+			q := p
+			q.Off = int64(buf.Len())
+			buf.Write(b[p.Off : p.Off+p.Len])
+			ps = append(ps, q)
+		}
+		pd := ev.PartsDigest(ps)
+		if !partsInRow {
+			ev.AppendIndex(&buf, ps)
+		}
+		d := sha256.Sum256(buf.Bytes())
+		mc.PutObject(ctx, bucket, r.key, bytes.NewReader(buf.Bytes()), int64(buf.Len()), minio.PutObjectOptions{DisableMultipart: true})
+		var pj any
+		if partsInRow {
+			b, _ := json.Marshal(ps)
+			pj = string(b)
+		}
+		err := tx(ctx, func(t pgx.Tx) error {
+			_, err := t.Exec(ctx, `update manifest set digest=$1, parts=$2::jsonb, records=records-$3, parts_digest=$4, parts_count=$5 where id=$6`, hex.EncodeToString(d[:]), pj, r.parts[0].Recs, pd, len(ps), r.id)
+			return err
+		})
+		fmt.Println("dropped batch", r.parts[0].Batch, "from", r.key, err)
+	}
+}
+
+// ----- erasure: destroying a session key leaves digests valid and the payload unreadable.
+func sha256Sum(b []byte) string {
+	x := sha256.Sum256(b)
+	return hex.EncodeToString(x[:])
+}
+
+func isGz(b []byte) bool { return len(b) > 2 && b[0] == 0x1f && b[1] == 0x8b }
+
+func cmdErase(a []string) {
+	fs := flag.NewFlagSet("erase", flag.ExitOnError)
+	tenant := fs.String("tenant", "", "")
+	session := fs.String("session", "", "")
+	destroy := fs.Bool("destroy", false, "")
+	fs.Parse(a)
+	if *destroy {
+		err := tx(ctx, func(t pgx.Tx) error {
+			ct, err := t.Exec(ctx, `update evidence_session_keys set key=null, destroyed_at=now() where tenant_id=$1 and session_id=$2 and destroyed_at is null`, *tenant, *session)
+			fmt.Println("destroyed", ct.RowsAffected(), "key rows")
+			return err
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	// read: try to decrypt every payload of the stream
+	keys := map[string][]byte{}
+	tx(ctx, func(t pgx.Tx) error {
+		rs, err := t.Query(ctx, `select key_ref, key from evidence_session_keys`)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var k string
+			var b []byte
+			rs.Scan(&k, &b)
+			keys[k] = b
+		}
+		return nil
+	})
+	ok, destroyed, plain := map[string]int{}, map[string]int{}, 0
+	refs := map[string]int{}
+	chunks, shownRanges := 0, 0
+	sample := ""
+	for _, r := range loadRows(`where stream='agent.activity' order by id`) {
+		forEachRecord(r, func(l []byte, _ part) bool {
+			var x ev.Rec
+			json.Unmarshal(l, &x)
+			if x.SequenceEnd > 0 && shownRanges < 6 {
+				shownRanges++
+				fmt.Printf("  chunk session=%s sequence=%d sequenceEnd=%d\n", x.SessionId, x.Sequence, x.SequenceEnd)
+			}
+			var ct []byte
+			if json.Unmarshal(x.Payload, &ct) != nil || x.PayloadKeyRef == "" {
+				plain++
+				return true
+			}
+			refs[x.PayloadKeyRef]++
+			k := keys[x.PayloadKeyRef]
+			if k == nil {
+				destroyed[x.SessionId]++
+				return true
+			}
+			b, _ := aes.NewCipher(k)
+			g, _ := cipher.NewGCM(b)
+			pt, err := g.Open(nil, ct[:g.NonceSize()], ct[g.NonceSize():], nil)
+			if err != nil {
+				destroyed[x.SessionId]++
+				return true
+			}
+			n := 1
+			if x.SequenceEnd > 0 || x.Sequence > 0 && isGz(pt) { // a chunk: gzip of newline-joined payloads
+				chunks++
+				if gz, err := gzip.NewReader(bytes.NewReader(pt)); err == nil {
+					pt, _ = io.ReadAll(gz)
+					n = bytes.Count(pt, []byte{'\n'})
+				}
+			}
+			ok[x.SessionId] += n
+			if sample == "" && len(pt) > 60 {
+				sample = string(pt[:60])
+			}
+			return true
+		})
+	}
+	fmt.Printf("read: decrypted payloads per session=%v records unreadable per session=%v unencrypted=%d chunks=%d key refs=%v\n", ok, destroyed, plain, chunks, refs)
+	_ = sample
+}
+
+// ----- mTLS and allowlist probes
+func cmdProbe(a []string) {
+	url := a[0]
+	line := func(stream, tenant, producer string) []byte {
+		b, _ := json.Marshal(&ev.Rec{Stream: stream, SchemaVersion: 1, Producer: producer, Incarnation: "probe", Sequence: 1, ObservedAt: time.Now().UTC(), TenantId: tenant, Provenance: "enforced", Payload: json.RawMessage(`{"probe":true}`)})
+		return append(b, '\n')
+	}
+	try := func(name, leaf, ca string, body []byte) {
+		var c *http.Client
+		if leaf == "" {
+			cfg := ev.ClientTLS("/certs/lenny-egress-authz", ca, "lenny-evidence.lenny-system.svc")
+			cfg.Certificates = nil
+			c = &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg}, Timeout: 5 * time.Second}
+		} else {
+			c = &http.Client{Transport: &http2.Transport{TLSClientConfig: ev.ClientTLS(leaf, ca, "lenny-evidence.lenny-system.svc")}, Timeout: 5 * time.Second}
+		}
+		r, err := c.Post(url+"/v1/records", "application/x-ndjson", bytes.NewReader(body))
+		if err != nil {
+			e := err.Error()
+			if len(e) > 110 {
+				e = e[:110]
+			}
+			fmt.Printf("%s: refused at TLS or transport: %s\n", name, e)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		fmt.Printf("%s: HTTP %d %s\n", name, r.StatusCode, strings.TrimSpace(string(b)))
+	}
+	ca := "/certs/evidence-ca.pem"
+	try("decision service, egress.decision", "/certs/lenny-egress-authz", ca, line("egress.decision", "tprobe", "forged-producer"))
+	try("token service, credential.mint", "/certs/lenny-token-service", ca, line("credential.mint", "tprobe", ""))
+	try("token service, egress.decision (not its stream)", "/certs/lenny-token-service", ca, line("egress.decision", "tprobe", ""))
+	try("mirror, git.operation, routed tenant", "/certs/lenny-git-mirror", ca, line("git.operation", "tmirror", ""))
+	try("mirror, git.operation, a tenant whose route does not name it", "/certs/lenny-git-mirror", ca, line("git.operation", "tother", ""))
+	try("a leaf from the same CA outside the allowlist", "/certs/lenny-other", ca, line("egress.decision", "tprobe", ""))
+	try("the decision service's SAN under a foreign CA", "/certs/foreign-authz", ca, line("egress.decision", "tprobe", ""))
+	try("no client certificate", "", ca, line("egress.decision", "tprobe", ""))
+}
+
+func main() {
+	log.SetFlags(0)
+	var err error
+	mc, err = minio.New(os.Getenv("MINIO"), &minio.Options{Creds: credentials.NewStaticV4("minioadmin", "minioadmin", "")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if u := os.Getenv("PG"); u != "" {
+		pg = ev.PGPool(ctx, u, 16)
+	}
+	cmd, args := os.Args[1], os.Args[2:]
+	switch cmd {
+	case "compact":
+		cmdCompact(args)
+	case "verify":
+		cmdVerify(args)
+	case "gaps":
+		cmdGaps(args)
+	case "lookup":
+		cmdLookup(args)
+	case "consume":
+		cmdConsume(args)
+	case "retain":
+		cmdRetain(args)
+	case "deletetenant":
+		cmdDeleteTenant(args)
+	case "windows":
+		cmdWindows(args)
+	case "sizes":
+		cmdSizes(args)
+	case "gen2":
+		cmdGen2(args)
+	case "sample":
+		cmdSample(args)
+	case "actpost":
+		cmdActPost(args)
+	case "readprobe":
+		cmdReadProbe(args)
+	case "export":
+		cmdExport(args)
+	case "exportcheck":
+		cmdExportCheck(args)
+	case "scan":
+		cmdScan(args)
+	case "gen":
+		cmdGen(args)
+	case "tamper":
+		cmdTamper(args)
+	case "erase":
+		cmdErase(args)
+	case "probe":
+		cmdProbe(args)
+	case "schema":
+		c, err := pgx.Connect(ctx, os.Getenv("PGDIRECT"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if _, err := c.Exec(ctx, ev.Schema); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("schema ok")
+	}
+}

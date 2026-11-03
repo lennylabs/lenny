@@ -1,0 +1,2 @@
+CONNECT status: 200 OK
+tunnel ended after 5.99s: EOF (last="tick 4.0")

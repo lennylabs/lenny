@@ -1,0 +1,1 @@
+(async()=>{ for (const u of process.argv.slice(2)) { try { const r=await fetch(u,{signal:AbortSignal.timeout(8000)}); await r.text(); console.log("NAME",u,"OK",r.status); } catch(e){ console.log("NAME",u,"REFUSED",String(e.cause&&(e.cause.code+" "+e.cause.message)||e).slice(0,160)); } } })();

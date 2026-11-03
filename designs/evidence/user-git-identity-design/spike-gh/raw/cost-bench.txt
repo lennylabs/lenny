@@ -1,0 +1,19 @@
+goos: linux
+goarch: arm64
+pkg: ghspike/cmd/netagent
+BenchmarkCheck/strict/create         	   94790	     11007 ns/op	  32.07 MB/s	    6816 B/op	      88 allocs/op
+BenchmarkCheck/strict/status         	   22696	     55137 ns/op	  33.24 MB/s	   42616 B/op	     394 allocs/op
+BenchmarkCheck/strict/largest        	   14731	     87884 ns/op	  27.17 MB/s	   78328 B/op	     737 allocs/op
+BenchmarkCheck/strict/body65k        	    2032	    605626 ns/op	 108.62 MB/s	  559056 B/op	     109 allocs/op
+BenchmarkCheck/strict/bound258k      	     217	   5538840 ns/op	  46.61 MB/s	 1681367 B/op	     114 allocs/op
+BenchmarkCheck/strict/comment256k    	     396	   3021767 ns/op	  86.75 MB/s	 2465935 B/op	      84 allocs/op
+BenchmarkCheck/strict/tokens256k     	      31	  35622883 ns/op	   7.30 MB/s	40001896 B/op	  260103 allocs/op
+BenchmarkCheck/canon/create          	   88750	     12878 ns/op	  27.41 MB/s	    8856 B/op	     150 allocs/op
+BenchmarkCheck/canon/status          	   16696	     72580 ns/op	  25.26 MB/s	   56429 B/op	     958 allocs/op
+BenchmarkCheck/canon/largest         	    9296	    132049 ns/op	  18.08 MB/s	  107650 B/op	    1909 allocs/op
+BenchmarkCheck/canon/body65k         	    1453	    803167 ns/op	  81.91 MB/s	  634536 B/op	     171 allocs/op
+BenchmarkCheck/canon/bound258k       	     177	   6851277 ns/op	  37.68 MB/s	 1945437 B/op	     179 allocs/op
+BenchmarkCheck/canon/comment256k     	     390	   3087496 ns/op	  84.91 MB/s	 2466934 B/op	     114 allocs/op
+BenchmarkCheck/canon/tokens256k      	      24	  49246389 ns/op	   5.28 MB/s	50488125 B/op	  650170 allocs/op
+PASS
+ok  	ghspike/cmd/netagent	23.084s

@@ -1,0 +1,24 @@
+// ncgo URL...: net/http with the system pool (SSL_CERT_FILE), HTTP/2 negotiated by default.
+package main
+
+import (
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"time"
+)
+
+func main() {
+	c := &http.Client{Timeout: 10 * time.Second}
+	for _, u := range os.Args[1:] {
+		r, err := c.Get(u)
+		if err != nil {
+			fmt.Printf("%s REFUSED %v\n", u, err)
+			continue
+		}
+		io.Copy(io.Discard, r.Body)
+		r.Body.Close()
+		fmt.Printf("%s OK %d %s\n", u, r.StatusCode, r.Proto)
+	}
+}

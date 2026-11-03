@@ -1,0 +1,33 @@
+Image: "ob-tools:3" with ID "sha256:f62d8a056097676dbe4524b4d9900224b075c61319d6fa4d88d60248edd234e7
+NAME            READY   STATUS    RESTARTS   AGE   IP               NODE                      NOMINATED NODE  
+default-envoy   1/1     Running   0          19s   10.244.110.38    ob-calico-worker          <none>          
+ga-cross        1/1     Running   0          19s   10.244.174.136   ob-calico-control-plane   <none>          
+ga-same         1/1     Running   0          19s   10.244.110.37    ob-calico-worker          <none>          
+stamper         1/1     Running   0          19s   10.244.174.135   ob-calico-control-plane   <none>          
+### controls: 3 s each, from pods that stay unstamped or wrongly stamped
+unset -> default Envoy (no ingress policy): STATE open;
+unset -> group Envoy, other node: STATE dropped;
+unset -> group Envoy, same node: STATE dropped;
+group-b -> group-a Envoy, other node: STATE dropped;
+group-b -> group-a Envoy, same node: STATE dropped;
+### sequential: probe from 2 s before the stamp to 10 s after
+### burst: 12 stamps in parallel, half of each placement
+### after the run: stamped-to-wrong control still dropped
+STATE dropped;
+sequential, other node: n=10 never_opened=[] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=0.004 median=0.009 max=0.022; values=[0.004, 0.006, 0.006, 0.007, 0.008, 0.01, 0.01, 0.017, 0.019, 0.022]
+   open after call START  s: min=0.013 median=0.015 max=0.031; call duration max=0.010
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-2.04, 2.071), (-2.04, 2.081), (-2.04, 2.088), (-2.03, 2.07), (-2.01, 2.031), (-2.01, 2.034), (-2.01, 2.055), (-2.01, 2.086), (-2.0, 2.061), (-2.0, 2.069), (-0.04, 1.03), (-0.04, 1.041)]
+sequential, same node: n=10 never_opened=[] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=0.004 median=0.015 max=0.021; values=[0.004, 0.007, 0.009, 0.011, 0.015, 0.015, 0.017, 0.017, 0.02, 0.021]
+   open after call START  s: min=0.014 median=0.023 max=0.029; call duration max=0.016
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-2.05, 2.068), (-2.03, 3.05), (-2.03, 3.06), (-2.02, 2.043), (-2.02, 2.06), (-2.02, 2.065), (-2.01, 2.03), (-2.01, 2.039), (-2.01, 2.088), (-2.0, 2.04), (-0.05, 1.026), (-0.03, 1.049)]
+burst, other node: n=6 never_opened=[] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=0.005 median=0.017 max=0.025; values=[0.005, 0.007, 0.015, 0.019, 0.019, 0.025]
+   open after call START  s: min=0.017 median=0.035 max=0.041; call duration max=0.027
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-3.11, 4.083), (-3.09, 4.124), (-3.09, 4.125), (-3.08, 4.076), (-3.06, 4.076), (-3.05, 4.084), (-1.11, 2.083), (-1.09, 2.06), (-1.09, 2.06), (-1.08, 2.074), (-1.06, 2.074), (-1.05, 2.082)]
+burst, same node: n=6 never_opened=[] dropped_before_all=True regress=0 codes=[200]
+   open after call RETURN s: min=0.016 median=0.018 max=0.028; values=[0.016, 0.016, 0.016, 0.02, 0.024, 0.028]
+   open after call START  s: min=0.028 median=0.031 max=0.042; call duration max=0.019
+   blocking dials begun before the stamp returned: (start relative to stamp, connect took s): [(-3.11, 4.08), (-3.11, 4.125), (-3.09, 4.123), (-3.09, 4.123), (-3.05, 4.082), (-3.03, 3.1), (-1.1, 2.06), (-1.1, 2.079), (-1.09, 2.059), (-1.09, 2.059), (-1.05, 2.081), (-1.03, 2.06)]
+Deleted nodes: ["ob-calico-worker" "ob-calico-control-plane"]

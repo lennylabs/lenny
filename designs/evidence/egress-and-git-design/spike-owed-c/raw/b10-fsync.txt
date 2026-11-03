@@ -1,0 +1,20 @@
+### idle, nothing else running on Docker but idle services, 120 s
+fdatasync n=50539 p50=393.667µs p99=1.321875ms p99.9=2.979917ms max=16.382208ms over50ms=0 over150ms=0
+
+### beside 2,000/s regulated, 120 s
+   busy: n=110275 codes={'200': 104773, '403': 5502, '503': 195} p50=0.88 p90=1.61 p99=11.21 p99.9=102.6 max=162.5 ms
+   small: n=109321 codes={'200': 103841, '403': 5480, '503': 209} p50=0.88 p90=1.60 p99=11.71 p99.9=111.7 max=162.2 ms
+   elapsed 120s ticks=227532 broken=0
+  +17.0s stall 50ms
+  +61.3s stall 84ms
+  +92.0s stall 124ms
+  +92.1s stall 103ms
+  +92.2s stall 91ms
+fdatasync n=58997 p50=144.292µs p99=1.487083ms p99.9=3.440959ms max=123.831167ms over50ms=5 over150ms=0
+   commits=239926 p50=0.5 p99=9.7 max=152.0 over bound=404 refused=404 (0.168%)
+
+### Postgres checkpoints in this run
+2026-11-03 04:27:25.847 UTC [58] LOG:  checkpoint complete: wrote 87 buffers (0.5%); 0 WAL file(s) added, 0 removed, 4 recycled; write=0.002 s, sync=0.024 s, total=0.030 s; sync files=49, longest=0.010 s, average=0.001 s; distance=71793 kB, estimate=374974 kB;
+2026-11-03 04:29:34.391 UTC [58] LOG:  checkpoint complete: wrote 44 buffers (0.3%); 0 WAL file(s) added, 0 removed, 3 recycled; write=0.005 s, sync=0.017 s, total=0.028 s; sync files=46, longest=0.002 s, average=0.001 s; distance=52961 kB, estimate=342773 kB;
+2026-11-03 04:35:06.813 UTC [58] LOG:  checkpoint complete: wrote 296 buffers (1.8%); 0 WAL file(s) added, 0 removed, 3 recycled; write=32.300 s, sync=0.034 s, total=32.346 s; sync files=50, longest=0.004 s, average=0.001 s; distance=35366 kB, estimate=312032 
+2026-11-03 04:35:06.823 UTC [58] LOG:  checkpoint complete: wrote 24 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.004 s, total=0.011 s; sync files=10, longest=0.003 s, average=0.001 s; distance=78 kB, estimate=280836 kB; ls

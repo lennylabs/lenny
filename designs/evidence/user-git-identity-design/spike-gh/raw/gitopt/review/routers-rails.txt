@@ -1,0 +1,13 @@
+actionpack 8.1.4
+rails PUT   /repos/a/b/pulls/1/merge                 200 merge
+rails PUT   /repos/a/b/pulls/1/m%65rge               404 Not Found
+rails PUT   /repos/a/b/pulls/1/merge/                200 merge
+rails PUT   /repos/a/b/pulls/1/merge.json            200 merge
+rails PUT   /repos/a/b/pulls/1/MERGE                 404 Not Found
+rails PUT   /repos/a/b//pulls/1/merge                200 merge
+rails POST  /repos/a/b/pulls/1/r%65views             404 Not Found
+rails POST  /repos/a/b/pulls/1/reviews/              200 reviews
+rails POST  /repos/a/b/pulls/1/reviews.json          200 reviews
+rails POST  /graphq%6C                               404 Not Found
+rails POST  /graphql/                                200 graphql
+rails POST  /graphql.json                            200 graphql

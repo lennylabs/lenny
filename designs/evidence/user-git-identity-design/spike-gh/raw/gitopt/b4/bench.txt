@@ -1,0 +1,24 @@
+documents=159 idempotent=159 not-idempotent=0 parse-failures=0
+goos: linux
+goarch: arm64
+pkg: ghgit/cmd/netagent
+BenchmarkFilter/allow/create         	   68506	      9313 ns/op	  37.90 MB/s	    6816 B/op	      88 allocs/op
+BenchmarkFilter/allow/status         	   11320	     52988 ns/op	  34.59 MB/s	   42616 B/op	     394 allocs/op
+BenchmarkFilter/allow/largest        	    7362	     81508 ns/op	  29.30 MB/s	   78328 B/op	     737 allocs/op
+BenchmarkFilter/allow/body65k        	     952	    698509 ns/op	  94.18 MB/s	  559057 B/op	     109 allocs/op
+BenchmarkFilter/allow/bound258k      	     100	   5779015 ns/op	  44.68 MB/s	 1681362 B/op	     114 allocs/op
+BenchmarkFilter/allow/comment256k    	     190	   2900944 ns/op	  90.37 MB/s	 2465935 B/op	      84 allocs/op
+BenchmarkFilter/allow/tokens14k      	     366	   1619743 ns/op	   8.66 MB/s	 2039783 B/op	   14080 allocs/op
+BenchmarkFilter/allow/tokens256k     	      15	  33431472 ns/op	   7.78 MB/s	40001896 B/op	  260103 allocs/op
+BenchmarkFilter/allow/rest-get       	  681150	       872.4 ns/op	     624 B/op	       4 allocs/op
+BenchmarkFilter/deny/create          	   52033	     11573 ns/op	  30.50 MB/s	    8920 B/op	     152 allocs/op
+BenchmarkFilter/deny/status          	   10000	     67924 ns/op	  26.99 MB/s	   56493 B/op	     960 allocs/op
+BenchmarkFilter/deny/largest         	    4951	    121464 ns/op	  19.66 MB/s	  107714 B/op	    1911 allocs/op
+BenchmarkFilter/deny/body65k         	     686	    805126 ns/op	  81.71 MB/s	  634602 B/op	     173 allocs/op
+BenchmarkFilter/deny/bound258k       	     100	   6320101 ns/op	  40.85 MB/s	 1945504 B/op	     181 allocs/op
+BenchmarkFilter/deny/comment256k     	     182	   2934955 ns/op	  89.32 MB/s	 2467001 B/op	     117 allocs/op
+BenchmarkFilter/deny/tokens14k       	     286	   2150611 ns/op	   6.52 MB/s	 2351967 B/op	   35119 allocs/op
+BenchmarkFilter/deny/tokens256k      	      93	   5857100 ns/op	  44.39 MB/s	 5989576 B/op	   30103 allocs/op
+BenchmarkFilter/deny/rest-get        	  548635	      1054 ns/op	     928 B/op	       8 allocs/op
+PASS
+ok  	ghgit/cmd/netagent	12.518s

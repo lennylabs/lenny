@@ -1,0 +1,10 @@
+go-net-http https://allowed.oa.test/ OK 200 HTTP/2.0
+go-net-http https://denied.oa.test/ REFUSED Get "https://denied.oa.test/": tls: failed to verify certificate: x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "denied.oa.test" is not permitted by any constraint
+go-net-http https://sub.allowed.oa.test/ OK 200 HTTP/2.0
+go-net-http https://viaint.oa.test/ REFUSED Get "https://viaint.oa.test/": tls: failed to verify certificate: x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "viaint.oa.test" is not permitted by any constraint
+go-net-http https://198.19.50.20/ OK 200 HTTP/2.0
+go-net-http https://ctl.oa.test/ OK 200 HTTP/2.0
+go-net-http https://unk.oa.test/ REFUSED Get "https://unk.oa.test/": tls: failed to verify certificate: x509: certificate signed by unknown authority
+go-net-http https://xallowed.oa.test/ OK 200 HTTP/2.0
+go-net-http https://xdenied.oa.test/ REFUSED Get "https://xdenied.oa.test/": tls: failed to verify certificate: x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "xdenied.oa.test" is not permitted by any constraint
+go-net-http https://198.19.50.20:8443/ REFUSED Get "https://198.19.50.20:8443/": tls: failed to verify certificate: x509: a root or intermediate certificate is not authorized to sign for this name: IP address "198.19.50.20" is excluded by constraint "0.0.0.0/0"

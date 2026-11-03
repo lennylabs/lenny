@@ -111,23 +111,23 @@ Each row was checked against the named source.
 | Claim | Status | Source |
 | :-- | :-- | :-- |
 | `POST /v1/credentials` acts only for the authenticated caller | True. `caller` reads tenant and subject from the principal, and every handler uses them. | `pkg/gateway/credentials/credentialserver/credentialserver.go` |
-| It refuses an impersonation bearer | False. That package has no `callercheck`. | `credentialserver.go` |
+| It refuses an impersonation bearer | False. That package has no `callercheck`, filed as F-13.3.26. | `credentialserver.go` |
 | It accepts a closed provider set | True. `provider.IsValid()` rejects anything outside `credential.AllProviders()` with `VALIDATION_ERROR`, and §4.9 says the same. The `provider` column itself is `TEXT`, validated in application code. | `credentialserver.go`, `pkg/credential/credential.go`, migration 0036 |
-| Three built-in providers register and never deliver | True. `credential.UserProxyDialect` has no dialect for `aws_bedrock`, `github`, or `vault_transit`, and `Materializer.Available` then reports them unavailable. | `pkg/credential/lease.go`, `usercreds.go` |
+| Three built-in providers register and never deliver | True. `credential.UserProxyDialect` has no dialect for `aws_bedrock`, `github`, or `vault_transit`, and `Materializer.Available` then reports them unavailable. Filed as F-4.9.46. | `pkg/credential/lease.go`, `usercreds.go` |
 | A secret has a size limit | Only the 1 MiB request reader. `secret` is a JSON string. | `credentialserver.go` |
 | A credential has an expiry | False. The table has status and timestamps and no expiry. | Migrations 0036, 0059, and 0073 |
-| The wire format matches §4.9 | False. §4.9 names the body field `credential` and the identifier `credential_ref`. The code uses `secret` and `ref`. A defect to file. | §4.9, `credentialserver.go` |
+| The wire format matches §4.9 | False. §4.9 names the body field `credential` and the identifier `credential_ref`. The code uses `secret` and `ref`. Filed as F-4.9.47, and no proposal here changes the names. | §4.9, `credentialserver.go` |
 | Rotation reaches a running session | For the LLM proxy only. `RotateUser` re-caches the secret gateway-side. §4.9 also describes `RotateCredentials`. | `usercreds.go`, §4.9 |
 | `DELETE` leaves running sessions alone | True for the LLM path, by statement: "Active session leases are unaffected". | §4.9 and [§15.1 REST API](../spec/15_external-api-surface.md#151-rest-api) |
 | Ownership is the only rotate check | True. `ownedBy` compares `UserID` with the caller. | `credentialserver.go` |
 | An impersonation bearer is refused on create, derive, replay, and create-and-start | True, through `requireCreatingBearerAllowed`. | `pkg/gateway/sessionserver/user_gate.go` |
-| Other session input refuses an impersonation bearer | False. `manageSessionRoute` covers messages, resume, finalize, start, uploads, memory writes, and tool and elicitation answers with permission and ownership only. `lenny/send_message`, `lenny/memory_write`, and the `/v1/responses` and `/v1/chat/completions` translators reach `executor.Executor.Send` or the memory store on their own paths. | `pkg/gateway/sessionserver/route_table.go`, `pkg/gateway/mcpfabric/mcptools/send_delivery.go`, `pkg/gateway/environment/translator/open_responses.go` |
+| Other session input refuses an impersonation bearer | False. `manageSessionRoute` covers messages, resume, finalize, start, uploads, memory writes, and tool and elicitation answers with permission and ownership only. `lenny/send_message`, `lenny/memory_write`, and the `/v1/responses` and `/v1/chat/completions` translators reach `executor.Executor.Send` or the memory store on their own paths. Filed as F-13.3.26. | `pkg/gateway/sessionserver/route_table.go`, `pkg/gateway/mcpfabric/mcptools/send_delivery.go`, `pkg/gateway/environment/translator/open_responses.go` |
 | A session row records the caller type | False. `Principal` carries `CallerType`, and the session store does not. | `pkg/gateway/middleware/auth/auth.go`, `sessionstore` |
-| Gateway replicas decrypt user-scoped credentials | True, against §4.3's "This is the only component with KMS decrypt permissions for downstream OAuth tokens" and §4.9's "Token Service stores it". `credentialpg.New(w.pgPool, w.kmsProvider)` runs in the gateway. A defect to file for LLM credentials. | `cmd/lenny-gateway/credentialsurface.go`, §4.3 |
+| Gateway replicas decrypt user-scoped credentials | True, against §4.3's "This is the only component with KMS decrypt permissions for downstream OAuth tokens" and §4.9's "Token Service stores it". `credentialpg.New(w.pgPool, w.kmsProvider)` runs in the gateway. F-4.3.1 already holds this as its deferred cleanup. | `cmd/lenny-gateway/credentialsurface.go`, §4.3 |
 | A pool's provider separates GHES from GitHub | False. `ProviderGitHub` is the one value, and §14 embeds it in `vcs.github.read`. The host separates them, as "Selecting the flavour" states. | `pkg/credential/credential.go`, §14 |
 | Pool recycling is read from the current pool at release | True. `poolRecyclePolicy` reads the pool in the scrub reporter's seams. `lenny.dev/runtime-process` is stamped on a pod and immutable. | `pkg/gateway/session/recycle/scrubreporter_seams.go`, `pkg/admission/webhook/label_immutability.go` |
 | Credential Secrets sit in one shared namespace, and tenant isolation holds where references enter a pool | True, for pools. Link providers have no such rule. | §4.9 **Secret references.** |
-| A connector's `clientSecretRef` is resolved with no tenant check | True, and the route is `platform-admin` alone, so this is no tenant escalation. The gateway has no `get` on Secrets but the named admin token Secret, so a confidential connector's resolution fails. Both are recorded in `user-git-identity-design.md`. | `pkg/gateway/connectors/connectorsecret/connectorsecret.go`, `pkg/gateway/externalapi/admin/routes.go`, `charts/lenny/templates/credentials-namespace.yaml` |
+| A connector's `clientSecretRef` is resolved with no tenant check | True, and the route is `platform-admin` alone, so this is no tenant escalation. The gateway has no `get` on Secrets but the named admin token Secret, so a confidential connector's resolution fails (F-9.3.19). Both are recorded in `user-git-identity-design.md`. | `pkg/gateway/connectors/connectorsecret/connectorsecret.go`, `pkg/gateway/externalapi/admin/routes.go`, `charts/lenny/templates/credentials-namespace.yaml` |
 | A delegated child inherits named bindings | True under the egress design's "Effective policy", which UC-3 narrows for this kind. | `egress-and-git-design.md` |
 | A session's `env` is checked against a blocklist | True. The default holds exact names and `*_SECRET_*`, `*_SECRET`, `*_KEY`, `*_TOKEN`, and `*_PASSWORD`, and an operator can extend it. Other names pass. | [§14](../spec/14_workspace-plan-schema.md), `pkg/gateway/provisioning/envblock/envblock.go` |
 | `inlineFile` content is inspected for secrets | False. | §14 |
@@ -716,9 +716,9 @@ Applied in its revision 11: links keyed on the provider's name, `prAuthoring` at
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
-| UC-1 (types, `registered`, the token trust record) | EG-9 | The single write path. It builds the digest format and `token_trust_records`, which UG-1 uses. It can land with no delivery. |
+| UC-1 (types, `registered`, the token trust record) | EG-9 | The single write path. It builds the digest format and `token_trust_records`, which UG-1 uses. It can land with no delivery. Closes F-4.9.46 and the `/v1/credentials` half of F-13.3.26. |
 | UC-2 (`oauth2Link`) | UC-1, UG-1, EG-2's mint path, and OC-1 and OC-2 for a private host | The link flow, and the route to a token endpoint. |
-| UC-3 (`userCredential` binding, `inject`) | UC-1, EG-4, EG-2 with the requests above, and TS-4 for the invalidation level | Bindings, I8, and `pkg/binding`. It also builds the session input check and `retireOnRelease`, which UG-2 uses. |
+| UC-3 (`userCredential` binding, `inject`) | UC-1, EG-4, EG-2 with the requests above, and TS-4 for the invalidation level | Bindings, I8, and `pkg/binding`. Addresses the session input half of F-13.3.26. It also builds the session input check and `retireOnRelease`, which UG-2 uses. |
 | UC-4 (request rules and presets) | UC-3, and the EG-4 stage | The stage. |
 | UC-5 (`file`) | UC-3, and EG-4's `file` delivery | The mechanics, and `allowRuntimeHeldCredentials` with its refusal and attach rule. It needs the grant under EG-9. |
 | UC-6 (leak scanning) | UC-5 | Optional. |
@@ -1083,3 +1083,5 @@ None was rejected. H1's alternative, refusing routes and CAs on those hosts, was
 ## Sources
 
 Vendor pages are listed in `user-git-identity-design.md`, and the capture and history data are recorded there.
+
+The evidence for this document's **[measured]** rows is under `evidence/user-git-identity-design/`, in `spike-gh/RESULTS.md` and `spike-gh/raw/`, and that folder's `README.md` lists what was left out. Citations in this document resolve under `evidence/user-git-identity-design/spike-gh/`: `raw/gitopt/...` as written, `t4/table.txt` at `raw/gitopt/t4/table.txt`, `deny-ghcom.txt` at `raw/gitopt/attack/deny-ghcom.txt`, and `source-headers.txt` at `raw/gitopt/review/source-headers.txt`.

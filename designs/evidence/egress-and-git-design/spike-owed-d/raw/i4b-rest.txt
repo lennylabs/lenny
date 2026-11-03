@@ -1,0 +1,499 @@
+### pg_test_fsync on this volume
+O_DIRECT supported on this platform for open_datasync and open_sync.
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+        open_datasync                     12337.642 ops/sec      81 usecs/op
+        fdatasync                         12066.333 ops/sec      83 usecs/op
+        fsync                              8080.190 ops/sec     124 usecs/op
+
+=== 4d. One transaction per tenant
+
+### One transaction per tenant, 500/s: 500 decisions/s for 180s, all tenants regulated, 2,500 tenants
+   window 30s: commits=14983 p50=0.5 p99=12.0 p99.9=123.2 max=151.7 ms refused=1
+   window 60s: commits=15074 p50=0.5 p99=1.7 p99.9=16.4 max=42.8 ms refused=0
+   window 90s: commits=15081 p50=0.5 p99=115.6 p99.9=151.5 max=152.0 ms refused=121
+   window 120s: commits=15062 p50=0.5 p99=14.8 p99.9=150.7 max=151.7 ms refused=33
+   window 150s: commits=15062 p50=0.5 p99=13.1 p99.9=150.8 max=151.8 ms refused=57
+   busy: n=42451 codes={'200': 40384, '403': 2067, '503': 182} p50=0.95 p90=1.38 p99=8.76 p99.9=122.8 max=152.1 ms
+   small: n=42218 codes={'200': 40104, '403': 2114, '503': 149} p50=0.95 p90=1.38 p99=8.80 p99.9=126.4 max=153.0 ms
+   elapsed 180s broken=0 refusedFirst=331 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 180s: commits=14601 p50=0.5 p99=101.4 p99.9=151.0 max=151.8 ms refused=119
+   od-envoy: 198m CPU, memory 32 MiB, peak 33 MiB
+   od-dec1: 140m CPU, memory 30 MiB, peak 32 MiB
+   od-ev1: 99m CPU, memory 182 MiB, peak 198 MiB
+   od-ev2: 110m CPU, memory 186 MiB, peak 210 MiB
+   od-pg: 94m CPU, memory 465 MiB, peak 466 MiB
+   od-pgb: 24m CPU, memory 7 MiB, peak 12 MiB
+   replica 0: records=203296 batches=9428 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=40594 walFail=0 lateLanded=145 lateLost=0 commitTx=40436 manifestTx=0 groupP50=1 groupUsP50=351 groupUsP99=2082
+   replica 1: records=227477 batches=9412 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=49391 walFail=0 lateLanded=184 lateLost=0 commitTx=49135 manifestTx=0 groupP50=1 groupUsP50=350 groupUsP99=2046
+
+### One transaction per tenant, 2,000/s: 2000 decisions/s for 180s, all tenants regulated, 2,500 tenants
+   window 30s: commits=59954 p50=0.5 p99=11.7 p99.9=69.8 max=101.3 ms refused=0
+   window 60s: commits=60280 p50=0.5 p99=3.4 p99.9=16.6 max=30.1 ms refused=0
+   window 90s: commits=60421 p50=0.5 p99=27.4 p99.9=95.6 max=130.8 ms refused=0
+   window 120s: commits=60304 p50=0.4 p99=113.1 p99.9=151.2 max=151.8 ms refused=525
+   window 150s: commits=60341 p50=0.5 p99=13.4 p99.9=60.9 max=79.9 ms refused=0
+   busy: n=169400 codes={'200': 160962, '403': 8438, '503': 637} p50=0.90 p90=2.42 p99=19.45 p99.9=100.5 max=164.7 ms
+   small: n=169292 codes={'200': 160862, '403': 8430, '503': 672} p50=0.91 p90=2.46 p99=19.76 p99.9=101.8 max=164.7 ms
+   elapsed 180s broken=0 refusedFirst=1309 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 180s: commits=58002 p50=0.5 p99=150.2 p99.9=151.3 max=151.9 ms refused=784
+   od-envoy: 622m CPU, memory 59 MiB, peak 66 MiB
+   od-dec1: 382m CPU, memory 35 MiB, peak 45 MiB
+   od-ev1: 256m CPU, memory 419 MiB, peak 504 MiB
+   od-ev2: 285m CPU, memory 435 MiB, peak 556 MiB
+   od-pg: 315m CPU, memory 914 MiB, peak 982 MiB
+   od-pgb: 79m CPU, memory 7 MiB, peak 12 MiB
+   replica 0: records=808202 batches=10138 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=162080 walFail=0 lateLanded=560 lateLost=0 commitTx=159790 manifestTx=0 groupP50=1 groupUsP50=311 groupUsP99=2314
+   replica 1: records=914781 batches=10141 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=197864 walFail=0 lateLanded=743 lateLost=0 commitTx=194163 manifestTx=0 groupP50=1 groupUsP50=305 groupUsP99=2199
+
+### Earlier single transaction under the sentinel, 2,000/s: 2000 decisions/s for 120s, all tenants regulated, 2,500 tenants
+   window 30s: commits=59941 p50=0.4 p99=3.6 p99.9=12.1 max=27.0 ms refused=0
+   window 60s: commits=60291 p50=0.4 p99=3.1 p99.9=53.3 max=90.5 ms refused=0
+   window 90s: commits=60387 p50=0.5 p99=85.8 p99.9=150.9 max=151.9 ms refused=347
+   busy: n=109817 codes={'200': 104337, '403': 5480, '503': 181} p50=0.83 p90=1.74 p99=14.91 p99.9=118.1 max=153.6 ms
+   small: n=109836 codes={'200': 104356, '403': 5480, '503': 166} p50=0.83 p90=1.73 p99=14.58 p99.9=115.8 max=152.9 ms
+   elapsed 120s broken=0 refusedFirst=347 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 120s: commits=58583 p50=0.4 p99=2.8 p99.9=14.6 max=36.6 ms refused=0
+   od-envoy: 595m CPU, memory 60 MiB, peak 66 MiB
+   od-dec1: 371m CPU, memory 32 MiB, peak 41 MiB
+   od-ev1: 231m CPU, memory 481 MiB, peak 484 MiB
+   od-ev2: 262m CPU, memory 563 MiB, peak 565 MiB
+   od-pg: 262m CPU, memory 952 MiB, peak 984 MiB
+   od-pgb: 71m CPU, memory 7 MiB, peak 12 MiB
+   replica 0: records=541216 batches=5350 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=107814 walFail=0 lateLanded=133 lateLost=0 commitTx=0 manifestTx=0 groupP50=1 groupUsP50=282 groupUsP99=1796
+   replica 1: records=609269 batches=5366 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=132127 walFail=0 lateLanded=210 lateLost=0 commitTx=0 manifestTx=0 groupP50=1 groupUsP50=277 groupUsP99=1634
+
+### One transaction per tenant, also for the manifest, 2,000/s: 2000 decisions/s for 120s, all tenants regulated, 2,500 tenants
+   window 30s: commits=59963 p50=0.4 p99=5.2 p99.9=53.4 max=71.8 ms refused=0
+   window 60s: commits=60317 p50=0.4 p99=3.6 p99.9=13.2 max=27.2 ms refused=0
+   window 90s: commits=60410 p50=0.5 p99=97.3 p99.9=151.2 max=151.9 ms refused=499
+   busy: n=109803 codes={'200': 104289, '403': 5514, '503': 251} p50=0.83 p90=1.69 p99=10.67 p99.9=70.6 max=158.9 ms
+   small: n=109699 codes={'200': 104177, '403': 5522, '503': 248} p50=0.83 p90=1.69 p99=10.97 p99.9=66.3 max=160.5 ms
+   elapsed 120s broken=0 refusedFirst=499 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 120s: commits=58913 p50=0.4 p99=2.8 p99.9=16.9 max=29.5 ms refused=0
+   od-envoy: 580m CPU, memory 61 MiB, peak 68 MiB
+   od-dec1: 370m CPU, memory 41 MiB, peak 49 MiB
+   od-ev1: 272m CPU, memory 598 MiB, peak 618 MiB
+   od-ev2: 229m CPU, memory 319 MiB, peak 332 MiB
+   od-pg: 329m CPU, memory 930 MiB, peak 984 MiB
+   od-pgb: 82m CPU, memory 7 MiB, peak 12 MiB
+   replica 0: records=768118 batches=5554 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108240 walFail=0 lateLanded=223 lateLost=0 commitTx=107234 manifestTx=5554 groupP50=1 groupUsP50=293 groupUsP99=1856
+   replica 1: records=381448 batches=2754 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=131702 walFail=0 lateLanded=269 lateLost=0 commitTx=130231 manifestTx=2754 groupP50=1 groupUsP50=291 groupUsP99=1651
+
+### Manifest writes per tenant, no regulated tenants, 2,000/s, 150 s: the sentinel, then one transaction per tenant
+   busy: n=140376 codes={'200': 133338, '403': 7038} p50=0.56 p90=1.00 p99=2.42 p99.9=8.9 max=83.1 ms
+   small: n=139624 codes={'200': 132717, '403': 6907} p50=0.56 p90=1.00 p99=2.40 p99.9=9.6 max=83.2 ms
+   elapsed 150s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   od-pg: 7m CPU, memory 793 MiB, peak 984 MiB
+   od-pgb: 1m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 158m CPU, memory 598 MiB, peak 801 MiB
+   od-ev2: 67m CPU, memory 341 MiB, peak 460 MiB
+   replica 0: records=962330 batches=10044 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=477585 batches=5030 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   manifest rows 15074 mode=sentinel
+   busy: n=139688 codes={'200': 132721, '403': 6967} p50=0.58 p90=1.08 p99=3.19 p99.9=19.6 max=98.7 ms
+   small: n=140312 codes={'200': 133305, '403': 7007} p50=0.58 p90=1.08 p99=3.22 p99.9=17.2 max=98.7 ms
+   elapsed 150s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   od-pg: 58m CPU, memory 782 MiB, peak 984 MiB
+   od-pgb: 13m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 68m CPU, memory 302 MiB, peak 427 MiB
+   od-ev2: 185m CPU, memory 548 MiB, peak 843 MiB
+   replica 0: records=391832 batches=5144 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=5144 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=1048116 batches=10314 droppedTenant=0 aggIn=1 aggOut=1 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=10314 groupP50=0 groupUsP50=0 groupUsP99=0
+   manifest rows 15458 mode=pertenant
+
+=== 4e. netagent's single retry on the distinct 503 reason
+
+### No retry: 2,000/s, all regulated, 120 s, stall of the database none
+   window 30s: decisions so far=59961 commits=59950 p50=0.4 p99=4.5 max=78.1 refused=0
+   window 60s: decisions so far=120352 commits=60247 p50=0.5 p99=4.0 max=39.0 refused=0
+   window 90s: decisions so far=180806 commits=60318 p50=0.5 p99=150.0 max=152.4 refused=726
+   busy: n=109019 codes={'200': 103659, '403': 5360, '503': 887} p50=0.85 p90=1.91 p99=20.99 p99.9=128.7 max=170.4 ms
+   small: n=109201 codes={'200': 103637, '403': 5564, '503': 893} p50=0.86 p90=1.94 p99=19.32 p99.9=122.9 max=171.0 ms
+   elapsed 120s broken=0 refusedFirst=1780 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 120s: decisions so far=239941 commits=59032 p50=0.5 p99=150.5 max=152.5 refused=1054
+   od-pg: 291m CPU, memory 941 MiB, peak 984 MiB
+   od-pgb: 76m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 241m CPU, memory 464 MiB, peak 466 MiB
+   od-ev2: 273m CPU, memory 549 MiB, peak 551 MiB
+   od-dec1: 375m CPU, memory 37 MiB, peak 49 MiB
+"decisions":239941
+   replica 0: records=537496 batches=5288 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108163 walFail=0 lateLanded=812 lateLost=0 commitTx=106637 manifestTx=0 groupP50=1 groupUsP50=301 groupUsP99=2058
+   replica 1: records=607206 batches=5321 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=131778 walFail=0 lateLanded=968 lateLost=0 commitTx=129347 manifestTx=0 groupP50=1 groupUsP50=296 groupUsP99=1954
+
+### Retry after 100 ms: 2,000/s, all regulated, 120 s, stall of the database none
+   window 30s: decisions so far=59965 commits=59957 p50=0.4 p99=3.7 max=72.5 refused=0
+   window 60s: decisions so far=120368 commits=60273 p50=0.4 p99=6.2 max=130.4 refused=0
+   window 90s: decisions so far=180809 commits=60207 p50=0.5 p99=13.9 max=68.0 refused=0
+   busy: n=110637 codes={'200': 105120, '403': 5517, '503-then-retry': 251} p50=0.85 p90=1.79 p99=18.40 p99.9=143.0 max=172.5 ms
+   small: n=109363 codes={'200': 103890, '403': 5473, '503-then-retry': 234} p50=0.85 p90=1.77 p99=17.93 p99.9=145.0 max=173.6 ms
+   elapsed 120s broken=0 refusedFirst=485 retried=485 retryPassed=485 retryRefused=0 retryOther=0
+   window 120s: decisions so far=240425 commits=59721 p50=0.4 p99=118.1 max=152.2 refused=485
+   od-pg: 288m CPU, memory 977 MiB, peak 984 MiB
+   od-pgb: 75m CPU, memory 6 MiB, peak 12 MiB
+   od-ev1: 240m CPU, memory 465 MiB, peak 466 MiB
+   od-ev2: 270m CPU, memory 504 MiB, peak 506 MiB
+   od-dec1: 372m CPU, memory 38 MiB, peak 53 MiB
+"decisions":240425
+   replica 0: records=542746 batches=5324 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108034 walFail=0 lateLanded=217 lateLost=0 commitTx=106921 manifestTx=0 groupP50=1 groupUsP50=297 groupUsP99=1911
+   replica 1: records=609715 batches=5371 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=132391 walFail=0 lateLanded=268 lateLost=0 commitTx=130513 manifestTx=0 groupP50=1 groupUsP50=292 groupUsP99=1806
+
+### Retry after 500 ms: 2,000/s, all regulated, 120 s, stall of the database none
+   window 30s: decisions so far=59962 commits=59949 p50=0.4 p99=4.4 max=87.3 refused=0
+   window 60s: decisions so far=120355 commits=60287 p50=0.4 p99=2.7 max=37.3 refused=0
+   window 90s: decisions so far=180823 commits=60336 p50=0.5 p99=16.4 max=107.8 refused=0
+   busy: n=110221 codes={'200': 104816, '403': 5405, '503-then-retry': 269} p50=0.83 p90=1.57 p99=12.76 p99.9=89.4 max=161.5 ms
+   small: n=109779 codes={'200': 104300, '403': 5479, '503-then-retry': 236} p50=0.83 p90=1.57 p99=12.07 p99.9=72.1 max=161.8 ms
+   elapsed 120s broken=0 refusedFirst=505 retried=505 retryPassed=505 retryRefused=0 retryOther=0
+   window 120s: decisions so far=240448 commits=59502 p50=0.4 p99=105.0 max=152.0 refused=505
+   od-pg: 284m CPU, memory 947 MiB, peak 984 MiB
+   od-pgb: 74m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 195m CPU, memory 298 MiB, peak 299 MiB
+   od-ev2: 299m CPU, memory 641 MiB, peak 682 MiB
+   od-dec1: 365m CPU, memory 39 MiB, peak 46 MiB
+"decisions":240448
+   replica 0: records=315407 batches=2682 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108837 walFail=0 lateLanded=229 lateLost=0 commitTx=107862 manifestTx=0 groupP50=1 groupUsP50=296 groupUsP99=1656
+   replica 1: records=837268 batches=5508 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=131611 walFail=0 lateLanded=270 lateLost=0 commitTx=129913 manifestTx=0 groupP50=1 groupUsP50=290 groupUsP99=1561
+
+### Retry after 200 ms with up to 300 ms of jitter: 2,000/s, all regulated, 120 s, stall of the database none
+   window 30s: decisions so far=59995 commits=59983 p50=0.5 p99=24.1 max=144.5 refused=0
+   window 60s: decisions so far=120535 commits=60395 p50=0.4 p99=9.2 max=93.5 refused=0
+   window 90s: decisions so far=181442 commits=60769 p50=0.5 p99=73.5 max=151.9 refused=370
+   busy: n=109871 codes={'200': 104467, '403': 5404, '503-then-retry': 180} p50=0.85 p90=1.71 p99=19.37 p99.9=102.0 max=162.1 ms
+   small: n=110130 codes={'200': 104683, '403': 5447, '503-then-retry': 190} p50=0.85 p90=1.73 p99=20.95 p99.9=111.1 max=162.7 ms
+   elapsed 120s broken=0 refusedFirst=370 retried=370 retryPassed=370 retryRefused=0 retryOther=0
+   window 120s: decisions so far=240317 commits=58779 p50=0.4 p99=3.1 max=24.6 refused=0
+   od-pg: 287m CPU, memory 915 MiB, peak 984 MiB
+   od-pgb: 75m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 273m CPU, memory 616 MiB, peak 668 MiB
+   od-ev2: 229m CPU, memory 347 MiB, peak 349 MiB
+   od-dec1: 372m CPU, memory 35 MiB, peak 44 MiB
+"decisions":240317
+   replica 0: records=769529 batches=5536 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108145 walFail=0 lateLanded=182 lateLost=0 commitTx=106923 manifestTx=0 groupP50=1 groupUsP50=296 groupUsP99=1929
+   replica 1: records=383108 batches=2730 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=132172 walFail=0 lateLanded=183 lateLost=0 commitTx=130304 manifestTx=0 groupP50=1 groupUsP50=294 groupUsP99=1725
+
+### No retry: 2,000/s, all regulated, 120 s, stall of the database 0.4
+   window 30s: decisions so far=59964 commits=59955 p50=0.4 p99=150.0 max=152.0 refused=701
+   window 60s: decisions so far=120366 commits=60262 p50=0.4 p99=150.7 max=154.2 refused=1397
+   window 90s: decisions so far=180762 commits=60273 p50=0.5 p99=150.7 max=152.2 refused=1466
+   busy: n=107328 codes={'200': 101973, '403': 5355, '503': 2750} p50=0.85 p90=1.77 p99=41.85 p99.9=149.2 max=165.4 ms
+   small: n=107284 codes={'200': 101774, '403': 5510, '503': 2638} p50=0.85 p90=1.79 p99=45.08 p99.9=148.3 max=166.0 ms
+   elapsed 120s broken=0 refusedFirst=5388 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 120s: decisions so far=239942 commits=59089 p50=0.4 p99=150.8 max=152.1 refused=1824
+   od-pg: 284m CPU, memory 936 MiB, peak 984 MiB
+   od-pgb: 74m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 235m CPU, memory 483 MiB, peak 485 MiB
+   od-ev2: 265m CPU, memory 469 MiB, peak 470 MiB
+   od-dec1: 365m CPU, memory 32 MiB, peak 43 MiB
+"decisions":239942
+   replica 0: records=533047 batches=5249 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108070 walFail=0 lateLanded=2415 lateLost=0 commitTx=105669 manifestTx=0 groupP50=1 groupUsP50=295 groupUsP99=1792
+   replica 1: records=597566 batches=5283 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=131872 walFail=0 lateLanded=2953 lateLost=0 commitTx=128138 manifestTx=0 groupP50=1 groupUsP50=291 groupUsP99=1710
+
+### Retry after 100 ms: 2,000/s, all regulated, 120 s, stall of the database 0.4
+   window 30s: decisions so far=60662 commits=60653 p50=0.4 p99=150.2 max=152.2 refused=930
+   window 60s: decisions so far=122600 commits=61815 p50=0.4 p99=150.8 max=157.0 refused=2007
+   window 90s: decisions so far=184524 commits=61803 p50=0.5 p99=150.7 max=153.5 refused=1906
+   busy: n=109393 codes={'200': 103994, '403': 5399, '503': 725, '503-then-retry': 2756} p50=0.86 p90=2.91 p99=146.71 p99.9=191.4 max=333.8 ms
+   small: n=109126 codes={'200': 103632, '403': 5494, '503': 756, '503-then-retry': 2719} p50=0.86 p90=2.94 p99=145.90 p99.9=190.6 max=333.9 ms
+   elapsed 120s broken=0 refusedFirst=5475 retried=5475 retryPassed=3994 retryRefused=1481 retryOther=0
+   window 120s: decisions so far=245412 commits=60785 p50=0.5 p99=150.8 max=154.5 refused=2113
+   od-pg: 292m CPU, memory 916 MiB, peak 984 MiB
+   od-pgb: 75m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 272m CPU, memory 628 MiB, peak 646 MiB
+   od-ev2: 230m CPU, memory 333 MiB, peak 336 MiB
+   od-dec1: 369m CPU, memory 37 MiB, peak 59 MiB
+"decisions":245412
+   replica 0: records=766893 batches=5484 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=110093 walFail=0 lateLanded=2984 lateLost=0 commitTx=105688 manifestTx=0 groupP50=1 groupUsP50=298 groupUsP99=1966
+   replica 1: records=384985 batches=2692 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=135319 walFail=0 lateLanded=3887 lateLost=0 commitTx=129016 manifestTx=0 groupP50=1 groupUsP50=295 groupUsP99=1725
+
+### Retry after 500 ms: 2,000/s, all regulated, 120 s, stall of the database 0.4
+   window 30s: decisions so far=60641 commits=60632 p50=0.4 p99=150.1 max=153.3 refused=704
+   window 60s: decisions so far=122428 commits=61678 p50=0.4 p99=150.6 max=152.3 refused=1411
+   window 90s: decisions so far=184314 commits=61770 p50=0.5 p99=150.7 max=152.8 refused=1458
+   busy: n=110280 codes={'200': 104795, '403': 5485, '503-then-retry': 2729} p50=0.86 p90=2.71 p99=75.52 p99.9=151.5 max=172.9 ms
+   small: n=109721 codes={'200': 104245, '403': 5476, '503-then-retry': 2663} p50=0.87 p90=2.74 p99=71.40 p99.9=150.2 max=174.3 ms
+   elapsed 120s broken=0 refusedFirst=5392 retried=5392 retryPassed=5392 retryRefused=0 retryOther=0
+   window 120s: decisions so far=245334 commits=60927 p50=0.5 p99=150.8 max=153.8 refused=1819
+   od-pg: 291m CPU, memory 890 MiB, peak 984 MiB
+   od-pgb: 75m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 275m CPU, memory 607 MiB, peak 615 MiB
+   od-ev2: 231m CPU, memory 324 MiB, peak 326 MiB
+   od-dec1: 371m CPU, memory 33 MiB, peak 44 MiB
+"decisions":245334
+   replica 0: records=770410 batches=5465 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=110235 walFail=0 lateLanded=2485 lateLost=0 commitTx=107114 manifestTx=0 groupP50=1 groupUsP50=298 groupUsP99=1858
+   replica 1: records=386272 batches=2677 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=135099 walFail=0 lateLanded=2899 lateLost=0 commitTx=130690 manifestTx=0 groupP50=1 groupUsP50=295 groupUsP99=1674
+
+### Retry after 200 ms with up to 300 ms of jitter: 2,000/s, all regulated, 120 s, stall of the database 0.4
+   window 30s: decisions so far=60635 commits=60627 p50=0.4 p99=150.0 max=153.3 refused=698
+   window 60s: decisions so far=122437 commits=61686 p50=0.5 p99=150.6 max=153.3 refused=1407
+   window 90s: decisions so far=184322 commits=61754 p50=0.5 p99=150.6 max=152.3 refused=1467
+   busy: n=109871 codes={'200': 104336, '403': 5535, '503': 2, '503-then-retry': 2381} p50=0.92 p90=3.39 p99=105.85 p99.9=165.9 max=210.1 ms
+   small: n=110114 codes={'200': 104688, '403': 5426, '503': 10, '503-then-retry': 2524} p50=0.92 p90=3.46 p99=105.04 p99.9=166.9 max=210.1 ms
+   elapsed 120s broken=0 refusedFirst=4905 retried=4905 retryPassed=4893 retryRefused=12 retryOther=0
+   window 120s: decisions so far=244835 commits=60401 p50=0.5 p99=150.6 max=152.9 refused=1345
+   od-pg: 313m CPU, memory 928 MiB, peak 984 MiB
+   od-pgb: 78m CPU, memory 6 MiB, peak 12 MiB
+   od-ev1: 205m CPU, memory 339 MiB, peak 356 MiB
+   od-ev2: 321m CPU, memory 668 MiB, peak 714 MiB
+   od-dec1: 383m CPU, memory 36 MiB, peak 45 MiB
+"decisions":244835
+   replica 0: records=315196 batches=2717 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=110098 walFail=0 lateLanded=2191 lateLost=0 commitTx=107053 manifestTx=0 groupP50=1 groupUsP50=310 groupUsP99=1985
+   replica 1: records=841361 batches=5634 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=134737 walFail=0 lateLanded=2710 lateLost=0 commitTx=129957 manifestTx=0 groupP50=1 groupUsP50=303 groupUsP99=1875
+
+### No retry: 2,000/s, all regulated, 120 s, stall of the database 2
+   window 30s: decisions so far=59953 commits=59942 p50=0.4 p99=151.1 max=153.7 refused=4195
+   window 60s: decisions so far=120350 commits=60287 p50=0.5 p99=151.5 max=153.9 refused=8422
+   window 90s: decisions so far=180754 commits=60006 p50=0.6 p99=151.5 max=155.2 refused=8660
+   busy: n=95130 codes={'200': 90185, '403': 4945, '503': 15020} p50=0.86 p90=2.09 p99=67.40 p99.9=148.9 max=165.0 ms
+   small: n=94775 codes={'200': 89927, '403': 4848, '503': 15075} p50=0.86 p90=2.17 p99=65.76 p99.9=149.3 max=163.8 ms
+   elapsed 120s broken=0 refusedFirst=30095 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   window 120s: decisions so far=239941 commits=59356 p50=0.5 p99=151.5 max=153.3 refused=8687
+   od-pg: 290m CPU, memory 943 MiB, peak 984 MiB
+   od-pgb: 72m CPU, memory 6 MiB, peak 12 MiB
+   od-ev1: 236m CPU, memory 452 MiB, peak 453 MiB
+   od-ev2: 271m CPU, memory 462 MiB, peak 532 MiB
+   od-dec1: 376m CPU, memory 38 MiB, peak 48 MiB
+"decisions":239941
+   replica 0: records=484264 batches=5269 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=108086 walFail=8 lateLanded=13591 lateLost=8 commitTx=99295 manifestTx=0 groupP50=1 groupUsP50=298 groupUsP99=2082
+   replica 1: records=552002 batches=5492 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=131831 walFail=16 lateLanded=16471 lateLost=16 commitTx=119646 manifestTx=0 groupP50=1 groupUsP50=294 groupUsP99=1967
+
+### Retry after 100 ms: 2,000/s, all regulated, 120 s, stall of the database 2
+   window 30s: decisions so far=64244 commits=64227 p50=0.5 p99=151.3 max=153.6 refused=8055
+   window 60s: decisions so far=133066 commits=68702 p50=0.6 p99=151.5 max=155.1 refused=15866
+   window 90s: decisions so far=202408 commits=69208 p50=0.8 p99=151.5 max=154.6 refused=16566
+   busy: n=96911 codes={'200': 92096, '403': 4815, '503': 13334, '503-then-retry': 15352} p50=0.93 p90=4.71 p99=133.89 p99.9=177.6 max=200.2 ms
+   small: n=96447 codes={'200': 91581, '403': 4866, '503': 13307, '503-then-retry': 15315} p50=0.93 p90=4.71 p99=134.21 p99.9=177.6 max=201.1 ms
+   elapsed 120s broken=0 refusedFirst=30667 retried=30667 retryPassed=4026 retryRefused=26641 retryOther=0
+   window 120s: decisions so far=270612 commits=68071 p50=0.6 p99=151.6 max=155.2 refused=16821
+   od-pg: 327m CPU, memory 926 MiB, peak 988 MiB
+   od-pgb: 77m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 259m CPU, memory 473 MiB, peak 493 MiB
+   od-ev2: 292m CPU, memory 516 MiB, peak 536 MiB
+   od-dec1: 398m CPU, memory 44 MiB, peak 64 MiB
+"decisions":270612
+   replica 0: records=505255 batches=5314 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=121139 walFail=8 lateLanded=25309 lateLost=8 commitTx=101887 manifestTx=0 groupP50=1 groupUsP50=311 groupUsP99=2405
+   replica 1: records=575677 batches=5374 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=149451 walFail=14 lateLanded=31926 lateLost=14 commitTx=123811 manifestTx=0 groupP50=1 groupUsP50=304 groupUsP99=2224
+
+### Retry after 500 ms: 2,000/s, all regulated, 120 s, stall of the database 2
+   window 30s: decisions so far=64381 commits=64371 p50=0.5 p99=151.4 max=154.2 refused=7522
+   window 60s: decisions so far=133520 commits=69030 p50=0.6 p99=151.5 max=154.4 refused=14891
+   window 90s: decisions so far=204222 commits=70576 p50=1.0 p99=151.6 max=174.8 refused=17092
+   window 120s: decisions so far=272170 commits=67847 p50=0.6 p99=151.5 max=158.7 refused=14859
+   busy: n=98680 codes={'200': 93663, '403': 5017, '503': 11215, '503-then-retry': 16224} p50=0.98 p90=25.45 p99=188.09 p99.9=234.5 max=255.9 ms
+   small: n=99184 codes={'200': 94224, '403': 4960, '503': 10923, '503-then-retry': 16002} p50=0.99 p90=26.16 p99=188.38 p99.9=229.9 max=256.1 ms
+   elapsed 121s broken=0 refusedFirst=32226 retried=32226 retryPassed=10088 retryRefused=22138 retryOther=0
+   od-pg: 351m CPU, memory 930 MiB, peak 988 MiB
+   od-pgb: 80m CPU, memory 7 MiB, peak 12 MiB
+   od-ev1: 225m CPU, memory 310 MiB, peak 312 MiB
+   od-ev2: 339m CPU, memory 692 MiB, peak 701 MiB
+   od-dec1: 409m CPU, memory 39 MiB, peak 66 MiB
+"decisions":272170
+   replica 0: records=307541 batches=2676 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=121763 walFail=7 lateLanded=24008 lateLost=7 commitTx=105219 manifestTx=0 groupP50=1 groupUsP50=319 groupUsP99=2500
+   replica 1: records=792036 batches=5555 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=150388 walFail=12 lateLanded=30286 lateLost=12 commitTx=126635 manifestTx=0 groupP50=1 groupUsP50=310 groupUsP99=2367
+
+### Retry after 200 ms with up to 300 ms of jitter: 2,000/s, all regulated, 120 s, stall of the database 2
+   window 30s: decisions so far=64442 commits=64431 p50=0.5 p99=151.4 max=158.4 refused=8021
+   window 60s: decisions so far=133717 commits=69149 p50=0.6 p99=151.5 max=154.9 refused=15667
+   window 90s: decisions so far=203978 commits=70145 p50=0.9 p99=151.6 max=158.1 refused=16973
+   busy: n=97810 codes={'200': 93010, '403': 4800, '503': 11999, '503-then-retry': 15929} p50=0.92 p90=8.92 p99=157.06 p99.9=184.8 max=221.2 ms
+   small: n=98186 codes={'200': 93115, '403': 5071, '503': 12005, '503-then-retry': 15826} p50=0.93 p90=8.37 p99=157.04 p99.9=185.4 max=204.3 ms
+   elapsed 121s broken=0 refusedFirst=31755 retried=31755 retryPassed=7751 retryRefused=24004 retryOther=0
+   window 120s: decisions so far=271694 commits=67612 p50=0.5 p99=151.6 max=159.8 refused=15098
+   od-pg: 337m CPU, memory 910 MiB, peak 988 MiB
+   od-pgb: 78m CPU, memory 8 MiB, peak 12 MiB
+   od-ev1: 259m CPU, memory 445 MiB, peak 447 MiB
+   od-ev2: 296m CPU, memory 507 MiB, peak 527 MiB
+   od-dec1: 404m CPU, memory 43 MiB, peak 67 MiB
+"decisions":271694
+   replica 0: records=510964 batches=5239 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=122041 walFail=9 lateLanded=24659 lateLost=9 commitTx=104815 manifestTx=0 groupP50=1 groupUsP50=310 groupUsP99=2481
+   replica 1: records=581081 batches=5326 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=149634 walFail=10 lateLanded=31006 lateLost=10 commitTx=125987 manifestTx=0 groupP50=1 groupUsP50=304 groupUsP99=2254
+
+=== 4f. Aggregates over contiguous ranges, and a decision identifier resolving during a flood
+
+### 3,000 denied/s, one host, beside 500/s
+   busy: n=19937 codes={'200': 18946, '403': 991} p50=0.51 p90=0.85 p99=1.97 p99.9=4.7 max=14.1 ms
+   small: n=20063 codes={'200': 19089, '403': 974} p50=0.51 p90=0.85 p99=2.04 p99.9=4.8 max=10.4 ms
+   noisy: n=239998 codes={'403': 239998} p50=0.41 p90=0.71 p99=1.74 p99.9=4.3 max=13.9 ms
+   elapsed 90s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=314870 emitted=400396 prodDropped=0 sendFail=0 gapRecords=0 gapSeqs=0 queued=0 commitOK=0 refused=0
+   replica 0: records=414213 batches=8911 droppedTenant=0 aggIn=269886 aggOut=2 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=71709 batches=4480 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2500 records present=44982 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant 1: positions=1 records present=269888 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:44984 denial_aggregate:2]; positions with a closing record: 0
+   noisy tenant stored: 2 rows, 4 records, 1126 bytes stored
+   sampled identifiers:    13605
+lookup: identifiers=400 resolved to map[aggregate:398 whole record:2]; time per lookup p50=3ms p99=23ms
+compact: groups=7501 skipped=0 failed=0 batches merged=13391 bytes=14828689 wall=7.19s par=8 groups/s=1042.9 group ms p50=7.2 p99=15.1 max=44.3 cpu=7.
+   after compaction: lookup: identifiers=200 resolved to map[aggregate:198 whole record:2]; time per lookup p50=4ms p99=24ms
+
+### 3,000 denied/s, two hosts alternating
+   busy: n=20116 codes={'200': 19105, '403': 1011} p50=0.52 p90=0.85 p99=2.05 p99.9=16.4 max=51.6 ms
+   small: n=19885 codes={'200': 18939, '403': 946} p50=0.53 p90=0.84 p99=2.01 p99.9=14.7 max=54.8 ms
+   noisy: n=240004 codes={'403': 240004} p50=0.42 p90=0.71 p99=1.80 p99.9=17.1 max=59.0 ms
+   elapsed 90s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=314878 emitted=400412 prodDropped=0 sendFail=0 gapRecords=0 gapSeqs=0 queued=0 commitOK=0 refused=0
+   replica 0: records=371163 batches=8037 droppedTenant=0 aggIn=82520 aggOut=60533 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=114775 batches=8032 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2500 records present=44983 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant 1: positions=1 records present=269895 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:232358 denial_aggregate:60533]; positions with a closing record: 0
+   noisy tenant stored: 42 rows, 247908 records, 6317 kB stored
+   sampled identifiers:    13605
+lookup: identifiers=400 resolved to map[aggregate:129 whole record:271]; time per lookup p50=19ms p99=43ms
+compact: groups=7501 skipped=0 failed=0 batches merged=16069 bytes=22386214 wall=7.65s par=8 groups/s=980.6 group ms p50=7.5 p99=23.2 max=91.5 cpu=7.7
+   after compaction: lookup: identifiers=200 resolved to map[aggregate:57 whole record:143]; time per lookup p50=20ms p99=45ms
+
+### 3,000 denied/s, a new host each
+   busy: n=20057 codes={'200': 19053, '403': 1004} p50=0.47 p90=0.78 p99=1.74 p99.9=3.8 max=12.8 ms
+   small: n=19943 codes={'200': 18984, '403': 959} p50=0.47 p90=0.77 p99=1.72 p99.9=3.6 max=9.9 ms
+   noisy: n=240003 codes={'403': 240003} p50=0.39 p90=0.65 p99=1.56 p99.9=3.5 max=14.1 ms
+   elapsed 90s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=314866 emitted=400390 prodDropped=0 sendFail=0 gapRecords=0 gapSeqs=0 queued=0 commitOK=0 refused=0
+   replica 0: records=371291 batches=7968 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=114623 batches=7999 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2500 records present=44981 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant 1: positions=1 records present=269885 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:314866]; positions with a closing record: 0
+   noisy tenant stored: 48 rows, 269885 records, 10060 kB stored
+   sampled identifiers:    13605
+lookup: identifiers=400 resolved to map[whole record:400]; time per lookup p50=19ms p99=37ms
+compact: groups=7501 skipped=0 failed=0 batches merged=15967 bytes=26152311 wall=8.07s par=8 groups/s=930.0 group ms p50=7.9 p99=24.6 max=178.8 cpu=7.
+   after compaction: lookup: identifiers=200 resolved to map[whole record:200]; time per lookup p50=20ms p99=40ms
+
+### One busy tenant whose allows interleave with 1,000 denied/s of one host
+   busy: n=20041 codes={'200': 19037, '403': 1004} p50=0.63 p90=0.98 p99=2.02 p99.9=4.3 max=16.2 ms
+   small: n=19959 codes={'200': 18923, '403': 1036} p50=0.63 p90=0.99 p99=2.04 p99.9=4.3 max=12.6 ms
+   noisy: n=79999 codes={'403': 79999} p50=0.53 p90=0.87 p99=1.82 p99.9=3.9 max=13.2 ms
+   elapsed 90s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=134936 emitted=220348 prodDropped=0 sendFail=0 gapRecords=0 gapSeqs=0 queued=0 commitOK=0 refused=0
+   replica 0: records=234393 batches=9019 droppedTenant=0 aggIn=89955 aggOut=2 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=71367 batches=4459 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2500 records present=44979 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant 1: positions=1 records present=89957 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:44981 denial_aggregate:2]; positions with a closing record: 0
+   noisy tenant stored: 2 rows, 4 records, 1138 bytes stored
+   sampled identifiers:     4611
+lookup: identifiers=400 resolved to map[aggregate:394 whole record:6]; time per lookup p50=3ms p99=22ms
+compact: groups=7501 skipped=0 failed=0 batches merged=13478 bytes=14857281 wall=8.00s par=8 groups/s=937.4 group ms p50=8.0 p99=17.3 max=78.6 cpu=8.1
+   after compaction: lookup: identifiers=200 resolved to map[aggregate:192 whole record:8]; time per lookup p50=4ms p99=24ms
+
+=== 4g. Per-session sequences
+
+### A single sequence for the tenant (the earlier layout): one chunk of s3 lost
+  chunk session=s3 sequence=1 sequenceEnd=1999
+  chunk session=s4 sequence=2 sequenceEnd=2000
+  chunk session=s3 sequence=2001 sequenceEnd=3999
+  chunk session=s4 sequence=2002 sequenceEnd=4000
+  chunk session=s4 sequence=4002 sequenceEnd=6000
+  chunk session=s3 sequence=6001 sequenceEnd=7999
+  unannounced hole tq agent.activity lenny-egress-authz.lenny-system.svc d1a1a054e009-978609: 4001..4001 (0 announced)
+audit: positions=1 records present=7999 duplicates=5994 | holes between records: missing=1 announced=0 unannounced=1 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:7]; positions with a closing record: 0
+
+### A sequence per session (revision 42): one chunk of s3 lost
+  chunk session=s3 sequence=1 sequenceEnd=1000
+  chunk session=s4 sequence=1 sequenceEnd=1000
+  chunk session=s3 sequence=1001 sequenceEnd=2000
+  chunk session=s4 sequence=1001 sequenceEnd=2000
+  chunk session=s4 sequence=2001 sequenceEnd=3000
+  chunk session=s4 sequence=3001 sequenceEnd=4000
+  unannounced hole tq agent.activity lenny-egress-authz.lenny-system.svc d1a1a0553209-8e6ae1 s3: 2001..3000 (0 announced)
+audit: positions=2 records present=7000 duplicates=0 | holes between records: missing=1000 announced=0 unannounced=1000 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:7]; positions with a closing record: 0
+
+=== 4h. Cached key invalidation on destruction
+
+### Per-record encryption, push to the other replica
+   before destruction: read: decrypted payloads per session=map[s1:200] records unreadable per session=map[] unencrypted=0 chunks=0 key refs=map[k/tk/s1/1:200]
+   destroy through replica 0: destroyed err=<nil> pushed=1
+   keys: 1|t|t 2|f|f 
+   after destruction, 8 s later: read: decrypted payloads per session=map[s1:60] records unreadable per session=map[s1:200] unencrypted=0 chunks=0 key refs=map[k/tk/s1/1:200 k/tk/s1/2:60]
+"keysCreated":2
+"keysCreated":0
+
+### Per-record encryption, no push, cached key TTL 10 s: the other replica's lag
+   before destruction: read: decrypted payloads per session=map[s1:200] records unreadable per session=map[] unencrypted=0 chunks=0 key refs=map[k/tk/s1/1:200]
+   destroy through replica 0: destroyed err=<nil> pushed=0
+   keys: 1|t|t 2|f|f 
+   after destruction, 28 s later: read: decrypted payloads per session=map[s1:240] records unreadable per session=map[s1:240] unencrypted=0 chunks=0 key refs=map[k/tk/s1/1:240 k/tk/s1/2:240]
+"keysCreated":2
+"keysCreated":0
+
+### Chunks, encrypted at flush: buffered payloads at destruction
+   destroy with 300 payloads still buffered in plaintext: destroyed err=<nil> pushed=1
+   read: decrypted payloads per session=map[s1:300] records unreadable per session=map[s1:1] unencrypted=0 chunks=1 key refs=map[k/tk/s1/1:1 k/tk/s1/2:1]
+audit: positions=1 records present=800 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:2]; positions with a closing record: 0
+
+### Chunks, with the buffer purged on destruction (not in the text)
+   destroy with 300 payloads still buffered in plaintext: purged 300 buffered payloads; destroyed err=<nil> pushed=1
+   read: decrypted payloads per session=map[] records unreadable per session=map[s1:1] unencrypted=1 chunks=0 key refs=map[k/tk/s1/1:1]
+audit: positions=1 records present=500 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[erased_before_flush:300]; record kinds: map[:1 gap:1]; positions with a closing record: 0
+
+=== 4i. The compacted row
+
+### The list in the row, anchors naming every batch (round 11)
+gen: hour=2026110300 tenants=50 rate=200 records=2160015 raw=1480.7 MiB compressed=103.5 MiB (7.0%) mean record=719 bytes objects=6000 manifest rows=6000 in 8s
+compact: groups=100 skipped=0 failed=0 batches merged=6000 bytes=108516540 wall=1.16s par=8 groups/s=86.0 group ms p50=85.2 p99=127.5 max=149.9 cpu=1.52s
+sizes: compacted rows=100 mean row=7608 bytes, parts per row mean=60.0, manifest table=3528 KiB | compaction anchors=100 mean=5047 bytes | manifest anchors=0 mean=0 bytes | audit_chain table=672 KiB
+verify: rows=100 objects=100 batches=6000 records=2160015 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=100 (compaction 100) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=0 digest-only interval anchors=0 index faults=0 index fetches
+export: delivered=2160015 parts skipped by index=0 cursor positions=100 cursor bytes=6841 17.1s
+   export again, nothing new: export: delivered=0 parts skipped by index=6000 cursor positions=100 cursor bytes=6841 0.0s
+sizes: compacted rows=100 mean row=7608 bytes, parts per row mean=60.0, manifest table=912 KiB | compaction anchors=100 mean=5047 bytes | manifest anchors=0 mean=0 bytes | audit_chain table=600 KiB
+flipped a byte in t20/evidence/egress.tunnel/2026110300/compacted-22f6babc99eacf83.gz
+  OBJECT DIGEST MISMATCH t20/evidence/egress.tunnel/2026110300/compacted-22f6babc99eacf83.gz
+verify: rows=100 objects=100 batches=5940 records=2144031 | object digest mismatches=1 part digest mismatches=0 record count mismatches=0 | chain events=100 (compaction 100) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction
+
+### Row holds the digest, list in the object's index, anchors naming every batch (the text)
+gen: hour=2026110300 tenants=50 rate=200 records=2160015 raw=1480.7 MiB compressed=103.5 MiB (7.0%) mean record=719 bytes objects=6000 manifest rows=6000 in 8s
+compact: groups=100 skipped=0 failed=0 batches merged=6000 bytes=108958999 wall=1.10s par=8 groups/s=90.7 group ms p50=76.2 p99=165.2 max=165.4 cpu=1.44s
+sizes: compacted rows=100 mean row=392 bytes, parts per row mean=60.0, manifest table=2704 KiB | compaction anchors=100 mean=5048 bytes | manifest anchors=0 mean=0 bytes | audit_chain table=656 KiB
+verify: rows=100 objects=100 batches=6000 records=2160015 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=100 (compaction 100) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=0 digest-only interval anchors=0 index faults=0 index fetches
+export: delivered=2160015 parts skipped by index=0 cursor positions=100 cursor bytes=6841 18.9s
+   export again, nothing new: export: delivered=0 parts skipped by index=6000 cursor positions=100 cursor bytes=6841 0.2s
+sizes: compacted rows=100 mean row=392 bytes, parts per row mean=60.0, manifest table=104 KiB | compaction anchors=100 mean=5048 bytes | manifest anchors=0 mean=0 bytes | audit_chain table=600 KiB
+flipped a byte in t17/evidence/egress.tunnel/2026110300/compacted-c93214cb1c207a98.gz
+  OBJECT DIGEST MISMATCH t17/evidence/egress.tunnel/2026110300/compacted-c93214cb1c207a98.gz
+verify: rows=100 objects=100 batches=5940 records=2144013 | object digest mismatches=1 part digest mismatches=0 record count mismatches=0 | chain events=100 (compaction 100) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction
+
+### Row holds the digest, list in the index, compaction anchors hold a digest only
+gen: hour=2026110300 tenants=50 rate=200 records=2160015 raw=1480.7 MiB compressed=103.5 MiB (7.0%) mean record=719 bytes objects=6000 manifest rows=6000 in 8s
+compact: groups=100 skipped=0 failed=0 batches merged=6000 bytes=108958999 wall=1.12s par=8 groups/s=89.5 group ms p50=81.9 p99=122.8 max=130.7 cpu=1.48s
+sizes: compacted rows=100 mean row=392 bytes, parts per row mean=60.0, manifest table=2680 KiB | compaction anchors=100 mean=440 bytes | manifest anchors=0 mean=0 bytes | audit_chain table=112 KiB
+verify: rows=100 objects=100 batches=6000 records=2160015 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=100 (compaction 100) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=100 digest-only interval anchors=0 index faults=0 index fetch
+export: delivered=2160015 parts skipped by index=0 cursor positions=100 cursor bytes=6841 18.3s
+   export again, nothing new: export: delivered=0 parts skipped by index=6000 cursor positions=100 cursor bytes=6841 0.1s
+sizes: compacted rows=100 mean row=392 bytes, parts per row mean=60.0, manifest table=104 KiB | compaction anchors=100 mean=440 bytes | manifest anchors=0 mean=0 bytes | audit_chain table=72 KiB
+flipped a byte in t28/evidence/egress.tunnel/2026110300/compacted-060ba1abdf39d63d.gz
+  OBJECT DIGEST MISMATCH t28/evidence/egress.tunnel/2026110300/compacted-060ba1abdf39d63d.gz
+verify: rows=100 objects=100 batches=5940 records=2144001 | object digest mismatches=1 part digest mismatches=0 record count mismatches=0 | chain events=100 (compaction 100) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction
+
+### A compromised compactor that drops one batch and writes a consistent object, index, row, and anchor, on data from running ingest
+--- interval anchors name batches, compaction anchors name batches
+   busy: n=10540 codes={'200': 9998, '403': 542} p50=0.80 p90=1.97 p99=3.51 p99.9=4.9 max=20.5 ms
+   small: n=10450 codes={'200': 9937, '403': 513} p50=0.81 p90=2.10 p99=3.55 p99.9=7.1 max=23.2 ms
+   elapsed 70s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+compact: groups=120 skipped=0 failed=0 batches merged=720 bytes=2887983 wall=0.36s par=8 groups/s=338.0 group ms p50=20.0 p99=54.5 max=57.4 
+verify: rows=120 objects=120 batches=720 records=86021 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=160 (compaction 120) bad links=0 anchors not recomputing=40 anchored batches absent=120 digest-only compaction anchors=0 digest-only interval anchors=0 index faults=0 index fetches
+   anchor-related lines: 160
+audit: positions=120 records present=86021 duplicates=0 | holes between records: missing=14709 announced=0 unannounced=14709 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+sizes: compacted rows=120 mean row=392 bytes, parts per row mean=6.0, manifest table=824 KiB | compaction anchors=120 mean=1266 bytes | manifest anchors=40 mean=1178 bytes | audit_chain table=272 KiB
+--- interval anchors name batches, compaction anchors hold a digest
+   busy: n=10520 codes={'200': 9975, '403': 545} p50=0.78 p90=1.94 p99=3.88 p99.9=20.8 max=35.7 ms
+   small: n=10470 codes={'200': 9924, '403': 546} p50=0.78 p90=1.90 p99=3.89 p99.9=18.4 max=35.7 ms
+   elapsed 70s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+compact: groups=120 skipped=0 failed=0 batches merged=1000 bytes=3089160 wall=0.44s par=8 groups/s=275.5 group ms p50=25.2 p99=68.3 max=73.1
+verify: rows=120 objects=120 batches=1000 records=88792 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=160 (compaction 120) bad links=0 anchors not recomputing=40 anchored batches absent=120 digest-only compaction anchors=120 digest-only interval anchors=0 index faults=0 index fetc
+   anchor-related lines: 160
+audit: positions=160 records present=88792 duplicates=0 | holes between records: missing=11794 announced=0 unannounced=11794 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+sizes: compacted rows=120 mean row=392 bytes, parts per row mean=8.3, manifest table=1080 KiB | compaction anchors=120 mean=472 bytes | manifest anchors=40 mean=1497 bytes | audit_chain table=184 KiB
+--- interval anchors hold a digest only, compaction anchors hold a digest
+   busy: n=10548 codes={'200': 10007, '403': 541} p50=0.80 p90=1.89 p99=3.59 p99.9=10.8 max=20.4 ms
+   small: n=10441 codes={'200': 9910, '403': 531} p50=0.81 p90=1.82 p99=3.62 p99.9=7.6 max=25.8 ms
+   elapsed 70s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+compact: groups=120 skipped=0 failed=0 batches merged=720 bytes=2883870 wall=0.47s par=8 groups/s=254.9 group ms p50=23.9 p99=88.3 max=89.8 
+verify: rows=120 objects=120 batches=720 records=85910 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=160 (compaction 120) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=120 digest-only interval anchors=40 index faults=0 index fetches
+   anchor-related lines: 0
+audit: positions=120 records present=85910 duplicates=0 | holes between records: missing=14747 announced=0 unannounced=14747 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+sizes: compacted rows=120 mean row=392 bytes, parts per row mean=6.0, manifest table=824 KiB | compaction anchors=120 mean=472 bytes | manifest anchors=40 mean=216 bytes | audit_chain table=128 KiB

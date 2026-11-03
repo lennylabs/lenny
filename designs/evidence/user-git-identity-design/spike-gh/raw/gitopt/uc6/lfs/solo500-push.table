@@ -1,0 +1,1 @@
+solo500-push-push              rc=0    35.9s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 9, 'lfs-action-credential:held': 9, 'lfs-transfer-put:allowed': 9} stub={'gitlab.ex PUT 500': 9}

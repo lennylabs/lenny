@@ -1,0 +1,530 @@
+// lsrefs: spike of the gateway ref resolver. Protocol v2 ls-refs over smart HTTP with a v0 fallback,
+// through an HTTP CONNECT proxy, bounded in bytes and time, no redirects, strict pkt-line parsing.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+const maxBytes = 1 << 20
+
+var proxyCA = flag.String("proxy-ca", "", "CA file: the proxy hop uses TLS")
+var sessionCache = tls.NewLRUClientSessionCache(64)
+
+type Class string
+
+const (
+	OK        Class = "ok"
+	NotFound  Class = "unresolvable"  // PERMANENT: ref absent, repo absent, or auth refused
+	Transient Class = "transient"     // TRANSIENT: egress path or host unavailable
+	Denied    Class = "policy_denied" // the decision refused the CONNECT
+	Bounded   Class = "bounded"       // the host exceeded a cap
+)
+
+type Result struct {
+	SHA, Proto string
+	Class      Class
+	Err        string
+	Bytes      int64
+	Dur        time.Duration
+	Connect    int
+}
+
+type Opts struct {
+	Proxy, Token, Tenant string
+	Keepalive            bool
+	Insecure             bool
+	Timeout, Dial        time.Duration
+}
+
+type countR struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countR) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+func NewTransport(o Opts, connectStatus *atomic.Int64) *http.Transport {
+	t := &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: o.Dial}).DialContext,
+		TLSHandshakeTimeout:   5 * time.Second,
+		DisableKeepAlives:     !o.Keepalive,
+		ResponseHeaderTimeout: o.Timeout,
+		ForceAttemptHTTP2:     false,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: o.Insecure},
+		MaxIdleConnsPerHost:   64,
+	}
+	if o.Proxy != "" {
+		u, _ := url.Parse(o.Proxy)
+		t.Proxy = http.ProxyURL(u)
+		if *proxyCA != "" {
+			pool := x509.NewCertPool()
+			pem, err := os.ReadFile(*proxyCA)
+			if err != nil {
+				panic(err)
+			}
+			pool.AppendCertsFromPEM(pem)
+			base := t.DialContext
+			cfg := &tls.Config{RootCAs: pool, ServerName: "lenny-egress.lenny-system.svc", NextProtos: []string{"http/1.1"}, ClientSessionCache: sessionCache}
+			host := u.Host
+			t.DialContext = func(ctx context.Context, n, addr string) (net.Conn, error) {
+				c, err := base(ctx, n, addr)
+				if err != nil || addr != host {
+					return c, err
+				}
+				tc := tls.Client(c, cfg)
+				if err := tc.HandshakeContext(ctx); err != nil {
+					c.Close()
+					return nil, err
+				}
+				return tc, nil
+			}
+		}
+		t.OnProxyConnectResponse = func(_ context.Context, _ *url.URL, _ *http.Request, r *http.Response) error {
+			connectStatus.Store(int64(r.StatusCode))
+			return nil
+		}
+		t.GetProxyConnectHeader = func(ctx context.Context, _ *url.URL, _ string) (http.Header, error) {
+			h := http.Header{}
+			if o.Token != "" {
+				h.Set("Proxy-Authorization", "Basic "+basic(proxyUser, o.Token))
+			}
+			if v, _ := ctx.Value(tenantKey{}).(string); v != "" && false {
+			}
+			if v, _ := ctx.Value(tenantKey{}).(string); v != "" {
+				h.Set("X-Lenny-Tenant", v)
+			}
+			return h, nil
+		}
+	}
+	return t
+}
+
+type tenantKey struct{}
+
+var proxyUser = func() string {
+	if u := os.Getenv("PROXY_USER"); u != "" {
+		return u
+	}
+	return "lenny"
+}()
+
+func basic(u, p string) string {
+	const a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+	b := []byte(u + ":" + p)
+	var out []byte
+	for i := 0; i < len(b); i += 3 {
+		var v uint32
+		n := 0
+		for j := 0; j < 3; j++ {
+			v <<= 8
+			if i+j < len(b) {
+				v |= uint32(b[i+j])
+				n++
+			}
+		}
+		for j := 0; j < 4; j++ {
+			if j <= n {
+				out = append(out, a[(v>>(18-6*uint(j)))&63])
+			} else {
+				out = append(out, '=')
+			}
+		}
+	}
+	return string(out)
+}
+
+func pkt(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
+
+func readPkt(r *bufio.Reader) (line []byte, flush bool, delim bool, err error) {
+	var h [4]byte
+	if _, err = io.ReadFull(r, h[:]); err != nil {
+		return
+	}
+	n, e := strconv.ParseUint(string(h[:]), 16, 16)
+	if e != nil {
+		err = fmt.Errorf("malformed pkt-line header %q", h[:])
+		return
+	}
+	switch {
+	case n == 0:
+		return nil, true, false, nil
+	case n == 1 || n == 2:
+		return nil, false, true, nil
+	case n < 4:
+		err = fmt.Errorf("invalid pkt-line length %d", n)
+		return
+	case n > 65520:
+		err = fmt.Errorf("oversize pkt-line %d", n)
+		return
+	}
+	line = make([]byte, n-4)
+	_, err = io.ReadFull(r, line)
+	return
+}
+
+func isOID(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
+var errCap = errors.New("response cap exceeded")
+
+type capReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (c *capReader) Read(p []byte) (int, error) {
+	if c.left <= 0 {
+		return 0, errCap
+	}
+	if int64(len(p)) > c.left {
+		p = p[:c.left]
+	}
+	n, err := c.r.Read(p)
+	c.left -= int64(n)
+	return n, err
+}
+
+func pickRef(refs map[string]string, peeled map[string]string, ref string) string {
+	for _, cand := range []string{ref, "refs/heads/" + ref, "refs/tags/" + ref} {
+		if s, ok := peeled[cand]; ok {
+			return s
+		}
+		if s, ok := refs[cand]; ok {
+			return s
+		}
+	}
+	return ""
+}
+
+func Resolve(ctx context.Context, cl *http.Client, cs *atomic.Int64, repo, ref string, v0Only, direct bool) Result {
+	start := time.Now()
+	res := func(c Class, sha, proto, msg string, n int64) Result {
+		return Result{SHA: sha, Proto: proto, Class: c, Err: msg, Bytes: n, Dur: time.Since(start)}
+	}
+	classify := func(err error, proto string, n int64) Result {
+		st := cs.Load()
+		switch {
+		case st == 0 && !direct:
+			return res(Transient, "", proto, "egress path: "+fmt.Sprint(err), n)
+		case st == 403 || st == 407:
+			return res(Denied, "", proto, fmt.Sprintf("CONNECT %d", st), n)
+		case errors.Is(err, errCap):
+			return res(Bounded, "", proto, "byte cap", n)
+		case errors.Is(err, context.DeadlineExceeded):
+			return res(Bounded, "", proto, "time cap", n)
+		case err != nil && strings.Contains(err.Error(), "pkt-line"):
+			return res(Bounded, "", proto, err.Error(), n)
+		}
+		return res(Transient, "", proto, fmt.Sprint(err), n)
+	}
+	// v2
+	if !v0Only {
+		body := pkt("command=ls-refs\n") + pkt("agent=lenny/spike\n") + "0001" + pkt("peel\n") + pkt("symrefs\n")
+		for _, p := range []string{ref, "refs/heads/" + ref, "refs/tags/" + ref} {
+			body += pkt("ref-prefix " + p + "\n")
+		}
+		body += "0000"
+		req, _ := http.NewRequestWithContext(ctx, "POST", repo+"/git-upload-pack", strings.NewReader(body))
+		req.Header.Set("Git-Protocol", "version=2")
+		req.Header.Set("Content-Type", "application/x-git-upload-pack-request")
+		req.Header.Set("Accept", "application/x-git-upload-pack-result")
+		req.Header.Set("User-Agent", "git/2.49-lenny-spike")
+		resp, err := cl.Do(req)
+		if err != nil {
+			return classify(err, "v2", 0)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			return res(NotFound, "", "v2", fmt.Sprintf("redirect refused (%d)", resp.StatusCode), 0)
+		}
+		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+			return res(Transient, "", "v2", fmt.Sprintf("host %d", resp.StatusCode), 0)
+		}
+		if resp.StatusCode == 200 && strings.Contains(resp.Header.Get("Content-Type"), "x-git-upload-pack-result") {
+			cr := &countR{r: &capReader{r: resp.Body, left: maxBytes}}
+			r := bufio.NewReader(cr)
+			refs, peeled := map[string]string{}, map[string]string{}
+			v2ok := true
+			for {
+				line, flush, _, err := readPkt(r)
+				if err != nil {
+					if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
+						return res(Transient, "", "v2", "short read", cr.n)
+					}
+					return classify(err, "v2", cr.n)
+				}
+				if flush {
+					break
+				}
+				f := strings.Fields(strings.TrimRight(string(line), "\n"))
+				if len(f) < 2 || !isOID(f[0]) {
+					v2ok = false // not a v2 ls-refs reply (for example a v0 advertisement)
+					break
+				}
+				refs[f[1]] = f[0]
+				for _, a := range f[2:] {
+					if strings.HasPrefix(a, "peeled:") {
+						peeled[f[1]] = strings.TrimPrefix(a, "peeled:")
+					}
+				}
+			}
+			if v2ok {
+				if s := pickRef(refs, peeled, ref); s != "" {
+					return res(OK, s, "v2", "", cr.n)
+				}
+				return res(NotFound, "", "v2", "ref absent", cr.n)
+			}
+		} else if resp.StatusCode == 401 || resp.StatusCode == 403 || resp.StatusCode == 404 {
+			// Fall through to v0: a host without v2 answers this way, and a true absence repeats on v0.
+		}
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	}
+	// v0: GET info/refs, stop at the first match, capped.
+	req, _ := http.NewRequestWithContext(ctx, "GET", repo+"/info/refs?service=git-upload-pack", nil)
+	req.Header.Set("User-Agent", "git/2.49-lenny-spike")
+	resp, err := cl.Do(req)
+	if err != nil {
+		return classify(err, "v0", 0)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return res(NotFound, "", "v0", fmt.Sprintf("redirect refused (%d)", resp.StatusCode), 0)
+	}
+	if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+		return res(Transient, "", "v0", fmt.Sprintf("host %d", resp.StatusCode), 0)
+	}
+	if resp.StatusCode != 200 {
+		return res(NotFound, "", "v0", fmt.Sprintf("host %d", resp.StatusCode), 0)
+	}
+	cr := &countR{r: &capReader{r: resp.Body, left: maxBytes}}
+	r := bufio.NewReader(cr)
+	refs, peeled := map[string]string{}, map[string]string{}
+	flushes := 0
+	want := []string{ref, "refs/heads/" + ref, "refs/tags/" + ref}
+	for {
+		line, flush, _, err := readPkt(r)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			if errors.Is(err, errCap) {
+				if s := pickRef(refs, peeled, ref); s != "" {
+					return res(OK, s, "v0", "matched before cap", cr.n)
+				}
+			}
+			return classify(err, "v0", cr.n)
+		}
+		if flush {
+			flushes++
+			if flushes >= 2 {
+				break
+			}
+			continue
+		}
+		s := strings.TrimRight(string(line), "\n")
+		if strings.HasPrefix(s, "# service=") {
+			continue
+		}
+		if i := strings.IndexByte(s, 0); i >= 0 {
+			s = s[:i]
+		}
+		f := strings.Fields(s)
+		if len(f) != 2 || !isOID(f[0]) {
+			return res(Bounded, "", "v0", "pkt-line: bad advertisement line", cr.n)
+		}
+		if strings.HasSuffix(f[1], "^{}") {
+			peeled[strings.TrimSuffix(f[1], "^{}")] = f[0]
+		} else {
+			refs[f[1]] = f[0]
+		}
+		// A sorted advertisement lets the reader stop once it is past every candidate (a peeled tag line
+		// follows its tag directly, so the stop waits one line past the last candidate).
+		past := true
+		for _, w := range want {
+			if f[1] <= w || strings.HasPrefix(f[1], w) {
+				past = false
+			}
+		}
+		if past {
+			break
+		}
+	}
+	if s := pickRef(refs, peeled, ref); s != "" {
+		return res(OK, s, "v0", "", cr.n)
+	}
+	return res(NotFound, "", "v0", "ref absent", cr.n)
+}
+
+func client(o Opts, cs *atomic.Int64) *http.Client {
+	return &http.Client{Transport: NewTransport(o, cs), CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+func pct(d []time.Duration, p float64) time.Duration {
+	if len(d) == 0 {
+		return 0
+	}
+	sort.Slice(d, func(i, j int) bool { return d[i] < d[j] })
+	return d[int(float64(len(d)-1)*p)]
+}
+
+func main() {
+	mode := flag.String("mode", "one", "one|bench|tenants|run")
+	repo := flag.String("repo", "", "")
+	ref := flag.String("ref", "main", "")
+	proxies := flag.String("proxy", "", "comma-separated proxy URLs; a retry moves to the next")
+	token := flag.String("token", "good", "")
+	tenant := flag.String("tenant", "acme", "")
+	ka := flag.Bool("keepalive", false, "")
+	v0 := flag.Bool("v0", false, "")
+	insecure := flag.Bool("insecure", false, "")
+	n := flag.Int("n", 1, "")
+	conc := flag.Int("c", 1, "")
+	timeout := flag.Duration("timeout", 10*time.Second, "")
+	dial := flag.Duration("dial", 2*time.Second, "")
+	retries := flag.Int("retries", 0, "")
+	connectBudget := flag.Duration("connect-budget", 1500*time.Millisecond, "")
+	rps := flag.Int("rps", 0, "")
+	dur := flag.Duration("dur", 0, "")
+	flag.Parse()
+	px := strings.Split(*proxies, ",")
+	mk := func(i int, k bool) (*http.Client, *atomic.Int64) {
+		cs := &atomic.Int64{}
+		return client(Opts{Proxy: px[i%len(px)], Token: *token, Keepalive: k, Insecure: *insecure, Timeout: *timeout, Dial: *dial}, cs), cs
+	}
+	one := func(attempt int, cl *http.Client, cs *atomic.Int64, t string) Result {
+		ctx, cancel := context.WithTimeout(context.WithValue(context.Background(), tenantKey{}, t), *timeout)
+		defer cancel()
+		cs.Store(0)
+		// The CONNECT must complete inside its own budget, so a frozen proxy costs one short attempt.
+		if *proxies != "" {
+			t := time.AfterFunc(*connectBudget, func() {
+				if cs.Load() == 0 {
+					cancel()
+				}
+			})
+			defer t.Stop()
+		}
+		return Resolve(ctx, cl, cs, *repo, *ref, *v0, *proxies == "")
+	}
+	withRetry := func(i int, t string) (Result, int) {
+		var r Result
+		start := time.Now()
+		for a := 0; a <= *retries; a++ {
+			cl, cs := mk(i+a, false)
+			r = one(a, cl, cs, t)
+			if cl.Transport != nil {
+				cl.Transport.(*http.Transport).CloseIdleConnections()
+			}
+			if r.Class != Transient {
+				r.Dur = time.Since(start)
+				return r, a
+			}
+		}
+		r.Dur = time.Since(start)
+		return r, *retries
+	}
+	switch *mode {
+	case "one":
+		r, _ := withRetry(0, *tenant)
+		json.NewEncoder(os.Stdout).Encode(map[string]any{"class": r.Class, "sha": r.SHA, "proto": r.Proto, "err": r.Err, "bytes": r.Bytes, "ms": r.Dur.Milliseconds()})
+	case "bench":
+		var mu sync.Mutex
+		var ds []time.Duration
+		cls := map[Class]int{}
+		sem := make(chan struct{}, *conc)
+		var wg sync.WaitGroup
+		t0 := time.Now()
+		for i := 0; i < *n; i++ {
+			sem <- struct{}{}
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				r, _ := withRetry(i, *tenant)
+				mu.Lock()
+				ds = append(ds, r.Dur)
+				cls[r.Class]++
+				mu.Unlock()
+			}(i)
+		}
+		wg.Wait()
+		fmt.Printf("n=%d c=%d wall=%s rate=%.0f/s p50=%s p90=%s p99=%s max=%s classes=%v\n", *n, *conc, time.Since(t0).Round(time.Millisecond), float64(*n)/time.Since(t0).Seconds(), pct(ds, .5).Round(100*time.Microsecond), pct(ds, .9).Round(100*time.Microsecond), pct(ds, .99).Round(100*time.Microsecond), pct(ds, 1).Round(100*time.Microsecond), cls)
+	case "tenants":
+		// Alternate tenants over one shared client, as a naive gateway would.
+		cl, cs := mk(0, *ka)
+		ts := []string{"acme", "globex"}
+		for i := 0; i < *n; i++ {
+			r := one(0, cl, cs, ts[i%2])
+			if r.Class != OK {
+				fmt.Println("error", r.Class, r.Err)
+			}
+		}
+	case "run":
+		// Constant rate for a duration, with retries, reporting failures over time.
+		var bad, tot, retried atomic.Int64
+		var mu sync.Mutex
+		var ds []time.Duration
+		errs := map[string]int{}
+		var wg sync.WaitGroup
+		t := time.NewTicker(time.Second / time.Duration(*rps))
+		defer t.Stop()
+		end := time.Now().Add(*dur)
+		i := 0
+		for time.Now().Before(end) {
+			<-t.C
+			i++
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				r, a := withRetry(i, *tenant)
+				tot.Add(1)
+				if a > 0 {
+					retried.Add(1)
+				}
+				mu.Lock()
+				ds = append(ds, r.Dur)
+				if r.Class != OK {
+					bad.Add(1)
+					errs[string(r.Class)+": "+r.Err]++
+				}
+				mu.Unlock()
+			}(i)
+		}
+		wg.Wait()
+		fmt.Printf("total=%d failed=%d retried=%d p50=%s p99=%s max=%s errs=%v\n", tot.Load(), bad.Load(), retried.Load(), pct(ds, .5).Round(100*time.Microsecond), pct(ds, .99).Round(100*time.Microsecond), pct(ds, 1).Round(100*time.Microsecond), errs)
+	}
+	_ = bytes.MinRead
+}

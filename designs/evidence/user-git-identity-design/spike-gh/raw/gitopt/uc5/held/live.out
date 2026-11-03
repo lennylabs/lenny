@@ -1,0 +1,12 @@
+### live-before-rotation rc=0
+$ git -c credential.helper=store push -q origin HEAD:refs/heads/lenny/live-13 2>&1 | tail -1
+
+### live-after-rotation rc=0
+$ git -c credential.helper=store push -q origin HEAD:refs/heads/lenny/live-54 2>&1 | tail -1
+
+### live-after-suspension rc=0
+$ git -c credential.helper=store push -q origin HEAD:refs/heads/lenny/live-82 2>&1 | tail -1
+
+### live-after-reinstated rc=0
+$ git -c credential.helper=store push -q origin HEAD:refs/heads/lenny/live-110 2>&1 | tail -1
+

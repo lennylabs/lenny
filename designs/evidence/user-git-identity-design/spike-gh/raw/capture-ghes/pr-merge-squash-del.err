@@ -1,0 +1,2 @@
+fatal: https://ghes.example.test/acme/widgets.git/info/refs not valid: is this a git repository?
+! warning: not possible to fast-forward to: "main"

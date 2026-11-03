@@ -1,0 +1,34 @@
+### I5: stock git through a loopback forwarder to the mirror stand-in
+plain-full rc=0   22.0s head=ebdc087dc9 objects=422967
+  plain full clone cpu: mirror 7.5 s, client side 38.7 s
+plain-shallow rc=0    2.0s head=ebdc087dc9 objects=4968
+plain-partial rc=0   11.0s head=ebdc087dc9 objects=256151
+  plain ls-remote ebdc087dc9
+  plain deepen+fsck (gzip POST): 76125 
+  plain progress lines streamed: 316
+tls-full   rc=0   22.0s head=ebdc087dc9 objects=422967
+  tls full clone cpu: mirror 7.4 s, client side 39.2 s
+tls-shallow rc=0    1.0s head=ebdc087dc9 objects=4968
+tls-partial rc=0   11.0s head=ebdc087dc9 objects=256151
+  tls ls-remote ebdc087dc9
+  tls deepen+fsck (gzip POST): 76125 
+  tls progress lines streamed: 316
+### I7: 2000 gRPC streams with a per-RPC token, then a server restart
+plain: server mem at 2000 streams=75.98MiB , before restart [t=  8s live=2000 starts=2000 retries=0]
+   reconnect cpu over 25 s: 0.0 cpu-s
+tls: server mem at 2000 streams=135.6MiB , before restart [t=  9s live=2000 starts=2000 retries=0]
+   reconnect cpu over 25 s: 0.0 cpu-s
+### level 1: Squid over TLS with Basic
+plain:
+  valid credential       TLS ok ech_accepted=false: 200 OK hello from target, you are 198.19.0.50:38832 err=<nil> (27.8ms)
+  wrong password         CONNECT 407 Proxy Authentication Required err=<nil> (4.6ms)
+  no credential          CONNECT 407 Proxy Authentication Required err=<nil> (0.8ms)
+  unlisted host          CONNECT 403 Forbidden err=<nil> (56.0ms)
+  20 x 200               n=400 c=20 4042.1/s results=map[TLS ok ech_accepted=false: 200 OK hello :400] p50=4.13ms p90=8.36ms p99=11.34ms
+tls:
+  valid credential       TLS ok ech_accepted=false: 200 OK hello from target, you are 198.19.0.50:42306 err=<nil> (27.9ms)
+  wrong password         CONNECT 407 Proxy Authentication Required err=<nil> (6.7ms)
+  no credential          CONNECT 407 Proxy Authentication Required err=<nil> (3.0ms)
+  unlisted host          CONNECT 403 Forbidden err=<nil> (6.6ms)
+  20 x 200               n=400 c=20 2020.2/s results=map[TLS ok ech_accepted=false: 200 OK hello :400] p50=8.49ms p90=13.54ms p99=32.88ms
+subject=CN=good Verification: OK 

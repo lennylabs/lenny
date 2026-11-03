@@ -1,0 +1,37 @@
+gh version 2.103.3 (2026-10-26)
+### ghes-2.103.3-strict-pr-create-rev-assign rc=0
+$ gh pr create --title t --body b --reviewer bob --assignee bob
+https://ghes.example.test/acme/widgets/pull/7
+### ghes-2.103.3-strict-pr-edit-title rc=0
+$ gh pr edit 7 --title new
+https://ghes.example.test/acme/widgets/pull/7
+### ghes-2.103.3-strict-pr-edit-meta rc=0
+$ gh pr edit 7 --add-label bug --add-assignee bob --add-reviewer bob
+https://ghes.example.test/acme/widgets/pull/7
+### ghes-2.103.3-strict-pr-comment rc=0
+$ gh pr comment 7 --body hello
+https://ghes.example.test/acme/widgets/pull/7#issuecomment-1
+### ghes-2.103.3-strict-pr-view rc=0
+$ gh pr view 7 --json number
+{"number":7}
+### ghes-2.103.3-strict-pr-merge rc=1
+$ gh pr merge 7 --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is denied by the preset\"}"
+### com-2.103.3-strict-pr-create-rev-assign rc=0
+$ gh pr create --title t --body b --reviewer bob --assignee bob
+https://github.com/acme/widgets/pull/7
+### com-2.103.3-strict-pr-edit-title rc=0
+$ gh pr edit 7 --title new
+https://github.com/acme/widgets/pull/7
+### com-2.103.3-strict-pr-edit-meta rc=0
+$ gh pr edit 7 --add-label bug --add-assignee bob --add-reviewer bob
+https://github.com/acme/widgets/pull/7
+### com-2.103.3-strict-pr-comment rc=0
+$ gh pr comment 7 --body hello
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-2.103.3-strict-pr-view rc=0
+$ gh pr view 7 --json number
+{"number":7}
+### com-2.103.3-strict-pr-merge rc=1
+$ gh pr merge 7 --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is denied by the preset\"}"

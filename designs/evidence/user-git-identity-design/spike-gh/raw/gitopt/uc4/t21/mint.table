@@ -1,0 +1,27 @@
+mint-clone-no-credential                     rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-R-acme_widgets:200:git-upload-pack MINT-R-acme_widgets:200:info/refs refused=
+mint-clone-helper                            rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-R-acme_widgets:200:git-upload-pack MINT-R-acme_widgets:200:info/refs refused=
+mint-push-no-credential                      rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+mint-push-helper                             rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+mint-push-extraheader                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+mint-push-extraheader-token                  rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+mint-push-url                                rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+mint-push-gh-helper                          rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+mint-push-other-token                        rc=0   identity=mint-credential-differs                  challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+mint-push-empty-token                        rc=0   identity=mint-credential-differs                  challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+mint-push-main-held                          rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+mint-push-main-other                         rc=0   identity=mint-credential-differs                  challenged=0 origin=MINT-W-acme_widgets:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+mint-push-mixed-held                         rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+mint-push-delete-held                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref deletion of refs/heads/feature refused
+mint-push-option-held                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=push options are refused
+mint-push-outside-held                       rc=0   identity=                                         challenged=0 origin= refused=repository acme/secret is outside the session's writable set
+mint-push-readonly-held                      rc=0   identity=                                         challenged=0 origin= refused=repository acme/lib is outside the session's writable set
+mint-read-outside-held                       rc=0   identity=                                         challenged=0 origin= refused=repository acme/secret is outside the session's readable set
+mint-read-held                               rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-upload-pack USER-FILE-TOKEN:200:info/refs refused=
+mint-curl-held-post-main                     rc=0   identity=                                         challenged=0 origin= refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+mint-reflect                                 rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=
+mint-redirect-held                           rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-upload-pack USER-FILE-TOKEN:200:info/refs USER-FILE-TOKEN:301:info/refs refused=
+mint-github-push-held                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+mint-github-push-main-held                   rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+mint-lfs-held                                rc=0   identity=mint-no-credential                       challenged=0 origin=MINT-R-acme_lfsrepo:200:git-upload-pack MINT-R-acme_lfsrepo:200:info/refs MINT-W-acme_lfsrepo:200:git-receive-pack MINT-W-acme_lfsrepo:200:info/lfs/lo refused=
+mint-gh-list-file-token                      rc=0   identity=                                         challenged=0 origin=token USER-FILE-TOKEN:200:graphql refused=
+mint-gh-merge-file-token                     rc=0   identity=                                         challenged=0 origin=token USER-FILE-TOKEN:200:graphql refused=

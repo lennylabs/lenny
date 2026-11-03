@@ -1,0 +1,1 @@
+f401-clone-keep-clone          rc=124  30.0s netagent={'lfs-download:allowed': 8, 'lfs-action-credential:held': 8, 'lfs-transfer-get:allowed': 11, 'lfs-transfer-get:refused': 8} stub={'gitlab.ex GET 401': 3}

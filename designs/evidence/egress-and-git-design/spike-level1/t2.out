@@ -1,0 +1,5 @@
+generation 1 only, g1      : connect=200 http=200
+overlap, g1 (cached 7200 s): connect=200 http=200
+overlap, g2                : connect=200 http=200
+g1 retired, g1 (was cached): connect=403 http=000
+g1 retired, g2             : connect=200 http=200

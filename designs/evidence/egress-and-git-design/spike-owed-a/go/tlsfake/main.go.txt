@@ -1,0 +1,82 @@
+// tlsfake: a proxy that answers every status the probe asks about and carries no traffic: a CONNECT it allows gets 200 and then a close.
+// It takes credentials and the canary from the probe source, so each status check sees the right code.
+package main
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"crypto/tls"
+	"strings"
+)
+
+type cred struct{ User, Password string }
+type src struct {
+	Fixed  map[string]cred `json:"fixed"`
+	Canary []struct {
+		User, Password, Host string
+		Retired              *cred
+	} `json:"canary"`
+}
+
+func main() {
+	c, err := tls.LoadX509KeyPair(os.Args[1], os.Args[2])
+	if err != nil {
+		log.Fatal(err)
+	}
+	l, err := tls.Listen("tcp", ":3128", &tls.Config{Certificates: []tls.Certificate{c}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		cn, err := l.Accept()
+		if err != nil {
+			continue
+		}
+		go func() {
+			defer cn.Close()
+			r, err := http.ReadRequest(bufio.NewReader(cn))
+			if err != nil {
+				return
+			}
+			resp, err := http.Get(os.Args[3])
+			if err != nil {
+				return
+			}
+			var s src
+			json.NewDecoder(resp.Body).Decode(&s)
+			resp.Body.Close()
+			d, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(r.Header.Get("Proxy-Authorization"), "Basic "))
+			u, p, _ := strings.Cut(string(d), ":")
+			code := 407
+			lists := map[string]string{"probe-a": "public.oa.test:443", "probe-b": "other.oa.test:443", "probe-addr": "pub.wild.oa.test:443"}
+			for k, v := range s.Fixed {
+				if v.User == u && v.Password == p {
+					code = 403
+					if lists[k] == r.Host {
+						code = 200
+					}
+				}
+			}
+			for _, x := range s.Canary {
+				if x.User == u && x.Password == p {
+					code = 403
+					if x.Host == r.Host {
+						code = 200
+					}
+				}
+				if x.Retired != nil && x.Retired.User == u {
+					code = 403
+				}
+			}
+			if code == 407 && strings.HasPrefix(u, "probe-a.g1") {
+				code = 403
+			}
+			fmt.Fprintf(cn, "HTTP/1.1 %d X\r\nProxy-Authenticate: Basic realm=\"x\"\r\nContent-Length: 0\r\n\r\n", code)
+		}()
+	}
+}

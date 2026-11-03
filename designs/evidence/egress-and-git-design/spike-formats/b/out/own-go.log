@@ -1,0 +1,6 @@
+-rw-r--r-- 1 0 0 46 Nov  2 06:42 /cfg/netrc
+-rw-r--r-- 1 0 0 46 Nov  2 06:42 /home/u/.netrc
+--- gotls-ownhome
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-ownhome/example.com/foo/@v/v1.0.0.info: 404 Not Found
+--- gotls-ownenv
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-ownenv/example.com/foo/@v/v1.0.0.info: 404 Not Found

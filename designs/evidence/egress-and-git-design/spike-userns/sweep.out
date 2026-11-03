@@ -1,0 +1,14 @@
+which kill: kill 25 /bin/kill
+before: 100001 S   sleep 300;100001 S   sleep 301;100001 S   sleep 302;
+-- procps or util-linux kill through setpriv (what my probe ran), errors shown
+/usr/bin/kill: failed to parse argument: '(null)'
+rc=1
+after tool: 100001 S   sleep 300;100001 S   sleep 301;100001 S   sleep 302;
+-- direct kill(-1) system call through setpriv
+kill(-1, SIGKILL): <nil>
+after syscall: 
+-- a process forked from a helper that changes UID again cannot escape: try setsid and a double fork
+before: 100001 Ss  sleep 310;100001 S   sleep 311;
+kill(-1, SIGKILL): <nil>
+after: 
+-- parent untouched: 65532 sh /sweep.sh

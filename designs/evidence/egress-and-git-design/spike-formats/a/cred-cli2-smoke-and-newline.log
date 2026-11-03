@@ -1,0 +1,6 @@
+{"ev": "fetch", "path": "/creds", "auth": "tok1-cli2", "result": 200, "akid": "AKIDCLI20001", "exp": "2026-11-02T06:38:15Z", "ua": "python-urllib3/2.6.3", "t": "06:35:15.660"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-cli2", "result": 200, "akid": "AKIDCLI20002", "exp": "2026-11-02T06:38:15Z", "ua": "python-urllib3/2.6.3", "t": "06:35:15.687"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-cli2", "result": 200, "akid": "AKIDCLI20003", "exp": "2026-11-02T06:38:15Z", "ua": "python-urllib3/2.6.3", "t": "06:35:15.985"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-cli2", "result": 200, "akid": "AKIDCLI20004", "exp": "2026-11-02T06:38:16Z", "ua": "python-urllib3/2.6.3", "t": "06:35:16.008"}
+{"ev": "fetch", "path": "/creds", "auth": null, "want": "tok-nl-cli2\n", "result": 401, "ua": null, "t": "06:42:41.988"}
+{"ev": "fetch", "path": "/creds", "auth": null, "want": "tok-nl-cli2\n", "result": 401, "ua": null, "t": "06:43:21.249"}

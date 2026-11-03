@@ -1,0 +1,17 @@
+### TEST e-py-hostip2  23:25:04
+### docker run --network container:spikefed-srv -e GCE_METADATA_HOST=127.0.0.1:8080 -e GCE_METADATA_IP=127.0.0.1:8080 -e API_URL=http://127.0.0.1/api/whoami spikefed-py:t python gce_md.py
+creds: google.auth.compute_engine.credentials Credentials project: proj-a
+call1 -> {'ok': True, 'saw': 'Bearer gce-md-at-1793604305'}
+call2 -> {'ok': True, 'saw': 'Bearer gce-md-at-1793604305'}
+email: tenant-a@proj-a.iam.gserviceaccount.com
+### exit 0
+### server log:
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google", "x-goog-api-client": "gl-python/3.13.18 auth/2.62.0 auth-request-type/mds"}}
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/project/project-id", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google"}}
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/?recursive=true", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google"}, "query": {"recursive": ["true"]}}
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google", "x-goog-api-client": "gl-python/3.13.18 auth/2.62.0 auth-request-type/at cred-type/mds"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/universe/universe-domain", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google"}}
+{"ts": "07:25:05", "port": 80, "peer": "127.0.0.1", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"Host": "127.0.0.1", "User-Agent": "python-requests/2.34.2", "x-goog-api-client": "cred-type/mds", "authorization": "Bearer gce-md-at-1793604305"}, "authorization": "Bearer gce-md-at-1793604305"}
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/tenant-a@proj-a.iam.gserviceaccount.com/?recursive=true", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google"}, "query": {"recursive": ["true"]}}
+{"ts": "07:25:05", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"Host": "127.0.0.1:8080", "User-Agent": "python-requests/2.34.2", "metadata-flavor": "Google", "x-goog-api-client": "gl-python/3.13.18 auth/2.62.0 auth-request-type/at cred-type/mds"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:05", "port": 80, "peer": "127.0.0.1", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"Host": "127.0.0.1", "User-Agent": "python-requests/2.34.2", "x-goog-api-client": "cred-type/mds", "authorization": "Bearer gce-md-at-1793604305"}, "authorization": "Bearer gce-md-at-1793604305"}

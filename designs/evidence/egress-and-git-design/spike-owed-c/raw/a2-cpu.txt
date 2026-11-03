@@ -1,0 +1,125 @@
+### upstream HTTP/2
+opaque | limit=none | 2212.6 MB/s | cpu 22.0s over 20s = 1102m | 0.53 cpu-s/GiB | peak 24 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h1 up-h2 scrub | limit=none | 777.4 MB/s | cpu 25.8s over 20s = 1289m | 1.78 cpu-s/GiB | peak 29 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h2 up-h2 scrub | limit=none | 598.4 MB/s | cpu 30.4s over 20s = 1518m | 2.72 cpu-s/GiB | peak 32 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque | limit=1 | 2118.1 MB/s | cpu 19.9s over 20s = 997m | 0.51 cpu-s/GiB | peak 24 MiB | errors 0 | nr_throttled 182 throttled_usec 1642813 
+intercepted client-h1 up-h2 scrub | limit=1 | 677.8 MB/s | cpu 20.0s over 20s = 1000m | 1.58 cpu-s/GiB | peak 29 MiB | errors 0 | nr_throttled 199 throttled_usec 3710630 
+intercepted client-h2 up-h2 scrub | limit=1 | 566.1 MB/s | cpu 20.0s over 20s = 1000m | 1.90 cpu-s/GiB | peak 28 MiB | errors 0 | nr_throttled 199 throttled_usec 4383981 
+opaque | limit=0.25 | 270.2 MB/s | cpu 5.0s over 20s = 251m | 1.00 cpu-s/GiB | peak 19 MiB | errors 0 | nr_throttled 200 throttled_usec 20620958 
+intercepted client-h1 up-h2 scrub | limit=0.25 | 61.7 MB/s | cpu 5.0s over 20s = 251m | 4.36 cpu-s/GiB | peak 26 MiB | errors 0 | nr_throttled 200 throttled_usec 26135899 
+intercepted client-h2 up-h2 scrub | limit=0.25 | 45.8 MB/s | cpu 5.0s over 20s = 251m | 5.89 cpu-s/GiB | peak 27 MiB | errors 0 | nr_throttled 200 throttled_usec 25901420 
+opaque | limit=0.05 | 25.3 MB/s | cpu 1.0s over 20s = 51m | 2.15 cpu-s/GiB | peak 16 MiB | errors 0 | nr_throttled 213 throttled_usec 29068024 
+intercepted client-h1 up-h2 scrub | limit=0.05 | 6.6 MB/s | cpu 1.0s over 20s = 50m | 8.08 cpu-s/GiB | peak 19 MiB | errors 0 | nr_throttled 217 throttled_usec 39904115 
+intercepted client-h2 up-h2 scrub | limit=0.05 | 5.0 MB/s | cpu 1.0s over 20s = 50m | 10.76 cpu-s/GiB | peak 20 MiB | errors 0 | nr_throttled 217 throttled_usec 39248591 
+opaque | limit=none | 2171.5 MB/s | cpu 22.6s over 20s = 1132m | 0.56 cpu-s/GiB | peak 26 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h1 up-h2 scrub | limit=none | 781.0 MB/s | cpu 25.9s over 20s = 1294m | 1.78 cpu-s/GiB | peak 29 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h2 up-h2 scrub | limit=none | 603.9 MB/s | cpu 30.7s over 20s = 1537m | 2.73 cpu-s/GiB | peak 32 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque | limit=1 | 2047.7 MB/s | cpu 19.9s over 20s = 993m | 0.52 cpu-s/GiB | peak 23 MiB | errors 0 | nr_throttled 178 throttled_usec 1714570 
+intercepted client-h1 up-h2 scrub | limit=1 | 665.2 MB/s | cpu 20.0s over 20s = 1001m | 1.62 cpu-s/GiB | peak 25 MiB | errors 0 | nr_throttled 199 throttled_usec 4406165 
+intercepted client-h2 up-h2 scrub | limit=1 | 534.0 MB/s | cpu 20.0s over 20s = 1000m | 2.01 cpu-s/GiB | peak 26 MiB | errors 0 | nr_throttled 198 throttled_usec 4430507 
+opaque | limit=0.25 | 323.3 MB/s | cpu 5.0s over 20s = 252m | 0.84 cpu-s/GiB | peak 25 MiB | errors 0 | nr_throttled 201 throttled_usec 17898907 
+intercepted client-h1 up-h2 scrub | limit=0.25 | 67.6 MB/s | cpu 5.0s over 20s = 252m | 4.00 cpu-s/GiB | peak 24 MiB | errors 0 | nr_throttled 201 throttled_usec 25046391 
+intercepted client-h2 up-h2 scrub | limit=0.25 | 52.1 MB/s | cpu 5.0s over 20s = 252m | 5.18 cpu-s/GiB | peak 24 MiB | errors 0 | nr_throttled 201 throttled_usec 25543600 
+opaque | limit=0.05 | 29.5 MB/s | cpu 1.0s over 20s = 51m | 1.86 cpu-s/GiB | peak 17 MiB | errors 0 | nr_throttled 213 throttled_usec 27260788 
+intercepted client-h1 up-h2 scrub | limit=0.05 | 8.7 MB/s | cpu 1.0s over 20s = 50m | 6.20 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 216 throttled_usec 36378221 
+intercepted client-h2 up-h2 scrub | limit=0.05 | 6.2 MB/s | cpu 1.0s over 20s = 49m | 8.57 cpu-s/GiB | peak 20 MiB | errors 0 | nr_throttled 211 throttled_usec 37009473 
+opaque | limit=none | 2320.3 MB/s | cpu 20.0s over 20s = 998m | 0.46 cpu-s/GiB | peak 25 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h1 up-h2 scrub | limit=none | 784.5 MB/s | cpu 26.2s over 20s = 1309m | 1.79 cpu-s/GiB | peak 30 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h2 up-h2 scrub | limit=none | 603.1 MB/s | cpu 30.7s over 20s = 1534m | 2.73 cpu-s/GiB | peak 33 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque | limit=1 | 2212.5 MB/s | cpu 19.8s over 20s = 992m | 0.48 cpu-s/GiB | peak 27 MiB | errors 0 | nr_throttled 171 throttled_usec 1165364 
+intercepted client-h1 up-h2 scrub | limit=1 | 652.4 MB/s | cpu 20.0s over 20s = 1000m | 1.65 cpu-s/GiB | peak 25 MiB | errors 0 | nr_throttled 199 throttled_usec 4570932 
+intercepted client-h2 up-h2 scrub | limit=1 | 568.1 MB/s | cpu 20.0s over 20s = 1000m | 1.89 cpu-s/GiB | peak 26 MiB | errors 0 | nr_throttled 199 throttled_usec 4500739 
+opaque | limit=0.25 | 310.7 MB/s | cpu 5.0s over 20s = 251m | 0.87 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 200 throttled_usec 19774132 
+intercepted client-h1 up-h2 scrub | limit=0.25 | 63.8 MB/s | cpu 5.0s over 20s = 251m | 4.22 cpu-s/GiB | peak 26 MiB | errors 0 | nr_throttled 200 throttled_usec 23662843 
+intercepted client-h2 up-h2 scrub | limit=0.25 | 48.2 MB/s | cpu 5.0s over 20s = 251m | 5.59 cpu-s/GiB | peak 24 MiB | errors 0 | nr_throttled 200 throttled_usec 25142239 
+opaque | limit=0.05 | 26.9 MB/s | cpu 1.0s over 20s = 51m | 2.03 cpu-s/GiB | peak 18 MiB | errors 0 | nr_throttled 213 throttled_usec 26322463 
+intercepted client-h1 up-h2 scrub | limit=0.05 | 6.7 MB/s | cpu 1.0s over 20s = 50m | 7.95 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 217 throttled_usec 38960453 
+intercepted client-h2 up-h2 scrub | limit=0.05 | 5.4 MB/s | cpu 1.0s over 20s = 49m | 9.79 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 215 throttled_usec 37356431 
+### upstream HTTP/1.1
+intercepted client-h1 up-h1 scrub | limit=none | 880.7 MB/s | cpu 20.9s over 20s = 1047m | 1.28 cpu-s/GiB | peak 23 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h1 up-h1 scrub | limit=1 | 878.2 MB/s | cpu 19.8s over 20s = 989m | 1.21 cpu-s/GiB | peak 25 MiB | errors 0 | nr_throttled 169 throttled_usec 524601 
+intercepted client-h1 up-h1 scrub | limit=0.25 | 112.3 MB/s | cpu 5.0s over 20s = 252m | 2.41 cpu-s/GiB | peak 20 MiB | errors 0 | nr_throttled 201 throttled_usec 18634070 
+intercepted client-h1 up-h1 scrub | limit=0.05 | 11.2 MB/s | cpu 1.0s over 20s = 51m | 4.89 cpu-s/GiB | peak 16 MiB | errors 0 | nr_throttled 212 throttled_usec 25126436 
+intercepted client-h1 up-h1 scrub | limit=none | 912.0 MB/s | cpu 20.3s over 20s = 1013m | 1.19 cpu-s/GiB | peak 26 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted client-h1 up-h1 scrub | limit=1 | 854.0 MB/s | cpu 19.9s over 20s = 993m | 1.25 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 180 throttled_usec 939753 
+intercepted client-h1 up-h1 scrub | limit=0.25 | 125.7 MB/s | cpu 5.0s over 20s = 251m | 2.14 cpu-s/GiB | peak 22 MiB | errors 0 | nr_throttled 201 throttled_usec 17216303 
+intercepted client-h1 up-h1 scrub | limit=0.05 | 11.5 MB/s | cpu 1.0s over 20s = 51m | 4.74 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 215 throttled_usec 25657294 
+### cost of each part, no limit
+intercepted h1, scrubbing off | limit=none | 862.0 MB/s | cpu 26.3s over 20s = 1314m | 1.64 cpu-s/GiB | peak 30 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, prefix window | limit=none | 791.7 MB/s | cpu 26.3s over 20s = 1317m | 1.79 cpu-s/GiB | peak 32 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, fixed window (design text) | limit=none | 778.9 MB/s | cpu 25.9s over 20s = 1293m | 1.78 cpu-s/GiB | peak 29 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, 99-byte secret | limit=none | 773.8 MB/s | cpu 26.2s over 20s = 1310m | 1.82 cpu-s/GiB | peak 30 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, gzip body decoded and scrubbed | limit=none | 644.9 MB/s | cpu 9.9s over 20s = 493m | 0.82 cpu-s/GiB | peak 18 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, same text uncompressed | limit=none | 834.1 MB/s | cpu 25.6s over 20s = 1279m | 1.65 cpu-s/GiB | peak 29 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque, 4 KiB copy buffer | limit=none | 1312.8 MB/s | cpu 21.3s over 20s = 1065m | 0.87 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque, 4 KiB copy buffer, limit 250m | limit=0.25 | 169.7 MB/s | cpu 5.0s over 20s = 252m | 1.59 cpu-s/GiB | peak 19 MiB | errors 0 | nr_throttled 201 throttled_usec 17345777 
+intercepted h1, scrubbing off | limit=none | 859.4 MB/s | cpu 25.6s over 20s = 1281m | 1.60 cpu-s/GiB | peak 33 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, prefix window | limit=none | 795.0 MB/s | cpu 26.0s over 20s = 1302m | 1.76 cpu-s/GiB | peak 31 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, fixed window (design text) | limit=none | 776.9 MB/s | cpu 25.9s over 20s = 1294m | 1.79 cpu-s/GiB | peak 29 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, 99-byte secret | limit=none | 725.3 MB/s | cpu 26.0s over 20s = 1301m | 1.93 cpu-s/GiB | peak 28 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, gzip body decoded and scrubbed | limit=none | 645.8 MB/s | cpu 9.7s over 20s = 485m | 0.81 cpu-s/GiB | peak 21 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1, same text uncompressed | limit=none | 830.0 MB/s | cpu 25.7s over 20s = 1286m | 1.66 cpu-s/GiB | peak 30 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque, 4 KiB copy buffer | limit=none | 1343.1 MB/s | cpu 20.7s over 20s = 1037m | 0.83 cpu-s/GiB | peak 25 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+opaque, 4 KiB copy buffer, limit 250m | limit=0.25 | 170.4 MB/s | cpu 5.0s over 20s = 252m | 1.59 cpu-s/GiB | peak 20 MiB | errors 0 | nr_throttled 201 throttled_usec 18624918 
+### ten concurrent downloads
+opaque x10 | limit=none | 4763.8 MB/s | cpu 60.1s over 20s = 3003m | 0.68 cpu-s/GiB | peak 75 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h1 x10 | limit=none | 881.7 MB/s | cpu 32.3s over 20s = 1614m | 1.97 cpu-s/GiB | peak 105 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+intercepted h2 x10 one connection | limit=none | 902.6 MB/s | cpu 44.0s over 20s = 2201m | 2.62 cpu-s/GiB | peak 107 MiB | errors 0 | nr_throttled 0 throttled_usec 0 
+### requests: latency and CPU at limits, a new connection per request (client TLS handshake against the per-pod CA, upstream reused)
+intercepted, new connection limit=none rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=11.47ms p99=20.74ms max=20.74ms | netagent 26m
+intercepted, keep-alive limit=none rate=5: rps kind=h1 new=false rate=5 ok=75 fail=0 p50=2.59ms p99=21.19ms max=21.19ms | netagent 5m
+opaque, new connection limit=none rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=9.17ms p99=20.47ms max=20.47ms | netagent 18m
+intercepted, new connection limit=none rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=10.65ms p99=14.88ms max=23.12ms | netagent 98m
+intercepted, keep-alive limit=none rate=20: rps kind=h1 new=false rate=20 ok=300 fail=0 p50=2.17ms p99=4.08ms max=18.18ms | netagent 17m
+opaque, new connection limit=none rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=8.75ms p99=21.03ms max=32.52ms | netagent 62m
+intercepted, new connection limit=none rate=100: rps kind=h1 new=true rate=100 ok=1500 fail=0 p50=3.64ms p99=6.21ms max=21.93ms | netagent 191m
+intercepted, keep-alive limit=none rate=100: rps kind=h1 new=false rate=100 ok=1500 fail=0 p50=1.29ms p99=2.85ms max=21.37ms | netagent 57m
+opaque, new connection limit=none rate=100: rps kind=h1 new=true rate=100 ok=1500 fail=0 p50=3.24ms p99=5.14ms max=45.84ms | netagent 124m
+intercepted, new connection limit=1 rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=11.35ms p99=19.72ms max=19.72ms | netagent 26m
+intercepted, keep-alive limit=1 rate=5: rps kind=h1 new=false rate=5 ok=75 fail=0 p50=2.42ms p99=23.34ms max=23.34ms | netagent 5m
+opaque, new connection limit=1 rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=9.5ms p99=19.49ms max=19.49ms | netagent 18m
+intercepted, new connection limit=1 rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=10.46ms p99=15.32ms max=21.31ms | netagent 94m
+intercepted, keep-alive limit=1 rate=20: rps kind=h1 new=false rate=20 ok=300 fail=0 p50=2.13ms p99=3.84ms max=19.59ms | netagent 17m
+opaque, new connection limit=1 rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=9.03ms p99=12.77ms max=20.19ms | netagent 61m
+intercepted, new connection limit=1 rate=100: rps kind=h1 new=true rate=100 ok=1500 fail=0 p50=3.59ms p99=5.44ms max=24.69ms | netagent 175m
+intercepted, keep-alive limit=1 rate=100: rps kind=h1 new=false rate=100 ok=1500 fail=0 p50=1.22ms p99=2.76ms max=18.27ms | netagent 53m
+opaque, new connection limit=1 rate=100: rps kind=h1 new=true rate=100 ok=1500 fail=0 p50=3.31ms p99=4.86ms max=24.16ms | netagent 112m
+intercepted, new connection limit=0.25 rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=11.5ms p99=18.22ms max=18.22ms | netagent 27m
+intercepted, keep-alive limit=0.25 rate=5: rps kind=h1 new=false rate=5 ok=75 fail=0 p50=2.57ms p99=18.02ms max=18.02ms | netagent 5m
+opaque, new connection limit=0.25 rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=8.9ms p99=31.81ms max=31.81ms | netagent 16m
+intercepted, new connection limit=0.25 rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=10.42ms p99=15.08ms max=20.82ms | netagent 94m
+intercepted, keep-alive limit=0.25 rate=20: rps kind=h1 new=false rate=20 ok=300 fail=0 p50=2.16ms p99=3.88ms max=15.27ms | netagent 17m
+opaque, new connection limit=0.25 rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=8.8ms p99=15.18ms max=21.2ms | netagent 58m
+intercepted, new connection limit=0.25 rate=100: rps kind=h1 new=true rate=100 ok=1500 fail=0 p50=3.52ms p99=5.06ms max=21.24ms | netagent 173m
+intercepted, keep-alive limit=0.25 rate=100: rps kind=h1 new=false rate=100 ok=1500 fail=0 p50=1.27ms p99=2.7ms max=21.99ms | netagent 54m
+opaque, new connection limit=0.25 rate=100: rps kind=h1 new=true rate=100 ok=1500 fail=0 p50=3.31ms p99=4.72ms max=20.81ms | netagent 114m
+intercepted, new connection limit=0.05 rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=12.01ms p99=55.58ms max=55.58ms | netagent 27m
+intercepted, keep-alive limit=0.05 rate=5: rps kind=h1 new=false rate=5 ok=75 fail=0 p50=2.46ms p99=27.55ms max=27.55ms | netagent 5m
+opaque, new connection limit=0.05 rate=5: rps kind=h1 new=true rate=5 ok=75 fail=0 p50=9.16ms p99=65.52ms max=65.52ms | netagent 17m
+intercepted, new connection limit=0.05 rate=20: rps kind=h1 new=true rate=20 ok=260 fail=40 p50=1m8.25133s p99=2m9.77651s max=2m12.77825s | netagent 451m
+intercepted, keep-alive limit=0.05 rate=20: rps kind=h1 new=false rate=20 ok=300 fail=0 p50=2.22ms p99=3.46ms max=18.36ms | netagent 18m
+opaque, new connection limit=0.05 rate=20: rps kind=h1 new=true rate=20 ok=300 fail=0 p50=979.25ms p99=2.83024s max=2.92841s | netagent 51m
+intercepted, new connection limit=0.05 rate=100: rps kind=h1 new=true rate=100 ok=398 fail=1102 p50=2m44.24987s p99=4m57.8734s max=5m4.94892s | netagent 1028m
+intercepted, keep-alive limit=0.05 rate=100: rps kind=h1 new=false rate=100 ok=1500 fail=0 p50=2.98254s p99=20.64701s max=21.5688s | netagent 121m
+opaque, new connection limit=0.05 rate=100: rps kind=h1 new=true rate=100 ok=682 fail=818 p50=20.54052s p99=35.89084s max=36.86946s | netagent 140m
+### idle and session profiles, no limit: what a 50m request has to cover
+idle warm pod, 60 s: 0m, current 13.8 MiB anon 4.9 MiB
+five LLM streams at 20 events/s for 30 s: 21m, current 13.3 MiB anon 11.7 MiB
+SSE events=600 lag p50=1.1ms p99=2.2ms max=9.2ms secretLeaks=0 total=31.45s
+SSE events=600 lag p50=1.1ms p99=2.1ms max=9.5ms secretLeaks=0 total=31.44s
+SSE events=600 lag p50=1.1ms p99=2.1ms max=9.5ms secretLeaks=0 total=31.43s
+SSE events=600 lag p50=1.1ms p99=2.3ms max=9.8ms secretLeaks=0 total=31.47s
+SSE events=600 lag p50=1.1ms p99=2.2ms max=9.4ms secretLeaks=0 total=31.47s
+package install stand-in, 50 new connections/s for 20 s: 135m, peak 23.4 MiB | rps kind=h1 new=true rate=50 ok=1000 fail=0 p50=5.2ms p99=7.45ms max=22.06ms
+### tunnels at a hard 64 MiB limit, before the container dies
+opaque, GOMEMLIMIT unset : state=[exited oom=true] last stats before the end: 
+intercepted h1, GOMEMLIMIT unset : state=[exited oom=true] last stats before the end: active 455 goroutines 1367 heapInuse 39 MiB
+opaque, GOMEMLIMIT=50MiB : state=[exited oom=true] last stats before the end: 
+intercepted h1, GOMEMLIMIT=50MiB : state=[exited oom=true] last stats before the end: 
+opaque -copy-buf=4096: state=[exited oom=true] last stats before the end: 
+### 20 stalled consumers at a hard 64 MiB limit, and with socket buffers bounded
+upstream h2, defaults: state=exited oom=true client=hold up=8 fail=0 ticks=0 
+upstream h2, h2-stream-buf=256k: state=running oom=false client=hold up=15 fail=0 ticks=0 current 63.7 peak 64.1 anon 11.0 sock 45.8 MiB
+upstream h2, h2-stream-buf=256k sockbuf=256k: state=running oom=false client=hold up=9 fail=0 ticks=0 current 23.8 peak 24.4 anon 11.9 sock 2.8 MiB
+upstream h1, defaults: state=exited oom=true client=hold up=10 fail=0 ticks=0 
+upstream h1, sockbuf=256k: state=running oom=false client=hold up=20 fail=0 ticks=0 current 35.6 peak 36.4 anon 12.3 sock 14.2 MiB

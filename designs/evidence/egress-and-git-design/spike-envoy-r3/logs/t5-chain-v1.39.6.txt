@@ -1,0 +1,86 @@
+## hygiene=0: upstream proxy B answers 407 (chain-407)
+      HTTP/1.1 407 Proxy Authentication Required
+      proxy-authenticate: Basic realm="corp"
+      proxy-authenticate: Negotiate
+      x-corp-hint: kerberos
+      content-type: text/plain
+      content-length: 20
+      date: Mon, 02 Nov 2026 05:14:45 GMT
+      server: envoy
+      connection: close
+      
+      corp auth required
+## hygiene=0: upstream proxy D answers 403 (chain-403)
+      HTTP/1.1 403 Forbidden
+      content-type: text/plain
+      x-corp-policy: rule-17
+      proxy-authenticate: Basic realm="corp-deny"
+      content-length: 41
+      date: Mon, 02 Nov 2026 05:14:47 GMT
+      server: envoy
+      connection: close
+      
+      blocked by corp policy: target.spike:443
+## hygiene=1: upstream proxy B answers 407 (chain-407)
+      HTTP/1.1 407 Proxy Authentication Required
+      content-type: text/plain
+      content-length: 20
+      date: Mon, 02 Nov 2026 05:14:50 GMT
+      server: envoy
+      connection: close
+      
+      corp auth required
+## hygiene=1: upstream proxy D answers 403 (chain-403)
+      HTTP/1.1 403 Forbidden
+      content-type: text/plain
+      content-length: 41
+      date: Mon, 02 Nov 2026 05:14:52 GMT
+      server: envoy
+      connection: close
+      
+      blocked by corp policy: target.spike:443
+## hygiene=2: upstream proxy B answers 407 (chain-407)
+      HTTP/1.1 407 Proxy Authentication Required
+      content-type: text/plain
+      content-length: 20
+      date: Mon, 02 Nov 2026 05:14:54 GMT
+      server: envoy
+      connection: close
+      
+      corp auth required
+## hygiene=2: upstream proxy D answers 403 (chain-403)
+      HTTP/1.1 403 Forbidden
+      content-type: text/plain
+      content-length: 41
+      date: Mon, 02 Nov 2026 05:14:56 GMT
+      server: envoy
+      connection: close
+      
+      blocked by corp policy: target.spike:443
+## hygiene=3: upstream proxy B answers 407 (chain-407)
+      HTTP/1.1 502 Bad Gateway
+      x-lenny-upstream-status: 407
+      content-length: 46
+      content-type: text/plain
+      date: Mon, 02 Nov 2026 05:14:58 GMT
+      server: envoy
+      connection: close
+      
+      upstream proxy rejected the egress credential
+## hygiene=3: upstream proxy D answers 403 (chain-403)
+      HTTP/1.1 403 Forbidden
+      x-lenny-upstream-status: 403
+      content-length: 38
+      content-type: text/plain
+      date: Mon, 02 Nov 2026 05:15:00 GMT
+      server: envoy
+      connection: close
+      
+      upstream proxy denied the destination
+## proxy B / D last requests
+2026/11/02 05:14:59 UPSTREAM peer=198.18.0.10:34760 CONNECT target.spike:443 host=target.spike:443 headers=map[]
+2026/11/02 05:14:59 UPSTREAM 407 (got "")
+2026/11/02 05:15:00 UPSTREAM peer=198.18.0.10:36078 CONNECT target.spike:443 host=target.spike:443 headers=map[]
+2026/11/02 05:15:00 UPSTREAM 403 target.spike:443
+502 -  198.18.0.13:3128 None
+403 -  198.18.0.15:3128 None

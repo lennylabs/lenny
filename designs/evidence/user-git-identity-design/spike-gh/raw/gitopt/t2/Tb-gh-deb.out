@@ -1,0 +1,253 @@
+### ghes-clone rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && git clone -q https://ghes.example.test/acme/widgets.git ghes && cd ghes && git checkout -q -b feature-Tb-1793730910-ghes && echo x > n && git add n && git commit -qm n && git push -q -u origin HEAD 2>&1 && git remote -v && git config --get remote.origin.url
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+https://ghes.example.test/acme/widgets.git
+### ghes-repo-view rc=0
+$ gh repo view --json url,nameWithOwner,sshUrl 2>&1
+{"nameWithOwner":"acme/widgets","sshUrl":"https://example.test/x","url":"https://ghes.example.test/acme/widgets"}
+### ghes-pr-create rc=0
+$ gh pr create --title t --body b 2>&1
+https://ghes.example.test/acme/widgets/pull/7
+### ghes-pr-view rc=0
+$ gh pr view --json number,headRefName,state,url,headRepositoryOwner,isCrossRepository 2>&1
+{"headRefName":"feature-Tb-1793730910-ghes","headRepositoryOwner":{"id":"s-id","name":"widgets","login":"acme"},"isCrossRepository":false,"number":7,"state":"OPEN","url":"https://ghes.example.test/acme/widgets/pull/7"}
+### ghes-pr-view-n rc=0
+$ gh pr view 7 --json number,state 2>&1
+{"number":7,"state":"OPEN"}
+### ghes-pr-list rc=0
+$ gh pr list 2>&1
+
+### ghes-pr-status rc=0
+$ gh pr status 2>&1
+Created by you
+  #7  the title [feature]
+  ✓ Checks passing ✓ 0 Approved ✓ Up to date ✓ Auto-merge enabled
+
+Requesting a code review from you
+  #7  the title [feature]
+  ✓ Checks passing ✓ Up to date ✓ Auto-merge enabled
+### ghes-pr-checks rc=0
+$ gh pr checks 7 2>&1
+widgets	pass	0	s-detailsUrl	a description
+### ghes-browse rc=1
+$ gh browse -n 2>&1
+HTTP 403 (https://ghes.example.test/api/v3/repos/acme/widgets)
+### ghes-reference-noconfig rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null gh pr view --json number,headRefName 2>&1
+{"headRefName":"feature-Tb-1793730910-ghes","number":7}
+### ghes-set-default rc=0
+$ gh repo set-default acme/widgets 2>&1; git config --get remote.origin.gh-resolved
+base
+### ghes-set-default-view rc=0
+$ gh repo set-default --view 2>&1
+acme/widgets
+### ghes-pr-checkout rc=0
+$ gh pr checkout 7 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.feature\.'
+Switched to a new branch 'feature'
+branch 'feature' set up to track 'origin/feature'.
+feature
+branch.feature.remote origin
+branch.feature.merge refs/heads/feature
+### ghes-pr-checkout-cross rc=0
+$ gh pr checkout 13 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | head -4
+Switched to branch 'cross-branch'
+cross-branch
+branch.cross-branch.remote origin
+branch.cross-branch.pushremote origin
+branch.cross-branch.merge refs/pull/13/head
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+### ghes-pr-checkout-cross-maintainer rc=0
+$ gh pr checkout 14 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | tail -2
+Switched to branch 'cross-branch'
+cross-branch
+branch.cross-branch.remote https://ghes.example.test/alice/widgets.git
+branch.cross-branch.pushremote https://ghes.example.test/alice/widgets.git
+branch.cross-branch.merge refs/heads/cross-branch
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+### ghes-pull-after-cross rc=0
+$ git pull 2>&1 | tail -1
+fatal: Need to specify how to reconcile divergent branches.
+### ghes-repo-clone rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && gh repo clone acme/widgets ghes-rc 2>&1; git -C ghes-rc remote -v; git -C ghes-rc config --get remote.origin.url
+Cloning into 'ghes-rc'...
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+https://ghes.example.test/acme/widgets.git
+### ghes-repo-clone-fork rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && gh repo clone alice/widgets ghes-rf 2>&1; git -C ghes-rf remote -v; git -C ghes-rf config --get-regexp '^remote\..*\.url'
+ * [new branch]      main       -> upstream/main
+origin	https://ghes.example.test/alice/widgets.git (fetch)
+origin	https://ghes.example.test/alice/widgets.git (push)
+upstream	https://ghes.example.test/acme/widgets.git (fetch)
+upstream	https://ghes.example.test/acme/widgets.git (push)
+remote.origin.url https://ghes.example.test/alice/widgets.git
+remote.upstream.url https://ghes.example.test/acme/widgets.git
+### ghes-fork-push rc=0
+$ git push -q -u fork HEAD 2>&1 && git remote -v && git rev-parse --abbrev-ref @{u}
+fork	https://ghes.example.test/alice/widgets.git (fetch)
+fork	https://ghes.example.test/alice/widgets.git (push)
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+fork/featurefork-Tb-1793730910-ghes
+### ghes-fork-pr-create rc=0
+$ gh pr create --title t --body b 2>&1
+https://ghes.example.test/acme/widgets/pull/7
+### ghes-fork-pr-view rc=0
+$ gh pr view --json number,headRefName,isCrossRepository,headRepositoryOwner 2>&1
+{"headRefName":"featurefork-Tb-1793730910-ghes","headRepositoryOwner":{"id":"s-id","name":"widgets","login":"alice"},"isCrossRepository":true,"number":7}
+### ghes-unpushed-noninteractive rc=1
+$ gh pr create --title t --body b 2>&1
+aborted: you must first push the current branch to a remote, or use the --head flag
+### ghes-interactive-push rc=0
+$ python3 -I /t/ptyrun.py 'gh pr create --title t --body b' 2>&1; printf '\n--config--\n'; git config --get-regexp '^branch\.feature-unp'; git remote -v
+⣾https://ghes.example.test/acme/widgets/pull/7
+
+--config--
+branch.feature-unp-Tb-1793730910-ghes.remote origin
+branch.feature-unp-Tb-1793730910-ghes.merge refs/heads/feature-unp-Tb-1793730910-ghes
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+### com-clone rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && git clone -q https://github.com/acme/widgets.git com && cd com && git checkout -q -b feature-Tb-1793730910-com && echo x > n && git add n && git commit -qm n && git push -q -u origin HEAD 2>&1 && git remote -v && git config --get remote.origin.url
+origin	https://github.com/acme/widgets.git (fetch)
+origin	https://github.com/acme/widgets.git (push)
+https://github.com/acme/widgets.git
+### com-repo-view rc=0
+$ gh repo view --json url,nameWithOwner,sshUrl 2>&1
+{"nameWithOwner":"acme/widgets","sshUrl":"https://example.test/x","url":"https://github.com/acme/widgets"}
+### com-pr-create rc=0
+$ gh pr create --title t --body b 2>&1
+https://github.com/acme/widgets/pull/7
+### com-pr-view rc=0
+$ gh pr view --json number,headRefName,state,url,headRepositoryOwner,isCrossRepository 2>&1
+{"headRefName":"feature-Tb-1793730910-com","headRepositoryOwner":{"id":"s-id","name":"widgets","login":"acme"},"isCrossRepository":false,"number":7,"state":"OPEN","url":"https://github.com/acme/widgets/pull/7"}
+### com-pr-view-n rc=0
+$ gh pr view 7 --json number,state 2>&1
+{"number":7,"state":"OPEN"}
+### com-pr-list rc=0
+$ gh pr list 2>&1
+
+### com-pr-status rc=0
+$ gh pr status 2>&1
+Created by you
+  #7  the title [feature]
+  ✓ Checks passing ✓ 0 Approved ✓ Up to date ✓ Auto-merge enabled
+
+Requesting a code review from you
+  #7  the title [feature]
+  ✓ Checks passing ✓ Up to date ✓ Auto-merge enabled
+### com-pr-checks rc=0
+$ gh pr checks 7 2>&1
+widgets	pass	0	s-detailsUrl	a description
+### com-browse rc=1
+$ gh browse -n 2>&1
+HTTP 403 (https://api.github.com/repos/acme/widgets)
+### com-reference-noconfig rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null gh pr view --json number,headRefName 2>&1
+{"headRefName":"feature-Tb-1793730910-com","number":7}
+### com-set-default rc=0
+$ gh repo set-default acme/widgets 2>&1; git config --get remote.origin.gh-resolved
+base
+### com-set-default-view rc=0
+$ gh repo set-default --view 2>&1
+acme/widgets
+### com-pr-checkout rc=0
+$ gh pr checkout 7 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.feature\.'
+Switched to a new branch 'feature'
+branch 'feature' set up to track 'origin/feature'.
+feature
+branch.feature.remote origin
+branch.feature.merge refs/heads/feature
+### com-pr-checkout-cross rc=0
+$ gh pr checkout 13 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | head -4
+Switched to branch 'cross-branch'
+cross-branch
+branch.cross-branch.remote origin
+branch.cross-branch.pushremote origin
+branch.cross-branch.merge refs/pull/13/head
+origin	https://github.com/acme/widgets.git (fetch)
+origin	https://github.com/acme/widgets.git (push)
+### com-pr-checkout-cross-maintainer rc=0
+$ gh pr checkout 14 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'; git remote -v | tail -2
+Switched to branch 'cross-branch'
+cross-branch
+branch.cross-branch.remote https://github.com/alice/widgets.git
+branch.cross-branch.pushremote https://github.com/alice/widgets.git
+branch.cross-branch.merge refs/heads/cross-branch
+origin	https://github.com/acme/widgets.git (fetch)
+origin	https://github.com/acme/widgets.git (push)
+### com-pull-after-cross rc=0
+$ git pull 2>&1 | tail -1
+fatal: Need to specify how to reconcile divergent branches.
+### com-repo-clone rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && gh repo clone acme/widgets com-rc 2>&1; git -C com-rc remote -v; git -C com-rc config --get remote.origin.url
+Cloning into 'com-rc'...
+origin	https://github.com/acme/widgets.git (fetch)
+origin	https://github.com/acme/widgets.git (push)
+https://github.com/acme/widgets.git
+### com-repo-clone-fork rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && gh repo clone alice/widgets com-rf 2>&1; git -C com-rf remote -v; git -C com-rf config --get-regexp '^remote\..*\.url'
+ * [new branch]      main       -> upstream/main
+origin	https://github.com/alice/widgets.git (fetch)
+origin	https://github.com/alice/widgets.git (push)
+upstream	https://github.com/acme/widgets.git (fetch)
+upstream	https://github.com/acme/widgets.git (push)
+remote.origin.url https://github.com/alice/widgets.git
+remote.upstream.url https://github.com/acme/widgets.git
+### com-fork-push rc=0
+$ git push -q -u fork HEAD 2>&1 && git remote -v && git rev-parse --abbrev-ref @{u}
+fork	https://github.com/alice/widgets.git (fetch)
+fork	https://github.com/alice/widgets.git (push)
+origin	https://github.com/acme/widgets.git (fetch)
+origin	https://github.com/acme/widgets.git (push)
+fork/featurefork-Tb-1793730910-com
+### com-fork-pr-create rc=0
+$ gh pr create --title t --body b 2>&1
+https://github.com/acme/widgets/pull/7
+### com-fork-pr-view rc=0
+$ gh pr view --json number,headRefName,isCrossRepository,headRepositoryOwner 2>&1
+{"headRefName":"featurefork-Tb-1793730910-com","headRepositoryOwner":{"id":"s-id","name":"widgets","login":"alice"},"isCrossRepository":true,"number":7}
+### com-unpushed-noninteractive rc=1
+$ gh pr create --title t --body b 2>&1
+aborted: you must first push the current branch to a remote, or use the --head flag
+### com-interactive-push rc=0
+$ python3 -I /t/ptyrun.py 'gh pr create --title t --body b' 2>&1; printf '\n--config--\n'; git config --get-regexp '^branch\.feature-unp'; git remote -v
+⣾https://github.com/acme/widgets/pull/7
+
+--config--
+branch.feature-unp-Tb-1793730910-com.remote origin
+branch.feature-unp-Tb-1793730910-com.merge refs/heads/feature-unp-Tb-1793730910-com
+origin	https://github.com/acme/widgets.git (fetch)
+origin	https://github.com/acme/widgets.git (push)
+### gl-clone rc=0
+$ cd /tmp/tmp.hQOxotBJ80 && git clone -q https://gitlab.example.test/acme/widgets.git l && cd l && git checkout -q -b feature-Tb-1793730910-l && echo x > n && git add n && git commit -qm n && git push -q -u origin HEAD 2>&1 && git remote -v
+origin	https://gitlab.example.test/acme/widgets.git (fetch)
+origin	https://gitlab.example.test/acme/widgets.git (push)
+### gl-mr-create rc=0
+$ glab mr create --title t --description d --yes 2>&1
+
+Creating merge request for feature-Tb-1793730910-l into main in acme/widgets
+
+https://gitlab.example.test/acme/widgets/-/merge_requests/7
+
+What's new in glab v1.127.0
+  Run: glab whatsnew
+### gl-mr-view rc=0
+$ glab mr view 7 2>&1 | head -4
+title:	the title
+state:	open
+author:	alice
+labels:	
+### gl-mr-list rc=0
+$ glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### gl-repo-view rc=0
+$ glab repo view 2>&1 | head -3
+name:	acme / widgets
+description:	
+script-rc=0

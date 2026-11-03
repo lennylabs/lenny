@@ -1,0 +1,193 @@
+// snicl: CONNECT through the proxy, then speak a chosen payload, to exercise the SNI gate.
+//
+//	-mode tls    TLS handshake with -sni (empty = no SNI extension), then GET /
+//	-mode plain  plaintext HTTP request (client speaks first)
+//	-mode wait   send nothing, wait for the server to speak first (target :7000)
+//	-ech B64     ECHConfigList for TLS 1.3 Encrypted Client Hello (inner SNI = -sni)
+//	-n N -c C    repeat N times with C workers and print latency percentiles
+//
+// -serve ADDR -public NAME runs an ECH-enabled TLS server instead and prints its ECHConfigList.
+package main
+
+import (
+	"bufio"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/binary"
+	"flag"
+	"fmt"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
+
+var (
+	proxy  = flag.String("proxy", "198.18.0.10:3128", "")
+	target = flag.String("target", "target.spike:443", "CONNECT authority")
+	cred   = flag.String("cred", "agent:sni", "")
+	mode   = flag.String("mode", "tls", "tls|plain|wait")
+	sni    = flag.String("sni", "target.spike", "")
+	ech    = flag.String("ech", "", "")
+	n      = flag.Int("n", 1, "")
+	c      = flag.Int("c", 1, "")
+	serve  = flag.String("serve", "", "")
+	public = flag.String("public", "public.ech.spike", "")
+)
+
+func once() (string, time.Duration, error) {
+	t0 := time.Now()
+	conn, err := net.DialTimeout("tcp", *proxy, 5*time.Second)
+	if err != nil {
+		return "", 0, err
+	}
+	defer conn.Close()
+	conn.SetDeadline(t0.Add(20 * time.Second))
+	fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", *target, *target,
+		base64.StdEncoding.EncodeToString([]byte(*cred)))
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		return "", time.Since(t0), fmt.Errorf("connect: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return "CONNECT " + resp.Status, time.Since(t0), nil
+	}
+	switch *mode {
+	case "plain":
+		fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", *target)
+		line, err := br.ReadString('\n')
+		return "plain: " + strings.TrimSpace(line), time.Since(t0), err
+	case "wait":
+		line, err := br.ReadString('\n')
+		return "server-first: " + strings.TrimSpace(line), time.Since(t0), err
+	}
+	cfg := &tls.Config{ServerName: *sni, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
+	if *ech != "" {
+		l, _ := base64.StdEncoding.DecodeString(*ech)
+		cfg.EncryptedClientHelloConfigList = l
+		cfg.MinVersion = tls.VersionTLS13
+	}
+	tc := tls.Client(&bufConn{conn, br}, cfg)
+	if err := tc.Handshake(); err != nil {
+		return "", time.Since(t0), fmt.Errorf("tls: %w", err)
+	}
+	st := tc.ConnectionState()
+	fmt.Fprintf(tc, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", *sni)
+	r2, err := http.ReadResponse(bufio.NewReader(tc), nil)
+	if err != nil {
+		return "", time.Since(t0), fmt.Errorf("https: %w", err)
+	}
+	buf := make([]byte, 200)
+	k, _ := r2.Body.Read(buf)
+	return fmt.Sprintf("TLS ok ech_accepted=%v: %s %s", st.ECHAccepted, r2.Status, strings.TrimSpace(string(buf[:k]))), time.Since(t0), nil
+}
+
+type bufConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (b *bufConn) Read(p []byte) (int, error) { return b.r.Read(p) }
+
+func main() {
+	flag.Parse()
+	if *serve != "" {
+		serveECH()
+		return
+	}
+	if *n == 1 {
+		s, d, err := once()
+		fmt.Printf("%s err=%v (%.1fms)\n", s, err, float64(d.Microseconds())/1000)
+		return
+	}
+	var mu sync.Mutex
+	var lats []time.Duration
+	res := map[string]int{}
+	jobs := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < *c; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range jobs {
+				s, d, err := once()
+				k := s
+				if err != nil {
+					k = "err:" + err.Error()
+				}
+				if len(k) > 40 {
+					k = k[:40]
+				}
+				mu.Lock()
+				res[k]++
+				if err == nil {
+					lats = append(lats, d)
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	t0 := time.Now()
+	for i := 0; i < *n; i++ {
+		jobs <- struct{}{}
+	}
+	close(jobs)
+	wg.Wait()
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	p := func(q float64) time.Duration { return lats[int(float64(len(lats)-1)*q)].Round(10 * time.Microsecond) }
+	fmt.Printf("n=%d c=%d %.1f/s results=%v p50=%v p90=%v p99=%v\n", *n, *c, float64(*n)/time.Since(t0).Seconds(), res, p(.5), p(.9), p(.99))
+}
+
+// ---------- ECH server ----------
+
+func serveECH() {
+	k, _ := ecdh.X25519().GenerateKey(rand.Reader)
+	pub := k.PublicKey().Bytes()
+	var b []byte
+	u16 := func(v int) { b = binary.BigEndian.AppendUint16(b, uint16(v)) }
+	// ECHConfigContents
+	var cont []byte
+	cont = append(cont, 7)                                  // config_id
+	cont = binary.BigEndian.AppendUint16(cont, 0x0020)      // KEM X25519
+	cont = binary.BigEndian.AppendUint16(cont, uint16(len(pub)))
+	cont = append(cont, pub...)
+	cont = binary.BigEndian.AppendUint16(cont, 4)           // cipher_suites length
+	cont = binary.BigEndian.AppendUint16(cont, 0x0001)      // HKDF-SHA256
+	cont = binary.BigEndian.AppendUint16(cont, 0x0001)      // AES-128-GCM
+	cont = append(cont, 0)                                  // maximum_name_length
+	cont = append(cont, byte(len(*public)))
+	cont = append(cont, *public...)
+	cont = binary.BigEndian.AppendUint16(cont, 0)           // extensions
+	u16(0xfe0d)
+	u16(len(cont))
+	b = append(b, cont...)
+	cfgOne := b
+	list := binary.BigEndian.AppendUint16(nil, uint16(len(cfgOne)))
+	list = append(list, cfgOne...)
+	fmt.Printf("ECHCONFIGLIST %s\n", base64.StdEncoding.EncodeToString(list))
+	os.Stdout.Sync()
+	ek, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "ech"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		DNSNames: []string{"target.spike", "evil.spike", "*.spike", *public, "public.ech.spike"}}
+	der, _ := x509.CreateCertificate(rand.Reader, t, t, &ek.PublicKey, ek)
+	srv := &http.Server{Addr: *serve, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "ech-server: inner SNI=%q\n", r.TLS.ServerName)
+	}), TLSConfig: &tls.Config{
+		Certificates:             []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: ek}},
+		EncryptedClientHelloKeys: []tls.EncryptedClientHelloKey{{Config: cfgOne, PrivateKey: k.Bytes(), SendAsRetry: true}},
+		MinVersion:               tls.VersionTLS13,
+	}}
+	fmt.Println(srv.ListenAndServeTLS("", ""))
+}

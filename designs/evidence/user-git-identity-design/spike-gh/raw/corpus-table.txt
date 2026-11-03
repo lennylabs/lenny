@@ -1,0 +1,50 @@
+id	gqlparser	graphql-go	graphql-js	graphql-ruby	graphql-ruby-c	difference
+amp-separator	ERR	ERR	ERR	ERR	ERR	
+blockstr-escape	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+blockstr-plain	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+blockstr-unterm-esc	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+bom-between	q:viewer | m:addPullRequestReview	ERR	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	ERR	
+bom-start	m:addPullRequestReview	m:addPullRequestReview	m:addPullRequestReview	m:addPullRequestReview	ERR	
+commas	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	
+cr-comment	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer	q:viewer | m:addPullRequestReview	graphql-ruby would allow what the filter refuses
+cr-hide-mutation	q:viewer	q:viewer	q:viewer	m:addPullRequestReview	q:viewer	BYPASS-CANDIDATE:graphql-ruby
+cr-hide-two-ops	q:viewer	q:viewer	q:viewer	q:viewer | m:addPullRequestReview	q:viewer	BYPASS-CANDIDATE:graphql-ruby
+crlf-comment	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	
+directive-def	ERR	q:viewer	q:viewer | other:DirectiveDefinition	q:viewer | other:DirectiveDefinition	q:viewer | other:DirectiveDefinition	
+empty-parens	ERR	ERR	ERR	q:viewer	ERR	
+empty-selection	ERR	ERR	ERR	q:	ERR	
+extend-doc	ERR	q:viewer	q:viewer | other:ObjectTypeExtension	q:viewer | other:ObjectTypeExtension	q:viewer | other:ObjectTypeExtension	
+ff-between	ERR	ERR	ERR	ERR	ERR	
+ff-comment	ERR	ERR	q:viewer	q:viewer	q:viewer	
+fragment-named-on	ERR	ERR	ERR	ERR	ERR	
+fragment-on-Mut	m:addPullRequestReview	m:addPullRequestReview	m:addPullRequestReview	m:addPullRequestReview	m:addPullRequestReview	
+good	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+good-mut	m:createPullRequest	m:createPullRequest	m:createPullRequest	m:createPullRequest	m:createPullRequest	
+keyword-mutation-field	q:mutation	q:mutation	q:mutation	q:mutation	q:mutation	
+lf-comment	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	
+name-unicode	ERR	ERR	ERR	ERR	ERR	
+name-zwsp	ERR	ERR	ERR	ERR	ERR	
+nbsp-between	ERR	ERR	ERR	ERR	ERR	
+no-separator	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	
+nul-between	ERR	ERR	ERR	ERR	q:viewer | m:addPullRequestReview	
+nul-comment	ERR	ERR	q:viewer	q:viewer	q:viewer	
+num-exp	q:viewer	q:viewer	q:viewer	q:viewer	ERR	graphql-ruby-c rejects what the filter allows (fails safe)
+num-then-name	ERR	ERR	ERR	ERR	ERR	
+opname-keyword	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+schema-doc	ERR	m:addPullRequestReview	m:addPullRequestReview | other:ObjectTypeDefinition	m:addPullRequestReview | other:ObjectTypeDefinition	m:addPullRequestReview | other:ObjectTypeDefinition	
+shorthand-then-mut	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	
+str-backslash-end	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	q:viewer | m:addPullRequestReview	
+str-cr-comment	ERR	ERR	ERR	ERR	ERR	
+str-escape-quote	ERR	ERR	ERR	ERR	ERR	
+str-newline	ERR	ERR	ERR	ERR	ERR	
+subscription	s:x	s:x	s:x	s:x	s:x	
+u0085-comment	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+u2028-comment	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+u2029-comment	q:viewer	q:viewer	q:viewer	q:viewer	q:viewer	
+vt-between	ERR	ERR	ERR	ERR	ERR	
+vt-comment	ERR	ERR	q:viewer	q:viewer	q:viewer	
+
+filter allows -> 12 of 44
+bypass candidates: 2
+('cr-hide-mutation', '\'# x\\rquery{viewer(a:"""\\nmutation{addPullRequestReview(input:{pullRequestId:"PR_x",event:APPROVE}){clientMutationId}} #"""){login}}\'', ['BYPASS-CANDIDATE:graphql-ruby'], {'gqlparser': 'q:viewer', 'graphql-go': 'q:viewer', 'graphql-js': 'q:viewer', 'graphql-ruby': 'm:addPullRequestReview', 'graphql-ruby-c': 'q:viewer'})
+('cr-hide-two-ops', '\'query{viewer(a:1,# x\\rb:"""\\n){login}} mutation B{addPullRequestReview(input:{pullRequestId:"PR_x",event:APPROVE}){clientMutationId}} #"""){login}}\'', ['BYPASS-CANDIDATE:graphql-ruby'], {'gqlparser': 'q:viewer', 'graphql-go': 'q:viewer', 'graphql-js': 'q:viewer', 'graphql-ruby': 'q:viewer | m:addPullRequestReview', 'graphql-ruby-c': 'q:viewer'})

@@ -1,0 +1,1115 @@
+// attack: raw attacks through netagent's local endpoint. Each case reports netagent's answer and what the stub received.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/klauspost/compress/zstd"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
+)
+
+const proxy = "127.0.0.1:3128"
+const placeholder = "lenny-injected"
+
+var roots *x509.CertPool
+var stubAdmin = "http://gh-stub:9000"
+
+type resp struct {
+	status int
+	filter string
+	body   string
+	err    string
+}
+
+func connect(auth string) (net.Conn, *bufio.Reader, error) {
+	c, err := net.DialTimeout("tcp", proxy, 5*time.Second)
+	if err != nil {
+		return nil, nil, err
+	}
+	c.SetDeadline(time.Now().Add(20 * time.Second))
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", auth, auth)
+	br := bufio.NewReader(c)
+	r, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		c.Close()
+		return nil, nil, err
+	}
+	if r.StatusCode != 200 {
+		c.Close()
+		return nil, nil, fmt.Errorf("CONNECT status %d", r.StatusCode)
+	}
+	return c, br, nil
+}
+
+func tlsTo(auth string, proto string, insecure bool) (*tls.Conn, error) {
+	c, _, err := connect(auth)
+	if err != nil {
+		return nil, err
+	}
+	host := auth
+	if h, _, e := net.SplitHostPort(auth); e == nil {
+		host = h
+	}
+	tc := tls.Client(c, &tls.Config{RootCAs: roots, ServerName: strings.ToLower(strings.TrimSuffix(host, ".")), NextProtos: []string{proto}, InsecureSkipVerify: insecure})
+	if err := tc.Handshake(); err != nil {
+		c.Close()
+		return nil, err
+	}
+	return tc, nil
+}
+
+func readH1(br *bufio.Reader, method string) resp {
+	r, err := http.ReadResponse(br, &http.Request{Method: method})
+	if err != nil {
+		return resp{err: "no response: " + err.Error()}
+	}
+	b, _ := io.ReadAll(io.LimitReader(r.Body, 4096))
+	r.Body.Close()
+	return resp{status: r.StatusCode, filter: r.Header.Get("X-Lenny-Filter"), body: string(b)}
+}
+
+// h2 one-connection client over raw frames, so that odd pseudo-headers go out as written.
+type h2c struct {
+	c    net.Conn
+	f    *http2.Framer
+	enc  *hpack.Encoder
+	buf  bytes.Buffer
+	next uint32
+	dec  *hpack.Decoder
+}
+
+func newH2(auth string, insecure bool) (*h2c, error) {
+	tc, err := tlsTo(auth, "h2", insecure)
+	if err != nil {
+		return nil, err
+	}
+	if tc.ConnectionState().NegotiatedProtocol != "h2" {
+		tc.Close()
+		return nil, fmt.Errorf("h2 not negotiated")
+	}
+	io.WriteString(tc, http2.ClientPreface)
+	h := &h2c{c: tc, f: http2.NewFramer(tc, tc), next: 1}
+	h.f.WriteSettings()
+	h.enc = hpack.NewEncoder(&h.buf)
+	h.dec = hpack.NewDecoder(65536, nil)
+	return h, nil
+}
+
+func (h *h2c) do(hs [][2]string, body []byte, trailers ...[2]string) resp {
+	id := h.next
+	h.next += 2
+	h.buf.Reset()
+	for _, x := range hs {
+		h.enc.WriteField(hpack.HeaderField{Name: x[0], Value: x[1]})
+	}
+	h.f.WriteHeaders(http2.HeadersFrameParam{StreamID: id, BlockFragment: h.buf.Bytes(), EndHeaders: true, EndStream: len(body) == 0})
+	for off := 0; off < len(body); {
+		n := len(body) - off
+		if n > 16000 {
+			n = 16000
+		}
+		end := off+n == len(body) && len(trailers) == 0
+		if err := h.f.WriteData(id, end, body[off:off+n]); err != nil {
+			return resp{err: "write: " + err.Error()}
+		}
+		off += n
+	}
+	if len(trailers) > 0 {
+		h.buf.Reset()
+		for _, x := range trailers {
+			h.enc.WriteField(hpack.HeaderField{Name: x[0], Value: x[1]})
+		}
+		h.f.WriteHeaders(http2.HeadersFrameParam{StreamID: id, BlockFragment: h.buf.Bytes(), EndHeaders: true, EndStream: true})
+	}
+	var out resp
+	var b bytes.Buffer
+	for {
+		fr, err := h.f.ReadFrame()
+		if err != nil {
+			out.err = "read: " + err.Error()
+			return out
+		}
+		switch x := fr.(type) {
+		case *http2.SettingsFrame:
+			if !x.IsAck() {
+				h.f.WriteSettingsAck()
+			}
+		case *http2.PingFrame:
+			if !x.IsAck() {
+				h.f.WritePing(true, x.Data)
+			}
+		case *http2.GoAwayFrame:
+			out.err = "GOAWAY " + x.ErrCode.String()
+			return out
+		case *http2.RSTStreamFrame:
+			if x.StreamID == id {
+				out.err = "RST_STREAM " + x.ErrCode.String()
+				return out
+			}
+		case *http2.WindowUpdateFrame:
+		case *http2.HeadersFrame:
+			fs, _ := h.dec.DecodeFull(x.HeaderBlockFragment())
+			if x.StreamID != id {
+				continue
+			}
+			for _, f := range fs {
+				if f.Name == ":status" {
+					fmt.Sscan(f.Value, &out.status)
+				}
+				if f.Name == "x-lenny-filter" {
+					out.filter = f.Value
+				}
+			}
+			if x.StreamEnded() {
+				out.body = b.String()
+				return out
+			}
+		case *http2.DataFrame:
+			if x.StreamID == id {
+				b.Write(x.Data())
+				if len(x.Data()) > 0 {
+					h.f.WriteWindowUpdate(0, uint32(len(x.Data())))
+					h.f.WriteWindowUpdate(id, uint32(len(x.Data())))
+				}
+				if x.StreamEnded() {
+					out.body = b.String()
+					return out
+				}
+			}
+		}
+	}
+}
+
+type rec struct {
+	Method  string              `json:"method"`
+	URI     string              `json:"uri"`
+	Host    string              `json:"host"`
+	Proto   string              `json:"proto"`
+	Headers map[string][]string `json:"headers"`
+	BodyLen int                 `json:"bodyLen"`
+	GQL     []struct {
+		Ops []struct {
+			Type   string   `json:"type"`
+			Fields []string `json:"fields"`
+		} `json:"ops"`
+		OpsB []struct {
+			Type   string   `json:"type"`
+			Fields []string `json:"fields"`
+		} `json:"opsB"`
+	} `json:"gql"`
+	Status int `json:"status"`
+}
+
+func drain() []rec {
+	r, err := (&http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{Proxy: nil}}).Get(stubAdmin + "/drain")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "drain:", err)
+		return nil
+	}
+	defer r.Body.Close()
+	var out []rec
+	dec := json.NewDecoder(r.Body)
+	for dec.More() {
+		var x rec
+		if dec.Decode(&x) != nil {
+			break
+		}
+		out = append(out, x)
+	}
+	return out
+}
+
+// ----- case table
+type step struct {
+	Method, Target string
+	Hdr            []string
+	Body           []byte
+	Host           string // Host or :authority, default the CONNECT authority
+	Raw            []byte // HTTP/1.1 only, written as is
+	H2             [][2]string
+	Trailers       [][2]string
+}
+type kase struct {
+	ID, Group, Expect string // refuse, allow, nocred
+	Conn              string
+	Proto             string // both, h1, h2, plain
+	Insecure          bool
+	Steps             []step
+	StepExpect        []string
+	Note              string
+}
+
+var host, restP, gqlP string
+
+func gj(q string, extra ...any) []byte {
+	m := map[string]any{"query": q}
+	for i := 0; i+1 < len(extra); i += 2 {
+		m[extra[i].(string)] = extra[i+1]
+	}
+	var b bytes.Buffer
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	e.Encode(m)
+	return b.Bytes()
+}
+
+const (
+	bad     = `mutation { addPullRequestReview(input:{pullRequestId:"PR_x",event:APPROVE}){clientMutationId} }`
+	badM    = `mutation { mergePullRequest(input:{pullRequestId:"PR_x"}){clientMutationId} }`
+	goodQ   = `query { viewer { login } }`
+	goodM   = `mutation($input:CreatePullRequestInput!){createPullRequest(input:$input){pullRequest{id url}}}`
+	badInner = `addPullRequestReview(input:{pullRequestId:"PR_x",event:APPROVE}){clientMutationId}`
+)
+
+var goodVars = map[string]any{"input": map[string]any{"repositoryId": "R_1", "title": "t", "baseRefName": "main", "headRefName": "feature"}}
+
+func gql(body []byte, hdr ...string) step {
+	return step{Method: "POST", Target: gqlP, Body: body, Hdr: append([]string{"Content-Type: application/json"}, hdr...)}
+}
+func rest(m, p string, body []byte, hdr ...string) step {
+	s := step{Method: m, Target: restP + p, Body: body, Hdr: hdr}
+	if body != nil {
+		s.Hdr = append([]string{"Content-Type: application/json"}, hdr...)
+	}
+	return s
+}
+func one(id, group, expect string, s step, note ...string) kase {
+	n := ""
+	if len(note) > 0 {
+		n = note[0]
+	}
+	return kase{ID: id, Group: group, Expect: expect, Proto: "both", Steps: []step{s}, Note: n}
+}
+func h1only(id, group, expect string, raw string, note ...string) kase {
+	n := ""
+	if len(note) > 0 {
+		n = note[0]
+	}
+	return kase{ID: id, Group: group, Expect: expect, Proto: "h1", Steps: []step{{Raw: []byte(raw)}}, Note: n}
+}
+func h2only(id, group, expect string, hs [][2]string, body []byte, note ...string) kase {
+	n := ""
+	if len(note) > 0 {
+		n = note[0]
+	}
+	return kase{ID: id, Group: group, Expect: expect, Proto: "h2", Steps: []step{{H2: hs, Body: body}}, Note: n}
+}
+
+func gz(b []byte) []byte {
+	var o bytes.Buffer
+	w := gzip.NewWriter(&o)
+	w.Write(b)
+	w.Close()
+	return o.Bytes()
+}
+func zs(b []byte) []byte {
+	var o bytes.Buffer
+	w, _ := zstd.NewWriter(&o)
+	w.Write(b)
+	w.Close()
+	return o.Bytes()
+}
+func df(b []byte) []byte {
+	var o bytes.Buffer
+	w, _ := flate.NewWriter(&o, 5)
+	w.Write(b)
+	w.Close()
+	return o.Bytes()
+}
+
+func cases() []kase {
+	var K []kase
+	add := func(k ...kase) { K = append(K, k...) }
+	pr := "/repos/acme/widgets/pulls"
+	// positive controls
+	add(one("ctl-query", "control", "allow", gql(gj(goodQ))))
+	add(one("ctl-create", "control", "allow", gql(gj(goodM, "variables", goodVars))))
+	add(one("ctl-rest-get", "control", "allow", rest("GET", pr+"/7", nil)))
+	add(one("ctl-rest-list", "control", "allow", rest("GET", pr+"?per_page=100&state=open", nil)))
+	add(one("ctl-rest-create", "control", "allow", rest("POST", pr, []byte(`{"title":"t","head":"feature","base":"main"}`))))
+	add(one("ctl-rest-owner-case", "control", "allow", rest("GET", "/repos/ACME/Widgets/pulls/7", nil), "owner and repo case are free; literal segments are not"))
+	add(one("ctl-two-good-ops", "control", "allow", gql(gj(`query A{viewer{login}} query B{viewer{id}}`, "operationName", "A"))))
+	add(one("ctl-fragment-good", "control", "allow", gql(gj(`mutation($input:CreatePullRequestInput!){...F} fragment F on Mutation{createPullRequest(input:$input){clientMutationId}}`, "variables", goodVars))))
+	add(one("ctl-comment-ws", "control", "allow", gql(gj("# a comment\n\t,,mutation  ( $input :CreatePullRequestInput! ) ,{ # c\r\n createPullRequest ( input : $input ) , { clientMutationId } }\n", "variables", goodVars))))
+	add(one("ctl-alias-good", "control", "allow", gql(gj(`mutation($input:CreatePullRequestInput!){x:createPullRequest(input:$input){clientMutationId}}`, "variables", goodVars))))
+	add(one("ctl-update-allowed-input", "control", "allow", gql(gj(`mutation($i:UpdatePullRequestInput!){updatePullRequest(input:$i){clientMutationId}}`, "variables", map[string]any{"i": map[string]any{"pullRequestId": "P", "labelIds": []string{"L"}}}))))
+	add(one("ctl-event-var-on-create", "control", "allow", gql(gj(goodM, "variables", map[string]any{"input": goodVars["input"], "event": "APPROVE"})), "extra variable; the field stays createPullRequest"))
+
+	// REST routes for reviews and merges, and neighbours
+	for _, r := range [][3]string{
+		{"POST", pr + "/7/reviews", `{"event":"APPROVE"}`},
+		{"POST", pr + "/7/reviews/1/events", `{"event":"APPROVE"}`},
+		{"PUT", pr + "/7/reviews/1", `{"body":"x"}`},
+		{"PUT", pr + "/7/reviews/1/dismissals", `{"message":"x"}`},
+		{"DELETE", pr + "/7/reviews/1", ""},
+		{"GET", pr + "/7/reviews", ""},
+		{"PUT", pr + "/7/merge", `{"merge_method":"merge"}`},
+		{"GET", pr + "/7/merge", ""},
+		{"POST", "/repos/acme/widgets/merges", `{"base":"main","head":"feature"}`},
+		{"POST", "/repos/acme/widgets/merge-upstream", `{"branch":"main"}`},
+		{"PUT", pr + "/7/update-branch", `{}`},
+		{"PATCH", pr + "/7", `{"state":"closed"}`},
+		{"POST", pr + "/7/requested_reviewers", `{"reviewers":["bob"]}`},
+		{"POST", "/repos/acme/widgets/issues/7/comments", `{"body":"/lgtm"}`},
+		{"PATCH", "/repos/acme/widgets/git/refs/heads/main", `{"sha":"abc","force":true}`},
+		{"POST", "/repos/acme/widgets/git/refs", `{"ref":"refs/heads/x","sha":"abc"}`},
+		{"DELETE", "/repos/acme/widgets/git/refs/heads/feature", ""},
+		{"PUT", "/repos/acme/widgets/contents/f", `{"message":"m","content":"eA=="}`},
+		{"POST", "/repos/acme/widgets/forks", `{}`},
+		{"DELETE", "/repos/acme/widgets", ""},
+		{"POST", "/graphql-not-here", `{}`},
+	} {
+		var b []byte
+		if r[2] != "" {
+			b = []byte(r[2])
+		}
+		add(one("rest "+r[0]+" "+r[1], "rest-route", "refuse", rest(r[0], r[1], b)))
+	}
+
+	// GraphQL names
+	for _, n := range []string{"addPullRequestReview", "submitPullRequestReview", "dismissPullRequestReview", "deletePullRequestReview", "updatePullRequestReview", "mergePullRequest", "enablePullRequestAutoMerge", "disablePullRequestAutoMerge", "enqueuePullRequest", "dequeuePullRequest", "mergeBranch", "updatePullRequestBranch", "updateRef", "updateRefs", "createRef", "deleteRef", "createCommitOnBranch", "closePullRequest", "reopenPullRequest", "addComment", "convertPullRequestToDraft", "markPullRequestReadyForReview", "revertPullRequest"} {
+		add(one("gql "+n, "gql-field", "refuse", gql(gj(`mutation { `+n+`(input:{}){clientMutationId} }`))))
+	}
+	add(one("gql-query-unlisted __schema", "gql-field", "refuse", gql(gj(`query { __schema { mutationType { fields { name } } } }`))))
+	add(one("gql-query-unlisted nodes", "gql-field", "refuse", gql(gj(`query { nodes(ids:["x"]) { id } }`))))
+
+	g := "gql-evasion"
+	add(one("alias x", g, "refuse", gql(gj(`mutation { x: `+badInner+` }`))))
+	add(one("alias named as an allowed field", g, "refuse", gql(gj(`mutation { createPullRequest: `+badInner+` }`))))
+	add(one("allowed alias on bad next to good", g, "refuse", gql(gj(`mutation($input:CreatePullRequestInput!){ createPullRequest(input:$input){clientMutationId} y: `+badInner+` }`, "variables", goodVars))))
+	add(one("second field bad", g, "refuse", gql(gj(`mutation($input:CreatePullRequestInput!){ createPullRequest(input:$input){clientMutationId} `+badInner+` }`, "variables", goodVars))))
+	add(one("two ops opName selects bad", g, "refuse", gql(gj(`query Good{viewer{login}} mutation Bad{`+badInner+`}`, "operationName", "Bad"))))
+	add(one("two ops opName selects good", g, "refuse", gql(gj(`query Good{viewer{login}} mutation Bad{`+badInner+`}`, "operationName", "Good")), "the unselected operation is refused too"))
+	add(one("two ops no opName", g, "refuse", gql(gj(`query Good{viewer{login}} mutation Bad{`+badInner+`}`))))
+	add(one("opName names nothing", g, "refuse", gql(gj(goodQ, "operationName", "Nope"))))
+	add(one("batch with bad", g, "refuse", gql([]byte(`[{"query":"query{viewer{login}}"},{"query":"`+strings.ReplaceAll(bad, `"`, `\"`)+`"}]`))))
+	add(one("batch of good", g, "refuse", gql([]byte(`[{"query":"query{viewer{login}}"}]`))))
+	add(one("fragment spread", g, "refuse", gql(gj(`mutation { ...F } fragment F on Mutation { `+badInner+` }`))))
+	add(one("nested fragments", g, "refuse", gql(gj(`mutation { ...A } fragment A on Mutation { ...B } fragment B on Mutation { `+badInner+` }`))))
+	add(one("inline fragment typed", g, "refuse", gql(gj(`mutation { ... on Mutation { `+badInner+` } }`))))
+	add(one("inline fragment untyped", g, "refuse", gql(gj(`mutation { ... { `+badInner+` } }`))))
+	add(one("fragment with a good field beside", g, "refuse", gql(gj(`mutation($input:CreatePullRequestInput!){ createPullRequest(input:$input){clientMutationId} ...F } fragment F on Mutation { `+badInner+` }`, "variables", goodVars))))
+	add(one("fragment cycle", g, "refuse", gql(gj(`mutation { ...A } fragment A on Mutation { ...B `+badInner+` } fragment B on Mutation { ...A }`))))
+	add(one("fragment unknown", g, "refuse", gql(gj(`mutation { ...Nope }`))))
+	add(one("fragment unused on Mutation", g, "refuse", gql(gj(`query { viewer { login } } fragment F on Mutation { `+badInner+` }`))))
+	add(one("skip directive on bad", g, "refuse", gql(gj(`mutation { `+strings.Replace(badInner, "(input", "(input", 1)[:len("addPullRequestReview")]+`(input:{}) @skip(if:false) {clientMutationId} }`))))
+	add(one("query op spreading Mutation fragment", g, "refuse", gql(gj(`query { ...F } fragment F on Mutation { `+badInner+` }`))))
+	add(one("variables carry the event", g, "refuse", gql(gj(`mutation($i:AddPullRequestReviewInput!){addPullRequestReview(input:$i){clientMutationId}}`, "variables", map[string]any{"i": map[string]any{"pullRequestId": "P", "event": "APPROVE"}}))))
+	add(one("variables close via updatePullRequest", g, "refuse", gql(gj(`mutation($i:UpdatePullRequestInput!){updatePullRequest(input:$i){clientMutationId}}`, "variables", map[string]any{"i": map[string]any{"pullRequestId": "P", "state": "CLOSED"}}))))
+	add(one("literal close via updatePullRequest", g, "refuse", gql(gj(`mutation{updatePullRequest(input:{pullRequestId:"P",state:CLOSED}){clientMutationId}}`))))
+	add(one("retarget via updatePullRequest", g, "refuse", gql(gj(`mutation{updatePullRequest(input:{pullRequestId:"P",baseRefName:"release"}){clientMutationId}}`))))
+	add(one("variable default holds the input", g, "refuse", gql(gj(`mutation($i:UpdatePullRequestInput={pullRequestId:"P",state:CLOSED}){updatePullRequest(input:$i){clientMutationId}}`))))
+	add(one("nested variable in the input", g, "allow", gql(gj(`mutation($s:[ID!]){updatePullRequest(input:{pullRequestId:"P",labelIds:$s}){clientMutationId}}`, "variables", map[string]any{"s": []string{"L"}})), "listed input keys only"))
+	add(one("comment hides nothing", g, "refuse", gql(gj("# query { viewer { login } }\n"+bad))))
+	add(one("mutation after a comment line", g, "refuse", gql(gj("query { viewer { login } } # x\nmutation B { "+badInner+" }"))))
+	add(one("CR ends a comment", g, "refuse", gql(gj("query { viewer { login } } # x\rmutation B { "+badInner+" }"))))
+	add(one("odd whitespace and commas", g, "refuse", gql(gj("\t,,\r\n mutation \t,{,\n\n"+badInner+"\n,}, "))))
+	add(one("BOM at start", g, "refuse", gql(gj("\ufeff"+bad))))
+	add(one("U+2028 after a comment", "gql-differential", "refuse", gql(gj("query { viewer { login } } # x\u2028mutation B { "+badInner+" }")), "expectation is for the strict policy; without the lexical rule the filter reads a comment to end of input and all five readers agree"))
+	add(one("NBSP between ops", g, "refuse", gql(gj("query { viewer { login } }\u00a0mutation B { "+badInner+" }"))))
+	add(one("NUL in comment", g, "refuse", gql(gj("query { viewer { login } } # x\x00\nmutation B { "+badInner+" }"))))
+	add(one("block string escape then op", "gql-differential", "allow", gql(gj(`query Q($a:String="""\"""){viewer{login}} mutation B{`+badInner+`} #"""){viewer{login}}`)), "readers that do not honour \\\"\"\" see a second operation; gqlparser's reading is in the corpus table"))
+	add(one("bare CR hides a mutation from one reader", g, "refuse", gql(gj("# x\rquery{viewer(a:\"\"\"\nmutation{"+badInner+"} #\"\"\"){login}}")), "gqlparser: comment ends at CR, then one query. graphql-ruby's pure lexer: comment ends at LF, then one mutation"))
+	bq := strings.ReplaceAll(bad, `"`, `\"`)
+	add(one("duplicate query good then bad", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}","query":"`+bq+`"}`))))
+	add(one("duplicate query bad then good", g, "refuse", gql([]byte(`{"query":"`+bq+`","query":"query{viewer{login}}"}`))))
+	add(one("duplicate via case variant", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}","QUERY":"`+bq+`"}`))))
+	add(one("duplicate via escaped key", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}","\u0071uery":"`+bq+`"}`))))
+	add(one("second JSON value after the object", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}"}{"query":"`+bq+`"}`))))
+	add(one("invalid UTF-8 in the body", g, "refuse", gql([]byte("{\"query\":\"query{viewer{login}}\xff\"}"))))
+	add(one("extensions key", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}","extensions":{"persistedQuery":{"version":1,"sha256Hash":"abc"}}}`))))
+	add(one("no query, persisted only", g, "refuse", gql([]byte(`{"extensions":{"persistedQuery":{"version":1,"sha256Hash":"abc"}}}`))))
+	add(one("query not a string", g, "refuse", gql([]byte(`{"query":["`+bq+`"]}`))))
+	add(one("operationName not a string", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}","operationName":{"a":1}}`))))
+	add(one("variables not an object", g, "refuse", gql([]byte(`{"query":"query{viewer{login}}","variables":"x"}`))))
+	add(one("GET query param bad", g, "refuse", step{Method: "GET", Target: gqlP + "?query=" + url.QueryEscape(bad)}))
+	add(one("GET query param good", g, "refuse", step{Method: "GET", Target: gqlP + "?query=" + url.QueryEscape(goodQ)}))
+	add(one("POST query param bad, good body", g, "refuse", step{Method: "POST", Target: gqlP + "?query=" + url.QueryEscape(bad), Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("POST operationName param", g, "refuse", step{Method: "POST", Target: gqlP + "?operationName=Bad", Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("empty URL query on POST", g, "refuse", step{Method: "POST", Target: gqlP + "?", Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("form body", g, "refuse", step{Method: "POST", Target: gqlP, Body: []byte("query=" + url.QueryEscape(bad)), Hdr: []string{"Content-Type: application/x-www-form-urlencoded"}}))
+	add(one("application/graphql body", g, "refuse", step{Method: "POST", Target: gqlP, Body: []byte(bad), Hdr: []string{"Content-Type: application/graphql"}}))
+	add(one("text/plain JSON body", g, "refuse", step{Method: "POST", Target: gqlP, Body: gj(bad), Hdr: []string{"Content-Type: text/plain"}}))
+	add(one("no Content-Type", g, "refuse", step{Method: "POST", Target: gqlP, Body: gj(bad)}))
+	add(one("two Content-Types", g, "refuse", step{Method: "POST", Target: gqlP, Body: gj(goodQ), Hdr: []string{"Content-Type: application/json", "Content-Type: application/graphql"}}))
+	add(one("Content-Type list", g, "refuse", step{Method: "POST", Target: gqlP, Body: gj(goodQ), Hdr: []string{"Content-Type: application/json, application/graphql"}}))
+	add(one("gzip body bad", g, "refuse", gql(gz(gj(bad)), "Content-Encoding: gzip")))
+	add(one("gzip body good", g, "refuse", gql(gz(gj(goodQ)), "Content-Encoding: gzip"), "fail closed, gh sends no compressed body"))
+	add(one("zstd body bad", g, "refuse", gql(zs(gj(bad)), "Content-Encoding: zstd")))
+	add(one("deflate body bad", g, "refuse", gql(df(gj(bad)), "Content-Encoding: deflate")))
+	add(one("gzip stream, no header", g, "refuse", gql(gz(gj(bad)))))
+	add(one("identity encoding header", g, "refuse", gql(gj(bad), "Content-Encoding: identity")))
+	// bound
+	pad := func(n int, doc string) []byte {
+		base := gj("#" + "\n" + doc)
+		return gj("#"+strings.Repeat("x", n-len(base))+"\n"+doc)
+	}
+	add(one("body at the bound, good", "bound", "allow", gql(pad(256<<10, goodQ))))
+	add(one("body over the bound, good", "bound", "refuse", gql(pad(256<<10+1, goodQ))))
+	add(one("body over the bound, bad past it", "bound", "refuse", gql(pad(256<<10+1, bad))))
+	add(one("1 MiB body, bad", "bound", "refuse", gql(pad(1<<20, bad))))
+	big := pad(256<<10, goodQ)
+	add(kase{ID: "chunked over the bound, no length", Group: "bound", Expect: "refuse", Proto: "h1", Steps: []step{{Raw: rawChunked(gqlP, pad(256<<10+1, bad))}}})
+	add(kase{ID: "chunked at the bound, good", Group: "bound", Expect: "allow", Proto: "h1", Steps: []step{{Raw: rawChunked(gqlP, big)}}})
+	add(kase{ID: "chunked good", Group: "chunked", Expect: "allow", Proto: "h1", Steps: []step{{Raw: rawChunked(gqlP, gj(goodQ))}}})
+	add(kase{ID: "chunked bad", Group: "chunked", Expect: "refuse", Proto: "h1", Steps: []step{{Raw: rawChunked(gqlP, gj(bad))}}})
+	add(kase{ID: "chunked bad split inside the field name", Group: "chunked", Expect: "refuse", Proto: "h1", Steps: []step{{Raw: rawChunkedSplit(gqlP, gj(bad), "addPullRe")}}})
+	add(kase{ID: "h2 no content-length, bad", Group: "chunked", Expect: "refuse", Proto: "h2", Steps: []step{{H2: h2base("POST", gqlP, host), Body: gj(bad)}}})
+	add(kase{ID: "h2 no content-length, over the bound", Group: "bound", Expect: "refuse", Proto: "h2", Steps: []step{{H2: h2base("POST", gqlP, host), Body: pad(256<<10+1, goodQ)}}})
+	// malformed and subscription
+	g = "gql-malformed"
+	add(one("malformed unterminated", g, "refuse", gql(gj(`mutation { addPullRequestReview(`))))
+	add(one("malformed garbage", g, "refuse", gql(gj(`not graphql at all`))))
+	add(one("empty query", g, "refuse", gql(gj(``))))
+	add(one("malformed JSON", g, "refuse", gql([]byte(`{"query":`))))
+	add(one("empty body", g, "refuse", step{Method: "POST", Target: gqlP, Hdr: []string{"Content-Type: application/json"}}))
+	add(one("schema definition document", g, "refuse", gql(gj(`type Mutation { x: Int }`))))
+	add(one("operation case variant", g, "refuse", gql(gj(`MUTATION { `+badInner+` }`))))
+	add(one("subscription", g, "refuse", gql(gj(`subscription { issueCommentAdded { id } }`))))
+	add(one("subscription named as an allowed field", g, "refuse", gql(gj(`subscription { repository { id } }`))))
+	add(one("deep nesting 40k levels", g, "refuse", gql(gj(strings.Repeat("{a", 40000)+strings.Repeat("}", 40000))), "field a is unlisted; checks that the parser returns"))
+	add(one("deep nesting under a listed field", g, "refuse", gql(gj("{viewer"+strings.Repeat("{a", 40000)+strings.Repeat("}", 40001))), "refused by maxDepth; without it the document passes the field check"))
+	add(one("nesting at the depth bound", g, "allow", gql(gj("{viewer"+strings.Repeat("{a", 30)+strings.Repeat("}", 31)))))
+	add(one("256 KiB of tokens", g, "refuse", gql(gj("{a"+strings.Repeat(" a", 130000)+"}")), "the first field is unlisted; checks the parser's cost"))
+
+	// REST path tricks. Each is a merge or review written so that a naive matcher or a normalizing origin might see it.
+	g = "rest-path"
+	m := pr + "/7/merge"
+	mb := []byte(`{"merge_method":"merge"}`)
+	for _, t := range [][2]string{
+		{"double slash leading", "/" + restP + m},
+		{"double slash inside", restP + "/repos/acme/widgets//pulls/7/merge"},
+		{"encoded slash", restP + "/repos/acme/widgets/pulls%2F7%2Fmerge"},
+		{"encoded slash lower", restP + "/repos/acme/widgets/pulls%2f7%2fmerge"},
+		{"double encoded slash", restP + "/repos/acme/widgets/pulls%252F7%252Fmerge"},
+		{"dot dot", restP + "/repos/acme/widgets/issues/../pulls/7/merge"},
+		{"encoded dot dot", restP + "/repos/acme/widgets/issues/%2e%2e/pulls/7/merge"},
+		{"dot segment", restP + "/repos/acme/widgets/./pulls/7/merge"},
+		{"trailing slash", restP + m + "/"},
+		{"case change literal", restP + "/repos/acme/widgets/PULLS/7/MERGE"},
+		{"encoded letter", restP + "/repos/acme/widgets/%70ulls/7/merge"},
+		{"encoded NUL suffix", restP + m + "%00"},
+		{"semicolon parameter", restP + m + ";a=b"},
+		{"backslash", restP + `/repos/acme/widgets/pulls\7\merge`},
+	} {
+		add(one("PUT "+t[0], g, "refuse", step{Method: "PUT", Target: t[1], Body: mb, Hdr: []string{"Content-Type: application/json"}}))
+	}
+	// Written to fit an allowed template.
+	for _, t := range [][3]string{
+		{"POST", "fits POST pulls via encoded tail", restP + "/repos/acme/widgets%2Fpulls%2F7%2Freviews/x/pulls"},
+		{"POST", "fits POST pulls via dotdot owner", restP + "/repos/../repos/acme/widgets/pulls/7/reviews"},
+		{"POST", "dotdot in template slots", restP + "/repos/acme/../pulls"},
+		{"POST", "dot in template slot", restP + "/repos/./widgets/pulls"},
+		{"POST", "trailing slash on allowed", restP + pr + "/"},
+		{"POST", "double slash on allowed", restP + "/repos/acme/widgets//pulls"},
+		{"POST", "case change on allowed", restP + "/repos/acme/widgets/PULLS"},
+		{"POST", "encoded slash on allowed", restP + "/repos/acme%2Fwidgets/pulls"},
+		{"GET", "non-numeric PR number", restP + pr + "/7a"},
+		{"GET", "encoded PR number", restP + pr + "/%37"},
+		{"POST", "_method in the query on allowed POST", restP + pr + "?_method=PUT"},
+		{"GET", "_method in the query on allowed GET", restP + pr + "/7?_method=PUT"},
+		{"GET", "unlisted query key", restP + pr + "?x=1"},
+		{"GET", "fragment in the target", restP + pr + "/7#frag"},
+	} {
+		var b []byte
+		var hd []string
+		if t[0] == "POST" {
+			b = []byte(`{"title":"t","head":"f","base":"m"}`)
+			hd = []string{"Content-Type: application/json"}
+		}
+		add(one(t[0]+" "+t[1], g, "refuse", step{Method: t[0], Target: t[2], Body: b, Hdr: hd}))
+	}
+	for _, o := range []string{"X-HTTP-Method-Override", "X-HTTP-Method", "X-Method-Override", "X-Original-URL", "X-Rewrite-URL"} {
+		v := "PUT"
+		if strings.Contains(o, "URL") {
+			v = restP + m
+		}
+		add(one(o+" on allowed POST", "rest-override", "refuse", rest("POST", pr, []byte(`{"title":"t"}`), o+": "+v)))
+		add(one(o+" on allowed GET", "rest-override", "refuse", rest("GET", pr+"/7", nil, o+": "+v)))
+	}
+	add(one("Connection names an allowed header", "rest-override", "refuse", rest("POST", pr, []byte(`{"title":"t"}`), "Connection: Content-Type")))
+	add(one("unlisted header", "rest-override", "refuse", rest("GET", pr+"/7", nil, "X-Foo: bar")))
+	add(one("form body on allowed POST", "rest-override", "refuse", step{Method: "POST", Target: restP + pr, Body: []byte("_method=PUT"), Hdr: []string{"Content-Type: application/x-www-form-urlencoded"}}))
+	add(one("array body on allowed POST", "rest-override", "refuse", rest("POST", pr, []byte(`[{"title":"t"}]`))))
+	add(one("gzip body on allowed POST", "rest-override", "refuse", rest("POST", pr, gz([]byte(`{"title":"t"}`)), "Content-Encoding: gzip")))
+	add(one("GET with a body", "rest-override", "refuse", step{Method: "GET", Target: restP + pr + "/7", Body: []byte(`{}`), Hdr: []string{"Content-Type: application/json"}}))
+	for _, me := range []string{"HEAD", "OPTIONS", "TRACE", "PATCH", "DELETE"} {
+		add(one(me+" allowed path", "rest-method", "refuse", rest(me, pr+"/7", nil)))
+		add(one(me+" merge path", "rest-method", "refuse", rest(me, m, nil)))
+		add(one(me+" GraphQL path", "rest-method", "refuse", step{Method: me, Target: gqlP}))
+	}
+	add(one("lower-case method", "rest-method", "refuse", step{Method: "post", Target: restP + pr, Body: []byte(`{"title":"t"}`), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("invented method", "rest-method", "refuse", step{Method: "MERGE", Target: restP + m}))
+	// GraphQL path tricks with a bad document
+	g = "gql-path"
+	for _, t := range [][2]string{
+		{"double slash", "/" + gqlP},
+		{"trailing slash", gqlP + "/"},
+		{"case change", strings.ToUpper(gqlP)},
+		{"encoded letter", strings.Replace(gqlP, "graphql", "%67raphql", 1)},
+		{"dot segment", strings.Replace(gqlP, "graphql", "./graphql", 1)},
+		{"dot dot", strings.Replace(gqlP, "graphql", "x/../graphql", 1)},
+		{"semicolon", gqlP + ";x=1"},
+		{"suffix", gqlP + "x"},
+		{"other prefix", "/api/v4/graphql"},
+		{"under the REST prefix", restP + "/repos/acme/widgets/graphql"},
+	} {
+		add(one("bad doc "+t[0], g, "refuse", step{Method: "POST", Target: t[1], Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}))
+	}
+
+	// Transport.
+	g = "transport"
+	A := func(extra string, target string, body []byte, hostHdr string) string {
+		return fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: token lenny-injected\r\nContent-Type: application/json\r\n%sContent-Length: %d\r\n\r\n%s", target, hostHdr, extra, len(body), body)
+	}
+	add(h1only("absolute-form bad, same Host", g, "refuse", A("", "https://"+host+gqlP, gj(bad), host)))
+	add(h1only("absolute-form good, same Host", g, "allow", A("", "https://"+host+gqlP, gj(goodQ), host)))
+	add(h1only("absolute-form http scheme, bad", g, "refuse", A("", "http://"+host+gqlP, gj(bad), host)))
+	add(h1only("absolute-form, disagreeing Host", g, "refuse", A("", "https://"+host+gqlP, gj(goodQ), "api.example.test")))
+	add(h1only("absolute-form merge route", g, "refuse", A("", "https://"+host+restP+m, mb, host)))
+	add(h1only("two Host headers", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nHost: api.example.test\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", gqlP, host, len(gj(goodQ)), gj(goodQ))))
+	add(h1only("HTTP/1.0 bad", g, "refuse", fmt.Sprintf("POST %s HTTP/1.0\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", gqlP, host, len(gj(bad)), gj(bad))))
+	add(h1only("HTTP/1.0 without Host", g, "refuse", fmt.Sprintf("POST %s HTTP/1.0\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", gqlP, len(gj(bad)), gj(bad))))
+	add(kase{ID: "absolute-form on the plain port, bad", Group: g, Expect: "refuse", Proto: "plain", Steps: []step{{Raw: []byte(A("", "http://"+host+gqlP, gj(bad), host))}}})
+	add(kase{ID: "absolute-form on the plain port, good", Group: g, Expect: "allow", Proto: "plain", Steps: []step{{Raw: []byte(A("", "http://"+host+gqlP, gj(goodQ), host))}}})
+	add(kase{ID: "absolute-form on the plain port, merge route", Group: g, Expect: "refuse", Proto: "plain", Steps: []step{{Raw: []byte(A("", "http://"+host+restP+m, mb, host))}}})
+	add(kase{ID: "absolute-form https on the plain port, bad", Group: g, Expect: "refuse", Proto: "plain", Steps: []step{{Raw: []byte(A("", "https://"+host+gqlP, gj(bad), host))}}})
+	add(kase{ID: "origin-form on the plain port", Group: g, Expect: "refuse", Proto: "plain", Steps: []step{{Raw: []byte(A("", gqlP, gj(goodQ), host))}}})
+	// Differing authority inside the same connection
+	add(one("Host other unbound, bad", g, "refuse", step{Method: "POST", Target: gqlP, Host: "other.example.test", Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host other unbound, good", g, "refuse", step{Method: "POST", Target: gqlP, Host: "other.example.test", Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host another bound host", g, "refuse", step{Method: "POST", Target: gqlP, Host: "api.example.test", Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host with another port", g, "refuse", step{Method: "POST", Target: gqlP, Host: host + ":8443", Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host in upper case, bad", g, "refuse", step{Method: "POST", Target: gqlP, Host: strings.ToUpper(host), Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host with port 443, bad", g, "refuse", step{Method: "POST", Target: gqlP, Host: host + ":443", Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host with trailing dot, bad", g, "refuse", step{Method: "POST", Target: gqlP, Host: host + ".", Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("Host in upper case, good", g, "allow", step{Method: "POST", Target: gqlP, Host: strings.ToUpper(host), Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}))
+	add(kase{ID: "filtered host named inside an unfiltered bound connection, bad", Group: g, Expect: "refuse", Conn: "api.example.test:443", Proto: "both", Steps: []step{{Method: "POST", Target: gqlP, Host: host, Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}}})
+	add(kase{ID: "filtered host named inside an unfiltered bound connection, good", Group: g, Expect: "allow", Conn: "api.example.test:443", Proto: "both", Steps: []step{{Method: "POST", Target: gqlP, Host: host, Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}}})
+	add(kase{ID: "filtered host in the plain port's Host with an unfiltered target", Group: g, Expect: "refuse", Proto: "plain", Steps: []step{{Raw: []byte(A("", "http://api.example.test"+gqlP, gj(bad), host))}}})
+	// CONNECT spellings
+	add(kase{ID: "CONNECT upper case, bad", Group: g, Expect: "refuse", Conn: strings.ToUpper(host) + ":443", Proto: "both", Insecure: true, Steps: []step{gql(gj(bad))}})
+	add(kase{ID: "CONNECT trailing dot, bad", Group: g, Expect: "refuse", Conn: host + ".:443", Proto: "both", Insecure: true, Steps: []step{gql(gj(bad))}})
+	// h2 specifics
+	g = "h2"
+	b2 := func(au string, extra ...[2]string) [][2]string { return append(h2base("POST", gqlP, au), extra...) }
+	add(h2only(":authority other, bad", g, "refuse", b2("other.example.test"), gj(bad)))
+	add(h2only(":authority another bound host", g, "refuse", b2("api.example.test"), gj(bad)))
+	add(h2only("host header beside :authority", g, "refuse", b2(host, [2]string{"host", "api.example.test"}), gj(goodQ)))
+	add(h2only("no :authority, host header only, bad", g, "refuse", [][2]string{{":method", "POST"}, {":scheme", "https"}, {":path", gqlP}, {"host", host}, {"content-type", "application/json"}}, gj(bad)))
+	add(h2only("no :authority, host header other", g, "refuse", [][2]string{{":method", "POST"}, {":scheme", "https"}, {":path", gqlP}, {"host", "other.example.test"}, {"content-type", "application/json"}}, gj(goodQ)))
+	add(h2only(":scheme http, bad", g, "refuse", [][2]string{{":method", "POST"}, {":scheme", "http"}, {":path", gqlP}, {":authority", host}, {"content-type", "application/json"}}, gj(bad)))
+	add(h2only(":path absolute URL", g, "refuse", [][2]string{{":method", "POST"}, {":scheme", "https"}, {":path", "https://" + host + gqlP}, {":authority", host}, {"content-type", "application/json"}}, gj(bad)))
+	add(h2only("two :path", g, "refuse", [][2]string{{":method", "POST"}, {":scheme", "https"}, {":path", gqlP}, {":path", restP + m}, {":authority", host}, {"content-type", "application/json"}}, gj(goodQ)))
+	add(h2only("two :method", g, "refuse", [][2]string{{":method", "GET"}, {":method", "PUT"}, {":scheme", "https"}, {":path", restP + pr + "/7"}, {":authority", host}}, nil))
+	add(h2only("two content-type fields", g, "refuse", [][2]string{{":method", "POST"}, {":scheme", "https"}, {":path", gqlP}, {":authority", host}, {"content-type", "application/json"}, {"content-type", "application/graphql"}}, gj(goodQ)))
+	add(h2only("content-length shorter than the body", g, "refuse", b2(host, [2]string{"content-length", "5"}), gj(bad)))
+	add(h2only("transfer-encoding header", g, "refuse", b2(host, [2]string{"transfer-encoding", "chunked"}), gj(bad)))
+	add(h2only("extended CONNECT", g, "refuse", [][2]string{{":method", "CONNECT"}, {":protocol", "websocket"}, {":scheme", "https"}, {":path", gqlP}, {":authority", host}}, nil))
+	add(h2only("plain CONNECT inside", g, "refuse", [][2]string{{":method", "CONNECT"}, {":authority", "other.example.test:443"}}, nil))
+	add(h2only("upgrade header", g, "refuse", b2(host, [2]string{"upgrade", "websocket"}), gj(goodQ)))
+	add(kase{ID: "control for the trailer cases", Group: g, Expect: "allow", Proto: "h2", Steps: []step{{H2: b2(host), Body: gj(goodQ)}}})
+	add(kase{ID: "undeclared trailer carries a method override", Group: g, Expect: "allow", Proto: "h2", Steps: []step{{H2: b2(host), Body: gj(goodQ), Trailers: [][2]string{{"x-http-method-override", "PUT"}}}}, Note: "allow means the document is good and the trailer did not reach the stub; judge fails the case if it did"})
+	add(kase{ID: "declared trailer carries a method override", Group: g, Expect: "refuse", Proto: "h2", Steps: []step{{H2: b2(host, [2]string{"trailer", "x-http-method-override"}), Body: gj(goodQ), Trailers: [][2]string{{"x-http-method-override", "PUT"}}}}})
+	// connection reuse
+	g = "reuse"
+	ok := gql(gj(goodQ))
+	no := gql(gj(bad))
+	me := rest("PUT", m, mb)
+	add(kase{ID: "allowed then bad GraphQL", Group: g, Proto: "both", Steps: []step{ok, no}, StepExpect: []string{"allow", "refuse"}})
+	add(kase{ID: "allowed then merge route", Group: g, Proto: "both", Steps: []step{ok, me}, StepExpect: []string{"allow", "refuse"}})
+	add(kase{ID: "refused then allowed", Group: g, Proto: "both", Steps: []step{no, ok}, StepExpect: []string{"refuse", "allow"}})
+	add(kase{ID: "allowed, then another authority, then bad", Group: g, Proto: "both", Steps: []step{ok, {Method: "POST", Target: gqlP, Host: "api.example.test", Body: gj(goodQ), Hdr: []string{"Content-Type: application/json"}}, no}, StepExpect: []string{"allow", "refuse", "refuse"}})
+	add(kase{ID: "pipelined good then bad", Group: g, Proto: "pipe", Steps: []step{ok, no}, StepExpect: []string{"allow", "refuse"}})
+	// smuggling, HTTP/1.1
+	g = "h1-framing"
+	jb := gj(goodQ)
+	sm := gj(bad)
+	smReq := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", gqlP, host, len(sm), sm)
+	add(kase{ID: "second request after Content-Length", Group: g, Proto: "framed", Steps: []step{{Raw: []byte(fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s%s", gqlP, host, len(jb), jb, smReq))}}, StepExpect: []string{"allow", "refuse"}})
+	add(h1only("Content-Length and chunked together", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n%s", gqlP, host, len(jb), smReq)))
+	add(h1only("TE xchunked", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTransfer-Encoding: xchunked\r\n\r\n0\r\n\r\n", gqlP, host)))
+	add(h1only("TE chunked, identity", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked, identity\r\n\r\n0\r\n\r\n", gqlP, host)))
+	add(h1only("TE with a space", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTransfer-Encoding : chunked\r\n\r\n0\r\n\r\n", gqlP, host)))
+	add(h1only("two differing Content-Lengths", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 2\r\nContent-Length: %d\r\n\r\n%s", gqlP, host, len(sm), sm)))
+	add(h1only("Content-Length 0 with a bad body after", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n%s", gqlP, host, sm), "empty document refused; the leftover bytes are a bad request line"))
+	add(h1only("bare LF line endings, bad", g, "refuse", strings.ReplaceAll(smReq, "\r\n", "\n")))
+	add(h1only("folded header", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nX-Foo: a\r\n b\r\nContent-Length: %d\r\n\r\n%s", gqlP, host, len(jb), jb)))
+	add(h1only("chunked with a trailer", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTrailer: X-HTTP-Method-Override\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n0\r\nX-HTTP-Method-Override: PUT\r\n\r\n", gqlP, host, len(jb), jb)))
+	add(h1only("Upgrade websocket", g, "refuse", fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n", gqlP, host)))
+	add(h1only("Upgrade h2c", g, "refuse", fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade, HTTP2-Settings\r\nUpgrade: h2c\r\nHTTP2-Settings: AAMAAABkAAQAAP__\r\n\r\n", restP+pr+"/7", host)))
+	add(h1only("CONNECT inside the terminated connection", g, "refuse", fmt.Sprintf("CONNECT other.example.test:443 HTTP/1.1\r\nHost: other.example.test:443\r\n\r\n")))
+	add(h1only("asterisk target", g, "refuse", fmt.Sprintf("OPTIONS * HTTP/1.1\r\nHost: %s\r\n\r\n", host)))
+	add(h1only("Expect 100-continue", g, "refuse", fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nExpect: 100-continue\r\nContent-Length: %d\r\n\r\n%s", gqlP, host, len(jb), jb)))
+	// other routes around the filter
+	g = "around"
+	add(kase{ID: "bound host on another port, opaque tunnel", Group: g, Expect: "nocred", Conn: host + ":8443", Proto: "h1", Insecure: true, Steps: []step{gql(gj(bad))}, Note: "not bound, so no secret and no filter; the stub does not listen on 8443"})
+	add(kase{ID: "stub by IP, opaque tunnel, no credential", Group: g, Expect: "nocred", Conn: "STUBIP:443", Proto: "h1", Insecure: true, Steps: []step{{Method: "POST", Target: gqlP, Host: host, Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}}, Note: "a client that ignores the certificate reaches the origin with the placeholder only"})
+	add(kase{ID: "unbound name for the same origin, opaque tunnel", Group: g, Expect: "nocred", Conn: "other.example.test:443", Proto: "h1", Insecure: true, Steps: []step{{Method: "POST", Target: gqlP, Host: host, Body: gj(bad), Hdr: []string{"Content-Type: application/json"}}}, Note: "same as above, through a name that is not bound"})
+	return K
+}
+
+func rawChunked(target string, body []byte) []byte {
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n", target, host)
+	for off := 0; off < len(body); off += 8192 {
+		e := off + 8192
+		if e > len(body) {
+			e = len(body)
+		}
+		fmt.Fprintf(&b, "%x\r\n%s\r\n", e-off, body[off:e])
+	}
+	b.WriteString("0\r\n\r\n")
+	return b.Bytes()
+}
+
+func rawChunkedSplit(target string, body []byte, at string) []byte {
+	i := bytes.Index(body, []byte(at)) + len(at)
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n", target, host)
+	fmt.Fprintf(&b, "%x\r\n%s\r\n%x\r\n%s\r\n0\r\n\r\n", i, body[:i], len(body)-i, body[i:])
+	return b.Bytes()
+}
+
+func h2base(m, p, au string) [][2]string {
+	return [][2]string{{":method", m}, {":scheme", "https"}, {":path", p}, {":authority", au}, {"content-type", "application/json"}, {"authorization", "token " + placeholder}}
+}
+
+func stepH1(s step, connHost string) []byte {
+	if s.Raw != nil {
+		return s.Raw
+	}
+	h := s.Host
+	if h == "" {
+		h = connHost
+	}
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "%s %s HTTP/1.1\r\nHost: %s\r\nAuthorization: token %s\r\nUser-Agent: attack\r\nAccept: */*\r\n", s.Method, s.Target, h, placeholder)
+	for _, x := range s.Hdr {
+		b.WriteString(x + "\r\n")
+	}
+	if s.Body != nil {
+		fmt.Fprintf(&b, "Content-Length: %d\r\n", len(s.Body))
+	}
+	b.WriteString("\r\n")
+	b.Write(s.Body)
+	return b.Bytes()
+}
+
+func stepH2(s step, connHost string) ([][2]string, []byte) {
+	if s.H2 != nil {
+		return s.H2, s.Body
+	}
+	h := s.Host
+	if h == "" {
+		h = connHost
+	}
+	out := [][2]string{{":method", s.Method}, {":scheme", "https"}, {":path", s.Target}, {":authority", h}, {"authorization", "token " + placeholder}, {"user-agent", "attack"}, {"accept", "*/*"}}
+	for _, x := range s.Hdr {
+		k, v, _ := strings.Cut(x, ":")
+		out = append(out, [2]string{strings.ToLower(strings.TrimSpace(k)), strings.TrimSpace(v)})
+	}
+	if s.Body != nil {
+		out = append(out, [2]string{"content-length", fmt.Sprint(len(s.Body))})
+	}
+	return out, s.Body
+}
+
+type result struct {
+	ID, Group, Proto, Expect, Verdict string
+	Step                              int
+	Status                            int
+	Filter                            string
+	Reason                            string
+	Err                               string
+	StubN                             int
+	RealCred                          bool
+	Placeholder                       bool
+	StubURI                           string
+	StubFields                        []string
+	Note                              string
+}
+
+var realTok = map[string]string{"ghes.example.test": "GH-REAL-55aa01", "api.github.com": "GHCOM-REAL-77cc02", "gitlab.example.test": "GL-REAL-66dd04", "api.example.test": "ACME-REAL-9f2c71"}
+
+func judge(k kase, proto string, step int, expect string, r resp, recs []rec) result {
+	o := result{ID: k.ID, Group: k.Group, Proto: proto, Expect: expect, Step: step, Status: r.status, Filter: r.filter, Err: r.err, StubN: len(recs), Note: k.Note}
+	var m struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(r.body), &m) == nil && m.Message != "" {
+		o.Reason = m.Message
+	} else if r.status >= 400 {
+		o.Reason = strings.TrimSpace(r.body)
+	}
+	for _, x := range recs {
+		o.StubURI = x.Method + " " + x.URI
+		for _, v := range x.Headers {
+			for _, y := range v {
+				for _, t := range realTok {
+					if strings.Contains(y, t) {
+						o.RealCred = true
+					}
+				}
+				if strings.Contains(y, placeholder) {
+					o.Placeholder = true
+				}
+			}
+		}
+		for _, g := range x.GQL {
+			for _, op := range g.Ops {
+				o.StubFields = append(o.StubFields, op.Type+":"+strings.Join(op.Fields, ","))
+			}
+		}
+	}
+	overrideSeen := false
+	for _, x := range recs {
+		for k := range x.Headers {
+			if strings.EqualFold(k, "X-Http-Method-Override") {
+				overrideSeen = true
+			}
+		}
+	}
+	if strings.Contains(r.err, "connection refused") || strings.Contains(r.err, "dial tcp") {
+		o.Verdict = "INVALID-netagent-down"
+		return o
+	}
+	switch expect {
+	case "allow":
+		if overrideSeen {
+			o.Verdict = "FAIL-override-header-reached-stub"
+		} else if r.status >= 200 && r.status < 300 && len(recs) == 1 && o.RealCred && !o.Placeholder {
+			o.Verdict = "PASS"
+		} else {
+			o.Verdict = "FAIL-not-allowed"
+		}
+	case "refuse":
+		if len(recs) > 0 && o.RealCred {
+			o.Verdict = "FAIL-BYPASS"
+		} else if len(recs) > 0 {
+			o.Verdict = "FAIL-reached-no-cred"
+		} else if r.status >= 200 && r.status < 300 {
+			o.Verdict = "FAIL-2xx-no-stub"
+		} else {
+			o.Verdict = "PASS"
+		}
+	case "nocred":
+		if o.RealCred {
+			o.Verdict = "FAIL-BYPASS"
+		} else if len(recs) > 0 {
+			o.Verdict = "PASS-reached-no-cred"
+		} else {
+			o.Verdict = "PASS-did-not-reach"
+		}
+	}
+	return o
+}
+
+func run(k kase, proto string) []result {
+	var out []result
+	conn := k.Conn
+	if conn == "" {
+		conn = host + ":443"
+	}
+	connHost := conn
+	if h, p, e := net.SplitHostPort(conn); e == nil && p == "443" {
+		connHost = h
+	}
+	exp := func(i int) string {
+		if k.StepExpect != nil {
+			return k.StepExpect[i]
+		}
+		return k.Expect
+	}
+	settle := func() []rec {
+		time.Sleep(15 * time.Millisecond)
+		return drain()
+	}
+	drain()
+	switch proto {
+	case "h1":
+		tc, err := tlsTo(conn, "http/1.1", k.Insecure)
+		if err != nil {
+			return []result{judge(k, proto, 0, exp(0), resp{err: err.Error()}, settle())}
+		}
+		defer tc.Close()
+		tc.SetDeadline(time.Now().Add(20 * time.Second))
+		br := bufio.NewReader(tc)
+		for i, s := range k.Steps {
+			tc.Write(stepH1(s, connHost))
+			m := s.Method
+			if m == "" {
+				m = "POST"
+				if bytes.HasPrefix(s.Raw, []byte("OPTIONS")) || bytes.HasPrefix(s.Raw, []byte("GET")) {
+					m = "GET"
+				}
+			}
+			r := readH1(br, m)
+			out = append(out, judge(k, proto, i, exp(i), r, settle()))
+		}
+	case "h2":
+		h, err := newH2(conn, k.Insecure)
+		if err != nil {
+			return []result{judge(k, proto, 0, exp(0), resp{err: err.Error()}, settle())}
+		}
+		defer h.c.Close()
+		for i, s := range k.Steps {
+			hs, b := stepH2(s, connHost)
+			r := h.do(hs, b, s.Trailers...)
+			out = append(out, judge(k, proto, i, exp(i), r, settle()))
+		}
+	case "plain":
+		c, err := net.DialTimeout("tcp", proxy, 5*time.Second)
+		if err != nil {
+			return []result{judge(k, proto, 0, exp(0), resp{err: err.Error()}, settle())}
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(20 * time.Second))
+		c.Write(k.Steps[0].Raw)
+		r := readH1(bufio.NewReader(c), "POST")
+		out = append(out, judge(k, proto, 0, exp(0), r, settle()))
+	case "pipe", "framed":
+		tc, err := tlsTo(conn, "http/1.1", k.Insecure)
+		if err != nil {
+			return []result{judge(k, proto, 0, exp(0), resp{err: err.Error()}, settle())}
+		}
+		defer tc.Close()
+		tc.SetDeadline(time.Now().Add(20 * time.Second))
+		var w bytes.Buffer
+		for _, s := range k.Steps {
+			w.Write(stepH1(s, connHost))
+		}
+		tc.Write(w.Bytes())
+		br := bufio.NewReader(tc)
+		var rs []resp
+		for range k.StepExpect {
+			rs = append(rs, readH1(br, "POST"))
+		}
+		recs := settle()
+		// Two responses, one stub total: the allowed request must be the only one that arrived.
+		for i, r := range rs {
+			var sub []rec
+			if exp(i) == "allow" {
+				sub = recs
+			} else if len(recs) > 1 {
+				sub = recs[1:]
+			}
+			out = append(out, judge(k, proto, i, exp(i), r, sub))
+		}
+	}
+	return out
+}
+
+func corpus() map[string]string {
+	bi := badInner
+	return map[string]string{
+		"cr-comment":          "query{viewer{login}} # x\rmutation B{" + bi + "}",
+		"cr-hide-mutation":    "# x\rquery{viewer(a:\"\"\"\nmutation{" + bi + "} #\"\"\"){login}}",
+		"cr-hide-two-ops":     "query{viewer(a:1,# x\rb:\"\"\"\n){login}} mutation B{" + bi + "} #\"\"\"){login}}",
+		"lf-comment":          "query{viewer{login}} # x\nmutation B{" + bi + "}",
+		"crlf-comment":        "query{viewer{login}} # x\r\nmutation B{" + bi + "}",
+		"u2028-comment":       "query{viewer{login}} # x\u2028mutation B{" + bi + "}",
+		"u2029-comment":       "query{viewer{login}} # x\u2029mutation B{" + bi + "}",
+		"u0085-comment":       "query{viewer{login}} # x\u0085mutation B{" + bi + "}",
+		"vt-comment":          "query{viewer{login}} # x\u000bmutation B{" + bi + "}",
+		"ff-comment":          "query{viewer{login}} # x\u000cmutation B{" + bi + "}",
+		"nul-comment":         "query{viewer{login}} # x\x00mutation B{" + bi + "}",
+		"bom-start":           "\ufeffmutation{" + bi + "}",
+		"bom-between":         "query{viewer{login}}\ufeffmutation B{" + bi + "}",
+		"nbsp-between":        "query{viewer{login}}\u00a0mutation B{" + bi + "}",
+		"ff-between":          "query{viewer{login}}\u000cmutation B{" + bi + "}",
+		"vt-between":          "query{viewer{login}}\u000bmutation B{" + bi + "}",
+		"nul-between":         "query{viewer{login}}\x00mutation B{" + bi + "}",
+		"commas":              ",,query,{,viewer,{,login,},},mutation,B,{," + bi + ",},",
+		"no-separator":        "query{viewer{login}}mutation B{" + bi + "}",
+		"blockstr-escape":     `query Q($a:String="""\"""){viewer{login}} mutation B{` + bi + `} #"""){viewer{login}}`,
+		"blockstr-plain":      `query Q($a:String="""x"""){viewer{login}}`,
+		"blockstr-unterm-esc": `query Q($a:String="""\\"""){viewer{login}} mutation B{` + bi + `} #"""){viewer{login}}`,
+		"str-escape-quote":    `query Q($a:String="\"){viewer{login}} mutation B{` + bi + `} #"){viewer{login}}`,
+		"str-backslash-end":   `query Q($a:String="\\"){viewer{login}} mutation B{` + bi + `} #"){viewer{login}}`,
+		"str-newline":         "query Q($a:String=\"x\n\"){viewer{login}}",
+		"str-cr-comment":      "query Q($a:String=\"x\r#\"){viewer{login}} mutation B{" + bi + "} #\"){viewer{login}}",
+		"num-then-name":       "query{viewer(a:1mutation){login}}",
+		"num-exp":             "query{viewer(a:1e2){login}}",
+		"amp-separator":       "query Q($a:Int)&mutation B{" + bi + "}",
+		"empty-parens":        "query Q(){viewer{login}}",
+		"empty-selection":     "query Q{}",
+		"shorthand-then-mut":  "{viewer{login}} mutation B{" + bi + "}",
+		"schema-doc":          "type Mutation{x:Int} mutation B{" + bi + "}",
+		"extend-doc":          "extend type Query{x:Int} query{viewer{login}}",
+		"directive-def":       "directive @x on FIELD query{viewer{login}}",
+		"fragment-named-on":   "query{...on} fragment on on Query{viewer{login}}",
+		"fragment-on-Mut":     "mutation{...F} fragment F on Mutation{" + bi + "}",
+		"name-unicode":        "mutation{addPullRequestReviéw(input:{}){clientMutationId}}",
+		"name-zwsp":           "mutation{add\u200bPullRequestReview(input:{}){clientMutationId}}",
+		"keyword-mutation-field": "query{mutation{" + bi + "}}",
+		"subscription":        "subscription{x}",
+		"opname-keyword":      "query mutation{viewer{login}}",
+		"good":                "query{viewer{login}}",
+		"good-mut":            "mutation($input:CreatePullRequestInput!){createPullRequest(input:$input){clientMutationId}}",
+	}
+}
+
+func main() {
+	fl := flag.String("flavour", "ghes", "ghes|ghcom")
+	stubIP := flag.String("stub-ip", "", "")
+	outp := flag.String("out", "", "JSONL results")
+	dump := flag.String("dump-corpus", "", "write the parser corpus and exit")
+	lat := flag.String("latency", "", "run the paired latency measurement, with this body size class")
+	n := flag.Int("n", 100, "latency pairs")
+	rate := flag.Int("rate", 5, "pairs per second")
+	flag.Parse()
+	if *dump != "" {
+		var b bytes.Buffer
+		e := json.NewEncoder(&b)
+		e.SetEscapeHTML(false)
+		e.Encode(corpus())
+		os.WriteFile(*dump, b.Bytes(), 0o644)
+		return
+	}
+	pem, err := os.ReadFile("/s/pod-ca.pem")
+	if err != nil {
+		panic(err)
+	}
+	roots = x509.NewCertPool()
+	roots.AppendCertsFromPEM(pem)
+	if *fl == "ghcom" {
+		host, restP, gqlP = "api.github.com", "", "/graphql"
+	} else {
+		host, restP, gqlP = "ghes.example.test", "/api/v3", "/api/graphql"
+	}
+	if *lat != "" {
+		latency(*lat, *n, *rate)
+		return
+	}
+	var f *os.File
+	if *outp != "" {
+		f, _ = os.Create(*outp)
+		defer f.Close()
+	}
+	counts := map[string]int{}
+	var fails []string
+	for _, k := range cases() {
+		if *stubIP != "" {
+			k.Conn = strings.Replace(k.Conn, "STUBIP", *stubIP, 1)
+		}
+		ps := []string{k.Proto}
+		if k.Proto == "both" {
+			ps = []string{"h1", "h2"}
+		}
+		for _, p := range ps {
+			for _, r := range run(k, p) {
+				counts[r.Verdict]++
+				line := fmt.Sprintf("%-22s %-5s %-64.64s step=%d exp=%-6s status=%-3d filter=%-7s stub=%d cred=%-5v %s", r.Verdict, r.Proto, r.Group+" / "+r.ID, r.Step, r.Expect, r.Status, r.Filter, r.StubN, r.RealCred, trunc(r.Reason+" "+r.Err, 110))
+				fmt.Println(line)
+				if !strings.HasPrefix(r.Verdict, "PASS") {
+					fails = append(fails, line+" stubURI="+r.StubURI+" fields="+strings.Join(r.StubFields, ";"))
+				}
+				if f != nil {
+					b, _ := json.Marshal(r)
+					f.Write(append(b, 10))
+				}
+			}
+		}
+	}
+	keys := []string{}
+	for k := range counts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fmt.Println("\n=== totals")
+	for _, k := range keys {
+		fmt.Printf("%s: %d\n", k, counts[k])
+	}
+	fmt.Println("\n=== not PASS")
+	for _, l := range fails {
+		fmt.Println(l)
+	}
+}
+
+func trunc(s string, n int) string {
+	s = strings.TrimSpace(strings.ReplaceAll(s, "\n", " "))
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// latency alternates the same request between an unfiltered bound host and the filtered one on persistent connections.
+func latency(class string, n, rate int) {
+	body := map[string]func() []byte{
+		"create": func() []byte { return gj(goodM, "variables", goodVars) },
+	}[class]
+	var b []byte
+	if body != nil {
+		b = body()
+	} else {
+		d, err := os.ReadFile(class)
+		if err != nil {
+			panic(err)
+		}
+		b = d
+	}
+	a, err := newH2("api.example.test:443", false)
+	if err != nil {
+		panic(err)
+	}
+	f, err := newH2(host+":443", false)
+	if err != nil {
+		panic(err)
+	}
+	var ta, tf []time.Duration
+	tick := time.NewTicker(time.Second / time.Duration(rate))
+	defer tick.Stop()
+	once := func(h *h2c, au string) time.Duration {
+		hs := append(h2base("POST", gqlP, au), [2]string{"content-length", fmt.Sprint(len(b))})
+		t := time.Now()
+		r := h.do(hs, b)
+		d := time.Since(t)
+		if r.status != 200 {
+			fmt.Println("status", r.status, r.err, trunc(r.body, 200))
+		}
+		return d
+	}
+	for i := 0; i < n; i++ {
+		<-tick.C
+		if i%2 == 0 {
+			ta = append(ta, once(a, "api.example.test"))
+			tf = append(tf, once(f, host))
+		} else {
+			tf = append(tf, once(f, host))
+			ta = append(ta, once(a, "api.example.test"))
+		}
+		if i%50 == 49 {
+			drain()
+		}
+	}
+	drain()
+	pc := func(x []time.Duration, p float64) float64 {
+		s := append([]time.Duration{}, x...)
+		sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+		return float64(s[int(float64(len(s)-1)*p)].Microseconds()) / 1000
+	}
+	var diffs []time.Duration
+	for i := range ta {
+		diffs = append(diffs, tf[i]-ta[i])
+	}
+	fmt.Printf("body=%d bytes pairs=%d rate=%d/s\n unfiltered p50=%.2fms p90=%.2fms p99=%.2fms\n filtered   p50=%.2fms p90=%.2fms p99=%.2fms\n paired difference p50=%.3fms p90=%.3fms\n", len(b), n, rate, pc(ta, .5), pc(ta, .9), pc(ta, .99), pc(tf, .5), pc(tf, .9), pc(tf, .99), pc(diffs, .5), pc(diffs, .9))
+}

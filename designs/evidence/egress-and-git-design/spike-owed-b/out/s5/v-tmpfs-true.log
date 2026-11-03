@@ -1,0 +1,19 @@
+mkdir: <nil>
+setxattr ACL: access ACL: operation not supported
+read back default ACL: -1 bytes, operation not supported
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65534
+    # flags: -s-
+    user::rwx
+    group::r-x
+    other::---
+    
+    setfacl: /data/s: Operation not supported
+    setfacl-rc=1
+    tmpfs          tmpfs   8126396     0   8126396   0% /data
+    tmpfs /data tmpfs rw,relatime,size=8126396k,noswap 0 0
+ls: cannot open directory '/data/s': Permission denied
+reader-ls-rc=2
+reader under its group only: <nil>

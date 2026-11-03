@@ -1,0 +1,241 @@
+// evload: opens CONNECT tunnels through Envoy at a fixed rate across many tenants with varied authorities, holds each, and reports
+// setup latency per tenant class. Tenant t0..t(busy-1) are busy and share busyshare of the rate. The rest share the remainder.
+// -noisy names a tenant whose extra rate of denied CONNECTs runs beside the main load.
+package main
+
+import (
+	"bufio"
+	"encoding/base64"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"math/rand/v2"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"owedc/ev"
+)
+
+type samp struct {
+	mu   sync.Mutex
+	lat  []time.Duration
+	code map[string]int
+}
+
+func (s *samp) add(d time.Duration, c string) {
+	s.mu.Lock()
+	if s.code == nil {
+		s.code = map[string]int{}
+	}
+	s.code[c]++
+	if c == "200" || c == "403" {
+		s.lat = append(s.lat, d)
+	}
+	s.mu.Unlock()
+}
+func (s *samp) sum(name string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sort.Slice(s.lat, func(i, j int) bool { return s.lat[i] < s.lat[j] })
+	p := func(q float64) float64 {
+		if len(s.lat) == 0 {
+			return 0
+		}
+		return float64(s.lat[int(float64(len(s.lat)-1)*q)].Microseconds()) / 1000
+	}
+	return map[string]any{"class": name, "n": len(s.lat), "codes": s.code, "p50ms": p(.5), "p90ms": p(.9), "p99ms": p(.99), "p999ms": p(.999), "maxms": p(1)}
+}
+
+func main() {
+	proxy := flag.String("proxy", "198.19.0.41:3128", "")
+	rate := flag.Int("rate", 2000, "")
+	dur := flag.Duration("for", time.Minute, "")
+	hold := flag.Duration("hold", 300*time.Millisecond, "")
+	tenants := flag.Int("tenants", 2500, "")
+	busy := flag.Int("busy", 5, "")
+	busyShare := flag.Float64("busyshare", 0.5, "")
+	deny := flag.Float64("deny", 0.05, "share of CONNECTs denied")
+	noisy := flag.String("noisy", "", "")
+	noisyRate := flag.Int("noisyrate", 0, "")
+	noisyUnique := flag.Bool("noisyunique", false, "")
+	noisyAlt := flag.Int("noisyalt", 0, "cycle through this many denied hosts")
+	to := flag.Duration("timeout", 10*time.Second, "")
+	warm := flag.Duration("warm", 10*time.Second, "samples before this are ignored")
+	retry := flag.Bool("retry503", false, "as netagent: retry a 503 with the commit timeout reason once after a delay")
+	retryDelay := flag.Duration("retry-delay", 200*time.Millisecond, "")
+	retryJitter := flag.Duration("retry-jitter", 0, "")
+	didsFile := flag.String("dids", "", "append a sample of 403 decision identifiers, with the tenant")
+	didEvery := flag.Int("did-every", 50, "")
+	flag.Parse()
+	var nRefusedFirst, nRetried, nRetryOK, nRetryRefused, nRetryOther, n403 atomic.Int64
+	var didMu sync.Mutex
+	var didF *os.File
+	if *didsFile != "" {
+		didF, _ = os.OpenFile(*didsFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	}
+	var cls = map[string]*samp{"busy": {}, "small": {}, "noisy": {}}
+	start := time.Now()
+	var open, ticks, broken, inflight, altN atomic.Int64
+	var wg sync.WaitGroup
+	var one func(tenant, class, auth string, retried bool)
+	one = func(tenant, class, auth string, retried bool) {
+		defer wg.Done()
+		t0 := time.Now()
+		rec := func(d time.Duration, c string) {
+			if t0.Sub(start) >= *warm {
+				cls[class].add(d, c)
+			}
+		}
+		inflight.Add(1)
+		defer inflight.Add(-1)
+		c, err := net.DialTimeout("tcp", *proxy, *to)
+		if err != nil {
+			e := "dial"
+			if strings.Contains(err.Error(), "cannot assign") {
+				e = "dial-eaddrnotavail"
+			}
+			rec(0, e)
+			return
+		}
+		defer c.Close()
+		c.SetDeadline(t0.Add(*to))
+		a := base64.StdEncoding.EncodeToString([]byte("agent:" + tenant))
+		fmt.Fprintf(c, "CONNECT %s:443 HTTP/1.1\r\nHost: %s:443\r\nProxy-Authorization: Basic %s\r\n\r\n", auth, auth, a)
+		br := bufio.NewReaderSize(c, 2048)
+		resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+		d := time.Since(t0)
+		if err != nil {
+			e := err.Error()
+			switch {
+			case strings.Contains(e, "timeout"):
+				rec(d, "timeout")
+			case strings.Contains(e, "EOF"):
+				rec(d, "eof")
+			case strings.Contains(e, "reset"):
+				rec(d, "reset")
+			default:
+				rec(d, "err")
+			}
+			return
+		}
+		if retried {
+			switch resp.StatusCode {
+			case 200, 403:
+				nRetryOK.Add(1)
+			case 503:
+				nRetryRefused.Add(1)
+			default:
+				nRetryOther.Add(1)
+			}
+		}
+		if resp.StatusCode == 503 && resp.Header.Get("X-Lenny-Reason") != "" {
+			if !retried {
+				nRefusedFirst.Add(1)
+			}
+			if *retry && !retried {
+				nRetried.Add(1)
+				dl := *retryDelay
+				if *retryJitter > 0 {
+					dl += time.Duration(rand.Int64N(int64(*retryJitter)))
+				}
+				wg.Add(1)
+				go func() { time.Sleep(dl); one(tenant, class, auth, true) }()
+				rec(d, "503-then-retry")
+				return
+			}
+		}
+		if resp.StatusCode == 403 {
+			if v := n403.Add(1); didF != nil && int(v)%*didEvery == 0 {
+				didMu.Lock()
+				fmt.Fprintf(didF, "%s %s\n", tenant, resp.Header.Get("X-Lenny-Decision"))
+				didMu.Unlock()
+			}
+		}
+		rec(d, fmt.Sprint(resp.StatusCode))
+		if resp.StatusCode != 200 {
+			return
+		}
+		open.Add(1)
+		defer open.Add(-1)
+		c.SetDeadline(time.Now().Add(*hold))
+		buf := make([]byte, 512)
+		for {
+			n, err := br.Read(buf)
+			if n > 0 {
+				ticks.Add(1)
+			}
+			if err != nil {
+				if ne, ok := err.(net.Error); !ok || !ne.Timeout() {
+					broken.Add(1)
+				}
+				return
+			}
+		}
+	}
+	// a large population of authorities, built once, so per-CONNECT cost in this tool stays small
+	r := rand.New(rand.NewPCG(7, 11))
+	hosts := make([]string, 200000)
+	for i := range hosts {
+		hosts[i] = ev.Host(r)
+	}
+	gen := func(rate int, pick func(*rand.Rand) (string, string, string)) {
+		defer wg.Done()
+		r := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+		iv := time.Second / time.Duration(rate)
+		next := time.Now()
+		for time.Since(start) < *dur {
+			t, cl, a := pick(r)
+			wg.Add(1)
+			go one(t, cl, a, false)
+			next = next.Add(iv)
+			if s := time.Until(next); s > 0 {
+				time.Sleep(s)
+			}
+		}
+	}
+	wg.Add(1)
+	go gen(*rate, func(r *rand.Rand) (string, string, string) {
+		var t, cl string
+		if r.Float64() < *busyShare {
+			t, cl = fmt.Sprintf("t%d", r.IntN(*busy)), "busy"
+		} else {
+			t, cl = fmt.Sprintf("t%d", *busy+r.IntN(*tenants-*busy)), "small"
+		}
+		a := hosts[r.IntN(len(hosts))]
+		if r.Float64() < *deny {
+			a = "deny-" + a
+		}
+		return t, cl, a
+	})
+	if *noisy != "" && *noisyRate > 0 {
+		wg.Add(1)
+		go gen(*noisyRate, func(r *rand.Rand) (string, string, string) {
+			if *noisyUnique {
+				return *noisy, "noisy", "deny-" + ev.RandHex(r, 24) + ".attacker.example"
+			}
+			if *noisyAlt > 0 {
+				return *noisy, "noisy", fmt.Sprintf("deny-alt%d.attacker.example", altN.Add(1)%int64(*noisyAlt))
+			}
+			return *noisy, "noisy", "deny-fixed.attacker.example"
+		})
+	}
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			fmt.Printf("t=%.0fs open=%d inflight=%d broken=%d\n", time.Since(start).Seconds(), open.Load(), inflight.Load(), broken.Load())
+		}
+	}()
+	wg.Wait()
+	out := map[string]any{"elapsed": time.Since(start).Seconds(), "ticks": ticks.Load(), "broken": broken.Load(), "refusedFirst": nRefusedFirst.Load(), "retried": nRetried.Load(), "retryPassed": nRetryOK.Load(), "retryRefused": nRetryRefused.Load(), "retryOther": nRetryOther.Load()}
+	for k, s := range cls {
+		out[k] = s.sum(k)
+	}
+	b, _ := json.Marshal(out)
+	fmt.Println("SUMMARY", string(b))
+	os.Stdout.Sync()
+}

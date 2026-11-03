@@ -1,0 +1,119 @@
+=== S1 baseline through Envoy, a store miss schedules a fetch
+PASS priv main, upstream answer                           class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=24 cause=[] at=
+scheduled fetch landed within 250 ms poll
+=== S2 host failures inside the tunnel: listed causes answer from the store
+PASS host 502                                             class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=4 cause=[host 502] at=2026-11-03T00:12:05Z
+PASS host 503                                             class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=4 cause=[host 503] at=2026-11-03T00:12:05Z
+PASS host 504                                             class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=4 cause=[host 504] at=2026-11-03T00:12:05Z
+PASS connection reset after TLS                           class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=5 cause=[connection or TLS failure to the host] at=2026-11-03T00:12:05Z
+PASS host accepts and hangs (8 s limit)                   class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=8019 cause=[timeout] at=2026-11-03T00:12:05Z
+=== S3 real outages
+PASS Gitea stopped behind the front (its dial hangs)      class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=8017 cause=[timeout] at=2026-11-03T00:12:05Z
+PASS origin address down: Envoy CONNECT 503               class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=5019 cause=[CONNECT 503] at=2026-11-03T00:12:05Z
+PASS Envoy stopped: no reply from lenny-egress            class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=8026 cause=[no reply from lenny-egress] at=2026-11-03T00:12:05Z
+PASS certificate for another name: TLS failure            class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=11 cause=[connection or TLS failure to the host] at=2026-11-03T00:12:05Z
+PASS proxy accepts and never replies                      class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=8011 cause=[no reply from lenny-egress] at=2026-11-03T00:12:05Z
+PASS CONNECT 503 (fake proxy)                             class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=14 cause=[CONNECT 503] at=2026-11-03T00:12:05Z
+=== S4 answers that are passed on, and keep confirmations
+PASS CONNECT 403                                          class=unresolvable code=UNRESOLVABLE reason=egress_denied fromStore=- status=403 sha= ms=15 cause=[CONNECT 403] at=
+PASS CONNECT 407                                          class=unresolvable code=UNRESOLVABLE reason=egress_denied fromStore=- status=407 sha= ms=4 cause=[CONNECT 407] at=
+PASS CONNECT 502                                          class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=502 sha= ms=3 cause=[CONNECT 502] at=
+PASS CONNECT 429                                          class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=429 sha= ms=3 cause=[CONNECT 429] at=
+PASS confirmations survive the CONNECT refusals above     class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=17 cause=[CONNECT 503] at=2026-11-03T00:12:05Z
+PASS host 429 passed on                                   class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=429 sha= ms=38 cause=[] at=
+PASS host 500 passed on (not a listed cause)              class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=500 sha= ms=8 cause=[] at=
+PASS confirmations survive 429 and 500                    class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=5 cause=[host 503] at=2026-11-03T00:12:05Z
+=== S5 host 401, 403, 404 stop the fallback until the next success
+PASS host 401 passed on                                   class=unresolvable code=UNRESOLVABLE reason=auth_failed fromStore=- status=401 sha= ms=34 cause=[] at=
+   state: {"stopped":true,"pairs":{}}
+PASS then 503: transient, not the store                   class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=5 cause=[host 503; fallback stopped] at=
+PASS next success                                         class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=44 cause=[] at=
+PASS then 503: the store again                            class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=34 cause=[host 503] at=2026-11-03T00:12:52Z
+PASS host 403 passed on                                   class=unresolvable code=UNRESOLVABLE reason=auth_failed fromStore=- status=403 sha= ms=8 cause=[] at=
+   state: {"stopped":true,"pairs":{}}
+PASS then 503: transient, not the store                   class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=4 cause=[host 503; fallback stopped] at=
+PASS next success                                         class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=15 cause=[] at=
+PASS then 503: the store again                            class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=5 cause=[host 503] at=2026-11-03T00:12:53Z
+PASS host 404 passed on                                   class=unresolvable code=UNRESOLVABLE reason=host_404_unmapped fromStore=- status=404 sha= ms=9 cause=[] at=
+   state: {"stopped":true,"pairs":{}}
+PASS then 503: transient, not the store                   class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=4 cause=[host 503; fallback stopped] at=
+PASS next success                                         class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=12 cause=[] at=
+PASS then 503: the store again                            class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=4 cause=[host 503] at=2026-11-03T00:12:54Z
+=== S6 mint
+PASS mint unavailable: listed cause                       class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=17 cause=[mint unavailable] at=2026-11-03T00:12:54Z
+PASS mint refused: passed on                              class=unresolvable code=UNRESOLVABLE reason=auth_failed fromStore=- status=403 sha= ms=3 cause=[mint refused] at=
+PASS then 503: transient                                  class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=8 cause=[host 503; fallback stopped] at=
+PASS next success                                         class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=18 cause=[] at=
+=== S7 a real repository made private, on the anonymous public store
+PASS pub main, anonymous                                  class=ok code= reason= fromStore=- status=200 sha=5c276f13 ms=10 cause=[] at=
+PASS pub from the store                                   class=ok code= reason= fromStore=true status=200 sha=5c276f13 ms=5 cause=[host 503] at=2026-11-03T00:12:55Z
+{"private":true}
+PASS repository now private: real 401                     class=unresolvable code=UNRESOLVABLE reason=auth_failed fromStore=- status=401 sha= ms=9 cause=[] at=
+PASS then 503: no store answer for the old public copy    class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=5 cause=[host 503; fallback stopped] at=
+{"private":false}
+PASS public again                                         class=ok code= reason= fromStore=- status=200 sha=5c276f13 ms=8 cause=[] at=
+=== S8 a real bad token and another user's token on the tenant store
+PASS invalid token: real 401                              class=unresolvable code=UNRESOLVABLE reason=auth_failed fromStore=- status=401 sha= ms=35 cause=[] at=
+   state: {"stopped":true,"pairs":{}}
+PASS restored                                             class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=15 cause=[] at=
+PASS other user's token: real 404                         class=unresolvable code=UNRESOLVABLE reason=host_404_unmapped fromStore=- status=404 sha= ms=20 cause=[] at=
+   state: {"stopped":true,"pairs":{}}
+PASS restored                                             class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=14 cause=[] at=
+=== S9 a deleted ref clears its pair, and only that pair
+PASS dev resolves                                         class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=15 cause=[] at=
+PASS v1 resolves peeled                                   class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=14 cause=[] at=
+   pairs: ["refs/heads/dev","refs/heads/main","refs/tags/v1"]
+PASS dev deleted upstream: absent                         class=unresolvable code=UNRESOLVABLE reason=ref_not_found fromStore=- status=200 sha= ms=13 cause=[] at=
+   pairs: ["refs/heads/main","refs/tags/v1"]
+PASS 503: deleted dev does not resolve                    class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=5 cause=[host 503; no confirmation] at=
+PASS 503: main still does                                 class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=6 cause=[host 503] at=2026-11-03T00:12:57Z
+PASS 503: tag still does                                  class=ok code= reason= fromStore=true status=200 sha=5f802206 ms=5 cause=[host 503] at=2026-11-03T00:12:57Z
+--- the literal reading: every pair the answer omits is cleared, though ref-prefix narrowed the answer
+PASS main resolves, naive clear                           class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=14 cause=[] at=
+   pairs: ["refs/heads/main"]
+PASS 503: tag v1 lost its pair under the literal reading  class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=4 cause=[host 503; no confirmation] at=
+=== S10 force-push: the store lacks the new commit
+PASS main at A                                            class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=14 cause=[] at=
+A=5f802206 B=eb02c585
+PASS ls-refs sees B                                       class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=13 cause=[] at=
+PASS 503: transient, never A                              class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=5 cause=[host 503; store lacks the commit] at=
+PASS next call schedules the fetch                        class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=13 cause=[] at=
+PASS 503: B from the store                                class=ok code= reason= fromStore=true status=200 sha=eb02c585 ms=7 cause=[host 503] at=2026-11-03T00:12:59Z
+=== S11 age limit (scaled to 2 s)
+PASS confirm                                              class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=14 cause=[] at=
+PASS 503 past the age limit: transient                    class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=5 cause=[host 503; confirmation too old] at=
+=== S12 the confirmation index survives a restart
+PASS confirm                                              class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=15 cause=[] at=
+confirmedAt before=2026-11-03T00:13:03Z after restart=2026-11-03T00:13:03Z
+PASS 503 after restart                                    class=ok code= reason= fromStore=true status=200 sha=eb02c585 ms=6 cause=[host 503] at=2026-11-03T00:13:03Z
+=== S13 coalescing: I3 on every request, one upstream call
+20 sequential: upstream +1, coalesced +19, I3 +20
+{"class":"ok","from":"true","ms":8008}
+{"class":"ok","from":"true","ms":8007}
+{"class":"ok","from":"true","ms":8007}
+{"class":"ok","from":"true","ms":8008}
+{"class":"ok","from":"true","ms":8007}
+{"class":"ok","from":"true","ms":8008}
+{"class":"ok","from":"true","ms":8007}
+{"class":"ok","from":"true","ms":8008}
+8 concurrent during a hang: upstream +1
+PASS fresh success                                        class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=21 cause=[] at=
+PASS pub token bad: real 401 (setup)                      class=unresolvable code=UNRESOLVABLE reason=auth_failed fromStore=- status=401 sha= ms=41 cause=[] at=
+PASS pub success with a good token                        class=ok code= reason= fromStore=- status=200 sha=5c276f13 ms=29 cause=[] at=
+t+1s after the credential broke: {"class":"ok","host_status":200,"coalesced":"true"}
+t+2s after the credential broke: {"class":"ok","host_status":200,"coalesced":"true"}
+t+3s after the credential broke: {"class":"ok","host_status":200,"coalesced":"true"}
+t+4s after the credential broke: {"class":"ok","host_status":200,"coalesced":"true"}
+t+5s after the credential broke: {"class":"ok","host_status":200,"coalesced":"true"}
+t+6s after the credential broke: {"class":"unresolvable","host_status":401,"coalesced":null}
+t+7s after the credential broke: {"class":"unresolvable","host_status":401,"coalesced":"true"}
+=== S14 decision service
+PASS confirm                                              class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=13 cause=[] at=
+PASS decision service down: mirror's I3 fails, no store   class=transient code=RESOLVE_TRANSIENT reason=network_error fromStore=- status=503 sha= ms=1015 cause=[decision service unavailable] at=
+PASS mirror's I3 fine, Envoy cannot reach the decision service class=ok code= reason= fromStore=true status=200 sha=eb02c585 ms=117 cause=[CONNECT 503] at=2026-11-03T00:13:48Z
+=== S15 a host that speaks only v0, behind the mirror
+PASS v0-only host, mirror falls back                      class=ok code= reason= fromStore=- status=200 sha=eb02c585 ms=37 cause=[] at=
+PASS v0-only host, tag peeled                             class=ok code= reason= fromStore=- status=200 sha=5f802206 ms=21 cause=[] at=
+PASS v0-only host, absent ref                             class=unresolvable code=UNRESOLVABLE reason=ref_not_found fromStore=- status=200 sha= ms=20 cause=[] at=
+PASS 503: confirmation from a v0 answer                   class=ok code= reason= fromStore=true status=200 sha=eb02c585 ms=4 cause=[host 503] at=2026-11-03T00:13:55Z
+=== summary PASS=72 FAIL=0

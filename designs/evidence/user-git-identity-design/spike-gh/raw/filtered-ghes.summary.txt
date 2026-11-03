@@ -1,0 +1,42 @@
+pr-create-basic                    rc=0   reqs=5   
+pr-create-draft                    rc=0   reqs=5   
+pr-create-reviewer                 rc=0   reqs=9   
+pr-create-label                    rc=0   reqs=7   
+pr-create-assignee                 rc=0   reqs=7   
+pr-create-milestone                rc=0   reqs=7   
+pr-create-project                  rc=0   reqs=9   
+pr-create-all                      rc=0   reqs=16  
+pr-create-fork-head                rc=0   reqs=5   
+pr-create-nohead                   rc=0   reqs=5   
+pr-view                            rc=0   reqs=3   
+pr-view-cur                        rc=0   reqs=3   
+pr-view-json-all                   rc=0   reqs=3   
+pr-list                            rc=0   reqs=1   
+pr-list-filtered                   rc=0   reqs=3   
+pr-status                          rc=0   reqs=4   
+pr-checks                          rc=0   reqs=4   
+pr-diff                            rc=0   reqs=2   
+pr-comment                         rc=1   reqs=1   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-edit-title                      rc=1   reqs=4   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: input f
+pr-edit-meta                       rc=1   reqs=12  HTTP 403: refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewe
+pr-ready                           rc=1   reqs=1   API call failed: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation a
+pr-close                           rc=1   reqs=1   API call failed: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation a
+pr-review-approve                  rc=1   reqs=1   failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress ope
+pr-review-comment                  rc=1   reqs=1   failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress ope
+pr-review-changes                  rc=1   reqs=1   failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress ope
+pr-merge                           rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-squash-del                rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-rebase                    rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-auto                      rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-admin                     rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-auto-blocked              rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-disable-auto              rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+pr-merge-queue                     rc=1   reqs=3   non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutatio
+repo-view                          rc=0   reqs=2   
+issue-view                         rc=0   reqs=4   
+auth-status                        rc=0   reqs=2   
+api-rest-get                       rc=0   reqs=1   
+api-rest-paginate                  rc=0   reqs=1   
+api-rest-post                      rc=0   reqs=1   
+api-graphql                        rc=0   reqs=1   
+api-graphql-mut                    rc=1   reqs=0   gh: refused by the egress operation allowlist: mutation field "addComment" is not on the allowlist (HTTP 403)

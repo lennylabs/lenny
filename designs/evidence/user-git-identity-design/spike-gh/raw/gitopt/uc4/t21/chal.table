@@ -1,0 +1,27 @@
+chal-clone-no-credential                     rc=2   identity=                                         challenged=1 origin= refused=
+chal-clone-helper                            rc=0   identity=held                                     challenged=1 origin=USER-FILE-TOKEN:200:git-upload-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-push-no-credential                      rc=0   identity=                                         challenged=1 origin= refused=
+chal-push-helper                             rc=0   identity=held                                     challenged=1 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-push-extraheader                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-push-extraheader-token                  rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-push-url                                rc=0   identity=held                                     challenged=1 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-push-gh-helper                          rc=0   identity=held                                     challenged=1 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-push-other-token                        rc=0   identity=mint-credential-differs                  challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+chal-push-empty-token                        rc=0   identity=mint-credential-differs                  challenged=0 origin=MINT-W-acme_widgets:200:git-receive-pack MINT-W-acme_widgets:200:info/refs refused=
+chal-push-main-held                          rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+chal-push-main-other                         rc=0   identity=mint-credential-differs                  challenged=0 origin=MINT-W-acme_widgets:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+chal-push-mixed-held                         rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+chal-push-delete-held                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref deletion of refs/heads/feature refused
+chal-push-option-held                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=push options are refused
+chal-push-outside-held                       rc=0   identity=                                         challenged=0 origin= refused=repository acme/secret is outside the session's writable set
+chal-push-readonly-held                      rc=0   identity=                                         challenged=0 origin= refused=repository acme/lib is outside the session's writable set
+chal-read-outside-held                       rc=0   identity=                                         challenged=0 origin= refused=repository acme/secret is outside the session's readable set
+chal-read-held                               rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-upload-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-curl-held-post-main                     rc=0   identity=                                         challenged=0 origin= refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+chal-reflect                                 rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=
+chal-redirect-held                           rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-upload-pack USER-FILE-TOKEN:200:info/refs USER-FILE-TOKEN:301:info/refs refused=
+chal-github-push-held                        rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:info/refs refused=
+chal-github-push-main-held                   rc=0   identity=held                                     challenged=0 origin=USER-FILE-TOKEN:200:info/refs refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is r
+chal-lfs-held                                rc=0   identity=held                                     challenged=4 origin=None:: USER-FILE-TOKEN:200:git-receive-pack USER-FILE-TOKEN:200:git-upload-pack USER-FILE-TOKEN:200:info/lfs/locks/verify USER-FILE-TOKEN:200:info/lfs refused=
+chal-gh-list-file-token                      rc=0   identity=                                         challenged=0 origin=token USER-FILE-TOKEN:200:graphql refused=
+chal-gh-merge-file-token                     rc=0   identity=                                         challenged=0 origin=token USER-FILE-TOKEN:200:graphql refused=

@@ -1,0 +1,57 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-label-immutability
+  annotations: {cert-manager.io/inject-ca-from: lenny-system/ob-webhook}
+webhooks:
+- name: label-immutability.lenny.dev
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  failurePolicy: Fail
+  timeoutSeconds: 5
+  matchPolicy: Equivalent
+  namespaceSelector:
+    matchExpressions: [{key: lenny.dev/agent-namespace, operator: In, values: ["true"]}]
+  rules:
+  - {apiGroups: [""], apiVersions: ["v1"], resources: ["pods"], operations: ["CREATE","UPDATE"], scope: Namespaced}
+  clientConfig:
+    service: {name: ob-webhook, namespace: lenny-system, path: /label-immutability, port: 443}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: lenny-tenant-label-immutability
+  annotations: {cert-manager.io/inject-ca-from: lenny-system/ob-webhook}
+webhooks:
+- name: tenant-label-immutability.lenny.dev
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  failurePolicy: Fail
+  timeoutSeconds: 5
+  matchPolicy: Equivalent
+  namespaceSelector:
+    matchExpressions: [{key: lenny.dev/agent-namespace, operator: In, values: ["true"]}]
+  rules:
+  - {apiGroups: [""], apiVersions: ["v1"], resources: ["pods"], operations: ["CREATE","UPDATE"], scope: Namespaced}
+  clientConfig:
+    service: {name: ob-webhook, namespace: lenny-system, path: /tenant-label-immutability, port: 443}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: ob-egress-group
+  annotations: {cert-manager.io/inject-ca-from: lenny-system/ob-webhook}
+webhooks:
+- name: ob-egress-group.lenny.dev
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  failurePolicy: Fail
+  timeoutSeconds: 5
+  matchPolicy: Equivalent
+  namespaceSelector:
+    matchExpressions: [{key: lenny.dev/agent-namespace, operator: In, values: ["true"]}]
+  rules:
+  - {apiGroups: [""], apiVersions: ["v1"], resources: EGRESSRES, operations: ["CREATE","UPDATE"], scope: Namespaced}
+  clientConfig:
+    service: {name: ob-webhook, namespace: lenny-system, path: /egress-group, port: 443}

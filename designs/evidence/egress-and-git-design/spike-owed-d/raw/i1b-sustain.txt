@@ -1,0 +1,138 @@
+# Mon Nov  2 21:31:55 PST 2026 hold for 120 s after the ramp, 50 streams/s, idle tick every 10 s
+opaque up=h1 target=400 go=unset state=[running oom=false] cpu over the run=14m
+  up_total=400 live_peak=400 live_at_last_stats=400 fail_at_last_stats=0 fail_total=0 readings=1146
+    last stats reading: current=62.7 anon=50.9 sock=0.0 kernel=4.0 file=6.4 peak=64.0 MiB goroutines=1204 heapInuse=38.5 stack=6.5 active=400 terminated=0 opaque=450
+    last cgroup reading: current=62.7 peak=64.0 anon=50.9 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=9.38ms p99=20.06ms max=20.06ms
+opaque up=h1 target=300 go=unset state=[running oom=false] cpu over the run=12m
+  up_total=300 live_peak=300 live_at_last_stats=300 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=55.1 anon=45.1 sock=0.0 kernel=3.2 file=6.5 peak=56.5 MiB goroutines=904 heapInuse=31.0 stack=5.2 active=300 terminated=0 opaque=350
+    last cgroup reading: current=55.1 peak=56.5 anon=45.1 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=9.44ms p99=29.19ms max=29.19ms
+opaque up=h1 target=600 go=50MiB state=[exited oom=true] cpu over the run=0m
+  up_total=600 live_peak=600 live_at_last_stats=600 fail_at_last_stats=0 fail_total=0 readings=290
+    last stats reading: current=61.7 anon=49.4 sock=0.0 kernel=5.5 file=4.9 peak=63.7 MiB goroutines=1804 heapInuse=45.1 stack=8.2 active=600 terminated=0 opaque=600
+    last cgroup reading: current=3.5 peak=64.4 anon=56.9 sock=0.1
+  new connections beside them: 
+opaque up=h1 target=800 go=50MiB state=[exited oom=true] cpu over the run=0m
+  up_total=800 live_peak=800 live_at_last_stats=800 fail_at_last_stats=0 fail_total=0 readings=249
+    last stats reading: current=59.8 anon=46.3 sock=0.0 kernel=7.0 file=5.0 peak=64.0 MiB goroutines=2404 heapInuse=59.5 stack=10.3 active=800 terminated=0 opaque=800
+    last cgroup reading: current=2.8 peak=64.2 anon=55.3 sock=0.2
+  new connections beside them: 
+opaque up=h1 target=1000 go=50MiB state=[running oom=false] cpu over the run=2364m
+  up_total=1000 live_peak=1000 live_at_last_stats=1000 fail_at_last_stats=0 fail_total=0 readings=614
+    last stats reading: current=63.6 anon=49.3 sock=0.0 kernel=8.6 file=4.0 peak=64.0 MiB goroutines=3004 heapInuse=74.1 stack=12.9 active=1000 terminated=0 opaque=1050
+    last cgroup reading: current=63.6 peak=64.0 anon=49.3 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=12.11ms p99=46.53ms max=46.53ms
+opaque up=h1 target=1150 go=50MiB state=[exited oom=true] cpu over the run=0m
+  up_total=1150 live_peak=1150 live_at_last_stats=1150 fail_at_last_stats=0 fail_total=0 readings=822
+    last stats reading: current=63.8 anon=51.0 sock=0.0 kernel=9.7 file=2.0 peak=64.0 MiB goroutines=3454 heapInuse=85.0 stack=14.4 active=1150 terminated=0 opaque=1150
+    last cgroup reading: current=11.2 peak=64.0 anon=52.5 sock=0.0
+  new connections beside them: 
+int-c1-u1 up=h1 target=400 go=unset state=[ oom=] cpu over the run=0m
+  up_total=400 live_peak=400 live_at_last_stats=400 fail_at_last_stats=0 fail_total=0 readings=371
+    last stats reading: current=58.2 anon=51.8 sock=0.0 kernel=3.9 file=2.3 peak=63.9 MiB goroutines=1204 heapInuse=35.3 stack=10.5 active=400 terminated=400 opaque=0
+    last cgroup reading: current=58.2 peak=63.9 anon=51.8 sock=0.0
+  new connections beside them: 
+int-c1-u1 up=h1 target=300 go=unset state=[ oom=] cpu over the run=-1m
+  up_total=300 live_peak=300 live_at_last_stats=300 fail_at_last_stats=0 fail_total=0 readings=88
+    last stats reading: current=42.0 anon=38.4 sock=0.0 kernel=3.2 file=0.0 peak=49.7 MiB goroutines=904 heapInuse=25.3 stack=8.1 active=300 terminated=300 opaque=0
+    last cgroup reading: current=42.0 peak=49.7 anon=38.4 sock=0.0
+  new connections beside them: 
+int-c1-u1 up=h1 target=400 go=50MiB state=[running oom=false] cpu over the run=20m
+  up_total=400 live_peak=400 live_at_last_stats=400 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=57.7 anon=48.0 sock=0.0 kernel=4.0 file=2.2 peak=62.8 MiB goroutines=1204 heapInuse=26.8 stack=10.3 active=400 terminated=400 opaque=50
+    last cgroup reading: current=57.7 peak=62.8 anon=48.0 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=10.56ms p99=38.69ms max=38.69ms
+int-c1-u1 up=h1 target=520 go=50MiB state=[running oom=false] cpu over the run=1275m
+  up_total=520 live_peak=520 live_at_last_stats=520 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=63.8 anon=51.4 sock=0.0 kernel=4.9 file=5.1 peak=64.0 MiB goroutines=1564 heapInuse=31.3 stack=13.3 active=520 terminated=520 opaque=50
+    last cgroup reading: current=63.8 peak=64.0 anon=51.4 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=13.43ms p99=38.92ms max=38.92ms
+int-c2-u2 up=h2 target=900 go=unset state=[running oom=false] cpu over the run=39m
+  up_total=900 live_peak=900 live_at_last_stats=900 fail_at_last_stats=0 fail_total=0 readings=614
+    last stats reading: current=64.0 anon=59.8 sock=0.0 kernel=1.0 file=3.2 peak=64.0 MiB goroutines=1818 heapInuse=28.4 stack=14.9 active=5 terminated=4 opaque=50
+    last cgroup reading: current=64.0 peak=64.0 anon=59.8 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=20.15ms p99=87.94ms max=87.94ms
+int-c2-u2 up=h2 target=1400 go=50MiB state=[exited oom=true] cpu over the run=0m
+  up_total=1400 live_peak=1400 live_at_last_stats=1400 fail_at_last_stats=0 fail_total=0 readings=249
+    last stats reading: current=63.3 anon=57.3 sock=0.0 kernel=1.0 file=3.1 peak=64.0 MiB goroutines=2822 heapInuse=40.3 stack=17.6 active=6 terminated=7 opaque=0
+    last cgroup reading: current=64.0 peak=64.2 anon=61.5 sock=0.1
+  new connections beside them: 
+gz-c1-u1 up=h1 target=250 go=unset state=[running oom=false] cpu over the run=14m
+  up_total=250 live_peak=250 live_at_last_stats=250 fail_at_last_stats=0 fail_total=0 readings=553
+    last stats reading: current=56.3 anon=46.2 sock=0.0 kernel=2.9 file=6.6 peak=58.4 MiB goroutines=756 heapInuse=35.9 stack=6.9 active=251 terminated=250 opaque=50
+    last cgroup reading: current=56.3 peak=58.4 anon=46.2 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=10.66ms p99=19.51ms max=19.51ms
+gz-c1-u1 up=h1 target=350 go=50MiB state=[running oom=false] cpu over the run=790m
+  up_total=350 live_peak=350 live_at_last_stats=350 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=57.3 anon=46.5 sock=0.0 kernel=3.6 file=5.2 peak=60.2 MiB goroutines=1054 heapInuse=37.3 stack=9.3 active=350 terminated=350 opaque=50
+    last cgroup reading: current=57.3 peak=60.2 anon=46.5 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=15.54ms p99=36.81ms max=36.81ms
+# Mon Nov  2 21:57:41 PST 2026 hold for 120 s after the ramp, 50 streams/s, idle tick every 10 s
+opaque up=h1 target=500 go=40MiB state=[running oom=false] cpu over the run=872m
+  up_total=500 live_peak=500 live_at_last_stats=500 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=62.7 anon=39.5 sock=0.0 kernel=4.8 file=5.8 peak=64.0 MiB goroutines=1504 heapInuse=37.7 stack=7.2 active=500 terminated=0 opaque=550
+    last cgroup reading: current=62.7 peak=64.0 anon=39.5 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=18.7ms p99=54.43ms max=54.43ms
+opaque up=h1 target=700 go=40MiB state=[running oom=false] cpu over the run=1510m
+  up_total=700 live_peak=700 live_at_last_stats=700 fail_at_last_stats=0 fail_total=0 readings=593
+    last stats reading: current=56.2 anon=39.9 sock=0.0 kernel=6.3 file=6.8 peak=64.0 MiB goroutines=2106 heapInuse=52.2 stack=9.5 active=701 terminated=0 opaque=750
+    last cgroup reading: current=56.2 peak=64.0 anon=39.9 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=13.14ms p99=49.54ms max=49.54ms
+opaque up=h1 target=900 go=40MiB state=[exited oom=true] cpu over the run=0m
+  up_total=900 live_peak=900 live_at_last_stats=900 fail_at_last_stats=0 fail_total=0 readings=270
+    last stats reading: current=62.8 anon=50.4 sock=0.0 kernel=7.8 file=3.4 peak=64.0 MiB goroutines=2704 heapInuse=66.9 stack=11.6 active=900 terminated=0 opaque=900
+    last cgroup reading: current=4.0 peak=64.0 anon=55.0 sock=0.1
+  new connections beside them: 
+int-c1-u1 up=h1 target=400 go=40MiB state=[running oom=false] cpu over the run=894m
+  up_total=400 live_peak=400 live_at_last_stats=400 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=56.6 anon=42.7 sock=0.0 kernel=4.0 file=6.8 peak=57.7 MiB goroutines=1204 heapInuse=24.2 stack=10.6 active=400 terminated=400 opaque=50
+    last cgroup reading: current=56.6 peak=57.7 anon=42.7 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=15.75ms p99=31.47ms max=31.47ms
+int-c1-u1 up=h1 target=500 go=40MiB state=[running oom=false] cpu over the run=1206m
+  up_total=500 live_peak=500 live_at_last_stats=500 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=62.6 anon=51.1 sock=0.0 kernel=4.7 file=5.0 peak=64.0 MiB goroutines=1504 heapInuse=29.5 stack=12.8 active=500 terminated=500 opaque=50
+    last cgroup reading: current=62.6 peak=64.0 anon=51.1 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=14.56ms p99=54ms max=54ms
+int-c2-u2 up=h2 target=1200 go=40MiB state=[running oom=false] cpu over the run=1755m
+  up_total=1200 live_peak=1200 live_at_last_stats=1200 fail_at_last_stats=0 fail_total=0 readings=634
+    last stats reading: current=63.3 anon=55.2 sock=0.0 kernel=1.0 file=0.0 peak=64.0 MiB goroutines=2419 heapInuse=34.7 stack=15.5 active=5 terminated=5 opaque=50
+    last cgroup reading: current=63.3 peak=64.0 anon=55.2 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=9ms p99=75.69ms max=75.69ms
+gz-c1-u1 up=h1 target=300 go=40MiB state=[running oom=false] cpu over the run=627m
+  up_total=300 live_peak=300 live_at_last_stats=300 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=53.2 anon=41.4 sock=0.0 kernel=3.2 file=5.2 peak=56.2 MiB goroutines=904 heapInuse=31.7 stack=8.2 active=300 terminated=300 opaque=50
+    last cgroup reading: current=53.2 peak=56.2 anon=41.4 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=20.07ms p99=58.56ms max=58.56ms
+opaque up=h1 target=300 go=unset state=[running oom=false] cpu over the run=48m
+  up_total=300 live_peak=300 live_at_last_stats=300 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=42.7 anon=35.4 sock=0.0 kernel=3.2 file=1.8 peak=47.5 MiB goroutines=904 heapInuse=31.3 stack=5.1 active=300 terminated=0 opaque=350
+    last cgroup reading: current=42.7 peak=47.5 anon=35.4 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=10.56ms p99=30.28ms max=30.28ms
+int-c1-u1 up=h1 target=300 go=unset state=[running oom=false] cpu over the run=57m
+  up_total=300 live_peak=300 live_at_last_stats=300 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=50.4 anon=43.2 sock=0.0 kernel=3.2 file=2.4 peak=55.9 MiB goroutines=904 heapInuse=28.4 stack=8.1 active=300 terminated=300 opaque=50
+    last cgroup reading: current=50.4 peak=55.9 anon=43.2 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=8.89ms p99=43.51ms max=43.51ms
+# Tue Nov  3 00:42:09 PST 2026 hold for 120 s after the ramp, 50 streams/s, idle tick every 10 s
+int-c1-u1 up=h1 target=400 go=unset state=[running oom=false] cpu over the run=21m
+  up_total=400 live_peak=400 live_at_last_stats=400 fail_at_last_stats=0 fail_total=0 readings=575
+    last stats reading: current=60.3 anon=52.0 sock=0.0 kernel=4.0 file=2.3 peak=64.0 MiB goroutines=1204 heapInuse=33.5 stack=10.4 active=400 terminated=400 opaque=50
+    last cgroup reading: current=60.3 peak=64.0 anon=52.0 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=10.05ms p99=24.44ms max=24.44ms
+int-c1-u1 up=h1 target=300 go=unset state=[running oom=false] cpu over the run=16m
+  up_total=300 live_peak=300 live_at_last_stats=300 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=56.7 anon=46.6 sock=0.0 kernel=3.2 file=6.7 peak=58.7 MiB goroutines=904 heapInuse=24.4 stack=8.0 active=300 terminated=300 opaque=50
+    last cgroup reading: current=56.7 peak=58.7 anon=46.6 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=9.55ms p99=35.3ms max=35.3ms
+opaque up=h1 target=500 go=30MiB state=[running oom=false] cpu over the run=856m
+  up_total=500 live_peak=500 live_at_last_stats=500 fail_at_last_stats=0 fail_total=0 readings=575
+    last stats reading: current=63.9 anon=51.6 sock=0.0 kernel=4.7 file=4.4 peak=64.0 MiB goroutines=1504 heapInuse=37.5 stack=7.1 active=500 terminated=0 opaque=550
+    last cgroup reading: current=63.9 peak=64.0 anon=51.6 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=16.88ms p99=36.79ms max=36.79ms
+int-c1-u1 up=h1 target=400 go=30MiB state=[running oom=false] cpu over the run=888m
+  up_total=400 live_peak=400 live_at_last_stats=400 fail_at_last_stats=0 fail_total=0 readings=574
+    last stats reading: current=62.8 anon=38.1 sock=0.0 kernel=4.0 file=6.8 peak=64.0 MiB goroutines=1204 heapInuse=23.4 stack=10.5 active=400 terminated=400 opaque=50
+    last cgroup reading: current=62.8 peak=64.0 anon=38.1 sock=0.0
+  new connections beside them: rps kind=h1 new=true rate=5 ok=50 fail=0 p50=14.45ms p99=39.6ms max=39.6ms

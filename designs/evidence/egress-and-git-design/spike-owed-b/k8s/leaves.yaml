@@ -1,0 +1,39 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: lenny-egress, namespace: lenny-system}
+spec:
+  secretName: lenny-egress-tls
+  duration: 24h
+  renewBefore: 23h58m
+  commonName: lenny-egress.lenny-system.svc
+  dnsNames: [lenny-egress.lenny-system.svc]
+  usages: [server auth, client auth]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lenny-egress-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: lenny-egress-authz, namespace: lenny-system}
+spec:
+  secretName: lenny-egress-authz-tls
+  duration: 24h
+  renewBefore: 23h58m
+  commonName: lenny-egress-authz.lenny-system.svc
+  dnsNames: [lenny-egress-authz.lenny-system.svc]
+  usages: [server auth, client auth]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lenny-egress-ca, kind: Issuer}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: lenny-controller, namespace: lenny-system}
+spec:
+  secretName: lenny-controller-tls
+  duration: 24h
+  renewBefore: 23h58m
+  commonName: lenny-controller.lenny-system.svc
+  dnsNames: [lenny-controller.lenny-system.svc]
+  usages: [server auth, client auth]
+  privateKey: {algorithm: ECDSA, size: 256}
+  issuerRef: {name: lenny-egress-ca, kind: Issuer}

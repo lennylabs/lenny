@@ -1,0 +1,2 @@
+node NODE_EXTRA_CA_CERTS=deployer-CA-only https://allowed.oa.test/ REFUSED UNABLE_TO_VERIFY_LEAF_SIGNATURE unable to verify the first certificate; if the root CA is installed locally, try running Node.js with --use-system-ca
+node NODE_EXTRA_CA_CERTS=deployer-CA-only https://ctl.oa.test/ OK 200

@@ -1,0 +1,22 @@
+t=  1.00s done=176  map[200:126 503:50] p50=111.2ms p99=183.7ms open=126 ticks=126 broken=0
+t=  2.00s done=197  map[200:127 503:70] p50=115.1ms p99=180.9ms open=127 ticks=287 broken=0
+t=  3.00s done=196  map[200:110 503:86] p50=161.4ms p99=180ms open=110 ticks=440 broken=0
+t=  4.00s done=207  map[200:112 503:95] p50=161.5ms p99=181.1ms open=113 ticks=585 broken=0
+t=  5.00s done=200  map[200:122 503:78] p50=161.2ms p99=180.3ms open=122 ticks=748 broken=0
+t=  6.00s done=198  map[200:122 503:76] p50=162.5ms p99=181ms open=122 ticks=901 broken=0
+t=  7.00s done=201  map[200:108 503:93] p50=162.7ms p99=181.2ms open=109 ticks=1052 broken=0
+t=  8.00s done=197  map[200:123 503:74] p50=160.4ms p99=180.7ms open=123 ticks=1213 broken=0
+t=  9.00s done=200  map[200:115 503:85] p50=159.9ms p99=182.8ms open=115 ticks=1369 broken=0
+t= 10.00s done=200  map[200:115 503:85] p50=163.4ms p99=181ms open=115 ticks=1526 broken=0
+t= 11.00s done=204  map[200:112 503:92] p50=163ms p99=181ms open=112 ticks=1677 broken=0
+t= 12.00s done=197  map[200:105 503:92] p50=162ms p99=181.5ms open=105 ticks=1840 broken=0
+t= 13.00s done=199  map[200:107 503:92] p50=161.5ms p99=179.7ms open=107 ticks=1993 broken=0
+t= 14.00s done=207  map[200:127 503:80] p50=157.7ms p99=179.8ms open=127 ticks=2154 broken=0
+t= 15.00s done=194  map[200:105 503:89] p50=158.8ms p99=182.7ms open=105 ticks=2303 broken=0
+t= 16.00s done=198  map[200:105 503:93] p50=162.9ms p99=180.1ms open=105 ticks=2448 broken=0
+t= 17.00s done=207  map[200:124 503:83] p50=160.9ms p99=182ms open=125 ticks=2605 broken=0
+t= 18.00s done=193  map[200:96 503:97] p50=162.4ms p99=180.7ms open=96 ticks=2749 broken=0
+t= 19.00s done=212  map[200:126 503:86] p50=158.4ms p99=181.8ms open=126 ticks=2912 broken=0
+t= 20.00s done=187  map[200:108 503:79] p50=159.7ms p99=181.1ms open=108 ticks=3066 broken=0
+t= 21.00s done=30   map[200:16 503:14] p50=168.9ms p99=182.4ms open=16 ticks=3114 broken=0
+SUMMARY attempts=4000 map[200:2311 503:1689] 200-latency p50=108.3ms p90=173ms p99=181.3ms max=190.5ms ticks=3119 broken=0 elapsed=21.2s

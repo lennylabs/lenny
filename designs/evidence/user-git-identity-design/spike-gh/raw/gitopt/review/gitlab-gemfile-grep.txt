@@ -1,0 +1,5 @@
+165:gem 'grape', '~> 3.2', feature_category: :api
+166:gem 'grape-entity', '~> 1.1.0', feature_category: :api
+167:gem 'grape-path-helpers', '~> 2.1', feature_category: :api
+297:gem 'rack', '~> 2.2.9', feature_category: :shared # rubocop:todo Gemfile/MissingFeatureCategory -- https://gitlab.com/gitlab-org/gitlab/-/issues/581839
+710:gem 'grape_logging', '~> 3.0', feature_category: :api

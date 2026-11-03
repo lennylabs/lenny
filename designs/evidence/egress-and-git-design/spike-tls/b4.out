@@ -1,0 +1,23 @@
+start:              subject=CN=good Verification: OK 
+### rotation with 200 tunnels open
+after rotate:       subject=CN=rotated Verification: OK 
+new CONNECT:        SUMMARY attempts=3 map[200:3] 200-latency p50=2.6ms p90=2.6ms p99=2.6ms max=6.6ms ticks=3 broken=0 e
+listener.0.0.0.0_3128.ssl.connection_error: 0 sds.server.update_failure: 0 sds.server.update_rejected: 0 sds.server.update_success: 1 
+t=  30.0s open=200 ticks=5888 (+5888) ended=map[]
+SUMMARY n=200 codes=map[200:200] end_reasons=map[max reached (still open):200] ticks_total=5894 ticks_per_tunnel=[28..30] connect_lat p50=0s p99=20ms 
+### invalid material keeps the last good certificate?
+garbage installed:  subject=CN=rotated Verification: OK 
+new CONNECT:        SUMMARY attempts=3 map[200:3] 200-latency p50=2.7ms p90=2.7ms p99=2.7ms max=6ms ticks=3 broken=0 ela
+sds.server.update_failure: 0 sds.server.update_rejected: 0 sds.server.update_success: 1 
+repaired:           subject=CN=good Verification: OK 
+### client refusals, all must fail closed
+expired cert:       subject=CN=expired Verification error: certificate has expired  | SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 elapsed=0.2s
+wrong SAN:          subject=CN=badsan Verification error: hostname mismatch  | SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 elapsed=0.2s
+untrusted CA:       subject=CN=ca2leaf Verification error: unable to verify the first certificate  | SUMMARY attempts=3 map[dial:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 elapsed=0.2s
+CA rotation bundle: Verification: OK
+TLS 1.1:            no peer certificate available Verification: OK 
+TLS 1.2:            subject=CN=good Verification: OK 
+plaintext client:   SUMMARY attempts=3 map[eof:3] 200-latency p50=0s p90=0s p99=0s max=0s ticks=0 broken=0 elapsed=0.2s
+RSA certificate:    subject=CN=rsa Verification: OK  | SUMMARY attempts=3 map[200:3] 200-latency p50=2.5ms p90=2.5ms p99=2.5ms max=6.2ms ticks=3 broken=0 e
+### cold start with no certificate installed
+state: running, ready=LIVE

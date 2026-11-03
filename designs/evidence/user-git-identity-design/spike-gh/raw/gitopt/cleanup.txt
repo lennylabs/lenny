@@ -1,0 +1,8 @@
+gh- containers 0
+gh- networks 0
+gh- volumes 0
+gh- images 0
+still running: podium-postgres podium-minio
+after the UC-4 follow-up: gh- containers 0 networks 0 volumes 0 images 0; still running: podium-postgres podium-minio 
+after the revision 5 run: gh- containers 0 networks 0 volumes 0 images 0; still running: podium-postgres podium-minio 
+after the revision 6 run: gh- containers 0 networks 0 volumes 0 images 0; still running: podium-postgres podium-minio 

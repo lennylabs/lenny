@@ -1,0 +1,26 @@
+{
+ "api.example.test": {
+  "header": "Authorization",
+  "value": "Bearer ACME-REAL-9f2c71",
+  "secret": "ACME-REAL-9f2c71",
+  "placeholder": "lenny-ph-acme"
+ },
+ "ghes.example.test": {
+  "header": "Authorization",
+  "value": "token GH-REAL-55aa01",
+  "secret": "GH-REAL-55aa01",
+  "placeholder": "lenny-ph-gh"
+ },
+ "registry.example.test": {
+  "header": "Authorization",
+  "value": "Bearer NPM-REAL-77bb02",
+  "secret": "NPM-REAL-77bb02",
+  "placeholder": "lenny-ph-npm"
+ },
+ "pypi.example.test": {
+  "header": "Authorization",
+  "value": "Basic cHlwaXVzZXI6UFlQSS1SRUFMLTMzY2MwMw==",
+  "secret": "PYPI-REAL-33cc03",
+  "placeholder": "lenny-ph-pypi"
+ }
+}

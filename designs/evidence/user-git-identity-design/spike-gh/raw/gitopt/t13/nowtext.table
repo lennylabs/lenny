@@ -1,0 +1,68 @@
+ok-forwarded       rc=0   nowtext-mr-create                        writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+no-write-at-stub   rc=0   nowtext-mr-view                          writes= refused=
+no-write-at-stub   rc=0   nowtext-mr-list                          writes= refused=
+ok-refused-denied  rc=0   nowtext-D-mr-approve                     writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+OVER               rc=0   nowtext-mr-revoke-D                      writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-mr-merge                       writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-mr-rebase                      writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-forwarded       rc=0   nowtext-mr-note                          writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes refused=
+ok-forwarded       rc=0   nowtext-mr-update                        writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   nowtext-mr-close                         writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   nowtext-issue-create                     writes=POST /api/v4/projects/acme%2Fwidgets/issues refused=
+ok-refused-denied  rc=0   nowtext-D-raw-7-approve                  writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-approve-numeric          writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-approve-fullencoded      writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-approve-case             writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-approve-trailing         writes= refused=POST .../merge_requests/{n}/approve is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-unapprove                writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-unapprove-numeric        writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-unapprove-fullencoded    writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-unapprove-case           writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-unapprove-trailing       writes= refused=POST .../merge_requests/{n}/unapprove is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-merge                    writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-merge-numeric            writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-merge-fullencoded        writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-merge-case               writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-merge-trailing           writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-rebase                   writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-rebase-numeric           writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-rebase-fullencoded       writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-rebase-case              writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-rebase-trailing          writes= refused=PUT .../merge_requests/{n}/rebase is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-reset_approvals          writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-reset_approvals-numeric  writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-reset_approvals-fullencoded writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-reset_approvals-case     writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-reset_approvals-trailing writes= refused=PUT .../merge_requests/{n}/reset_approvals is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-raw-7-cancel_merge_when_pipeline_succeeds writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   nowtext-D-raw-7-cancel_merge_when_pipeline_succeeds-numeric writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   nowtext-D-raw-7-cancel_merge_when_pipeline_succeeds-fullencoded writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   nowtext-D-raw-7-cancel_merge_when_pipeline_succeeds-case writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   nowtext-D-raw-7-cancel_merge_when_pipeline_succeeds-trailing writes= refused=POST .../merge_requests/{n}/cancel_merge_when_pipeline_succeeds is denied by the
+ok-refused-denied  rc=0   nowtext-D-raw-override                   writes= refused=PUT .../merge_requests/{n}/merge is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-gql-accept                     writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-gql-alias                      writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-refused-denied  rc=0   nowtext-D-gql-fragment                   writes= refused=mutation field "mergeRequestAccept" is denied by the preset
+ok-forwarded       rc=0   nowtext-gql-neighbour-set-draft          writes=mergeRequestSetDraft refused=
+ok-forwarded       rc=0   nowtext-raw-neighbour-update             writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   nowtext-T-desc-merge                     writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-desc-approve-line2             writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-desc-escaped                   writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-desc-cr                        writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-query                          writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-form                           writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-update                         writes=PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 refused=
+ok-forwarded       rc=0   nowtext-T-note                           writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes refused=
+ok-forwarded       rc=0   nowtext-T-discussion                     writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/discussions refused=
+ok-forwarded       rc=0   nowtext-T-issue-note                     writes=POST /api/v4/projects/acme%2Fwidgets/issues/1/notes refused=
+ok-forwarded       rc=0   nowtext-T-commit-comment                 writes=POST /api/v4/projects/acme%2Fwidgets/repository/commits/abc/comme refused=
+ok-forwarded       rc=0   nowtext-T-gql-note                       writes=createNote refused=
+ok-forwarded       rc=0   nowtext-T-gql-note-var                   writes=createNote refused=
+ok-forwarded       rc=0   nowtext-T-gql-mr-create                  writes=mergeRequestCreate refused=
+ok-forwarded       rc=0   nowtext-T-glab-create                    writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-glab-note                      writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes refused=
+ok-forwarded       rc=0   nowtext-T-fp-path-in-desc                writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-fp-mention                     writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-codeblock                      writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+ok-forwarded       rc=0   nowtext-T-other-action                   writes=POST /api/v4/projects/acme%2Fwidgets/merge_requests refused=
+TOTAL 67 {'ok-forwarded': 27, 'ok-refused-denied': 37, 'OVER': 1, 'MISS': 0, 'no-write-at-stub': 2}

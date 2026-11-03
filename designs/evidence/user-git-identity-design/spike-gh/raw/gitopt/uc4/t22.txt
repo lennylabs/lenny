@@ -1,0 +1,7 @@
+concurrent slow body: 200 9.8
+concurrent slow body: 200 9.8
+concurrent slow body: 200 9.8
+concurrent slow body: 200 9.8
+concurrent slow body: 429 9.8
+concurrent slow body: 429 9.8
+slow body past 30 s: http 408 after 32.0 s 

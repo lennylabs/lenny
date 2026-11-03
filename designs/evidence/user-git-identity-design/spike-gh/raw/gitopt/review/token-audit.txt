@@ -1,0 +1,39 @@
+acme.ghe.com                     mint-read          3
+acme.ghe.com                     mint-write         2
+api.acme.ghe.com API             other:token GHE-REAL-44bb03 616
+api.acme.ghe.com API             placeholder        2
+api.example.test API             other:Bearer ACME-REAL-9f2c71 32
+api.github.com API               GHCOM-REAL         1426
+api.github.com API               placeholder        2
+ghes.example.test                mint-read          27
+ghes.example.test                mint-write         10
+ghes.example.test API            GH-REAL            1448
+ghes.example.test API            placeholder        2
+github.com                       mint-read          27
+github.com                       mint-write         10
+github.com API                   placeholder        6
+gitlab.example.test              mint-read          3
+gitlab.example.test              mint-write         2
+gitlab.example.test API          GL-REAL            185
+uploads.github.com API           placeholder        3
+findings: 20
+('placeholder at the API', 'ghes.example.test', '/api/graphql')
+('placeholder at the API', 'api.github.com', '/graphql')
+('placeholder at the API', 'api.acme.ghe.com', '/graphql')
+('placeholder at the API', 'ghes.example.test', '/api/graphql')
+('placeholder at the API', 'api.github.com', '/graphql')
+('placeholder at the API', 'api.acme.ghe.com', '/graphql')
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')
+('mint on an uncovered host', 'acme.ghe.com', 'acme/widgets', 'MINT-R-acme_widgets')
+('mint on an uncovered host', 'acme.ghe.com', 'acme/widgets', 'MINT-R-acme_widgets')
+('mint on an uncovered host', 'acme.ghe.com', 'acme/widgets', 'MINT-R-acme_widgets')
+('mint on an uncovered host', 'acme.ghe.com', 'acme/widgets', 'MINT-W-acme_widgets')
+('mint on an uncovered host', 'acme.ghe.com', 'acme/widgets', 'MINT-W-acme_widgets')
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')

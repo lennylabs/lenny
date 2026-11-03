@@ -1,0 +1,1196 @@
+// netagent: prototype of the design's netagent egress endpoint (the `inject` delivery).
+//  - local CONNECT listener on loopback, no client authentication
+//  - per-pod CA kept in a private directory, name-constrained to the terminated hosts, anchor written to /run/netagent
+//  - TLS termination for bound hosts only, HTTP/1.1 and HTTP/2 from the client
+//  - authority derived once and compared with its port to the bound host; absolute-form with a disagreeing Host refused
+//  - header overwrite from the binding, hop-by-hop stripping, smart HTTP refusal on VCS hosts, pinned hosts
+//  - plain HTTP upgrade for absolute-form requests
+//  - response scrubbing: headers, bodies (gzip and deflate decoded, unknown encodings refused), sliding window, WebSocket server frames
+//  - opaque tunnels for other hosts
+//  - server TLS to the central proxy verified against the egress CA and the Service name; upstream TLS verified against public roots only
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	_ "net/http/pprof"
+	"net/textproto"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"golang.org/x/net/http2"
+)
+
+type binding struct {
+	Hosts  []string `json:"hosts"`
+	Header string   `json:"header"`
+	Value  string   `json:"value"`
+	Secret string   `json:"secret"`
+	VCS    bool     `json:"vcs"`
+	Pinned bool     `json:"pinned"`
+	Filter string   `json:"filter"`
+}
+
+type agent struct {
+	bind     map[string]*binding // canonical host:port -> binding
+	proxy    string
+	cred     string
+	proxyTLS *tls.Config
+	tr       *http.Transport
+	rootsTLS *tls.Config
+	caCert   *x509.Certificate
+	caKey    *ecdsa.PrivateKey
+	caDER    []byte
+	leafMu   sync.Mutex
+	leaves   map[string]*tls.Certificate
+	h2srv    *http2.Server
+	h2cfg    *tls.Config
+	win      string // scrub window: "prefix" (hold only a partial match), "fixed" (the design's len-1), "off"
+	rendered bool   // also scrub the rendered attach value
+	bufSize  int
+	copyBuf  int
+	sockBuf  int
+	lax      bool // for comparison only: no Accept-Encoding rewrite, unknown encodings pass unscrubbed
+	direct   bool // spike: dial upstreams directly on the internal network, no central proxy
+	policies map[string]*policy
+	filterOn bool
+	logMu    sync.Mutex
+	reqLog   *os.File
+	nFilterRefused, nFilterAllowed, nFilterNanos atomic.Int64
+
+	nConnect, nOpaque, nTerm, nPlain, nReq, nAttach, nMismatch, nRefused, nScrub, nDialErr atomic.Int64
+	active                                                                                  atomic.Int64
+}
+
+var bufPool sync.Pool
+
+func (a *agent) getBuf() *[]byte {
+	if p, ok := bufPool.Get().(*[]byte); ok {
+		return p
+	}
+	b := make([]byte, a.bufSize)
+	return &b
+}
+
+// ----- canonicalization: the shared rule (case and default port).
+func canon(auth string, defPort string) (string, error) {
+	auth = strings.TrimSpace(strings.ToLower(auth))
+	if auth == "" {
+		return "", errors.New("empty authority")
+	}
+	host, port, err := net.SplitHostPort(auth)
+	if err != nil {
+		if strings.Contains(err.Error(), "missing port") {
+			host, port = strings.Trim(auth, "[]"), defPort
+		} else {
+			return "", err
+		}
+	}
+	if len(host) > 253 || host == "" {
+		return "", errors.New("bad host")
+	}
+	return net.JoinHostPort(strings.TrimSuffix(host, "."), port), nil
+}
+
+// ----- the per-pod CA
+func (a *agent) loadCA(dir, anchor string, hosts []string, constrain bool) {
+	os.MkdirAll(dir, 0o700)
+	keyPath := filepath.Join(dir, "ca-key.pem")
+	var k *ecdsa.PrivateKey
+	if b, err := os.ReadFile(keyPath); err == nil {
+		d, _ := pem.Decode(b)
+		ki, err := x509.ParsePKCS8PrivateKey(d.Bytes)
+		if err != nil {
+			log.Fatal(err)
+		}
+		k = ki.(*ecdsa.PrivateKey)
+	} else {
+		k, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		b, _ := x509.MarshalPKCS8PrivateKey(k)
+		os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: b}), 0o600)
+	}
+	sort.Strings(hosts)
+	want := fmt.Sprint(constrain, hosts)
+	certPath := filepath.Join(dir, "ca.pem")
+	statePath := filepath.Join(dir, "ca.state")
+	var der []byte
+	if st, err := os.ReadFile(statePath); err == nil && string(st) == want {
+		if b, err := os.ReadFile(certPath); err == nil {
+			d, _ := pem.Decode(b)
+			der = d.Bytes
+		}
+	}
+	if der == nil {
+		t := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: "netagent per-pod CA"}, IsCA: true, BasicConstraintsValid: true, MaxPathLenZero: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(30 * 24 * time.Hour)}
+		if constrain {
+			t.PermittedDNSDomainsCritical = true
+			t.PermittedDNSDomains = hosts
+			_, v4, _ := net.ParseCIDR("0.0.0.0/0")
+			_, v6, _ := net.ParseCIDR("::/0")
+			t.ExcludedIPRanges = []*net.IPNet{v4, v6}
+		}
+		var err error
+		der, err = x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+		if err != nil {
+			log.Fatal(err)
+		}
+		os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
+		os.WriteFile(statePath, []byte(want), 0o600)
+	}
+	c, err := x509.ParseCertificate(der)
+	if err != nil {
+		log.Fatal(err)
+	}
+	a.caCert, a.caKey, a.caDER = c, k, der
+	os.MkdirAll(filepath.Dir(anchor), 0o755)
+	tmp := anchor + ".tmp"
+	os.WriteFile(tmp, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o644)
+	os.Rename(tmp, anchor)
+	s := sha256.Sum256(der)
+	log.Printf("per-pod CA sha256=%s permitted=%v excludedIP=%d", hex.EncodeToString(s[:8]), c.PermittedDNSDomains, len(c.ExcludedIPRanges))
+}
+
+func (a *agent) leaf(host string) (*tls.Certificate, error) {
+	a.leafMu.Lock()
+	defer a.leafMu.Unlock()
+	if l := a.leaves[host]; l != nil {
+		return l, nil
+	}
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: host}, DNSNames: []string{host}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(7 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	d, err := x509.CreateCertificate(rand.Reader, t, a.caCert, &k.PublicKey, a.caKey)
+	if err != nil {
+		return nil, err
+	}
+	l := &tls.Certificate{Certificate: [][]byte{d}, PrivateKey: k}
+	a.leaves[host] = l
+	return l, nil
+}
+
+// ----- I2: TLS to the central proxy, CONNECT with the pod's credential
+func (a *agent) dialTunnel(ctx context.Context, addr string) (net.Conn, error) {
+	d := net.Dialer{Timeout: 5 * time.Second}
+	if a.direct {
+		return d.DialContext(ctx, "tcp", addr)
+	}
+	raw, err := d.DialContext(ctx, "tcp", a.proxy)
+	if err != nil {
+		a.nDialErr.Add(1)
+		return nil, err
+	}
+	a.tune(raw)
+	var c net.Conn = raw
+	if a.proxyTLS != nil {
+		tc := tls.Client(raw, a.proxyTLS)
+		hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err = tc.HandshakeContext(hctx)
+		cancel()
+		if err != nil {
+			raw.Close()
+			a.nDialErr.Add(1)
+			return nil, fmt.Errorf("proxy tls: %w", err)
+		}
+		c = tc
+	}
+	// Forward the authority and nothing else from the client.
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", addr, addr, base64.StdEncoding.EncodeToString([]byte(a.cred)))
+	br := bufio.NewReaderSize(c, 1024)
+	resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		c.Close()
+		a.nDialErr.Add(1)
+		return nil, fmt.Errorf("proxy connect: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		c.Close()
+		return nil, &refused{resp.StatusCode}
+	}
+	if br.Buffered() > 0 {
+		return &bufConn{c, br}, nil
+	}
+	return c, nil
+}
+
+type refused struct{ code int }
+
+func (r *refused) Error() string { return fmt.Sprintf("proxy refused: %d", r.code) }
+
+type bufConn struct {
+	net.Conn
+	br *bufio.Reader
+}
+
+func (b *bufConn) Read(p []byte) (int, error) {
+	if b.br != nil {
+		if b.br.Buffered() > 0 {
+			return b.br.Read(p)
+		}
+		b.br = nil
+	}
+	return b.Conn.Read(p)
+}
+
+// ----- local listener loop, shared by plain requests and terminated HTTP/1.1
+type head struct {
+	method, target string
+	hosts          []string
+}
+
+// peekHead reads the request head without consuming it. net/http drops the Host
+// header from an absolute-form request, so the disagreement rule needs the raw head.
+func peekHead(br *bufio.Reader) (*head, *bufio.Reader, error) {
+	n := 1
+	for {
+		b, err := br.Peek(n)
+		if err != nil {
+			if errors.Is(err, bufio.ErrBufferFull) {
+				if br.Size() >= 64<<10 {
+					return nil, br, errors.New("request head too large")
+				}
+				br = bufio.NewReaderSize(br, 64<<10) // a long head: chain a larger reader for it
+				n = 1
+				continue
+			}
+			return nil, br, err
+		}
+		if i := bytes.Index(b, []byte("\r\n\r\n")); i >= 0 {
+			lines := strings.Split(string(b[:i]), "\r\n")
+			f := strings.Fields(lines[0])
+			if len(f) != 3 {
+				return nil, br, errors.New("bad request line")
+			}
+			h := &head{method: f[0], target: f[1]}
+			for _, l := range lines[1:] {
+				k, v, ok := strings.Cut(l, ":")
+				if ok && textproto.CanonicalMIMEHeaderKey(strings.TrimSpace(k)) == "Host" {
+					h.hosts = append(h.hosts, strings.TrimSpace(v))
+				}
+			}
+			return h, br, nil
+		}
+		n = br.Buffered()
+		if n == len(b) {
+			n = len(b) + 1
+		} else if n < 1 {
+			n = 1
+		}
+	}
+}
+
+func (a *agent) serveLocal(c net.Conn) {
+	a.active.Add(1)
+	defer a.active.Add(-1)
+	defer c.Close()
+	a.h1Loop(c, bufio.NewReaderSize(c, 2048), "")
+}
+
+// h1Loop serves HTTP/1.1. connAuth is the CONNECT authority of a terminated tunnel, or empty on the plain listener.
+func (a *agent) h1Loop(c net.Conn, br *bufio.Reader, connAuth string) {
+	for {
+		h, nbr, err := peekHead(br)
+		br = nbr
+		if err != nil {
+			if err != io.EOF {
+				a.simple(c, 400, "bad request")
+			}
+			return
+		}
+		if h.method == "CONNECT" && connAuth == "" {
+			a.handleConnect(c, br, h.target)
+			return
+		}
+		req, err := http.ReadRequest(br)
+		if err != nil {
+			a.simple(c, 400, "bad request")
+			return
+		}
+		if len(h.hosts) > 1 {
+			a.nRefused.Add(1)
+			a.simple(c, 400, "more than one Host header")
+			return
+		}
+		rc := reqCtx{connAuth: connAuth, h: h}
+		w := &h1w{c: c, hdr: http.Header{}, req: req}
+		aborted := func() (ab bool) {
+			defer func() {
+				if v := recover(); v != nil {
+					if v != http.ErrAbortHandler {
+						log.Printf("panic: %v", v)
+					}
+					ab = true
+				}
+			}()
+			a.serve(w, req, rc)
+			return false
+		}()
+		if aborted {
+			return // no terminal chunk: the client sees a truncated body
+		}
+		if w.hijacked {
+			return
+		}
+		w.finish()
+		if !w.closeAfter {
+			io.Copy(io.Discard, req.Body)
+		}
+		req.Body.Close()
+		if req.Close || w.closeAfter || req.ProtoAtLeast(1, 1) == false {
+			return
+		}
+	}
+}
+
+func (a *agent) simple(c net.Conn, code int, msg string) {
+	fmt.Fprintf(c, "HTTP/1.1 %d %s\r\nContent-Type: text/plain\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", code, http.StatusText(code), len(msg), msg)
+}
+
+func (a *agent) handleConnect(c net.Conn, br *bufio.Reader, target string) {
+	a.nConnect.Add(1)
+	// consume the rest of the CONNECT head
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		return
+	}
+	_ = req
+	key, err := canon(target, "443")
+	if err != nil {
+		a.simple(c, 400, "bad authority")
+		return
+	}
+	if b := a.bind[key]; b != nil {
+		a.nTerm.Add(1)
+		fmt.Fprint(c, "HTTP/1.1 200 Connection established\r\n\r\n")
+		a.terminate(wrapBuffered(c, br), key)
+		return
+	}
+	a.nOpaque.Add(1)
+	log.Printf("opaque CONNECT %s", key)
+	up, err := a.dialTunnel(context.Background(), key)
+	if err != nil {
+		log.Printf("opaque CONNECT %s failed: %v", key, err)
+		var rf *refused
+		if errors.As(err, &rf) {
+			a.simple(c, rf.code, "refused by egress policy")
+		} else {
+			a.simple(c, 502, "egress unavailable")
+		}
+		return
+	}
+	defer up.Close()
+	fmt.Fprint(c, "HTTP/1.1 200 Connection established\r\n\r\n")
+	cl := wrapBuffered(c, br)
+	done := make(chan struct{}, 2)
+	go func() { a.copyTo(up, cl); closeWrite(up); done <- struct{}{} }()
+	go func() { a.copyTo(c, up); closeWrite(c); done <- struct{}{} }()
+	<-done
+	<-done
+}
+
+// copyTo uses io.Copy's 32 KiB buffer unless -copy-buf sets another size.
+func (a *agent) copyTo(dst io.Writer, src io.Reader) {
+	if a.copyBuf == 0 {
+		io.Copy(dst, src)
+		return
+	}
+	buf := make([]byte, a.copyBuf)
+	io.CopyBuffer(struct{ io.Writer }{dst}, struct{ io.Reader }{src}, buf)
+}
+
+func (a *agent) tune(c net.Conn) {
+	if a.sockBuf == 0 {
+		return
+	}
+	if t, ok := c.(*net.TCPConn); ok {
+		t.SetReadBuffer(a.sockBuf)
+		t.SetWriteBuffer(a.sockBuf)
+	}
+}
+
+func closeWrite(c net.Conn) {
+	switch x := c.(type) {
+	case *net.TCPConn:
+		x.CloseWrite()
+	case *tls.Conn:
+		x.CloseWrite()
+	case *bufConn:
+		closeWrite(x.Conn)
+	}
+}
+
+func wrapBuffered(c net.Conn, br *bufio.Reader) net.Conn {
+	if br.Buffered() > 0 {
+		return &bufConn{c, br}
+	}
+	return c
+}
+
+// ----- TLS termination
+func (a *agent) terminate(c net.Conn, key string) {
+	host, _, _ := net.SplitHostPort(key)
+	cfg := a.h2cfg.Clone()
+	cfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) { return a.leaf(host) }
+	tc := tls.Server(c, cfg)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	err := tc.HandshakeContext(ctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	defer tc.Close()
+	if tc.ConnectionState().NegotiatedProtocol == "h2" {
+		a.h2srv.ServeConn(tc, &http2.ServeConnOpts{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a.serve(w, r, reqCtx{connAuth: key, h2: true})
+		})})
+		return
+	}
+	a.h1Loop(tc, bufio.NewReaderSize(tc, 2048), key)
+}
+
+// ----- the request path
+type reqCtx struct {
+	connAuth string // CONNECT authority, canonical, when terminated
+	h        *head  // raw HTTP/1.1 head
+	h2       bool
+}
+
+var hopByHop = []string{"Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade"}
+
+func stripHop(h http.Header) {
+	for _, v := range h["Connection"] {
+		for _, f := range strings.Split(v, ",") {
+			h.Del(strings.TrimSpace(f))
+		}
+	}
+	for _, k := range hopByHop {
+		h.Del(k)
+	}
+}
+
+func isSmart(p string) bool {
+	return strings.Contains(p, "/info/refs") || strings.HasSuffix(p, "/git-upload-pack") || strings.HasSuffix(p, "/git-receive-pack") || strings.Contains(p, "/info/lfs")
+}
+
+func (a *agent) refuseF(w http.ResponseWriter, code int, reason string) {
+	w.Header().Set("X-Lenny-Filter", "refused")
+	w.Header().Set("Content-Type", "application/json")
+	a.nRefused.Add(1)
+	w.Header().Set("X-Lenny-Decision", "local-"+strconv.FormatInt(time.Now().UnixNano(), 36))
+	w.WriteHeader(code)
+	m, _ := json.Marshal(map[string]string{"message": "refused by the egress operation allowlist: " + reason})
+	w.Write(m)
+}
+
+func (a *agent) refuse(w http.ResponseWriter, code int, reason string) {
+	a.nRefused.Add(1)
+	w.Header().Set("Content-Type", "text/plain")
+	w.Header().Set("X-Lenny-Decision", "local-"+strconv.FormatInt(time.Now().UnixNano(), 36))
+	w.WriteHeader(code)
+	fmt.Fprintln(w, reason)
+}
+
+func (a *agent) serve(w http.ResponseWriter, r *http.Request, rc reqCtx) {
+	a.nReq.Add(1)
+	decision, decReason := "unfiltered", ""
+	if a.reqLog != nil {
+		defer func() {
+			e, _ := json.Marshal(map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "proto": r.Proto, "method": r.Method, "uri": r.RequestURI, "host": r.Host, "conn": rc.connAuth, "headers": r.Header, "contentLength": r.ContentLength, "te": r.TransferEncoding, "decision": decision, "reason": decReason})
+			a.logMu.Lock()
+			a.reqLog.Write(append(e, 10))
+			a.logMu.Unlock()
+		}()
+	}
+	// Derive the authority once.
+	var authority string
+	abs := r.URL.IsAbs() && r.URL.Host != ""
+	switch {
+	case rc.h2:
+		authority = r.Host
+	case abs:
+		authority = r.URL.Host
+		if len(rc.h.hosts) == 1 {
+			scheme := "443"
+			if rc.connAuth == "" {
+				scheme = "80"
+			}
+			x, e1 := canon(authority, scheme)
+			y, e2 := canon(rc.h.hosts[0], scheme)
+			if e1 != nil || e2 != nil || x != y {
+				a.refuse(w, 400, "Host disagrees with the request target")
+				return
+			}
+		}
+	default:
+		if rc.connAuth == "" { // origin-form on the proxy port
+			a.refuse(w, 400, "this endpoint is a proxy")
+			return
+		}
+		authority = r.Host
+	}
+	plain := rc.connAuth == ""
+	var key string
+	var err error
+	if plain {
+		// http://host/ means the bound host on 443 through the upgrade; an explicit other port does not match.
+		key, err = canon(authority, "80")
+		if err == nil {
+			h, p, _ := net.SplitHostPort(key)
+			if p == "80" {
+				key = net.JoinHostPort(h, "443")
+			}
+		}
+		a.nPlain.Add(1)
+	} else {
+		key, err = canon(authority, "443")
+	}
+	if err != nil {
+		a.refuse(w, 400, "bad authority")
+		return
+	}
+	b := a.bind[key]
+	if a.filterOn {
+		// A filtered connection holds requests for its own authority only; a request naming a filtered host is checked wherever it arrives.
+		if cb := a.bind[rc.connAuth]; !plain && cb != nil && cb.Filter != "" && key != rc.connAuth {
+			decision, decReason = "refused", "authority differs inside a filtered connection"
+			a.refuseF(w, 403, decReason)
+			return
+		}
+		if b != nil && b.Filter != "" {
+			p := a.policies[b.Filter]
+			if p == nil {
+				decision, decReason = "refused", "no such policy"
+				a.refuseF(w, 500, decReason)
+				return
+			}
+			t0 := time.Now()
+			fb, de := p.check(r)
+			a.nFilterNanos.Add(int64(time.Since(t0)))
+			if de != nil {
+				decision, decReason = "refused", de.reason
+				a.nFilterRefused.Add(1)
+				if h, ok := w.(*h1w); ok && de.code == 413 {
+					h.closeAfter = true
+					h.hdr.Set("Connection", "close")
+				}
+				a.refuseF(w, de.code, de.reason)
+				return
+			}
+			decision = "allowed"
+			a.nFilterAllowed.Add(1)
+			r.TransferEncoding = nil
+			r.Trailer = nil
+			if len(fb) == 0 {
+				r.Body, r.ContentLength = http.NoBody, 0
+			} else {
+				r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(fb)), int64(len(fb))
+			}
+		}
+	}
+	if !plain {
+		if cb := a.bind[rc.connAuth]; cb != nil && cb.Pinned && key != rc.connAuth {
+			a.refuse(w, 403, "authority differs inside a pinned connection")
+			return
+		}
+		if b == nil {
+			a.nMismatch.Add(1)
+		}
+	}
+	if b != nil && b.Pinned && strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		a.refuse(w, 403, "upgrade refused on a pinned host")
+		return
+	}
+	if b != nil && b.VCS && isSmart(r.URL.Path) {
+		a.refuse(w, 403, "smart HTTP on a VCS host goes through the local git endpoint")
+		return
+	}
+	out := r.Clone(r.Context())
+	out.RequestURI = ""
+	wsUp := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	wsHdrs := [3]string{r.Header.Get("Sec-WebSocket-Key"), r.Header.Get("Sec-WebSocket-Version"), r.Header.Get("Sec-WebSocket-Protocol")}
+	stripHop(out.Header)
+	if wsUp {
+		out.Header.Set("Connection", "Upgrade")
+		out.Header.Set("Upgrade", "websocket")
+		out.Header.Del("Sec-WebSocket-Extensions") // frames must stay uncompressed to be scrubbed
+		out.Header.Set("Sec-WebSocket-Key", wsHdrs[0])
+		out.Header.Set("Sec-WebSocket-Version", wsHdrs[1])
+		if wsHdrs[2] != "" {
+			out.Header.Set("Sec-WebSocket-Protocol", wsHdrs[2])
+		}
+	}
+	var scr *scrubber
+	if b != nil {
+		// Overwrite rather than substitute. The decoder handles gzip and deflate only, so the request may not advertise others.
+		out.Header.Set(b.Header, b.Value)
+		a.nAttach.Add(1)
+		if out.Header.Get("Accept-Encoding") != "" && !a.lax {
+			out.Header.Set("Accept-Encoding", "gzip, deflate")
+		}
+		scr = a.newScrubber(b)
+	}
+	switch {
+	case plain && b != nil: // the upgrade
+		out.URL.Scheme, out.URL.Host, out.Host = "https", key, hostOnly(key)
+	case plain: // other host: unchanged over a tunnel
+		out.URL.Scheme = "http"
+		out.URL.Host, out.Host = authority, authority
+	default:
+		// The upstream connection uses the CONNECT authority as server name, the request keeps its own authority.
+		// A request whose authority is itself a bound host goes to that host, so its secret cannot reach the connection's origin.
+		ua := hostOnly(rc.connAuth)
+		if b != nil {
+			ua = hostOnly(key)
+		}
+		out.URL.Scheme, out.URL.Host = "https", ua
+		out.Host = authority
+	}
+	resp, err := a.tr.RoundTrip(out)
+	if err != nil {
+		var rf *refused
+		if errors.As(err, &rf) {
+			a.refuse(w, rf.code, "refused by egress policy")
+			return
+		}
+		log.Printf("upstream: %s: %v", key, err)
+		a.refuse(w, 502, "upstream failure")
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 101 && wsUp {
+		a.websocket(w, resp, scr)
+		return
+	}
+	stripHop(resp.Header)
+	var body io.Reader = resp.Body
+	if scr != nil {
+		ce := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+		var derr error
+		switch ce {
+		case "", "identity":
+		case "gzip", "x-gzip":
+			body, derr = gzip.NewReader(resp.Body)
+		case "deflate":
+			body, derr = newDeflate(resp.Body)
+		default:
+			if a.lax {
+				break
+			}
+			a.nRefused.Add(1)
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(502)
+			fmt.Fprintf(w, "response encoding %q cannot be scrubbed\n", ce)
+			return
+		}
+		if derr != nil {
+			a.refuse(w, 502, "bad compressed body")
+			return
+		}
+		if ce == "gzip" || ce == "x-gzip" || ce == "deflate" {
+			resp.Header.Del("Content-Encoding")
+			resp.Header.Del("Content-Length")
+		}
+		for k, vs := range resp.Header {
+			for i := range vs {
+				vs[i] = scr.line(vs[i])
+			}
+			resp.Header[k] = vs
+		}
+	}
+	dst := w.Header()
+	for k, vs := range resp.Header {
+		dst[k] = vs
+	}
+	w.WriteHeader(resp.StatusCode)
+	fl, _ := w.(http.Flusher)
+	bp := a.getBuf()
+	defer bufPool.Put(bp)
+	buf := *bp
+	for {
+		n, rerr := body.Read(buf)
+		if n > 0 {
+			p := buf[:n]
+			if scr != nil {
+				p = scr.write(p)
+			}
+			if len(p) > 0 {
+				if _, werr := w.Write(p); werr != nil {
+					return
+				}
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		if rerr != nil {
+			if scr != nil {
+				if p := scr.finish(); len(p) > 0 {
+					w.Write(p)
+					if fl != nil {
+						fl.Flush()
+					}
+				}
+				if rerr != io.EOF {
+					// a truncated stream must look truncated to the client
+					panic(http.ErrAbortHandler)
+				}
+			}
+			return
+		}
+	}
+}
+
+func hostOnly(k string) string {
+	h, p, _ := net.SplitHostPort(k)
+	if p == "443" {
+		return h
+	}
+	return k
+}
+
+func newDeflate(r io.Reader) (io.Reader, error) {
+	br := bufio.NewReader(r)
+	b, err := br.Peek(2)
+	if err != nil {
+		return nil, err
+	}
+	if b[0]&0x0f == 8 && (uint16(b[0])<<8|uint16(b[1]))%31 == 0 {
+		return zlib.NewReader(br)
+	}
+	return flate.NewReader(br), nil
+}
+
+// ----- scrubber. Same-length mask, so a known Content-Length stays correct and offsets do not move.
+type scrubber struct {
+	a       *agent
+	secrets [][]byte
+	maxLen  int
+	hold    []byte
+	work    []byte
+}
+
+func (a *agent) newScrubber(b *binding) *scrubber {
+	if a.win == "off" {
+		return nil
+	}
+	s := &scrubber{a: a}
+	add := func(v string) {
+		if v == "" {
+			return
+		}
+		for _, x := range s.secrets {
+			if string(x) == v {
+				return
+			}
+		}
+		s.secrets = append(s.secrets, []byte(v))
+		if len(v) > s.maxLen {
+			s.maxLen = len(v)
+		}
+	}
+	add(b.Secret)
+	if a.rendered {
+		// The rendered value holds the secret in another encoding when the template encodes it (Basic).
+		add(b.Value)
+		if i := strings.IndexByte(b.Value, ' '); i >= 0 {
+			add(b.Value[i+1:])
+		}
+	}
+	// longest first, so a longer rendered value is masked whole
+	sort.Slice(s.secrets, func(i, j int) bool { return len(s.secrets[i]) > len(s.secrets[j]) })
+	return s
+}
+
+func (s *scrubber) mask(p []byte) {
+	for _, sec := range s.secrets {
+		off := 0
+		for {
+			i := bytes.Index(p[off:], sec)
+			if i < 0 {
+				break
+			}
+			for j := off + i; j < off+i+len(sec); j++ {
+				p[j] = 'x'
+			}
+			off += i + len(sec)
+			s.a.nScrub.Add(1)
+		}
+	}
+}
+
+// holdLen returns how many trailing bytes of p to keep back.
+func (s *scrubber) holdLen(p []byte) int {
+	if s.a.win == "fixed" {
+		h := s.maxLen - 1
+		if h > len(p) {
+			h = len(p)
+		}
+		return h
+	}
+	// prefix: the longest suffix of p that is a proper prefix of some secret
+	m := s.maxLen - 1
+	if m > len(p) {
+		m = len(p)
+	}
+	for n := m; n > 0; n-- {
+		tail := p[len(p)-n:]
+		for _, sec := range s.secrets {
+			if n < len(sec) && bytes.Equal(tail, sec[:n]) {
+				return n
+			}
+		}
+	}
+	return 0
+}
+
+func (s *scrubber) write(in []byte) []byte {
+	if len(s.hold) == 0 {
+		s.mask(in)
+		h := s.holdLen(in)
+		if h == 0 {
+			return in
+		}
+		s.hold = append(s.hold[:0], in[len(in)-h:]...)
+		return in[:len(in)-h]
+	}
+	s.work = append(append(s.work[:0], s.hold...), in...)
+	s.mask(s.work)
+	h := s.holdLen(s.work)
+	s.hold = append(s.hold[:0], s.work[len(s.work)-h:]...)
+	return s.work[:len(s.work)-h]
+}
+
+func (s *scrubber) finish() []byte {
+	p := s.hold
+	s.hold = nil
+	s.mask(p)
+	return p
+}
+
+func (s *scrubber) line(v string) string {
+	b := []byte(v)
+	s.mask(b)
+	return string(b)
+}
+
+// ----- WebSocket: server frames are coalesced to a message, scrubbed, and re-framed.
+func (a *agent) websocket(w http.ResponseWriter, resp *http.Response, scr *scrubber) {
+	hw, ok := w.(*h1w)
+	if !ok {
+		return
+	}
+	up, ok := resp.Body.(io.ReadWriteCloser)
+	if !ok {
+		return
+	}
+	defer up.Close()
+	c := hw.hijack()
+	stripHopKeepUpgrade(resp.Header)
+	fmt.Fprintf(c, "HTTP/1.1 101 Switching Protocols\r\n")
+	for k, vs := range resp.Header {
+		for _, v := range vs {
+			fmt.Fprintf(c, "%s: %s\r\n", k, v)
+		}
+	}
+	fmt.Fprint(c, "Connection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(up, c); done <- struct{}{} }()
+	go func() { a.wsDown(c, up, scr); done <- struct{}{} }()
+	<-done
+}
+
+func stripHopKeepUpgrade(h http.Header) { stripHop(h) }
+
+func (a *agent) wsDown(c io.Writer, up io.Reader, scr *scrubber) {
+	br := bufio.NewReader(up)
+	var msg []byte
+	var msgOp byte
+	for {
+		var hd [2]byte
+		if _, err := io.ReadFull(br, hd[:]); err != nil {
+			return
+		}
+		fin, op := hd[0]&0x80 != 0, hd[0]&0x0f
+		n := uint64(hd[1] & 0x7f)
+		if n == 126 {
+			var e [2]byte
+			io.ReadFull(br, e[:])
+			n = uint64(binary.BigEndian.Uint16(e[:]))
+		} else if n == 127 {
+			var e [8]byte
+			io.ReadFull(br, e[:])
+			n = binary.BigEndian.Uint64(e[:])
+		}
+		if n > 16<<20 {
+			return
+		}
+		p := make([]byte, n)
+		if _, err := io.ReadFull(br, p); err != nil {
+			return
+		}
+		if op >= 8 { // control frames pass; a close or ping can carry reflected text
+			if scr != nil {
+				scr.mask(p)
+			}
+			wsFrame(c, op, p)
+			continue
+		}
+		if op != 0 {
+			msgOp = op
+			msg = msg[:0]
+		}
+		msg = append(msg, p...)
+		if fin {
+			if scr != nil {
+				scr.mask(msg)
+			}
+			wsFrame(c, msgOp, msg)
+			msg = msg[:0]
+		}
+	}
+}
+
+func wsFrame(w io.Writer, op byte, p []byte) {
+	h := []byte{0x80 | op}
+	n := len(p)
+	switch {
+	case n < 126:
+		h = append(h, byte(n))
+	case n < 65536:
+		h = append(h, 126, byte(n>>8), byte(n))
+	default:
+		h = append(h, 127)
+		h = binary.BigEndian.AppendUint64(h, uint64(n))
+	}
+	w.Write(append(h, p...))
+}
+
+// ----- a minimal HTTP/1.1 response writer. net/http's server hides the raw head the authority rule needs.
+type h1w struct {
+	c          net.Conn
+	hdr        http.Header
+	req        *http.Request
+	wrote      bool
+	chunked    bool
+	noBody     bool
+	remaining  int64
+	hijacked   bool
+	closeAfter bool
+	buf        []byte
+}
+
+func (w *h1w) Header() http.Header { return w.hdr }
+func (w *h1w) WriteHeader(code int) {
+	if w.wrote {
+		return
+	}
+	w.wrote = true
+	w.noBody = w.req.Method == "HEAD" || code == 204 || code == 304 || code < 200
+	cl := w.hdr.Get("Content-Length")
+	if cl == "" && !w.noBody {
+		if w.req.ProtoAtLeast(1, 1) {
+			w.chunked = true
+			w.hdr.Set("Transfer-Encoding", "chunked")
+		} else {
+			w.closeAfter = true
+		}
+	}
+	var b bytes.Buffer
+	fmt.Fprintf(&b, "HTTP/1.1 %d %s\r\n", code, http.StatusText(code))
+	w.hdr.Write(&b)
+	b.WriteString("\r\n")
+	w.c.Write(b.Bytes())
+}
+func (w *h1w) Write(p []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(200)
+	}
+	if w.noBody {
+		return len(p), nil
+	}
+	if !w.chunked {
+		return w.c.Write(p)
+	}
+	w.buf = append(w.buf[:0], strconv.FormatInt(int64(len(p)), 16)...)
+	w.buf = append(w.buf, '\r', '\n')
+	w.buf = append(w.buf, p...)
+	w.buf = append(w.buf, '\r', '\n')
+	if _, err := w.c.Write(w.buf); err != nil {
+		return 0, err
+	}
+	if cap(w.buf) > 32<<10 {
+		w.buf = nil
+	}
+	return len(p), nil
+}
+func (w *h1w) Flush() {}
+func (w *h1w) finish() {
+	if !w.wrote {
+		w.WriteHeader(200)
+	}
+	if w.chunked {
+		w.c.Write([]byte("0\r\n\r\n"))
+	}
+	w.buf = nil
+}
+func (w *h1w) hijack() net.Conn { w.hijacked = true; return w.c }
+
+// -----
+func main() {
+	listen := flag.String("listen", "127.0.0.1:3128", "")
+	stats := flag.String("stats", "127.0.0.1:9100", "")
+	proxy := flag.String("proxy", "", "central proxy address")
+	proxyCA := flag.String("proxy-ca", "", "egress CA bundle")
+	sni := flag.String("proxy-sni", "lenny-egress.lenny-system.svc", "")
+	cred := flag.String("cred", "agent:good", "")
+	bindings := flag.String("bindings", "/cfg/bindings.json", "")
+	roots := flag.String("roots", "/certs/pub-ca.pem", "public roots and deployer CA")
+	caDir := flag.String("ca-dir", "/var/netagent", "private directory")
+	anchor := flag.String("anchor", "/run/netagent/ca.pem", "")
+	constrain := flag.Bool("constrain", true, "")
+	win := flag.String("window", "prefix", "prefix|fixed|off")
+	rendered := flag.Bool("scrub-rendered", true, "")
+	bufSize := flag.Int("buf", 16<<10, "body copy buffer")
+	lax := flag.Bool("lax-encoding", false, "")
+	copyBuf := flag.Int("copy-buf", 0, "opaque tunnel copy buffer; 0 keeps io.Copy's 32 KiB")
+	sockBuf := flag.Int("sockbuf", 0, "SO_SNDBUF and SO_RCVBUF on both sides; 0 keeps kernel autotuning")
+	h2buf := flag.Int("h2-stream-buf", 0, "upstream per-stream HTTP/2 receive buffer; 0 keeps the net/http default of 4 MiB")
+	direct := flag.Bool("direct", false, "dial upstreams directly")
+	policyPath := flag.String("policy", "", "operation allowlist file, name to policy")
+	filterOn := flag.Bool("filter", false, "apply the operation allowlist")
+	reqLog := flag.String("reqlog", "", "JSONL of requests as the client sent them")
+	flag.Parse()
+	log.SetFlags(log.Lmicroseconds)
+
+	a := &agent{bind: map[string]*binding{}, proxy: *proxy, cred: *cred, leaves: map[string]*tls.Certificate{}, win: *win, rendered: *rendered, bufSize: *bufSize, lax: *lax, copyBuf: *copyBuf, sockBuf: *sockBuf}
+	a.direct, a.filterOn = *direct, *filterOn
+	if *reqLog != "" {
+		a.reqLog, _ = os.OpenFile(*reqLog, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	}
+	if *policyPath != "" {
+		pb, err := os.ReadFile(*policyPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := json.Unmarshal(pb, &a.policies); err != nil {
+			log.Fatal(err)
+		}
+		for n, p := range a.policies {
+			if err := p.compile(); err != nil {
+				log.Fatal(n, ": ", err)
+			}
+		}
+	}
+	raw, err := os.ReadFile(*bindings)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var bs []*binding
+	if err := json.Unmarshal(raw, &bs); err != nil {
+		log.Fatal(err)
+	}
+	seen := map[string]bool{}
+	var hosts []string
+	for _, b := range bs {
+		for _, h := range b.Hosts {
+			k, err := canon(h, "443")
+			if err != nil {
+				log.Fatal(err)
+			}
+			a.bind[k] = b
+			hn, _, _ := net.SplitHostPort(k)
+			if !seen[hn] {
+				seen[hn] = true
+				hosts = append(hosts, hn)
+			}
+		}
+	}
+	a.loadCA(*caDir, *anchor, hosts, *constrain)
+	if *proxyCA != "" {
+		p := x509.NewCertPool()
+		b, err := os.ReadFile(*proxyCA)
+		if err != nil {
+			log.Fatal(err)
+		}
+		p.AppendCertsFromPEM(b)
+		a.proxyTLS = &tls.Config{RootCAs: p, ServerName: *sni, NextProtos: []string{"http/1.1"}, ClientSessionCache: tls.NewLRUClientSessionCache(32), MinVersion: tls.VersionTLS12}
+	}
+	rp := x509.NewCertPool()
+	rb, err := os.ReadFile(*roots)
+	if err != nil {
+		log.Fatal(err)
+	}
+	rp.AppendCertsFromPEM(rb) // never the per-pod CA
+	a.tr = &http.Transport{
+		DialContext:         func(ctx context.Context, _, addr string) (net.Conn, error) { return a.dialTunnel(ctx, addr) },
+		TLSClientConfig:     &tls.Config{RootCAs: rp, ClientSessionCache: tls.NewLRUClientSessionCache(32)},
+		ForceAttemptHTTP2:   true,
+		DisableCompression:  true,
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     60 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second,
+	}
+	if *h2buf > 0 {
+		a.tr.HTTP2 = &http.HTTP2Config{MaxReceiveBufferPerStream: *h2buf, MaxReceiveBufferPerConnection: *h2buf * 8}
+	}
+	a.h2srv = &http2.Server{}
+	a.h2cfg = &tls.Config{NextProtos: []string{"h2", "http/1.1"}, MinVersion: tls.VersionTLS12}
+
+	go func() {
+		m := http.DefaultServeMux
+		m.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			json.NewEncoder(w).Encode(map[string]any{
+				"goroutines": runtime.NumGoroutine(), "heapAlloc": ms.HeapAlloc, "heapInuse": ms.HeapInuse, "heapSys": ms.HeapSys, "stackInuse": ms.StackInuse, "sys": ms.Sys, "numGC": ms.NumGC,
+				"active": a.active.Load(), "connect": a.nConnect.Load(), "opaque": a.nOpaque.Load(), "terminated": a.nTerm.Load(), "plain": a.nPlain.Load(), "requests": a.nReq.Load(), "attached": a.nAttach.Load(),
+				"filterAllowed": a.nFilterAllowed.Load(), "filterRefused": a.nFilterRefused.Load(), "filterNanos": a.nFilterNanos.Load(), "authorityMismatch": a.nMismatch.Load(), "refused": a.nRefused.Load(), "scrubHits": a.nScrub.Load(), "dialErrors": a.nDialErr.Load(),
+			})
+		})
+		m.HandleFunc("/gc", func(w http.ResponseWriter, r *http.Request) { runtime.GC(); fmt.Fprintln(w, "ok") })
+		log.Fatal(http.ListenAndServe(*stats, m))
+	}()
+	ln, err := net.Listen("tcp", *listen)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("netagent listening on %s, %d bound authorities, window=%s", *listen, len(a.bind), a.win)
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		a.tune(c)
+		go a.serveLocal(c)
+	}
+}

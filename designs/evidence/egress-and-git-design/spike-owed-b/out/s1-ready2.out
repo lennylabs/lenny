@@ -1,0 +1,7 @@
+g-down ready=False restarts=0 admin_ready=[LIVE]
+[2026-11-03 00:00:54.431][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: Failed to load certific
+Warning   Unhealthy   18    Readiness probe failed: Get "https://10.244.0.34:3443/healthz": EOF
+g-both ready=False restarts=3 admin_ready=[command terminated with exit c]
+[2026-11-03 00:01:32.878][1][warning][config] [source/extensions/config_subscription/filesystem/filesystem_subscription_impl.cc:81] Filesystem config update rejected: Failed to load certific
+[2026-11-03 00:01:32.878][1][critical][main] [source/server/server.cc:449] error `Failed to load certificate chain from <inline>` initializing config 'goo.gle/debugstr  
+Warning   BackOff     6     Back-off restarting failed container envoy in pod g-both_lenny-system(a40ef8a5-2adb-4d9a-a93a-eaf34aa423f9)

@@ -1,0 +1,161 @@
+Image: "ob-webhook:1" with ID "sha256:a69439937e33477efbd16f0a38f37b4a
+pod/ob-webhook condition met
+lenny-label-immutability caBundle bytes: 1400
+lenny-tenant-label-immutability caBundle bytes: 1400
+ob-egress-group caBundle bytes: 1400
+=================== WEBHOOK PROTOTYPE, with the repository's two label deciders beside it
+# --- CREATE carrying the label
+CREATE with label                              gateway        ALLOW
+CREATE with label                              controller     ALLOW
+CREATE with label                              pool-scaler    DENY [egress_group_immutable: system:serviceaccount:lenny-system:lenny-pool-scaling-controller m]
+CREATE with label                              agent-pod-sa   DENY [egress_group_immutable: system:serviceaccount:agents:agent may not set lenny.dev/egress-gr]
+CREATE with label                              kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot get resource "pods]
+CREATE with label                              cluster-admin  DENY [egress_group_immutable: kubernetes-admin may not set lenny.dev/egress-group ]
+# --- CREATE with no label
+CREATE without label                           gateway        ALLOW
+CREATE without label                           controller     ALLOW
+CREATE without label                           pool-scaler    ALLOW
+CREATE without label                           agent-pod-sa   ALLOW
+CREATE without label                           kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot get resource "pods]
+CREATE without label                           cluster-admin  ALLOW
+# --- UPDATE unset to a value (merge patch)
+PATCH unset->group-a                           gateway        ALLOW
+PATCH unset->group-a                           controller     ALLOW
+PATCH unset->group-a                           pool-scaler    DENY [egress_group_immutable: system:serviceaccount:lenny-system:lenny-pool-scaling-controller m]
+PATCH unset->group-a                           agent-pod-sa   DENY [egress_group_immutable: system:serviceaccount:agents:agent may not set lenny.dev/egress-gr]
+PATCH unset->group-a                           kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot patch resource "po]
+PATCH unset->group-a                           cluster-admin  DENY [egress_group_immutable: kubernetes-admin may not set lenny.dev/egress-group ]
+# --- UPDATE unset to a value (kubectl label, JSON patch, server-side apply)
+kubectl label unset->group-a                   gateway        ALLOW
+kubectl label unset->group-a                   agent-pod-sa   DENY [egress_group_immutable: system:serviceaccount:agents:agent may not set lenny.dev/egress-gr]
+JSON patch unset->group-a                      gateway        ALLOW
+JSON patch unset->group-a                      agent-pod-sa   DENY [egress_group_immutable: system:serviceaccount:agents:agent may not set lenny.dev/egress-gr]
+server-side apply unset->group-a               gateway        ALLOW
+server-side apply unset->group-a               agent-pod-sa   DENY [egress_group_immutable: system:serviceaccount:agents:agent may not set lenny.dev/egress-gr]
+# --- labelled pods: value to value, value to unset, and the same value
+PATCH group-a->group-b                         gateway        DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]
+PATCH group-a->group-b                         controller     DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]
+PATCH group-a->group-b                         pool-scaler    DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]
+PATCH group-a->group-b                         agent-pod-sa   DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]
+PATCH group-a->group-b                         kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot patch resource "po]
+PATCH group-a->group-b                         cluster-admin  DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]
+PATCH group-a->unset                           gateway        DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to ""]
+PATCH group-a->unset                           controller     DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to ""]
+PATCH group-a->unset                           pool-scaler    DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to ""]
+PATCH group-a->unset                           agent-pod-sa   DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to ""]
+PATCH group-a->unset                           kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot patch resource "po]
+PATCH group-a->unset                           cluster-admin  DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to ""]
+PATCH group-a->group-a                         agent-pod-sa   ALLOW
+PATCH group-a->group-a                         gateway        ALLOW
+annotation only, on a labelled pod             agent-pod-sa   ALLOW
+annotation only, on a labelled pod             pool-scaler    ALLOW
+another label, on an unlabelled pod            agent-pod-sa   ALLOW
+# --- present but empty
+PATCH unset->empty string                      agent-pod-sa   DENY [egress_group_immutable: lenny.dev/egress-group cannot be empty ]
+PATCH unset->empty string                      gateway        DENY [egress_group_immutable: lenny.dev/egress-group cannot be empty ]
+PATCH empty->group-a (only if the empty stuck) gateway        ALLOW
+# --- the status subresource carries metadata changes
+pods/status PATCH unset->group-a               agent-pod-sa   DENY [egress_group_immutable: system:serviceaccount:agents:agent may not set lenny.dev/egress-gr]; label now []
+pods/status PATCH unset->group-a               kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot get resource "pods]; label now []
+pods/status PATCH unset->group-a               gateway        ALLOW; label now [group-a]
+pods/status PATCH group-a->group-b             gateway        DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]; label now [group-a]
+pods/status PATCH group-a->group-b             agent-pod-sa   DENY [egress_group_immutable: lenny.dev/egress-group is set to "group-a" and cannot change to "g]; label now [group-a]
+# --- two gateway replicas race different values with a merge patch, 20 rounds
+exactly one won: 20; both succeeded: 0; neither: 0
+# --- the existing deciders, alongside: the stamp together with tenant-id
+gateway stamps tenant-id and group in one patch gateway        ALLOW
+controller CREATE with tenant-id and group     controller     DENY [tenant_label_immutable: only system:serviceaccount:lenny-system:lenny-gateway may set lenn]
+controller CREATE with group, no tenant-id     controller     ALLOW
+unset->empty on an immutable-list label        agent-pod-sa   ALLOW
+=================== status subresource with the rule set the chart uses today: resources [pods] only
+as system:serviceaccount:agents:agent rc=0 output=[pod/st1 patched] labels now: {"app":"x","lenny.dev/egress-group":"group-a","lenny.dev/tenant-id":"evil"}
+as system:node:ob-pki-control-plane --as-group=system:nodes rc=1 output=[Error from server (Forbidden): pods "st1" is forbidden: User "system:node:ob-pki-control-plane" cannot get resource "pods/status" in API group "" in t] labels now: {"app":"x"}
+as system:serviceaccount:lenny-system:lenny-controller rc=0 output=[pod/st1 patched] labels now: {"app":"x","lenny.dev/egress-group":"group-a","lenny.dev/tenant-id":"evil"}
+=================== VALIDATING ADMISSION POLICY in place of the webhook prototype
+# --- CREATE carrying the label
+CREATE with label                              gateway        ALLOW
+CREATE with label                              controller     ALLOW
+CREATE with label                              pool-scaler    DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+CREATE with label                              agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+CREATE with label                              kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot get resource "pods]
+CREATE with label                              cluster-admin  DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+# --- CREATE with no label
+CREATE without label                           gateway        ALLOW
+CREATE without label                           controller     ALLOW
+CREATE without label                           pool-scaler    ALLOW
+CREATE without label                           agent-pod-sa   ALLOW
+CREATE without label                           kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot get resource "pods]
+CREATE without label                           cluster-admin  ALLOW
+# --- UPDATE unset to a value (merge patch)
+PATCH unset->group-a                           gateway        ALLOW
+PATCH unset->group-a                           controller     ALLOW
+PATCH unset->group-a                           pool-scaler    DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH unset->group-a                           agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH unset->group-a                           kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot patch resource "po]
+PATCH unset->group-a                           cluster-admin  DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+# --- UPDATE unset to a value (kubectl label, JSON patch, server-side apply)
+kubectl label unset->group-a                   gateway        ALLOW
+kubectl label unset->group-a                   agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+JSON patch unset->group-a                      gateway        ALLOW
+JSON patch unset->group-a                      agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+server-side apply unset->group-a               gateway        ALLOW
+server-side apply unset->group-a               agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+# --- labelled pods: value to value, value to unset, and the same value
+PATCH group-a->group-b                         gateway        DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->group-b                         controller     DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->group-b                         pool-scaler    DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->group-b                         agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->group-b                         kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot patch resource "po]
+PATCH group-a->group-b                         cluster-admin  DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->unset                           gateway        DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->unset                           controller     DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->unset                           pool-scaler    DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->unset                           agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->unset                           kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot patch resource "po]
+PATCH group-a->unset                           cluster-admin  DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH group-a->group-a                         agent-pod-sa   ALLOW
+PATCH group-a->group-a                         gateway        ALLOW
+annotation only, on a labelled pod             agent-pod-sa   ALLOW
+annotation only, on a labelled pod             pool-scaler    ALLOW
+another label, on an unlabelled pod            agent-pod-sa   ALLOW
+# --- present but empty
+PATCH unset->empty string                      agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH unset->empty string                      gateway        DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]
+PATCH empty->group-a (only if the empty stuck) gateway        ALLOW
+# --- the status subresource carries metadata changes
+pods/status PATCH unset->group-a               agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]; label now []
+pods/status PATCH unset->group-a               kubelet        DENY [RBAC or node authorizer: User "system:node:ob-pki-control-plane" cannot get resource "pods]; label now []
+pods/status PATCH unset->group-a               gateway        ALLOW; label now [group-a]
+pods/status PATCH group-a->group-b             gateway        DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]; label now [group-a]
+pods/status PATCH group-a->group-b             agent-pod-sa   DENY [only the gateway and the controller may set lenny.dev/egress-group, and only from unset ]; label now [group-a]
+# --- two gateway replicas race different values with a merge patch, 20 rounds
+exactly one won: 20; both succeeded: 0; neither: 0
+# --- the existing deciders, alongside: the stamp together with tenant-id
+gateway stamps tenant-id and group in one patch gateway        ALLOW
+controller CREATE with tenant-id and group     controller     DENY [tenant_label_immutable: only system:serviceaccount:lenny-system:lenny-gateway may set lenn]
+controller CREATE with group, no tenant-id     controller     ALLOW
+unset->empty on an immutable-list label        agent-pod-sa   ALLOW
+=================== DRAIN ON MISMATCH: repository code, real CRDs, real webhooks
+state.ValidTransitions reserved->draining allowed: false
+state.ValidTransitions claimed->draining allowed: true
+state.ValidTransitions idle->draining allowed: true
+[idle] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[idle] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=nodes "ob-pki-control-plane" is forbidden: User "system:serviceaccount:lenny-system:lenny-controller" cannot get resource "nodes"
+[reserved] the pod holds a claim in the design's rebind and routing paths
+[reserved] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[reserved] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=nodes "ob-pki-control-plane" is forbidden: User "system:serviceaccount:lenny-system:lenny-controller" cannot get resource "no
+[claimed] the pod holds a claim in the design's rebind and routing paths
+[claimed] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[claimed] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=nodes "ob-pki-control-plane" is forbidden: User "system:serviceaccount:lenny-system:lenny-controller" cannot get resource "nod
+N                P
+drain-claimed    claimed
+drain-idle       idle
+drain-reserved   reserved
+N                G         D
+drain-claimed    group-a   2026-11-03T00:42:51.716175Z
+drain-idle       group-a   2026-11-03T00:42:51.686949Z
+drain-reserved   group-a   2026-11-03T00:42:51.70414Z
+m2098018164      group-a   <none>
+2026/11/03 00:42:51 egress-group op=UPDATE sub="" user=system:serviceaccount:lenny-system:lenny-gateway old=group-a new=group-a allowed=true
+2026/11/03 00:42:51 egress-group op=UPDATE sub="status" user=system:node:ob-pki-control-plane old=group-a new=group-a allowed=true
+2026/11/03 00:42:51 egress-group op=UPDATE sub="status" user=system:node:ob-pki-control-plane old=group-a new=group-a allowed=true

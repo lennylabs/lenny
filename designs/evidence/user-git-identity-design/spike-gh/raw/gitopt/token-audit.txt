@@ -1,0 +1,68 @@
+api.example.test API             other:Bearer ACME-REAL-9f2c71 180
+api.github.com API               GHCOM-REAL         1873
+api.github.com API               other:token USER-FILE-TOKEN 18
+api.github.com API               placeholder        2
+ghes.example.test                mint-read          1421
+ghes.example.test                mint-write         335
+ghes.example.test                none               13
+ghes.example.test                other:USER-FILE-TOKEN 2
+ghes.example.test API            GH-REAL            2241
+ghes.example.test API            other:token USER-FILE-TOKEN 40
+ghes.example.test API            placeholder        5
+github.com                       agent-own          7
+github.com                       mint-read          384
+github.com                       mint-write         98
+github.com                       none               39
+github.com                       other:USER-FILE-TOKEN 3
+github.com API                   none               4
+github.com API                   placeholder        8
+gitlab.example.test              mint-read          163
+gitlab.example.test              mint-write         20
+gitlab.example.test API          GL-REAL            240
+mirror.example.test              mirror-sa          18
+nossh.example.test API           placeholder        8
+other.example.test               agent-own          6
+other.example.test               none               168
+other.example.test API           placeholder        18
+uploads.github.com API           placeholder        2
+findings: 43
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'nossh.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'other.example.test', '/api/graphql')
+('placeholder at the API', 'ghes.example.test', '/api/graphql')
+('placeholder at the API', 'ghes.example.test', '/api/graphql')
+('placeholder at the API', 'ghes.example.test', '/api/graphql')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')
+('placeholder at the API', 'ghes.example.test', '/api/graphql')
+('placeholder at the API', 'api.github.com', '/graphql')
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')

@@ -1,0 +1,20 @@
+GET 1 raw.githubusercontent.com ml-agents develop 3DBall.onnx: a binary ONNX file starting "pytorch2.2.2", not a pointer
+GET 2 raw.githubusercontent.com mozilla/DeepSpeech v0.6.1 data/lm/lm.binary
+version https://git-lfs.github.com/spec/v1
+oid sha256:a24953ce3f013bbf5f4a1c9f5a0e5482bc56eaa81638276de522f39e62ff3a56
+size 945699324
+
+http=206 bytes=134 content_type=text/plain; charset=utf-8
+GET 3 gitlab.com gitlab-org/gitlab-test files/lfs/lfs_object.iso
+version https://git-lfs.github.com/spec/v1
+oid sha256:91eff75a492a3ed0dfcb544d7f31326bc4014c8551849c192fd1e48d4dd2c897
+size 1575078
+
+
+http=206 bytes=133 content_type=text/plain; charset=utf-8
+GET 5 raw.githubusercontent.com onnx/models main mnist-12.onnx
+version https://git-lfs.github.com/spec/v1
+oid sha256:5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd
+size 26143
+
+http=206

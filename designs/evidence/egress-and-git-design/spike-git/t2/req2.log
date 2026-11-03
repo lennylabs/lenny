@@ -1,0 +1,5 @@
+{"m": "GET", "path": "/https/github.com/org/absmod/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/https/github.com/org/relmod.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/scp/gitlab.com:grp/scpmod.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/https/github.com/org/absmod/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/https/github.com/acme/widget/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}

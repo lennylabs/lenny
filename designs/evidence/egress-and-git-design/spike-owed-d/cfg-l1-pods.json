@@ -1,0 +1,2 @@
+{"pod-a":{"User":"pod-a.g1","Pass":"pod-a-pw-1","Allow":["target.oa.test","public.oa.test","api.example.test","other.example.test","other.oa.test","rebind.oa.test","private.oa.test"],"Addr":{"private.oa.test":"198.19.50.20:443"}},
+ "pod-b":{"User":"pod-b.g1","Pass":"pod-b-pw-1","Allow":["target.oa.test","other.oa.test"]}}

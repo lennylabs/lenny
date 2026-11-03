@@ -1,0 +1,23 @@
+== t3 Tb-sshloop2-gh-cli 10:52:34 script-rc=0
+== t4 Tb-gh-cli 10:52:42 script-rc=0
+== t4 Tb-gh-deb 10:52:44 script-rc=0
+== t3 P-sshloop2-gh-cli 10:52:48 script-rc=0
+== t4 P-gh-cli 10:52:55 script-rc=0
+== t4 P-gh-deb 10:52:57 script-rc=0
+== t4 L-gh-cli 10:53:05 script-rc=0
+A-RERUN-DONE
+== t12 gh-cli ghes: TOTAL 100 {'ok-forwarded': 64, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 13}
+== t12 gh-cli com: TOTAL 100 {'ok-forwarded': 65, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 12}
+== t12 gh-deb ghes: TOTAL 100 {'ok-forwarded': 64, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 13}
+== t12 gh-deb com: TOTAL 100 {'ok-forwarded': 65, 'ok-refused-denied': 23, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 12}
+T12-DONE
+== attack ghes: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 980 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 247  === not PASS 
+== attack ghcom: === totals PASS-no-stub-expected-allow: 2 PASS-refused: 980 REACHED-denied-action-no-credential: 1 REACHED-not-denied: 247  === not PASS 
+netagent Up 3 minutes
+ATTACK-DONE
+== t13 deny
+== t13 nowtext
+T13-DONE
+T14-DONE
+B4-DONE
+ALL-DONE

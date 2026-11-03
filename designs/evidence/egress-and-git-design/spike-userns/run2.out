@@ -1,0 +1,99 @@
+Image: "spike-userns:3" with ID "sha256:
+drw-r--r-- 1 root root 4096 Nov  2 21:02 /kind
+drwxr-xr-x 2 root root 4096 Oct 17  2024 /kind/bin
+-rwxr-xr-x 1 root root 2455 Oct 17  2024 /kind/bin/mount-product-files
+################ host: phase=Running
+== parent
+uid=65532 gid=65532 groups=65532,0(root),65534(nogroup)
+uid_map:  0 0 4294967295
+CapInh: 00000000000000c1 CapPrm: 00000000000000c1 CapEff: 00000000000000c1 CapBnd: 00000000000000c1 CapAmb: 00000000000000c1 NoNewPrivs: 1 
+  parent chown store a to owner 65533 group 70001: ALLOWED
+  parent chown store b to owner 65533 group 70002: ALLOWED
+  drwxrws--- 65533 70001 /data/a
+  drwxrws--- 65533 70002 /data/b
+  secret: -r--r----- root nogroup
+  parent reads the 0440 Secret: ALLOWED
+== fetch child under UID 100001, group 70001, all capabilities cleared
+uid=100001 gid=70001 groups=70001
+CapInh: 0000000000000000 CapPrm: 0000000000000000 CapEff: 0000000000000000 CapBnd: 00000000000000c1 CapAmb: 0000000000000000 NoNewPrivs: 1 
+  write its own store: ALLOWED
+  write another store: refused (sh: 1: cannot create /data/b/evil: Permission denied)
+  list another store: refused (ls: cannot open directory '/data/b': Permission denied)
+  read the mirror's Secret: refused (cat: /secret/key: Permission denied)
+  write the root filesystem: refused (sh: 1: cannot create /evil: Read-only file system)
+  signal the parent: refused (/tmp/child.sh: 2: kill: Operation not permitted)
+  become root: refused (setpriv: setresuid failed: Operation not permitted)
+  change a file's owner: ALLOWED
+  switch to a sibling UID: refused (setpriv: setresuid failed: Operation not permitted)
+  planted a symlink to the Secret
+== after the child: the sweep (a helper under the fetch UID signals its own UID)
+  survivors under 100001 before: 1
+  survivors under 100001 after: 1
+  parent alive: yes
+== re-chown, under the store's group, no symlink following
+  parent re-chowns the store: ALLOWED
+ls: cannot open directory '/data/a': Permission denied
+  secret still owned: root nogroup
+== what a compromised parent can do
+  become UID 0: ALLOWED
+uid=0(root) gid=0(root) groups=0(root),65534(nogroup)
+CapEff: 00000000000000c1 CapBnd: 00000000000000c1 
+  read pid 1 environ: refused
+sh: 1: cannot create /proc/sys/kernel/hostname: Read-only file system
+  mount: refused
+  sysctl write: refused
+  write volume as root: ALLOWED (0)
+  switch to the runtime's UID 65533: ALLOWED
+== marker for the node view
+/probe.sh: 40: exec: -a: not found
+sh: 1: exec: -a: not found
+################ userns: phase=Running
+== parent
+uid=65532 gid=65532 groups=65532,0(root),65534(nogroup)
+uid_map:  0 4050845696 65536
+CapInh: 00000000000000c1 CapPrm: 00000000000000c1 CapEff: 00000000000000c1 CapBnd: 00000000000000c1 CapAmb: 00000000000000c1 NoNewPrivs: 1 
+  parent chown store a to owner 65533 group 70001: refused (chown: changing ownership of '/data/a': Invalid argument)
+  parent chown store b to owner 65533 group 70002: refused (chown: changing ownership of '/data/b': Invalid argument)
+  drwxrws--- 65532 65532 /data/a
+  drwxrws--- 65532 65532 /data/b
+  secret: -r--r----- root nogroup
+  parent reads the 0440 Secret: ALLOWED
+== fetch child under UID 100001, group 70001, all capabilities cleared
+setpriv: setresuid failed: Invalid argument
+== after the child: the sweep (a helper under the fetch UID signals its own UID)
+  survivors under 100001 before: 0
+  survivors under 100001 after: 0
+  parent alive: yes
+== re-chown, under the store's group, no symlink following
+  parent re-chowns the store: refused (setpriv: setresgid failed: Invalid argument)
+  secret still owned: root nogroup
+== what a compromised parent can do
+  become UID 0: ALLOWED
+uid=0(root) gid=0(root) groups=0(root),65534(nogroup)
+CapEff: 00000000000000c1 CapBnd: 00000000000000c1 
+  read pid 1 environ: refused
+sh: 1: cannot create /proc/sys/kernel/hostname: Read-only file system
+  mount: refused
+  sysctl write: refused
+  write volume as root: ALLOWED (0)
+  switch to the runtime's UID 65533: ALLOWED
+== marker for the node view
+/probe.sh: 40: exec: -a: not found
+setpriv: setresuid failed: Invalid argument
+################ node view of the same processes
+65532 65532 sleep 600
+-244056068 -244056068 sleep 600
+host uid_map on node:  0 0 4294967295
+userns uid_map on node:  0 4050845696 65536
+################ on-disk owners, as the node sees them
+da
+    a/ lrwxrwxrwx 65533 70001 link
+    a/ -rw-r--r-- 65533 70001 pack1
+    drwxrws--- 65533 70001
+    drwxrws--- 65533 70002
+db
+    drwxrws--- 65532 65532
+    drwxrws--- 65532 65532
+################ user namespace with no added capabilities: can the sequence run at all
+Failed
+setpriv: setresuid failed: Operation not permitted

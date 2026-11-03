@@ -1,0 +1,37 @@
+api.acme.ghe.com API             other:token GHE-REAL-44bb03 160
+api.example.test API             other:Bearer ACME-REAL-9f2c71 4
+api.github.com API               GHCOM-REAL         562
+assets.example.test              none               4
+assets.example.test              other:USER-FILE-CURRENT 9
+assets.example.test API          none               2
+gen-c.example.test API           other:Bearer GENC-REAL-cc03 14
+gh-on-gl.example.test API        other:token WF1-REAL-aa01 4
+ghes.example.test                mint-read          103
+ghes.example.test                mint-write         75
+ghes.example.test                none               119
+ghes.example.test                other:USER-FILE-CURRENT 110
+ghes.example.test                other:USER-FILE-ROTATED 50
+ghes.example.test API            GH-REAL            736
+ghes.example.test API            other:token USER-FILE-CURRENT 13
+github.com                       mint-read          16
+github.com                       mint-write         21
+github.com                       none               10
+github.com                       other:USER-FILE-CURRENT 6
+github.com                       other:USER-FILE-ROTATED 3
+github.com API                   placeholder        4
+gitlab.example.test              mint-read          222
+gitlab.example.test              mint-write         90
+gitlab.example.test API          GL-REAL            41
+gl-on-ghes.example.test API      other:WF2-REAL-bb02 4
+lfs-store.example.test API       none               2
+mirror.example.test              mirror-sa          23
+mirror.example.test              none               1
+other.example.test API           other:Bearer OTHER-REAL-11ee05 4
+uploads.github.com API           placeholder        2
+findings: 6
+('placeholder at the API', 'uploads.github.com', '/repos/acme/widgets/releases/1/assets?label=&name=')
+('placeholder at the API', 'github.com', '/repos/acme/widgets/releases/assets/1')
+('placeholder at the API', 'github.com', '/repos/acme/widgets/releases/1')
+('placeholder at the API', 'uploads.github.com', '/repos/acme/widgets/releases/1/assets?label=&name=')
+('placeholder at the API', 'github.com', '/repos/acme/widgets/releases/assets/1')
+('placeholder at the API', 'github.com', '/repos/acme/widgets/releases/1')

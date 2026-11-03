@@ -1,0 +1,94 @@
+// Spike multi-call binary: "proxy" is a minimal HTTP CONNECT (and absolute-URI
+// HTTP) forward proxy that logs each request; "client" is a Go HTTPS client that
+// honors HTTPS_PROXY via http.ProxyFromEnvironment; "lookup" times a resolver call.
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"time"
+)
+
+func proxy() {
+	log.Printf("proxy listening :3128")
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		if r.Method == http.MethodConnect {
+			up, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+			if err != nil {
+				log.Printf("CONNECT %s from %s: dial error %v", r.Host, r.RemoteAddr, err)
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			hj, _ := w.(http.Hijacker)
+			cl, buf, err := hj.Hijack()
+			if err != nil {
+				up.Close()
+				return
+			}
+			cl.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+			log.Printf("CONNECT %s from %s: tunnel up (dial %v)", r.Host, r.RemoteAddr, time.Since(start))
+			go func() {
+				if buf.Reader.Buffered() > 0 {
+					io.CopyN(up, buf, int64(buf.Reader.Buffered()))
+				}
+				io.Copy(up, cl)
+				up.Close()
+			}()
+			io.Copy(cl, up)
+			cl.Close()
+			return
+		}
+		// plain HTTP forwarding
+		r.RequestURI = ""
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			log.Printf("HTTP %s %s: %v", r.Method, r.URL, err)
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		log.Printf("HTTP %s %s from %s: %d", r.Method, r.URL, r.RemoteAddr, resp.StatusCode)
+	})
+	log.Fatal(http.ListenAndServe(":3128", h))
+}
+
+func client(url string) {
+	start := time.Now()
+	c := &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	resp, err := c.Get(url)
+	if err != nil {
+		fmt.Printf("go-client %s: ERROR after %v: %v\n", url, time.Since(start), err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
+	fmt.Printf("go-client %s: %s in %v, body[:60]=%q\n", url, resp.Status, time.Since(start), string(b[:min(60, len(b))]))
+}
+
+func lookup(name string) {
+	start := time.Now()
+	addrs, err := net.DefaultResolver.LookupHost(context.Background(), name)
+	fmt.Printf("go-lookup %s: %v err=%v in %v\n", name, addrs, err, time.Since(start))
+}
+
+func main() {
+	switch os.Args[1] {
+	case "proxy":
+		proxy()
+	case "client":
+		client(os.Args[2])
+	case "lookup":
+		lookup(os.Args[2])
+	}
+}

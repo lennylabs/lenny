@@ -1,0 +1,20 @@
+=== drain on mismatch with the controller holding node read
+state.ValidTransitions reserved->draining allowed: false
+state.ValidTransitions claimed->draining allowed: true
+state.ValidTransitions idle->draining allowed: true
+[idle] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[idle] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=<nil>; Sandbox phase is now "draining"
+[reserved] the pod holds a claim in the design's rebind and routing paths
+[reserved] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[reserved] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=<nil>; Sandbox phase is now "draining"
+[claimed] the pod holds a claim in the design's rebind and routing paths
+[claimed] mismatch refused; StampDrainRequest as gateway: err=<nil>
+[claimed] real PodReconciler.Reconcile as controller: res={Requeue:false RequeueAfter:0s} err=<nil>; Sandbox phase is now "draining"
+N                P
+drain-claimed    draining
+drain-idle       draining
+drain-reserved   draining
+N                G         D
+drain-claimed    group-a   2026-11-03T00:43:56.610675Z
+drain-idle       group-a   2026-11-03T00:43:56.547249Z
+drain-reserved   group-a   2026-11-03T00:43:56.584722Z

@@ -1,0 +1,30 @@
+### python: pip install requests through the proxy
+pip exit=0 in 3s
+requests           2.34.2
+urllib3            2.8.0
+python requests https://example.com 200 0.129s
+python requests https://pypi.org/simple/requests/ 200 0.200s
+python requests https://github.com 200 0.215s
+python urllib https://example.com 200 0.093s
+### NO_PROXY with FQDN in-cluster target (should go direct)
+curl fqdn 200
+python fqdn 200
+node fqdn 200
+go-client http://validator.spike.svc.cluster.local:8080/validate: 200 OK in 1.304958ms, body[:60]="{\"ok\":false,\"reason\":\"malformed\"}\n"
+### NO_PROXY with ClusterIP literal
+curl CIDR-noproxy 200
+go-client http://10.96.150.24:8080/validate: 200 OK in 345.5µs, body[:60]="{\"ok\":false,\"reason\":\"malformed\"}\n"
+python CIDR-noproxy 200
+node CIDR-noproxy 200
+### proxy log since 04:56:54 (entries here = request was proxied)
+awk: syntax error at source line 1
+ context is
+	 >>> \ <<< $2>=m
+awk: bailing out at source line 1
+2026/11/02 04:56:51 CONNECT pypi.org:443 from 10.244.0.18:54574: tunnel up (dial 85.230834ms)
+2026/11/02 04:56:52 CONNECT files.pythonhosted.org:443 from 10.244.0.18:54586: tunnel up (dial 51.224375ms)
+2026/11/02 04:56:53 CONNECT example.com:443 from 10.244.0.18:54592: tunnel up (dial 26.41675ms)
+2026/11/02 04:56:53 CONNECT pypi.org:443 from 10.244.0.18:54604: tunnel up (dial 58.05075ms)
+2026/11/02 04:56:54 CONNECT github.com:443 from 10.244.0.18:54606: tunnel up (dial 34.881291ms)
+2026/11/02 04:56:54 CONNECT example.com:443 from 10.244.0.18:54616: tunnel up (dial 17.467459ms)
+2026/11/02 04:56:55 CONNECT 10.96.150.24:8080 from 10.244.0.18:54626: tunnel up (dial 83.5µs)

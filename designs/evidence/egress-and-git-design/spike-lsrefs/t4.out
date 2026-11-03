@@ -1,0 +1,16 @@
+### tunnel reuse across tenants (20 calls alternating acme and globex)
+  keepalive=true decisions seen: authz1 map[acme:1] authz2 map[]
+  keepalive=false decisions seen: authz1 map[acme:5 globex:4] authz2 map[acme:5 globex:6]
+### one Envoy stopped during load, one retry, connect budget 1.5 s
+total=300 failed=0 retried=87 p50=6.5ms p99=1.0104s max=1.0115s errs=map[]
+### one Envoy frozen (black hole), one retry, connect budget 1.5 s
+total=300 failed=0 retried=88 p50=6.8ms p99=1.51s max=1.5119s errs=map[]
+### graceful Envoy drain during load, one retry
+total=375 failed=0 retried=0 p50=5.9ms p99=8.3ms max=8.9ms errs=map[]
+### both Envoys stopped, one retry
+  {"bytes":0,"class":"transient","err":"egress path: Post \"https://git.spike/fast.git/git-upload-pack\": proxyconnect tcp: dial tcp 198.19.0.42:3128: i/o timeout","ms":2009,"proto":"v2","sha":""}
+  after restart: {"bytes":65,"class":"ok","err":"","ms":13,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}
+### both Envoys frozen, one retry
+  {"bytes":0,"class":"transient","err":"egress path: Post \"https://git.spike/fast.git/git-upload-pack\": context canceled","ms":3005,"proto":"v2","sha":""}
+### host outage is still classified as the host
+  hang (10 s cap): {"bytes":0,"class":"bounded","err":"time cap","ms":10005,"proto":"v2","sha":""}

@@ -1,0 +1,24 @@
+### opaque-public rc=0
+$ git ls-remote https://github.com/pub/lib.git 2>&1 | tail -1 | cut -c1-140
+a35554173b51fcc953fd0f3b40652cc064c01711	refs/heads/main
+### opaque-private rc=0
+$ git ls-remote https://github.com/acme/widgets.git 2>&1 | tail -1 | cut -c1-140
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+### opaque-outside rc=0
+$ git ls-remote https://github.com/acme/secret.git 2>&1 | tail -1 | cut -c1-140
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+### opaque-sslverify-false rc=0
+$ git -c http.sslVerify=false ls-remote https://github.com/pub/lib.git 2>&1 | tail -1 | cut -c1-140
+a35554173b51fcc953fd0f3b40652cc064c01711	refs/heads/main
+### opaque-own-token-push-main rc=0
+$ git -c 'http.extraHeader=Authorization: Bearer AGENT-OWN-TOKEN' push -q https://github.com/agent/own.git HEAD:refs/heads/main 2>&1 | tail -1 | cut -c1-140
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+### opaque-release-download rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 https://github.com/acme/widgets/releases/download/v1/x 2>&1
+http=200
+### opaque-web-page rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 https://github.com/acme/widgets 2>&1
+http=200
+### opaque-gh-pr-list rc=0
+$ git init -q z; cd z; git remote add origin https://github.com/acme/widgets.git; GH_TOKEN=lenny-injected gh pr list 2>&1 | tail -1 | cut -c1-120
+

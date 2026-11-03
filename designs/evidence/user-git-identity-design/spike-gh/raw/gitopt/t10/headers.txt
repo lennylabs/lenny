@@ -1,0 +1,4 @@
+glab {'Accept': 48, 'Accept-Encoding': 48, 'Private-Token': 48, 'User-Agent': 48, 'Content-Length': 10, 'Content-Type': 10}
+GitHub {'Accept': 99, 'Accept-Encoding': 99, 'Authorization': 99, 'Content-Length': 86, 'Content-Type': 99, 'Graphql-Features': 86, 'Time-Zone': 99, 'User-Agent': 99, 'X-Github-Api-Version': 99, 'X-Gh-Cache-Ttl': 8}
+values {'Graphql-Features': ['merge_queue'], 'Time-Zone': ['America/New_York', 'Etc/UTC']}
+refusals 0

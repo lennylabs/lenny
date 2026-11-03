@@ -1,0 +1,6 @@
+### TEST f-node-default  23:25:46
+### docker run --network spikefed-net -e IDENTITY_ENDPOINT=http://msi.azure.test:8080/msi/token -e IDENTITY_HEADER=s3cr3t-identity-header -e MODE=default -w /napp spikefed-node:t node azmsi.js
+token: az-msi-at-1793604346 expiresOn: 1793604366000
+### exit 0
+### server log:
+{"ts": "07:25:46", "port": 8080, "peer": "172.20.0.6", "kind": "az-msi", "method": "GET", "path": "/msi/token?api-version=2019-08-01&resource=https%3A%2F%2Fmanagement.azure.com", "headers": {"X-IDENTITY-HEADER": "s3cr3t-identity-header", "Content-Type": "application/x-www-form-urlencoded;charset=utf-8", "User-Agent": "azsdk-js-identity/4.14.1 core-rest-pipeline/1.25.0 Node/24.22.2 (Linux 6.12.76-linuxkit; arm64)", "Host": "msi.azure.test:8080"}, "query": {"api-version": ["2019-08-01"], "resource": ["https://management.azure.com"]}, "header_ok": true}

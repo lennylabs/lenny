@@ -1,0 +1,29 @@
+glab-module-rc=1
+== X-HTTP-Method-Override
+== X-Original-URL
+== X-Rewrite-URL
+== Sudo
+{
+	"Path": "gitlab.com/gitlab-org/cli",
+	"Version": "v1.127.0",
+	"Error": "gitlab.com/gitlab-org/cli@v1.127.0 requires go \u003e= 1.27.0 (running go 1.26.7; GOTOOLCHAIN=local)",
+	"Info": "/go/pkg/mod/cache/download/gitlab.com/gitlab-org/cli/@v/v1.127.0.info",
+	"GoMod": "/go/pkg/mod/cache/download/gitlab.com/gitlab-org/cli/@v/v1.127.0.mod",
+{
+	"Path": "gitlab.com/gitlab-org/cli/v2",
+	"Version": "v1.127.0",
+cli@v1.127.0
+gh X-HTTP-Method-Override count=0
+gh X-Http-Method-Override count=0
+gh X-Original-URL count=0
+gh X-Rewrite-URL count=0
+gh Sudo count=6
+glab X-HTTP-Method-Override count=0
+glab X-Http-Method-Override count=0
+glab X-Original-URL count=0
+glab X-Rewrite-URL count=0
+glab Sudo count=6
+SudoG
+Sudog
+Sudog with non-nil gp.paramunknown runnable g
+Sudog: found s.elem != nil in cachefatal erro

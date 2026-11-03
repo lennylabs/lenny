@@ -1,0 +1,287 @@
+// naload: a client for the netagent spike. It runs next to netagent in the same network namespace.
+//   hold  -kind opaque|h1|h2 -n N -url U       N concurrent streams held open, prints when established, stays until killed or -for ends
+//   bulk  -kind ... -for 20s -conc 1           download for a fixed time, prints MB/s
+//   rps   -kind ... -rate R -for 20s -new      requests per second with latency percentiles
+//   sse   -kind ... -url U                     per-event delivery lag
+package main
+
+import (
+	"bufio"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+func client(kind string, ca string, conc int, keep bool) *http.Client {
+	p := x509.NewCertPool()
+	for _, f := range strings.Split(ca, ",") {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			panic(err)
+		}
+		p.AppendCertsFromPEM(b)
+	}
+	pu, _ := url.Parse(os.Getenv("NA_PROXY"))
+	if pu == nil || pu.Host == "" {
+		pu, _ = url.Parse("http://127.0.0.1:3128")
+	}
+	t := &http.Transport{Proxy: http.ProxyURL(pu), TLSClientConfig: &tls.Config{RootCAs: p}, DisableCompression: true, MaxIdleConnsPerHost: conc + 1, MaxConnsPerHost: 0, DisableKeepAlives: !keep}
+	if kind == "h2" {
+		t.ForceAttemptHTTP2 = true
+	} else {
+		t.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	}
+	return &http.Client{Transport: t}
+}
+
+func main() {
+	mode := os.Args[1]
+	fs := flag.NewFlagSet(mode, flag.ExitOnError)
+	kind := fs.String("kind", "h1", "")
+	n := fs.Int("n", 100, "")
+	u := fs.String("url", "", "")
+	ca := fs.String("ca", "/run/netagent/ca.pem,/certs/pub-ca.pem", "")
+	dur := fs.Duration("for", 0, "")
+	conc := fs.Int("conc", 1, "")
+	rate := fs.Int("rate", 10, "")
+	newc := fs.Bool("new", false, "a new connection per request")
+	ramp := fs.Int("ramp", 200, "streams per second")
+	logf := fs.String("log", "", "hold: append one line per -every with time, streams up so far, live streams, and failures")
+	every := fs.Duration("every", 250*time.Millisecond, "")
+	fs.Parse(os.Args[2:])
+	switch mode {
+	case "hold":
+		c := client(*kind, *ca, *n, true)
+		var up, live, fail, ticks atomic.Int64
+		var wg sync.WaitGroup
+		if *logf != "" {
+			// Each reading goes to the file as it is taken, with no buffer, so a later failure cannot overwrite it.
+			f, err := os.OpenFile(*logf, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+			if err != nil {
+				panic(err)
+			}
+			go func() {
+				for range time.Tick(*every) {
+					fmt.Fprintf(f, "%d %d %d %d %d\n", time.Now().UnixMilli(), up.Load(), live.Load(), fail.Load(), ticks.Load())
+				}
+			}()
+		}
+		ctx := context.Background()
+		if *dur > 0 {
+			var cancel func()
+			ctx, cancel = context.WithTimeout(ctx, *dur)
+			defer cancel()
+		}
+		iv := time.Second / time.Duration(*ramp)
+		var errs sync.Map
+		for i := 0; i < *n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req, _ := http.NewRequestWithContext(ctx, "GET", *u, nil)
+				req.Header.Set("Authorization", "Bearer lenny-injected")
+				r, err := c.Do(req)
+				if err != nil {
+					fail.Add(1)
+					errs.Store(err.Error()[:min(len(err.Error()), 120)], true)
+					return
+				}
+				defer r.Body.Close()
+				if r.StatusCode != 200 {
+					fail.Add(1)
+					errs.Store(r.Status, true)
+					return
+				}
+				br := bufio.NewReader(r.Body)
+				if _, err := br.ReadString('\n'); err != nil {
+					fail.Add(1)
+					return
+				}
+				up.Add(1)
+				live.Add(1)
+				defer live.Add(-1)
+				for {
+					if _, err := br.ReadString('\n'); err != nil {
+						return
+					}
+					ticks.Add(1)
+				}
+			}()
+			time.Sleep(iv)
+		}
+		for ctx.Err() == nil {
+			fmt.Printf("hold up=%d fail=%d ticks=%d\n", up.Load(), fail.Load(), ticks.Load())
+			errs.Range(func(k, _ any) bool { fmt.Println("  err:", k); errs.Delete(k); return true })
+			time.Sleep(2 * time.Second)
+		}
+		wg.Wait()
+		fmt.Printf("hold end up=%d fail=%d ticks=%d\n", up.Load(), fail.Load(), ticks.Load())
+	case "stall": // read the first bytes of each of N large responses, then stop reading: a slow consumer
+		c := client(*kind, *ca, *n, true)
+		var up atomic.Int64
+		for i := 0; i < *n; i++ {
+			go func() {
+				r, err := c.Get(*u)
+				if err != nil {
+					fmt.Println("err:", err)
+					return
+				}
+				b := make([]byte, 4096)
+				r.Body.Read(b)
+				up.Add(1)
+				select {}
+			}()
+			time.Sleep(10 * time.Millisecond)
+		}
+		for {
+			fmt.Printf("hold up=%d fail=0 ticks=0\n", up.Load())
+			time.Sleep(2 * time.Second)
+		}
+	case "bulk":
+		c := client(*kind, *ca, *conc, true)
+		ctx, cancel := context.WithTimeout(context.Background(), *dur)
+		defer cancel()
+		var total atomic.Int64
+		var errsN atomic.Int64
+		t0 := time.Now()
+		var wg sync.WaitGroup
+		for i := 0; i < *conc; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				buf := make([]byte, 256<<10)
+				for ctx.Err() == nil {
+					req, _ := http.NewRequestWithContext(ctx, "GET", *u, nil)
+					r, err := c.Do(req)
+					if err != nil {
+						if ctx.Err() == nil {
+							errsN.Add(1)
+							fmt.Println("err:", err)
+							time.Sleep(100 * time.Millisecond)
+						}
+						continue
+					}
+					for {
+						m, err := r.Body.Read(buf)
+						total.Add(int64(m))
+						if err != nil {
+							break
+						}
+					}
+					r.Body.Close()
+				}
+			}()
+		}
+		wg.Wait()
+		el := time.Since(t0).Seconds()
+		fmt.Printf("bulk kind=%s conc=%d bytes=%d secs=%.2f MBps=%.1f errors=%d\n", *kind, *conc, total.Load(), el, float64(total.Load())/1e6/el, errsN.Load())
+	case "rps":
+		c := client(*kind, *ca, 64, !*newc)
+		var mu sync.Mutex
+		var lat []time.Duration
+		var fail atomic.Int64
+		var wg sync.WaitGroup
+		end := time.Now().Add(*dur)
+		iv := time.Second / time.Duration(*rate)
+		next := time.Now()
+		for time.Now().Before(end) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				t := time.Now()
+				r, err := c.Get(*u)
+				if err != nil {
+					fail.Add(1)
+					return
+				}
+				io.Copy(io.Discard, r.Body)
+				r.Body.Close()
+				if r.StatusCode >= 400 {
+					fail.Add(1)
+					return
+				}
+				mu.Lock()
+				lat = append(lat, time.Since(t))
+				mu.Unlock()
+			}()
+			next = next.Add(iv)
+			time.Sleep(time.Until(next))
+		}
+		wg.Wait()
+		sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+		if len(lat) == 0 {
+			fmt.Println("rps: no successes, failures", fail.Load())
+			return
+		}
+		fmt.Printf("rps kind=%s new=%v rate=%d ok=%d fail=%d p50=%v p99=%v max=%v\n", *kind, *newc, *rate, len(lat), fail.Load(), lat[len(lat)/2].Round(10*time.Microsecond), lat[len(lat)*99/100].Round(10*time.Microsecond), lat[len(lat)-1].Round(10*time.Microsecond))
+	case "sse":
+		c := client(*kind, *ca, 1, true)
+		req, _ := http.NewRequest("GET", *u, nil)
+		req.Header.Set("Authorization", "Bearer lenny-injected")
+		if os.Getenv("NA_GZIP") != "" {
+			req.Header.Set("Accept-Encoding", "gzip")
+		}
+		t0 := time.Now()
+		r, err := c.Do(req)
+		if err != nil {
+			fmt.Println("sse err:", err)
+			return
+		}
+		defer r.Body.Close()
+		fmt.Printf("proto=%s status=%d content-encoding=%q\n", r.Proto, r.StatusCode, r.Header.Get("Content-Encoding"))
+		br := bufio.NewReader(r.Body)
+		var lags []time.Duration
+		leak := 0
+		for {
+			l, err := br.ReadString('\n')
+			if err != nil {
+				fmt.Println("end:", err)
+				break
+			}
+			if !strings.HasPrefix(l, "data: ") {
+				continue
+			}
+			// Dispatch when the blank line arrives, as an SSE parser does.
+			b, err := br.ReadString('\n')
+			if err != nil {
+				fmt.Println("end in event:", err)
+				break
+			}
+			_ = b
+			now := time.Now()
+			var ev struct {
+				N    int    `json:"n"`
+				Ts   int64  `json:"ts"`
+				Auth string `json:"auth"`
+			}
+			if e := json.Unmarshal([]byte(strings.TrimPrefix(l, "data: ")), &ev); e != nil {
+				fmt.Println("bad event", e, l[:min(len(l), 60)])
+				continue
+			}
+			lag := now.Sub(time.Unix(0, ev.Ts))
+			lags = append(lags, lag)
+			if strings.Contains(ev.Auth, "REAL") {
+				leak++
+			}
+			if ev.N < 6 || ev.N%100 == 0 {
+				fmt.Printf("event n=%d at=+%.3fs lag=%v auth=%q\n", ev.N, now.Sub(t0).Seconds(), lag.Round(100*time.Microsecond), ev.Auth)
+			}
+		}
+		sort.Slice(lags, func(i, j int) bool { return lags[i] < lags[j] })
+		if len(lags) > 0 {
+			fmt.Printf("SSE events=%d lag p50=%v p99=%v max=%v secretLeaks=%d total=%.2fs\n", len(lags), lags[len(lags)/2].Round(100*time.Microsecond), lags[len(lags)*99/100].Round(100*time.Microsecond), lags[len(lags)-1].Round(100*time.Microsecond), leak, time.Since(t0).Seconds())
+		}
+	}
+}

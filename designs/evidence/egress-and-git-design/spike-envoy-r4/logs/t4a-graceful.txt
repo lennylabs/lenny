@@ -1,0 +1,33 @@
+envoy main ready (envoy/final.json) "version": "b2d89e0ae53916f28770771fbdd49c5c99c5c5a2/1.40.2/Clean/RELEASE/BoringSSL"
+t=0s envoy=running exit=0 cx_active: 8 cx_active: 8 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=1s envoy=running exit=0 cx_active: 119 cx_active: 119 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=2s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=4s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 0 
+t=5s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=6s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=7s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=8s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+   [t=8s applied graceful: OK]
+t=9s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 201 
+t=10s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=11s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=12s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=13s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=15s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=16s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=17s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=18s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=19s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=20s envoy=running exit=0 cx_active: 200 cx_active: 200 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=21s envoy=running exit=0 cx_active: 201 cx_active: 201 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=22s envoy=running exit=0 cx_active: 116 cx_active: 116 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+t=23s envoy=running exit=0 cx_active: 0 cx_active: 0 active: 1 draining: 0 live: 1 state: 0 total_connections: 200 
+--- soak client:
+t=  10.0s open=200 ticks=1896 (+1896) ended=map[]
+t=  20.0s open=200 ticks=3896 (+2000) ended=map[]
+SUMMARY n=200 codes=map[200:200] end_reasons=map[EOF (clean close):200] ticks_total=4329 ticks_per_tunnel=[20..23] connect_lat p50=0s p99=20ms lifetime min=19.58s p50=21.27s max=23.01s elapsed=23.2s
+--- probes:
+probe t=   1.0s -> 200 +data (1.003s)
+--- envoy log tail:
+[2026-11-02 09:06:25.131][1][info][main] [source/server/server.cc:467]   envoy.quic.connection_id_generator: envoy.quic.connection_id_generator.quic_lb, envoy.quic.deterministic_connection_id_generato
+[2026-11-02 09:06:25.131][1][info][main] [source/server/server.cc:467]   envoy.filters.network: envoy.echo, envoy.ext_authz, envoy.filters.network.connection_limit, envoy.filters.network.direct_respon

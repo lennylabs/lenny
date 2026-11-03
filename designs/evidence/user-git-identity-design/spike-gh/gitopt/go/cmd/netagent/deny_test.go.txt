@@ -1,0 +1,118 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"testing"
+
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/formatter"
+	"github.com/vektah/gqlparser/v2/parser"
+)
+
+func loadP(b testing.TB, f, name string) *policy {
+	raw, err := os.ReadFile(f)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var m map[string]*policy
+	if err := json.Unmarshal(raw, &m); err != nil {
+		b.Fatal(err)
+	}
+	if err := m[name].compile(); err != nil {
+		b.Fatal(err)
+	}
+	return m[name]
+}
+
+func BenchmarkFilter(b *testing.B) {
+	for _, pol := range []string{"allow", "deny"} {
+		f := "/t/policy.json"
+		if pol == "deny" {
+			f = "/t/policy-deny.json"
+		}
+		p := loadP(b, f, "ghes")
+		for _, n := range []string{"create", "status", "largest", "body65k", "bound258k", "comment256k", "tokens14k", "tokens256k"} {
+			body, err := os.ReadFile("/bodies/body-" + n + ".json")
+			if err != nil {
+				continue
+			}
+			b.Run(pol+"/"+n, func(b *testing.B) {
+				b.ReportAllocs()
+				b.SetBytes(int64(len(body)))
+				for i := 0; i < b.N; i++ {
+					r, _ := http.NewRequest("POST", "https://ghes.example.test/api/graphql", bytes.NewReader(body))
+					r.RequestURI = "/api/graphql"
+					r.Header.Set("Content-Type", "application/json")
+					var de *deny
+					if pol == "deny" {
+						_, _, de = p.checkDeny(r)
+					} else {
+						_, de = p.check(r)
+					}
+					if de != nil && n != "tokens256k" {
+						b.Fatal(de.reason)
+					}
+				}
+			})
+		}
+		// REST with no body read
+		b.Run(pol+"/rest-get", func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				r, _ := http.NewRequest("GET", "https://ghes.example.test/api/v3/repos/acme/widgets/pulls/7", nil)
+				r.RequestURI = "/api/v3/repos/acme/widgets/pulls/7"
+				if pol == "deny" {
+					p.checkDeny(r)
+				} else {
+					p.check(r)
+				}
+			}
+		})
+	}
+}
+
+// TestStability reads /docs/docs.json (a list of documents) and prints each one twice.
+func TestStability(t *testing.T) {
+	raw, err := os.ReadFile("/docs/docs.json")
+	if err != nil {
+		t.Skip(err)
+	}
+	var docs []string
+	json.Unmarshal(raw, &docs)
+	pr := func(s string) (string, error) {
+		d, err := parser.ParseQuery(&ast.Source{Input: s})
+		if err != nil {
+			return "", err
+		}
+		var b bytes.Buffer
+		formatter.NewFormatter(&b, formatter.WithCompacted()).FormatQueryDocument(d)
+		return b.String(), nil
+	}
+	same, diff, fail := 0, 0, 0
+	out := map[string]string{}
+	for _, d := range docs {
+		a, err := pr(d)
+		if err != nil {
+			fail++
+			continue
+		}
+		out[d] = a
+		c, err := pr(a)
+		if err != nil {
+			fail++
+			continue
+		}
+		if a == c {
+			same++
+		} else {
+			diff++
+		}
+	}
+	j, _ := json.Marshal(out)
+	os.WriteFile("/docs/printed.json", j, 0o644)
+	fmt.Printf("documents=%d idempotent=%d not-idempotent=%d parse-failures=%d\n", len(docs), same, diff, fail)
+}

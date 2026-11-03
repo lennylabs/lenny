@@ -1,0 +1,25 @@
+twopoolson-clone-none                    rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-clone-helper                  rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-clone-url                     rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-clone-header                  rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-clone-other                   rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-none                     rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-helper                   rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-url                      rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-header                   rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-other                    rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-gh-helper                rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-push-main                     rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+twopoolson-push-main-other               rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+twopoolson-push-mixed                    rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+twopoolson-push-delete                   rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref deletion of refs/heads/feature refused
+twopoolson-push-option                   rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=push options are refused
+twopoolson-push-outside                  rc=0   identity=                       origin= refused=repository acme/secret is outside the session's writable set
+twopoolson-push-readonly                 rc=0   identity=                       origin= refused=repository acme/lib is outside the session's writable set
+twopoolson-read-outside                  rc=0   identity=                       origin= refused=repository acme/secret is outside the session's readable set
+twopoolson-reflect                       rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+twopoolson-redirect-in-scope             rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 ghes.example.test=USER-FILE-CURRENT:301 refused=
+twopoolson-redirect-out-of-scope         rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:302 refused=redirect to https://other.example.test/pub/lib.git/info/refs?service=git-upload-
+twopoolson-github-push                   rc=0   identity=held                   origin=github.com=USER-FILE-CURRENT:200 refused=
+twopoolson-github-push-main              rc=0   identity=held                   origin=github.com=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+twopoolson-lfs-store-host                rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 lfs-store.example.test=-: refused=

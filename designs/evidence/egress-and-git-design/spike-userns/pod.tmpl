@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: NAME, namespace: NS, labels: {t: mirror}}
+spec:
+  HOSTUSERS
+  restartPolicy: Never
+  securityContext: {fsGroup: 65534, fsGroupChangePolicy: OnRootMismatch, seccompProfile: {type: RuntimeDefault}}
+  containers:
+  - name: mirror
+    image: spike-userns:4
+    env: [{name: FU, value: "FUVAL"},{name: GA, value: "GAVAL"},{name: GB, value: "GBVAL"}]
+    imagePullPolicy: Never
+    command: ["setpriv","--reuid=65532","--regid=65532","--keep-groups","--inh-caps=+setuid,+setgid,+chown","--ambient-caps=+setuid,+setgid,+chown","sh","/probe.sh"]
+    securityContext:
+      runAsUser: 0
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities: {drop: ["ALL"], add: ["SETUID","SETGID","CHOWN"]}
+    volumeMounts:
+    - {name: data, mountPath: /data}
+    - {name: secret, mountPath: /secret, readOnly: true}
+    - {name: tmp, mountPath: /tmp}
+  volumes:
+  - {name: data, VOLUME}
+  - {name: tmp, emptyDir: {}}
+  - name: secret
+    secret: {secretName: s, defaultMode: 0440}

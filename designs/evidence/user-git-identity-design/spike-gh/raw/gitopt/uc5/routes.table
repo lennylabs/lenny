@@ -1,0 +1,241 @@
+refused         ghes    h1 POST /merge-upstream                         http=403 fwd=   | POST {repo}/merge-upstream is denied by the preset
+refused         ghes    h1 POST /merges                                 http=403 fwd=   | POST {repo}/merges is denied by the preset
+refused         ghes    h1 PUT /pulls/{pull_number}/merge               http=403 fwd=   | PUT {repo}/pulls/*/merge is denied by the preset
+refused         ghes    h1 PUT /pulls/{pull_number}/merge-async         http=403 fwd=   | PUT {repo}/pulls/*/merge-async is denied by the preset
+refused         ghes    h1 PUT /pulls/{pull_number}/update-branch       http=403 fwd=   | PUT {repo}/pulls/*/update-branch is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection         http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/enforce http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         ghes    h1 DELETE /environments/{environment_name}      http=403 fwd=   | DELETE {repo}/environments/* is denied by the preset
+refused         ghes    h1 DELETE /environments/{environment_name}/depl http=403 fwd=   | DELETE {repo}/environments/*/deployment-branch-policies/** is denied by the pres
+refused         ghes    h1 DELETE /environments/{environment_name}/depl http=403 fwd=   | DELETE {repo}/environments/*/deployment_protection_rules/** is denied by the pre
+REACHED         ghes    h1 DELETE /environments/{environment_name}/secr http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod/secrets/S   | 
+REACHED         ghes    h1 DELETE /environments/{environment_name}/vari http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod/variables/1   | 
+refused         ghes    h1 PATCH /branches/{branch}/protection/required http=403 fwd=   | PATCH {repo}/branches/** is denied by the preset
+refused         ghes    h1 PATCH /branches/{branch}/protection/required http=403 fwd=   | PATCH {repo}/branches/** is denied by the preset
+REACHED         ghes    h1 PATCH /environments/{environment_name}/varia http=201 fwd=PATCH /api/v3/repos/acme/widgets/environments/prod/variables/1   | 
+refused         ghes    h1 POST /actions/runs/{run_id}/approve          http=403 fwd=   | POST {repo}/actions/runs/*/approve is denied by the preset
+refused         ghes    h1 POST /actions/runs/{run_id}/deployment_prote http=403 fwd=   | POST {repo}/actions/runs/*/deployment_protection_rule is denied by the preset
+refused         ghes    h1 POST /actions/runs/{run_id}/force-cancel     http=403 fwd=   | POST {repo}/actions/runs/*/force-cancel is denied by the preset
+refused         ghes    h1 POST /actions/runs/{run_id}/pending_deployme http=403 fwd=   | POST {repo}/actions/runs/*/pending_deployments is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/protection/enforce_a http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/protection/required_ http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/protection/required_ http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/protection/restricti http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/protection/restricti http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/protection/restricti http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /environments/{environment_name}/deploy http=403 fwd=   | POST {repo}/environments/*/deployment-branch-policies/** is denied by the preset
+refused         ghes    h1 POST /environments/{environment_name}/deploy http=403 fwd=   | POST {repo}/environments/*/deployment_protection_rules/** is denied by the prese
+REACHED         ghes    h1 POST /environments/{environment_name}/variab http=201 fwd=POST /api/v3/repos/acme/widgets/environments/prod/variables   | 
+REACHED         ghes    h1 POST /issues/{issue_number}/suggestions/{sug http=201 fwd=POST /api/v3/repos/acme/widgets/issues/1/suggestions/1/approve   | 
+refused         ghes    h1 PUT /actions/permissions                     http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /actions/permissions/access              http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /actions/permissions/artifact-and-log-re http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /actions/permissions/fork-pr-contributor http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /actions/permissions/fork-pr-workflows-p http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /actions/permissions/selected-actions    http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /actions/permissions/workflow            http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         ghes    h1 PUT /branches/{branch}/protection            http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         ghes    h1 PUT /branches/{branch}/protection/required_s http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         ghes    h1 PUT /branches/{branch}/protection/restrictio http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         ghes    h1 PUT /branches/{branch}/protection/restrictio http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         ghes    h1 PUT /branches/{branch}/protection/restrictio http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         ghes    h1 PUT /environments/{environment_name}         http=403 fwd=   | PUT {repo}/environments/* is denied by the preset
+refused         ghes    h1 PUT /environments/{environment_name}/deploym http=403 fwd=   | PUT {repo}/environments/*/deployment-branch-policies/** is denied by the preset
+REACHED         ghes    h1 PUT /environments/{environment_name}/secrets http=201 fwd=PUT /api/v3/repos/acme/widgets/environments/prod/secrets/S   | 
+refused         ghes    h1 DELETE /contents/{path}                      http=403 fwd=   | DELETE {repo}/contents/** is denied by the preset
+refused         ghes    h1 DELETE /git/refs/{ref}                       http=403 fwd=   | DELETE {repo}/git/refs/** is denied by the preset
+refused         ghes    h1 PATCH /git/refs/{ref}                        http=403 fwd=   | PATCH {repo}/git/refs/** is denied by the preset
+refused         ghes    h1 POST /branches/{branch}/rename               http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         ghes    h1 POST /git/commits                            http=403 fwd=   | POST {repo}/git/commits is denied by the preset
+refused         ghes    h1 POST /git/refs                               http=403 fwd=   | POST {repo}/git/refs/** is denied by the preset
+refused         ghes    h1 POST /git/tags                               http=403 fwd=   | POST {repo}/git/tags is denied by the preset
+refused         ghes    h1 POST /git/trees                              http=403 fwd=   | POST {repo}/git/trees is denied by the preset
+refused         ghes    h1 PUT /contents/{path}                         http=403 fwd=   | PUT {repo}/contents/** is denied by the preset
+REACHED         ghes    h1 DELETE /pulls/{pull_number}/requested_review http=204 fwd=DELETE /api/v3/repos/acme/widgets/pulls/7/requested_reviewers   | 
+refused         ghes    h1 DELETE /pulls/{pull_number}/reviews/{review_ http=403 fwd=   | DELETE {repo}/pulls/*/reviews/** is denied by the preset
+REACHED         ghes    h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers   | 
+REACHED         ghes    h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers/rerequ   | 
+refused         ghes    h1 POST /pulls/{pull_number}/reviews            http=403 fwd=   | POST {repo}/pulls/*/reviews/** is denied by the preset
+refused         ghes    h1 POST /pulls/{pull_number}/reviews/{review_id http=403 fwd=   | POST {repo}/pulls/*/reviews/** is denied by the preset
+refused         ghes    h1 PUT /pulls/{pull_number}/reviews/{review_id} http=403 fwd=   | PUT {repo}/pulls/*/reviews/** is denied by the preset
+refused         ghes    h1 PUT /pulls/{pull_number}/reviews/{review_id} http=403 fwd=   | PUT {repo}/pulls/*/reviews/** is denied by the preset
+refused         ghes    h1 DELETE /rulesets/{ruleset_id}                http=403 fwd=   | DELETE {repo}/rulesets/** is denied by the preset
+refused         ghes    h1 POST /rulesets                               http=403 fwd=   | POST {repo}/rulesets/** is denied by the preset
+refused         ghes    h1 PUT /rulesets/{ruleset_id}                   http=403 fwd=   | PUT {repo}/rulesets/** is denied by the preset
+refused         ghes    h1 mutation addPullRequestReview                http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation addPullRequestReviewComment         http=200 fwd=POST /api/graphql addPullRequestReviewComment  | 
+REACHED         ghes    h1 mutation addPullRequestReviewThread          http=200 fwd=POST /api/graphql addPullRequestReviewThread  | 
+REACHED         ghes    h1 mutation addPullRequestReviewThreadReply     http=200 fwd=POST /api/graphql addPullRequestReviewThreadRepl  | 
+refused         ghes    h1 mutation approveDeployments                  http=403 fwd=   | mutation field "approveDeployments" is denied by the preset
+REACHED         ghes    h1 mutation closePullRequest                    http=200 fwd=POST /api/graphql closePullRequest  | 
+refused         ghes    h1 mutation createBranchProtectionRule          http=403 fwd=   | mutation field "createBranchProtectionRule" is denied by the preset
+refused         ghes    h1 mutation createCommitOnBranch                http=403 fwd=   | mutation field "createCommitOnBranch" is denied by the preset
+REACHED         ghes    h1 mutation createDeployment                    http=200 fwd=POST /api/graphql createDeployment  | 
+REACHED         ghes    h1 mutation createDeploymentStatus              http=200 fwd=POST /api/graphql createDeploymentStatus  | 
+refused         ghes    h1 mutation createEnvironment                   http=403 fwd=   | mutation field "createEnvironment" is denied by the preset
+refused         ghes    h1 mutation createRef                           http=403 fwd=   | mutation field "createRef" is denied by the preset
+refused         ghes    h1 mutation createRepositoryRuleset             http=403 fwd=   | mutation field "createRepositoryRuleset" is denied by the preset
+refused         ghes    h1 mutation deleteBranchProtectionRule          http=403 fwd=   | mutation field "deleteBranchProtectionRule" is denied by the preset
+REACHED         ghes    h1 mutation deleteDeployment                    http=200 fwd=POST /api/graphql deleteDeployment  | 
+refused         ghes    h1 mutation deleteEnvironment                   http=403 fwd=   | mutation field "deleteEnvironment" is denied by the preset
+refused         ghes    h1 mutation deletePullRequestReview             http=403 fwd=   | mutation field "deletePullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation deletePullRequestReviewComment      http=200 fwd=POST /api/graphql deletePullRequestReviewComment  | 
+refused         ghes    h1 mutation deleteRef                           http=403 fwd=   | mutation field "deleteRef" is denied by the preset
+refused         ghes    h1 mutation deleteRepositoryRuleset             http=403 fwd=   | mutation field "deleteRepositoryRuleset" is denied by the preset
+refused         ghes    h1 mutation dequeuePullRequest                  http=403 fwd=   | mutation field "dequeuePullRequest" is denied by the preset
+refused         ghes    h1 mutation disablePullRequestAutoMerge         http=403 fwd=   | mutation field "disablePullRequestAutoMerge" is denied by the preset
+refused         ghes    h1 mutation dismissPullRequestReview            http=403 fwd=   | mutation field "dismissPullRequestReview" is denied by the preset
+refused         ghes    h1 mutation enablePullRequestAutoMerge          http=403 fwd=   | mutation field "enablePullRequestAutoMerge" is denied by the preset
+refused         ghes    h1 mutation enqueuePullRequest                  http=403 fwd=   | mutation field "enqueuePullRequest" is denied by the preset
+REACHED         ghes    h1 mutation markPullRequestReadyForReview       http=200 fwd=POST /api/graphql markPullRequestReadyForReview  | 
+refused         ghes    h1 mutation mergeBranch                         http=403 fwd=   | mutation field "mergeBranch" is denied by the preset
+refused         ghes    h1 mutation mergePullRequest                    http=403 fwd=   | mutation field "mergePullRequest" is denied by the preset
+refused         ghes    h1 mutation pinEnvironment                      http=403 fwd=   | mutation field "pinEnvironment" is denied by the preset
+refused         ghes    h1 mutation rejectDeployments                   http=403 fwd=   | mutation field "rejectDeployments" is denied by the preset
+REACHED         ghes    h1 mutation reopenPullRequest                   http=200 fwd=POST /api/graphql reopenPullRequest  | 
+refused         ghes    h1 mutation reorderEnvironment                  http=403 fwd=   | mutation field "reorderEnvironment" is denied by the preset
+REACHED         ghes    h1 mutation requestReviews                      http=200 fwd=POST /api/graphql requestReviews  | 
+REACHED         ghes    h1 mutation requestReviewsByLogin               http=200 fwd=POST /api/graphql requestReviewsByLogin  | 
+REACHED         ghes    h1 mutation rerequestReviews                    http=200 fwd=POST /api/graphql rerequestReviews  | 
+REACHED         ghes    h1 mutation resolveReviewThread                 http=200 fwd=POST /api/graphql resolveReviewThread  | 
+refused         ghes    h1 mutation revertPullRequest                   http=403 fwd=   | mutation field "revertPullRequest" is denied by the preset
+refused         ghes    h1 mutation submitPullRequestReview             http=403 fwd=   | mutation field "submitPullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation unresolveReviewThread               http=200 fwd=POST /api/graphql unresolveReviewThread  | 
+refused         ghes    h1 mutation updateBranchProtectionRule          http=403 fwd=   | mutation field "updateBranchProtectionRule" is denied by the preset
+refused         ghes    h1 mutation updateEnvironment                   http=403 fwd=   | mutation field "updateEnvironment" is denied by the preset
+refused         ghes    h1 mutation updatePullRequestBranch             http=403 fwd=   | mutation field "updatePullRequestBranch" is denied by the preset
+refused         ghes    h1 mutation updatePullRequestReview             http=403 fwd=   | mutation field "updatePullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation updatePullRequestReviewComment      http=200 fwd=POST /api/graphql updatePullRequestReviewComment  | 
+refused         ghes    h1 mutation updateRef                           http=403 fwd=   | mutation field "updateRef" is denied by the preset
+refused         ghes    h1 mutation updateRefs                          http=403 fwd=   | mutation field "updateRefs" is denied by the preset
+refused         ghes    h1 mutation updateRepositoryRuleset             http=403 fwd=   | mutation field "updateRepositoryRuleset" is denied by the preset
+REACHED         ghes    h1 mutation updateTeamReviewAssignment          http=200 fwd=POST /api/graphql updateTeamReviewAssignment  | 
+refused         com     h1 POST /merge-upstream                         http=403 fwd=   | POST {repo}/merge-upstream is denied by the preset
+refused         com     h1 POST /merges                                 http=403 fwd=   | POST {repo}/merges is denied by the preset
+refused         com     h1 PUT /pulls/{pull_number}/merge               http=403 fwd=   | PUT {repo}/pulls/*/merge is denied by the preset
+refused         com     h1 PUT /pulls/{pull_number}/merge-async         http=403 fwd=   | PUT {repo}/pulls/*/merge-async is denied by the preset
+refused         com     h1 PUT /pulls/{pull_number}/update-branch       http=403 fwd=   | PUT {repo}/pulls/*/update-branch is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection         http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/enforce http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/require http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /branches/{branch}/protection/restric http=403 fwd=   | DELETE {repo}/branches/** is denied by the preset
+refused         com     h1 DELETE /environments/{environment_name}      http=403 fwd=   | DELETE {repo}/environments/* is denied by the preset
+refused         com     h1 DELETE /environments/{environment_name}/depl http=403 fwd=   | DELETE {repo}/environments/*/deployment-branch-policies/** is denied by the pres
+refused         com     h1 DELETE /environments/{environment_name}/depl http=403 fwd=   | DELETE {repo}/environments/*/deployment_protection_rules/** is denied by the pre
+REACHED         com     h1 DELETE /environments/{environment_name}/secr http=204 fwd=DELETE /repos/acme/widgets/environments/prod/secrets/S   | 
+REACHED         com     h1 DELETE /environments/{environment_name}/vari http=204 fwd=DELETE /repos/acme/widgets/environments/prod/variables/1   | 
+refused         com     h1 PATCH /branches/{branch}/protection/required http=403 fwd=   | PATCH {repo}/branches/** is denied by the preset
+refused         com     h1 PATCH /branches/{branch}/protection/required http=403 fwd=   | PATCH {repo}/branches/** is denied by the preset
+REACHED         com     h1 PATCH /environments/{environment_name}/varia http=201 fwd=PATCH /repos/acme/widgets/environments/prod/variables/1   | 
+refused         com     h1 POST /actions/runs/{run_id}/approve          http=403 fwd=   | POST {repo}/actions/runs/*/approve is denied by the preset
+refused         com     h1 POST /actions/runs/{run_id}/deployment_prote http=403 fwd=   | POST {repo}/actions/runs/*/deployment_protection_rule is denied by the preset
+refused         com     h1 POST /actions/runs/{run_id}/force-cancel     http=403 fwd=   | POST {repo}/actions/runs/*/force-cancel is denied by the preset
+refused         com     h1 POST /actions/runs/{run_id}/pending_deployme http=403 fwd=   | POST {repo}/actions/runs/*/pending_deployments is denied by the preset
+refused         com     h1 POST /branches/{branch}/protection/enforce_a http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /branches/{branch}/protection/required_ http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /branches/{branch}/protection/required_ http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /branches/{branch}/protection/restricti http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /branches/{branch}/protection/restricti http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /branches/{branch}/protection/restricti http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /environments/{environment_name}/deploy http=403 fwd=   | POST {repo}/environments/*/deployment-branch-policies/** is denied by the preset
+refused         com     h1 POST /environments/{environment_name}/deploy http=403 fwd=   | POST {repo}/environments/*/deployment_protection_rules/** is denied by the prese
+REACHED         com     h1 POST /environments/{environment_name}/variab http=201 fwd=POST /repos/acme/widgets/environments/prod/variables   | 
+REACHED         com     h1 POST /issues/{issue_number}/suggestions/{sug http=201 fwd=POST /repos/acme/widgets/issues/1/suggestions/1/approve   | 
+refused         com     h1 PUT /actions/permissions                     http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /actions/permissions/access              http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /actions/permissions/artifact-and-log-re http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /actions/permissions/fork-pr-contributor http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /actions/permissions/fork-pr-workflows-p http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /actions/permissions/selected-actions    http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /actions/permissions/workflow            http=403 fwd=   | PUT {repo}/actions/permissions/** is denied by the preset
+refused         com     h1 PUT /branches/{branch}/protection            http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         com     h1 PUT /branches/{branch}/protection/required_s http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         com     h1 PUT /branches/{branch}/protection/restrictio http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         com     h1 PUT /branches/{branch}/protection/restrictio http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         com     h1 PUT /branches/{branch}/protection/restrictio http=403 fwd=   | PUT {repo}/branches/** is denied by the preset
+refused         com     h1 PUT /environments/{environment_name}         http=403 fwd=   | PUT {repo}/environments/* is denied by the preset
+refused         com     h1 PUT /environments/{environment_name}/deploym http=403 fwd=   | PUT {repo}/environments/*/deployment-branch-policies/** is denied by the preset
+REACHED         com     h1 PUT /environments/{environment_name}/secrets http=201 fwd=PUT /repos/acme/widgets/environments/prod/secrets/S   | 
+refused         com     h1 DELETE /contents/{path}                      http=403 fwd=   | DELETE {repo}/contents/** is denied by the preset
+refused         com     h1 DELETE /git/refs/{ref}                       http=403 fwd=   | DELETE {repo}/git/refs/** is denied by the preset
+refused         com     h1 PATCH /git/refs/{ref}                        http=403 fwd=   | PATCH {repo}/git/refs/** is denied by the preset
+refused         com     h1 POST /branches/{branch}/rename               http=403 fwd=   | POST {repo}/branches/** is denied by the preset
+refused         com     h1 POST /git/commits                            http=403 fwd=   | POST {repo}/git/commits is denied by the preset
+refused         com     h1 POST /git/refs                               http=403 fwd=   | POST {repo}/git/refs/** is denied by the preset
+refused         com     h1 POST /git/tags                               http=403 fwd=   | POST {repo}/git/tags is denied by the preset
+refused         com     h1 POST /git/trees                              http=403 fwd=   | POST {repo}/git/trees is denied by the preset
+refused         com     h1 PUT /contents/{path}                         http=403 fwd=   | PUT {repo}/contents/** is denied by the preset
+REACHED         com     h1 DELETE /pulls/{pull_number}/requested_review http=204 fwd=DELETE /repos/acme/widgets/pulls/7/requested_reviewers   | 
+refused         com     h1 DELETE /pulls/{pull_number}/reviews/{review_ http=403 fwd=   | DELETE {repo}/pulls/*/reviews/** is denied by the preset
+REACHED         com     h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /repos/acme/widgets/pulls/7/requested_reviewers   | 
+REACHED         com     h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /repos/acme/widgets/pulls/7/requested_reviewers/rerequest   | 
+refused         com     h1 POST /pulls/{pull_number}/reviews            http=403 fwd=   | POST {repo}/pulls/*/reviews/** is denied by the preset
+refused         com     h1 POST /pulls/{pull_number}/reviews/{review_id http=403 fwd=   | POST {repo}/pulls/*/reviews/** is denied by the preset
+refused         com     h1 PUT /pulls/{pull_number}/reviews/{review_id} http=403 fwd=   | PUT {repo}/pulls/*/reviews/** is denied by the preset
+refused         com     h1 PUT /pulls/{pull_number}/reviews/{review_id} http=403 fwd=   | PUT {repo}/pulls/*/reviews/** is denied by the preset
+refused         com     h1 DELETE /rulesets/{ruleset_id}                http=403 fwd=   | DELETE {repo}/rulesets/** is denied by the preset
+refused         com     h1 POST /rulesets                               http=403 fwd=   | POST {repo}/rulesets/** is denied by the preset
+refused         com     h1 PUT /rulesets/{ruleset_id}                   http=403 fwd=   | PUT {repo}/rulesets/** is denied by the preset
+refused         com     h1 mutation addPullRequestReview                http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         com     h1 mutation addPullRequestReviewComment         http=200 fwd=POST /graphql addPullRequestReviewComment  | 
+REACHED         com     h1 mutation addPullRequestReviewThread          http=200 fwd=POST /graphql addPullRequestReviewThread  | 
+REACHED         com     h1 mutation addPullRequestReviewThreadReply     http=200 fwd=POST /graphql addPullRequestReviewThreadRepl  | 
+refused         com     h1 mutation approveDeployments                  http=403 fwd=   | mutation field "approveDeployments" is denied by the preset
+REACHED         com     h1 mutation closePullRequest                    http=200 fwd=POST /graphql closePullRequest  | 
+refused         com     h1 mutation createBranchProtectionRule          http=403 fwd=   | mutation field "createBranchProtectionRule" is denied by the preset
+refused         com     h1 mutation createCommitOnBranch                http=403 fwd=   | mutation field "createCommitOnBranch" is denied by the preset
+REACHED         com     h1 mutation createDeployment                    http=200 fwd=POST /graphql createDeployment  | 
+REACHED         com     h1 mutation createDeploymentStatus              http=200 fwd=POST /graphql createDeploymentStatus  | 
+refused         com     h1 mutation createEnvironment                   http=403 fwd=   | mutation field "createEnvironment" is denied by the preset
+refused         com     h1 mutation createRef                           http=403 fwd=   | mutation field "createRef" is denied by the preset
+refused         com     h1 mutation createRepositoryRuleset             http=403 fwd=   | mutation field "createRepositoryRuleset" is denied by the preset
+refused         com     h1 mutation deleteBranchProtectionRule          http=403 fwd=   | mutation field "deleteBranchProtectionRule" is denied by the preset
+REACHED         com     h1 mutation deleteDeployment                    http=200 fwd=POST /graphql deleteDeployment  | 
+refused         com     h1 mutation deleteEnvironment                   http=403 fwd=   | mutation field "deleteEnvironment" is denied by the preset
+refused         com     h1 mutation deletePullRequestReview             http=403 fwd=   | mutation field "deletePullRequestReview" is denied by the preset
+REACHED         com     h1 mutation deletePullRequestReviewComment      http=200 fwd=POST /graphql deletePullRequestReviewComment  | 
+refused         com     h1 mutation deleteRef                           http=403 fwd=   | mutation field "deleteRef" is denied by the preset
+refused         com     h1 mutation deleteRepositoryRuleset             http=403 fwd=   | mutation field "deleteRepositoryRuleset" is denied by the preset
+refused         com     h1 mutation dequeuePullRequest                  http=403 fwd=   | mutation field "dequeuePullRequest" is denied by the preset
+refused         com     h1 mutation disablePullRequestAutoMerge         http=403 fwd=   | mutation field "disablePullRequestAutoMerge" is denied by the preset
+refused         com     h1 mutation dismissPullRequestReview            http=403 fwd=   | mutation field "dismissPullRequestReview" is denied by the preset
+refused         com     h1 mutation enablePullRequestAutoMerge          http=403 fwd=   | mutation field "enablePullRequestAutoMerge" is denied by the preset
+refused         com     h1 mutation enqueuePullRequest                  http=403 fwd=   | mutation field "enqueuePullRequest" is denied by the preset
+REACHED         com     h1 mutation markPullRequestReadyForReview       http=200 fwd=POST /graphql markPullRequestReadyForReview  | 
+refused         com     h1 mutation mergeBranch                         http=403 fwd=   | mutation field "mergeBranch" is denied by the preset
+refused         com     h1 mutation mergePullRequest                    http=403 fwd=   | mutation field "mergePullRequest" is denied by the preset
+refused         com     h1 mutation pinEnvironment                      http=403 fwd=   | mutation field "pinEnvironment" is denied by the preset
+refused         com     h1 mutation rejectDeployments                   http=403 fwd=   | mutation field "rejectDeployments" is denied by the preset
+REACHED         com     h1 mutation reopenPullRequest                   http=200 fwd=POST /graphql reopenPullRequest  | 
+refused         com     h1 mutation reorderEnvironment                  http=403 fwd=   | mutation field "reorderEnvironment" is denied by the preset
+REACHED         com     h1 mutation requestReviews                      http=200 fwd=POST /graphql requestReviews  | 
+REACHED         com     h1 mutation requestReviewsByLogin               http=200 fwd=POST /graphql requestReviewsByLogin  | 
+REACHED         com     h1 mutation rerequestReviews                    http=200 fwd=POST /graphql rerequestReviews  | 
+REACHED         com     h1 mutation resolveReviewThread                 http=200 fwd=POST /graphql resolveReviewThread  | 
+refused         com     h1 mutation revertPullRequest                   http=403 fwd=   | mutation field "revertPullRequest" is denied by the preset
+refused         com     h1 mutation submitPullRequestReview             http=403 fwd=   | mutation field "submitPullRequestReview" is denied by the preset
+REACHED         com     h1 mutation unresolveReviewThread               http=200 fwd=POST /graphql unresolveReviewThread  | 
+refused         com     h1 mutation updateBranchProtectionRule          http=403 fwd=   | mutation field "updateBranchProtectionRule" is denied by the preset
+refused         com     h1 mutation updateEnvironment                   http=403 fwd=   | mutation field "updateEnvironment" is denied by the preset
+refused         com     h1 mutation updatePullRequestBranch             http=403 fwd=   | mutation field "updatePullRequestBranch" is denied by the preset
+refused         com     h1 mutation updatePullRequestReview             http=403 fwd=   | mutation field "updatePullRequestReview" is denied by the preset
+REACHED         com     h1 mutation updatePullRequestReviewComment      http=200 fwd=POST /graphql updatePullRequestReviewComment  | 
+refused         com     h1 mutation updateRef                           http=403 fwd=   | mutation field "updateRef" is denied by the preset
+refused         com     h1 mutation updateRefs                          http=403 fwd=   | mutation field "updateRefs" is denied by the preset
+refused         com     h1 mutation updateRepositoryRuleset             http=403 fwd=   | mutation field "updateRepositoryRuleset" is denied by the preset
+REACHED         com     h1 mutation updateTeamReviewAssignment          http=200 fwd=POST /graphql updateTeamReviewAssignment  | 
+TOTALS [(('com', 'REACHED'), 26), (('com', 'refused'), 94), (('ghes', 'REACHED'), 26), (('ghes', 'refused'), 94)]

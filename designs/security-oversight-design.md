@@ -412,7 +412,7 @@ The customer resolves the row through the approvals API under SO-5. An unanswere
 
 ### Existing behaviour
 
-The runtime sets `approvalRequired` on a `tool_call` frame (`schemas/lenny-adapter-jsonl.schema.json`), and `maybeGateToolCall` in `pkg/gateway/session/executor/podstream.go` holds the call only when the frame reaches it with that flag. Two paths never reach it. `HandleToolCall` in `pkg/adapter/toolcall.go` answers adapter-local tools inside the adapter, and §28.5.3 Intra-pod sends platform and connector tools over MCP at the Standard and Full levels, with stdin `tool_call` reserved for adapter-local tools. So `maybeGateToolCall` sees only a relayed frame, and `lenny/delegate_task` from a Standard runtime is never gated. `HandleToolCall` also ignores `approvalRequired`, although the schema says a flagged call blocks, which is a defect to file when SO-5a is written.
+The runtime sets `approvalRequired` on a `tool_call` frame (`schemas/lenny-adapter-jsonl.schema.json`), and `maybeGateToolCall` in `pkg/gateway/session/executor/podstream.go` holds the call only when the frame reaches it with that flag. Two paths never reach it. `HandleToolCall` in `pkg/adapter/toolcall.go` answers adapter-local tools inside the adapter, and §28.5.3 Intra-pod sends platform and connector tools over MCP at the Standard and Full levels, with stdin `tool_call` reserved for adapter-local tools. So `maybeGateToolCall` sees only a relayed frame, and `lenny/delegate_task` from a Standard runtime is never gated. `HandleToolCall` also ignores `approvalRequired`, although the schema says a flagged call blocks, which is filed as F-7.2.46.
 
 No platform policy forces approval. §15.2 refers to a policy that does not require approval, and a search of the specification finds no definition of one for tool calls. `approvalMode` in the §8 delegation lease example is the nearest field. `ToolApprovalGate` records an interaction keyed on session, owning user, and call, polls the store across replicas, and treats a timeout as denial. §10.2 **Session ownership.** rule 5 limits resolution to the owner.
 
@@ -690,6 +690,17 @@ None was rejected.
 - **`lenny-ops`.** It remains inside the PKI trust boundary after SO-7.
 - **Destination coverage.** Destinations accept HTTPS POST with HMAC or a header. A SIEM that needs an object store or another protocol needs the customer's collector in front of it.
 
+## Defects found while verifying
+
+These exist in today's tree independent of this design and are filed in `BUILD-GAPS.md`. F-25.6.9 and F-25.4.40 are under SO-6 and SO-7.
+
+| Finding | Severity | Defect | Addressed by |
+| :-- | :-- | :-- | :-- |
+| F-13.3.25 | Medium | Actions under an impersonation bearer are recorded as the impersonated user, and no audit row names the operator. | SO-4a |
+| F-12.3.30 | Medium | `GET /v1/sessions?tenant=` lets a platform admin list another tenant's sessions and writes no audit row. | SO-4a |
+| F-7.2.46 | Medium | An adapter-local `tool_call` with `approvalRequired: true` runs at once, because `HandleToolCall` does not read the flag. | SO-5a |
+| F-10.6.22 | Medium | A `tenant-admin` can point `introspectionEndpoint` at any HTTPS address, and the gateway posts every bearer presented for that tenant to it. | SO-1 for a security principal's bearer, and TS-4 in `tenant-scoping-identity-design.md` for the address check |
+
 ## Specification sections affected
 
 - §4.9 Credential Leasing Service: **Credential Storage Topology** and **Token Service secret resolution**, for the forwarder's keyed read and the destination Secrets.
@@ -717,9 +728,9 @@ The outline's items keep their labels. SO-4 and SO-5 each split, because their p
 | SO-1 | The security roles, `tenant_security_principals`, the resolver rules in the gateway and `lenny-ops`, reserved role names, protected subjects, the introspection exemption, `audit.read` and `audit.recover`, the `lenny-ops` ceiling, security-owned subscriptions, and the audit catalog review. |
 | SO-2 | The tenant security record, its applier, delayed principal changes, the `identityProvider` write rule, the guardrail check, suspension, and the posture read. |
 | SO-3 | `lenny-siem-forwarder`, destinations, cursors, the retention hold, the compliance gate, and evidence delivery. |
-| SO-4a | The mirror, `impersonated_by`, and the operator reference. |
+| SO-4a | The mirror, `impersonated_by`, and the operator reference. Closes F-13.3.25 and F-12.3.30. |
 | SO-4b | Operator access requests, the approval gate, and the emergency path. |
-| SO-5a | `security_approvals`, the approvals API, and the tool hold at MCP dispatch and on relayed frames. |
+| SO-5a | `security_approvals`, the approvals API, and the tool hold at MCP dispatch and on relayed frames. Addresses F-7.2.46. |
 | SO-5b | Repository write approvals. |
 | SO-6 | F-25.6.9: the windows, the remedy with its `certificates/status` rule, and the CA finding. |
 | SO-7 | F-25.4.40: the rights, the version source, the §25.4 reconciliation, and the skip removal. |

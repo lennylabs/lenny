@@ -1,0 +1,6 @@
+grape POST  /api/v4/projects/1/merge_requests/7/approve                    201 {"hit":"approve","id":"1"}
+grape POST  /api/v4/projects/acme/widgets/merge_requests/7/approve         404 404 Not Found
+grape POST  /api/v4/projects/1/merge_requests/7/approve.json.json          404 404 Not Found
+grape POST  /api/v4/projects/1/merge_requests/7/approve.foo                404 404 Not Found
+grape POST  /api/v4/projects/1/merge_requests/7/approve.JSON               404 404 Not Found
+grape PUT   /api/v4/projects/1/merge_requests/7/merge.json.json            404 404 Not Found

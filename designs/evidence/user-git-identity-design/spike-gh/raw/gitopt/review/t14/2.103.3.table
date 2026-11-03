@@ -1,0 +1,13 @@
+ok-forwarded       rc=0   ghes-2.103.3-strict-pr-create-rev-assign writes=createPullRequest,updatePullRequest,requestReviews refused=
+ok-forwarded       rc=0   ghes-2.103.3-strict-pr-edit-title        writes=updatePullRequest refused=
+ok-forwarded       rc=0   ghes-2.103.3-strict-pr-edit-meta         writes=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers,updatePullRequest,addLabelsToL refused=
+ok-forwarded       rc=0   ghes-2.103.3-strict-pr-comment           writes=addComment refused=
+no-write-at-stub   rc=0   ghes-2.103.3-strict-pr-view              writes= refused=
+OVER               rc=1   ghes-2.103.3-strict-pr-merge             writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-forwarded       rc=0   com-2.103.3-strict-pr-create-rev-assign  writes=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+ok-forwarded       rc=0   com-2.103.3-strict-pr-edit-title         writes=updatePullRequest refused=
+ok-forwarded       rc=0   com-2.103.3-strict-pr-edit-meta          writes=requestReviewsByLogin,replaceActorsForAssignable,addLabelsToLabelable,updatePullRequest refused=
+ok-forwarded       rc=0   com-2.103.3-strict-pr-comment            writes=addComment refused=
+no-write-at-stub   rc=0   com-2.103.3-strict-pr-view               writes= refused=
+OVER               rc=1   com-2.103.3-strict-pr-merge              writes= refused=mutation field "mergePullRequest" is denied by the preset
+TOTAL 12 {'ok-forwarded': 8, 'ok-refused-denied': 0, 'OVER': 2, 'MISS': 0, 'no-write-at-stub': 2}

@@ -1,0 +1,86 @@
+// Spike multi-call binary.
+//   proxy        : minimal HTTP CONNECT (and absolute-URI HTTP) forward proxy on :3128, logs each request.
+//   echo ADDR    : HTTP server on ADDR that answers "echo <NAME> <remote-addr>" (NAME from env NAME or hostname).
+package main
+
+import (
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"time"
+)
+
+func proxy() {
+	log.Printf("proxy listening :3128")
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		if r.Method == http.MethodConnect {
+			up, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
+			if err != nil {
+				log.Printf("CONNECT %s from %s: dial error %v", r.Host, r.RemoteAddr, err)
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			hj, _ := w.(http.Hijacker)
+			cl, buf, err := hj.Hijack()
+			if err != nil {
+				up.Close()
+				return
+			}
+			cl.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+			log.Printf("CONNECT %s from %s: tunnel up (dial %v)", r.Host, r.RemoteAddr, time.Since(start))
+			go func() {
+				if buf.Reader.Buffered() > 0 {
+					io.CopyN(up, buf, int64(buf.Reader.Buffered()))
+				}
+				io.Copy(up, cl)
+				up.Close()
+			}()
+			io.Copy(cl, up)
+			cl.Close()
+			return
+		}
+		r.RequestURI = ""
+		resp, err := http.DefaultTransport.RoundTrip(r)
+		if err != nil {
+			log.Printf("HTTP %s %s: %v", r.Method, r.URL, err)
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		io.Copy(w, resp.Body)
+		log.Printf("HTTP %s %s from %s: %d", r.Method, r.URL, r.RemoteAddr, resp.StatusCode)
+	})
+	log.Fatal(http.ListenAndServe(":3128", h))
+}
+
+func echo(addr string) {
+	name := os.Getenv("NAME")
+	if name == "" {
+		name, _ = os.Hostname()
+	}
+	log.Printf("echo %s listening %s", name, addr)
+	log.Fatal(http.ListenAndServe(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("echo %s: %s %s from %s", name, r.Method, r.URL.Path, r.RemoteAddr)
+		fmt.Fprintf(w, "echo %s from %s\n", name, r.RemoteAddr)
+	})))
+}
+
+func main() {
+	switch os.Args[1] {
+	case "proxy":
+		proxy()
+	case "echo":
+		echo(os.Args[2])
+	default:
+		fmt.Fprintln(os.Stderr, "usage: proxy | echo ADDR")
+		os.Exit(2)
+	}
+}

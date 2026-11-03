@@ -1,0 +1,1056 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"crypto/tls"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"math/rand/v2"
+	"net/http"
+	"net/url"
+	"os"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"owedc/ev"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/minio/minio-go/v7"
+	"golang.org/x/net/http2"
+)
+
+// ----- the sequence audit. -truth gives each producer's own high-water marks, which a consumer does not have.
+type posData struct{ present, gaps []rng }
+
+func mergeR(v []rng) (out []rng, overlap uint64) {
+	sort.Slice(v, func(i, j int) bool { return v[i].a < v[j].a })
+	for _, r := range v {
+		if n := len(out); n > 0 && r.a <= out[n-1].b+1 {
+			if r.a <= out[n-1].b {
+				e := r.b
+				if out[n-1].b < e {
+					e = out[n-1].b
+				}
+				overlap += e - r.a + 1
+			}
+			if r.b > out[n-1].b {
+				out[n-1].b = r.b
+			}
+			continue
+		}
+		out = append(out, r)
+	}
+	return
+}
+
+func overlapLen(a, b []rng) uint64 {
+	var n uint64
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		lo, hi := a[i].a, a[i].b
+		if b[j].a > lo {
+			lo = b[j].a
+		}
+		if b[j].b < hi {
+			hi = b[j].b
+		}
+		if lo <= hi {
+			n += hi - lo + 1
+		}
+		if a[i].b < b[j].b {
+			i++
+		} else {
+			j++
+		}
+	}
+	return n
+}
+
+func cmdGaps(a []string) {
+	fs := flag.NewFlagSet("gaps", flag.ExitOnError)
+	truth := fs.String("truth", "", "comma-separated URLs of the producers' /positions")
+	stream := fs.String("stream", "", "this stream only")
+	show := fs.Int("show", 0, "print this many examples of unannounced missing ranges")
+	noisy := fs.String("noisy", "", "report this tenant apart")
+	fs.Parse(a)
+	where := `order by id`
+	args := []any{}
+	if *stream != "" {
+		where = `where stream=$1 order by id`
+		args = append(args, *stream)
+	}
+	rows := loadRows(where, args...)
+	var mu sync.Mutex
+	pos := map[string]*posData{}
+	reasons := map[string]uint64{}
+	closes := map[string]bool{}
+	kinds := map[string]uint64{}
+	ch := make(chan row, 64)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range ch {
+				type lr struct {
+					k      string
+					a, b   uint64
+					gap    bool
+					reason string
+					close  bool
+					kind   string
+				}
+				var ls []lr
+				err := forEachRecord(r, func(line []byte, _ part) bool {
+					var x struct {
+						Stream, Producer, Incarnation, TenantId, Kind string
+						Sequence, SequenceEnd                         uint64
+						Payload                                       struct {
+							Reason string `json:"reason"`
+						}
+					}
+					json.Unmarshal(line, &x)
+					e := x.Sequence
+					if x.SequenceEnd > e {
+						e = x.SequenceEnd
+					}
+					ls = append(ls, lr{ev.PosKey(x.TenantId, x.Stream, x.Producer, x.Incarnation, sessOf(line, x.Stream)), x.Sequence, e, x.Kind == "gap", x.Payload.Reason, x.Kind == "incarnation_close", x.Kind})
+					return true
+				})
+				if err != nil {
+					log.Printf("read %s: %v", r.key, err)
+				}
+				mu.Lock()
+				for _, l := range ls {
+					p := pos[l.k]
+					if p == nil {
+						p = &posData{}
+						pos[l.k] = p
+					}
+					kinds[l.kind]++
+					if l.gap {
+						p.gaps = append(p.gaps, rng{l.a, l.b})
+						reasons[l.reason] += l.b - l.a + 1
+						continue
+					}
+					if l.close {
+						closes[l.k] = true
+					}
+					p.present = append(p.present, rng{l.a, l.b})
+				}
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, r := range rows {
+		ch <- r
+	}
+	close(ch)
+	wg.Wait()
+	hw := map[string]uint64{}
+	if *truth != "" {
+		for _, u := range strings.Split(*truth, ",") {
+			resp, err := http.Get(u)
+			if err != nil {
+				fmt.Println("  truth unavailable:", u, err)
+				continue
+			}
+			var t struct {
+				Incarnation string            `json:"incarnation"`
+				Positions   map[string]uint64 `json:"positions"`
+			}
+			json.NewDecoder(resp.Body).Decode(&t)
+			resp.Body.Close()
+			for k, v := range t.Positions {
+				f := strings.SplitN(k, " ", 3)
+				if *stream != "" && f[1] != *stream {
+					continue
+				}
+				sess := ""
+				if len(f) == 3 {
+					sess = f[2]
+				}
+				hw[ev.PosKey(f[0], f[1], "lenny-egress-authz.lenny-system.svc", t.Incarnation, sess)] = v
+			}
+		}
+	}
+	type totals struct{ recs, dup, internalHole, internalAnnounced, tail, tailAnnounced, falseGap, positions, tailPos, noneStored, noneRecs, noneAnn uint64 }
+	var T, N totals
+	shown := 0
+	for k, p := range pos {
+		o := &T
+		if *noisy != "" && strings.HasPrefix(k, *noisy+" ") {
+			o = &N
+		}
+		o.positions++
+		pr, dup := mergeR(p.present)
+		gp, _ := mergeR(p.gaps)
+		o.dup += dup
+		var last uint64
+		var holes []rng
+		for _, r := range pr {
+			o.recs += r.b - r.a + 1
+			if r.a > last+1 {
+				holes = append(holes, rng{last + 1, r.a - 1})
+			}
+			last = r.b
+		}
+		o.falseGap += overlapLen(pr, gp)
+		for _, h := range holes {
+			n := h.b - h.a + 1
+			ann := overlapLen([]rng{h}, gp)
+			o.internalHole += n
+			o.internalAnnounced += ann
+			if n != ann && shown < *show {
+				fmt.Printf("  unannounced hole %s: %d..%d (%d announced)\n", k, h.a, h.b, ann)
+				shown++
+			}
+		}
+		if t, ok := hw[k]; ok && t > last {
+			h := rng{last + 1, t}
+			ann := overlapLen([]rng{h}, gp)
+			o.tail += t - last
+			o.tailAnnounced += ann
+			if t-last != ann {
+				o.tailPos++
+				if shown < *show {
+					fmt.Printf("  unannounced tail %s: %d..%d (%d announced)\n", k, h.a, h.b, ann)
+					shown++
+				}
+			}
+		}
+	}
+	for k, t := range hw {
+		if _, ok := pos[k]; !ok {
+			T.noneStored++
+			T.noneRecs += t
+		}
+	}
+	pr := func(n string, o totals) {
+		fmt.Printf("%spositions=%d records present=%d duplicates=%d | holes between records: missing=%d announced=%d unannounced=%d | tails against truth: missing=%d announced=%d unannounced=%d in %d positions | positions with nothing stored=%d (%d records) | sequence numbers both stored and in a gap record=%d\n", n, o.positions, o.recs, o.dup, o.internalHole, o.internalAnnounced, o.internalHole-o.internalAnnounced, o.tail, o.tailAnnounced, o.tail-o.tailAnnounced, o.tailPos, o.noneStored, o.noneRecs, o.falseGap)
+	}
+	pr("audit: ", T)
+	if *noisy != "" {
+		pr("  noisy tenant "+*noisy+": ", N)
+	}
+	fmt.Printf("  gap sequence numbers by reason: %v; record kinds: %v; positions with a closing record: %d\n", reasons, kinds, len(closes))
+}
+
+// ----- resolve a decision identifier from a 403 to the record, aggregate, or gap that holds it.
+type resolved struct {
+	how string
+	n   int
+}
+
+func resolve(tenant, did string) (string, error) {
+	_, inc, seq, err := ev.ParseDecisionID(did)
+	if err != nil {
+		return "", err
+	}
+	rows := loadRows(`where tenant_id=$1 and stream='egress.decision' and seq_first<=$2 and seq_last>=$2 order by id`, tenant, int64(seq))
+	for _, r := range rows {
+		if !r.compacted && r.i != inc {
+			continue
+		}
+		if r.compacted {
+			if _, err := rowParts(&r); err != nil {
+				return "", err
+			}
+		}
+		ps := r.parts
+		if !r.compacted {
+			ps = []part{{Incarnation: r.i, SeqF: r.seqF, SeqL: r.seqL}}
+		}
+		for _, p := range ps {
+			if p.Incarnation != inc || int64(seq) < p.SeqF || int64(seq) > p.SeqL {
+				continue
+			}
+			b, err := get(r.key, p.Off, p.Len)
+			if err != nil {
+				return "", err
+			}
+			g, err := gzip.NewReader(bytes.NewReader(b))
+			if err != nil {
+				return "", err
+			}
+			sc := bufio.NewScanner(g)
+			sc.Buffer(make([]byte, 1<<20), 16<<20)
+			for sc.Scan() {
+				var x struct {
+					Kind                  string
+					Incarnation           string
+					Sequence, SequenceEnd uint64
+				}
+				json.Unmarshal(sc.Bytes(), &x)
+				e := x.Sequence
+				if x.SequenceEnd > e {
+					e = x.SequenceEnd
+				}
+				if x.Incarnation == inc && x.Sequence <= seq && seq <= e {
+					switch x.Kind {
+					case "":
+						return "whole record", nil
+					case "denial_aggregate":
+						return "aggregate", nil
+					case "gap":
+						return "gap record", nil
+					default:
+						return x.Kind, nil
+					}
+				}
+			}
+		}
+	}
+	return "not found", nil
+}
+
+func cmdLookup(a []string) {
+	fs := flag.NewFlagSet("lookup", flag.ExitOnError)
+	file := fs.String("file", "/w/dids.txt", "")
+	max := fs.Int("max", 500, "")
+	par := fs.Int("par", 4, "")
+	fs.Parse(a)
+	f, err := os.Open(*file)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var lines [][2]string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		p := strings.Fields(sc.Text())
+		if len(p) == 2 {
+			lines = append(lines, [2]string{p[0], p[1]})
+		}
+	}
+	rand.Shuffle(len(lines), func(i, j int) { lines[i], lines[j] = lines[j], lines[i] })
+	if len(lines) > *max {
+		lines = lines[:*max]
+	}
+	ch := make(chan [2]string, 16)
+	var mu sync.Mutex
+	counts := map[string]int{}
+	var lats []time.Duration
+	var wg sync.WaitGroup
+	for i := 0; i < *par; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for l := range ch {
+				t0 := time.Now()
+				s, err := resolve(l[0], l[1])
+				if err != nil {
+					s = "error: " + err.Error()
+				}
+				mu.Lock()
+				counts[s]++
+				lats = append(lats, time.Since(t0))
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, l := range lines {
+		ch <- l
+	}
+	close(ch)
+	wg.Wait()
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	if len(lats) == 0 {
+		fmt.Println("lookup: no identifiers")
+		return
+	}
+	fmt.Printf("lookup: identifiers=%d resolved to %v; time per lookup p50=%s p99=%s\n", len(lines), counts, lats[len(lats)/2].Round(time.Millisecond), lats[len(lats)*99/100].Round(time.Millisecond))
+}
+
+// ----- a consumer reading through lenny-evidence
+func consumerClient() *http.Client {
+	return &http.Client{Transport: &http2.Transport{TLSClientConfig: ev.ClientTLS("/certs/lenny-evidence-consumer", "/certs/evidence-ca.pem", "lenny-evidence.lenny-system.svc")}, Timeout: 120 * time.Second}
+}
+
+func cmdConsume(a []string) {
+	fs := flag.NewFlagSet("consume", flag.ExitOnError)
+	urls := fs.String("urls", "https://198.19.0.31:8443", "comma separated; pages alternate between them")
+	consumer := fs.String("consumer", "siem", "")
+	stream := fs.String("stream", "egress.decision", "")
+	tenants := fs.String("tenants", "", "comma separated, or a prefix:from:to range")
+	limit := fs.Int("limit", 5000, "")
+	max := fs.Int("max", 0, "stop after this many records in total, as if the consumer died")
+	out := fs.String("out", "/w/consume.txt", "")
+	persist := fs.Bool("persist", true, "store the position on the server after each page")
+	fs.Parse(a)
+	var ts []string
+	if strings.Count(*tenants, ":") == 2 {
+		f := strings.Split(*tenants, ":")
+		var from, to int
+		fmt.Sscan(f[1], &from)
+		fmt.Sscan(f[2], &to)
+		for i := from; i < to; i++ {
+			ts = append(ts, fmt.Sprintf("%s%d", f[0], i))
+		}
+	} else {
+		ts = strings.Split(*tenants, ",")
+	}
+	us := strings.Split(*urls, ",")
+	c := consumerClient()
+	f, err := os.OpenFile(*out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	w := bufio.NewWriter(f)
+	defer w.Flush()
+	t0 := time.Now()
+	total, pages, skipped, retries, errs := 0, 0, 0, 0, 0
+	for _, tn := range ts {
+		for {
+			u := fmt.Sprintf("%s/v1/read?tenant=%s&stream=%s&limit=%d&consumer=%s", us[pages%len(us)], url.QueryEscape(tn), url.QueryEscape(*stream), *limit, url.QueryEscape(*consumer))
+			pages++
+			resp, err := c.Get(u)
+			if err != nil || resp.StatusCode != 200 {
+				errs++
+				time.Sleep(200 * time.Millisecond)
+				if resp != nil {
+					resp.Body.Close()
+				}
+				if errs > 200 {
+					log.Fatal("too many read errors: ", err)
+				}
+				continue
+			}
+			sc := bufio.NewScanner(resp.Body)
+			sc.Buffer(make([]byte, 1<<20), 64<<20)
+			var cur json.RawMessage
+			n, full := 0, false
+			for sc.Scan() {
+				l := sc.Bytes()
+				var x struct {
+					Kind                                         string
+					Stream, Producer, Incarnation, TenantId      string
+					Sequence, SequenceEnd                        uint64
+					Cursor                                       json.RawMessage
+					Delivered, PartsSkipped, Retries             int
+					Full                                         bool
+				}
+				json.Unmarshal(l, &x)
+				if x.Kind == "cursor" {
+					cur, full = x.Cursor, x.Full
+					skipped += x.PartsSkipped
+					retries += x.Retries
+					continue
+				}
+				e := x.Sequence
+				if x.SequenceEnd > e {
+					e = x.SequenceEnd
+				}
+				fmt.Fprintf(w, "%s %d %d\n", ev.PosKey(x.TenantId, x.Stream, x.Producer, x.Incarnation, sessOf(l, x.Stream)), x.Sequence, e)
+				n++
+			}
+			resp.Body.Close()
+			total += n
+			if *persist && cur != nil {
+				b, _ := json.Marshal(map[string]any{"consumer": *consumer, "tenant": tn, "stream": *stream, "cursor": cur})
+				r, err := c.Post(us[0]+"/v1/consumers/position", "application/json", bytes.NewReader(b))
+				if err != nil {
+					log.Fatal(err)
+				}
+				io.Copy(io.Discard, r.Body)
+				r.Body.Close()
+			}
+			if *max > 0 && total >= *max {
+				fmt.Printf("consume: stopped at %d records (pages=%d)\n", total, pages)
+				return
+			}
+			if !full {
+				break
+			}
+		}
+	}
+	el := time.Since(t0).Seconds()
+	fmt.Printf("consume: delivered=%d tenants=%d pages=%d parts skipped=%d server-side retries=%d client errors=%d %.1fs %.0f records/s\n", total, len(ts), pages, skipped, retries, errs, el, float64(total)/el)
+}
+
+// ----- retention by stream age, honouring holds and each registered consumer's position up to a bound.
+func cmdRetain(a []string) {
+	fs := flag.NewFlagSet("retain", flag.ExitOnError)
+	stream := fs.String("stream", "egress.decision", "")
+	age := fs.Duration("age", time.Hour, "retention")
+	bound := fs.Duration("bound", 2*time.Hour, "the longest a consumer's position can hold a row")
+	tomb := fs.Bool("tombstone", true, "write a chain event naming what was removed")
+	honour := fs.Bool("honour-consumers", true, "")
+	fs.Parse(a)
+	now := time.Now()
+	rows := loadRows(`where stream=$1 order by id`, *stream)
+	cons := map[string]map[string]map[string]ev.Ranges{} // consumer -> tenant -> position -> ranges
+	var regs []string
+	tx(ctx, func(t pgx.Tx) error {
+		rs, err := t.Query(ctx, `select consumer from evidence_consumer_reg`)
+		if err != nil {
+			return err
+		}
+		for rs.Next() {
+			var c string
+			rs.Scan(&c)
+			regs = append(regs, c)
+		}
+		rs.Close()
+		rs, err = t.Query(ctx, `select consumer,tenant_id,cursor from evidence_consumers where stream=$1`, *stream)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var c, tn string
+			var b []byte
+			rs.Scan(&c, &tn, &b)
+			var m map[string]ev.Ranges
+			json.Unmarshal(b, &m)
+			if cons[c] == nil {
+				cons[c] = map[string]map[string]ev.Ranges{}
+			}
+			cons[c][tn] = m
+		}
+		return rs.Err()
+	})
+	var young, kept, held, removed, overBound, chainEvents, rowsLoss int
+	type rm struct {
+		r row
+		o bool
+	}
+	byTenant := map[string][]rm{}
+	for i := range rows {
+		r := rows[i]
+		if now.Sub(r.tL) < *age {
+			young++
+			continue
+		}
+		if r.held {
+			held++
+			continue
+		}
+		over := false
+		if *honour {
+			need := false
+			ps := []part{{Producer: r.p, Incarnation: r.i, Session: r.session, SeqF: r.seqF, SeqL: r.seqL}}
+			if r.compacted {
+				x, err := rowParts(&r)
+				if err != nil {
+					log.Fatal(err)
+				}
+				ps = x
+			}
+			for _, c := range regs {
+				for _, p := range ps {
+					k := ev.PosKey(r.tenant, r.stream, p.Producer, p.Incarnation, p.Session)
+					if !cons[c][r.tenant][k].Covers(uint64(p.SeqF), uint64(p.SeqL)) {
+						need = true
+					}
+				}
+			}
+			if need {
+				if now.Sub(r.tL) < *bound {
+					kept++
+					continue
+				}
+				over = true
+				overBound++
+			}
+		}
+		byTenant[r.tenant] = append(byTenant[r.tenant], rm{r, over})
+	}
+	for tn, list := range byTenant {
+		ids := make([]int64, 0, len(list))
+		var det []map[string]string
+		for _, x := range list {
+			ids = append(ids, x.r.id)
+			if x.r.compacted {
+				ps, _ := rowParts(&x.r)
+				for _, p := range ps {
+					det = append(det, map[string]string{"b": p.Batch, "d": p.Digest})
+				}
+			} else {
+				det = append(det, map[string]string{"b": x.r.batch, "d": x.r.digest})
+			}
+		}
+		err := tx(ctx, func(t pgx.Tx) error {
+			ct, err := t.Exec(ctx, `delete from manifest where id = any($1::bigint[]) and not held`, ids)
+			if err != nil {
+				return err
+			}
+			if int(ct.RowsAffected()) != len(ids) {
+				return fmt.Errorf("a row was held or changed during retention")
+			}
+			for _, x := range list {
+				if x.o {
+					for _, c := range regs {
+						if _, err := t.Exec(ctx, `insert into evidence_consumer_loss(consumer,tenant_id,stream,batch,seq_first,seq_last) values($1,$2,$3,$4,$5,$6)`, c, tn, *stream, x.r.batch, x.r.seqF, x.r.seqL); err != nil {
+							return err
+						}
+						rowsLoss++
+					}
+				}
+			}
+			if *tomb {
+				if _, err := t.Exec(ctx, `select pg_advisory_xact_lock(hashtext($1)::bigint)`, tn); err != nil {
+					return err
+				}
+				var seq int64
+				var prev string
+				t.QueryRow(ctx, `select seq, hash from audit_chain where tenant_id=$1 order by seq desc limit 1 for update`, tn).Scan(&seq, &prev)
+				d, _ := json.Marshal(map[string]any{"removed": det, "reason": "retention", "stream": *stream})
+				h := hashHex(prev + "|retention|" + hashHex(string(d)))
+				if _, err := t.Exec(ctx, `insert into audit_chain(tenant_id,seq,kind,digest,prev,hash,detail) values($1,$2,'retention',$3,$4,$5,$6::jsonb)`, tn, seq+1, hashHex(string(d)), prev, h, string(d)); err != nil {
+					return err
+				}
+				chainEvents++
+			}
+			return nil
+		})
+		if err != nil {
+			fmt.Println("  retention aborted for", tn, err)
+			continue
+		}
+		for _, x := range list {
+			mc.RemoveObject(ctx, bucket, x.r.key, minio.RemoveObjectOptions{})
+			removed++
+		}
+	}
+	fmt.Printf("retain: stream=%s rows=%d younger than retention=%d held=%d kept for a consumer=%d removed=%d removed past the consumer bound=%d loss rows=%d chain events=%d\n", *stream, len(rows), young, held, kept, removed, overBound, rowsLoss, chainEvents)
+}
+
+// ----- EvidenceStore.DeleteByTenant, honouring holds
+func cmdDeleteTenant(a []string) {
+	fs := flag.NewFlagSet("deletetenant", flag.ExitOnError)
+	tenant := fs.String("tenant", "", "")
+	fs.Parse(a)
+	rows := loadRows(`where tenant_id=$1 order by id`, *tenant)
+	var keep, del int
+	var keys []string
+	var ids []int64
+	for _, r := range rows {
+		if r.held {
+			keep++
+			continue
+		}
+		del++
+		ids = append(ids, r.id)
+		keys = append(keys, r.key)
+	}
+	var keysDestroyed, keysKept int64
+	err := tx(ctx, func(t pgx.Tx) error {
+		ct, err := t.Exec(ctx, `delete from manifest where id = any($1::bigint[]) and not held`, ids)
+		if err != nil {
+			return err
+		}
+		if int(ct.RowsAffected()) != len(ids) {
+			return fmt.Errorf("a row was held during deletion")
+		}
+		// keys of a session that still has held rows stay, or the held rows could not be read
+		ct, err = t.Exec(ctx, `update evidence_session_keys k set key=null, destroyed_at=now() where tenant_id=$1 and destroyed_at is null and not exists (select 1 from manifest m where m.tenant_id=$1 and m.held and (m.session=k.session_id))`, *tenant)
+		if err != nil {
+			return err
+		}
+		keysDestroyed = ct.RowsAffected()
+		t.QueryRow(ctx, `select count(*) from evidence_session_keys where tenant_id=$1 and destroyed_at is null`, *tenant).Scan(&keysKept)
+		if keep == 0 {
+			if _, err := t.Exec(ctx, `delete from audit_chain where tenant_id=$1`, *tenant); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		fmt.Println("deletetenant aborted:", err)
+		return
+	}
+	for _, k := range keys {
+		mc.RemoveObject(ctx, bucket, k, minio.RemoveObjectOptions{})
+	}
+	fmt.Printf("deletetenant %s: rows removed=%d rows kept under a hold=%d session keys destroyed=%d kept=%d\n", *tenant, del, keep, keysDestroyed, keysKept)
+}
+
+// ----- egress.accesslog against the incarnation rows. egress.tunnel, numbered by the producer, serves as the reference.
+func cmdWindows(a []string) {
+	fs := flag.NewFlagSet("windows", flag.ExitOnError)
+	margin := fs.Duration("margin", 5*time.Second, "reported separately: losses this close outside a window")
+	fs.Parse(a)
+	type win struct {
+		w                string
+		rep              int
+		start, closed    *time.Time
+		lastFlush        *time.Time
+		nextStart        *time.Time
+	}
+	var ws []*win
+	err := tx(ctx, func(t pgx.Tx) error {
+		rs, err := t.Query(ctx, `select w.writer,w.replica,w.started_at,w.closed_at,(select max(created_at) from manifest m where m.writer=w.writer) from evidence_writers w order by w.started_at`)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			x := &win{}
+			if err := rs.Scan(&x.w, &x.rep, &x.start, &x.closed, &x.lastFlush); err != nil {
+				return err
+			}
+			ws = append(ws, x)
+		}
+		return rs.Err()
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	for i, x := range ws {
+		for _, y := range ws[i+1:] {
+			if y.rep == x.rep {
+				x.nextStart = y.start
+				break
+			}
+		}
+		fl := "none"
+		if x.lastFlush != nil {
+			fl = x.lastFlush.Format("15:04:05.000")
+		}
+		cl := "NO CLOSING ROW"
+		if x.closed != nil {
+			cl = "closed " + x.closed.Format("15:04:05.000")
+		}
+		fmt.Printf("  incarnation %s replica %d started %s, last flush %s, %s\n", x.w, x.rep, x.start.Format("15:04:05.000"), fl, cl)
+	}
+	type key struct{ did, typ string }
+	seen := map[key]bool{}
+	type tr struct {
+		k  key
+		at time.Time
+		tn string
+	}
+	var tunnels []tr
+	var mu sync.Mutex
+	load := func(stream string, f func(tn, did, typ string, at time.Time)) {
+		rows := loadRows(`where stream=$1`, stream)
+		ch := make(chan row, 16)
+		var wg sync.WaitGroup
+		for i := 0; i < 8; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for r := range ch {
+					forEachRecord(r, func(l []byte, _ part) bool {
+						var x struct {
+							TenantId, Kind string
+							ObservedAt     time.Time
+							Payload        struct {
+								DecisionId string `json:"decisionId"`
+								EndedBy    string `json:"endedBy"`
+							}
+						}
+						json.Unmarshal(l, &x)
+						if x.Kind == "" {
+							mu.Lock()
+							f(x.TenantId, x.Payload.DecisionId, x.Payload.EndedBy, x.ObservedAt)
+							mu.Unlock()
+						}
+						return true
+					})
+				}
+			}()
+		}
+		for _, r := range rows {
+			ch <- r
+		}
+		close(ch)
+		wg.Wait()
+	}
+	nAL := 0
+	load("egress.accesslog", func(_, did, typ string, _ time.Time) { seen[key{did, typ}] = true; nAL++ })
+	load("egress.tunnel", func(tn, did, typ string, at time.Time) { tunnels = append(tunnels, tr{key{did, typ}, at, tn}) })
+	lost, inside, near, outside := 0, 0, 0, 0
+	buckets := map[int64]int{}
+	var t0 int64
+	for _, x := range tunnels {
+		if seen[x.k] {
+			continue
+		}
+		lost++
+		if t0 == 0 || x.at.Unix() < t0 {
+			t0 = x.at.Unix()
+		}
+		buckets[x.at.Unix()/10]++
+		in, nr := false, false
+		for _, w := range ws {
+			if w.closed != nil || w.nextStart == nil {
+				continue
+			}
+			lo := *w.start
+			if w.lastFlush != nil {
+				lo = *w.lastFlush
+			}
+			if x.at.After(lo) && x.at.Before(*w.nextStart) {
+				in = true
+			} else if x.at.After(lo.Add(-*margin)) && x.at.Before(w.nextStart.Add(*margin)) {
+				nr = true
+			}
+		}
+		switch {
+		case in:
+			inside++
+		case nr:
+			near++
+		default:
+			outside++
+		}
+	}
+	fmt.Printf("windows: egress.tunnel entries=%d egress.accesslog entries=%d, tunnel entries with no access log entry=%d: inside a window (last flush to next start) %d, within %s of one %d, outside every window %d\n", len(tunnels), nAL, lost, inside, *margin, near, outside)
+	ks := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		ks = append(ks, k)
+	}
+	sort.Slice(ks, func(i, j int) bool { return ks[i] < ks[j] })
+	for _, k := range ks {
+		fmt.Printf("    %s %d\n", time.Unix(k*10, 0).UTC().Format("15:04:05"), buckets[k])
+	}
+}
+
+func cmdSizes(a []string) {
+	tx(ctx, func(t pgx.Tx) error {
+		var n, parts int64
+		var avg, avgp, chain, chainN, tbl float64
+		t.QueryRow(ctx, `select count(*), coalesce(avg(pg_column_size(m.*)),0), coalesce(sum(parts_count),0), coalesce(avg(parts_count),0) from manifest m where compacted`).Scan(&n, &avg, &parts, &avgp)
+		t.QueryRow(ctx, `select coalesce(avg(pg_column_size(c.*)),0), count(*) from audit_chain c where kind='compaction'`).Scan(&chain, &chainN)
+		t.QueryRow(ctx, `select pg_total_relation_size('manifest')`).Scan(&tbl)
+		var mchain, mchainN float64
+		t.QueryRow(ctx, `select coalesce(avg(pg_column_size(c.*)),0), count(*) from audit_chain c where kind='manifest'`).Scan(&mchain, &mchainN)
+		var total float64
+		t.QueryRow(ctx, `select pg_total_relation_size('audit_chain')`).Scan(&total)
+		fmt.Printf("sizes: compacted rows=%d mean row=%.0f bytes, parts per row mean=%.1f, manifest table=%.0f KiB | compaction anchors=%.0f mean=%.0f bytes | manifest anchors=%.0f mean=%.0f bytes | audit_chain table=%.0f KiB\n", n, avg, avgp, tbl/1024, chainN, chain, mchainN, mchain, total/1024)
+		return nil
+	})
+}
+
+// ----- producers other than the decision service, at a fixed rate. gen2 local|gitop|mint
+func cmdGen2(a []string) {
+	kind := a[0]
+	fs := flag.NewFlagSet("gen2", flag.ExitOnError)
+	rate := fs.Int("rate", 100, "records per second")
+	dur := fs.Duration("for", 60*time.Second, "")
+	tenants := fs.Int("tenants", 2500, "")
+	busy := fs.Int("busy", 5, "")
+	share := fs.Float64("busyshare", .5, "")
+	urls := fs.String("urls", "https://198.19.0.31:8443,https://198.19.0.32:8443", "")
+	i7 := fs.String("i7", "http://198.19.0.11:9004/v1/report", "")
+	fs.Parse(a[1:])
+	r := rand.New(rand.NewPCG(rand.Uint64(), 7))
+	pick := func() string {
+		if r.Float64() < *share {
+			return fmt.Sprintf("t%d", r.IntN(*busy))
+		}
+		return fmt.Sprintf("t%d", *busy+r.IntN(*tenants-*busy))
+	}
+	repl := strings.Split(*urls, ",")
+	var sent, fail atomic.Int64
+	inc := ev.NewIncarnation(kind[:1])
+	seqs := map[string]uint64{}
+	t0 := time.Now()
+	iv := time.Second / 20 // groups, 20 per second
+	perTick := *rate / 20
+	if perTick < 1 {
+		perTick = 1
+	}
+	var wg sync.WaitGroup
+	switch kind {
+	case "local":
+		c := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{MaxIdleConns: 512, MaxIdleConnsPerHost: 512, IdleConnTimeout: 30 * time.Second}}
+		for time.Since(t0) < *dur {
+			by := map[string][]map[string]any{}
+			for i := 0; i < perTick; i++ {
+				tn := pick()
+				slot := r.IntN(4)
+				k := fmt.Sprintf("Bearer %s/%d", tn, slot)
+				by[k] = append(by[k], map[string]any{"stream": "egress.local", "tenantId": "forged-tenant", "podUid": "forged", "provenance": "enforced",
+					"payload": map[string]any{"decisionId": ev.RandHex(r, 24), "localClientPort": 1024 + r.IntN(60000), "event": "tunnel_open", "uid": 1000}})
+			}
+			for k, v := range by {
+				wg.Add(1)
+				go func(k string, v []map[string]any) {
+					defer wg.Done()
+					b, _ := json.Marshal(v)
+					req, _ := http.NewRequest("POST", *i7, bytes.NewReader(b))
+					req.Header.Set("Authorization", k)
+					resp, err := c.Do(req)
+					if err != nil {
+						fail.Add(int64(len(v)))
+						return
+					}
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+					sent.Add(int64(len(v)))
+				}(k, v)
+			}
+			time.Sleep(iv)
+		}
+	case "gitop", "mint":
+		leaf, stream := "/certs/lenny-git-mirror", "git.operation"
+		if kind == "mint" {
+			leaf, stream = "/certs/lenny-token-service", "credential.mint"
+		}
+		c := &http.Client{Transport: &http2.Transport{TLSClientConfig: ev.ClientTLS(leaf, "/certs/evidence-ca.pem", "lenny-evidence.lenny-system.svc")}, Timeout: 10 * time.Second}
+		_ = tls.VersionTLS12
+		for time.Since(t0) < *dur {
+			buf := make([]bytes.Buffer, len(repl))
+			n := make([]int, len(repl))
+			for i := 0; i < perTick; i++ {
+				tn := pick()
+				seqs[tn]++
+				var pl map[string]any
+				if kind == "gitop" {
+					pl = map[string]any{"operation": "fetch", "repository": "https://git.example.test/org/repo-" + ev.RandHex(r, 6), "refs": []map[string]string{{"ref": "refs/heads/main", "old": ev.RandHex(r, 40), "new": ev.RandHex(r, 40)}}, "commit": ev.RandHex(r, 40), "route": "mirror"}
+				} else {
+					pl = map[string]any{"podUid": ev.UUIDFrom(tn), "binding": "binding-" + ev.RandHex(r, 6), "definitionVersion": r.IntN(9), "provider": "github-app", "scope": "contents:read", "hosts": []string{"github.com"}, "expiry": time.Now().Add(time.Hour).Format(time.RFC3339), "tokenHash": ev.RandHex(r, 64)}
+				}
+				p, _ := json.Marshal(pl)
+				b, _ := json.Marshal(&ev.Rec{Stream: stream, SchemaVersion: 1, Incarnation: inc, Sequence: seqs[tn], ObservedAt: time.Now().UTC(), TenantId: tn, Provenance: "enforced", Payload: p})
+				x := ev.Replica(tn, len(repl))
+				buf[x].Write(b)
+				buf[x].WriteByte('\n')
+				n[x]++
+			}
+			for i := range repl {
+				if n[i] == 0 {
+					continue
+				}
+				wg.Add(1)
+				go func(u string, b []byte, n int) {
+					defer wg.Done()
+					resp, err := c.Post(u+"/v1/records", "application/x-ndjson", bytes.NewReader(b))
+					if err != nil {
+						fail.Add(int64(n))
+						return
+					}
+					io.Copy(io.Discard, resp.Body)
+					resp.Body.Close()
+					if resp.StatusCode == 200 {
+						sent.Add(int64(n))
+					} else {
+						fail.Add(int64(n))
+					}
+				}(repl[i], buf[i].Bytes(), n[i])
+			}
+			time.Sleep(iv)
+		}
+	}
+	wg.Wait()
+	exp := uint64(0)
+	for _, v := range seqs {
+		exp += v
+	}
+	fmt.Printf("gen2 %s: sent=%d failed=%d numbered=%d positions=%d incarnation=%s in %.0fs\n", kind, sent.Load(), fail.Load(), exp, len(seqs), inc, time.Since(t0).Seconds())
+}
+
+func hashHex(s string) string {
+	h := sha256Sum([]byte(s))
+	return h
+}
+
+// actpost sends sensitive records straight to one replica, as a producer whose tenant hashes or rehashes there.
+func cmdActPost(a []string) {
+	fs := flag.NewFlagSet("actpost", flag.ExitOnError)
+	u := fs.String("url", "https://198.19.0.31:8443", "")
+	tn := fs.String("tenant", "tk", "")
+	se := fs.String("session", "s1", "")
+	n := fs.Int("n", 100, "")
+	from := fs.Uint64("from", 1, "first sequence")
+	inc := fs.String("inc", "act", "")
+	fs.Parse(a)
+	c := &http.Client{Transport: &http2.Transport{TLSClientConfig: ev.ClientTLS("/certs/lenny-egress-authz", "/certs/evidence-ca.pem", "lenny-evidence.lenny-system.svc")}, Timeout: 20 * time.Second}
+	var b bytes.Buffer
+	for i := 0; i < *n; i++ {
+		p, _ := json.Marshal(map[string]any{"command": fmt.Sprintf("curl -H 'Authorization: Bearer SECRET%d' https://x/%d", i, i)})
+		l, _ := json.Marshal(&ev.Rec{Stream: "agent.activity", SchemaVersion: 1, Incarnation: *inc, Sequence: *from + uint64(i), ObservedAt: time.Now().UTC(), TenantId: *tn, SessionId: *se, Provenance: "self_reported", Payload: p})
+		b.Write(l)
+		b.WriteByte('\n')
+	}
+	r, err := c.Post(*u+"/v1/records", "application/x-ndjson", &b)
+	if err != nil {
+		log.Fatal(err)
+	}
+	io.Copy(io.Discard, r.Body)
+	r.Body.Close()
+	if r.StatusCode != 200 {
+		fmt.Println("actpost status", r.StatusCode)
+	}
+}
+
+// readprobe reads through the service with a chosen client identity, optionally from a named position, and reports what came back.
+func cmdReadProbe(a []string) {
+	fs := flag.NewFlagSet("readprobe", flag.ExitOnError)
+	u := fs.String("url", "https://198.19.0.31:8443", "")
+	leaf := fs.String("leaf", "/certs/lenny-evidence-consumer", "")
+	tn := fs.String("tenant", "", "")
+	st := fs.String("stream", "egress.decision", "")
+	pos := fs.String("pos", "", "a position key")
+	seq := fs.Uint64("seq", 0, "the last sequence already held at that position")
+	fs.Parse(a)
+	c := &http.Client{Transport: &http2.Transport{TLSClientConfig: ev.ClientTLS(*leaf, "/certs/evidence-ca.pem", "lenny-evidence.lenny-system.svc")}, Timeout: 60 * time.Second}
+	q := fmt.Sprintf("%s/v1/read?tenant=%s&stream=%s&limit=100000000", *u, url.QueryEscape(*tn), url.QueryEscape(*st))
+	if *pos != "" {
+		j, _ := json.Marshal(map[string]ev.Ranges{*pos: {{1, *seq}}})
+		q += "&from=" + url.QueryEscape(string(j))
+	}
+	r, err := c.Get(q)
+	if err != nil {
+		fmt.Println("refused at transport:", err)
+		return
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		b, _ := io.ReadAll(r.Body)
+		fmt.Printf("HTTP %d %s\n", r.StatusCode, strings.TrimSpace(string(b)))
+		return
+	}
+	sc := bufio.NewScanner(r.Body)
+	sc.Buffer(make([]byte, 1<<20), 64<<20)
+	n, below := 0, 0
+	first, last := uint64(0), uint64(0)
+	keys := map[string]int{}
+	for sc.Scan() {
+		var x struct {
+			Kind                                    string
+			Stream, Producer, Incarnation, TenantId string
+			Sequence                                uint64
+		}
+		json.Unmarshal(sc.Bytes(), &x)
+		if x.Kind == "cursor" {
+			continue
+		}
+		k := ev.PosKey(x.TenantId, x.Stream, x.Producer, x.Incarnation, "")
+		keys[k]++
+		n++
+		if k == *pos {
+			if first == 0 {
+				first = x.Sequence
+			}
+			last = x.Sequence
+			if x.Sequence <= *seq {
+				below++
+			}
+		}
+	}
+	fmt.Printf("readprobe: HTTP 200 records=%d positions=%d; at the named position first=%d last=%d, at or below the named sequence=%d\n", n, len(keys), first, last, below)
+}
+
+// sample prints the first record of a stream.
+func cmdSample(a []string) {
+	rows := loadRows(`where stream=$1 order by id limit 1`, a[0])
+	for _, r := range rows {
+		forEachRecord(r, func(l []byte, _ part) bool {
+			fmt.Println(string(l))
+			return false
+		})
+	}
+}

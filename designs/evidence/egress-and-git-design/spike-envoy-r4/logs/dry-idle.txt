@@ -1,0 +1,1 @@
+SUMMARY n=2 codes=map[200:2] end_reasons=map[EOF (clean close):2] ticks_total=0 ticks_per_tunnel=[0..0] connect_lat p50=0s p99=0s lifetime min=20.1s p50=20.1s max=20.11s elapsed=20.6s

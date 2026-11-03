@@ -1,0 +1,1124 @@
+// evidence: lenny-evidence as a separate service, per the design's "Evidence streams".
+//   POST /v1/records   asynchronous ingest, NDJSON envelopes
+//   POST /v1/commit    a regulated tenant's decision, acknowledged after a group commit to the write-ahead table
+// Producers authenticate with mTLS, and the verified SAN selects the streams they may write. Ingest overwrites `producer`.
+// Tenants hash to replicas. Per-tenant buffers, denials aggregated per host, a batch flushes at a size bound or at FLUSH.
+package main
+
+import (
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"owedc/ev"
+
+	alsv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/minio/minio-go/v7"
+	miniocreds "github.com/minio/minio-go/v7/pkg/credentials"
+	"google.golang.org/grpc"
+	grpccreds "google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
+)
+
+func envDur(k string, d time.Duration) time.Duration {
+	if x, err := time.ParseDuration(os.Getenv(k)); err == nil {
+		return x
+	}
+	return d
+}
+func envInt(k string, d int) int {
+	if x, err := strconv.Atoi(os.Getenv(k)); err == nil {
+		return x
+	}
+	return d
+}
+
+var (
+	replica     = envInt("REPLICA", 0)
+	writerInc   = fmt.Sprintf("w%d-%x", replica, time.Now().UnixMilli())
+	flushEvery  = envDur("FLUSH", 60*time.Second)
+	sizeBound   = envInt("SIZE_BOUND", 4<<20)
+	tenantBound = int64(envInt("TENANT_BOUND", 16<<20))
+	globalBound = int64(envInt("GLOBAL_BOUND", 1<<30))
+	workers     = envInt("WORKERS", 32)
+	walMax      = envInt("WAL_MAX", 1000)
+	walMode     = os.Getenv("WALMODE") // "" platform sentinel in one transaction, "pertenant" one SET LOCAL transaction per tenant
+	aggregate   = os.Getenv("NO_AGGREGATE") == ""
+	chunkMode   = os.Getenv("CHUNK") != "" // sequenceEnd: one session's payloads encrypted together, per batch
+	mc          *minio.Client
+	bucket      = "evidence"
+	pg          *pgxpool.Pool
+
+	// SAN -> streams. The token service and mirror rows follow the design's table.
+	allow = map[string]map[string]bool{
+		"lenny-egress-authz.lenny-system.svc":  {"egress.decision": true, "egress.tunnel": true, "egress.local": true, "git.operation": true, "agent.activity": true},
+		"lenny-git-mirror.lenny-system.svc":    {"git.operation": true},
+		"lenny-token-service.lenny-system.svc": {"credential.mint": true},
+		"lenny-egress.lenny-system.svc":        {"egress.accesslog": true},
+	}
+	encStreams = map[string]bool{"agent.activity": true}
+
+	nRecords, nBytesIn, nBatches, nBytesOut, nRawOut, nPutFail, nGap, nAggIn, nAggOut, nDroppedT, nDroppedG, nForbidden, nWalOK, nWalFail, nDrained atomic.Int64
+	buffered                                                                                                                                     atomic.Int64
+)
+
+type key struct{ tenant, stream, producer, incarnation string }
+
+type aggr struct {
+	first        []byte
+	rec          ev.Rec
+	count        int
+	seqFirst     uint64
+	seqLast      uint64
+	ranges       [][2]uint64 // the sequences this aggregate covers, so a loss between them stays detectable
+	first1, last time.Time
+}
+
+type bat struct {
+	key
+	recs      [][]byte
+	size      int
+	opened    time.Time
+	seqF      uint64
+	seqL      uint64
+	tF, tL    time.Time
+	aggs      map[string]*aggr
+	walIDs    []int64
+	chunks    map[string]*chunk
+	nRec      int
+	hourLabel string
+}
+
+// chunk gathers one session's payloads in a batch. They compress before encryption.
+type chunk struct {
+	first, last uint64
+	tF          time.Time
+	rec         ev.Rec
+	buf         bytes.Buffer
+}
+
+type tenant struct {
+	mu       sync.Mutex
+	name     string
+	bats     map[key]*bat
+	bytes    int64
+	inflight bool
+	drops    map[key]*[2]uint64 // first and last dropped sequence, to become a gap record
+	queued   []*bat
+}
+
+const shards = 64
+
+var (
+	tmu  [shards]sync.RWMutex
+	tmap [shards]map[string]*tenant
+)
+
+func getT(name string) *tenant {
+	s := ev.Hash(name) % shards
+	tmu[s].RLock()
+	t := tmap[s][name]
+	tmu[s].RUnlock()
+	if t != nil {
+		return t
+	}
+	tmu[s].Lock()
+	defer tmu[s].Unlock()
+	if t = tmap[s][name]; t == nil {
+		t = &tenant{name: name, bats: map[key]*bat{}, drops: map[key]*[2]uint64{}}
+		tmap[s][name] = t
+	}
+	return t
+}
+
+func eachT(f func(*tenant)) {
+	for s := 0; s < shards; s++ {
+		tmu[s].RLock()
+		ts := make([]*tenant, 0, len(tmap[s]))
+		for _, t := range tmap[s] {
+			ts = append(ts, t)
+		}
+		tmu[s].RUnlock()
+		for _, t := range ts {
+			f(t)
+		}
+	}
+}
+
+// ---- session keys
+var (
+	keyMu  sync.Mutex
+	keyMap = map[string][]byte{}
+)
+
+func sessionKey(ctx context.Context, tenantID, session string) (string, []byte, error) {
+	ref := "k/" + tenantID + "/" + session
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	if k := keyMap[ref]; k != nil {
+		return ref, k, nil
+	}
+	k := make([]byte, 32)
+	rand.Read(k)
+	tx, err := pg.Begin(ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `select set_config('app.current_tenant','__all__',true)`); err != nil {
+		return "", nil, err
+	}
+	var out []byte
+	err = tx.QueryRow(ctx, `insert into evidence_session_keys(key_ref,tenant_id,session_id,key) values($1,$2,$3,$4) on conflict(key_ref) do update set key_ref=excluded.key_ref returning key`, ref, tenantID, session, k).Scan(&out)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", nil, err
+	}
+	keyMap[ref] = out
+	return ref, out, nil
+}
+
+func encrypt(k, plain []byte) []byte {
+	b, _ := aes.NewCipher(k)
+	g, _ := cipher.NewGCM(b)
+	n := make([]byte, g.NonceSize())
+	rand.Read(n)
+	return g.Seal(n, n, plain, nil)
+}
+
+// ---- ingest
+func (t *tenant) add(r *ev.Rec, line []byte, walID int64) {
+	k := key{t.name, r.Stream, r.Producer, r.Incarnation}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	nRecords.Add(1)
+	if walID == 0 && (t.bytes >= tenantBound || buffered.Load() >= globalBound) {
+		if buffered.Load() >= globalBound {
+			nDroppedG.Add(1)
+		} else {
+			nDroppedT.Add(1)
+		}
+		d := t.drops[k]
+		if d == nil {
+			d = &[2]uint64{r.Sequence, r.Sequence}
+			t.drops[k] = d
+		}
+		d[1] = r.Sequence
+		return
+	}
+	b := t.bats[k]
+	if b == nil {
+		b = &bat{key: k, opened: time.Now(), seqF: r.Sequence, tF: r.ObservedAt, hourLabel: ev.Hour(r.ObservedAt)}
+		t.bats[k] = b
+	}
+	if h := ev.Hour(r.ObservedAt); h != b.hourLabel && len(b.recs)+len(b.aggs) > 0 {
+		// a batch stays within one hour of observation
+		t.detach(b)
+		b = &bat{key: k, opened: time.Now(), seqF: r.Sequence, tF: r.ObservedAt, hourLabel: h}
+		t.bats[k] = b
+	}
+	if r.Sequence < b.seqF {
+		b.seqF = r.Sequence
+	}
+	if r.Sequence > b.seqL {
+		b.seqL = r.Sequence
+	}
+	if b.tF.After(r.ObservedAt) {
+		b.tF = r.ObservedAt
+	}
+	if r.ObservedAt.After(b.tL) {
+		b.tL = r.ObservedAt
+	}
+	if walID != 0 {
+		b.walIDs = append(b.walIDs, walID)
+	}
+	if chunkMode && encStreams[r.Stream] {
+		if b.chunks == nil {
+			b.chunks = map[string]*chunk{}
+		}
+		c := b.chunks[r.SessionId]
+		if c == nil {
+			c = &chunk{first: r.Sequence, tF: r.ObservedAt, rec: *r}
+			b.chunks[r.SessionId] = c
+		}
+		c.last = r.Sequence
+		c.buf.Write(r.Payload)
+		c.buf.WriteByte('\n')
+		b.size += len(r.Payload) + 1
+		t.bytes += int64(len(r.Payload) + 1)
+		buffered.Add(int64(len(r.Payload) + 1))
+		return
+	}
+	// Denials aggregate to a count per host within a batch: the first is kept whole.
+	if aggregate && r.Stream == "egress.decision" && walID == 0 {
+		var p struct {
+			Outcome   string `json:"outcome"`
+			Authority string `json:"authority"`
+		}
+		json.Unmarshal(r.Payload, &p)
+		if p.Outcome == "deny" {
+			if b.aggs == nil {
+				b.aggs = map[string]*aggr{}
+			}
+			if a := b.aggs[p.Authority]; a != nil {
+				a.count++
+				a.seqLast = r.Sequence
+				a.last = r.ObservedAt
+				if n := len(a.ranges); n > 0 && a.ranges[n-1][1]+1 == r.Sequence {
+					a.ranges[n-1][1] = r.Sequence
+				} else {
+					a.ranges = append(a.ranges, [2]uint64{r.Sequence, r.Sequence})
+				}
+				nAggIn.Add(1)
+				return
+			}
+			c := append([]byte(nil), line...)
+			b.aggs[p.Authority] = &aggr{first: c, rec: *r, count: 1, seqFirst: r.Sequence, seqLast: r.Sequence, first1: r.ObservedAt, last: r.ObservedAt}
+			b.size += len(line)
+			t.bytes += int64(len(line))
+			buffered.Add(int64(len(line)))
+			return
+		}
+	}
+	c := append([]byte(nil), line...)
+	b.recs = append(b.recs, c)
+	b.size += len(c)
+	t.bytes += int64(len(c))
+	buffered.Add(int64(len(c)))
+	if b.size >= sizeBound {
+		t.detach(b)
+	}
+}
+
+func (t *tenant) detach(b *bat) {
+	delete(t.bats, b.key)
+	t.queued = append(t.queued, b)
+}
+
+// ingest decodes each line, overwrites producer from the verified SAN, and applies the per-session key when the stream has one.
+func prep(ctx context.Context, san string, line []byte) (*ev.Rec, []byte, error) {
+	var r ev.Rec
+	if err := json.Unmarshal(line, &r); err != nil {
+		return nil, nil, err
+	}
+	r.Producer = san
+	if encStreams[r.Stream] && !chunkMode {
+		ref, k, err := sessionKey(ctx, r.TenantId, r.SessionId)
+		if err != nil {
+			return nil, nil, err
+		}
+		ct := encrypt(k, r.Payload)
+		r.PayloadKeyRef = ref
+		r.Payload, _ = json.Marshal(ct)
+	}
+	out, err := json.Marshal(&r)
+	return &r, out, err
+}
+
+func sanOf(req *http.Request) string {
+	if req.TLS == nil || len(req.TLS.PeerCertificates) == 0 || len(req.TLS.PeerCertificates[0].DNSNames) == 0 {
+		return ""
+	}
+	return req.TLS.PeerCertificates[0].DNSNames[0]
+}
+
+func handleRecords(w http.ResponseWriter, req *http.Request) {
+	san := sanOf(req)
+	streams := allow[san]
+	if streams == nil {
+		nForbidden.Add(1)
+		http.Error(w, "client not allowed", 403)
+		return
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, "read", 400)
+		return
+	}
+	nBytesIn.Add(int64(len(body)))
+	var refused int
+	for len(body) > 0 {
+		i := bytes.IndexByte(body, '\n')
+		var line []byte
+		if i < 0 {
+			line, body = body, nil
+		} else {
+			line, body = body[:i], body[i+1:]
+		}
+		if len(line) == 0 {
+			continue
+		}
+		r, out, err := prep(req.Context(), san, line)
+		if err != nil {
+			refused++
+			continue
+		}
+		if !streams[r.Stream] {
+			refused++
+			nForbidden.Add(1)
+			continue
+		}
+		if san == "lenny-git-mirror.lenny-system.svc" && !mirrorRoutes[r.TenantId] {
+			refused++
+			nForbidden.Add(1)
+			continue
+		}
+		getT(r.TenantId).add(r, out, 0)
+	}
+	if refused > 0 {
+		w.WriteHeader(403)
+		fmt.Fprintf(w, "refused %d records\n", refused)
+		return
+	}
+	fmt.Fprintln(w, "ok")
+}
+
+var mirrorRoutes = map[string]bool{}
+
+// ---- flush workers. One batch per tenant in flight, so a busy tenant cannot occupy every worker.
+var jobs = make(chan *job, 4096)
+
+type job struct {
+	t *tenant
+	b *bat
+}
+
+func flusher() {
+	for range time.Tick(250 * time.Millisecond) {
+		now := time.Now()
+		eachT(func(t *tenant) {
+			t.mu.Lock()
+			for _, b := range t.bats {
+				if now.Sub(b.opened) >= flushEvery {
+					t.detach(b)
+				}
+			}
+			for k, d := range t.drops {
+				gapRecord(t, k, d)
+				delete(t.drops, k)
+			}
+			var j *job
+			if !t.inflight && len(t.queued) > 0 {
+				j = &job{t, t.queued[0]}
+				t.queued = t.queued[1:]
+				t.inflight = true
+			}
+			t.mu.Unlock()
+			if j != nil {
+				jobs <- j
+			}
+		})
+	}
+}
+
+// gapRecord writes what ingest dropped past the tenant's bound. Caller holds t.mu.
+func gapRecord(t *tenant, k key, d *[2]uint64) {
+	nGap.Add(1)
+	pl, _ := json.Marshal(map[string]any{"from": d[0], "to": d[1], "reason": "ingest_tenant_bound"})
+	r := ev.Rec{Stream: k.stream, SchemaVersion: 1, Producer: k.producer, Incarnation: k.incarnation, Sequence: d[0], SequenceEnd: d[1], Kind: "gap", ObservedAt: time.Now().UTC(), TenantId: t.name, Provenance: "enforced", Payload: pl}
+	line, _ := json.Marshal(&r)
+	b := t.bats[k]
+	if b == nil {
+		b = &bat{key: k, opened: time.Now(), seqF: d[0], tF: r.ObservedAt, hourLabel: ev.Hour(r.ObservedAt)}
+		t.bats[k] = b
+	}
+	if d[0] < b.seqF {
+		b.seqF = d[0]
+	}
+	if d[1] > b.seqL {
+		b.seqL = d[1]
+	}
+	b.tL = r.ObservedAt
+	b.recs = append(b.recs, line)
+	b.size += len(line)
+	t.bytes += int64(len(line))
+	buffered.Add(int64(len(line)))
+}
+
+func worker(ctx context.Context) {
+	var z bytes.Buffer
+	for j := range jobs {
+		flushBatch(ctx, j, &z)
+		j.t.mu.Lock()
+		j.t.inflight = false
+		j.t.mu.Unlock()
+	}
+}
+
+type manRow struct {
+	batchID, tenant, stream, hour, producer, inc, key, digest string
+	seqF, seqL                                                int64
+	tF, tL                                                    time.Time
+	bytes, raw                                                int64
+	recs                                                      int
+	walIDs                                                    []int64
+	done                                                      chan error
+}
+
+var manCh = make(chan *manRow, 8192)
+
+func flushBatch(ctx context.Context, j *job, z *bytes.Buffer) {
+	b := j.b
+	z.Reset()
+	g, _ := gzip.NewWriterLevel(z, gzip.DefaultCompression)
+	raw := 0
+	nrec := 0
+	for _, r := range b.recs {
+		g.Write(r)
+		g.Write([]byte{'\n'})
+		raw += len(r) + 1
+		nrec++
+	}
+	// chunks: compress, then encrypt under the session's key
+	sess := make([]string, 0, len(b.chunks))
+	for k := range b.chunks {
+		sess = append(sess, k)
+	}
+	sort.Strings(sess)
+	for _, k := range sess {
+		c := b.chunks[k]
+		ref, key, err := sessionKey(ctx, b.tenant, k)
+		if err != nil {
+			log.Printf("chunk key: %v", err)
+			continue
+		}
+		var cz bytes.Buffer
+		cg := gzip.NewWriter(&cz)
+		cg.Write(c.buf.Bytes())
+		cg.Close()
+		r := c.rec
+		r.Producer, r.Sequence, r.SequenceEnd, r.PayloadKeyRef = b.producer, c.first, c.last, ref
+		r.Payload, _ = json.Marshal(encrypt(key, cz.Bytes()))
+		line, _ := json.Marshal(&r)
+		g.Write(line)
+		g.Write([]byte{'\n'})
+		raw += len(line) + 1
+		nrec++
+	}
+	// aggregates in a stable order
+	keys := make([]string, 0, len(b.aggs))
+	for k := range b.aggs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		a := b.aggs[k]
+		g.Write(a.first)
+		g.Write([]byte{'\n'})
+		raw += len(a.first) + 1
+		nrec++
+		if a.count > 1 {
+			var p map[string]any
+			json.Unmarshal(a.rec.Payload, &p)
+			pl, _ := json.Marshal(map[string]any{"authority": p["authority"], "count": a.count, "firstDecisionId": p["decisionId"], "firstAt": a.first1, "lastAt": a.last, "seqRanges": a.ranges})
+			r := a.rec
+			r.Kind, r.Sequence, r.SequenceEnd, r.ObservedAt, r.Payload = "denial_aggregate", a.seqFirst, a.seqLast, a.last, pl
+			line, _ := json.Marshal(&r)
+			g.Write(line)
+			g.Write([]byte{'\n'})
+			raw += len(line) + 1
+			nrec++
+			nAggOut.Add(1)
+		}
+	}
+	g.Close()
+	d := sha256.Sum256(z.Bytes())
+	dg := hex.EncodeToString(d[:])
+	id := fmt.Sprintf("%s-%d-%s", writerInc, b.seqF, dg[:16])
+	objKey := fmt.Sprintf("%s/evidence/%s/%s/%s.gz", b.tenant, b.stream, b.hourLabel, id)
+	for {
+		c, cancel := context.WithTimeout(ctx, 10*time.Second)
+		_, err := mc.PutObject(c, bucket, objKey, bytes.NewReader(z.Bytes()), int64(z.Len()), minio.PutObjectOptions{ContentType: "application/gzip", DisableMultipart: true, DisableContentSha256: true})
+		cancel()
+		if err == nil {
+			break
+		}
+		nPutFail.Add(1)
+		time.Sleep(500 * time.Millisecond)
+	}
+	m := &manRow{batchID: id, tenant: b.tenant, stream: b.stream, hour: b.hourLabel, producer: b.producer, inc: b.incarnation, key: objKey, digest: dg, seqF: int64(b.seqF), seqL: int64(b.seqL), tF: b.tF, tL: b.tL, bytes: int64(z.Len()), raw: int64(raw), recs: nrec, walIDs: b.walIDs, done: make(chan error, 1)}
+	for {
+		manCh <- m
+		err := <-m.done
+		if err == nil {
+			break
+		}
+		log.Printf("manifest: %v", err)
+		time.Sleep(500 * time.Millisecond)
+		m.done = make(chan error, 1)
+	}
+	nBatches.Add(1)
+	nBytesOut.Add(int64(z.Len()))
+	nRawOut.Add(int64(raw))
+	j.t.mu.Lock()
+	j.t.bytes -= int64(b.size)
+	j.t.mu.Unlock()
+	buffered.Add(-int64(b.size))
+}
+
+// manifestWriter puts batches' rows in one transaction, with the write-ahead rows they drained.
+func manifestWriter(ctx context.Context) {
+	for {
+		first := <-manCh
+		rows := []*manRow{first}
+		t := time.After(50 * time.Millisecond)
+	fill:
+		for len(rows) < 500 {
+			select {
+			case m := <-manCh:
+				rows = append(rows, m)
+			case <-t:
+				break fill
+			}
+		}
+		err := writeManifest(ctx, rows)
+		for _, m := range rows {
+			m.done <- err
+		}
+	}
+}
+
+func writeManifest(ctx context.Context, rows []*manRow) error {
+	n := len(rows)
+	a := make([][]string, 8)
+	for i := range a {
+		a[i] = make([]string, n)
+	}
+	seqF, seqL, by, raw := make([]int64, n), make([]int64, n), make([]int64, n), make([]int64, n)
+	recs := make([]int32, n)
+	tF, tL := make([]time.Time, n), make([]time.Time, n)
+	var wal []int64
+	for i, m := range rows {
+		a[0][i], a[1][i], a[2][i], a[3][i], a[4][i], a[5][i], a[6][i], a[7][i] = m.batchID, m.tenant, m.stream, m.hour, m.producer, m.inc, m.key, m.digest
+		seqF[i], seqL[i], by[i], raw[i], recs[i], tF[i], tL[i] = m.seqF, m.seqL, m.bytes, m.raw, int32(m.recs), m.tF, m.tL
+		wal = append(wal, m.walIDs...)
+	}
+	c, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	tx, err := pg.Begin(c)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(c)
+	if _, err := tx.Exec(c, `select set_config('app.current_tenant','__all__',true)`); err != nil {
+		return err
+	}
+	_, err = tx.Exec(c, `insert into manifest(batch_id,tenant_id,stream,hour,producer,incarnation,object_key,digest,seq_first,seq_last,bytes,raw_bytes,records,time_first,time_last,writer)
+	 select b,t,s,h,p,i,k,d,sf,sl,by,r,n,tf,tl,$16 from unnest($1::text[],$2::text[],$3::text[],$4::text[],$5::text[],$6::text[],$7::text[],$8::text[],$9::bigint[],$10::bigint[],$11::bigint[],$12::bigint[],$13::int[],$14::timestamptz[],$15::timestamptz[]) as x(b,t,s,h,p,i,k,d,sf,sl,by,r,n,tf,tl)`,
+		a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], seqF, seqL, by, raw, recs, tF, tL, writerInc)
+	if err != nil {
+		return err
+	}
+	if len(wal) > 0 {
+		if _, err := tx.Exec(c, `delete from evidence_wal where id = any($1::bigint[])`, wal); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(c)
+}
+
+// ---- the regulated path: group commit to the write-ahead table through the pooler
+type walItem struct {
+	tenant string
+	rec    string
+	done   chan error
+}
+
+var walCh = make(chan walItem, 100000)
+
+var (
+	latMu                sync.Mutex
+	groupSizes, groupDur []int64
+)
+
+func walLoop(ctx context.Context) {
+	for {
+		first := <-walCh
+		batch := []walItem{first}
+	fill:
+		for len(batch) < walMax {
+			select {
+			case it := <-walCh:
+				batch = append(batch, it)
+			default:
+				break fill
+			}
+		}
+		t0 := time.Now()
+		var err error
+		if walMode == "pertenant" {
+			err = commitPerTenant(ctx, batch)
+		} else {
+			err = commitAll(ctx, batch)
+		}
+		d := time.Since(t0)
+		latMu.Lock()
+		groupSizes = append(groupSizes, int64(len(batch)))
+		groupDur = append(groupDur, d.Microseconds())
+		latMu.Unlock()
+		if err != nil {
+			log.Printf("wal: %v", err)
+			nWalFail.Add(int64(len(batch)))
+		} else {
+			nWalOK.Add(int64(len(batch)))
+		}
+		for _, it := range batch {
+			it.done <- err
+		}
+	}
+}
+
+func commitAll(ctx context.Context, batch []walItem) error {
+	ten, rec := make([]string, len(batch)), make([]string, len(batch))
+	for i, it := range batch {
+		ten[i], rec[i] = it.tenant, it.rec
+	}
+	c, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	// BEGIN, the sentinel, the insert, and COMMIT go as one pipeline, so a group costs one round trip to the pooler.
+	var b pgx.Batch
+	b.Queue(`begin`)
+	b.Queue(`select set_config('app.current_tenant','__all__',true)`)
+	b.Queue(`insert into evidence_wal(replica,tenant_id,rec) select $1::int,t,r from unnest($2::text[],$3::text[]) as x(t,r)`, replica, ten, rec)
+	b.Queue(`commit`)
+	br := pg.SendBatch(c, &b)
+	for i := 0; i < 4; i++ {
+		if _, err := br.Exec(); err != nil {
+			br.Close()
+			return err
+		}
+	}
+	return br.Close()
+}
+
+// commitPerTenant is the alternative a table under tenant RLS forces if the writer keeps a concrete tenant context:
+// one transaction per tenant in the group, concurrent, bounded by the pool.
+func commitPerTenant(ctx context.Context, batch []walItem) error {
+	by := map[string][]string{}
+	for _, it := range batch {
+		by[it.tenant] = append(by[it.tenant], it.rec)
+	}
+	c, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	var firstErr atomic.Value
+	sem := make(chan struct{}, 16)
+	for t, recs := range by {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(t string, recs []string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			var b pgx.Batch
+			b.Queue(`begin`)
+			b.Queue(`select set_config('app.current_tenant',$1,true)`, t)
+			b.Queue(`insert into evidence_wal(replica,tenant_id,rec) select $1::int,$2,r from unnest($3::text[]) as x(r)`, replica, t, recs)
+			b.Queue(`commit`)
+			br := pg.SendBatch(c, &b)
+			for i := 0; i < 4; i++ {
+				if _, err := br.Exec(); err != nil {
+					firstErr.Store(err)
+					break
+				}
+			}
+			br.Close()
+		}(t, recs)
+	}
+	wg.Wait()
+	if e := firstErr.Load(); e != nil {
+		return e.(error)
+	}
+	return nil
+}
+
+func handleCommit(w http.ResponseWriter, req *http.Request) {
+	san := sanOf(req)
+	if !allow[san]["egress.decision"] {
+		nForbidden.Add(1)
+		http.Error(w, "client not allowed", 403)
+		return
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		http.Error(w, "read", 400)
+		return
+	}
+	r, out, err := prep(req.Context(), san, body)
+	if err != nil {
+		http.Error(w, "bad record", 400)
+		return
+	}
+	it := walItem{r.TenantId, string(out), make(chan error, 1)}
+	select {
+	case walCh <- it:
+	default:
+		http.Error(w, "queue full", 503)
+		return
+	}
+	select {
+	case err := <-it.done:
+		if err != nil {
+			http.Error(w, "commit failed", 503)
+			return
+		}
+		w.WriteHeader(200)
+	case <-req.Context().Done():
+	}
+}
+
+// drainLoop moves committed write-ahead rows into the normal batch path. Their rows are deleted in the same
+// transaction as the manifest row, so a crash re-reads them rather than losing them.
+func drainLoop(ctx context.Context) {
+	var hw int64
+	for range time.Tick(envDur("DRAIN_EVERY", 5*time.Second)) {
+		for {
+			c, cancel := context.WithTimeout(ctx, 10*time.Second)
+			tx, err := pg.Begin(c)
+			if err != nil {
+				cancel()
+				break
+			}
+			tx.Exec(c, `select set_config('app.current_tenant','__all__',true)`)
+			rows, err := tx.Query(c, `select id, rec from evidence_wal where replica=$1 and id>$2 order by id limit 20000`, replica, hw)
+			n := 0
+			if err == nil {
+				for rows.Next() {
+					var id int64
+					var s string
+					if rows.Scan(&id, &s) == nil {
+						var r ev.Rec
+						if json.Unmarshal([]byte(s), &r) == nil {
+							getT(r.TenantId).add(&r, []byte(s), id)
+							nDrained.Add(1)
+						}
+						hw = id
+						n++
+					}
+				}
+				rows.Close()
+			}
+			tx.Rollback(c)
+			cancel()
+			if n < 20000 {
+				break
+			}
+		}
+	}
+}
+
+// ---- anchors: each interval, a digest of the tenant's new manifest rows goes into the chain as one event.
+var (
+	chainMu                    sync.Mutex
+	nReplicas                  = envInt("REPLICAS_N", 2)
+	anchorEvents, anchorMicros atomic.Int64
+)
+
+func anchorLoop(ctx context.Context) {
+	for range time.Tick(envDur("ANCHOR", 300*time.Second)) {
+		if err := anchorOnce(ctx); err != nil {
+			log.Printf("anchor: %v", err)
+		}
+	}
+}
+
+func anchorOnce(ctx context.Context) error {
+	t0 := time.Now()
+	c, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	tx, err := pg.Begin(c)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(c)
+	if _, err := tx.Exec(c, `select set_config('app.current_tenant','__all__',true)`); err != nil {
+		return err
+	}
+	rows, err := tx.Query(c, `select tenant_id, id, batch_id, digest from manifest where not anchored order by tenant_id, id limit 400000`)
+	if err != nil {
+		return err
+	}
+	type it struct{ id, dg string }
+	by := map[string][]it{}
+	var ids []int64
+	for rows.Next() {
+		var t, b, d string
+		var id int64
+		if err := rows.Scan(&t, &id, &b, &d); err != nil {
+			rows.Close()
+			return err
+		}
+		if ev.Replica(t, nReplicas) != replica {
+			continue
+		}
+		by[t] = append(by[t], it{b, d})
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(by) == 0 {
+		return nil
+	}
+	chainMu.Lock()
+	defer chainMu.Unlock()
+	names := make([]string, 0, len(by))
+	for t := range by {
+		names = append(names, t)
+	}
+	type st struct {
+		seq  int64
+		hash string
+	}
+	head := map[string]st{}
+	hr, err := tx.Query(c, `select distinct on (tenant_id) tenant_id, seq, hash from audit_chain where tenant_id = any($1::text[]) order by tenant_id, seq desc`, names)
+	if err != nil {
+		return err
+	}
+	for hr.Next() {
+		var t string
+		var x st
+		if err := hr.Scan(&t, &x.seq, &x.hash); err != nil {
+			hr.Close()
+			return err
+		}
+		head[t] = x
+	}
+	hr.Close()
+	var tn, dg, pv, hs, de []string
+	var sq []int64
+	for t, items := range by {
+		h := sha256.New()
+		var bs []string
+		for _, x := range items {
+			fmt.Fprintf(h, "%s %s\n", x.id, x.dg)
+			bs = append(bs, x.id)
+		}
+		d := hex.EncodeToString(h.Sum(nil))
+		cur := head[t]
+		x := sha256.Sum256([]byte(cur.hash + "|manifest|" + d))
+		hash := hex.EncodeToString(x[:])
+		detail, _ := json.Marshal(map[string]any{"batches": bs})
+		tn, dg, pv, hs, de, sq = append(tn, t), append(dg, d), append(pv, cur.hash), append(hs, hash), append(de, string(detail)), append(sq, cur.seq+1)
+	}
+	if _, err := tx.Exec(c, `insert into audit_chain(tenant_id,seq,kind,digest,prev,hash,detail) select t,s,'manifest',d,p,h,x::jsonb from unnest($1::text[],$2::bigint[],$3::text[],$4::text[],$5::text[],$6::text[]) as y(t,s,d,p,h,x)`, tn, sq, dg, pv, hs, de); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(c, `update manifest set anchored=true where id = any($1::bigint[])`, ids); err != nil {
+		return err
+	}
+	if err := tx.Commit(c); err != nil {
+		return err
+	}
+	anchorEvents.Add(int64(len(tn)))
+	anchorMicros.Add(time.Since(t0).Microseconds())
+	return nil
+}
+
+// ---- egress.accesslog: Envoy calls lenny-evidence directly under its own identity. Envoy's stream cannot hash per tenant,
+// so the replica that receives a record writes it, under a position that names that replica's incarnation.
+type alsSrv struct {
+	alsv3.UnimplementedAccessLogServiceServer
+}
+
+var (
+	alsSeqMu sync.Mutex
+	alsSeq   = map[string]uint64{}
+	nAlsIn, nAlsForeign atomic.Int64
+	alsStop = func() {}
+)
+
+func (alsSrv) StreamAccessLogs(st grpc.ClientStreamingServer[alsv3.StreamAccessLogsMessage, alsv3.StreamAccessLogsResponse]) error {
+	san := ""
+	if p, ok := peer.FromContext(st.Context()); ok {
+		if ti, ok := p.AuthInfo.(grpccreds.TLSInfo); ok && len(ti.State.PeerCertificates) > 0 && len(ti.State.PeerCertificates[0].DNSNames) > 0 {
+			san = ti.State.PeerCertificates[0].DNSNames[0]
+		}
+	}
+	if !allow[san]["egress.accesslog"] {
+		nForbidden.Add(1)
+		return fmt.Errorf("client not allowed")
+	}
+	for {
+		m, err := st.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		for _, e := range m.GetHttpLogs().GetLogEntry() {
+			cp := e.GetCommonProperties()
+			fm := cp.GetMetadata().GetFilterMetadata()["envoy.filters.http.ext_authz"].GetFields()
+			tn := fm["tenant"].GetStringValue()
+			if tn == "" {
+				continue
+			}
+			nAlsIn.Add(1)
+			if ev.Replica(tn, nReplicas) != replica {
+				nAlsForeign.Add(1)
+			}
+			alsSeqMu.Lock()
+			alsSeq[tn]++
+			sq := alsSeq[tn]
+			alsSeqMu.Unlock()
+			up, src := cp.GetUpstreamRemoteAddress().GetSocketAddress(), cp.GetUpstreamLocalAddress().GetSocketAddress()
+			start := cp.GetStartTime().AsTime()
+			pl := ev.TunnelPayload(fm["decision_id"].GetStringValue(), up.GetAddress(), src.GetAddress(), src.GetPortValue(), start, start.Add(cp.GetTimeToLastDownstreamTxByte().AsDuration()), cp.GetUpstreamWireBytesSent(), cp.GetUpstreamWireBytesReceived(), cp.GetAccessLogType().String())
+			r := &ev.Rec{Stream: "egress.accesslog", SchemaVersion: 1, Producer: san, Incarnation: writerInc, Sequence: sq, ObservedAt: time.Now().UTC(), TenantId: tn, Provenance: "enforced", Payload: pl}
+			line, _ := json.Marshal(r)
+			getT(tn).add(r, line, 0)
+		}
+	}
+}
+
+func pct(v []int64, p float64) int64 {
+	if len(v) == 0 {
+		return 0
+	}
+	x := append([]int64(nil), v...)
+	sort.Slice(x, func(i, j int) bool { return x[i] < x[j] })
+	return x[int(float64(len(x)-1)*p)]
+}
+
+func stats(w http.ResponseWriter, _ *http.Request) {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	tenants := 0
+	eachT(func(*tenant) { tenants++ })
+	latMu.Lock()
+	gp50, gp99, dp50, dp99 := pct(groupSizes, .5), pct(groupSizes, .99), pct(groupDur, .5), pct(groupDur, .99)
+	gn := len(groupSizes)
+	latMu.Unlock()
+	json.NewEncoder(w).Encode(map[string]any{"replica": replica, "writer": writerInc, "tenants": tenants, "records": nRecords.Load(), "bytesIn": nBytesIn.Load(), "batches": nBatches.Load(), "bytesOut": nBytesOut.Load(), "rawOut": nRawOut.Load(), "buffered": buffered.Load(), "putFail": nPutFail.Load(), "gapRecords": nGap.Load(), "aggregatedIn": nAggIn.Load(), "aggregatesOut": nAggOut.Load(), "droppedTenant": nDroppedT.Load(), "droppedGlobal": nDroppedG.Load(), "forbidden": nForbidden.Load(), "walOK": nWalOK.Load(), "walFail": nWalFail.Load(), "drained": nDrained.Load(), "groups": gn, "groupSizeP50": gp50, "groupSizeP99": gp99, "groupUsP50": dp50, "groupUsP99": dp99, "accesslogIn": nAlsIn.Load(), "accesslogForeign": nAlsForeign.Load(), "anchorEvents": anchorEvents.Load(), "anchorMicros": anchorMicros.Load(), "heapInuse": ms.HeapInuse, "goroutines": runtime.NumGoroutine()})
+}
+
+func flushAll() {
+	eachT(func(t *tenant) {
+		t.mu.Lock()
+		for _, b := range t.bats {
+			t.detach(b)
+		}
+		for k, d := range t.drops {
+			gapRecord(t, k, d)
+			delete(t.drops, k)
+		}
+		for _, b := range t.bats {
+			t.detach(b)
+		}
+		t.mu.Unlock()
+	})
+}
+
+func main() {
+	log.SetFlags(log.Lmicroseconds)
+	for s := 0; s < shards; s++ {
+		tmap[s] = map[string]*tenant{}
+	}
+	for _, t := range strings.Split(os.Getenv("MIRROR_TENANTS"), ",") {
+		if t != "" {
+			mirrorRoutes[t] = true
+		}
+	}
+	ctx := context.Background()
+	var err error
+	mc, err = minio.New(os.Getenv("MINIO"), &minio.Options{Creds: miniocreds.NewStaticV4("minioadmin", "minioadmin", "")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pg = ev.PGPool(ctx, os.Getenv("PG"), int32(envInt("PGCONNS", 16)))
+	go walLoop(ctx)
+	if walMode == "" || walMode == "pertenant" {
+		go drainLoop(ctx)
+	}
+	go manifestWriter(ctx)
+	go flusher()
+	go anchorLoop(ctx)
+	for i := 0; i < workers; i++ {
+		go worker(ctx)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/records", handleRecords)
+	mux.HandleFunc("/v1/commit", handleCommit)
+	caB, err := os.ReadFile(os.Getenv("CA"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	p := x509.NewCertPool()
+	p.AppendCertsFromPEM(caB)
+	if _, err := pg.Exec(ctx, `insert into evidence_writers(writer) values($1)`, writerInc); err != nil {
+		log.Printf("writer row: %v", err)
+	}
+	crt, err := tls.LoadX509KeyPair(os.Getenv("LEAF")+"/tls.crt", os.Getenv("LEAF")+"/tls.key")
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() {
+		l, err := net.Listen("tcp", ":8444")
+		if err != nil {
+			log.Fatal(err)
+		}
+		g := grpc.NewServer(grpc.Creds(grpccreds.NewTLS(&tls.Config{Certificates: []tls.Certificate{crt}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: p, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}})))
+		alsv3.RegisterAccessLogServiceServer(g, alsSrv{})
+		alsStop = g.Stop
+		log.Print(g.Serve(l))
+	}()
+	srv := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: p, MinVersion: tls.VersionTLS12}, ErrorLog: log.New(io.Discard, "", 0)}
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/stats", stats)
+		m.HandleFunc("/flush", func(w http.ResponseWriter, r *http.Request) { flushAll(); fmt.Fprintln(w, "ok") })
+		m.HandleFunc("/anchor", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, anchorOnce(ctx)) })
+		log.Fatal(http.ListenAndServe(":9100", m))
+	}()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
+	go func() {
+		<-sig
+		// Graceful stop: stop intake, so producers keep their records and retry, then flush everything buffered.
+		sc, cancel := context.WithTimeout(ctx, 3*time.Second)
+		srv.Shutdown(sc)
+		cancel()
+		alsStop()
+		flushAll()
+		for i := 0; i < 600 && buffered.Load() > 0; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+		anchorOnce(ctx)
+		pg.Exec(ctx, `update evidence_writers set closed_at=now() where writer=$1`, writerInc)
+		log.Printf("closed buffered=%d", buffered.Load())
+		os.Exit(0)
+	}()
+	log.Printf("evidence replica %d writer %s flush %s size %d", replica, writerInc, flushEvery, sizeBound)
+	if err := srv.ListenAndServeTLS(os.Getenv("LEAF")+"/tls.crt", os.Getenv("LEAF")+"/tls.key"); err != http.ErrServerClosed {
+		log.Fatal(err)
+	}
+	select {} // the signal handler exits
+}

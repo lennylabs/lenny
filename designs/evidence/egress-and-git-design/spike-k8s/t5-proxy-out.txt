@@ -1,0 +1,43 @@
+### curl via proxy
+curl https://example.com -> 200 namelookup=0.000993s connect=0.001146s total=0.098652s
+curl https://github.com -> 200 total=0.261733s
+curl http://example.com (plain, via proxy) -> 200 total=0.062237s
+### curl direct (no proxy)
+curl: (6) Could not resolve host: example.com
+000 total=0.000086s
+command terminated with exit code 6
+### curl in-cluster name, NO_PROXY honored
+{"ok":false,"reason":"malformed"}
+ -> 200 total=0.003765s
+### python requests
+sh: 1: time: not found
+Traceback (most recent call last):
+  File "<string>", line 2, in <module>
+    import requests,time
+ModuleNotFoundError: No module named 'requests'
+command terminated with exit code 1
+### node 24 fetch with NODE_USE_ENV_PROXY=1
+node fetch https://example.com 200 0.120s
+node fetch https://github.com 200 0.106s
+node fetch in-cluster 200 {"ok":false,"reason":"malformed"}
+
+node https.get 200 0.096s
+### node 24 fetch WITHOUT NODE_USE_ENV_PROXY
+node fetch (no env proxy) ERR ENOTFOUND 0.026s
+### Go net/http ProxyFromEnvironment
+go-client https://example.com: 200 OK in 97.889792ms, body[:60]="<!doctype html><html lang=en><head><meta charset=utf-8><link"
+go-client https://github.com: 200 OK in 138.641458ms, body[:60]="\n\n\n\n\n\n\n\n<!DOCTYPE html>\n<html\n  lang=\"en\"\n  \n  data-color-mo"
+go-client http://validator.spike:8080/validate: 200 OK in 2.040875ms, body[:60]="{\"ok\":false,\"reason\":\"malformed\"}\n"
+### proxy log
+2026/11/02 04:55:19 proxy listening :3128
+2026/11/02 04:56:31 CONNECT example.com:443 from 10.244.0.18:40154: tunnel up (dial 23.389917ms)
+2026/11/02 04:56:32 CONNECT github.com:443 from 10.244.0.18:40170: tunnel up (dial 29.24325ms)
+2026/11/02 04:56:32 HTTP GET http://example.com/ from 10.244.0.18:40176: 200
+2026/11/02 04:56:32 HTTP POST http://validator.spike:8080/validate from 10.244.0.18:40184: 200
+2026/11/02 04:56:32 CONNECT example.com:443 from 10.244.0.18:40200: tunnel up (dial 25.745041ms)
+2026/11/02 04:56:32 CONNECT github.com:443 from 10.244.0.18:40204: tunnel up (dial 35.107166ms)
+2026/11/02 04:56:33 CONNECT validator.spike:8080 from 10.244.0.18:40220: tunnel up (dial 581.875µs)
+2026/11/02 04:56:33 CONNECT example.com:443 from 10.244.0.18:40224: tunnel up (dial 24.965792ms)
+2026/11/02 04:56:33 CONNECT example.com:443 from 10.244.0.18:40228: tunnel up (dial 18.885083ms)
+2026/11/02 04:56:33 CONNECT github.com:443 from 10.244.0.18:40238: tunnel up (dial 27.255583ms)
+2026/11/02 04:56:33 HTTP GET http://validator.spike:8080/validate from 10.244.0.18:40248: 200

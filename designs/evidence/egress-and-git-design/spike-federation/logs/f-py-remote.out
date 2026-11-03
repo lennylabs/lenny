@@ -1,0 +1,6 @@
+### TEST f-py-remote  23:25:44
+### docker run --network spikefed-net -e IDENTITY_ENDPOINT=http://msi.azure.test:8080/msi/token -e IDENTITY_HEADER=s3cr3t-identity-header spikefed-py:t python az_msi.py
+token: az-msi-at-1793604345 expires_on: 1793604365
+### exit 0
+### server log:
+{"ts": "07:25:45", "port": 8080, "peer": "172.20.0.6", "kind": "az-msi", "method": "GET", "path": "/msi/token?api-version=2019-08-01&resource=https://management.azure.com", "headers": {"Host": "msi.azure.test:8080", "User-Agent": "azsdk-python-identity/1.27.0 Python/3.13.18 (Linux-6.12.76-linuxkit-aarch64-with-glibc2.41)", "X-IDENTITY-HEADER": "s3cr3t-identity-header", "Metadata": "true"}, "query": {"api-version": ["2019-08-01"], "resource": ["https://management.azure.com"]}, "header_ok": true}

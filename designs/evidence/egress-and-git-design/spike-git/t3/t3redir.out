@@ -1,0 +1,47 @@
+## [7074] git ls-remote https://moved301.test/org/repo
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7074
+=> Send header: GET /https/moved301.test/org/repo/info/refs?service=git-upload-pack HTTP/1.1
+== Info: Connected to localhost (127.0.0.1) port 8080
+=> Send header: GET /org/repo.git/info/refs?service=git-upload-pack HTTP/1.1
+fatal: could not read Username for 'http://localhost:8080': terminal prompts disabled
+## [7074] git ls-remote https://tohub.test/google/protobuf
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7074
+=> Send header: GET /https/tohub.test/google/protobuf/info/refs?service=git-upload-pack HTTP/1.1
+== Info: Connected to github.com (172.182.252.133) port 443
+=> Send header: GET /google/protobuf.git/info/refs?service=git-upload-pack HTTP/2
+warning: redirecting to https://github.com/google/protobuf.git/
+=> Send header: POST /google/protobuf.git/git-upload-pack HTTP/2
+bbe8d1453a434300f1ffed0e314ab4ed8a6bdd5b	HEAD
+bbe8d1453a434300f1ffed0e314ab4ed8a6bdd5b	refs/heads/main
+## [7074] git ls-remote https://ghhttp.test/google/protobuf
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7074
+=> Send header: GET /https/ghhttp.test/google/protobuf/info/refs?service=git-upload-pack HTTP/1.1
+== Info: Connected to github.com (172.182.252.133) port 443
+=> Send header: GET /google/protobuf.git/info/refs?service=git-upload-pack HTTP/2
+warning: redirecting to https://github.com/google/protobuf.git/
+=> Send header: POST /google/protobuf.git/git-upload-pack HTTP/2
+bbe8d1453a434300f1ffed0e314ab4ed8a6bdd5b	HEAD
+bbe8d1453a434300f1ffed0e314ab4ed8a6bdd5b	refs/heads/main
+## [7075] git ls-remote https://ghhttp.test/google/protobuf
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7075
+=> Send header: GET /https/ghhttp.test/google/protobuf/info/refs?service=git-upload-pack HTTP/1.1
+=> Send header: GET /https/github.com/google/protobuf.git/info/refs?service=git-upload-pack HTTP/1.1
+fatal: could not read Username for 'http://127.0.0.1:7075': terminal prompts disabled
+## [7075] git ls-remote https://tohub.test/google/protobuf
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7075
+=> Send header: GET /https/tohub.test/google/protobuf/info/refs?service=git-upload-pack HTTP/1.1
+fatal: could not read Username for 'http://127.0.0.1:7075': terminal prompts disabled
+## [7075] git ls-remote https://moved301.test/org/repo
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7075
+=> Send header: GET /https/moved301.test/org/repo/info/refs?service=git-upload-pack HTTP/1.1
+fatal: could not read Username for 'http://127.0.0.1:7075': terminal prompts disabled
+## rewrite proxy, redirect to a host not allowlisted (tohub to github.com/google/protobuf allowed; now try a disallowed one)
+## [7076] git ls-remote https://ghhttp.test/google/protobuf
+== Info: Connected to 127.0.0.1 (127.0.0.1) port 7076
+=> Send header: GET /https/ghhttp.test/google/protobuf/info/refs?service=git-upload-pack HTTP/1.1
+fatal: unable to access 'http://127.0.0.1:7076/https/ghhttp.test/google/protobuf/': The requested URL returned error: 403
+== logs
+      1 REDIRECT 301 http://127.0.0.1:8080/moved301/org/repo.git/info/refs?service=git-upload-pack -> http://localhost:8080/org/repo.git/info/refs?service=git-upload-pack
+      1 REDIRECT 301 http://127.0.0.1:8080/tohub/google/protobuf.git/info/refs?service=git-upload-pack -> https://github.com/google/protobuf.git/info/refs?service=git-upload-pack
+      3 REDIRECT 301 http://github.com/google/protobuf.git/info/refs?service=git-upload-pack -> https://github.com/google/protobuf.git/info/refs?service=git-upload-pack
+      1 REDIRECT refused: /https/github.com/google/protobuf.git/info/refs ""

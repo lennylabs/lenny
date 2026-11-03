@@ -1,0 +1,68 @@
+// Spike upstream HTTP CONNECT proxy (stands in for a tenant's corporate proxy).
+// Requires Basic auth when REQUIRE_AUTH=user:pass is set; logs each CONNECT line,
+// its headers, and the peer address.
+package main
+
+import (
+	"bufio"
+	"encoding/base64"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"time"
+)
+
+func main() {
+	addr := ":3128"
+	want := os.Getenv("REQUIRE_AUTH")
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("upstream proxy on %s require_auth=%q", addr, want)
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+		go handle(c, want)
+	}
+}
+
+func handle(c net.Conn, want string) {
+	defer c.Close()
+	br := bufio.NewReader(c)
+	req, err := http.ReadRequest(br)
+	if err != nil {
+		log.Printf("peer=%s read error: %v", c.RemoteAddr(), err)
+		return
+	}
+	log.Printf("UPSTREAM peer=%s %s %s host=%s headers=%v", c.RemoteAddr(), req.Method, req.RequestURI, req.Host, req.Header)
+	if req.Method != http.MethodConnect {
+		io.WriteString(c, "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
+	if want != "" {
+		got := req.Header.Get("Proxy-Authorization")
+		if got != "Basic "+base64.StdEncoding.EncodeToString([]byte(want)) {
+			log.Printf("UPSTREAM 407 (got %q)", got)
+			io.WriteString(c, "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"corp\"\r\nContent-Length: 0\r\n\r\n")
+			return
+		}
+	}
+	up, err := net.DialTimeout("tcp", req.RequestURI, 5*time.Second)
+	if err != nil {
+		log.Printf("UPSTREAM dial %s: %v", req.RequestURI, err)
+		io.WriteString(c, "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+		return
+	}
+	defer up.Close()
+	log.Printf("UPSTREAM tunnel %s -> %s", c.RemoteAddr(), up.RemoteAddr())
+	io.WriteString(c, "HTTP/1.1 200 Connection Established\r\n\r\n")
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(up, br); done <- struct{}{} }()
+	go func() { io.Copy(c, up); done <- struct{}{} }()
+	<-done
+}

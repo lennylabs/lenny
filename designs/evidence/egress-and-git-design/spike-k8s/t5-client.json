@@ -1,0 +1,189 @@
+{
+ "apiVersion": "v1",
+ "kind": "Pod",
+ "metadata": {
+  "name": "proxied-client",
+  "namespace": "spike",
+  "labels": {
+   "role": "agent"
+  }
+ },
+ "spec": {
+  "automountServiceAccountToken": false,
+  "dnsPolicy": "None",
+  "dnsConfig": {
+   "nameservers": [
+    "10.96.212.202"
+   ],
+   "searches": [
+    "spike.svc.cluster.local",
+    "svc.cluster.local",
+    "cluster.local"
+   ],
+   "options": [
+    {
+     "name": "ndots",
+     "value": "5"
+    }
+   ]
+  },
+  "containers": [
+   {
+    "name": "alpine",
+    "image": "alpine:3.22",
+    "imagePullPolicy": "IfNotPresent",
+    "command": [
+     "sleep",
+     "infinity"
+    ],
+    "env": [
+     {
+      "name": "HTTPS_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "https_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "HTTP_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "http_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "NO_PROXY",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "no_proxy",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "NODE_USE_ENV_PROXY",
+      "value": "1"
+     }
+    ]
+   },
+   {
+    "name": "curl",
+    "image": "curlimages/curl:8.11.0",
+    "imagePullPolicy": "IfNotPresent",
+    "command": [
+     "sleep",
+     "infinity"
+    ],
+    "env": [
+     {
+      "name": "HTTPS_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "https_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "HTTP_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "http_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "NO_PROXY",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "no_proxy",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "NODE_USE_ENV_PROXY",
+      "value": "1"
+     }
+    ]
+   },
+   {
+    "name": "python",
+    "image": "python:3.13-slim",
+    "imagePullPolicy": "IfNotPresent",
+    "command": [
+     "sleep",
+     "infinity"
+    ],
+    "env": [
+     {
+      "name": "HTTPS_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "https_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "HTTP_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "http_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "NO_PROXY",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "no_proxy",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "NODE_USE_ENV_PROXY",
+      "value": "1"
+     }
+    ]
+   },
+   {
+    "name": "node",
+    "image": "node:24-slim",
+    "imagePullPolicy": "IfNotPresent",
+    "command": [
+     "sleep",
+     "infinity"
+    ],
+    "env": [
+     {
+      "name": "HTTPS_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "https_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "HTTP_PROXY",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "http_proxy",
+      "value": "http://lenny-egress.spike.svc.cluster.local:3128"
+     },
+     {
+      "name": "NO_PROXY",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "no_proxy",
+      "value": ".cluster.local,.svc,localhost,127.0.0.1"
+     },
+     {
+      "name": "NODE_USE_ENV_PROXY",
+      "value": "1"
+     }
+    ]
+   }
+  ]
+ }
+}

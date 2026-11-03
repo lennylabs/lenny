@@ -1,0 +1,4 @@
+[{"hosts":["ghes.example.test"],"header":"","value":"","secret":"","filter":"ghes"},
+ {"hosts":["api.github.com"],"header":"","value":"","secret":"","filter":"ghcom"},
+ {"hosts":["gitlab.example.test"],"header":"","value":"","secret":"","filter":"gitlab"},
+ {"hosts":["api.example.test"],"header":"Authorization","value":"Bearer ACME-REAL-9f2c71","secret":"ACME-REAL-9f2c71"}]

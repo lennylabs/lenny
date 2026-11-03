@@ -1,0 +1,63 @@
+### pg_test_fsync on the Postgres volume (characterizes the disk under every commit number below)
+O_DIRECT supported on this platform for open_datasync and open_sync.
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+        open_datasync                     14496.645 ops/sec      69 usecs/op
+        fdatasync                         15044.530 ops/sec      66 usecs/op
+        fsync                              9765.952 ops/sec     102 usecs/op
+(in "wal_sync_method" preference order, except fdatasync is Linux's default)
+
+### B1a. Evidence off: no writer, no access log. 2,000 CONNECTs/s, 2,500 tenants (5 busy with half the rate), 5% denied, 300 ms hold, 120 s
+   sockets at 60 s: client[inuse 563 orphan 4 tw 30971] envoy[inuse 1140 orphan 0 tw 1321]
+   busy: n=110080 codes={'200': 104585, '403': 5495} p50=0.53 p90=0.89 p99=1.77 p99.9=27.9 max=123.8 ms
+   small: n=109918 codes={'200': 104314, '403': 5604} p50=0.53 p90=0.89 p99=1.70 p99.9=23.9 max=123.4 ms
+   elapsed 120s ticks=227848 broken=0
+   oc-envoy: 551m CPU, memory 58 MiB, peak 64 MiB
+   oc-dec: 183m CPU, memory 25 MiB, peak 26 MiB
+   oc-client: 283m CPU, memory 14 MiB, peak 64 MiB
+
+### B1a2. Evidence on, no direct Envoy log (dec access log only), 120 s, to separate egress.accesslog's cost
+   busy: n=109833 codes={'200': 104444, '403': 5389} p50=0.58 p90=1.00 p99=2.32 p99.9=36.1 max=90.5 ms
+   small: n=110166 codes={'200': 104743, '403': 5423} p50=0.58 p90=1.00 p99=2.31 p99.9=40.4 max=90.0 ms
+   elapsed 120s ticks=228155 broken=0
+   oc-envoy: 546m CPU, memory 56 MiB, peak 64 MiB
+   oc-dec: 276m CPU, memory 34 MiB, peak 37 MiB
+   oc-ev1: 52m CPU, memory 381 MiB, peak 382 MiB
+   oc-ev2: 61m CPU, memory 411 MiB, peak 412 MiB
+
+### B1b. Evidence on, the Envoy access log direct as well (revision 37), two replicas, FLUSH=60s, same load, 330 s
+   t=55s manifest: rows=30 tenants=5 records=199305 raw=126105276 stored=8460651
+   sockets at 60 s: client[inuse 570 orphan 4 tw 30958] envoy[inuse 1152 orphan 0 tw 1322]
+   t=111s manifest: rows=10050 tenants=2500 records=763012 raw=488341915 stored=37273126
+   t=166s manifest: rows=20059 tenants=2500 records=1295181 raw=828226461 stored=64659021
+   sockets at 180 s: client[inuse 575 orphan 0 tw 31058] envoy[inuse 1155 orphan 3 tw 1338]
+   t=221s manifest: rows=30011 tenants=2500 records=1938320 raw=1231263885 stored=96256700
+   t=276s manifest: rows=39653 tenants=2500 records=2463780 raw=1568174643 stored=123343260
+   busy: n=319752 codes={'200': 303780, '403': 15972} p50=0.59 p90=1.05 p99=3.20 p99.9=40.8 max=142.0 ms
+   small: n=320249 codes={'200': 304240, '403': 16009} p50=0.59 p90=1.05 p99=3.16 p99.9=40.2 max=142.0 ms
+   elapsed 330s ticks=626967 broken=0
+   t=331s manifest: rows=48559 tenants=2500 records=2998859 raw=1915733031 stored=150807038
+   oc-envoy: 576m CPU, memory 60 MiB, peak 67 MiB
+   oc-dec: 276m CPU, memory 31 MiB, peak 36 MiB
+   oc-ev1: 120m CPU, memory 503 MiB, peak 641 MiB
+   oc-ev2: 128m CPU, memory 508 MiB, peak 617 MiB
+   oc-pg: 13m CPU, memory 316 MiB, peak 415 MiB
+   oc-pgb: 2m CPU, memory 2 MiB, peak 11 MiB
+   oc-minio: 206m CPU, memory 1306 MiB, peak 1471 MiB
+   oc-client: 264m CPU, memory 14 MiB, peak 66 MiB
+   decision service: {"alsEntries":1286911,"commitMaxUs":0,"commitOK":0,"commitP50us":0,"commitP95us":0,"commitP999us":0,"commitP99us":0,"commits":0,"commitsOverBound":0,"decisions":659944,"denied":32977,"emitted":1913878,"heapInuse":6406144,"incarnation":"d1a19f5d198c","prodDropped":0,"queuedBytes":0,"refused":0,"sendFail":0,"sends":6320,"tunnelEnds":626967}
+   replica 0: {"accesslogForeign":341478,"accesslogIn":621542,"aggregatedIn":461,"aggregatesOut":410,"anchorEvents":5002,"anchorMicros":353796,"batches":24373,"buffered":45960841,"bytesIn":588645118,"bytesOut":70912387,"drained":0,"droppedGlobal":0,"droppedTenant":0,"forbidden":0,"gapRecords":0,"goroutines":83,"groupSizeP50":0,"groupSizeP99":0,"groupUsP50":0,"groupUsP99":0,"groups":0,"heapInuse":288268288,"putFail":0,"rawOut":891124475,"records":1483063,"replica":0,"tenants":2500,"walFail":0,"walOK":0,"writer":"w0-1a19f5d186f"}
+   replica 1: {"accesslogForeign":284380,"accesslogIn":632392,"aggregatedIn":715,"aggregatesOut":638,"anchorEvents":5003,"anchorMicros":321677,"batches":24394,"buffered":52302509,"bytesIn":719020069,"bytesOut":80162524,"drained":0,"droppedGlobal":0,"droppedTenant":0,"forbidden":0,"gapRecords":0,"goroutines":83,"groupSizeP50":0,"groupSizeP99":0,"groupUsP50":0,"groupUsP99":0,"groups":0,"heapInuse":405585920,"putFail":0,"rawOut":1027373370,"records":1684749,"replica":1,"tenants":2500,"walFail":0,"walOK":0,"writer":"w1-1a19f5d1907"}
+   rows per stream: egress.tunnel|12563|1206540|96|56 MB|6.8|720
+egress.decision|12516|636943|51|41 MB|9.5|716
+egress.accesslog|23707|1160950|49|47 MB|8.2|512
+   time to durable (manifest created_at minus the batch's first record), small tenants and busy tenants:
+     busy|egress.accesslog|70|43.5|45.3|45.3
+     busy|egress.decision|55|29.7|30.5|30.5
+     busy|egress.tunnel|105|15.7|17.0|17.4
+     small|egress.accesslog|23637|60.2|63.1|64.8
+     small|egress.decision|12461|60.4|63.2|64.8
+     small|egress.tunnel|12458|60.5|64.3|64.9
+   rows inserted per minute in the steady window (t=120..300 s):
+8747
+   table sizes: manifest=26 MB chain=4712 kB chain rows=10005
+   objects in the bucket: 48887

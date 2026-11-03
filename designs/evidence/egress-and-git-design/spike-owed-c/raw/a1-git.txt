@@ -1,0 +1,40 @@
+
+=== git OpenSSL (Alpine): clone through an opaque tunnel, unbound host
+2
+rc=0
+
+=== git OpenSSL (Alpine): clone through termination, bound non-VCS host, then a 64 MiB chunked push
+2
+push-rc=0
+3
+rc=0
+
+=== git OpenSSL (Alpine): clone against a VCS-covered host through HTTPS_PROXY (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'https://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== git OpenSSL (Alpine): push over the plain HTTP upgrade to a VCS-covered host (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'http://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== git GnuTLS (Debian): clone through an opaque tunnel, unbound host
+2
+rc=0
+
+=== git GnuTLS (Debian): clone through termination, bound non-VCS host, then a 64 MiB chunked push
+2
+push-rc=0
+4
+rc=0
+
+=== git GnuTLS (Debian): clone against a VCS-covered host through HTTPS_PROXY (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'https://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== git GnuTLS (Debian): push over the plain HTTP upgrade to a VCS-covered host (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'http://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128

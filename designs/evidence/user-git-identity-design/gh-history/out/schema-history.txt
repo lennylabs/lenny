@@ -1,0 +1,19 @@
+2021-01-01 total 122
+2022-01-01 total 155
+  added 33 removed 0
+  added, name matches review, merge, or ref family: ['approveDeployments', 'approveVerifiableDomain', 'createCommitOnBranch', 'disablePullRequestAutoMerge', 'enablePullRequestAutoMerge', 'rejectDeployments']
+2023-01-01 total 201
+  added 46 removed 0
+  added, name matches review, merge, or ref family: ['abortQueuedMigrations', 'createLinkedBranch', 'deleteLinkedBranch', 'updatePullRequestBranch']
+2024-01-01 total 223
+  added 28 removed 6
+  added, name matches review, merge, or ref family: ['addPullRequestReviewThreadReply', 'createRepositoryRuleset', 'deleteRepositoryRuleset', 'dequeuePullRequest', 'enqueuePullRequest', 'revertPullRequest', 'updateRepositoryRuleset']
+2025-01-01 total 242
+  added 19 removed 0
+  added, name matches review, merge, or ref family: ['createDeployment', 'createDeploymentStatus', 'updateRefs', 'updateTeamReviewAssignment']
+2025-02-27 total 247
+  added 7 removed 2
+  added, name matches review, merge, or ref family: []
+docs.github.com/public/fpt/schema.docs.graphql, fetched 2026-11-03 total 278
+  added 38 removed 7
+  added, name matches review, merge, or ref family: ['addPullRequestCreationCapBypassUsers', 'removePullRequestCreationCapBypassUsers', 'requestReviewsByLogin', 'rerequestReviews']

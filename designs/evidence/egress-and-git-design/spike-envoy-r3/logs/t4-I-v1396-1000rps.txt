@@ -1,0 +1,17 @@
+t=  1s done=1001 map[200:1001] p50=600µs p99=32.3ms open=1001 ticks=1001 broken=0
+t=  2s done=1000 map[200:1000] p50=700µs p99=13ms open=1000 ticks=2390 broken=0
+t=  3s done=1000 map[200:1000] p50=700µs p99=1.1ms open=1000 ticks=3736 broken=0
+t=  4s done=998  map[200:998] p50=700µs p99=1.1ms open=998 ticks=5097 broken=0
+t=  5s done=1001 map[200:1001] p50=700µs p99=1.2ms open=999 ticks=6439 broken=0
+t=  6s done=1000 map[200:1000] p50=700µs p99=1.5ms open=1000 ticks=7755 broken=0
+t=  7s done=999  map[200:999] p50=600µs p99=1.1ms open=999 ticks=9064 broken=0
+t=  8s done=1001 map[200:1001] p50=700µs p99=1.5ms open=1001 ticks=10353 broken=0
+t=  9s done=1000 map[200:1000] p50=700µs p99=1.2ms open=1000 ticks=11709 broken=0
+t= 10s done=999  map[200:999] p50=700µs p99=1.2ms open=999 ticks=13010 broken=0
+t= 11s done=1002 map[200:1002] p50=600µs p99=5.2ms open=1002 ticks=14346 broken=0
+t= 12s done=999  map[200:999] p50=600µs p99=1.7ms open=998 ticks=15667 broken=0
+t= 13s done=1001 map[200:1001] p50=700µs p99=1.3ms open=1001 ticks=16996 broken=0
+t= 14s done=999  map[200:999] p50=700µs p99=1.1ms open=998 ticks=18332 broken=0
+t= 15s done=1000 map[200:1000] p50=700µs p99=1.2ms open=998 ticks=19674 broken=0
+t= 16s done=0    map[] p50=0s p99=0s open=2 ticks=20038 broken=0
+SUMMARY attempts=15000 map[200:15000] 200-latency p50=700µs p90=900µs p99=7.8ms max=39ms ticks=20038 broken=0 elapsed=16.0s

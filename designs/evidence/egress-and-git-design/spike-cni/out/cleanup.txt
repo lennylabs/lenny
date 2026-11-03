@@ -1,0 +1,18 @@
+# 2026-11-02T08:52:31Z cleanup
+Deleting cluster "spike-cni" ...
+Deleted nodes: ["spike-cni-control-plane" "spike-cni-worker"]
+kind clusters after: No kind clusters found.
+Untagged: spike-cni-client:v1
+Deleted: sha256:f7d2006237479a57d715d81a31955419f3ff72f068dadb8ee09192f11af7b61a
+spike images left: 0
+containers still running:
+r4-envoy-main	Up About a minute
+r4-soak	Up 8 minutes
+r4-envoy-soak	Up 8 minutes
+r4-client	Up 11 minutes
+r4-target	Up 11 minutes
+r4-authz2	Up 11 minutes
+r4-authz1	Up 7 minutes
+podium-postgres	Up 3 weeks (healthy)
+podium-minio	Up 3 weeks (healthy)
+kube contexts mentioning spike-cni: 0

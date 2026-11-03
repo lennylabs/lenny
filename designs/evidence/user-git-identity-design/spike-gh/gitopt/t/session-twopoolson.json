@@ -1,0 +1,38 @@
+{
+ "ghes.example.test": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   },
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-TOKEN",
+  "noCredential": "challenge"
+ },
+ "github.com": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   },
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-TOKEN",
+  "noCredential": "challenge"
+ }
+}

@@ -1,0 +1,3 @@
+### fill-P-clone rc=0
+$ git clone -q https://github.com/acme/widgets.git c 2>&1; git -C c log --oneline 2>/dev/null | wc -l
+6

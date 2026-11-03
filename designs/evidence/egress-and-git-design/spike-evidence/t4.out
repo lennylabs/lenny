@@ -1,0 +1,21 @@
+Have a question, bug, or feature request
+command terminated with exit code 1
+   sample 1: before stamp=dropped, open after 0.00 s
+command terminated with exit code 1
+   sample 2: before stamp=dropped, open after 0.00 s
+command terminated with exit code 1
+   sample 3: before stamp=dropped, open after 0.01 s
+command terminated with exit code 1
+   sample 4: before stamp=dropped, open after 0.00 s
+command terminated with exit code 1
+   sample 5: before stamp=dropped, open after 0.00 s
+command terminated with exit code 1
+   sample 6: before stamp=dropped, open after 0.00 s
+command terminated with exit code 1
+   sample 7: before stamp=dropped, open after 0.00 s
+command terminated with exit code 1
+   sample 8: before stamp=dropped, open after 0.01 s
+--- a pod with the wrong label stays dropped
+command terminated with exit code 1
+   wrong label: dropped
+Deleted nodes: ["lenny-grp-control-plane

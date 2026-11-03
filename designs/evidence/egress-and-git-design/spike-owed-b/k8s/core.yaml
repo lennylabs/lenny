@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: ob, namespace: lenny-system}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: ob-admin}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: cluster-admin}
+subjects: [{kind: ServiceAccount, name: ob, namespace: lenny-system}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lenny-egress, namespace: lenny-system}
+spec: {clusterIP: 10.96.31.28, selector: {app: envoy}, ports: [{port: 3128, name: p}]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lenny-egress-authz, namespace: lenny-system}
+spec: {clusterIP: 10.96.77.77, selector: {app: authz}, ports: [{port: 9000, name: p}]}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: target, namespace: lenny-system}
+spec: {selector: {app: target}, ports: [{port: 7000, name: p}]}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: target, namespace: lenny-system, labels: {app: target}}
+spec:
+  containers: [{name: t, image: ob-tools:1, imagePullPolicy: Never, command: [target]}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: watcher, namespace: lenny-system}
+spec:
+  serviceAccountName: ob
+  containers:
+  - {name: secrets, image: ob-tools:1, imagePullPolicy: Never, command: [ob, watchk8s, /api/v1/namespaces/lenny-system/secrets]}
+  - {name: cms, image: ob-tools:1, imagePullPolicy: Never, command: [ob, watchk8s, /api/v1/configmaps]}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: ctrl, namespace: lenny-system}
+spec:
+  serviceAccountName: ob
+  securityContext: {fsGroup: 65532, runAsUser: 65532, runAsNonRoot: true}
+  containers:
+  - name: c
+    image: ob-tools:1
+    imagePullPolicy: Never
+    command: [ob, controller, -leaf, /leaf/ca.crt, -value, /value/extra.pem, -ns, "agents,lenny-system"]
+    volumeMounts: [{name: leaf, mountPath: /leaf, readOnly: true},{name: value, mountPath: /value, readOnly: true}]
+  volumes:
+  - {name: leaf, secret: {secretName: lenny-controller-tls, defaultMode: 0440}}
+  - {name: value, configMap: {name: ob-rotation, optional: true}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: authz, namespace: lenny-system, labels: {app: authz}}
+spec:
+  securityContext: {fsGroup: 65532, runAsUser: 65532, runAsNonRoot: true}
+  containers:
+  - name: a
+    image: ob-tools:1
+    imagePullPolicy: Never
+    command: [authz]
+    env:
+    - {name: NAME, value: authz}
+    - {name: TLS_RELOAD, value: "1"}
+    - {name: TLS_CERT, value: /certs/tls.crt}
+    - {name: TLS_KEY, value: /certs/tls.key}
+    - {name: TLS_CLIENT_CA, value: /ca/ca.crt}
+    - {name: TLS_CLIENT_SANS, value: lenny-egress.lenny-system.svc}
+    volumeMounts: [{name: certs, mountPath: /certs, readOnly: true},{name: ca, mountPath: /ca, readOnly: true}]
+  volumes:
+  - {name: certs, secret: {secretName: lenny-egress-authz-tls, defaultMode: 0440}}
+  - {name: ca, configMap: {name: lenny-egress-ca}}

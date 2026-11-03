@@ -1,0 +1,2 @@
+FROM python:3.13-slim
+RUN pip install -q --no-cache-dir --root-user-action=ignore pygit2 && python -c "import pygit2;print(pygit2.LIBGIT2_VERSION)"
