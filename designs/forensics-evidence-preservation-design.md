@@ -1,6 +1,6 @@
 # Forensics and evidence preservation
 
-Status: design for owner review, revision 1, 2026-11-02. Nothing in this document is built, staged, or validated. No spike, test, or benchmark has run for it, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n.
+Status: design for owner review, revision 2, 2026-11-03, after one independent review, against `egress-and-git-design.md` revision 38. Nothing in this document is built, staged, or validated. No spike, test, or benchmark has run for it, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n.
 
 ## Problem
 
@@ -41,7 +41,7 @@ This design consumes the envelope, the provenance values, `lenny-evidence`, the 
 - FP4. Held material is retained independently of the tenant's keys and the tenant's lifecycle, in the tenant's region (§12.8 **Data residency**).
 - FP5. Every forensic action writes a custody event to the audit chain before it takes effect, with the actor, the case, and the justification.
 - FP6. A reconciler finding never depends on a tag that the component under suspicion supplied.
-- FP7. A secret that appears in a command line never reaches storage in plaintext, and `DeleteByUser` can make stored activity unreadable by destroying a key, unless a security hold covers that key.
+- FP7. A secret that appears in a command line never reaches storage in plaintext where redaction recognizes it, and `DeleteByUser` makes stored activity unreadable by destroying a key, subject to the rules under "Keys".
 - FP8. A record's `provenance` is set by verified identity at ingest. A producer inside a pod is `self_reported` in every isolation profile.
 - FP9. Collecting activity adds no privileged container to agent nodes in the default isolation profile.
 
@@ -89,7 +89,7 @@ The design adds one small record, the case, and no new control-plane service.
 
 | Method and path | Behaviour |
 | :-- | :-- |
-| `POST /v1/admin/quarantines` | Body: `caseId`, one of `podName` with `namespace` or `sessionId`, optional `includeDelegationTree`, `sessionDisposition` (`fail` by default, or `resume`), and `reason`. Returns `202` with the quarantine identifier, `affectedSessions`, and a per-step status. `dryRun` is refused, as on other action endpoints (§15.1). |
+| `POST /v1/admin/quarantines` | Body: `caseId`, one of `podName` with `namespace` or `sessionId`, optional `includeDelegationTree`, `sessionDisposition` (`fail` by default, or `resume`), and `reason`. Returns `202` with the quarantine identifier, `affectedSessions`, and a per-step status including `preserve` and `freeze`. `dryRun` is refused, as on other action endpoints (§15.1). |
 | `GET /v1/admin/quarantines` and `GET /v1/admin/quarantines/{id}` | Filters: `caseId`, `tenantId`, and `state`. Returns each step's status and the age of the quarantine. |
 | `POST /v1/admin/quarantines/{id}/release` | Body: `justification` and `acknowledgeEvidenceLoss`, required when no capture is registered. Moves the pod to `draining`. |
 
@@ -102,17 +102,18 @@ The design adds one small record, the case, and no new control-plane service.
 | `pod_quarantines` row (session store, platform-scoped, because a lookup by pod UID has no tenant context) | Identifier, pod UID, name, namespace, node, pool, tenant, sessions, case, state (`applying`, `active`, `released`), step status, set and release principals and times | The record of the quarantine |
 | Pod label `lenny.dev/quarantine=<id>` | Quarantine identifier | The enforcement signal, read from informers with no database call |
 | `SandboxClaim.status.phase = quarantined` | New gateway-owned binding state (§4.6.3) | Excludes the claim from orphan GC and hold expiry |
+| Regular container `keepalive` in every agent pod | A static binary that sleeps and exits on SIGTERM, with its own UID, no volume mounts, and a minimal request | Keeps the pod non-terminal, so the kubelet keeps its volumes (below) |
 | `Sandbox.status.phase = quarantined` | New phase, written by the WarmPoolController as a projection of the label (§6.2) | Excludes the pod from inventory and from every drain edge |
 | Per-pod `PodDisruptionBudget` | `minAvailable: 1`, selecting the quarantine label | Refuses API-initiated eviction |
 
-The label and the row are both read, so either outage leaves one path. `pkg/binding` treats a pod as quarantined when the informer shows the label or when its bounded re-read of the store finds an active row. The PDB uses an integer `minAvailable` because §4.6.1's warm-pod PDB rule states that a `maxUnavailable` budget cannot compute `expectedPods` on a `Sandbox`-owned pod.
+The label and the row are both read, so either outage leaves one path. `pkg/binding` treats a pod as quarantined when the informer shows the label or when its re-read of the store finds an active row, and egress revision 38 fixes both inputs in the hook. The PDB uses an integer `minAvailable` because §4.6.1's warm-pod PDB rule states that a `maxUnavailable` budget cannot compute `expectedPods` on a `Sandbox`-owned pod.
 
 ### Enforcement points
 
 | Control | Enforced by | Mechanism |
 | :-- | :-- | :-- |
 | New egress, mints, and mirror reads | Decision service, Token Service, and mirror | The `quarantined` state in `pkg/binding`, each instance reading independently (EG-2). A compromised decision service cannot release the Token Service gate. |
-| Raw network paths | CNI | The chart's agent allow policies (`allow-gateway-ingress`, `allow-pod-egress-base`, `allow-pod-egress-objectstore`, and the `proxied` and `gitAccess` policies) gain `lenny.dev/quarantine DoesNotExist` in their pod selector, so the namespace's `default-deny-all` applies. Network policies are additive, so a deny policy cannot express this. |
+| Raw network paths | CNI | Every allow policy selecting agent pods gains `lenny.dev/quarantine DoesNotExist` in its pod selector, so the namespace's `default-deny-all` applies. Today that means `allow-gateway-ingress`, `allow-pod-egress-base`, `allow-pod-egress-llm-proxy`, `allow-pod-egress-otlp`, `allow-pod-egress-provider-direct` until EG-2 removes it, `allow-pod-egress-internet`, `allow-pod-egress-kube-dns`, and `allow-pod-egress-objectstore` (`charts/lenny/templates/agent-network-policies.yaml`), plus the policies EG-2 adds for `proxied` and `gitAccess`. A tier 0 test enumerates every rendered policy in agent namespaces, so a later policy without the exclusion fails. Network policies are additive, so a deny policy cannot express this. |
 | Open tunnels | `netagent` and the pool's tunnel cap | `netagent` closes tunnels at the binding change. A compromised `netagent` keeps them until the pool's `max_stream_duration`, the residual the egress design states. Kubernetes leaves it to the network plugin whether a policy change affects an existing connection, so the policy change is no guarantee either. FE-5 gives the reset procedure. |
 | New sessions and claims | Gateway, `lenny-sandboxclaim-guard`, and the service-mode router | The phase leaves inventory, the webhook refuses a claim whose pod carries the label, and `tenantaffinity.Router` never selects a labelled pod. |
 | Session work | Gateway | The sessions end (below). The gateway mints no presigned capability, delivers no message, and runs no checkpoint or scrub for the pod. |
@@ -130,16 +131,32 @@ The label and the row are both read, so either outage leaves one path. `pkg/bind
 | Orphan claim GC (each predicate) | Reclaims a stale claim | The new binding state matches no predicate. |
 | Reserved hold expiry | Claim deleted | The hold no longer applies. |
 | Unschedulable host retire on the recycle edge | Retire | Not evaluated. |
-| Adapter or runtime container exit, under **Liveness.** | Retire | The pod remains. `restartPolicy` is `Never` (`podspec/base_pod.go`), so the container stays exited, and disk and tmpfs volumes remain while the pod object exists. |
+| Adapter or runtime container exit, under **Liveness.** | `observePod` reduces it to `PodFailed`, and the pod retires | The label check precedes that reduction, so the pod stays. `restartPolicy` is `Never`, so the exited container's memory is gone, and the volumes stay while `keepalive` runs. |
 | Force-terminate, tenant suspension drain, user invalidation, and erasure drain | Session ends and the pod is released | Session ends, and the release step skips a labelled pod. |
 | Tenant deletion Phase 5, and pool deletion | CRDs removed | The labelled Sandbox is skipped, and the deletion reports it to the forensics reconciler. |
 | Node drain | preStop checkpoint, then eviction | The PDB refuses eviction, so the drain waits. |
 | Node-pressure eviction | Kubelet evicts | No Lenny control applies, because the kubelet honours neither PodDisruptionBudgets nor the grace period. See "Residual risks". |
-| Coordinator hold timeout (§10.1) | After `coordinatorHoldTimeoutSeconds` (120 s), the adapter ends sessions and closes the runtime's `CH-MSGSOCK` | The gateway sends a new RPC, proposed as `CH-PRESERVE`, which puts the adapter into a state that never ends the runtime and sends it nothing. Delivery is best effort, because an embedded adapter is the agent. |
+| Coordinator hold timeout (§10.1) | After `coordinatorHoldTimeoutSeconds` (120 s), the adapter ends sessions and closes the runtime's `CH-MSGSOCK` | The gateway first sends a new RPC, proposed as `CH-PRESERVE`, on `LNK-POD-GRPC`. It puts the adapter into a state that never ends the runtime, sends it nothing, and never exits. §10.1's hold state accepts this RPC as well as `CoordinatorFence`. An embedded adapter is the agent, so its compliance is best effort. |
+
+### Keeping the volumes
+
+A pod's object existing is not enough to keep its volumes. The kubelet's `SyncTerminatedPod` "cleans up a pod that has terminated (has no running containers)" and waits for volumes to unmount, and the emptyDir plugin's teardown ends with `os.RemoveAll`. With `restartPolicy: Never`, a pod whose regular containers have all exited therefore loses `/workspace`, `/artifacts`, `/sessions`, and `/tmp`. The removal of data for this exact case is inferred from that source and is untested. A native sidecar does not prevent it, because the kubelet stops sidecars after the regular containers, so `netagent` gives no protection.
+
+An exiting agent can therefore destroy the volumes on an embedded pod, where the adapter is the agent, and on a sidecar pod whose adapter has exited. The pod spec cannot gain a container after creation, and whether a running ephemeral container keeps a pod non-terminal is unverified, so every agent pod carries `keepalive` from creation (decision 25). `agentContainerTerminated` consults only the adapter and runtime containers, so `keepalive` does not change retirement of a pod with no quarantine: the controller still retires it by deletion, and `keepalive` exits on SIGTERM. The agent UID cannot signal it, because it has another UID and another PID namespace.
+
+### Freezing the agent
+
+Quarantine cuts the agent's reach, and the runtime process keeps running. §10.1 states that in hold state the runtime "continues running". It can overwrite its workspace, delete files, and scrub its memory. A freeze follows the acknowledged preservation RPC (decision 22):
+
+- **In the pod, sidecar model.** After acknowledging `CH-PRESERVE`, the adapter sends `freeze` on `CH-SUPERVISE`, and the supervisor sends SIGSTOP to every other process in the runtime container's PID namespace. The supervisor keeps answering the adapter. Automatic, immediate, and best effort, because §4.7.11 item 8 places the supervisor on the untrusted side.
+- **In the pod, embedded model.** No supervisor exists, and the adapter is the agent, so no in-pod freeze applies.
+- **From the node.** The FE-5 capture Job freezes the container: `runsc pause <id>` on gVisor (the subcommand exists in `runsc/cmd/pause.go`, and its behaviour on a Lenny pod is untested) and `cgroup.freeze` on runc, whose kernel documentation states that a frozen process stays halted and can still be killed by a fatal signal. No Kata method has been identified.
+
+The freeze slightly alters what it preserves: SIGSTOP changes process state and sends SIGCHLD to parents. Whether a frozen process can then be checkpointed is a validation item. An investigator who needs the agent observed live sets `freeze: false` on the request.
 
 ### Sessions on the pod
 
-`sessionDisposition: fail` writes `failed` with `FailureClassRuntime` and the reason `POD_WITHDRAWN`, as force-terminate does for `FORCE_TERMINATED`. §7.3 treats a reason on neither retry list as non-retryable, so no resume follows. Leases return through the §11.4 lease step, which stops proxy-mode LLM access at once. A direct-mode credential stays usable until it is revoked, which FE-5 covers.
+`sessionDisposition: fail` writes `failed` with the existing reason `orphan_pod_terminated` (§10.1), so the client sees the failure a lost pod produces, and the true cause sits only in the platform-tenant row (FP3). The handler forces no auto-retry, and §7.3 treats a reason on neither retry list as non-retryable. Reporting an accurate but generic reason is part of decision 6. Leases return through the §11.4 lease step, which stops proxy-mode LLM access at once. A direct-mode credential stays usable until it is revoked, which FE-5 covers.
 
 `sessionDisposition: resume` uses the `pod_evicted` path, so the client sees a recovery on a replacement pod and no failure. The default is `fail`, because a resume restores the session from a checkpoint the compromised pod may have written, and it continues any injected instruction in the transcript. An investigator chooses `resume` when the suspect is the pod rather than the session.
 
@@ -147,13 +164,16 @@ The API returns every session on the pod. A concurrent-slot pod can hold several
 
 ### Order and failure behaviour
 
-1. The handler commits the row and the custody event in one step. A failure returns `503`, and nothing has changed.
-2. It stamps the label, sets the claim phase, pushes the binding change to the decision replicas, and sends the preservation RPC.
-3. It ends the sessions.
-4. The forensics reconciler creates the PDB and retries any incomplete step, and it reports per-step status on the row.
+1. The handler commits the row and the custody event in one step. A failure returns `503`, and nothing has changed. It then pushes the binding change, so egress, mints, and mirror reads stop through the row while the network path to the adapter stays open.
+2. It sends `CH-PRESERVE` and waits for the acknowledgement, bounded by `forensics.quarantine.preserveTimeout` (5 seconds). The adapter then starts the freeze.
+3. It stamps the label, which cuts the network and removes the pod from inventory, and it sets the claim phase. The label follows the RPC, because the RPC needs `allow-gateway-ingress`, and because a pod cut off first enters hold state and closes `CH-MSGSOCK` at 120 seconds.
+4. It ends the sessions.
+5. The forensics reconciler creates the PDB and retries any incomplete step, and it reports per-step status on the row.
 
 | Failure | Behaviour |
 | :-- | :-- |
+| `CH-PRESERVE` unacknowledged at the timeout | The sequence continues, and `preserve: unacknowledged` is reported. The runtime may lose `CH-MSGSOCK` when the hold times out, so the runbook captures memory at once. `keepalive` still protects the volumes. |
+| Freeze fails or is unavailable | `freeze: failed` or `unavailable` is reported, and the capture Job freezes from the node. |
 | Postgres is down | The API refuses. A cluster admin in `forensics.breakGlassGroups` can stamp the label with `kubectl`, which denies egress, mints, and network paths at once. The webhook logs the requesting user. When Postgres returns, the reconciler creates the row with origin `break_glass` and a custody event, and the Kubernetes audit log is the record of who stamped it. |
 | API server is down | The row is committed and the label step retries. `pkg/binding`'s store re-read applies the state within its 30-second bound. The informers serve their last cache. |
 | Webhook unavailable | Every labelled write and delete is refused, which is the fail-closed direction. |
@@ -172,18 +192,18 @@ A quarantined pod consumes node capacity and a slot in the namespace `ResourceQu
 | Method and path | Behaviour |
 | :-- | :-- |
 | `GET /v1/admin/mirror/stores` | Filters: `tenantId`, `upstream`, `kind` (`public` or `tenant`), and `held`. Returns store identity, generation, replica, volume, and last fetch. |
-| `POST /v1/admin/mirror/stores/{id}/hold` | Body: `caseId`, `note`, and `stopServing` (default `false`). Returns the snapshot reference and the flag state. |
+| `POST /v1/admin/mirror/stores/{id}/hold` | Body: `caseId` and `note`. Returns the sealed generation, the snapshot reference, and the flag state. |
 | `POST /v1/admin/mirror/stores/{id}/release` | Body: `justification`. Clears the flag and allows repack and purge. |
 
 ### Mechanism
 
-- **Flag.** The gateway sets the held flag in the store index (EG-5) on the mirror's parent, authenticated by the gateway's identity. The flag stops the sweep's re-chown, repacks, and purge, as the hook states. It also stops new fetches for that store once the in-flight fetch has ended and its sweep has run. The re-chown is skipped so that on-disk owners keep saying which fetch UID wrote each file.
-- **Fetch UIDs.** The egress design returns a fetch UID to the pool only after the sweep and the re-chown. A skipped re-chown leaves files owned by that UID, and a public store's directories are mode `2775`, so a later fetch reusing that UID could traverse and write them. The UIDs that own files in a held store therefore stay out of the pool until release, and the index persists that set so a restart honours it (see "Changes requested"). The range bounds concurrent fetches, so `gitMirror.heldUidBudget` caps how many UIDs held stores may retire, and a hold past the cap re-chowns after recording an ownership manifest.
+- **Flag.** The gateway sets the held flag in the store index (EG-5) on the mirror's parent, authenticated by the gateway's identity. The flag stops the sweep's re-chown, repacks, and purge, as the hook states. It seals the store's current generation: no fetch or `upload-pack` touches it once the in-flight fetch has ended and its sweep has run. The re-chown is skipped so that on-disk owners keep saying which fetch UID wrote each file.
+- **Fetch UIDs.** The egress design returns a fetch UID to the pool only after the sweep and the re-chown. A skipped re-chown leaves files owned by that UID, and a public store's directories are mode `2775`, so a later fetch reusing that UID could traverse and write them. The UIDs that own files in a held store therefore stay out of the pool until release, and the index persists that set so a restart honours it, as the hook states. The range bounds concurrent fetches, so `gitMirror.heldUidBudget` caps how many UIDs held stores may retire, and a hold past the cap re-chowns after recording an ownership manifest.
 - **Snapshot.** The forensics reconciler creates a CSI `VolumeSnapshot` of the replica's volume, after the flag is acknowledged or after 10 seconds, whichever comes first, using a snapshot class with `deletionPolicy: Retain`. The snapshot does not depend on the parent, so a compromised parent cannot withhold it. The controller gains `create` and `get` on `volumesnapshots` in the mirror's namespace, and no `delete`.
 - **Extraction.** A volume holds several stores, including other tenants', so the snapshot is an interim artifact. The FE-5 procedure mounts a restored copy in a job, archives only the held store with numeric owners, modes, and ACLs, hashes each pack, and registers the archive as a capture. The snapshot is then deleted through the cluster admin's rights. A deployment without CSI snapshots skips this step, and the archive runs against the live store while the flag holds, which a compromised parent can affect. `gitMirror.forensics.volumeSnapshotClass` selects the behaviour.
-- **Continued service.** With `stopServing: false`, the frozen store keeps answering `upload-pack`, because reads do not change it. A poisoned store needs `stopServing: true`, which retires that generation and has the mirror start a fresh generation from the upstream on the next request. A held public store therefore costs one refetch, and every tenant sees a slower first fetch and no failure. The on-disk layout has to allow two generations of one store identity (see "Changes requested").
+- **Continued service.** Every hold moves service to a fresh generation under the same store identity, using the hook's on-disk generation, and the mirror fills it from the upstream on the next request. A frozen store that kept serving would stop refreshing, so the egress design's read-after-push wait could not complete and tenants would see stale refs. Serving a sealed generation would also keep a poisoned store in use. A hold therefore costs one refetch, and tenants see a slower first fetch and no failure, including on a public store. Read-after-push targets the current generation.
 - **Tenant view.** Held bytes are excluded from the per-tenant mirror storage quota (P7), and neither the quota read nor the prefetch API exposes the flag (FP3).
-- **Tenant deletion.** The §12.8 mirror purge skips a store whose index or `security_holds` row says it is held, and it fails closed when it cannot read them. A store held at teardown keeps its files until release, and the erasure receipt records it under the rule in FE-3.
+- **Tenant deletion.** The §12.8 mirror purge skips a store whose index or `security_holds` row says it is held, and it fails closed when it cannot read them. A store held at teardown keeps its files until release. The tenant-readable receipt follows the rule in FE-3, and the platform-tenant case record lists the store.
 
 ### Failure behaviour
 
@@ -192,7 +212,7 @@ A quarantined pod consumes node capacity and a slot in the namespace `ResourceQu
 | Mirror unreachable, or the replica lost | The row stays `pending`, the snapshot proceeds, and the reconciler retries the flag with an alert. Purge reads the row, so it cannot run in the gap. |
 | Snapshot fails or no class is configured | The hold stands, `snapshot: unavailable` is reported, and the case shows it. |
 | Compromised parent ignores or forges the flag | The snapshot and the fetch records (`git.operation`, `enforced` from the mirror) are the evidence. The limit is stated under "Residual risks". |
-| Volume full while held | `gitMirror` capacity alerts fire, and a held store is never deleted to make room. |
+| Volume full while held | The mirror's capacity alert fires, a held generation is never deleted to make room, and fresh generations fail over to the `direct` route when the volume cannot hold them. |
 
 ## FE-3: Platform-only holds and a security retention class
 
@@ -202,7 +222,7 @@ A security hold is a separate object from the §12.8 `legal_hold` flag. The tena
 
 | Method and path | Behaviour |
 | :-- | :-- |
-| `POST /v1/admin/security-holds` | Body: `caseId`, `tenantId`, `scope`, `include`, `note`, and `reviewAt`. Returns `202` with the identifier and `materializing`. |
+| `POST /v1/admin/security-holds` | Body: `caseId`, `tenantId`, `scope`, `include`, `basis`, `basisRef`, `note`, and `reviewAt`. Returns `202` with the identifier and `materializing`. |
 | `GET /v1/admin/security-holds` | Filters: `caseId`, `tenantId`, and `state`. Requires `forensics.hold.write` or `forensics.query`. Returns item counts and materialization progress. |
 | `POST /v1/admin/security-holds/{id}/release` | Body: `justification`. Runs deferred erasures (below). |
 
@@ -214,6 +234,8 @@ A security hold is a separate object from the §12.8 `legal_hold` flag. The tena
 | Scope, include, and range | As above |
 | State | `materializing`, `active`, `failed`, or `released` |
 | Items | Per-class counts, escrow object keys, and digests |
+| `basis` and `basisRef` | The enumerated ground for retention and the reference to its legal approval (below) |
+| `auditCursor` | The last `sequence_number` copied, per tenant |
 | Set and release principals, note, and `reviewAt` | `HoldReviewDue` alerts at `reviewAt`, and nothing expires automatically |
 | Pending erasures | Erasure jobs and users deferred by this hold |
 
@@ -223,21 +245,31 @@ The tenant's data is copied or marked so that nothing in the tenant's own stores
 
 | Class | Mechanism | Retention |
 | :-- | :-- | :-- |
-| `artifacts`, `checkpoints`, and `transcripts` | Copied at hold time to `legal-hold-escrow/{tenant}/security/{case}/...`, using the existing region-scoped `storage.regions.<region>.legalHoldEscrow` entry, the `legal_hold_escrow_kek`, and the `pkg/legalholdescrow` migrator and its `SourceReader`. The originals follow normal rotation and deletion. | Until release |
-| `audit` | The rows in range are written as canonical tuples with their `prev_hash`, `sequence_number`, and `event_schema_version`, plus the tuple before the range, so the segment verifies against §11.7 item 3 with no live table. Anchor events for held evidence are always included. This gives `audit_range` a body in the migrator. | Until release |
+| `artifacts`, `checkpoints`, and `transcripts` | Copied to `security-hold/{tenant}/{case}/...` in the region's escrow bucket, using the existing `storage.regions.<region>.legalHoldEscrow` entry and a new `securityHoldKekId`. FE-3 reuses `pkg/legalholdescrow`'s read and re-encrypt path and keeps its own records (below). The originals follow normal rotation and deletion. | Until release |
+| `audit` | A contiguous segment of the tenant's chain for the time range, as canonical tuples with `prev_hash`, `sequence_number`, and `event_schema_version`, plus the tuple before the range. Filtering would break the per-tenant chain, and §12.8 step 13 states that the table has no `user_id` or `session_id` column, so every scope copies every row of the tenant in range, and a reader filters afterwards. Anchor events for held evidence fall in that segment, and a release cannot leave them behind. | Until release |
 | `evidence` | `lenny-evidence` sets the held marker on every manifest row in range, and on new rows while `to` is absent, and reports the rows to the hold. A release recomputes the marker from the remaining holds, since several holds can cover one row. | Until release, after which normal stream retention applies |
 
-**Retention races.** The handler marks manifest rows and starts the copy before it returns, and the sweeper and compactor read the marker in the transaction that deletes or merges. The §16.4 partition GC gains a second guard: it holds an audit partition while a hold in `materializing` state overlaps it, and it emits `AuditPartitionDropBlocked` with `reason: security_hold`. `POST /v1/admin/audit-partitions/{partition}/drop` refuses that partition while the guard is active. Once the tuples are written the partition can drop, so a hold does not retain other tenants' rows past their retention.
+**Separate records.** `POST /v1/admin/legal-hold` with `hold: false` calls `ReleaseForSession`, which lists `Records.ActiveForSession` and deletes each object, whether or not a legal hold was ever set, and the handler returns `escrowReleased` when the count is above zero. Security copies therefore never enter those records. They live in `security_hold_items` under the hold, in their own prefix and under their own KEK, and `Releaser` has no path to them, so a tenant admin can neither delete one nor learn of one through that count.
 
-**The §12.8 ledger.** `audit_range` in step 0 and Phase 3.5 now means an audit copy under a security hold, and `workspace_snapshot` remains as the existing checkpoint class under one. The tripwire test on the setter stays, because the tenant-visible setter keeps its two scopes. The spec text changes to name the new source, and `tenantHoldEnumerator` reads it.
+**Open-ended holds and retention races.** The handler marks manifest rows and starts the copy before it returns, and the sweeper and compactor read the marker in the transaction that deletes or merges. While a hold is active, a worker continues copying:
 
-**Tenant visibility.** `GET /v1/admin/legal-holds` excludes these holds for every caller, and `lenny_tenant_legal_hold_active_count` does not count them. Tenant reads of a stream apply the stream's normal retention window, so a held row past that window reads as expired. Held bytes are charged to the platform and excluded from `storageQuotaBytes`.
+- **Audit.** At `forensics.holds.auditCopyInterval` (5 minutes), the worker extends the segment for an open range and advances `auditCursor`. The §16.4 partition GC gains a second guard: it holds a partition containing any tenant row in a hold's range above that cursor, and it emits `AuditPartitionDropBlocked` with `reason: security_hold`. `POST /v1/admin/audit-partitions/{partition}/drop` refuses that partition while the guard is active. Once the tuples are written the partition can drop, so a hold does not retain other tenants' rows past their retention.
+- **Artifacts.** The worker enumerates new artifacts and checkpoints for named sessions and users. Every path that deletes one (the GC, checkpoint rotation, `DeleteByUser`, and `DeleteByTenant`) first calls `EnsureCopied` against the hold index, which closes the interval between the worker's runs. A copy failure refuses the deletion, and the deleter retries.
+- **Teardown.** Phase 3.5 flushes the audit segment to the tail and runs `EnsureCopied` for every in-scope item before Phase 4, because the audit eraser has no escrow skip and no later rows exist to copy afterwards.
+
+**The §12.8 ledger.** Security holds stay outside the legal-hold ledger. Step 0(c) and Phase 3.5(c) block on `audit_range` and `workspace_snapshot` entries and return 409s that list holds, so placing security holds there would both block erasure and reveal them. Nothing sets those two types today, so §12.8 and §15.1 remove them, the `ERASURE_BLOCKED_BY_LEGAL_HOLD` and `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` text narrows to sessions and artifacts, and the tripwire test on the setter stays as it is. The tenant deletion controller reads `security_holds` directly, in the separate step under "Interaction with erasure and teardown". This resolves the gap the outline named by removing the unused ledger types.
+
+**Tenant visibility.** `GET /v1/admin/legal-holds` excludes these holds for every caller, and `lenny_tenant_legal_hold_active_count` does not count them. Tenant reads of a stream apply the stream's normal retention window, so a held row past that window reads as expired. Held bytes are charged to the platform and excluded from `storageQuotaBytes`. Tenant reads of a quarantined pod's later records are covered under "Records after a quarantine".
 
 ### Interaction with erasure and teardown
 
-**`DeleteByUser`.** Step 0 does not block on a security hold, because a `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` lists holds to a tenant-admin caller. The job runs and deletes the originals in the tenant's stores. It leaves escrow copies and held evidence alone, and for a session under a hold it skips destroying the per-session key. It adds itself to the hold's pending erasures. At release, the worker deletes the copies, destroys the keys unless another hold covers them, and writes a `gdpr.erasure_deferred_completed` event. The receipt's `legal_basis` uses the existing value `gdpr_art17_with_art17_3_exception`. Whether the tenant-visible receipt states that something was retained is decision 7, and it has a legal dimension: §11.8 states that Lenny operates as a data processor, and Article 17(3) sets out the exceptions, so the operator needs its own basis for retaining against a controller's instruction.
+**`DeleteByUser`.** Step 0 does not block on a security hold, because a `409 ERASURE_BLOCKED_BY_LEGAL_HOLD` lists holds to a tenant-admin caller. The job runs and deletes the originals in the tenant's stores. A hold whose `basis` is in `forensics.holds.deferErasureBases` keeps its escrow copies and held evidence, skips destroying the per-session key, and adds the job to its pending erasures. At release, the worker deletes the copies, destroys the keys unless another hold covers them, and writes a `gdpr.erasure_deferred_completed` platform-tenant event. A hold with any other `basis` does not defer: the job deletes its in-scope copies and destroys the keys, and a `forensics.evidence_lost` event tells the investigator.
 
-**Tenant deletion.** Phase 3.5 enumerates security holds and does not block on them, since the originals are already segregated. It waits for any hold still `materializing`, and it escrows held evidence: `EvidenceStore` moves marked batches to the escrow prefix, unwraps per-session keys under the tenant KEK, and rewraps them under the escrow KEK before Phase 4a destroys the tenant key. Batch bytes do not change, so anchored digests still verify. The audit copy carries the anchors the Phase 4 audit eraser deletes. If materialization cannot finish before the §12.8 deadline, the phase blocks fail closed, and the existing `TenantDeletionOverdue` alert fires on the operator side with no tenant-visible reason.
+**Basis.** `basis` is `legal_obligation`, `legal_claims`, `security_incident_response`, or `customer_instruction`, and `basisRef` names the approval, which the design does not supply. Article 17(3)(b) and (e) name legal obligations and legal claims. Recital 49 describes network and information security as a legitimate interest and is not a 17(3) exception, so `security_incident_response` is outside the default `deferErasureBases`. §11.8 states that Lenny operates as a data processor, so retaining against a controller's instruction needs the operator's own ground, and which ground fits an investigation is for counsel (decision 24). A hold cannot be created without both fields.
+
+**Receipt.** The `legal_basis` enum in §12.8 belongs to the `RedactionReceipt` for dead-lettered rows, so this design leaves it alone. The tenant-readable `gdpr.erasure_completed` event and job status have the normal form. Whether the receipt states that something was retained is decision 7, and the default is the neutral form, with the retained items recorded in the platform-tenant case. A dead-lettered row in a held audit segment keeps its unredacted copy under the same deferral.
+
+**Tenant deletion.** Phase 3.5 enumerates security holds and does not block on them, since the originals are already segregated. It waits for any hold still `materializing`, and it escrows held evidence: `EvidenceStore` moves marked batches to the escrow prefix, unwraps per-session keys under the tenant KEK, and rewraps them under the escrow KEK before Phase 4a destroys the tenant key. Batch bytes do not change, so anchored digests still verify. The audit segment carries the anchors the Phase 4 audit eraser deletes. The Phase 6 receipt keeps its normal fields, and the case records what was retained. If materialization cannot finish before the §12.8 deadline, the phase blocks fail closed, and the existing `TenantDeletionOverdue` alert fires on the operator side with no tenant-visible reason.
 
 **Restore.** The post-restore reconciler's ledger gate (§25.11 `confirm-legal-hold-ledger`) gains `security_holds`, so a restored database does not replay an erasure that a hold deferred.
 
@@ -245,7 +277,7 @@ The tenant's data is copied or marked so that nothing in the tenant's own stores
 
 A stream can carry `retentionClass: security` at the deployment level. For those streams, tenant teardown moves batches inside the stream's retention window into the escrow prefix, where they stay for `forensics.retention.afterTeardownDays`, regardless of any hold. The class exists because a tenant that offboards after a compromise otherwise removes the evidence (R4), and the egress design states that tenant deletion removes these streams today.
 
-The recommended members are `credential.mint`, `egress.decision`, `egress.tunnel`, and `git.operation`, because they carry session identifiers and no content. `agent.activity.*` stays out unless a hold covers it, because of its sensitivity. The chart default is 0 days, and a SaaS operator sets a value that its customer agreement states (decision 8). Recital 49 names network and information security as a legitimate interest for processing that is strictly necessary and proportionate, which is the argument the operator's counsel would assess. §12.9 gains a row for retained evidence.
+The recommended members are `credential.mint`, `egress.decision`, `egress.tunnel`, and `git.operation`, because they carry session identifiers and no content. `agent.activity.*` stays out unless a hold covers it, because of its sensitivity. The chart default is 0 days, and a SaaS operator sets a value that its customer agreement states (decision 8). The design makes no claim that this retention meets an Article 17(3) exception. Recital 49 is one argument for counsel, limited to what is strictly necessary and proportionate. §12.9 gains a row for retained evidence.
 
 ### Failure behaviour
 
@@ -264,7 +296,7 @@ A compromised decision service writes `egress.decision` and receives Envoy's acc
 
 | Source | What it measures | Independent of | Status |
 | :-- | :-- | :-- | :-- |
-| Envoy-measured fields, sent by a second access logger directly to `lenny-evidence` | Downstream peer address, CONNECT authority, upstream address and source port, times, bytes, and the Envoy replica | The decision service | New stream `egress.accesslog` (see "Changes requested") |
+| Envoy-measured fields, sent by a second access logger directly to `lenny-evidence` | Downstream peer address, CONNECT authority, upstream address and source port, times, bytes, and the Envoy replica | The decision service | `egress.accesslog`, from EG-10 |
 | `credential.mint` from the Token Service | Each mint, with its own `pkg/binding` read | The decision service | From EG-2 |
 | `git.operation` from the mirror | Fetches through the mirror, with its own binding read | The decision service | From EG-5 |
 | `pod.address`, from the controller's watch | Pod UID, addresses, node, and tenant label over time, which resolves a peer address at a time to a pod | The decision service and `netagent` | New stream, provenance `observed` |
@@ -316,8 +348,8 @@ The design adds no standing privileged Lenny component for capture (decision 13)
 The runbook `docs/runbooks/forensic-capture.md` follows the §25.7 format, and the order follows RFC 3227: memory and process state first, then temporary file systems, then disk, then remote logs. RFC 3227 also warns against shutting a system down before collection, because evidence is lost. Quarantine comes first, in tension with that order, since quarantining changes network state. The runbook takes quarantine first because stopping an active exfiltration outweighs the changed network state, and it records the pod's network state before the label where the operator has time.
 
 1. Open a case, then set a security hold covering the tenant and range.
-2. Quarantine the pod. If `lenny-ctl` is unavailable, use the break-glass label.
-3. Capture memory and process state (table below). Each archive contains every memory page of the checkpointed processes, including keys (Kubernetes warning), so the Job encrypts it to the case's public key before it leaves the node and removes the node copy.
+2. Quarantine the pod, and read `preserve` and `freeze` from its status. If `lenny-ctl` is unavailable, use the break-glass label, which reaches the adapter with no RPC, so the runtime may lose its socket after 120 seconds.
+3. Freeze from the node where the in-pod freeze is absent or failed, then capture memory and process state (table below). Each archive contains every memory page of the checkpointed processes, including keys (Kubernetes warning), so the Job encrypts it to the case's public key before it leaves the node and removes the node copy.
 4. Copy tmpfs volumes (`/sessions`, `/tmp`, and `/run/lenny` for the credential file), then `/workspace` and `/artifacts`, then container logs. The Job hashes each file.
 5. Register each capture.
 6. Reset open tunnels if R-TUNNEL-AFTER-END fires or `netagent` is suspect. Envoy has no per-tunnel kill, so the procedure runs the chart's graceful drain against the replicas named in `egress.accesslog`, which interrupts other tenants' tunnels on those replicas until they reconnect. On a shared replica set, an investigator weighs that against the pool's remaining tunnel cap.
@@ -342,7 +374,7 @@ An attempt that fails falls back to step 4. `kubectl debug` is a poor substitute
 1. Record the report in a case: source address, port when given, destination, time, and the reporter's clock source. RFC 7422 states that identifying a subscriber behind a shared address depends on source port and accurate timekeeping, and that a report often lacks a port.
 2. On a shared cloud NAT, map the public address and port to the `lenny-egress` replica with the NAT log. Without that log, the query returns every tunnel from the egress address in the window, ranked by target match. The operations guide requires the deployer to retain NAT logs for at least the longest evidence retention.
 3. Run `attribute` with a window of plus or minus 60 seconds. It reads `egress.tunnel`, joins `egress.decision`, and checks attribution against `egress.accesslog` and `pod.address`, so it reports a mismatch beside each candidate.
-4. For each candidate, read the session's owner, then `agent.activity.exec` joined on the decision identifier and local port, when coverage exists.
+4. For each candidate, read the session's owner, then the `connect` records in `agent.activity.exec` in the same pod around the tunnel's start, when coverage exists. That join is a time-based correlation and is labelled so.
 5. Classify: tenant-directed abuse, a prompt-injected agent, or a compromised credential or component. Each class names its next action. An abusive tenant gets quarantine before suspension, because suspension drains sessions and a pod with no label is released.
 6. Reply to the reporter with the action taken and no tenant identity. Contacting the tenant is a case action, after decision 6's rule.
 
@@ -379,25 +411,29 @@ Use layered producers, joined by `podUid`, `sessionId`, `traceId`, and time.
 
 The other profiles differ. `standard` pools get FE-6a, plus a published producer contract, so a deployer running Tetragon or Falco can forward to `lenny-evidence` under its own identity, and a reference forwarder for Tetragon is tested on Kind (decision 3). `microvm` pools get FE-6a and the network evidence in the first version, and the API reports `coverage: tool_only` for them, so investigators see the gap (decision 2). An in-guest sensor is later work. Under the envelope's rule it would still be `self_reported`.
 
-A pool's RuntimeClass selects coverage. The chart documents a `gvisor-monitored` RuntimeClass whose runtime handler points at a `runsc` configuration naming the sink, so a pool opts in by RuntimeClass, and an unmonitored gVisor pool on the same node has no session and no cost. Configuring the handler is node provisioning, which the cluster admin owns, as with RuntimeClass installation today (§17). GKE Sandbox preconfigures gVisor, and the Falco Helm chart installs there through a values file, so the managed path needs its own check.
+A new pool field, `activityMonitoring: true`, selects coverage, and it is valid only with `isolationProfile: sandboxed`. A profile maps to one RuntimeClass through `runtimeClasses.profiles.<profile>.name` (§17.5, `RuntimeClassNameOverrides`), so the profile cannot distinguish the two. The controller renders the class named in `runtimeClasses.monitored.name`, by default `gvisor-monitored`, whose runtime handler points at a `runsc` configuration naming the sink. An unmonitored gVisor pool on the same node has no session and no cost. Admission policies keyed on RuntimeClass (§17.2) gain the name. Configuring the handler is node provisioning, which the cluster admin owns, as with RuntimeClass installation today (§17). GKE Sandbox preconfigures gVisor, and the Falco Helm chart installs there through a values file, so the managed path needs its own check.
 
 ### Streams
 
 | Stream | Producer | Provenance | Payload | Default retention |
 | :-- | :-- | :-- | :-- | :-- |
 | `agent.activity.tool` | Gateway, including reports it forwards for the adapter and the SDK | `enforced` for calls the gateway carried, `self_reported` otherwise | `toolCallId`, tool, connector, phase, outcome, bounded redacted input, duration, and `reportedBy` | 90 days |
-| `agent.activity.exec` | Collector | `observed` | `kind` (`exec`, `exit`, or `connect`), PID, parent PID, process start time, binary path, `argv[0]`, argument count, UID, container name, working directory class, exit status, loopback port for a `connect`, and non-proxy `connect` targets | 30 days |
+| `agent.activity.exec` | Collector | `observed` | `kind` (`exec`, `exit`, or `connect`), PID, parent PID, process start time, binary path, `argv[0]`, argument count, UID, container name, working directory class, exit status, and the destination of a `connect` | 30 days |
 | `agent.activity.exec.args` | Collector | `observed` | The process key and its redacted, bounded arguments | 14 days |
 | `agent.activity.file` | Collector | `observed` | Per process and directory prefix: operation and count per window. Exact records for the watchlist and for writes outside the workspace | 30 days |
 
-Separate streams carry different permissions, retention, and keys, which answers the outline's question about differing audiences: a customer's security team can hold `exec` while only forensics holds `args`. Attribution comes from ingest. The collector supplies the pod and container and the time, and `lenny-evidence` sets tenant and session from the binding at that time. On an embedded pod the adapter's own work appears in the `adapter` container at the agent UID, and the record's binding state (warm-up, materializing, or running) is the distinction available. Warm-pod records have no tenant and use the platform prefix, as the envelope states. Records on a concurrent-slot pod take the session from a working directory under `/workspace/slots/{sessionId}/`, and otherwise carry only the tenant.
+Separate streams carry different permissions, retention, and keys, which answers the outline's question about differing audiences: a customer's security team can hold `exec` while only forensics holds `args`. Attribution comes from ingest. The collector supplies the pod and container and the time, and `lenny-evidence` sets tenant and session from the binding at that time. On an embedded pod the adapter's own work appears in the `adapter` container at the agent UID, and the record's binding state (warm-up, materializing, or running) is the distinction available. Warm-pod records have no tenant and use the platform prefix, as the envelope states. Attribution comes from the binding, as the envelope requires. A pod with one bound session gets that session. A concurrent-slot pod's records carry `candidateSessions` from the binding at that time, with no `sessionId`, and a `workdirHint` field that the agent controls and nothing else reads, so a process cannot choose its key by changing directory.
 
-**Joining a command to a tunnel.** Prompt-injection exfiltration is the case an investigator most needs answered: which command opened this connection. `agent.activity.exec` records a process's `connect` to the local endpoint with its local port, and `netagent` knows the same port for the tunnel it opens with a decision identifier. Recording that port in the decision path joins process to tunnel without trusting either record alone (see "Changes requested"). A `connect` to any address other than the local endpoints is also recorded, because the NetworkPolicy drops it and the attempt itself is a signal.
+**Joining a command to a tunnel.** Prompt-injection exfiltration is the case an investigator most needs answered: which command opened this connection. gVisor's `Connect` trace point has `fd`, `fd_path`, and one `address`, with no local port, so `agent.activity.exec` cannot supply the port that `egress.local` now records. On gVisor the join is a time-based correlation of a process's `connect` to the local endpoint with `netagent`'s tunnel open in the same pod, and the query returns it with `join: time_correlated` and every candidate process. A busy pod can yield several candidates, and a `connect` may reuse a keepalive connection. The spike checks whether a trace point or an upstream gVisor change can supply the port. A host sensor under `standard` may see the socket's local port, which would make `join: exact` there, and that is also unverified. A `connect` to any address other than the local endpoints is recorded, because the NetworkPolicy drops it and the attempt itself is a signal.
+
+**Trace point fields.** gVisor's `Execve` carries `pathname`, `argv`, and `envv`, and `envv` stays off. `Open` carries a raw `pathname` that the source describes as not canonicalized, and an `fd_path` for the `openat` directory. The collector resolves it against the process's working directory before the watchlist check. It cannot resolve symlinks, so the watchlist is weaker than a canonical path filter, and the residual is stated below.
+
+**Records after a quarantine.** Tenant reads must not show `quarantined` denials or activity after a session's failure (FP3). Records from a quarantined pod, from the moment the state applies, go under the platform prefix with the tenant in the payload (see "Changes requested"), so they appear in no tenant read or export, and the tenant's sequence numbers show no gap. They are retained with the case.
 
 ### Producer contract and channels
 
 - **SDK.** The runtime writes an `activity` frame on `CH-MSGSOCK`, or calls the SDK's `reportActivity`. The adapter validates, sizes, and rate-limits it (§4.7.11 item 3), and sends it on a new channel proposed as `CH-ACTIVITYREPORT`. The gateway overwrites session and tenant from the binding, rejects a report for a session the pod does not hold, forces `self_reported`, and forwards to `lenny-evidence`, as the decision service does for `netagent`. Reporting is optional at every integration level, and an absent report shows as `coverage` rather than as an error.
-- **Collector.** One unprivileged process per monitored node, running as non-root, with a hostPath directory for its socket, an informer limited to its own node's pods, and a `lenny-evidence` client. gVisor allows one trace session, named `Default`, with several sinks, so a deployer already running Falco on these nodes merges the two configurations. It filters the fields that gVisor always sends (a third-party trial reports that `container/start` carries arguments and the working directory regardless of optional fields) before anything leaves memory. It authenticates with a projected token carrying pod and node claims, and ingest accepts a record only for a pod on that node (see "Changes requested"), so a compromised collector can forge records for pods on its node and no others.
+- **Collector.** One unprivileged process per monitored node, running as non-root, with a hostPath directory for its socket, an informer limited to its own node's pods, and a `lenny-evidence` client. gVisor allows one trace session, named `Default`, with several sinks, so a deployer already running Falco on these nodes merges the two configurations. It filters the fields that gVisor always sends (a third-party trial reports that `container/start` carries arguments and the working directory regardless of optional fields) before anything leaves memory. It authenticates with a projected token carrying pod and node claims, and ingest accepts a record only for a pod on that node, as the egress design states, so a compromised collector can forge records for pods on its node and no others.
 - **Public contract.** A deployer's sensor is a producer with an allowlisted identity and the same node restriction, writing `agent.activity.exec` and `agent.activity.file`. Provenance stays `observed`, and `producer` names it.
 
 ### Redaction
@@ -411,19 +447,19 @@ Redaction runs in the collector and in the adapter before a record leaves the no
 | Entropy | A high-entropy argument above a set length is treated the same way. |
 | Bounds | At most 64 arguments and 4 KiB per record. Longer input is cut with a `truncated` count. Paths are bounded and normalized. |
 | Credential paths | `/run/lenny` and `/run/netagent` are recorded as path classes, never as file names beyond the fixed layout. |
-| Fingerprints | HMAC-SHA-256 under a key derived from the session's data key. An investigator holding a leaked value can test whether it appeared in a session, through `forensics.query`, without the record storing it. |
+| Fingerprints | HMAC-SHA-256 under a per-pod-incarnation fingerprint key that `lenny-evidence` issues to the collector and to the adapter's path at coverage start, because the redacting process runs before ingest and holds no session key. An investigator holding a leaked value can test it pod by pod, through `forensics.query`, without the record storing it. The key is stored wrapped beside the data keys and is destroyed with them. |
 | Detail setting | `metadata` writes no `args` stream, `redacted` is the default, and `full` writes arguments with the structural layer off, and needs a platform gate and a tenant opt-in. |
 
 Redaction misses secrets with no recognizable form, so §12.9 classifies all four streams as T3 by default and T4 when `workspaceTier` is T4. Encryption and restricted reads are the control, and redaction reduces exposure. Tool input from the SDK passes the same rules, in the adapter, because a compromised runtime controls that input.
 
 ### Keys
 
-Each session has a data key, generated by `lenny-evidence` at the first record, wrapped by the tenant's KMS key on T4 and by a regional evidence key otherwise, and stored in `evidence_session_keys` (tenant, session, user, wrapped key, state, and timestamps). `payloadKeyRef` names it. `lenny-evidence` encrypts on ingest, so digests are computed over ciphertext and still verify after destruction. A record with no session (service mode, or a slot the working directory rule cannot attribute) uses a key per tenant and pod incarnation.
+Each session has a data key, generated by `lenny-evidence` at the first record, wrapped by the tenant's KMS key on T4 and by a regional evidence key otherwise, and stored in `evidence_session_keys` (tenant, session, user, wrapped key, state, and timestamps). `payloadKeyRef` names it. `lenny-evidence` encrypts on ingest, so digests are computed over ciphertext and still verify after destruction. A record with no single session (service mode, or any concurrent-slot record) uses a key per tenant and pod incarnation, selected by the binding.
 
 | Event | Effect |
 | :-- | :-- |
 | Read | The gateway's handler asks `lenny-evidence` to decrypt, after its permission check. A cross-tenant platform read writes `forensics.evidence_read`. |
-| `DeleteByUser` | The job destroys the keys of that user's sessions, and `lenny-evidence` records a tombstone. A key under a security hold is skipped and queued in pending erasures. A pod-incarnation key is destroyed when any user whose session ran on that pod is erased, because it cannot be scoped further, unless a hold covers it. |
+| `DeleteByUser` | Tenant reads of that user's sessions stop at once. The job schedules destruction of their keys after `forensics.activity.keyDestructionDelay` (0 by default), so a hold set in that window can still stop it, and it then records a tombstone. A key under a hold with a deferring `basis` is queued in pending erasures. A pod-incarnation key is destroyed when every user whose session ran on that pod has been erased, or at retention expiry, because destroying it on one user's request would let a tenant erase other sessions' evidence. The erased user's records on that pod stay encrypted until then, which is stated under "Residual risks". |
 | Retention expiry | The sweeper deletes batches, and it destroys a session's key once its last batch is gone. |
 | Tenant teardown | Keys are deleted with the tenant, except those under a hold or the retention class, which are rewrapped under the escrow KEK. |
 
@@ -441,6 +477,8 @@ The streams are customer data about the customer's own agents. A tenant admin ca
 | `evidence.read.agent.activity.exec.args` | None until granted by a tenant admin | Same, and each read writes a custody event |
 
 `tenant-viewer` holds none of these by default, because an activity stream can expose paths and commands of other users' sessions in a form the viewer role's session read does not present today. A tenant admin who is the subject of an investigation can read these streams, which is why the operator's copy is the one under hold.
+
+**Activity floor.** A tenant admin could otherwise set `agentActivity.level: none` or erase a user before an investigation starts, and a later hold cannot recover a record that was never written or a key already destroyed. `forensics.activity.floor` sets a deployment minimum for level, detail, and retention, `agentActivity.levelFloor` raises it per tenant under the platform admin's control, and the tenant's setting can only go above the floor. A floor of `process` means sessions need a monitored pool, and session creation on another pool is refused. Lowering a tenant's own setting above the floor is an audited write (decision 23).
 
 ### Volume and cost
 
@@ -460,7 +498,7 @@ For comparison, §16.4 estimates about 10 KB of audit and 50 KB of logs per sess
 - **Watchlist.** `forensics.activity.fileWatchlist` covers paths whose access is the event: `/run/lenny`, `/run/netagent`, `/proc/*/environ`, `.ssh`, `.git/config`, `.npmrc`, and `.netrc`. A tenant can extend it.
 - **Isolation between tenants (P7).** The collector bounds each pod, and ingest bounds each tenant. Past a bound, loss appears as a sequence gap and a gap record, as the egress design specifies, and a flood is itself recorded by the count.
 - **Effect on the agent.** gVisor's documentation warns that a high number of remote sink retries can significantly delay application execution, so the configuration sets low retries and accepts a drop. An attacker can cause drops by flooding, which is visible as gaps and a rate-limit record. Tracing `openat` adds work on each open in the Sentry, by an amount no gVisor source states, so the `file` stream can be turned off per pool, and the spike measures both. For scale, Falco's project documentation gives a rule of thumb for its kernel path: below about 1,500 kernel events per second per CPU keeping up is rarely a problem, and above about 3,000 it becomes harder, with event rates depending on the workload.
-- **Manifest rows.** The compaction bound of one row per tenant-hour per stream gives 120,000 rows per day per stream at 5,000 tenants, so these streams raise the egress design's 600,000 to at most 1,080,000.
+- **Manifest rows.** The compaction bound of one row per tenant-hour per stream gives 120,000 rows per day per stream at 5,000 tenants. The egress table now has six streams, so its bound is 720,000 rather than the 600,000 its text states. The four activity streams and `pod.address` raise that to at most 1,320,000.
 
 **Per-tenant cost.** A tenant's stored bytes are `sessions per day × Σ (MB per session × retention days)`. At the assumed sizes, that is 80 MB per daily session, so a tenant with 100 sessions per day holds about 8 GB. `lenny_evidence_bytes_total{tenant_id, stream}` and a daily `evidence.usage` billing event in §11.2.1 let an operator charge for it, and the tenant's activity bytes count against a separate `evidenceQuotaBytes`, so a full quota produces gap records and never refuses a session. The operator bears the collector's node cost in the pool's resource accounting, because `applyResources` copies the pool's class onto pod containers and the collector is outside the pod.
 
@@ -468,7 +506,7 @@ For comparison, §16.4 estimates about 10 KB of audit and 50 KB of logs per sess
 
 | Failure | Behaviour |
 | :-- | :-- |
-| Collector absent when a sandbox starts | `ignore_setup_error: false` on `gvisor-monitored` fails the sandbox, so the pod fails its warm fill, and the alert names the node. |
+| Collector absent when a sandbox starts | `ignore_setup_error: false` on the monitored class fails the sandbox, so the pod fails its warm fill, and the alert names the node. |
 | Collector restarts with sandboxes running | A third-party plugin's README states that `runsc` connects to the sink once at sandbox start, does not reconnect, and needs a sandbox restart after the receiver restarts. A Kubescape trial states that its restart run does not establish recovery of the existing connection. Running pods therefore go dark until they retire, unless the spike finds a reattach path. The collector records `coverage: lost` for each, and `ActivityCoverageLost` fires. The DaemonSet uses `OnDelete` updates during node rotation. Whether `runsc trace create` can reattach from a Job is a validation item. |
 | Coverage lost on a bound pod | `forensics.activity.onCoverageLoss`: `continue` (default) records the gap, `retire` refuses new sessions and retires the pod after its session, and `quarantine` applies on regulated tenants only by explicit choice. |
 | Sentry drops a trace point | The sink's sender drop count, where reported, becomes a gap record. A third-party trial notes that zero reported drops does not prove zero loss, so absence of a record is never proof. |
@@ -490,6 +528,9 @@ For comparison, §16.4 estimates about 10 KB of audit and 50 KB of logs per sess
 | `forensics.breakGlassGroups` | Lists the Kubernetes groups that may stamp the quarantine label directly when the API is unavailable. | Deployment | Platform admin (Helm) | Empty disables the path. |
 | `forensics.quarantine.alertAfter` | Sets the age at which `QuarantineAged` fires. | Deployment | Platform admin (Helm) | 24 hours by default. It never releases. |
 | `forensics.quarantine.maxPods` | Sets the count of quarantined pods at which an alert fires. | Deployment | Platform admin (Helm) | It alerts and does not refuse. |
+| `forensics.quarantine.preserveTimeout` | Bounds how long the handler waits for the adapter's acknowledgement before stamping the label. | Deployment | Platform admin (Helm) | 5 seconds by default. |
+| `forensics.holds.deferErasureBases` | Lists the hold bases under which erasure defers. | Deployment | Platform admin (Helm), on counsel's advice | `legal_obligation` and `legal_claims` by default. Decision 24. |
+| `forensics.holds.auditCopyInterval` | Sets how often an open-ended hold copies new audit rows. | Deployment | Platform admin (Helm) | 5 minutes by default. |
 | `forensics.twoPersonRelease` | Requires a release to come from a different principal than the one who set it. | Deployment | Platform admin (Helm) | Decision 12. |
 | `gitMirror.forensics.volumeSnapshotClass` | Names the CSI snapshot class for store holds. | Deployment | Platform admin (Helm) | Empty means no snapshot, and the API reports it. |
 | `gitMirror.heldUidBudget` | Caps the fetch UIDs that held stores may keep out of the pool. | Deployment | Platform admin (Helm) | |
@@ -497,16 +538,20 @@ For comparison, §16.4 estimates about 10 KB of audit and 50 KB of logs per sess
 | Stream `retentionClass: security` and `forensics.retention.afterTeardownDays` | Selects the streams retained after tenant teardown, and for how long. | Deployment | Platform admin (Helm) | 0 days by default. Decision 8. |
 | `lenny-evidence-reconcile` schedule and imported sources | Sets the reconciler's cadence and the object store prefixes holding NAT, flow, provider, and Kubernetes audit logs. | Deployment | Platform admin (Helm) | Imports are optional. |
 | `forensics.activity.enabled` and per-stream retention | Turns on agent activity collection and sets the ceiling on detail and retention. | Deployment | Platform admin (Helm) | Off by default. Decision 4. |
+| `forensics.activity.floor` | Sets the minimum level, detail, and retention that a tenant's settings cannot go below. | Deployment | Platform admin (Helm) | `none` by default. A SaaS operator raises it. Decision 23. |
+| `forensics.activity.keyDestructionDelay` | Delays destruction of an erased user's keys, so a hold set in that window can stop it. | Deployment | Platform admin (Helm), on counsel's advice | 0 by default. Decision 23. |
+| `agentActivity.levelFloor` | Raises the floor for one tenant. | Tenant | Platform admin (admin API) | The tenant cannot lower it. |
 | `forensics.activity.fullDetailGate` | Grants a tenant the right to choose `full` detail. | Deployment and tenant | Platform admin (admin API) | Same pattern as the egress gates. |
 | `forensics.activity.redactPatterns` and `execRatePerPod` | Extends the redaction patterns and sets the per-pod rate limit. | Deployment | Platform admin (Helm) | Patterns can be added and shipped ones cannot be removed. |
 | `lenny-activity-collector` image, resources, and producer allowlist | Installs the collector, and lists deployer sensors allowed to write activity streams. | Deployment | Platform admin (Helm) | |
-| `gvisor-monitored` runtime handler and sink configuration | Points `runsc` at the collector's socket, on nodes that run monitored pods. | Node pool | Cluster admin | Node provisioning, with a preflight check. |
-| `isolationProfile` and RuntimeClass selection | Chooses monitored or unmonitored gVisor for a pool. | Pool | Platform admin | Existing field. |
-| `forensics.activity.fileStream` | Turns on the `file` stream for a pool. | Pool | Platform admin | Off for pools whose workloads make the Sentry cost unacceptable. |
+| `runtimeClasses.monitored.name` | Names the RuntimeClass for monitored pools. | Deployment | Platform admin (Helm) | `gvisor-monitored` by default. |
+| Monitored runtime handler and sink configuration | Points `runsc` at the collector's socket, on nodes that run monitored pods. | Node pool | Cluster admin | Node provisioning, with a preflight check. |
+| `activityMonitoring` | Chooses monitored gVisor for a pool. | Pool | Platform admin | Valid only with `isolationProfile: sandboxed`. |
+| `forensics.activity.fileStream` | Turns on the `file` stream for a pool. | Pool | Platform admin | Off by default until the spike reports the Sentry's cost. |
 | `forensics.activity.onCoverageLoss` | Chooses what happens to a bound pod that loses coverage. | Pool | Platform admin | Decision 19. |
-| `agentActivity.level` | Chooses `none`, `tool`, or `process` within the ceiling and the pool's coverage. | Tenant | Tenant admin | A session cannot lower it. |
+| `agentActivity.level` | Chooses `none`, `tool`, or `process` between the floor and the ceiling, within the pool's coverage. | Tenant | Tenant admin | A session cannot lower it. |
 | `agentActivity.detail` | Chooses `metadata`, `redacted`, or `full`. | Tenant | Tenant admin | `full` needs the gate. |
-| `agentActivity.retentionDays` per stream | Shortens or lengthens retention within the deployment's limits. | Tenant | Tenant admin | Subject to any regulatory floor. |
+| `agentActivity.retentionDays` per stream | Shortens or lengthens retention within the deployment's limits. | Tenant | Tenant admin | Subject to the activity floor and any regulatory floor. |
 | `agentActivity.fileWatchlist` | Adds paths whose access is recorded exactly. | Tenant | Tenant admin | |
 | `evidenceQuotaBytes` | Bounds the tenant's activity bytes. | Tenant | Platform admin | Past it, records become gaps. |
 | Evidence read permissions | Grants named read permissions on each activity stream. | Tenant | Tenant admin, subject to `security-oversight-design.md` | Defaults under "Who may read". |
@@ -522,8 +567,8 @@ A hosting provider reports that 203.0.113.7 scanned its host 198.51.100.20 on po
 
 1. Dave, on the operator's forensics team, opens a case. The address is the shared NAT for the default `lenny-egress` Deployment.
 2. `lenny-ctl admin forensics attribute --address 203.0.113.7 --target 198.51.100.20:443 --at 2026-11-20T14:03:11Z --window 60s` reads `egress.tunnel` by time and target, and returns three tunnels. All three carry the same session in `acme`, owned by `alice@acme.com`. The attribution check against `egress.accesslog` and `pod.address` reports no mismatch.
-3. `agent.activity.exec`, read under the case, shows a `python` process in that session's runtime container with `connect` records matching the local ports of those tunnels. `agent.activity.tool` shows that the command ran after a fetch of a web page whose text instructed it. This suggests prompt injection rather than tenant-directed abuse.
-4. The session is still running, so Dave quarantines the pod with `sessionDisposition: fail`, sets a security hold on the session with `evidence`, `audit`, `artifacts`, and `transcripts`, and captures memory with `runsc checkpoint --leave-running`.
+3. `agent.activity.exec`, read under the case, shows a `python` process in that session's runtime container with `connect` records to the local endpoint within a second of each tunnel's start, returned as `join: time_correlated`, and no other process connected in those windows. `agent.activity.tool` shows that the command ran after a fetch of a web page whose text instructed it. This suggests prompt injection rather than tenant-directed abuse, and it is a correlation rather than a proof.
+4. The session is still running, so Dave quarantines the pod with `sessionDisposition: fail`, sets a security hold on the session with `evidence`, `audit`, `artifacts`, and `transcripts` and an approved `basis`, and captures memory with `runsc checkpoint --leave-running`.
 5. Without activity coverage (a Kata pool, for example), step 3 has only `agent.activity.tool` and the network streams, and `activity-coverage` says so.
 6. Dave answers the reporter, and contacts `acme` through the operator's security contact, recording the disclosure on the case. The tenant admin can then read its own streams.
 
@@ -538,7 +583,7 @@ Bob, a tenant admin at `globex`, reports that the API key from the credential bi
 3. Bob's own reads show `egress.local` scrub hits, and `egress.decision` records for an unexpected host, in one session. He files a report.
 4. Carol, on the operator's team, opens a case naming `globex`. She runs R-MINT-WRONG-TENANT over the range to test for a cross-tenant breach, and it finds no record of the binding minted to another tenant's pod.
 5. Bob supplies the key's value through the case's encrypted channel. A fingerprint test over `agent.activity.exec.args` and `agent.activity.tool` in the range finds a match in one session, in a `curl` command line, as the session's tool report also shows. So the value reached the agent's context through a path outside `inject`, which is a different finding from a platform leak.
-6. Carol sets a security hold for the session and the user, and reports the result to Bob. Where the fingerprint search finds nothing, the investigation has no conclusion on that point, because redaction patterns, coverage gaps, and pods with `tool_only` coverage leave room for a miss.
+6. Carol sets a security hold for the session and the user, with `basis: customer_instruction` and the reference Bob's written request gives, and reports the result to Bob. Where the fingerprint search finds nothing, the investigation has no conclusion on that point, because redaction patterns, coverage gaps, and pods with `tool_only` coverage leave room for a miss.
 
 ### A compromised `netagent`
 
@@ -555,46 +600,50 @@ Bob, a tenant admin at `globex`, reports that the API key from the credential bi
 
 Carol, a tenant admin at `acme`, submits `POST /v1/admin/users/alice/erase` while Dave's case has a security hold covering Alice's sessions.
 
-1. Step 0 finds no §12.8 legal hold, so the job starts. The security hold does not block it, and the response is the normal one.
+1. Step 0 finds no §12.8 legal hold, so the job starts. The security hold sits outside that ledger, and the response is the normal one.
 2. The job drains Alice's sessions and deletes the originals in the tenant's stores. A quarantined pod remains, and the release step skips it.
-3. The escrow copies stay, and held evidence manifests stay. The per-session keys for Alice's sessions under the hold are skipped, and the job is added to the hold's pending erasures. Keys for her other sessions are destroyed, so those records become unreadable while their digests still verify.
-4. The receipt records `legal_basis: gdpr_art17_with_art17_3_exception` and the fact of a retention, in the form decision 7 selects.
+3. The hold's `basis` is `legal_claims`, approved by the operator's counsel, so its escrow copies and held evidence manifests stay, its per-session keys are skipped, and the job joins the pending erasures. Keys for her other sessions are destroyed, after any configured delay, so those records become unreadable while their digests still verify. Had the basis been outside `deferErasureBases`, the copies and keys would go too, and Dave would see `forensics.evidence_lost`.
+4. The tenant-readable events have the normal form, under decision 7's default, and the case records the retention.
 5. When Dave releases the hold, the worker deletes the copies and destroys the keys, unless another hold covers them, writes `gdpr.erasure_deferred_completed`, and terminates the quarantined pod, removing its volumes.
 
-If `acme` asks for tenant deletion instead, Phase 3.5 waits for the hold to finish materializing, escrows held evidence and rewraps its keys, and continues, so Phase 4a can destroy the tenant key within the T4 deadline. A quarantined pod keeps tenant data on its node's disk past that deadline, which the receipt and the case state.
+If `acme` asks for tenant deletion instead, Phase 3.5 waits for the hold to finish materializing, escrows held evidence and rewraps its keys, and continues, so Phase 4a can destroy the tenant key within the T4 deadline. A quarantined pod keeps tenant data on its node's disk past that deadline, which the case states, and which the operator's agreement has to allow.
 
 ## Residual risks
 
 - **Lost before quarantine.** Memory and tmpfs state from before the first alert are gone unless the pod is still running, and the default pod lifetime is one session (§6.1). Many investigations start from records alone. A pool can extend `retentionClass` evidence, and nothing extends a pod's life in advance.
 - **Node-pressure eviction and node loss.** The kubelet's eviction ignores PodDisruptionBudgets and grace periods, and a hard threshold terminates immediately, so a quarantined pod can be lost. Quarantined pods should be captured promptly, and the loss is recorded.
-- **A compromised runtime destroys its own state.** Nothing stops a process from exiting or from overwriting its workspace before the quarantine lands. A compromised `netagent` restarts on exit, which loses its memory.
+- **A compromised runtime destroys its own state.** Nothing stops a process from exiting or from overwriting its workspace before the quarantine lands, or on an embedded pod before a node-side freeze. The freeze is best effort in the pod. A compromised `netagent` restarts on exit, which loses its memory. `keepalive` protects volumes unless the guest or Sentry is compromised.
 - **Open tunnels.** Quarantine does not end an open tunnel through a compromised `netagent` until the pool's cap or a replica drain, because Envoy has no per-tunnel kill. A drain interrupts other tenants. Exfiltration can continue in that window, and `egress.accesslog` records it.
 - **Kernel or Sentry compromise.** An attacker who controls the Sentry can stop trace points and forge them, and an escape reaches the collector and any forensic Job on that node. A Kata pool has no `observed` activity evidence in the first version.
 - **Coverage gaps.** Drops, a disconnected sink, redaction misses, and a runtime that reports nothing all leave holes. `coverage` and gap records state what was missed, as far as they can tell, and absence of a record is never proof.
-- **Agent evasion by interpretation.** An agent can read a file through a long-running interpreter with no new `exec`, and a `file` aggregate shows a count per directory rather than each file. A file reached through a bind mount or hard link can evade a path filter on a host sensor. The watchlist reduces this for the paths that matter most.
+- **Agent evasion by interpretation.** An agent can read a file through a long-running interpreter with no new `exec`, and a `file` aggregate shows a count per directory rather than each file. A symlink or a raw relative path can evade the watchlist, because `Open` carries a raw `pathname`, and a bind mount or hard link can evade a path filter on a host sensor.
+- **Process-to-tunnel attribution.** On gVisor the join is a time-based correlation, so a busy pod or a reused connection leaves the answer ambiguous.
+- **Erasure on a shared pod.** An erased user's records on a concurrent-slot pod stay encrypted until every user on that pod is erased or retention ends. Counsel should confirm that retention is acceptable on those pools.
+- **Evidence before a hold.** Under a floor of `none` and a key delay of 0, a tenant can stop collection or erase a user before any hold exists, and that evidence is gone. A deployment choosing those defaults accepts this loss.
 - **Privacy of the evidence itself.** Activity streams record what developers and agents did, including paths and commands that identify people, and redaction is imperfect. A held key survives an erasure request. Captures contain all process memory. Counsel should review the operator's basis, and the customer agreement should state collection, retention, and operator access.
-- **Tipping off.** FP3 hides holds from tenant-readable surfaces. A session ending as `POD_WITHDRAWN` and a pod's absence remain observable, and a tenant could infer an investigation from a pattern of them.
+- **Tipping off.** FP3 hides holds from tenant-readable surfaces. A pattern of sessions failing with a generic reason, and a slower first fetch after a store hold, remain observable, and a tenant could infer an investigation from them.
 - **Platform trust.** A database superuser, a cluster admin, a compromised `lenny-evidence`, and a platform admin who grants itself a role are all inside the boundary. The audit chain, pgaudit, and the SIEM copy detect some of this after the fact, as §11.7 states. A snapshot volume holds other tenants' stores until extraction.
 - **Compromised mirror parent.** It can forge `enforced` `git.operation` records (the limit the egress design states), and it can ignore the held flag. The snapshot is the check, taken up to 10 seconds later.
 - **Capture methods untested.** The gVisor and Kata memory captures are unproven on Lenny's node configuration, and an operator should test them before needing them.
 
 ## Specification sections affected
 
+- §4.7.10 and §28.5.3: the `keepalive` container, the `freeze` request on `CH-SUPERVISE`, and the preservation state.
 - §4.6.1, §4.6.3, and §6.2: the `quarantined` binding state and phase, the projection and drain edges, orphan GC exclusion, the label check in `lenny-sandboxclaim-guard`, the forensics reconciler's PDB and VolumeSnapshot grants, and RBAC.
 - §4.7, §28.3, and §28.5: `CH-PRESERVE`, `CH-ACTIVITYREPORT`, and the `activity` frame on `CH-MSGSOCK`, with register rows. These identifiers are proposals under the naming law.
 - §4.7.11: the adapter's validation of `activity` frames.
-- §5.3 and §17.2: the `gvisor-monitored` RuntimeClass, and the collector and `lenny-forensics` namespace rules, with admission inventory and preflight checks.
-- §7.3: `POD_WITHDRAWN` and the `resume` disposition.
-- §10.1: the preservation state beside hold state.
+- §5.2, §5.3, §17.2, and §17.5: the `activityMonitoring` pool field, the monitored RuntimeClass name, and the collector and `lenny-forensics` namespace rules, with admission inventory and preflight checks.
+- §7.3 and §10.1: `orphan_pod_terminated` as the surfaced reason, and the `resume` disposition.
+- §10.1: the preservation state beside hold state, and `CH-PRESERVE` accepted during hold.
 - §10.2: the `platform-forensics` role and permission rows.
 - §11.2.1: the `evidence.usage` billing event and `evidenceQuotaBytes`.
 - §11.7: the `forensics.*` events under CMP-058, the anchor retention rule, and a correction of the "6004 File System Activity" class name (OCSF v1.1.0 lists File System Activity as class 1001, and Datastore Activity as 6005).
 - §11.8: quarantine, security holds, the reconciler, and the capture runbook as first-responder primitives.
 - §12.2 and §12.6: `pod_quarantines`, `security_holds`, cases, `evidence_session_keys`, and `EvidenceStore`'s escrow operation.
-- §12.8: the meaning of `audit_range` and `workspace_snapshot`, security holds in step 0 and Phase 3.5, deferred erasure, key destruction, mirror purge, the retention class, and the post-restore gate.
+- §12.8: removal of `audit_range` and `workspace_snapshot` from the ledger in step 0(c) and Phase 3.5(c), a separate security-hold step in teardown, `EnsureCopied` on every deletion path, hold basis and deferred erasure, key destruction, mirror purge, the retention class, and the post-restore gate.
 - §12.9: rows for activity streams, captures, and retained evidence.
-- §13.1 and §13.2: selector exclusions on the agent policies, the collector and reconciler rows, and the deletion rule in `lenny-label-immutability`.
-- §15.1: the new admin endpoints, error codes (`QUARANTINE_NO_POD` and `SECURITY_HOLD_REGION_UNRESOLVABLE`), and the correction of the `POST /v1/admin/legal-hold` body, which the specification gives as `resourceType` and `resourceId` while the code takes `tenantId`, `sessionId`, and `artifactId`.
+- §13.1 and §13.2: the `keepalive` container identity, selector exclusions on every agent policy, the collector and reconciler rows, and the deletion rule in `lenny-label-immutability`.
+- §15.1: the new admin endpoints, error codes (`QUARANTINE_NO_POD` and `SECURITY_HOLD_REGION_UNRESOLVABLE`), the narrowed legal-hold error text,, and the correction of the `POST /v1/admin/legal-hold` body, which the specification gives as `resourceType` and `resourceId` while the code takes `tenantId`, `sessionId`, and `artifactId`.
 - §15.4 and §15.7: the `activity` report in the adapter specification and the SDKs.
 - §16.1, §16.4, §16.5, and §16.7: new metrics, the partition GC guard, the alerts (`QuarantineAged`, `HoldReviewDue`, `EvidenceDisagreement`, `ReconcilerStale`, and `ActivityCoverageLost`), and the event catalog.
 - §17.7 and §25.7: `forensic-capture` and `abuse-report` runbooks.
@@ -608,22 +657,22 @@ If `acme` asks for tenant deletion instead, Phase 3.5 waits for the hold to fini
 | Label | Proposal | Contents |
 | :-- | :-- | :-- |
 | FE-0 | Cases and custody | The case record, the `forensics.*` events, the `platform-forensics` role, and the `lenny-ctl` subsection. |
-| FE-1 | Quarantine | The API, the row and label, the binding state's writer, the phase, every retirement path, the preservation RPC, the policy selectors, the webhook rules, the PDB, and release. |
-| FE-2 | Mirror store hold | The store APIs, the flag's setter, the UID rule, stop-serving with a fresh generation, the snapshot, and purge. |
-| FE-3 | Security holds and the retention class | The hold API, copy on hold, the audit tuples, the marker's setter, the GC guard, step 0 and Phase 3.5, deferred erasure, escrow of evidence and keys, and the retention class. |
+| FE-1 | Quarantine | The API, the row and label, the binding state's writer, the phase, every retirement path, the preservation RPC, the `keepalive` container, the freeze, the policy selectors, the webhook rules, the PDB, and release. |
+| FE-2 | Mirror store hold | The store APIs, the flag's setter, sealing with a fresh generation, the snapshot, and purge. |
+| FE-3 | Security holds and the retention class | The hold API and basis, separate records, continuous copy, the audit segments, the marker's setter, the GC guard and `EnsureCopied`, the §12.8 ledger change, deferred erasure, escrow of evidence and keys, and the retention class. |
 | FE-4 | Reconciler | `pod.address`, `lenny-evidence-reconcile`, the rules, `evidence.reconcile`, imports, and the API. |
 | FE-5 | Capture runbook and abuse workflow | The unbound role, the published capture image, capture registration, `attribute`, export and verify, and the runbooks. |
 | FE-6a | Tool activity | `agent.activity.tool`, the key store, the SDK and adapter report, the coverage API, the read API, and redaction. |
-| FE-6b | Process and file activity | The collector, `gvisor-monitored`, `agent.activity.exec`, `.exec.args`, and `.file`, the producer contract, and the Tetragon reference forwarder. It starts with the spike under "Validation owed". |
+| FE-6b | Process and file activity | The collector, `activityMonitoring` and the monitored class, `agent.activity.exec`, `.exec.args`, and `.file`, the producer contract, and the Tetragon reference forwarder. It starts with the spike under "Validation owed". |
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
 | FE-0 | None | It adds records and a role. |
 | FE-1 | FE-0, EG-2 | The case record, and the `quarantined` binding state |
-| FE-2 | FE-0, EG-5 | The case record, and the held flag |
+| FE-2 | FE-0, FE-3, EG-5 | The case record, the `security_holds` row that purge reads, and the held flag |
 | FE-3 | FE-0, EG-10 | The case record, the held marker, and `EvidenceStore` |
 | FE-4 | EG-2, EG-3, EG-5, EG-10, FE-1 | The streams it reconciles, and the quarantine rule |
-| FE-5 | FE-0, FE-1, FE-2, FE-3, EG-8 | The procedures it documents, and the cross-tenant query |
+| FE-5 | FE-0, FE-1, FE-2, FE-3, FE-4, EG-8 | The procedures it documents, the `pod.address` and `egress.accesslog` checks in `attribute`, and the cross-tenant query |
 | FE-6a | EG-9, EG-10, FE-3 for its hold behaviour | The named permissions, the envelope, ingest, the key field, and the marker. It needs FE-3 only for the hold rule, and a release before FE-3 ships without that rule. |
 | FE-6b | FE-6a, EG-11 | The streams and keys, and the PKI |
 | FE-4's `R-ACTIVITY` rule | FE-6b | It lands with FE-6b, so FE-4 does not wait. |
@@ -640,21 +689,17 @@ The egress design's table lists FE-1 to FE-6 with their EG dependencies, and the
 
 ## Changes requested of egress-and-git-design.md
 
-Revision 37 of `egress-and-git-design.md` applied the items below that had to land before its proposals, so they are history here rather than open requests.
+Revision 38 of that document applied the first set of requests: `egress.accesslog`, `netagent`'s local client port, `sequenceEnd`, the pod-incarnation key in `payloadKeyRef`, the per-node producer identity with `spec.nodeName`, the marker in `EvidenceStore.DeleteByTenant` with its escrow operation, the persisted fetch UIDs, store generations, and the `quarantined` inputs and precedence. This design consumes them as fixed inputs.
 
-These are requests. This design does not edit that document, and it treats its hooks as fixed. Each item would be rework if added after EG-2, EG-5, or EG-10 ship.
+The items below are new. This design does not edit that document.
 
 | Change | In | Why it would be rework later |
 | :-- | :-- | :-- |
-| A second Envoy access logger, sent directly to `lenny-evidence` under Envoy's own identity, as stream `egress.accesslog`. It carries only fields Envoy measures: downstream peer address, CONNECT authority, upstream address and source port, times, bytes, the replica, and the decision identifier as a lookup key. | EG-2 and EG-10 | FE-4 needs a source the decision service does not control, and today the access log stream terminates at the decision service. It changes the chart's bootstrap, the SAN allowlist, and the pinned log formats. Records not captured cannot be recovered. |
-| `netagent` records the local client port for each tunnel, in the decision path or in an `egress.local` tunnel-open record at every level, with the decision identifier. | EG-2 | It joins a process to a tunnel (FE-6). It changes the I2 CONNECT contract or `egress.local`'s volume. |
-| An envelope option for a record to carry a chunk of one session's payloads, with `sequence` and an optional `sequenceEnd`. | EG-10 | A payload encrypted per record does not compress in a batch, and the activity streams are the first to use `payloadKeyRef`. A format change later would split stored records into two forms. The alternative, keeping per-record encryption, costs the storage shown under "Volume and cost" with no compression. |
-| `payloadKeyRef` can name a key for a tenant and pod incarnation as well as a session. | EG-10 | Service-mode and unattributed slot records have no session. The envelope's wording says "per-session". |
-| A per-node producer identity at `lenny-evidence`: a projected token with pod and node claims, plus a rule that a node-bound producer's records must name a pod on its node. `lenny-evidence` needs a `pkg/binding` view that includes `spec.nodeName`, and the informer's projection gains that field. | EG-2 and EG-10 | Ingest authenticates by client SAN today, and a certificate per DaemonSet pod is a different PKI cost. The projection's fields are stated in the design. |
-| `EvidenceStore.DeleteByTenant` honours the held marker and has an operation that escrows marked batches and rewraps their keys. | EG-10 | The design states that "tenant deletion removes them" and that retention and the compactor honour the marker. The interface is new in EG-10. |
-| The mirror's store index persists the fetch UIDs that own files in a held store, keeps them out of the pool across a restart, and bounds their number. | EG-5 | The UID reuse rule and the restart behaviour are specified around a re-chown that the hold skips. On a public store (mode `2775`), a reused UID could write a held store's files. |
-| The on-disk store path includes a generation, so a held generation and its successor coexist under one store identity. | EG-5 | It changes the on-disk layout, which the egress scope rule names as costly. |
-| The `quarantined` state names its inputs: the `lenny.dev/quarantine` label and an active `pod_quarantines` row, either of which applies. It takes precedence over every other binding state, including provisional and warm-up, and level 1's Helm-rendered tenant policies carry the same selector exclusion. | EG-2 and EG-7 | The hook names the state and not its source. Level 1 has no decision in the path for some flows, so the selector is its enforcement. |
+| Records from a pod in the `quarantined` state go under the platform prefix with the tenant in the payload, set from `pkg/binding` at ingest and in the decision service's forwarding. | EG-2 and EG-10 | Tenant reads, exports, and per-tenant sequence numbers would otherwise show `quarantined` denials and post-failure activity, which breaks FP3. Attribution is set where the record is written, so a later change alters stored placement. |
+| A `refresh` and a read-after-push wait always target the store's current generation. | EG-5 | A hold seals a generation, and a `netagent` wait on a sealed one never completes. |
+| Correct the manifest bound text. The stream table has six streams, and the bound of 600,000 rows states five. | EG-10 | It is a sizing statement other designs add to. This item is a correction with no format effect. |
+
+The local client port in `egress.local` gives no exact join on gVisor, because `Connect` has no local port (see FE-6). This design keeps the field for a sensor that can supply the port, and asks for no change.
 
 ## Documentation
 
@@ -668,13 +713,12 @@ Each proposal carries the changes for its own surface, and spec changes land fir
 | `docs/runbooks/forensic-capture.md`, `abuse-report.md`, and `leaked-secret.md` | New runbooks in the §25.7 format, with the capture table per profile. | FE-5 |
 | `docs/runbooks/legal-hold-quota-pressure.md` | States that security holds do not count here. | FE-3 |
 | Operator guide `security.md` and `audit-ocsf.md` | `security.md` summarizes incident primitives and links out. `audit-ocsf.md` gains the new classes and corrects the File System Activity class. | FE-0, FE-6a |
-| Operator guide `namespace-and-isolation.md` | States which evidence each isolation profile yields, because that now informs the choice of profile. | FE-6b |
+| Operator guide `namespace-and-isolation.md` | States which evidence each isolation profile yields, because that now informs the choice of profile, and documents `activityMonitoring`. | FE-6b |
 | Operator guide `lenny-ctl.md` and `docs/reference` | The new commands, endpoints, errors, metrics, and alerts. | Each |
 | Runtime author guide `platform-tools.md` | States that tool calls through the platform and connectors are recorded. | FE-6a |
 | Runtime author guide `runtime-sdk.md` and `integration-levels.md` | The `activity` report and `reportActivity`, what to report for a shell tool, the redaction applied, and that reporting is optional and self-reported. | FE-6a |
 | Runtime author guide `runtime-configuration.md` | States that monitored pools record the runtime's processes and files, and that a process-heavy runtime pays the file stream's cost. | FE-6b |
-| Runtime author guide `lifecycle.md` | States that a pod can end with `POD_WITHDRAWN`, and that the runtime receives nothing further in that case. | FE-1 |
-| Client guide | Adds `POD_WITHDRAWN`, with no explanation of cause. | FE-1 |
+| Runtime author guide `lifecycle.md` | States that a runtime can stop receiving messages and be stopped with SIGSTOP at any time, with no notice. | FE-1 |
 
 ## Tests
 
@@ -682,7 +726,7 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 
 ### Tier 0: static
 
-- The chart renders the quarantine exclusion on every agent allow policy, and a schema check fails a new policy that lacks it.
+- Every rendered NetworkPolicy in an agent namespace other than `default-deny-all` carries the quarantine exclusion, in every chart configuration that renders one, including `internet`, `kube-dns`, `llm-proxy`, and `otlp`. A new policy without it fails.
 - The `lenny-forensics-capture` ClusterRole holds no `nodes/proxy` and is bound by nothing the chart renders.
 - The collector's pod template passes `pkg/podsecurity` and holds no capability.
 - `schemas/` and the OCSF mapping cover each new event type and stream.
@@ -693,7 +737,10 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 - **Binding.** The label alone, the row alone, both, and neither yield the stated state, and quarantine takes precedence over every other state.
 - **Holds.** Marker recomputation on release covers overlapping holds, an open-ended range, and a release while another hold still covers a row.
 - **Redaction.** Each structural pattern, entropy threshold, truncation boundary, and credential path class, with values from a corpus of known secret forms and a corpus of harmless arguments.
-- **Fingerprints.** A value matches its own fingerprint under the session key, and not under another key.
+- **Fingerprints.** A value matches its own fingerprint under the pod-incarnation key, and not under another key. A collector with no issued key writes the value as unfingerprinted redaction.
+- **Attribution.** A process that changes directory selects no session or key on a concurrent-slot pod, and `workdirHint` feeds nothing else.
+- **Floor.** A tenant write below the floor is refused, and an erasure with a delay can be stopped by a hold set inside it.
+- **Hold basis.** A hold without both basis fields is refused, and each basis defers erasure or does not, per the configured list.
 - **Aggregation.** Windows, counts, watchlist exact records, and collapse above the rate limit, including the empty window and the boundary at the limit.
 - **Reconciler rules.** Each rule on matching inputs, on a disagreement, on a lossy input, and on a suspect tag that must not attribute.
 - **Coverage.** A timeline with a start, a loss, and no producer returns the stated intervals.
@@ -715,29 +762,35 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 
 ### Tier 4: integration
 
-- **Holds on the compose stack.** A hold's audit tuples verify as a chain segment after the live rows are deleted. A held artifact survives rotation and deletion of its original, and the tenant's quota and legal-hold list are unchanged. The partition GC waits during materialization and drops afterwards.
+- **Holds on the compose stack.** A hold's audit segment verifies as a chain after the live rows are deleted, for a tenant scope and for a session scope, each copying every tenant row in range. A held artifact survives rotation and deletion of its original, and the tenant's quota and legal-hold list are unchanged.
+- **Open-ended holds.** Audit rows and artifacts created after the hold are copied, the partition GC waits for rows above the cursor and drops afterwards, every deletion path copies first, and a copy failure refuses the deletion. Phase 3.5 flushes before Phase 4.
+- **Ledger.** A security hold produces no `ERASURE_BLOCKED_BY_LEGAL_HOLD` or `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD`.
+- **Separate records.** `POST /v1/admin/legal-hold` with `hold: false` on a session under a security hold deletes no security copy and returns no `escrowReleased` count, on a live session and on a tombstoned tenant.
 - **Erasure.** `DeleteByUser` during a hold returns the normal response, deletes the originals, skips held keys, and completes at release, with the stated receipt fields, and a user with no hold follows the existing path.
 - **Teardown.** Phase 3.5 escrows held evidence and rewraps its keys, Phase 4a destroys the tenant key, digests and anchors verify afterwards, and decryption works under the escrow KEK. A region with no escrow entry fails closed.
 - **Retention class.** Marked streams survive teardown for the set period and are deleted afterwards, and unmarked ones are removed.
 - **Keys.** Key destruction makes a payload unreadable while its digest verifies, and a retention expiry destroys the key after the last batch.
-- **Sessions.** `sessionDisposition` `fail` and `resume`, on a single-session, a concurrent-slot, a service-mode, and a warm pod, and a delegation tree.
+- **Sessions.** `sessionDisposition` `fail` and `resume`, on a single-session, a concurrent-slot, a service-mode, and a warm pod, and a delegation tree. The `fail` session shows `orphan_pod_terminated` and does not retry.
+- **Order.** With a test adapter, the row and binding push precede `CH-PRESERVE`, `CH-PRESERVE` precedes the label, and an unacknowledged RPC continues at the timeout.
 - **Restore.** A restored database replays no erasure that a hold deferred.
 
 ### Tier 5: end to end on Kind
 
 - A quarantined pod keeps its volumes through a force-terminate, a tenant suspension, a recycle limit, an uptime limit, a pool deletion, a tenant deletion's Phase 5, a coordinator hold timeout, and a `kubectl delete`, and each is refused or skipped as stated.
+- With `keepalive`, exiting the adapter and the runtime leaves `/workspace` and `/sessions` readable on the node. Without it, the same exits remove them, which pins the kubelet inference. A pod with no quarantine retires as before when its adapter exits.
+- In-pod freeze stops every process in the runtime container on a sidecar pod, and `CH-SUPERVISE` keeps working.
 - `kubectl drain` waits on the PDB, and the release lets it complete.
 - The agent policies apply after the label on Calico or Cilium, because kindnet is not evidence of production enforcement, and new connections to the gateway, object store, and mirror fail.
-- A mirror store hold stops re-chown, repack, purge, and fetches, a held public store's files stay unwritable by a later fetch, and `stopServing` serves a fresh generation.
+- A mirror store hold stops re-chown, repack, purge, and fetches on the sealed generation, and a held public store's files stay unwritable by a later fetch. A fresh generation serves fetches and read-after-push at once, and refs stay current.
 - The kubelet checkpoint path under `standard`, with CRI-O or containerd with CRIU, produces an archive, and a runtime without it returns the documented error, which the runbook handles.
 - The Tetragon reference forwarder writes `agent.activity.exec` for a `standard` pod.
 
 ### Tier 6: end to end on cloud
 
-- On gVisor nodes: the collector receives `exec` and `file` records with correct attribution on sidecar and embedded pods, `ignore_setup_error: false` fails a sandbox with no collector, a collector restart produces `coverage: lost`, and an unmonitored RuntimeClass on the same node produces nothing.
+- On gVisor nodes: the collector receives `exec` and `file` records with correct attribution on sidecar and embedded pods, `ignore_setup_error: false` fails a sandbox with no collector, a collector restart produces `coverage: lost`, `activityMonitoring` selects the monitored class, and an unmonitored pool on the same node produces nothing. The join reports `time_correlated` on `Connect` records.
 - A host eBPF sensor on the same node records no process inside the gVisor and Kata pods, which pins the coverage table.
-- `runsc checkpoint --leave-running` through the published image leaves the agent running and produces a registered archive. The Kata capture method, once chosen, gets the same test.
-- GKE Sandbox as a managed configuration of `gvisor-monitored`, where it is available.
+- `runsc pause` and `runsc checkpoint --leave-running` through the published image, on an unfrozen and a frozen pod, produce a registered archive. The Kata capture method, once chosen, gets the same test.
+- GKE Sandbox as a managed configuration of the monitored class, where it is available.
 
 ### Tier 7: load
 
@@ -750,12 +803,13 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 
 - Quarantine during a Postgres outage (break glass), during an API server outage (store re-read), and with a lost binding push (the 30-second bound).
 - A node eviction of a quarantined pod records `forensics.evidence_lost`.
-- A crash of the gateway between each step of the quarantine order leaves the reconciler to finish it, with no pod retired.
+- A crash of the gateway between each step of the quarantine order leaves the reconciler to finish it, with no pod retired. An unreachable adapter at `CH-PRESERVE` produces the stated status, and the volumes survive the hold timeout.
 - `lenny-evidence` loss during materialization, during activity ingest, and during a sweep leaves nothing deleted.
 
 ### Tier 9: security
 
-- A tenant admin's every read (audit query, legal-hold list, quota, retention, error codes, and session fields other than `POD_WITHDRAWN`) shows no sign of a hold, quarantine, or case, which pins FP3.
+- A tenant admin's every read (audit query, legal-hold list and clear, quota, retention, error codes, session fields, every stream read and export including sequence continuity, and the erasure and teardown receipts) shows no sign of a hold, quarantine, or case, which pins FP3.
+- A process at the agent UID cannot signal `keepalive`. Raw egress on an `internet` pool stops for new connections after the label.
 - A compromised `netagent` stand-in leaves its tunnels open under quarantine, and R-TUNNEL-AFTER-END fires. Its forged reports for another session are rejected.
 - A compromised decision service stand-in drops records and forges tags, and R-TUNNEL-NO-DECISION and R-ATTRIBUTION fire, and the Token Service refuses a quarantined pod regardless.
 - A forged collector record for a pod on another node is rejected.
@@ -775,7 +829,11 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 
 ## Decisions
 
-Each item is open, and nothing below has been adopted. Decision numbers are referenced above.
+Each item in the table is open, and nothing in it has been adopted. Decision numbers are referenced above. Decisions 14, 20, and 21 are settled by this revision, subject to the owner's review:
+
+- **Decision 14: network cut on quarantine.** Every agent allow policy excludes the label, including `allow-gateway-ingress`, and the label follows the acknowledged `CH-PRESERVE`. The cost is that a pod whose adapter did not acknowledge can lose `CH-MSGSOCK` at 120 seconds.
+- **Decision 20: selecting monitored pods.** The `activityMonitoring` pool field and `runtimeClasses.monitored.name`, because one profile maps to one RuntimeClass. A new isolation profile would touch each profile-keyed rule with no change in isolation. A node-wide setting would charge unmonitored pools and fail every gVisor pod on a collector outage.
+- **Decision 21: the `file` stream.** Off per pool until the spike reports the Sentry's cost, so early adopters have `exec` and tool evidence alone.
 
 | # | Decision | Recommendation | Cost of the recommendation | Main alternative |
 | :-- | :-- | :-- | :-- | :-- |
@@ -784,32 +842,34 @@ Each item is open, and nothing below has been adopted. Decision numbers are refe
 | 3 | `standard` coverage | A public producer contract and a tested Tetragon forwarder, with no sensor in the chart. | A deployer installs a privileged DaemonSet itself. | A chart option, which adds the privileged component the egress design avoids, for a profile §5.3 reserves for development. |
 | 4 | Default state | Off at the deployment level. A SaaS operator turns it on, and tenants choose within it. | No evidence exists for a tenant until someone chooses it, and an incident before that has none. | On by default at `tool` level, which is cheap and needs a customer agreement to state it. |
 | 5 | Who reads activity | `tool`, `exec`, and `file` to `tenant-admin` and `security-auditor`, `args` only on grant, and the operator only under an open case. Owned by `security-oversight-design.md`. | A subject tenant admin can read its own streams, and the case requirement slows the operator. | Operator-only: simpler, and it removes the customer's evidence, which `security-oversight-design.md` exists to provide. |
-| 6 | Does the tenant learn of a quarantine or hold | No signal by default, and disclosure as a recorded case action. | A tenant may see a failed session with no explanation for a period, and an operator can misuse silence. SO-4 must carve it out. | Immediate notice: simple and transparent, and it warns a malicious tenant. |
-| 7 | Erasure during a hold | Proceed, defer the held part, and state in the receipt that some records are retained under an exception, without naming the case. | The receipt can hint at an investigation, and the operator needs its own legal basis, since §11.8 calls it a processor. Counsel must review. | Silent retention, which risks a false receipt. Blocking erasure, which reveals the hold and delays the tenant's obligation. |
+| 6 | Does the tenant learn of a quarantine or hold | No signal by default, a generic existing failure reason, and disclosure as a recorded case action. | A tenant sees a failure whose reason does not state the cause, and an operator can misuse silence. SO-4 must carve it out. | Immediate notice or a distinct reason: simple and transparent, and it warns a malicious tenant. |
+| 7 | Erasure during a hold | Proceed, defer only under an approved basis, and keep the tenant-readable receipt neutral by default, with the customer agreement stating that retention can occur. | A neutral receipt may be inaccurate as a statement to a controller, and that risk is for counsel, since §11.8 calls the operator a processor. | A receipt stating a retention, which hints at an investigation. Blocking erasure, which reveals the hold and delays the tenant's obligation. |
 | 8 | Retention class default | 0 days in the chart, and a SaaS operator sets a period in its agreement, 90 days being a starting value. | Without it, offboarding removes evidence. With it, data outlives the tenant, on a basis counsel must assess. | A non-zero chart default, which makes the promise for every deployer. |
 | 9 | Who may set a quarantine | `platform-forensics` and `platform-admin`. Tenants ask through the operator. | A customer's team cannot freeze its own pod quickly. | A tenant request permission limited to an exclusive pod, once the audit and cost rules are proven. |
 | 10 | Default session disposition | `fail`. | A false positive ends a customer's session. | `resume`, which keeps work going and restores possibly tainted state. |
 | 11 | Quarantine lifetime | No automatic release, with an alert at 24 hours. | A forgotten quarantine holds a node from upgrading. Cluster upgrades can stall. | An automatic release at a deadline, which destroys evidence on a timer. |
 | 12 | Release control | Two-person release and capture reads on by default for regulated tenants, and off elsewhere. | A small team needs a second person at release. | One person, with the audit event as the control. |
 | 13 | Capture automation | No privileged Lenny controller. An unbound role and a published image, used through the deployer's privileged access. | Capture is slower and manual, and needs a practised operator. | An API-driven capture controller holding `nodes/checkpoint`, and privileged Job creation, at the cost of a standing high-value target. |
-| 14 | Network cut on quarantine | Add the selector exclusion to every agent policy. | The chart's policies change, new connections to the gateway stop, and the gateway's RPC must arrive first. | Rely on the binding state alone, which leaves raw paths to the gateway and object store. |
 | 15 | Argument detail default | `redacted`. | Secrets with no recognizable form are stored, encrypted. | `metadata`, which loses the arguments an exfiltration investigation needs. |
 | 16 | Who pays | The operator pays for quarantined pods and held bytes. Tenants are metered for activity bytes. | Operators carry investigation costs. | Charging the tenant, which reveals the hold. |
 | 17 | Source independent of the decision service | Envoy's second logger to `lenny-evidence`, with the deployer's log pipeline and flow logs as an optional outside source. | A second stream of tunnel records, and a compromised `lenny-evidence` remains a common point. | A log shipper in `lenny-egress` with its own bucket credential, which is stronger against `lenny-evidence` and breaks the rule that no producer holds a store credential. |
 | 18 | How a hold protects artifacts | Copy on hold to escrow. | Copy time and storage at set time. Later writes to a session need a named range. | An in-place flag, which is cheaper and changes rotation and quota in ways a tenant can see. |
 | 19 | `onCoverageLoss` default | `continue`, with an alert and a gap record. | A dark pod keeps running. | `retire`, which turns a collector rollout into capacity loss. |
-| 20 | Selecting monitored pods | A separate `gvisor-monitored` RuntimeClass. | One more RuntimeClass, and node configuration. | A node-wide setting, in which an unmonitored pool pays for monitoring, and a collector outage fails every gVisor pod. |
-| 21 | Default for the `file` stream | Off per pool until the spike reports the Sentry's cost. | Early adopters have `exec` and tool evidence alone. | On with `exec`, which risks build-time regressions unmeasured. |
+| 22 | Post-quarantine freeze | Automatic in-pod SIGSTOP on sidecar pods after the acknowledgement, with `freeze: false` to opt out, and a node-side freeze in the runbook. | It changes process state, and a frozen process may affect checkpoint methods, untested. Embedded pods wait for the node-side step. | No freeze: the agent keeps running and can destroy evidence, though it is observed live. |
+| 23 | Activity floor and key delay | `forensics.activity.floor` and `keyDestructionDelay`, with chart defaults of `none` and 0, and a SaaS operator raising them in its agreement. | A floor reduces the tenant's control over collection, and a delay postpones erasure of a key, on a period counsel must accept. With the defaults, a tenant can erase evidence before a hold exists. | No floor, leaving this to the tenant. A non-zero chart default, which makes the promise for every deployer. |
+| 24 | Hold basis | A required enumerated `basis` and `basisRef` per hold, with erasure deferred only for `legal_obligation` and `legal_claims` by default. | Each hold needs counsel's input, which slows the first minutes, so an investigator quarantines first and sets the hold once a basis exists. An incident-response basis alone loses material to erasure. | Treat security response as deferring by default, which asserts a legal conclusion in code. |
+| 25 | `keepalive` container | A regular container in every agent pod, at a minimal request. | One more container per pod, including warm pods, a small density cost, a reserved UID, and an image to pin. | Rely on the sidecar adapter staying alive, which leaves embedded pods and an exited adapter losing the volumes. An ephemeral container at quarantine time, which is unverified and is subject to the cred-guard webhook. |
 
 ## Validation owed
 
 No validation has run. These come first, because the recommendation rests on them, and each is an input to a proposal.
 
-1. **gVisor spike, before FE-6b.** On containerd and on GKE Sandbox: which trace points carry `execve` arguments and `openat` paths, what a build workload costs with each enabled, what the sender drop count reports under flood, whether a sink can reattach to a running sandbox, and whether a per-handler configuration selects monitored pods.
+1. **gVisor spike, before FE-6b.** On containerd and on GKE Sandbox: what `Execve` and `Open` deliver in practice, what a build workload costs with each enabled, what the sender drop count reports under flood, whether a sink can reattach to a running sandbox, whether a per-handler configuration selects monitored pods, and whether any trace point can supply a connection's local port.
 2. **Host sensor confirmation.** Tetragon and Falco on the same nodes, against gVisor and Kata pods, to pin the coverage table's inference.
 3. **Volume.** Measured records per session on representative workloads, replacing the assumed figures, and the compression that a chunked envelope gains.
 4. **Capture.** The kubelet path on the deployment's containerd or CRI-O, `runsc checkpoint --leave-running` on a Lenny pod including its native sidecar, and a Kata hypervisor dump for each hypervisor a deployment uses.
 5. **Quarantine on CNIs.** What happens to existing flows after the selector change on Calico and Cilium, and how managed node upgrades treat a PDB that refuses eviction indefinitely.
+5a. **Volumes and freeze.** That emptyDir data is removed once only native sidecars remain, that `keepalive` prevents it, whether a running ephemeral container would, and whether a frozen process can be checkpointed by each method.
 6. **Legal review.** Decisions 6, 7, and 8, including the operator's role against a tenant's instruction, and what a customer agreement must state.
 
 ## Sources
@@ -829,11 +889,14 @@ Vendor pages describe the vendor's own product. Read on 2026-11-02, and none was
 - [Kubelet authentication and authorization](https://kubernetes.io/docs/reference/access-authn-authz/kubelet-authn-authz/) for `nodes/checkpoint` and the `nodes/proxy` warning.
 - [Network policies](https://kubernetes.io/docs/concepts/services-networking/network-policies/) on additivity and on existing connections.
 - [Node-pressure eviction](https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/).
+- [Kubelet `SyncTerminatedPod`](https://raw.githubusercontent.com/kubernetes/kubernetes/master/pkg/kubelet/kubelet.go), [emptyDir teardown](https://raw.githubusercontent.com/kubernetes/kubernetes/master/pkg/volume/emptydir/empty_dir.go), and [sidecar containers](https://kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/). The kubelet's stopping of sidecars after regular containers on a non-Job pod is from the documentation's termination description and general behaviour, and is untested here.
+- [Linux cgroup v2 `cgroup.freeze`](https://docs.kernel.org/admin-guide/cgroup-v2.html).
 - [containerd's CRI checkpoint handler](https://github.com/containerd/containerd/blob/v2.0.0-rc.1/internal/cri/server/container_checkpoint_linux.go) (source code at v2.0.0-rc.1).
 
 **gVisor and Kata (project documentation unless stated)**
 
 - [gVisor runtime monitoring](https://raw.githubusercontent.com/google/gvisor/master/g3doc/user_guide/runtime_monitoring.md), [seccheck](https://raw.githubusercontent.com/google/gvisor/master/pkg/sentry/seccheck/README.md) on sessions, optional fields, `ignore_setup_error`, and retries, and the [remote sink example](https://raw.githubusercontent.com/google/gvisor/master/examples/seccheck/README.md).
+- [gVisor's trace point messages](https://raw.githubusercontent.com/google/gvisor/master/pkg/sentry/seccheck/points/syscall.proto) for `Connect`, `Execve`, and `Open`, and [`runsc pause`](https://github.com/google/gvisor/blob/master/runsc/cmd/pause.go) (source code).
 - [Configuring Falco with gVisor](https://gvisor.dev/docs/tutorials/falco) and [gVisor checkpoint and restore](https://gvisor.dev/docs/user_guide/checkpoint_restore/).
 - [falco-gvisor-plugin](https://github.com/gucchisk/falco-gvisor-plugin) (third party) for no reconnection after sandbox start, and [Kubescape's gVisor proposal](https://github.com/kubescape/designs-and-proposals/pull/23) with its [node-agent trial](https://github.com/kubescape/node-agent/pull/1051) (third-party project) for always-sent fields, sender drops, and receiver restarts.
 - [Ant Group's Kata and eBPF case study](https://ebpf.foundation/ant-group-secures-their-platform-with-kata-containers-and-ebpf-for-fine-grained-control/) (eBPF Foundation).

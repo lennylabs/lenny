@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: design for owner review, revision 1, 2026-11-02. Nothing in this document is built or staged, and no part of it has been tested. Statements about the current specification and tree were checked by reading them on this date. Proposals carry the label SO-n.
+Status: design for owner review, revision 2, 2026-11-03, after an independent review. Nothing in this document is built or staged, and no part of it has been tested. Statements about the current specification and tree were checked by reading them on this date. Proposals carry the label SO-n.
 
 ## Problem
 
@@ -22,8 +22,8 @@ This design covers a read-only security role with a protected assignment, a tena
 
 ## Requirements
 
-- R1. A customer's security team reads audit events, evidence, posture, and subscriptions for its tenant with no access to session content.
-- R2. A tenant admin cannot remove, disable, or rewrite that access through any Lenny API.
+- R1. A customer's security team reads audit events, evidence, posture, and subscriptions for its tenant with no access to session content by default.
+- R2. A tenant admin cannot remove, disable, lock out, or rewrite that access through any Lenny API, including the tenant's authentication settings.
 - R3. A customer's security team can forbid specific opt-ins and host patterns, and the tenant admin cannot override that. Weakening a constraint is recorded, is justified, and takes effect only after a delay.
 - R4. A posture read reports, per tenant, the settings a security review asks about, and reports an unknown value as unknown.
 - R5. A customer can send its own audit and evidence records to its own destination. A failing destination affects no other tenant and no request path.
@@ -37,17 +37,17 @@ This design covers a read-only security role with a protected assignment, a tena
 
 Each property names the component that holds it.
 
-- SP1. Only a subject in `tenant_security_principals` holds a security role, unless a platform admin has set the tenant's role source to `oidc`. The gateway's principal resolution enforces this.
-- SP2. No tenant-admin or custom-role caller can change a security principal, or invalidate, disable, delete, or erase a subject that holds a security role. The security principal handlers and the user handlers enforce this.
+- SP1. Only an active row in `tenant_security_principals` grants a security role, unless a platform admin has set the tenant's role source to `oidc`. The role resolver in the gateway and in `lenny-ops` removes `security-*` from token claims and from user-row roles before it adds these rows, and the user routes and custom-role routes refuse those names.
+- SP2. No tenant-admin or custom-role caller can change a security principal, or invalidate, disable, delete, or erase a subject that holds a security role, and no tenant-admin endpoint receives a principal's bearer or decides its validity. The security principal handlers, the user handlers, and the auth middleware's introspection step enforce this.
 - SP3. The write permissions of the security roles sit outside `TenantAdminPermissions()`, so the §10.2 custom-role ceiling keeps them out of any custom role. Custom-role validation (`IsTenantAdminPermission`) enforces this.
 - SP4. Every opt-in write passes the guardrail check, and an object a tightening makes non-compliant stops taking effect at every enforcement point. The EG-9 write path, the Token Service, and the decision service enforce this.
-- SP5. A weakening has no effect before its `effectiveAt`, and the delay cannot be shortened through the admin API. The security record's applier enforces this.
-- SP6. A failing tenant SIEM destination delays only its own records, and never blocks an audit write, a session, a gateway start, or another destination. `lenny-siem-forwarder` holds this through per-destination leases and budgets.
+- SP5. A weakening has no effect before its `effectiveAt`, and the delay cannot be shortened through the admin API. Weakenings include removing a security principal, adding a `security-admin` or `security-approver`, and creating or repointing a SIEM destination, so a stolen `security-admin` token cannot remove the peers who would cancel it. The security record's applier enforces this.
+- SP6. A failing tenant SIEM destination delays only its own records, and never blocks an audit write, a session, a gateway start, or another destination. `lenny-siem-forwarder` holds this through per-destination leases and budgets, the retention hold acts on that tenant's rows only, and the startup check reads no destination state.
 - SP7. A tenant destination's records are complete or show a detectable gap, through chain fields and a gap record. The forwarder's cursor and hold rule hold this.
 - SP8. An impersonation bearer is not issued until the customer-visible record is durable, and every audit row written under that bearer names the operator reference. The impersonation service and the audit write path enforce this.
 - SP9. With approval required, the gateway issues an impersonation bearer only against a matching approved request, or through the emergency path the tenant allows. The impersonation service enforces this.
-- SP10. No principal approves its own request. An impersonation bearer resolves no approval and holds no security role. The approval handlers and the bearer mint enforce this.
-- SP11. A repository marked for approval receives no write token until its approval exists, enforced by the Token Service and `lenny-egress-authz` as the two gates of EG-3.
+- SP10. No principal approves its own request. An impersonation bearer resolves no approval and holds no security role, because the resolver adds no security row for a token carrying `impersonated_by`. A platform admin cannot assign `security-approver`. The approval handlers and the resolver enforce this.
+- SP11. A repository marked for approval receives no write token until its approval exists, including a rule added while a session is running, enforced by the Token Service and `lenny-egress-authz` as the two gates of EG-3.
 
 SP8 to SP10 bind operators who use the Lenny admin API. An operator with cluster or database rights can go around them (see "Residual risks").
 
@@ -55,7 +55,7 @@ SP8 to SP10 bind operators who use the Lenny admin API. An operator with cluster
 
 ### Roles
 
-The design adds these built-in, tenant-scoped roles to `auth.AllRoles()`:
+The design adds these built-in, tenant-scoped roles in a separate `auth.SecurityRoles()` enum. They stay out of `auth.AllRoles()`, because `validateRoleNames` accepts anything `Role.IsValid()` accepts, and `handlePutTenantUserRole` would then let a tenant admin assign `security-admin` to herself:
 
 - **`security-auditor`** reads, and acts on nothing.
 - **`security-approver`** resolves approvals routed to the security team, and reads only what those approvals display.
@@ -74,7 +74,7 @@ Their write permissions are `security.principals.write`, `security.config.write`
 | Read event subscriptions and deliveries | All tenants | Own | Own | Own | No | Own |
 | Read legal holds | All tenants | Own | No | Own | No | Own |
 | Read session content | All tenants, under SO-4 | Own | Own | No | Only a pending approval's detail | No |
-| Manage security principals | Yes, with a ticket | No | No | No | No | Own |
+| Manage security principals | `security-admin` only, when the tenant has none active, with a ticket | No | No | No | No | Own |
 | Write the tenant security record | Yes, with justification and the same delay | No | No | No | No | Own |
 | Manage SIEM destinations | Yes, with justification | Read | No | Read | No | Own |
 | Create a subscription owned by the security team | Yes | No | No | No | No | Own |
@@ -92,13 +92,16 @@ CREATE TABLE tenant_security_principals (
     assigned_by   TEXT NOT NULL,
     assigned_at   TIMESTAMPTZ NOT NULL,
     expires_at    TIMESTAMPTZ,
+    effective_at  TIMESTAMPTZ NOT NULL,
+    state         TEXT NOT NULL,   -- pending | active | removal_pending
+    removal_effective_at TIMESTAMPTZ,
     justification TEXT NOT NULL,
     ticket_id     TEXT,
     PRIMARY KEY (tenant_id, user_id, role)
 );
 ```
 
-The table is separate from the user row because `handlePutTenantUserRole` replaces `u.Roles` with a single role and `handleDeleteTenantUserRole` clears it. A row in its own table cannot be overwritten by those paths or by `PUT /v1/admin/users/{userId}`, so the protection does not depend on guarding every user write. Principal resolution adds these rows to the principal's roles after token validation. The table has row-level security and a `lenny_tenant_guard` trigger as other tenant tables do, and §12.8 and §12.9 classify it.
+The table is separate from the user row because `handlePutTenantUserRole` replaces `u.Roles` with a single role and `handleDeleteTenantUserRole` clears it. A row in its own table cannot be overwritten by those paths or by `PUT /v1/admin/users/{userId}`, so the protection does not depend on guarding every user write. The `PlatformRoles` resolver (`userstore/platformroles.go`, and `cmd/lenny-ops/platformroles.go` for `lenny-ops`) reads active rows in the same lookup it makes today, removes any `security-*` value from the claim and from the user row, and adds the rows. The table has row-level security and a `lenny_tenant_guard` trigger as other tenant tables do, and §12.8 and §12.9 classify it.
 
 The tenant record gains `securityRoleSource`, `managed` by default or `oidc`, and only a platform admin writes it. Under `managed`, a `security-*` value in a `lenny_role` claim is ignored and counted in `lenny_security_role_claim_ignored_total`.
 
@@ -107,28 +110,38 @@ The tenant record gains `securityRoleSource`, `managed` by default or `oidc`, an
 | Method and path | Caller | Behaviour |
 | :-- | :-- | :-- |
 | `GET /v1/admin/tenants/{id}/security-principals` | `platform-admin`, `tenant-admin`, `security-auditor`, `security-admin` | Lists rows and each subject's last authentication time. A tenant admin can see who watches, because concealment would not stop a tenant admin and would complicate offboarding. |
-| `PUT /v1/admin/tenants/{id}/security-principals/{userId}/{role}` | `platform-admin`, or `security-admin` | Body: `{"justification", "ticketId", "expiresAt"}`. `justification` is required, and `ticketId` is required from a platform admin. Emits `security.principal_assigned`. |
-| `DELETE /v1/admin/tenants/{id}/security-principals/{userId}/{role}` | `platform-admin`, or `security-admin` | Body: `{"justification", "ticketId"}`. A `security-admin` cannot remove the tenant's last `security-admin`, which returns `409 LAST_SECURITY_ADMIN`. Emits `security.principal_removed`. |
+| `PUT /v1/admin/tenants/{id}/security-principals/{userId}/{role}` | `security-admin`, or `platform-admin` under the limit below | Body: `{"justification", "ticketId", "expiresAt"}`. `justification` is required, and `ticketId` is required from a platform admin. Emits `security.principal_assigned`, and `security.principal_activated` when the row takes effect. |
+| `DELETE /v1/admin/tenants/{id}/security-principals/{userId}/{role}` | `security-admin`, or `platform-admin` under the limit below | Body: `{"justification", "ticketId"}`. The row moves to `removal_pending` and keeps its authority until the delay ends. A request that would leave no `security-admin` returns `409 LAST_SECURITY_ADMIN` to a `security-admin`. Emits `security.principal_removal_requested`, and `security.principal_removed` at activation. |
+| `POST /v1/admin/tenants/{id}/security-principals/pending/{userId}/{role}/cancel` | Another `security-admin`, or `platform-admin` with a ticket | Cancels a pending assignment or removal. A tenant admin can also cancel a pending assignment that a platform admin wrote. Emits `security.principal_change_cancelled`. |
 
-The first `security-admin` of a tenant is assigned by a platform admin against the customer's recorded request. After that the customer manages its own principals without the operator. Removing the last `security-admin` needs a platform admin and a ticket. An expired row stops granting the role at its `expires_at`, and a sweep deletes it and emits `security.principal_expired`.
+**Timing.** Assigning `security-auditor` applies at once. Assigning `security-admin` or `security-approver`, and every removal, is a weakening under SO-2's delay, because a stolen token can otherwise remove the people who would respond. Before the tenant has a security record, the floor applies. The event reaches subscriptions and SIEM destinations at the request.
+
+**Platform admin limit.** A platform admin assigns only `security-admin`, and only when the tenant has no active `security-admin`. It assigns no other security role. The tenant's first assignment applies at once, against the customer's recorded request, and any later one takes the delay and can be cancelled. A platform admin's removal takes the delay and needs a ticket. Without this limit, a platform admin can give an operator identity `security-approver` and approve the operator's own access request, and the self-approval check does not see it, because the two subjects differ.
+
+**Compromise response.** A compromised principal is stopped at once by a platform admin's `POST /v1/admin/users/{userId}/invalidate`, which revokes its tokens under §11.4, and its row is then removed under the delay. A principal invalidated in that way does not count as active.
+
+An expired row stops granting the role at its `expires_at`, and a sweep deletes it and emits `security.principal_expired`.
 
 ### Enforcement points
 
 - **Audit reads.** `requireAuditReader` and `auditTenant` move from role names to an `audit.read` permission. `POST /v1/admin/audit-events/{seq}/retranslate` and `/republish` use `requireAuditReader` today, so they get a separate `audit.recover` permission that `security-auditor` does not hold. Without this split the auditor would gain two write routes.
 - **Evidence.** The EG-8 and EG-9 named permissions gain grants for the new roles, with no handler change. A later sensitive stream, such as FE-6's `agent.activity`, gets no default grant to any security role (see decision 19).
 - **`lenny-ops`.** §25.4 Authentication requires `platform-admin` or `tenant-admin` on every endpoint. The role ceiling admits the security roles on the read endpoints named in the matrix, under the same tenant scoping as `tenant-admin`.
-- **Protected subjects.** `DELETE /v1/admin/users/{userId}`, `POST .../invalidate`, `POST .../erase`, and a `PUT /v1/admin/users/{userId}` that disables the user return `403 SECURITY_PRINCIPAL_PROTECTED` to a caller without `security-admin` or `platform-admin` when the target holds a row, and emit `security.principal_protection_refused`. The §15.1 role routes stay open to a tenant admin, because they change only the user row's role and leave the security row in place.
+- **Role names.** `POST` and `PUT` on `/v1/admin/users`, the §15.1 role routes, and the bootstrap seed refuse a `security-*` value with `400 VALIDATION_ERROR`. `POST /v1/admin/tenants/{id}/roles` refuses a custom role with that prefix with `422 RESERVED_IDENTIFIER`, because a custom role named `security-admin` would otherwise match a role-name comparison.
+- **Protected subjects.** `DELETE /v1/admin/users/{userId}`, `POST .../invalidate`, `POST .../erase`, TS-4's `POST .../reinstate`, and a `PUT /v1/admin/users/{userId}` that disables the user return `403 SECURITY_PRINCIPAL_PROTECTED` to a caller without `security-admin` or `platform-admin` when the target holds a row, and emit `security.principal_protection_refused`. A subject named in the record's `lifecycleSubjects` may also call invalidate and reinstate on a protected subject, so TS-4's `identity-sync` worker can carry a directory departure when the customer's security team names it. Holding `manage_user_lifecycle` alone does not admit a caller, because `tenant-admin` holds that permission. The §15.1 role routes stay open to a tenant admin for other roles, because they leave the security row in place.
+- **Introspection.** `PUT .../rbac-config` is open to `manage_rbac_config`, and `IntrospectGroups` sends each bearer to `identityProvider.introspectionEndpoint` and rejects it on `active: false`. Today a tenant admin can therefore receive a principal's bearer and lock the principal out. The auth middleware skips introspection for a subject with an active or `removal_pending` row, and that covers an endpoint set before the principal was assigned. A principal's groups come from its token.
+- **Tenant authentication settings.** For a tenant with any row, a change to `identityProvider.*` in `PUT .../rbac-config` needs `security.config.write` or `platform-admin`, takes the weakening delay, and otherwise returns `403 SECURITY_CONFIG_PROTECTED`. The other fields stay with `manage_rbac_config`. This limits a tenant admin's capture of other users' bearers once a security team exists (decision 23).
 - **Subscriptions.** `ops_event_subscriptions` gains `owner_class`, `tenant` by default or `security`. A tenant admin can read and cannot change or delete a `security` subscription.
-- **Impersonation.** `impersonation.go` builds `TargetRoles` for the bearer. It drops `security-*` values, so an operator impersonating a security principal holds none of its security authority.
+- **Impersonation.** `impersonation.go` builds `TargetRoles` from the user row, which holds no security role under this design, and the resolver adds security rows by subject. The resolver therefore adds no row for a token carrying `impersonated_by`, so an operator impersonating a security principal holds none of its security authority.
 - **Scopes.** The §15.1 scope taxonomy gains a `security` domain, so a narrowed token works as it does for other domains.
 
 ### Failure behaviour
 
-When the principals read fails, the caller holds no security role, and a protected-subject check returns `503`, so a tenant admin's user write fails closed during a database fault. An unknown or expired role has no effect. An auditor read follows §25.9's existing degradation rules, and each query emits `audit.query_executed` as today.
+The rows are read in the role lookup that exists today, and a failed lookup fails the request as it does now (`platform_role_lookup_failed`), so no request proceeds on a partial role set. A protected-subject check reads the same table and returns `503` on failure, so a tenant admin's user write fails closed during a database fault. An unknown or expired role has no effect. An auditor read follows §25.9's existing degradation rules, and each query emits `audit.query_executed` as today.
 
 ### Identity source
 
-Lenny defines the roles and their permissions, and it stores the assignments. A SaaS operator's identity broker authenticates the subject (`tenant-scoping-identity-design.md`, TS-2). A broker can carry these roles only when the tenant is set to `oidc`, in which case whoever administers the customer's IdP controls them, and SP1 and SP2 hold only as far as that administrator is separate from the tenant admin.
+Lenny defines the roles and their permissions, and it stores the assignments. A SaaS operator's identity broker authenticates the subject (`tenant-scoping-identity-design.md`, TS-2). A broker can carry these roles only when the tenant is set to `oidc`, in which case whoever administers the customer's IdP controls them, and SP1 and SP2 hold only as far as that administrator is separate from the tenant admin. This narrows the statement in `tenant-scoping-identity-design.md` that a broker conveys `security-auditor` in `roles` and that a platform-managed row overrides it: under `managed`, the claim is ignored and no user row can carry the role.
 
 ## SO-2: tenant security record and posture
 
@@ -153,6 +166,8 @@ One record per tenant holds every customer-set security constraint, so one write
     "repositoryWrites": [{ "match": "github.com/acme/prod-*", "ttlSeconds": 3600 }],
     "timeoutSeconds": 1800
   },
+  "lifecycleSubjects": ["svc-identity-sync"],
+  "auditorStreamGrants": [],
   "weakeningDelaySeconds": 86400
 }
 ```
@@ -173,7 +188,7 @@ Each stored version is a row in `tenant_security_config_versions` with its autho
 The applier classifies each change field by field.
 
 - **A tightening** applies in the write's transaction. It emits `security.config_tightened`, and the response lists every object it suspended.
-- **A weakening** removes a forbid, shrinks `neverAllow`, widens `allowOnlyWithin`, relaxes approval rules, or lowers `weakeningDelaySeconds`. It needs a non-empty `justification`, or the write returns `400 SECURITY_CONFIG_JUSTIFICATION_REQUIRED`, following §9.2's **Justification requirement.** The write creates a pending version and emits `security.config_weakening_requested`, which subscriptions and SIEM destinations receive at once. A periodic applier activates it at `effectiveAt` and emits `security.config_weakened`.
+- **A weakening** removes a forbid, shrinks `neverAllow`, widens `allowOnlyWithin`, relaxes approval rules, adds to `lifecycleSubjects` or `auditorStreamGrants`, or lowers `weakeningDelaySeconds`. The same delay applies to the security principal and SIEM destination changes those sections name. It needs a non-empty `justification`, or the write returns `400 SECURITY_CONFIG_JUSTIFICATION_REQUIRED`, following §9.2's **Justification requirement.** The write creates a pending version and emits `security.config_weakening_requested`, which subscriptions and SIEM destinations receive at once. A periodic applier activates it at `effectiveAt` and emits `security.config_weakened`.
 - **A mixed write** applies its tightening parts at once and holds its weakening parts.
 
 The delay differs from §8.3's weakening cooldown, which rejects delegation calls for a short window after a change has already taken effect. A delay fits here because it gives the rest of the security team time to cancel a weakening from a stolen credential before it has any effect. The duration has the same protection as §8.3's: `security.config.minWeakeningDelaySeconds`, a Helm value with a default of 3600, is a floor that the admin API cannot change, and a pending weakening keeps the delay in force when it was written.
@@ -182,8 +197,8 @@ A platform admin's write takes the same path, is mirrored under SO-4, and needs 
 
 ### Enforcement
 
-- **New writes.** SO-2 fills the EG-9 "tenant policy check, empty today" with a check of each opt-in change against the active version. The check reads the version under a shared row lock, and the record's writer holds an update lock, so a concurrent opt-in cannot miss a tightening. A violation returns `422 GUARDRAIL_VIOLATION` with `details.rule` and `details.configVersion`, and emits `security.guardrail_refused`. A failed read refuses the write with `503`. Sessions and traffic make no read of this record.
-- **Existing objects.** A tightening sets `suspendedBy` on each non-compliant object in the same transaction, and increments the policy and definition versions so the change reaches decisions and pods through the existing binding push. An activation that removes a rule clears the mark it set.
+- **New writes.** SO-2 fills the EG-9 "tenant policy check, empty today" with a check of each opt-in change against the active version. The check reads the version under a shared row lock, and the record's writer holds an update lock, so a concurrent opt-in cannot miss a tightening. A violation returns `422 GUARDRAIL_VIOLATION` with `details.rule` and `details.configVersion`, and emits `security.guardrail_refused`. A failed read refuses the write with `503`. Egress decisions and mints read `suspendedBy` and the writable set from their own stores and never read this record. A tool call that SO-5a holds reads the rules at dispatch, and a failed read denies that call.
+- **Existing objects.** A tightening sets `suspendedBy` on each non-compliant object in the same transaction, and increments the policy and definition versions so the change reaches decisions and pods through the existing binding push. It also re-evaluates running sessions against `approvals.repositoryWrites`. An activation that removes a rule clears the mark it set.
 
 | Constraint | Object affected | Effect while suspended |
 | :-- | :-- | :-- |
@@ -194,6 +209,8 @@ A platform admin's write takes the same path, is mirrored under SO-4, and needs 
 | `shadowPolicy` | A running shadow policy | The candidate stops being evaluated. Active policy outcomes do not change. |
 | `hostPatterns.neverAllow` | Tenant always-allowed and session-requestable entries | Patterns are held in a read-only partition of the tenant's denied hosts, so the effective-policy formula gains no term. |
 | `hostPatterns.allowOnlyWithin` | Entries outside the set | Those entries are suspended. |
+| `approvals.repositoryWrites` | `granted` writable set entries of bound sessions that match the new rule, without an approval | The entry moves to `pendingApproval`, a `security_approvals` row is created, and the binding change flushes `netagent`'s cached write token. |
+| `approvals.tools` | Tool calls | Applies at the next dispatch, and a call already released is not recalled. |
 
 A platform gate and a guardrail both apply: the platform grants a class, and the tenant's security team can still forbid it. A guardrail never grants anything a gate has not granted.
 
@@ -210,6 +227,7 @@ A platform gate and a guardrail both apply: the platform grants a class, and the
 | `audit` | `complianceProfile`, `dataResidencyRegion`, retention, and the chain integrity report from the most recent background verification, with its time and range. |
 | `siem` | Whether a platform copy exists (with no address), each tenant destination's state and lag, and gaps recorded. |
 | `operatorAccess` | Approval setting, active impersonation sessions, and counts for the last 30 days. |
+| `identity` | `securityRoleSource`, and the host of any introspection endpoint. |
 | `principals` | Holder counts per security role, the time of each role's most recent authentication, and subjects also holding `tenant-admin`. |
 
 Chain integrity comes from the §11.7 periodic check because `auditRows` loads a tenant's rows into memory, and an on-demand verification on every posture read would put that cost on a read an auditor polls. Posture is reported by the platform about itself (see "Residual risks").
@@ -231,7 +249,7 @@ A new `lenny-siem-forwarder` Deployment delivers to tenant destinations. The pla
 - Each batch runs in a transaction scoped to the destination's tenant, so row-level security applies and no `__all__` read is needed.
 - Its database role holds `SELECT` on `audit_log` and write access only to its own tables.
 - It reads evidence from `lenny-evidence` by stable position (see "Changes requested").
-- Its NetworkPolicy is the `lenny-ops` webhook egress rule of §25.4, which excludes private, cluster, and metadata ranges, plus Postgres and `lenny-evidence`. It holds no PKI rights and no Kubernetes write rights.
+- Its NetworkPolicy is the `lenny-ops` webhook egress rule of §25.4, which excludes private, cluster, and metadata ranges, plus Postgres, `lenny-evidence`, and the Token Service. It holds no PKI rights and no Kubernetes rights, so it has no path to the API server.
 
 Decision 8 compares this with running delivery in `lenny-ops` or the gateway.
 
@@ -250,6 +268,8 @@ CREATE TABLE tenant_siem_destinations (
     include_audit   BOOLEAN NOT NULL DEFAULT true,
     evidence_streams TEXT[] NOT NULL DEFAULT '{}',
     state           TEXT NOT NULL,          -- pending | active | failing | suspended | blocked
+    pending_change  JSONB,                  -- a verified URL or scope change awaiting its delay
+    pending_effective_at TIMESTAMPTZ,
     generation      BIGINT NOT NULL,
     created_by      TEXT NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL
@@ -266,19 +286,20 @@ CREATE TABLE tenant_siem_delivery_state (
 
 `audit.siem.maxDestinationsPerTenant` bounds the rows per tenant, with a default of 2 so a customer can move between SIEMs without a gap.
 
-The HMAC secret or header value is stored as a Kubernetes Secret in the §4.9 credential namespace topology, readable only by the forwarder's ServiceAccount. It is written from `secretData` or generated server-side and returned once, as in §25.5's **Webhook Secret Lifecycle**. HMAC signing needs the plaintext, so the design does not copy §25.5's statement that only a hash is stored.
+The HMAC secret or header value is stored as a Kubernetes Secret in the §4.9 credentials namespace, written by the gateway under the existing verbs of `lenny-gateway-credential-writer` with the name `lenny-siemdest-` plus a hash of tenant and destination, and carrying the `lenny.dev/tenant-hash` label, so Phase 4's delete-collection removes it. §4.9 **Credential Storage Topology** states that no other Lenny ServiceAccount holds a verb on Secrets in that namespace, and dynamic names rule out `resourceNames`, so the forwarder holds none. It obtains a value through the Token Service keyed read of **Token Service secret resolution**, as the gateway does for VCS tokens. The Token Service admits the forwarder's client certificate for that call and only for names with the `lenny-siemdest-` prefix, so a compromised forwarder reads destination credentials and no provider credential. The forwarder keeps a value in memory for at most 15 minutes, which bounds how long a rotation takes outside its 60-second overlap. A value is written from `secretData` or generated server-side and returned once, as in §25.5's **Webhook Secret Lifecycle**. HMAC signing needs the plaintext, so the design does not copy §25.5's statement that only a hash is stored.
 
 ### API
 
 | Method and path | Caller | Behaviour |
 | :-- | :-- | :-- |
-| `POST /v1/admin/tenants/{id}/siem-destinations` | `security-admin`, or `platform-admin` with a ticket | Creates a `pending` destination and validates its URL. |
-| `POST .../siem-destinations/{destId}/verify` | Same | Sends a signed test record with a challenge. A 2xx response makes the destination `active`. |
+| `POST /v1/admin/tenants/{id}/siem-destinations` | `security-admin`, or `platform-admin` with a ticket | Creates a `pending` destination and validates its URL. Creation takes the weakening delay, because a stolen token would otherwise stream the tenant's audit trail to an endpoint of its choosing. |
+| `POST .../siem-destinations/{destId}/verify` | Same | Sends a signed test record with a challenge. A 2xx response marks it verified, and it becomes `active` once verified and past its delay. |
 | `GET .../siem-destinations`, `GET .../{destId}` | Also `tenant-admin` and `security-auditor` | Returns configuration without the secret, plus state, lag per source, and gap records. |
-| `PUT .../{destId}` | `security-admin`, or `platform-admin` with a ticket | Requires `If-Match`. A URL change returns it to `pending`. |
+| `PUT .../{destId}` | `security-admin`, or `platform-admin` with a ticket | Requires `If-Match`. A URL, authentication, or scope change is stored in `pending_change`, needs its own verify, and takes the delay. The destination keeps delivering to its current URL until then. |
+| `POST .../{destId}/pending/cancel` | Another `security-admin`, or `platform-admin` with a ticket | Cancels a pending creation or change. |
 | `POST .../{destId}/rotate-secret` | Same | A 60-second overlap, following §25.5. |
 | `POST .../{destId}/replay` | `security-admin` | Body: `{"since"}`. Moves the audit cursor back within retention, and delivery repeats those records. |
-| `DELETE .../{destId}` | Same | A removal or narrowing counts as a weakening, is justified, and is delayed under SO-2. Refused with `409 COMPLIANCE_SIEM_REQUIRED` when it would leave a regulated tenant with no independent copy. |
+| `DELETE .../{destId}` | `security-admin`, or `platform-admin` with a ticket | A removal or narrowing counts as a weakening, is justified, and is delayed under SO-2. Refused with `409 COMPLIANCE_SIEM_REQUIRED` when it would leave a regulated tenant with no independent copy. |
 
 URL validation applies §25.5's **SSRF and DNS Rebinding Protections** at creation and on every delivery: HTTPS only, a registered domain, resolved addresses checked each time, metadata addresses blocked, and no redirects followed. A destination on a private network is refused until `tenant-outbound-connector-design.md` provides a route to it.
 
@@ -292,15 +313,20 @@ URL validation applies §25.5's **SSRF and DNS Rebinding Protections** at creati
 
 ### Retention hold
 
-§16.4's SIEM delivery guard keeps audit rows until the platform forwarder acknowledges them, and the §25.9 force-drop stays with the platform admin. A tenant destination extends that guard, with a bound, so one dead endpoint cannot hold the operator's storage indefinitely:
+§16.4's SIEM delivery guard keeps audit rows until the platform forwarder acknowledges them. §16.4 describes this as holding a partition, and the tree acts per tenant: `audit_log` is not range partitioned (migration 0149, F-16.4.6), `auditretention` deletes rows by tenant, and `{partition}` in the §25.9 force-drop is a tenant chain identifier. A tenant destination extends the guard in that per-tenant form, so a dead destination holds only its own tenant's rows. §16.4's wording changes to match. A proposal that later range partitions `audit_log` would have to copy held rows out per tenant, because a shared partition cannot be held for one tenant.
 
-- An unregulated tenant's destination holds rows up to `audit.siem.tenantMaxHoldDays` past their retention (default 7). After that GC proceeds, and the gap record follows.
-- A regulated tenant whose independent copy is only that destination holds without a bound, and `AuditPartitionDropBlocked` fires for the platform admin, as it does today for the platform copy.
-- Evidence objects follow the same rule against each stream's retention.
+- An unregulated tenant's destination holds rows up to `audit.siem.tenantMaxHoldDays` past their retention (default 7). After that the pruner proceeds, and the gap record follows.
+- A regulated tenant whose independent copy is only that destination holds without a bound, and `AuditPartitionDropBlocked` fires for the platform admin, as it does today for the platform copy. The storage cost falls on that tenant's rows.
+- The §25.9 force-drop stays with the platform admin. `ForceDrop` on a chain with a destination behind it writes a `siem.delivery_gap` row to the tenant's chain before it deletes, naming the range and `audit.partition_drop_forced`, so the destination and the tenant both see the loss.
+- Evidence objects follow the same rule against each stream's retention, using the consumer position `lenny-evidence` honours. Evidence objects sit under a tenant prefix, so this also holds one tenant's data.
 
 ### Compliance gate
 
-§11.7 rejects a regulated tenant when `audit.siem.endpoint` is absent, and a regulated tenant with no endpoint is fatal at gateway start. Under this design, an `active` tenant destination with `include_audit` also satisfies the gate for that tenant (decision 10). The startup check reads destinations, and it checks that each regulated tenant has one source or the other. It never contacts a tenant's endpoint at startup.
+§11.7 rejects a regulated tenant when `audit.siem.endpoint` is absent, and a regulated tenant with no endpoint is fatal at gateway start. Under this design:
+
+- **At a write.** Creating a regulated tenant, updating one, or creating an environment under one accepts a platform endpoint or an `active` tenant destination with `include_audit`, as decision 10 states.
+- **At start.** The gateway reads the configuration and never contacts a tenant's endpoint. A regulated tenant with a platform endpoint or any tenant destination row with `include_audit` passes, whatever the row's state, so a `failing` or `blocked` destination or one with a pending change cannot stop the gateway for other tenants. The existing fatal rule stays for a tenant with neither, which the removal refusal above leaves as an operator error rather than a customer's fault.
+- **In operation.** A regulated tenant whose only destination is not `active` raises the per-tenant `TenantComplianceSIEMDegraded` alert, and posture reports it.
 
 ### Residency and erasure
 
@@ -322,7 +348,9 @@ An `operator_access.recorded` event is appended to the target tenant's own audit
 | Revocation by another route (§13.3 rule 4) | `kind: impersonation_revoked` | Sweep |
 | Platform-tenant events carrying `target_tenant_id` under CMP-058, such as `compliance.profile_decommissioned` and `gdpr.legal_hold_overridden_tenant` | `kind` naming the event | Sweep |
 | A platform admin's write to a resource of this tenant, from `EmitAdminEvent` | `kind: admin_write` with the resource and event type, with no body | Sweep |
-| A platform admin's read that names this tenant, such as `GET /v1/admin/audit-events?tenantId=` or `GET /v1/sessions?tenant=` | `kind: admin_read` with the endpoint | Sweep, coalesced per subject, endpoint, and hour |
+| A platform admin's read that names this tenant, such as `GET /v1/admin/audit-events?tenantId=` | `kind: admin_read` with the endpoint | Sweep, coalesced per subject, endpoint, and hour |
+| `GET /v1/sessions?tenant=` by a platform admin | `kind: admin_read` with the endpoint and result count | `handleList` emits no audit row today, because it sets a named tenant rather than `__all__`. It gains `admin.tenant_sessions_read`, emitted before it returns rows, and it returns no list when the emit fails, following §13.3 rule 7. Then sweep. |
+| `forensics.*` events | Not mirrored, unless a case discloses them | `forensics-evidence-preservation-design.md` states this carve-out. |
 | `cross_tenant_read` from a call that names no tenant, such as `tenant_list` | Not mirrored | The event stays in the platform chain, and posture reports the count. |
 
 **Write path.** §11.7's write-time validation rejects a row whose tenant differs from the request's scope, so the mirror is an explicit path that derives the tenant from `target_tenant_id` and writes only this event type. Under CMP-058 the source row can sit in a regional platform Postgres that differs from the tenant's audit shard, so the two writes cannot share a transaction. The ordering is:
@@ -359,7 +387,9 @@ The customer resolves the row through the approvals API under SO-5. An unanswere
 
 ### Existing behaviour
 
-The runtime sets `approvalRequired` on a `tool_call` frame (`schemas/lenny-adapter-jsonl.schema.json`), and `maybeGateToolCall` in `pkg/gateway/session/executor/podstream.go` holds the call only when the frame carries it. No platform policy forces approval. §15.2 refers to a policy that does not require approval, and a search of the specification finds no definition of one for tool calls. `approvalMode` in the §8 delegation lease example is the nearest field. `ToolApprovalGate` records an interaction keyed on session, owning user, and call, polls the store across replicas, and treats a timeout as denial. §10.2 **Session ownership.** rule 5 limits resolution to the owner.
+The runtime sets `approvalRequired` on a `tool_call` frame (`schemas/lenny-adapter-jsonl.schema.json`), and `maybeGateToolCall` in `pkg/gateway/session/executor/podstream.go` holds the call only when the frame reaches it with that flag. Two paths never reach it. `HandleToolCall` in `pkg/adapter/toolcall.go` answers adapter-local tools inside the adapter, and §28.5.3 Intra-pod sends platform and connector tools over MCP at the Standard and Full levels, with stdin `tool_call` reserved for adapter-local tools. So `maybeGateToolCall` sees only a relayed frame, and `lenny/delegate_task` from a Standard runtime is never gated. `HandleToolCall` also ignores `approvalRequired`, although the schema says a flagged call blocks, which is a defect to file when SO-5a is written.
+
+No platform policy forces approval. §15.2 refers to a policy that does not require approval, and a search of the specification finds no definition of one for tool calls. `approvalMode` in the §8 delegation lease example is the nearest field. `ToolApprovalGate` records an interaction keyed on session, owning user, and call, polls the store across replicas, and treats a timeout as denial. §10.2 **Session ownership.** rule 5 limits resolution to the owner.
 
 ### Approvals store and API
 
@@ -389,20 +419,20 @@ These routes sit on the admin surface, so the session surface keeps its existenc
 
 ### SO-5a: tool-use approvals
 
-`approvals.tools` rules match a tool name. `maybeGateToolCall` treats a matching frame as approval required, whatever the runtime's flag says, and routes it by the rule's `approver`.
+`approvals.tools` rules match a platform or connector tool name. Enforcement sits at the gateway's MCP tool dispatch (`pkg/gateway/mcpfabric`), which `CH-MCP-PLATFORM` and the connector servers forward to over `LNK-GWCONTROL`, and at `maybeGateToolCall` for relayed frames. Both call `ToolApprovalGate.AwaitApproval` before the tool runs, whatever the runtime's flag says, and route by the rule's `approver`. A denial returns an MCP tool error on the first path and a `tool_result` with `isError: true` on the second.
 
 - With `approver: security`, the gate writes a `security_approvals` row and an interaction, and the owner's `tool-use/{id}/approve` returns `403 APPROVAL_ROUTED_TO_SECURITY`. The owner's `deny` still works, because a user declining their own session's action needs no oversight.
 - `AwaitApproval` keeps its wait, polling the interaction store, and the approvals API writes the same resolution, so the cross-replica path is unchanged.
 - Timeout uses `approvals.timeoutSeconds` and denies. With no holder of `security-approver`, the write of a matching rule is refused with `422 NO_APPROVER`, and a later removal of the last holder raises `SecurityApproverCoverageLost`.
 - `showArguments: true` shows `arguments` to the approver and emits `approval.viewed`. With `false`, the approver sees the tool name and session only.
 
-Rules apply to frames the gateway sees: adapter-local tools and platform MCP tools. A tool a runtime runs inside its own process never reaches this gate, and the documentation states that limit.
+**Adapter-local tools are outside these rules.** The validator refuses a rule naming `read_file`, `write_file`, `list_dir`, or `delete_file` with `422 RULE_NOT_ENFORCEABLE`. They act on the workspace, which the runtime already reads and writes directly, so holding them in the adapter would add no control over the agent. A tool a runtime runs inside its own process never reaches a gate either, and the documentation states both limits.
 
 ### SO-5b: repository write approvals
 
 The outline's flag on `writableRepositories` cannot live on the session field, because the client writes that field and an approval requirement set by the client constrains nothing. The requirement is in `approvals.repositoryWrites`, and the session field keeps its meaning.
 
-1. At session bind, the gateway records the writable set under EG-3. An entry matching a rule is stored with `state: pendingApproval`, and a `security_approvals` row of kind `repository_write` is created naming the repository and any `allowedRefPatterns`.
+1. At session bind, the gateway records the writable set under EG-3. An entry matching a rule is stored with `state: pendingApproval`, and a `security_approvals` row of kind `repository_write` is created naming the repository and any `allowedRefPatterns`. A rule added later applies to bound sessions as SO-2 states.
 2. The session runs with read access. A push reaches `netagent`, which asks the Token Service on I8, and both gates refuse to mint write scope for an entry in that state. `netagent` returns a 403 with the decision identifier and a git message saying that approval is pending, and `egress.local` records the refusal.
 3. An approver approves. The entry moves to `granted` with an expiry of `ttlSeconds`, and the gateway pushes a binding change, so the next push mints.
 4. At expiry or on revocation the entry returns to `pendingApproval`, the binding change flushes `netagent`'s cached write token, and a new push is refused. A token already minted stays valid at the host until its own expiry. `netagent` holds it, and the agent never does.
@@ -437,6 +467,8 @@ The last two rows stay close to the 7-day threshold they have today, and the lea
 
 `certManagerExpiring` matches a Certificate in `degraded` by time with Ready true, `isCA` false, no `lenny.dev/doctor-optout`, and no current `Issuing=True` condition. The fix sets `Issuing=True` with reason `ManuallyTriggered` through the `certificates/status` subresource, which is what `cmctl renew` does (see "Evidence"). cert-manager then re-issues into the same Secret, and the existing certificate stays in place until the new one arrives. The fix deletes no Secret and sets no `cert-manager.io/issue-temporary-certificate` annotation.
 
+SO-6 adds `update` on `certificates/status` to the `lenny-ops` Role, to §25.4, and to the preflight list, so the remedy works when SO-6 lands with SO-7 still ahead.
+
 An `isCA` Certificate in `degraded` or `unhealthy` produces `certManagerCaExpiring` with `remediation: "manual"` and a pointer to the `ca-rotation` runbook, and `diagnostics.fix_skipped` records `reason: is_ca`. Failure of the status write records `diagnostics.fix_failed` and changes nothing.
 
 The removal of the annotation has a second reason. cert-manager documents that annotation as placing a temporary certificate on the Secret until the final one returns. A temporary certificate in an mTLS leaf's Secret is a risk this design has not measured, and the new remedy does not need the annotation. The egress design's `lenny.dev/doctor-optout` annotations remain valid as a hard skip.
@@ -453,11 +485,11 @@ The removal of the annotation has a second reason. cert-manager documents that a
 | :-- | :-- | :-- |
 | `secrets` | `get`, `list`, `watch`, `delete` | Removed |
 | `certificates` | `get`, `list`, `watch`, `patch` | `get`, `list`, `watch` |
-| `certificates/status` | None | `update`, for the SO-6 remedy |
+| `certificates/status` | `update`, added by SO-6 | Unchanged |
 | `jobs`, `deployments`, and all others | As rendered | Unchanged |
 
 - **Version source.** `versionsource.HelmChart` reads the `helm.sh/chart` label on the `lenny-ops` Deployment, which `lenny.labels` stamps and `lenny-ops` can already `get`. It strips the chart name and restores `_` to `+`, which is reversible because SemVer permits no `_`. This also reports a version on an install rendered with `helm template`, where no release Secret exists. §25.8 "Version Aggregation" changes its line naming the `helm.sh/release.v1` Secret.
-- **Preflight.** `CanonicalOpsSARBACRules` drops the `secrets: get` row and gains the status row.
+- **Preflight.** `CanonicalOpsSARBACRules` drops the `secrets: get` row.
 - **Specification.** §25.4 "ServiceAccount and RBAC" shows a Role with no `secrets`, `certificates`, or `endpoints` rules, which the chart has. `TestOpsRBACMatchesSpecCanonicalBlock` is skipped for that reason, with an entry in `tests/registers/skip-reasons.yaml`. SO-7 reconciles the block and removes the skip and the entry.
 - **Level 1.** EG-7's rows for `lenny-ops` (the probe ConfigMap and its I8 client certificate) add no Secret rule, so they do not conflict with this change.
 
@@ -481,7 +513,10 @@ The egress design's "Transport security" says that `lenny-ops` can read Secrets 
 | `security.operatorAccess.requestTtlSeconds` | Lifetime of an unanswered operator access request. | Deployment | Platform admin (Helm) | 43200 | |
 | `admin.doctor.allowedFixes` | Fixes `doctor --fix` may apply. | Deployment | Platform admin (Helm) | Existing list | Existing value. |
 | `securityRoleSource` | Whether security roles come only from Lenny's table or also from an OIDC claim. | Tenant | Platform admin (admin API) | `managed` | See decision 2. |
-| Security principals | Who holds each security role. | Tenant | Platform admin for the first and last `security-admin`, then `security-admin` | None | A tenant admin can read them. |
+| Security principals | Who holds each security role. | Tenant | `security-admin`, and a platform admin only for a `security-admin` when none is active | None | A tenant admin can read them. Most changes take the delay. |
+| `lifecycleSubjects` | Service subjects, such as a directory sync worker, that may invalidate and reinstate a protected subject. | Tenant | `security-admin` | Empty | Adding one is a weakening. |
+| `auditorStreamGrants` | Sensitive evidence streams `security-auditor` may read. | Tenant | `security-admin` | Empty | Adding one is a weakening. |
+| `identityProvider.*` in the RBAC config | The tenant's token introspection endpoint and credentials. | Tenant | `tenant-admin` until the tenant has a security principal, then `security-admin` or a platform admin | Unset | See decision 23. |
 | `credentialDelivery.forbid` | Credential binding deliveries the tenant admin cannot use. | Tenant | `security-admin` | Empty | Applies on top of the platform gate. |
 | `storedTokenPush` | Forbids `allowStoredTokenPush` and token reuse that depends on its gate. | Tenant | `security-admin` | Unset | |
 | `verbatimClientFiles` | Forbids tenant client files and overlay templates. | Tenant | `security-admin` | Unset | |
@@ -503,15 +538,15 @@ The egress design's "Transport security" says that `lenny-ops` can read Secrets 
 
 The examples use tenant `acme`, whose tenant admin is alice and whose security lead is bob, a second tenant `globex`, and carol, a platform admin at the SaaS operator. Dave is a developer at `acme`.
 
-**Onboarding.** Bob's company signs a contract asking for separate oversight. Carol calls `PUT .../acme/security-principals/bob@acme.com/security-admin` with the signed request's ticket number. Bob assigns `security-auditor` to his analyst and `security-approver` to two on-call engineers, with no further call to the operator. Bob reads the posture and sees a shared pool, default enforcement, and the `agentReadableDelivery` grant in use by one binding.
+**Onboarding.** Bob's company signs a contract asking for separate oversight. Carol calls `PUT .../acme/security-principals/bob@acme.com/security-admin` with the signed request's ticket number. Bob assigns `security-auditor` to his analyst, which applies at once, and `security-approver` to two on-call engineers, which applies after the delay, with no further call to the operator. Bob reads the posture and sees a shared pool, default enforcement, and the `agentReadableDelivery` grant in use by one binding.
 
-**A tenant admin tries to remove the auditor.** Alice calls `DELETE .../users/analyst@acme.com/role`. That route has no effect on the row in `tenant_security_principals`, so the role stays. She then calls `POST /v1/admin/users/analyst@acme.com/invalidate`, which returns `403 SECURITY_PRINCIPAL_PROTECTED` and emits an event bob's SIEM receives. She creates a custom role listing `security.config.write`, which is refused under the §10.2 ceiling. If alice deletes the analyst's account in the IdP, Lenny has no event for that. Bob sees the analyst's last authentication age in posture.
+**A tenant admin tries to remove the auditor.** Alice calls `DELETE .../users/analyst@acme.com/role`. That route has no effect on the row in `tenant_security_principals`, so the role stays. She then calls `POST /v1/admin/users/analyst@acme.com/invalidate`, which returns `403 SECURITY_PRINCIPAL_PROTECTED` and emits an event bob's SIEM receives. She creates a custom role listing `security.config.write`, which is refused under the §10.2 ceiling, and a custom role named `security-admin`, which is refused as a reserved name. `PUT .../users/alice@acme.com/role` with `security-admin` returns `400`. She points `introspectionEndpoint` at her own server, which returns `403 SECURITY_CONFIG_PROTECTED`, and an endpoint she set before bob arrived receives neither his bearer nor a say in its validity. If alice deletes the analyst's account in the IdP, Lenny has no event for that. Bob sees the analyst's last authentication age in posture.
 
 **Forbidding a delivery.** Bob runs `PUT .../acme/security-config?dryRun=true` with `credentialDelivery.forbid: ["file"]`, and the response lists `npm-publish-token`. He applies it. The binding is suspended, new plans naming it are rejected, and pods with it lose the file at the next binding change. Alice's attempt to create another `file` binding returns `422 GUARDRAIL_VIOLATION`. `globex` keeps its `file` binding, because each tenant has its own record and its own gate.
 
-**A stolen credential weakens a rule.** An attacker holding bob's token removes the forbid at 02:00 with a justification. The change becomes pending for 24 hours, and the event reaches the SIEM and the on-call rotation at once. A second `security-admin` cancels it at 08:00. The binding stayed suspended throughout.
+**A stolen credential weakens a rule.** An attacker holding bob's token removes the forbid at 02:00 with a justification. The change becomes pending for 24 hours, and the event reaches the SIEM and the on-call rotation at once. The attacker also asks to remove the second `security-admin` and to repoint the SIEM destination, and both requests wait under the same delay while the destination keeps delivering to its current URL. The second `security-admin` cancels all of them at 08:00, and carol invalidates bob's subject at bob's request. The binding stayed suspended throughout.
 
-**A failing SIEM.** Bob registers `https://siem.acme.example/lenny`, and verify succeeds. At the weekend the endpoint returns 503 for two days. Deliveries back off, the destination becomes `failing`, and a subscription notifies bob. `globex` and the platform copy see no change, and sessions continue. On Monday, delivery resumes from its cursor with no gap, because rows are still within retention. Had the outage outlasted retention plus seven days, a `siem.delivery_gap` record would name the missing range.
+**A failing SIEM.** Bob registers `https://siem.acme.example/lenny`, verify succeeds, and it starts delivering after the delay. At the weekend the endpoint returns 503 for two days. Deliveries back off, the destination becomes `failing`, and a subscription notifies bob. `globex` and the platform copy see no change, and sessions continue. On Monday, delivery resumes from its cursor with no gap, because rows are still within retention. Had the outage outlasted retention plus seven days, a `siem.delivery_gap` record would name the missing range.
 
 **An operator support case with approval.** Dave reports a stuck session and opens a ticket. Carol calls `POST /v1/admin/operator-access-requests` for dave, for 30 minutes. A record appears in `acme`'s chain, and one of bob's approvers approves it. Carol starts impersonation with `accessRequestId`, and the tenant chain shows the start before the bearer exists. Each action Carol takes carries `impersonated_by`. She does not end it, so at expiry the sweep writes `impersonation_expired`. A second attempt with the same request returns `403 OPERATOR_ACCESS_APPROVAL_REQUIRED`.
 
@@ -546,13 +581,9 @@ The hooks in its "Reserved for other designs" are inputs here, and the items bel
 
 Revision 37 of `egress-and-git-design.md` applied the items below that had to land before its proposals, so they are history here rather than open requests.
 
-These are requests. This design does not edit that file.
+Revision 1 of this document made five requests, and `egress-and-git-design.md` has applied them (revision 39 was re-read on 2026-11-03): the widened EG-9 write path, `suspendedBy` on opt-in objects with the guardrail layer, writable set entries as records, `lenny-evidence` reads from a named position with retention honouring a consumer's position, and `lenny-siem-forwarder` in the egress PKI's leaf list.
 
-1. **Widen the objects on the one write path (EG-9).** Its hook lists bindings, gates, tenant upstreams, session-requestable hosts, and the shadow policy. Guardrails also need VCS pool writes (`allowStoredTokenPush`, `allowWrite`, and `allowWorkflowEdits`), tenant always-allowed hosts and warm-up additions, tenant-registered git endpoints, egress and git routes, tenant client config files, and tenant pool overlays that extend a ceiling or add a CA. Reason: `storedTokenPush` and `hostPatterns` cannot act on an object that skips the check, and moving each handler onto the path after it ships repeats work the hook exists to avoid. Gates stay on the path for audit, and the policy check does not apply to a platform grant.
-2. **A suspended state on opt-in objects (EG-2, EG-4, and EG-9).** Each opt-in object carries a nullable `suspendedBy`, which the effective policy, the Token Service, `netagent`, and the decision service treat as absent, and setting it bumps the definition and policy versions. The effective-policy read names `guardrail` as a layer. Reason: without it, a tightening reaches only new writes, and adding the check to two independent gates and `pkg/binding` after they ship is rework to a shipped enforcement point. Registrations already have a suspended state, so this extends it.
-3. **Writable set entries as records (EG-2 and EG-3).** A writable set entry carries a `state` (`granted`, the only value EG-3 sets, and `pendingApproval`) and an optional `expiresAt`. Both gates and `netagent` treat any state other than `granted` as read only, and the I8 refusal has a code that `netagent` turns into the git message. Reason: the writable set is in the session binding record, the binding feed, and an I8 decision, so changing a list of names to a list of records after EG-3 ships changes a stored format and a wire contract.
-4. **Evidence read by stable position (EG-8 and EG-10).** `lenny-evidence` exposes a read from a named position per tenant and stream, with its SAN allowlist admitting `lenny-siem-forwarder`, and stream retention honours each registered consumer's position up to a configured bound. The egress design says a tenant subscription uses §25.5 and that a consumer holds a cursor, and §25.5's webhook has no replay. Reason: SO-3 needs a durable consumer, and the read API and retention check belong with the ingest they read from. The sampling rule and the OCSF translation stay as written.
-5. **Add `lenny-siem-forwarder` to the `lenny-evidence` client rows (EG-10).** The evidence NetworkPolicy row and the egress PKI leaf list gain it. Reason: the PKI renders leaves by name, and that design lists them exhaustively.
+This revision makes no new request. Its changes to the forwarder's secret path, the tool gate, and the principal rules touch no egress object.
 
 ## Residual risks
 
@@ -560,10 +591,12 @@ These are requests. This design does not edit that file.
 - **Delivery window.** A database superuser can change a row between commit and delivery, within the lag the destination reports.
 - **Platform-reported posture.** Posture is the platform's statement about itself. A customer can check parts of it against evidence and audit records, and cannot check the rest independently.
 - **IdP removal.** Deleting or disabling a security principal in the customer's IdP is outside Lenny's reach. Posture shows the last authentication time, and `SecurityPrincipalCoverageLost` fires only on Lenny-side changes. The spec has no SCIM (TS-2).
+- **Platform recovery path.** A platform admin who invalidates every `security-admin` of a tenant can assign a new one after the delay. The tenant's chain, its SIEM, and any `tenant-admin` see that happen and a tenant admin can cancel it, and the approval control is otherwise bypassable on this path.
+- **Bearer capture before the security team exists.** An introspection endpoint a tenant admin set earlier keeps receiving other users' bearers, excluding principals, until a `security-admin` changes it. Posture reports the endpoint's host.
 - **Operator's copy remains.** A tenant destination adds a copy, and the operator's `audit.siem.endpoint` continues to receive the tenant's chain.
 - **Secrets already delivered.** Suspending a `file` or `federation` binding removes it from the pod, and an agent that copied the value keeps the copy until it expires or is rotated.
 - **Minted write tokens.** A revoked repository approval stops new mints, and an existing token stays valid at the host until its expiry, held by `netagent`.
-- **Runtime-internal tools.** A tool a runtime runs without emitting a `tool_call` frame is outside SO-5a. Egress rules still apply to its traffic.
+- **Runtime-internal and adapter-local tools.** A tool a runtime runs in its own process, and each adapter-local tool, is outside SO-5a. Egress rules still apply to their network traffic.
 - **Audit payload content.** §12.9 classifies audit events as T2 or T3 and transcripts as T3. This design has not established that no event type carries user content, such as a free-text reason or a dead-letter `raw_canonical_b64`. SO-1's proposal has to audit the catalog, and the auditor's "no session content" statement depends on that result.
 - **Combined roles.** A person holding `tenant-admin` and `security-admin` defeats the separation for that tenant. Posture reports it, and Lenny does not refuse it.
 - **`lenny-ops`.** It remains inside the PKI trust boundary after SO-7.
@@ -571,14 +604,16 @@ These are requests. This design does not edit that file.
 
 ## Specification sections affected
 
+- §4.9 Credential Leasing Service: **Credential Storage Topology** and **Token Service secret resolution**, for the forwarder's keyed read and the destination Secrets.
+- §10.6: tenant RBAC config, the write rule on `identityProvider`, and the principal exemption from introspection.
 - §10.2 Authentication: the built-in roles, the permission matrix (including the first audit rows), the role source, **Custom roles (tenant-scoped).**, **Role assignment:**, **Session ownership.** rule 5, and the `impersonated_by` claim.
 - §11.2.1 Billing Event Stream: no change, cited as the self-approval precedent.
 - §11.7 Audit Logging: write-time tenant validation (mirror path), "Platform-tenant audit event residency", the compliance gate and startup checks, the SIEM statements, and OCSF mapping for new events.
 - §12.2 and §12.3: new tables and the forwarder's outbox statement. §12.8 Compliance Interfaces: `DeleteByTenant` and `DeleteByUser` coverage, erasure propagation, and protected subjects under erasure. §12.9 Data Classification: the new records.
 - §13.1, §13.2.4, and §17: `lenny-siem-forwarder`, its NetworkPolicy row, identity, and sizing.
 - §13.3 Credential Flow, "Platform-admin impersonation": role stripping, the mirror step in rule 1, the approval gate, and sweep behaviour at expiry.
-- §15.1 REST API: new resources, error codes, and scope domain. §7.2: approval routing.
-- §16.1, §16.4, §16.5, §16.7: metrics, the SIEM delivery guard's extension, alerts, and events.
+- §15.1 REST API: new resources, error codes, and scope domain. §7.2 and §28.5: approval routing and the MCP tool hold.
+- §16.1, §16.4, §16.5, §16.7: metrics, the SIEM delivery guard's extension and its per-tenant wording, alerts, and events.
 - §24: `lenny-ctl` commands for principals, security config, destinations, and approvals.
 - §25.1 and §25.4 Authentication: the role ceiling. §25.4 "ServiceAccount and RBAC": the reconciled block and **PKI trust boundary**.
 - §25.5 Operational Event Stream: `owner_class` and **Tenant Isolation**.
@@ -591,21 +626,21 @@ The outline's items keep their labels. SO-4 and SO-5 each split, because their p
 
 | Label | Content |
 | :-- | :-- |
-| SO-1 | The security roles, `tenant_security_principals`, protected subjects, `audit.read` and `audit.recover`, the `lenny-ops` ceiling, security-owned subscriptions, role stripping on impersonation, and the audit catalog review. |
-| SO-2 | The tenant security record, its applier, the guardrail check, suspension, and the posture read. |
+| SO-1 | The security roles, `tenant_security_principals`, the resolver rules in the gateway and `lenny-ops`, reserved role names, protected subjects, the introspection exemption, `audit.read` and `audit.recover`, the `lenny-ops` ceiling, security-owned subscriptions, and the audit catalog review. |
+| SO-2 | The tenant security record, its applier, delayed principal changes, the `identityProvider` write rule, the guardrail check, suspension, and the posture read. |
 | SO-3 | `lenny-siem-forwarder`, destinations, cursors, the retention hold, the compliance gate, and evidence delivery. |
 | SO-4a | The mirror, `impersonated_by`, and the operator reference. |
 | SO-4b | Operator access requests, the approval gate, and the emergency path. |
-| SO-5a | `security_approvals`, the approvals API, and tool-use routing. |
+| SO-5a | `security_approvals`, the approvals API, and the tool hold at MCP dispatch and on relayed frames. |
 | SO-5b | Repository write approvals. |
-| SO-6 | F-25.6.9: the windows, the remedy, and the CA finding. |
+| SO-6 | F-25.6.9: the windows, the remedy with its `certificates/status` rule, and the CA finding. |
 | SO-7 | F-25.4.40: the rights, the version source, the §25.4 reconciliation, and the skip removal. |
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
 | SO-1 | EG-8 and EG-9 for the evidence grants only | The named permissions on the new reads. The role and audit reads can land first, and the grants follow as one change. |
 | SO-2 | EG-9, EG-2, and EG-4 (the requested fields), and SO-1 | The write path, the suspended state, and the role that writes the record. The posture sections on egress need EG-2 and EG-9 and otherwise report `unknown`. |
-| SO-3 | SO-1, and EG-8, EG-10, and EG-11 for evidence delivery | The role, the export, and the leaf. Audit delivery can land first, with the `lenny-siem-forwarder` row added when EG-10 lands. |
+| SO-3 | SO-1 and SO-2, and EG-8, EG-10, and EG-11 for evidence delivery | The role, the delay on creating, changing, and removing a destination, the export, and the leaf. Audit delivery can land before the EG proposals, with the `lenny-siem-forwarder` row added when EG-10 lands. |
 | SO-4a | None | It can land at any point. |
 | SO-4b | SO-1, SO-2, SO-4a, and SO-5a | The approver role, the setting, the mirror, and the store. |
 | SO-5a | SO-1 and SO-2 | The role and the rules. |
@@ -619,7 +654,8 @@ The outline stated that SO-4, SO-5, and SO-7 depend on nothing. The approval par
 
 | Proposal | Depends on | Why |
 | :-- | :-- | :-- |
-| FE-6 | SO-1 | The rule that a sensitive stream has its own permission and no default grant. |
+| FE-6 | None | `tenant-admin` holds its read permissions until SO-1 lands, and neither proposal waits, as that design says. Decision 19 states the auditor's grants. |
+| TS-4 | None | `lifecycleSubjects` lets its worker act on a protected subject. Whichever lands second adds that case. |
 | TS-2 | None in either direction | This design works with a broker or without one. `securityRoleSource` is where they meet. |
 | OC-2 | None | A connector registration passes the guardrail check as a tenant-registered service, and whichever of OC-2 and SO-2 lands second adds that case. |
 
@@ -644,7 +680,7 @@ Each proposal carries the pages for its own surface. Spec changes land before th
 | `operator-guide/security.md` and `security-principles.md` | The control map adds the guardrails, and the trust statement adds the `lenny-ops` boundary paragraph. |
 | `operator-guide/agent-operability.md` and `lenny-ctl.md` | `doctor --fix` behaviour, the new CA finding, the removed Secret delete, and the new commands. |
 | `operator-guide/installation.md`, `reference/configuration.md` | The forwarder's values and preflight rows. |
-| `api/admin.md` | "Required roles" adds the new roles, and the resource groups for principals, security config, posture, destinations, approvals, and operator access requests are added. |
+| `api/admin.md` | "Required roles" adds the new roles, the `rbac-config` entry states the `identityProvider` rule, and the resource groups for principals, security config, posture, destinations, approvals, and operator access requests are added. |
 | `api/rest.md`, `api/mcp.md`, `client-guide/session-lifecycle.md`, `client-guide/error-handling.md` | A tool call routed to security, `POST /v1/sessions/{id}/write-approvals`, and the new errors. |
 | `reference/error-catalog.md`, `reference/metrics.md`, `reference/glossary.md` | New errors, metrics, alerts, and terms. |
 | `runbooks/` | New runbooks for each alert, such as `OperatorEmergencyAccess`, `TenantSIEMDeliveryFailing`, and `SecurityApproverCoverageLost`. `cert-manager-outage.md` adopts the relative thresholds and the status-based fix, and `ca-rotation.md` is linked from the new finding. The runbook index gains the entries. |
@@ -655,7 +691,7 @@ Each proposal carries the pages for its own surface. Spec changes land before th
 
 | Page | Change |
 | :-- | :-- |
-| `lifecycle.md` | States that the gateway can hold a `tool_call` the runtime did not flag, that it can resolve as denied on timeout, and that a runtime treats that verdict as it treats a user's denial. The guide has no treatment of `approvalRequired` today, so this page adds one. |
+| `lifecycle.md` and `platform-tools.md` | State that the gateway can hold a platform or connector tool call the runtime did not flag, that the MCP call stays open until approval or timeout, that a denial arrives as a tool error which a runtime treats as a user's denial, and that a client timeout shorter than `approvals.timeoutSeconds` loses the verdict. The guide has no treatment of approvals today, so these pages add one. |
 | "Network and credentials in the pod" (from the egress design) | States that a push can return 403 with a pending-approval message, that a runtime reports this to the user and does not retry in a loop, and that the credentials a runtime sees can be withdrawn by a binding change. |
 | `testing.md` | Describes the conformance case for a held call and a refused push. |
 
@@ -667,7 +703,7 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 
 - The new endpoints' OpenAPI entries carry `x-lenny-scope`, and the event catalog, OCSF mapping, and error catalog validate.
 - `TestOpsRBACMatchesSpecCanonicalBlock` runs with no skip, and its register entry is gone.
-- A rendered `lenny-ops` Role has no `secrets` rule and has only `get`, `list`, and `watch` on `certificates`.
+- After SO-6, a rendered `lenny-ops` Role has `update` on `certificates/status`. After SO-7, it has no `secrets` rule and has only `get`, `list`, and `watch` on `certificates`.
 
 ### Tier 1: unit
 
@@ -679,6 +715,8 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 - Operator reference derivation is stable per tenant and differs across tenants.
 - Approval state transitions, self-approval comparison, and expiry.
 - Permission tables for each role against the matrix, and the custom-role ceiling refusing each security write permission.
+- Resolver output for each combination of claim, user row, security row, role source, and `impersonated_by`.
+- Rule validation refusing an adapter-local tool name.
 
 ### Tier 2: component
 
@@ -690,7 +728,7 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 
 - Tenant destination requests: batch body, signature header, and header authentication.
 - The stream anchor, gap, and closed records against their schemas.
-- Approvals and security config response schemas, and the JSONL `tool_call` verdict for a gateway-held call.
+- Approvals and security config response schemas, the MCP tool error for a denied held call, and the JSONL `tool_call` verdict on a relayed frame.
 - The I8 refusal code for a pending write and the writable-set record in the binding feed.
 
 ### Tier 4: integration
@@ -701,10 +739,13 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 - A weakening stays pending until `effectiveAt`, can be cancelled, and clears suspensions on activation.
 - The destination lifecycle, cursor replay after a forwarder restart with no gap, replay by `since`, and evidence delivery by position.
 - Mirror: the sweep covers each row of the table, restarts with no duplicate, and writes `impersonation_expired`.
-- `impersonated_by` appears on rows written under a bearer, across a session create and an admin write.
+- `impersonated_by` appears on rows written under a bearer, across a session read and an admin write. A session create under that bearer stays refused by §13.3 step (1a).
+- `GET /v1/sessions?tenant=` emits its event before it returns rows, and returns no list when the emit fails.
+- Pending principal changes and destination changes activate at their delay, can be cancelled, and leave the prior state in force until then, including continued delivery to the old URL.
+- The forwarder obtains a destination secret through the keyed read with no Kubernetes rights.
 - Operator access request flow: approved, denied, expired, used twice, and wrong target.
-- Tool approval routed to security across two gateway replicas, with timeout denial.
-- Repository write: pending at bind, refused push, approval, successful push, expiry, and revocation.
+- Tool approval routed to security on the MCP path and on a relayed frame, across two gateway replicas, with timeout denial, and a rule match on a `lenny/delegate_task` call from a Standard-level runtime.
+- Repository write: pending at bind, refused push, approval, successful push, expiry, and revocation. A rule added while a session runs moves its `granted` entry to pending, and its next push is refused.
 
 ### Tier 5: end to end on Kind
 
@@ -727,7 +768,8 @@ No behaviour here needs a cloud-only feature. The forwarder's egress through a m
 
 ### Tier 8: chaos
 
-- Destination outage past the hold bound: GC proceeds for an unregulated tenant, a gap record follows, and a regulated tenant holds with the alert.
+- Destination outage past the hold bound: the pruner proceeds for an unregulated tenant, a gap record follows, and a regulated tenant holds with the alert while another tenant's rows prune on schedule. A force-drop writes the gap record before it deletes.
+- A gateway restart with a regulated tenant's only destination `failing`, `blocked`, or holding a pending change starts normally and raises the per-tenant alert.
 - Postgres loss during a mirror write issues no bearer. During a revocation, the revocation holds and the mirror catches up.
 - Forwarder kill mid-batch redelivers and skips nothing.
 - Approvals store loss denies a held tool call rather than releasing it.
@@ -736,7 +778,12 @@ No behaviour here needs a cloud-only feature. The forwarder's egress through a m
 
 ### Tier 9: security
 
-- **Protected subjects.** A tenant admin and a custom role with `manage_users` cannot remove a security role, or invalidate, disable, delete, or erase its holder, through any user or role route.
+- **Protected subjects.** A tenant admin and a custom role with `manage_users` or `manage_user_lifecycle` cannot remove a security role, or invalidate, disable, reinstate, delete, or erase its holder, through any user or role route, and a listed `lifecycleSubjects` caller can invalidate and reinstate.
+- **Self-grant.** A tenant admin cannot assign a `security-*` role through `PUT .../users/{id}/role`, `POST` or `PUT /v1/admin/users`, the bootstrap seed, or a custom role with that name.
+- **Introspection.** A principal's bearer never reaches a configured introspection endpoint, whoever set it, and an `active: false` answer does not reject a principal. A tenant admin cannot change `identityProvider.*` once a principal exists.
+- **Stolen `security-admin`.** Removal of a peer, assignment of an approver, and creation or repointing of a destination have no effect before the delay, and a peer or a platform admin can cancel them.
+- **Platform admin limit.** A platform admin cannot assign `security-approver` or `security-auditor`, or assign `security-admin` while one is active.
+- **Forwarder.** It cannot read a Secret through the API, reach the API server, or read through the keyed read any name without its prefix.
 - **Role source.** A `security-*` claim under `managed` grants nothing, including for a bearer from the tenant's IdP.
 - **Isolation.** A security principal of `acme` reads nothing of `globex`, for each new read, including through `?tenantId=` and scatter-gather. Posture does not reveal other tenants' identity or number.
 - **Impersonation.** A bearer for a security principal holds no security role, and a bearer resolves no approval and writes no security config.
@@ -750,7 +797,7 @@ No behaviour here needs a cloud-only feature. The forwarder's egress through a m
 
 ### Tier 10: conformance
 
-A runtime treats a gateway-held `tool_call` and a denial on timeout correctly, and reports a refused push with a pending-approval message, for a runtime with no SDK and for each SDK.
+A runtime treats a gateway-held MCP tool call and a denial on timeout correctly, and reports a refused push with a pending-approval message, for a runtime with no SDK and for each SDK.
 
 ### Tier 11: documentation
 
@@ -777,17 +824,17 @@ No first-hand account from a customer security team was found, and the outline's
 
 ## Decisions
 
-Each item is open, and each states a recommendation and its cost. The first three answer the outline's open questions.
+Decisions 1, 3, 20, 21, and 22 are settled in this revision, and the design above is written to them. The others are open, and each states a recommendation and its cost. Decisions 1 to 3 answer the outline's open questions.
 
-1. **Who can remove a `security-auditor`, and what stops a tenant admin?** Recommendation: a `security-admin`, or a platform admin with a ticket, can remove one, and the last `security-admin` needs the platform admin. A separate table and refusals on user routes stop a tenant admin. Cost: a customer that loses its last `security-admin` needs an operator support step, and a compromised auditor can be stopped only by those two roles.
+1. **Who can remove a `security-auditor`, and what stops a tenant admin?** Settled. A `security-admin` removes one under the delay, and a platform admin does so with a ticket under the same delay. A separate table, resolver filtering, and refusals on user routes stop a tenant admin. Accepted cost: a customer that loses its last `security-admin` needs an operator step, and only a platform admin's invalidation stops a compromised principal at once.
 2. **Does the broker or Lenny supply the role?** Recommendation: Lenny defines and stores it, and an OIDC claim counts only under `securityRoleSource: oidc`. Cost: an operator step per tenant at onboarding, and security principals maintained apart from IdP groups, which many customers prefer. `oidc` restores group management and moves the separation to the IdP's administrators.
-3. **Which guardrails can a customer set without the operator?** Recommendation: all of them, both directions, within the platform's gates. Only the first `security-admin`, `securityRoleSource`, and gates need the operator. Cost: a customer can suspend its own objects and break its own sessions and then open tickets, which the dry run reduces.
+3. **Which guardrails can a customer set without the operator?** Settled. All of them, both directions, within the platform's gates. Only the first `security-admin`, recovery of the last one, `securityRoleSource`, and gates need the operator. Accepted cost: a customer can suspend its own objects and break its own sessions and then open tickets, which the dry run reduces.
 4. **Refuse one subject holding `tenant-admin` and `security-admin`?** Recommendation: allow it and report it in posture, because small customers have one person for both. Cost: separation is advisory at those customers.
 5. **Separate approver and admin roles?** Recommendation: keep them separate, as Lockbox has a dedicated approver role, so an on-call approver cannot loosen rules and a rule author does not approve by default. Cost: one more role to explain and assign, and small teams assign both.
 6. **What happens to existing objects on a tightening?** Recommendation: suspend them at once, with a dry run first. Cost: a tightening can break running sessions. The alternative, applying to new writes only, leaves every existing opt-in in force and makes a guardrail unreliable as a statement.
 7. **Weakening delay: a delay before effect, and how long?** Recommendation: a delay rather than §8.3's rejection window, with a floor of 1 hour and a tenant default equal to the floor. Cost: an urgent loosening waits, and neither the customer nor the platform admin can shorten it through the API. The example above uses 24 hours, which bob's team chose.
 8. **Where does tenant delivery run?** Recommendation: a new `lenny-siem-forwarder` Deployment. Cost: one more Deployment, database role, and policy row. The `lenny-ops` alternative reuses its webhook egress rule and SSRF code at the cost of running more tenant-influenced URLs in a component inside the PKI boundary, with leader-only delivery. The gateway alternative reuses `Outbox` at the cost of running customer endpoints in the request-serving tier.
-9. **Hold bound for a failing destination.** Recommendation: 7 days past retention for unregulated tenants, and no bound for a regulated tenant whose independent copy is only that destination. Cost: storage for the operator, unbounded in the regulated case until the platform admin force-drops with an acknowledgement.
+9. **Hold bound for a failing destination.** Recommendation: 7 days past retention for unregulated tenants, and no bound for a regulated tenant whose independent copy is only that destination. Because the pruner acts per tenant, the hold affects one tenant's rows. Cost: storage for the operator, unbounded in the regulated case until the platform admin force-drops with an acknowledgement, which writes a gap record.
 10. **Does a tenant destination satisfy `COMPLIANCE_SIEM_REQUIRED`?** Recommendation: yes, when `active` with audit included, and its removal is refused when it would leave none. Cost: the operator can host a regulated tenant with no copy of its own, and the §11.7 startup check becomes per tenant. The alternative keeps the platform endpoint mandatory, which conflicts with the outline's point that the independent copy should not sit with the operator.
 11. **Mirror or query-time union?** Recommendation: append to the tenant's chain. Cost: a second write path past §11.7's tenant validation, a synchronous cross-store write on impersonation start, and one row per operator action. A union at read time would add no rows, but its records would have no place in the tenant's chain or SIEM.
 12. **How much operator activity to mirror?** Recommendation: the table under SO-4a, with reads coalesced hourly and tenant-unnamed `cross_tenant_read` left out. Cost: fleet-wide operations leave only a platform record and a posture count, and proposal work has to enumerate each admin route's tenant.
@@ -795,9 +842,11 @@ Each item is open, and each states a recommendation and its cost. The first thre
 14. **Approval and emergency defaults.** Recommendation: approval `off`, and emergency `allowed` when a tenant turns approval on. Cost: a customer gets no approval until its security team asks, and a stolen platform-admin credential can use the emergency path, at the price of a critical customer-visible record.
 15. **What approval gates.** Recommendation: impersonation and a platform admin's session content reads. Cost: operators lose a routine diagnostic during support on tenants that opt in, and the route list needs review whenever a content route is added.
 16. **Disclosure during an investigation.** Recommendation: no suppression in SO-4a, and `forensics-evidence-preservation-design.md` states whether its own quarantine and holds are disclosed, with its abuse workflow using its own read path instead of impersonation. Cost: an abuse investigation cannot impersonate a tenant under suspicion without that tenant seeing it. A disclosure delay would change that, at the cost of weakening what R6 promises.
-17. **Repository approval timing, and forcing tool approval.** Recommendation: create the repository approval at bind, because the gateway records the writable set there, and have the gateway force approval on rule-matched frames regardless of the runtime's flag. Cost: approvers see requests for sessions that never push, and a runtime can see a held call it did not ask for. Creating the approval at first push avoids the noise and adds a path from `netagent` through the decision service to the approvals store.
+17. **Repository approval timing, tool gating, and adapter-local tools.** Recommendation: create the repository approval at bind, because the gateway records the writable set there; hold rule-matched platform and connector tools at the gateway's MCP dispatch regardless of the runtime's flag; and refuse rules on adapter-local tools. Cost: approvers see requests for sessions that never push, a runtime's MCP client waits on a held call it did not ask for, and a customer cannot gate a workspace file tool. Gating adapter-local dispatch is possible, at the cost of an approval path from the adapter that constrains nothing the runtime cannot do directly. Creating the repository approval at first push avoids the noise and adds a path from `netagent` through the decision service to the approvals store.
 18. **Restrict `lenny-ops`'s Job and Deployment rights by admission policy?** Recommendation: defer, and state the boundary in §25.4 as the outline asks. A policy limiting that ServiceAccount's pod templates to chart-rendered images and Secret references would move `lenny-ops` out of the boundary. Cost of deferring: the residual stays. Cost of doing it: every backup and upgrade template change needs a policy change, and the same treatment would be owed to the controller.
-19. **Security roles and future sensitive streams.** Recommendation: no default grant on a stream with `payloadKeyRef`, and a `security-admin` can grant it. Cost: a customer's first look at `agent.activity` takes an explicit step.
-20. **SO-6's remedy mechanism.** Recommendation: the `Issuing` status condition, which differs from the finding's text. Cost: Lenny depends on a status condition cert-manager manages, so a cert-manager change to that condition breaks the remedy, and the tier 2 and tier 5 tests are there to catch it. Keeping the Secret delete leaves a window with no Secret, keeps a delete right, and keeps the annotation's unmeasured effect.
-21. **SO-7's extent.** Recommendation: remove the `secrets` rule and the Certificate `patch` entirely, where the finding suggested `resourceNames`. Cost: a dependency on SO-6, and the §25.8 version now reflects the applied Deployment's label rather than Helm's release record, which differ only while a release is in progress or a Deployment was edited by hand. The ConfigMap alternative costs a new chart object with no gain over the label.
-22. **Stale pointers in the findings.** F-25.4.40 and F-25.6.9 each say the egress design carries the fix in its proposal 2, and that design has since moved them here. Recommendation: the closing proposals record the actual resolution when they close the findings, with no separate edit now. Cost: the text stays stale until then.
+19. **Security roles and sensitive streams.** Recommendation: no default grant to a security role on FE-6's `agent.activity.*` streams or any stream with `payloadKeyRef`, and a `security-admin` lists a stream in `auditorStreamGrants` to grant it, under the delay. This does not adopt the default for `security-auditor` that `forensics-evidence-preservation-design.md` proposes in its decision 5, because commands and file paths are session activity and R1 withholds that by default. That design's `tenant-admin` defaults and its operator rule under an open case are unaffected. Cost: a customer's first look at `agent.activity` takes an explicit step and an hour or more.
+20. **SO-6's remedy mechanism.** Settled: the `Issuing` status condition, which differs from the finding's text. Accepted cost: Lenny depends on a status condition cert-manager manages, so a cert-manager change to that condition breaks the remedy, and the tier 2 and tier 5 tests are there to catch it. The Secret delete is rejected because it leaves a window with no Secret, keeps a delete right, and keeps the annotation's unmeasured effect.
+21. **SO-7's extent.** Settled: remove the `secrets` rule and the Certificate `patch` entirely, where the finding suggested `resourceNames`, with the version read from the Deployment's label. Accepted cost: a dependency on SO-6, and the §25.8 version now reflects the applied Deployment's label rather than Helm's release record, which differ only while a release is in progress or a Deployment was edited by hand. The ConfigMap alternative costs a new chart object with no gain over the label.
+22. **Stale pointers in the findings.** Settled: F-25.4.40 and F-25.6.9 each say the egress design carries the fix in its proposal 2, and that design has since moved them here. The closing proposals record the actual resolution when they close the findings, with no separate edit now. Accepted cost: the text stays stale until then.
+23. **Who controls `rbac-config`'s `identityProvider`.** Recommendation: exempt principals from introspection in every tenant, and once a tenant has a principal, move `identityProvider.*` writes to `security-admin` and `platform-admin` under the delay. Cost: a tenant admin loses a setting §10.2 gives it, at tenants that opted in, and a principal's groups can be stale until its token renews. Making the field platform-only in every tenant is simpler and closes bearer capture for all users, at the cost of an operator ticket for each customer's IdP change, including customers with no security team.
+24. **Platform admin writes to security principals.** Recommendation: a platform admin assigns only `security-admin`, only when none is active, with a ticket, and with the delay after the first assignment. A platform admin's removal takes the delay. Cost: a slower recovery for a customer that lost its only admin, and an operator cannot help by adding a reader. Refusing recovery altogether would leave such a customer with no path, and allowing any grant lets an operator identity approve the operator's own access.
