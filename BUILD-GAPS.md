@@ -3951,6 +3951,20 @@ Key file paths:
 **Gap:** On a stock install the Token Service could neither read a credential Secret nor reach the kube-apiserver. Every probed admin credential-pool write was refused with `422 CREDENTIAL_SECRET_RBAC_MISSING`, and the returned remediation patched a Role that did not exist.
 **Resolution (proposal 0112, 2026-10-31):** `charts/lenny/templates/credentials-namespace.yaml` renders the credentials namespace, its `pods: "0"` quota, the `lenny-token-service-credentials` Role with a namespace-wide `get`, and its RoleBinding. `allow-token-service` gains the kube-apiserver egress rule. The admin handlers no longer emit the remediation. The tier-3, tier-5, and tier-9 tests landed with the proposal pin the probe wire, the kind install, the live RBAC, and the egress rule.
 
+### - [ ] F-4.9.46 — `POST /v1/credentials` accepts `provider: github`, `aws_bedrock`, and `vault_transit`, stores the credential, and has no path that delivers it [Medium] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service, **Pre-Authorized Credential Flow** (the `POST /v1/credentials` row: "`provider` (string, must match a known `CredentialProvider` type)"), the credential source table (the user-scoped row names "user-specific Bedrock roles"), and the `userCredentialsEnabled` paragraph.
+**Evidence:** `handleRegister` in `pkg/gateway/credentials/credentialserver/credentialserver.go` admits any `provider.IsValid()` value, and `credential.AllProviders()` includes all three. `credential.UserProxyDialect` (`pkg/credential/lease.go`) has a dialect for `anthropic_direct`, `azure_openai`, `vertex_ai`, and `cursor_direct` only, and `Materializer.Available` (`pkg/gateway/credentials/usercreds/usercreds.go`) returns false when the dialect is absent. `usercreds` is the delivery path for user credentials since F-4.9.15.
+**Gap:** A caller receives a successful registration for a credential that no session can use. At session creation the credential reads as unavailable, so the session falls through to a pool or fails with `USER_CREDENTIAL_NOT_FOUND`, although a credential is registered. The user-scoped row's Bedrock use case does not hold.
+**Suggested resolution:** Through the proposal pipeline, either refuse these three providers with `VALIDATION_ERROR` on the route or specify their delivery, and correct the §4.9 use-case text. `designs/user-credential-delivery-design.md` refuses them in UC-1.
+
+### - [ ] F-4.9.47 — The `/v1/credentials` wire names differ from §4.9, so a client that follows §4.9 is refused with `secret is required` [Medium] — OPEN
+
+**Spec:** §4.9 Credential Leasing Service, **Pre-Authorized Credential Flow** (the `POST /v1/credentials` row: "`credential` (the secret material — API key, access token, etc.)", "Returns: `credential_ref` (opaque ID), `provider`, `label`, `created_at`"), and the `DELETE` row, which returns `credentialRef`.
+**Evidence:** `credentialserver.go` declares `Secret string` with the JSON key `secret` on the register and rotate bodies and `Ref string` with the key `ref` on the response, and it answers `400 VALIDATION_ERROR` when `secret` is empty. `docs/api/rest.md` documents `secret`, and `docs/client-guide/authentication.md` shows `credentialRef`.
+**Gap:** The specification, the code, and the documentation use three spellings of the reference and two of the secret field. A client built from §4.9 cannot register a credential and does not find the reference in the response.
+**Suggested resolution:** Through the proposal pipeline, choose one spelling for each field and apply it to §4.9, the handler, and the documentation pages. `designs/user-credential-delivery-design.md` records this under "Current state", and no proposal in that design changes the names.
+
 ## §5.1 Runtime <a id="5.1"></a>
 ### Summary
 
@@ -4935,6 +4949,13 @@ The NEEDS-OPERATOR (Kata-enabled host RuntimeClass) gating is cleared: retire-an
 **Evidence:** No production file imports `pkg/adapter/statelessslot`; the only reference is a path in the tier 0 test map `tests/tier0_static/spec_map_slot_address_registration_test.go`. `statelessproxy.go` dials the pod over plain HTTP on the runtime's own port (`DefaultPodPort`, 8080). `allow-gateway-ingress` in `charts/lenny/templates/agent-network-policies.yaml` admits only `adapter.grpcPort`.
 **Gap:** Under an enforcing CNI, the agent pod's default-deny drops the gateway's dial, so a service-mode request cannot reach its pod. With no caller, nothing drives readiness from slot occupancy, so §5.2's slot signal and its scale-up behaviour do not hold. No component on the path can confirm which pod answered a dial to a reused IP. No end-to-end test exercises this path under an enforcing CNI.
 **Suggested resolution:** Through the proposal pipeline, add a service-mode listener in `pkg/adapter` for the sidecar and embedded models that fronts the runtime, carries the slot accounting, and checks the expected pod UID, move the gateway's dial to its port, and add the ingress and gateway egress rows, the §28 register entry, and a test under an enforcing CNI. `designs/egress-and-git-design.md` specifies this as part of proposal 0.
+
+### - [ ] F-5.2.67 — A `tenant-admin` can change `egressProfile` and every other field of a shared pool, so one tenant sets the network posture of pods that serve other tenants [High] — OPEN
+
+**Spec:** §4.2 Session Manager, **Multi-tenancy:** ("**Runtime and pool records are platform-global**"); §10.2 Authentication, the permission matrix rows "Manage pools / scaling policies" and "Manage egress profiles" (`tenant-admin`: "Yes (own tenant)"); §15.1 REST API, the `PUT /v1/admin/pools/{name}` row ("`tenant-admin` restricted to access-table entries for own tenant") and the note that states "Egress Profiles are an enum field on pool and runtime definitions"; §13.2.6 Per-Pool Egress Relaxation and `egressProfile`.
+**Evidence:** The route runs `requireResourceManage(auth.PermManagePools, tenantaccessstore.KindPool)` (`pkg/gateway/externalapi/admin/routes.go`), and that gate (`tenant_access.go`) checks only that the caller's tenant holds a grant on the pool. `applyPoolUpdate` (`pools.go`) applies `egressProfile`, `dnsPolicy`, `allowStandardIsolation`, and the other fields of `UpdatePoolRequest`, and `pools.go` contains no role check. `pool_tenant_access` admits several tenants on one pool. The warm-count, circuit-breaker, drain, and bootstrap-override routes use the same gate.
+**Gap:** An administrator of one granted tenant can move a shared pool from `restricted` to `internet`, and the pods the controller creates afterwards carry that profile for every tenant granted the pool. §10.2's "own tenant" does not describe a record other tenants share, so the specification and the code agree and both are wrong.
+**Suggested resolution:** Through the proposal pipeline, limit a tenant's writes on a shared pool to fields that affect only that tenant, and refuse the rest with `403`. `designs/egress-and-git-design.md` lists this for filing and states the intended overlay in EG-9: `egressProfile` has no tenant overlay on a shared pool.
 
 ## §5.3 Isolation Profiles <a id="5.3"></a>
 Spec section: `spec/05_runtime-registry-and-pool-model.md` lines 638–679.
@@ -8409,6 +8430,13 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 **Gap:** A derived or replayed session that fails before its first checkpoint resumes with the source session's session files and without the files its bound plan supplied, so its workspace after resume differs from its workspace before the failure.
 **Suggested resolution:** Through the proposal pipeline, state what a resume restores for a session whose only checkpoint is the copied source snapshot: for example, take the snapshotless rebuild path with 0109's restore as the first materialization tier, or mark the copied checkpoint as not resumable until the session's own first checkpoint lands. The specification states neither, so this needs a proposal. Tests: tier 1 on the resume path selection and tier 4 with a derived session failed before its first checkpoint. Owner: its own proposal, after 0109's implementation, whose restore closure and Binder call sites such a rebuild would reuse.
 **Note (proposal 0109, 2026-10-30):** Proposal 0109's implementation does not discharge this finding, which stays OPEN. Re-confirmed against the tree at `990cffb30`, the last implementation commit of 0109 before its records step, and kept as the entry for this defect rather than filing a duplicate. `resumeOnPod` still takes the snapshot path for any row whose `WorkspaceSnapshot.Ref` is set, and 0109's restore closure (`workspaceRestore` in `pkg/gateway/sessionserver/snapshot_restore.go`) runs only on the bind-time `FinalizeWorkspace`. §7.1 **Derive restore semantics:** is now in the specification, so the proposal this entry names can cite it. The owner is unchanged.
+
+### - [ ] F-7.2.46 — An adapter-local `tool_call` with `approvalRequired: true` runs at once, because `HandleToolCall` does not read the flag [Medium] — OPEN
+
+**Spec:** §7.2 Interactive Session Model (`tool_use_requested(tool_call_id, tool, args)`: "Agent wants to call a tool (if approval required)"); `schemas/lenny-adapter-jsonl.schema.json`, the `tool_call` frame ("the adapter then publishes the §7.2 `tool_use_requested` SSE event and blocks the call", under a description that covers "an adapter-local tool (read_file, write_file, list_dir, delete_file)"); §28.5.3 Intra-pod ("The adapter resolves these locally and returns `tool_result` on stdin").
+**Evidence:** `HandleToolCall` (`pkg/adapter/toolcall.go`) decodes `type`, `id`, `name`, and `arguments`, and dispatches any local tool through `localtools.Dispatch`. `attach.go` calls it before it relays a frame, and a handled frame never reaches the gateway. `maybeGateToolCall` (`pkg/gateway/session/executor/podstream.go`), the gate F-7.2.9 added, runs only on a relayed frame. §28.5.3 sends platform and connector tools over MCP at the Standard and Full levels, and those calls carry no such flag, so the gate does not see `lenny/delegate_task` from a Standard runtime either.
+**Gap:** A runtime that asks for approval before `write_file` or `delete_file` receives the result with no `tool_use_requested` event and no user decision, against the frame's stated contract. The approval path works only for a platform `tool_call` relayed on stdin, which §28.5.3 reserves for adapter-local tools.
+**Suggested resolution:** Through the proposal pipeline, state which component gates each tool path, then gate adapter-local calls in the adapter or relay flagged calls to the gateway, and define the MCP path. `designs/security-oversight-design.md` records this under SO-5a.
 
 ## §7.4 Upload Safety <a id="7.4"></a>
 Spec source: `spec/07_session-lifecycle.md:429-465`. Audit scope: gateway upload handler, archive extraction, mid-session uploads, uploadToken auth, storage-quota integration, audit/observability hooks.
@@ -14058,6 +14086,27 @@ authorization-code grant against an in-memory test fixture:
   types the handlers emit (F9), and the OpenAPI document does not
   declare the OAuth routes (F14).
 
+### - [ ] F-9.3.18 — The connector OAuth callback does not bind the approving browser to the flow's user, so an attacker can obtain a victim's provider token under the attacker's own Lenny user [High] — OPEN
+
+**Spec:** §9.3 Connector Definition and OAuth/OIDC, **OAuth security requirements:** ("stores it bound to the initiating session ID and connector ID (Redis, TTL = 10 min), and validates the returned `state` exactly on the redirect callback").
+**Evidence:** `handleAuthorizeConnector` (`pkg/gateway/externalapi/admin/connector_oauth.go`) answers any authenticated caller with `AuthorizationURL` and `State`, and its comment states that "Any authenticated caller may initiate a flow". `handleConnectorOAuthCallback` is mounted with no authentication (`routes.go`), and its comment states that it "carries no Bearer token". The flow context holds `UserID`, `TenantID`, `Environment`, `SessionID`, and `CodeVerifier`, so the gateway supplies the PKCE verifier itself and PKCE binds nothing to the browser.
+**Gap:** A caller starts a flow and sends the URL to a victim who holds an account at the provider. The victim approves, and the callback stores the victim's token under the caller's tenant, connector, and user. The attack does not depend on a client secret. Under chart defaults F-9.3.19 stops a confidential connector at the callback, so a public connector is exposed today and a confidential connector is exposed once F-9.3.19 is fixed. §9.3's binding does not address this attack, and it also differs from the code's binding, so the specification changes with the code.
+**Suggested resolution:** Through the proposal pipeline, require the browser that reaches the provider to authenticate as the flow's tenant and subject before the redirect. `designs/user-git-identity-design.md` specifies this binding under UG-1 **Flow**.
+
+### - [ ] F-9.3.19 — The chart gives the gateway no `get` on a connector's client Secret, so a confidential connector's token exchange fails at the callback under chart defaults [High] — OPEN
+
+**Spec:** §9.3 Connector Definition and OAuth/OIDC (the connector example: `clientSecretRef: lenny-system/github-client-secret`, and **Confidential clients.**); §4.6.3 CRD Field Ownership and Write Boundaries, **Gateway ServiceAccount RBAC grants:**, which lists no Secret read; §4.9 Credential Leasing Service, **Credentials namespace.** rule 4.
+**Evidence:** `credentialsurface.go` wires `connectorsecret.NewKubeResolver(w.clusterClient, ...)`, and `pod_lifecycle.go` builds that client with `client.New`, so each `Resolve` is a live `Get`. `helm template` with default values plus the required `global.spiffeTrustDomain` and `coredns.clusterIP` renders five bindings for the `lenny-gateway` service account. The `lenny-gateway` ClusterRole, `lenny-gateway-leader-election`, and `lenny-gateway-phase-stamp-reader` have no Secret rule. `lenny-gateway-credential-writer` in `lenny-credentials` has `create`, `update`, `delete`, and `deletecollection`. `lenny-gateway-admin-token` in the release namespace has `create`, and `get`, `update`, and `patch` on `lenny-admin-token` alone. F-9.3.4's resolution named this prerequisite ("the gateway ServiceAccount needs `get` on the connector-secret Secrets"), and no chart change followed.
+**Gap:** `Resolve` receives a forbidden error for §9.3's own example, and `handleConnectorOAuthCallback` answers `500 INTERNAL_ERROR` ("could not resolve the connector client secret") after it has consumed the state. A confidential connector cannot complete authorization on a chart install. This comes from reading the code and the rendered chart, and it has not run against a cluster. `clientSecretRef` has no tenant check, but every `/v1/admin/connectors` route that writes it uses `requireAdmin`, which admits only `platform-admin`, so this is an availability defect and is no tenant escalation.
+**Suggested resolution:** Through the proposal pipeline, decide which component reads the client secret, either a grant to the gateway or resolution through the Token Service, which holds `get` in `lenny-credentials`, and state it in §4.6.3 and §9.3 with a chart test that a confidential connector's reference resolves. `designs/user-git-identity-design.md` records this under "Defects found while verifying", and no proposal closes it.
+
+### - [ ] F-9.3.20 — No code refreshes a connector token, so a connector stops working when its access token expires [High] — OPEN
+
+**Spec:** §9.3 Connector Definition and OAuth/OIDC, **OAuth/OIDC Flow** ("Future calls from pods **authorized for that connector** use gateway-held connector state"); §4.3 Token Service ("Refresh tokens stored encrypted at rest", and "they receive short-lived access tokens").
+**Evidence:** `connectoroauth.RefreshAccessToken` (`pkg/connectoroauth/flow.go`) and `connectorcredstore.Store.RotateAccessToken` have no non-test caller. `Invoker.bearerFor` (`pkg/gateway/connectors/connectorinvoke/invoker.go`) returns `cred.AccessToken` with no expiry check. F-4.3.5 and F-9.3.3 closed by adding those two functions, and F-4.3.5's suggested resolution also named a renewer or a refresh on `401`, which was not built.
+**Gap:** The refresh token is stored and never used, so each user must re-authorize a connector once its access token expires.
+**Suggested resolution:** Refresh in `bearerFor` before expiry and after a `401`, with one writer per credential because a provider can rotate the refresh token.
+
 ---
 
 ## §9.4 Memory Store <a id="9.4"></a>
@@ -15248,6 +15297,27 @@ Owner: the forwarded-call session binding proposal (not yet written).
 - `cmd/lenny-gateway/main.go` (wiring; F1, F2, F6, F9, F11, F13, F14)
 - `charts/lenny/values.yaml` (Helm values; F9)
 - `tests/tier3_contract/rest_auth/auth_test.go` (F17 evidence)
+
+### - [ ] F-10.2.38 — An IdP-verified token whose `roles` claim names `platform-admin` receives authority over every tenant [High] — OPEN
+
+**Spec:** §10.2 Authentication, **Role assignment:** ("Roles — both built-in and custom — are conveyed via OIDC claims (e.g., a `lenny_role` claim in the ID token, which can carry any built-in or custom role name)").
+**Evidence:** `normalizeUserBearer` (`pkg/auth/jwt/oidc.go`) clears `typ`, `session_id`, `delegation_depth`, and `origin` and leaves `Roles`. `serveBearer` (`pkg/gateway/middleware/auth/auth.go`) copies `claims.Roles` to the principal, and a platform-managed row replaces them only when one exists. `requireAdmin` (`pkg/gateway/externalapi/admin/tenants.go`) checks `principal.HasRole(auth.RolePlatformAdmin)`.
+**Gap:** One claim-mapping error at the identity provider or a broker gives a tenant's user the platform. §10.2 permits this, so the specification changes with the code.
+**Suggested resolution:** Through the proposal pipeline, remove `platform-admin` from an IdP-verified token's roles at the IdP boundary on the gateway and the Token Service, with an audit event and an alert, and take the role from a platform-managed row, a Lenny-issued token, or a §25.4 service identity. `designs/tenant-scoping-identity-design.md` specifies this in TS-2 (decision 9).
+
+### - [ ] F-10.2.39 — The gateway serves no RFC 9728 metadata and no `WWW-Authenticate` challenge, although §10.2 names it an MCP-standard protected resource server [Medium] — OPEN
+
+**Spec:** §10.2 Authentication, the authentication table row "Client → Gateway": "OIDC/OAuth 2.1 (MCP-standard protected resource server)".
+**Evidence:** No file under `pkg` or `cmd` serves `oauth-protected-resource`. `serveBearer` and the auth middleware's error writer set no `WWW-Authenticate` header on a `401`; the header appears only in idempotency replay comments and a registry client.
+**Gap:** An MCP client that follows the MCP authorization flow cannot discover the authorization server from a `401`, so it needs out-of-band configuration.
+**Suggested resolution:** Add the protected resource metadata route and the challenge, and state the metadata's contents in §10.2 through the proposal pipeline. `designs/tenant-scoping-identity-design.md` carries this in TS-2.
+
+### - [ ] F-10.2.40 — §10.2 and the documentation name a `lenny_role` claim and Helm values that do not exist, and the code reads a fixed `roles` claim [Low] — OPEN
+
+**Spec:** §10.2 Authentication, **Role assignment:** ("a `lenny_role` claim in the ID token").
+**Evidence:** `jwt.Claims.Roles` (`pkg/auth/jwt/jwt.go`) reads the JSON key `roles`, and nothing configures another name. `docs/client-guide/authentication.md` names `lenny_role`. `docs/tutorials/multi-tenant-setup.md` shows `tenantClaim`, `roleClaim`, and `jwksUri` under `auth`, and `charts/lenny/values.yaml` defines `auth.oidc.issuerUrl`, `auth.oidc.clientId`, and `auth.tenantIdClaim` and none of those.
+**Gap:** An operator who configures a `lenny_role` claim from these pages gets no role from it, and the Helm values on the tutorial page have no effect.
+**Suggested resolution:** Name the `roles` claim in §10.2 through the proposal pipeline, and correct the two documentation pages and `docs/operator-guide/security.md`. `designs/tenant-scoping-identity-design.md` carries this in TS-2.
 
 ---
 
@@ -17178,6 +17248,62 @@ uses `environment` where the spec uses `targetEnvironment` and
 `sourceEnvironment`; the Tenant RBAC Config payload covers only
 one of the five spec-named fields; and the `environmentId` billing
 rollup and `?environmentId=` discovery stub are unimplemented.
+
+### - [ ] F-10.6.15 — A delegated child, a derived session, and a replayed session have no Environment, so §10.6 checks on those sessions read an empty value [Medium] — OPEN
+
+**Spec:** §10.6 Environment Resource and RBAC Model, **Cross-environment check evaluation semantics.** ("re-evaluated against the current `Environment` resource definitions at each `delegate_task` call, including grandchild and deeper delegations"), and **Effective delegation scope:**.
+**Evidence:** The session row's `Environment` is set only in `create.go` and `create_and_start.go` (`pkg/gateway/sessionserver`). `buildChildSession` (`pkg/gateway/mcpfabric/delegation/service.go`), `derive.go`, and `replay.go` do not set it. `crossEnvReachable` (`mcptools.go`) returns false when `parent.Environment` is empty. The connector authorizer (`pkg/gateway/connectors/connectorauthz/connectorauthz.go`) resolves no Environment policy for an empty value, and `connectortools.go` looks up connector credentials with the row's value.
+**Gap:** A child of a session in an Environment loses that Environment's connector policy and cross-environment reach, so a grandchild delegation is evaluated as if no Environment applied, against §10.6. A derived or replayed session and a child look up connector tokens under the no-environment scope.
+**Suggested resolution:** Through the proposal pipeline, copy the Environment to the child, derived, and replayed rows, and define resume. `designs/tenant-scoping-identity-design.md` carries this in TS-3.
+
+### - [ ] F-10.6.16 — In-pod `lenny/delegate_task` resolves Environment access from a principal with no groups, so group members are refused under `deny-all` and selectors are skipped under `allow-all` [High] — OPEN
+
+**Spec:** §10.6 Environment Resource and RBAC Model, **Effective delegation scope:** and **`noEnvironmentPolicy` semantics:** ("`allow-all` does **not** bypass environment-level RBAC for users who **are** members of an environment").
+**Evidence:** `WithSessionPrincipal` (`pkg/gateway/gatewaycontrol/platformtools/platformtools.go`) builds the in-pod principal from `Subject`, `TenantID`, `SessionID`, and `CallerType`, with no `Groups`. `runtimeAuthorizedForCaller` and `crossEnvReachable` (`pkg/gateway/mcpfabric/mcptools/mcptools.go`) call `environmentResolution`, which builds `envaccess.Caller{Subject, Groups}` from that principal.
+**Gap:** A member through an `oidc-group` resolves to no membership. Under `deny-all` the agent cannot delegate within its own Environment. Under `allow-all` the check admits every runtime in the tenant, which skips the selector of the Environment the user belongs to.
+**Suggested resolution:** Through the proposal pipeline, evaluate an in-pod delegation against the calling session's recorded Environment, and leave the caller's groups out of that decision. `designs/tenant-scoping-identity-design.md` carries this in TS-3, which needs F-10.6.15.
+
+### - [ ] F-10.6.17 — Experiment routing and the late `PreRoute` segment change a session's runtime after §10.6 admission, so the selector check does not cover the runtime that runs [Medium] — OPEN
+
+**Spec:** §10.6 Environment Resource and RBAC Model (the environment's `runtimeSelector`, and the explicit endpoint's runtime scope); §10.7 Experiment Primitives; §4.8 Gateway Policy Engine (`PreRoute`).
+**Evidence:** `create.go` (`pkg/gateway/sessionserver`) calls `requireEnvironmentAdmission` with `req.RuntimeRef`, and later `routeExperiment` and `preRouteAfterExperiment`. `experimentrouter.go` sets `row.RuntimeRef = variant.Runtime`, and `route.go` sets `row.RuntimeRef = spec.RequestedRuntime`. Neither path rereads the selector. `routeExperiment` checks isolation monotonicity alone.
+**Gap:** A session created in an Environment can run a variant or an interceptor's runtime that the Environment's selector excludes. The specification does not state the order of these steps.
+**Suggested resolution:** Through the proposal pipeline, run the runtime-dependent §10.6 checks again on the final row and refuse a rewrite that fails them. `designs/tenant-scoping-identity-design.md` carries this in TS-3 and states the rule under TS-1.
+
+### - [ ] F-10.6.18 — Tokens from `/v1/oauth/token` carry no groups, so they cannot satisfy an `oidc-group` Environment member [Medium] — OPEN
+
+**Spec:** §10.6 Environment Resource and RBAC Model, **Identity:** ("Groups from LDAP/AD carried as JWT claims"); §13.3 Credential Flow (the token exchange).
+**Evidence:** `jwt.Claims` has `Groups` (`pkg/auth/jwt/jwt.go`), and no file under `pkg/tokenservice` sets or copies it.
+**Gap:** A user who rotates a token through `/v1/oauth/token` loses group-based Environment membership on the new token, with no error at the exchange.
+**Suggested resolution:** Through the proposal pipeline, state that an exchange carries the subject token's groups, and copy them. `designs/tenant-scoping-identity-design.md` carries this in TS-3.
+
+### - [ ] F-10.6.19 — The transparent create path admits any member of any Environment, with no role check and no selector check on the requested runtime [Medium] — OPEN
+
+**Spec:** §10.6 Environment Resource and RBAC Model ("**Transparent filtering** (default) — user connects to standard endpoint; gateway computes the union of authorized runtimes across all environments where the user's groups have a role and returns that filtered view"), and **Member roles:**.
+**Evidence:** `requireEnvironmentAdmission` (`pkg/gateway/sessionserver/runtimes.go`) calls `requireExplicitEnvironmentAdmission` when the request names an Environment, and otherwise returns true when `len(res.MemberEnvironments) > 0`.
+**Gap:** A `viewer` in one Environment can create a session on a runtime outside every selector it can reach by leaving the Environment out of the request. Discovery filters that runtime out, and creation does not.
+**Suggested resolution:** Admit the transparent create only when the runtime is in the union of the selectors of Environments where the caller holds at least `creator`. `designs/tenant-scoping-identity-design.md` carries this in TS-3.
+
+### - [ ] F-10.6.20 — Deleting an Environment does not check for active sessions, against the §15.1 deletion rule [Medium] — OPEN
+
+**Spec:** §15.1 REST API, **Deletion semantics for resources with dependents.** ("**Environment:** blocked if any sessions are active within the environment").
+**Evidence:** `handleDeleteEnvironment` (`pkg/gateway/externalapi/admin/environments.go`) checks the `If-Match` precondition and calls `environments.Delete`, with no session read and no `RESOURCE_HAS_DEPENDENTS` response.
+**Gap:** An administrator can delete an Environment with running sessions, and those rows then name an Environment that does not exist. `connectorauthz.go` treats that case as no policy.
+**Suggested resolution:** Direct fix. Count non-terminal sessions on the Environment and answer `409 RESOURCE_HAS_DEPENDENTS`. `designs/tenant-scoping-identity-design.md` carries this in TS-3.
+
+### - [ ] F-10.6.21 — `GET /v1/admin/tenants/{id}/rbac-config` returns `introspectionClientSecret`, which the tenant row stores in its JSON configuration [Medium] — OPEN
+
+**Spec:** §10.6 Environment Resource and RBAC Model, **Tenant RBAC Config:**; §12.9 Data Classification (T4 **Restricted**: "Credentials, ..."); §4.9 Credential Leasing Service, the rule for a pool's credential routes ("No response carries a submitted value").
+**Evidence:** `rbacConfigPayload` and `toRBACConfig` (`pkg/gateway/externalapi/admin/rbac_config.go`) copy `IntrospectionClientSecret` both ways, and `handleGetRBACConfig` encodes the payload. `tenantstore.IdentityProvider` holds the field in the tenant's stored configuration.
+**Gap:** A credential that authenticates the gateway to an identity provider is readable through the API and stored without envelope encryption, unlike every other credential class §12.9 names.
+**Suggested resolution:** Through the proposal pipeline, make the field write-only and move its storage to a Secret reference or the envelope-encrypted store. `designs/tenant-scoping-identity-design.md` carries the read half in TS-4.
+
+### - [ ] F-10.6.22 — A `tenant-admin` can point `introspectionEndpoint` at any HTTPS address, and the gateway posts every bearer presented for that tenant to it with no §13.2 destination check [Medium] — OPEN
+
+**Spec:** §13.2.5 Gateway Egress to Upstream LLM Providers ("Every gateway-initiated HTTPS flow (connector callbacks, webhook notifications, LLM proxy upstreams, external interceptor calls) MUST validate the resolved destination against the same block list at the application layer before dialing"); §10.2 Authentication, the permission matrix row "Configure tenant RBAC config" (`tenant-admin`: "Yes (own tenant)"); §10.6 Environment Resource and RBAC Model, **Identity:**.
+**Evidence:** `validateRBACConfigExtras` (`pkg/gateway/externalapi/admin/rbac_config.go`) requires an absolute `https` URL and checks no address. `introspection.New` (`pkg/auth/introspection/introspection.go`) uses `&http.Client{Timeout: 5 * time.Second}` with the default dialer, as `cmd/lenny-gateway/httpsurface.go` wires it, and `introspect` posts the raw bearer. `serveBearer` calls `IntrospectGroups` for each bearer in the tenant, including an impersonation bearer, and rejects the bearer when the endpoint answers `active: false`.
+**Gap:** The write permission matches §10.2, and the missing check does not. The gateway can post a bearer and the client secret to an address inside the deployer's network, limited by NetworkPolicy alone. An RFC 7662 endpoint is normally the token issuer's, and here a tenant administrator's own server receives the raw tokens of the tenant's other users and can refuse any of them.
+**Suggested resolution:** Through the proposal pipeline, apply the §13.2 destination check at write and at dial, and decide whether a tenant may set this URL under a shared issuer. `designs/tenant-scoping-identity-design.md` carries the address check in TS-4, and `designs/security-oversight-design.md` guards a security principal's bearer under SO-1.
 
 ---
 
@@ -19817,6 +19943,27 @@ The remaining items are smaller — synchronous-vs-async wording mismatch (F5), 
 **Gap:** A delegated child that full_revoke cancels never returns its `parallel_children` slot, `tree_memory` share, `tree_size` unit, or unused tokens, against §7.1 **Terminal pipeline context:**.
 **Suggested resolution:** Run the post-terminal hook for the revoke cancel writes, detached from the admin request, so the budget return and the other pipeline steps run once per cancelled session. §11.4 states which steps the revoke fan-out runs, so this goes through the proposal pipeline. Owner: the next proposal that edits §11.4 full_revoke handling, after 0107's implementation.
 
+### - [ ] F-11.4.19 — `POST /v1/admin/users/{userId}/invalidate` answers `404` for a user with no row, so a user known only through an IdP cannot be stopped [High] — OPEN
+
+**Spec:** §15.1 REST API, the `POST /v1/admin/users/{userId}/invalidate` row ("Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response to stop an active attacker's sessions"); §11.4 User Invalidation, step 1 ("The gateway lists every session the user has"); §13.3 Credential Flow, **Platform-admin impersonation.** rule 1 ("A user with no user row carries no invalidation level").
+**Evidence:** `handleInvalidateUser` (`pkg/gateway/externalapi/admin/users.go`) calls `r.users.Update`, and `userstore.ErrNotFound` answers `404 RESOURCE_NOT_FOUND` before any §11.4 step runs. Rows are created by `handleCreateUser`, the bootstrap path, and `admintoken`, and a login creates none. `requireActiveUserForAction` (`pkg/gateway/sessionserver/user_gate.go`) admits a user with no row.
+**Gap:** The operator cannot terminate the sessions of a user who only ever logged in through an IdP, which is the common case, or record that user as invalidated.
+**Suggested resolution:** Through the proposal pipeline, have an invalidation of an unknown subject create the row in the invalidated state and run the §11.4 steps, which list sessions by owner. `designs/tenant-scoping-identity-design.md` carries this in TS-4.
+
+### - [ ] F-11.4.20 — Authentication never reads a user's invalidation state, so an invalidated or deleted administrator with a live IdP token keeps the admin API [High] — OPEN
+
+**Spec:** §11.4 User Invalidation (the level table: "Full revoke | Terminate active sessions, invalidate cached auth, deny reconnects"), and step 5, which revokes "the user's issued tokens"; §15.1 REST API, the `USER_INVALIDATED` row ("returned for session creation on every creation path, delegated-task creation, and interaction resolution").
+**Evidence:** `serveBearer` (`pkg/gateway/middleware/auth/auth.go`) does not read `IsActive`. `PlatformRoles.ResolveRoles` (`pkg/gateway/environment/userstore/platformroles.go`) returns `row.Roles` whatever `Disabled` and `DeletedAt` hold, and the Postgres store's `Get` returns a soft-deleted row. `SoftDelete` leaves `Roles` and `RoleAssigned` in place. The production callers of `User.IsActive` are `user_gate.go` and `mcptools/elicitation.go`. Step 5's revocation reaches `issued_tokens`, and an IdP token has no row there.
+**Gap:** After a `full_revoke`, a `tenant-admin` holding an IdP token still authenticates with its roles, and it can read and write the tenant through the admin API until the token expires. §15.1's list of refusals covers no admin route, so the specification changes with the code.
+**Suggested resolution:** Through the proposal pipeline, refuse a `full_revoke` or deleted row at authentication with `401`, and reduce a disabled row's roles to `user`, with the lookup the middleware already performs for roles. `designs/tenant-scoping-identity-design.md` carries this in TS-4.
+
+### - [ ] F-11.4.21 — An invalidation has no defined reversal: `PUT disabled:false` undoes a disable with no check, and nothing clears the state `hard_disable` and `full_revoke` set [Medium] — OPEN
+
+**Spec:** §11.4 User Invalidation, which states three levels and no reversal.
+**Evidence:** `handleUpdateUser` (`pkg/gateway/externalapi/admin/users.go`) assigns `u.Disabled = *body.Disabled` with no check of the caller, the subject, or the level. `handleInvalidateUser` sets `DeletedAt` for `hard_disable` and `full_revoke`, and no handler clears it. The row does not record which level was applied.
+**Gap:** An invalidated administrator can clear its own soft disable, because of F-11.4.20. A user under `hard_disable` or `full_revoke` cannot be reinstated, including a returning employee.
+**Suggested resolution:** Through the proposal pipeline, add a reinstate operation as the one way back, record the level on the row, and refuse `disabled: false` on an invalidated row. `designs/tenant-scoping-identity-design.md` carries this in TS-4.
+
 ## §11.5 Idempotency <a id="11.5"></a>
 Scope: `spec/11_policy-and-controls.md` lines 266-279. The section enumerates six "critical operations" that support idempotency keys (CreateSession, FinalizeWorkspace, StartSession, SpawnChild, Approve/DenyDelegation, Resume), a "**Mechanism.**" paragraph that fixes the wire surface (header for REST, `idempotencyKey` field for MCP), the key bound (≤128 characters, UUIDs recommended), the Postgres storage primitives (table `idempotency_keys` keyed by `(tenant_id, idempotency_key)`, 24h TTL), the replay contract ("same HTTP status and body" within the window), the reuse-detection contract (SHA-256 body hash; `422 IDEMPOTENCY_KEY_REUSED` on mismatch), garbage collection after the window, tenant-scoping, and the closing statement "Prevents duplicate sessions or children during gateway failover or client retries."
 
@@ -21537,6 +21684,13 @@ audit-recovery admin endpoints, and the audit-event schema registry.
 **Gap:** Each `cross_tenant_read` row dead-letters on the SIEM path after its retries and fails any §25.9 query page that renders it. The §11.7 mapping paragraph names the §16.6, §16.7, and §4.9.2 catalogs and not §12.3, but the wire-format paragraph covers every audit event, and the mapping file already carries events from other sections (§13.3 impersonation, §24.11 force-terminate).
 **Resolution:** Fixed in 738bdc797 on `fix/t9-skip-causes` (2026-10-29). `exactCatalog` maps `cross_tenant_read` to API Activity (6003), Read, and `schemas/ocsf-mapping.yaml` is regenerated with `cmd/lenny-ocsf-mapping-gen`. `TestCrossTenantReadTranslatesToAPIActivityRead_spec_12_3` in `pkg/audit/ocsf/ocsf_test.go` pins the lookup and translates both payload forms the emitters write. The live tier-9 rerun waits on a gateway image built from this commit. The listing's 500 on an untranslatable row is F-25.9.20.
 
+### - [ ] F-11.7.27 — §11.7 and the OCSF translator pair four class numbers with the wrong class names, so an OCSF consumer files those events under other classes [Medium] — OPEN
+
+**Spec:** §11.7 Audit Logging, the `class_uid`/`activity_id` mapping paragraph ("primarily classes 3002 Authentication, 6003 API Activity, 6004 File System Activity, 3006 Account Change, 5001 Entity Management, and 2004 Application Security Finding").
+**Evidence:** `pkg/audit/ocsf/ocsf.go` declares `ClassAccountChange = 3006`, `ClassEntityManagement = 5001`, `ClassFileSystemActivity = 6004`, and `ClassAppSecurityFinding = 2004`, pins the wire version at OCSF v1.1.0, and `schemas/ocsf-mapping.yaml` is generated from them. The OCSF v1.1.0 class list at `schema.ocsf.io/1.1.0/classes` assigns 6004 to Web Resource Access Activity (File System Activity is 1001), 3006 to Group Management (Account Change is 3001), 5001 to Device Inventory Info (Entity Management is 3004), and 2004 to Detection Finding. 3002 and 6003 are correct.
+**Gap:** Each record carries a `class_uid` that a conforming SIEM reads as a different class from the `class_name` beside it. The audit events for user changes, resource changes, workspace file access, and findings are affected. The category values follow the wrong numbers as well.
+**Suggested resolution:** Through the proposal pipeline, correct §11.7, the constants, the categories, and the generated mapping. `designs/forensics-evidence-preservation-design.md` lists the 6004 correction under "Specification sections affected", and the other three are new here.
+
 ## §11.8 Security Incident Response <a id="11.8"></a>
 ### Summary
 
@@ -23063,6 +23217,13 @@ Source files referenced above (absolute paths):
   `pkg/alerting/rules/rules.go` (lines 1066, 1084, 1103, 1220)
 - HA Postgres test infra: `tests/testinfra/kind/datastores-ha-postgres.yaml`
 - Restore-test CronJob: `charts/lenny/templates/restore-test-cronjob.yaml`
+
+### - [ ] F-12.3.30 — `GET /v1/sessions?tenant=` lets a platform admin list another tenant's sessions and writes no audit row, because the §12.3 rule keys on the `__all__` sentinel [Medium] — OPEN
+
+**Spec:** §12.3 Postgres HA Requirements, item 2 **Audit event** ("Every code path that sets `app.current_tenant = '__all__'` MUST emit an audit event (`cross_tenant_read`)"); §15.1 REST API, the `GET /v1/sessions` row ("filterable by status, runtime, tenant, labels"); §10.2 Authentication, the row "Access other tenants' data".
+**Evidence:** `handleList` (`pkg/gateway/sessionserver/session_read.go`) sets `tenantID` to the `tenant` query value for a `platform-admin`, calls `s.store.List` under that tenant, and emits nothing.
+**Gap:** The same read across all tenants writes a `cross_tenant_read` row, and a read of one named tenant writes none, so a customer and the operator have no record of it. The code matches §12.3's text, so this is a specification gap: no sentence requires an audit row on this path.
+**Suggested resolution:** Through the proposal pipeline, extend the rule to a platform admin's read of a named tenant, and emit before returning rows. `designs/security-oversight-design.md` specifies `admin.tenant_sessions_read` in SO-4a.
 
 ---
 
@@ -25905,6 +26066,13 @@ This makes the gaps in F2 (artifact legal-hold endpoint), F5 (pg-backed billing 
 **Gap:** An escrowed record is deletable by any holder of the escrow store's credentials while its hold is active, so the immutability §12.8 states does not hold. The specification is also inconsistent: an S3 Object Lock retention period in `COMPLIANCE` mode cannot be shortened or removed by any user before it expires, so an object locked that way cannot become "eligible for deletion" when the hold clears. The Object Lock primitive that is set and lifted with the hold is a legal hold (`PutObjectLegalHold` `ON`/`OFF`).
 **Suggested resolution:** Through the proposal pipeline, restate sub-step 3 as an Object Lock legal hold on a lock-enabled escrow bucket, set at escrow and cleared before the escrow GC deletes the object, and state which backends provide it. Then provision the lock-enabled escrow bucket, set and clear the legal hold in the escrow writer and deleter, and add a tier-2 case on a lock-enabled bucket that shows a delete is refused while the hold is set. §12.8 names the `COMPLIANCE` mode, so the change needs the proposal pipeline. Owner: unassigned (the S3-compatible object-store capability profile proposal).
 
+### - [ ] F-12.8.64 — Clearing a session hold deletes escrow objects with no check that a hold covered them, including an artifact held under its own separate hold [Medium] — OPEN
+
+**Spec:** §12.8 Compliance Interfaces, **Legal hold interaction during deletion**, sub-step 3 ("the escrow object's retention tag is set to `retain-until-hold-release`", and "When the hold is subsequently cleared via `POST /v1/admin/legal-hold` (`hold: false`) ... the escrow object becomes eligible for deletion").
+**Evidence:** `Releaser.ReleaseForSession` (`pkg/legalholdescrow/release.go`) lists `Records.ActiveForSession` and deletes each object. `setSessionLegalHold` (`pkg/gateway/externalapi/admin/legalhold.go`) calls it on any `hold: false`, whether the row is missing or live, with no read of a prior hold. `heldArtifactFromRecord` (`cmd/lenny-gateway/legalholdescrow.go`) records the owning session on every escrowed artifact, including one escrowed from its artifact-level hold, and its comment states that "clearing either the session hold or the artifact's own hold releases it". The record does not state which hold caused the escrow.
+**Gap:** A `hold: false` naming a session that was never held deletes the escrow of an artifact whose own hold nobody cleared, and it emits `legal_hold.escrow_released`. That is a loss of evidence under an active preservation order. After Phase 4 the session row is gone, so the handler cannot tell the two cases apart from the row.
+**Suggested resolution:** Direct fix. Record on the escrow row which hold caused the escrow, and have each clear release only the rows its own hold caused. `designs/forensics-evidence-preservation-design.md` records this behaviour and keeps its own security copies out of these records, so FE-3 does not close it.
+
 ## §12.9 Data Classification <a id="12.9"></a>
 Spec source: `spec/12_storage-architecture.md` lines 995–1057.
 Implementation root: `pkg/gateway/admin/`, `pkg/gateway/tenantstore/`,
@@ -27647,6 +27815,20 @@ The deletion-guard remains in `implementationOnlyValidatingWebhooks` (`pkg/prefl
 **Gap:** The chart grants webhook pods a kube-apiserver egress that §13.2 does not list, and the controller rows' CIDR scoping is unstated, so the specification under-describes the rendered allow-list.
 **Suggested resolution:** Through the proposal pipeline, add the kube-apiserver egress with `kubeApiServerCIDR` to the Admission Webhooks row and the CIDR to the controller row, or remove the webhook rule from the chart if no webhook needs it. The defect is specification text, so it needs a proposal. Owner: unassigned, with F-13.2.26.
 
+### - [ ] F-13.2.28 — The label webhooks do not cover `pods/status`, which also writes labels, so a holder of that subresource can change every immutable label and `lenny.dev/tenant-id` with no webhook consulted [Medium] — OPEN
+
+**Spec:** §13.2 Network Isolation, **`lenny.dev/managed` label immutability (NET-003):** (rule 2, **Mutation guard:**) and the **Label immutability note:**; §5.2 Pool Configuration and Execution Modes, the Kubernetes layer of tenant pinning ("no Kubernetes API call can silently re-label a pod to a different tenant").
+**Evidence:** Both webhooks in `charts/lenny/templates/admission-policies/label-immutability-webhook.yaml` set `resources: ["pods"]`, which does not match the subresource. `controller-rbac.yaml` grants `lenny-controller` `get`, `patch`, and `update` on `pods/status`. `designs/evidence/egress-and-git-design/spike-owed-b/RESULTS.md` records a test in which the controller's identity set `lenny.dev/tenant-id: evil` through `pods/status` with no webhook consulted, and adding `pods/status` to the rule closed it. The kubelet was refused by the API server.
+**Gap:** Under the chart, `lenny-controller` and any principal a deployer grants this subresource can write these labels, so the guard does not hold against the principal §5.2's transition rules restrict.
+**Suggested resolution:** Direct fix. Add `pods/status` to both webhooks' rules and a tier-5 test through the subresource. `designs/egress-and-git-design.md` states this requirement under egress groups, in EG-6.
+
+### - [ ] F-13.2.29 — `DecideImmutableLabels` treats an unset label and an empty value as equal, so an `UPDATE` can add or remove an immutable label with an empty value [Low] — OPEN
+
+**Spec:** §13.2 Network Isolation, **`lenny.dev/managed` label immutability (NET-003):** ("`UPDATE` requests that add or change the `lenny.dev/managed` label on an existing pod are denied unconditionally"); §17.2 Namespace Layout, item 5.
+**Evidence:** `DecideImmutableLabels` (`pkg/admission/label_immutability/label_immutability.go`) compares `r.OldLabels[key]` with `r.NewLabels[key]`, so a missing key and an empty value both read as `""`, and its doc comment says that an `UPDATE` that "changes, adds, or removes the label is refused". `DecideTenantTransition` reads `lenny.dev/tenant-id` the same way. No test covers an empty value on the immutable set.
+**Gap:** The decider admits unset to empty and empty to unset. No selector in the chart uses `Exists` or `DoesNotExist`, so this has no network effect today, and a selector of that form would gain one.
+**Suggested resolution:** Direct fix. Compare map presence as well as value, and add the tier-1 cases.
+
 ---
 
 ## §13.3 Credential Flow <a id="13.3"></a>
@@ -28046,6 +28228,20 @@ No finding — recorded as confirmation.
 - **Info / positive (4):** CFL-009 deny-list source-aware key; CFL-013 dev-path durable-store opt-out; CFL-015 connector OAuth confidentiality; CFL-016 direct-mode/SPIFFE-disabled admission; CFL-017 ephemeral container guard; CFL-018 credential-file mode + fsGroup.
 
 Net: the credential-delivery and revocation primitives are present and structurally correct (CFL-009, CFL-013–CFL-018). The §13.3 audit, atomic-write, and rate-limit guarantees that bind the issuance side are largely unimplemented (CFL-001 through CFL-005, CFL-006), and the operator-facing emergency-revocation API does not exist (CFL-007). Two MUSTs (CFL-001, CFL-002) silently break the spec's "every token exchange emits an audit row" invariant; one MUST (CFL-003) leaves `/v1/oauth/token` open to brute force.
+
+### - [ ] F-13.3.25 — Actions taken under an impersonation bearer are recorded as the impersonated user, and no audit row names the operator [Medium] — OPEN
+
+**Spec:** §11.7 Audit Logging ("Who requested it (user_id, tenant_id)"), and the `user_id` row of the OCSF field table (`actor.user.uid`); §13.3 Credential Flow, **Platform-admin impersonation.** rule 1, which signs "a `user_bearer` for the target user"; §10.2 Authentication (`user_bearer`: "Carries no `session_id` or `act` claim").
+**Evidence:** `Service.Issue` (`pkg/gateway/credentials/impersonation/service.go`) signs a bearer with the target's subject and records `act_sub` only on the `issued_tokens` row. The principal in `serveBearer` has no marker of impersonation, and `ChainAuditSink.EmitAdminEvent` (`pkg/gateway/externalapi/admin/audit_sink.go`) writes `actor_subject` from it with no `jti`. A search of `pkg/audit`, `pkg/gateway/audit`, and the admin router finds no reference to `act_sub` and no `jti` on a row.
+**Gap:** A row written under the bearer states that the target user acted, including an operator's writes as a `tenant-admin`. Only the time window of `admin.impersonation_started`, which sits in the platform tenant's chain, connects a row to an operator, and two sessions can overlap. The specification requires the bearer's subject and states nothing about attribution, so it changes with the code.
+**Suggested resolution:** Through the proposal pipeline, add a distinct claim to the bearer, carry it into the audit context, and add it to every row and to the OCSF record. `designs/security-oversight-design.md` specifies `impersonated_by` in SO-4a.
+
+### - [ ] F-13.3.26 — An impersonation bearer is refused at session creation and admitted on session input, memory writes, and `/v1/credentials` writes [Medium] — OPEN
+
+**Spec:** §13.3 Credential Flow, **Write-before-issue ordering** step (1a) and **Platform-admin impersonation.** rule 5; §4.9 Credential Leasing Service, **Pre-Authorized Credential Flow**. Neither states a rule for input to an existing session.
+**Evidence:** `requireCreatingBearerAllowed` (`pkg/gateway/sessionserver/user_gate.go`) and `callercheck` cover create, derive, replay, and create-and-start. `manageSessionRoute` (`route_table.go`) covers messages, resume, start, uploads, memory writes, and tool and elicitation answers with permission and ownership alone. `lenny/send_message` (`mcptools/send_delivery.go`), `lenny/memory_write`, and the `/v1/responses` and `/v1/chat/completions` translators (`environment/translator/open_responses.go`) run on their own paths. `credentialserver.go` does not use `callercheck`.
+**Gap:** An operator can drive a user's running session, write to that user's memory, and register or rotate that user's credential, and F-13.3.25 records each action as the user's own. The rule that blocks creation does not cover these paths, and the specification does not state whether they are allowed.
+**Suggested resolution:** Through the proposal pipeline, state which session input and credential writes an impersonation bearer may reach. `designs/user-credential-delivery-design.md` refuses every `/v1/credentials` write in UC-1 and affected session input in UC-3.
 
 ---
 
@@ -30774,6 +30970,20 @@ in the MCP Management Server inventory.
 **Evidence:** `handleRemoveCredential` (`pkg/gateway/externalapi/admin/credential_pools.go`) never reads the header, while `handleDeleteCredentialPool` in the same file calls `enforceIfMatchIfPresent`. Proposal 0112 CODE-4 adds locked-row checks that do not depend on the precondition. Found by proposal 0112 review (`proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/`, its unstaged-defects list), filed 2026-10-31 and re-confirmed against the tree at `65a7a15e3`.
 **Gap:** A removal that carries a stale `If-Match` succeeds where §15.1 requires `412`.
 **Suggested resolution:** Direct fix. Call `enforceIfMatchIfPresent` with the current credential version before the removal, with tier-1 cases for an absent, a stale, and a matching header. Owner: unassigned (direct-fix queue), with F-15.1.70.
+
+### - [ ] F-15.1.73 — The `POST /v1/admin/legal-hold` body differs between §15.1 and the code, so a client that follows §15.1 is refused with `tenantId is required` [Medium] — OPEN
+
+**Spec:** §15.1 REST API, the `POST /v1/admin/legal-hold` row ("Body: `{"resourceType": "session"|"artifact", "resourceId": "<id>", "hold": true|false, "note": "<string> (required when hold is true)"}`"); §12.8 Compliance Interfaces, **Legal hold.**.
+**Evidence:** `LegalHoldRequest` (`pkg/gateway/externalapi/admin/legalhold.go`) has `tenantId`, `sessionId`, `artifactId`, `hold`, and `note`, and `handleSetLegalHold` refuses a body with no `tenantId` and requires exactly one of the two identifiers. `pkg/gateway/externalapi/openapi/openapi.json` matches the code. `docs/api/admin.md` and `docs/operator-guide/lenny-ctl.md` match §15.1.
+**Gap:** The §15.1 body cannot set or clear a hold. It also names no tenant, so a `platform-admin` could not address another tenant's resource with it, which is why this needs a decision rather than a rename.
+**Suggested resolution:** Through the proposal pipeline, choose one body and apply it to §15.1, the handler, the OpenAPI document, and the documentation pages. `designs/forensics-evidence-preservation-design.md` records the code's fields under the current state of legal hold scope.
+
+### - [ ] F-15.1.74 — The `/v1/admin/users` routes exist in code and are absent from the §15.1 endpoint table [Low] — OPEN
+
+**Spec:** §15.1 REST API, the admin endpoint table, which lists `/v1/admin/users/{userId}/invalidate`, `/rotate-token`, and `/erase`, and the `/v1/admin/tenants/{id}/users/{userId}/role` routes.
+**Evidence:** `routes.go` (`pkg/gateway/externalapi/admin`) mounts `POST` and `GET /v1/admin/users`, and `GET`, `PUT`, and `DELETE /v1/admin/users/{userId}`.
+**Gap:** The routes that create, change, and delete a user row, including the `platform-admin` role grant, have no specified behaviour, error codes, or audit events.
+**Suggested resolution:** Add the rows to §15.1 through the proposal pipeline. `designs/tenant-scoping-identity-design.md` carries this in TS-2.
 
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).
@@ -49380,6 +49590,20 @@ The filesystem layout is internally consistent with §26.2.
 **Evidence:** `pkg/embedded/localcli/attach.go` streams with the Go SDK's `StreamEvents`, which reads `GET /v1/sessions/{id}/events`, for both `lenny session new --attach` and `lenny session attach`. 0086 SPEC-6 rewrites the §24.17 create row to the REST flow and keeps the §26.2 attach clause verbatim, because correcting the attach transport is a separate change. Filed from proposal 0086's unstaged-defects list (`proposals/0086_fix_the-gateway-accepts-a-workspaceplan-in-the-body-of/`), 2026-10-28. 0086 carries no REC-1 record item, so the filing is done here, and 0086's implementor updates this entry rather than filing a duplicate.
 **Gap:** A reader of §26.2 or §24.17 expects the CLI to hold an MCP connection, while it reads the REST event stream.
 **Suggested resolution:** Through the proposal pipeline, describe the SSE attach in §26.2 and in the §24.17 `attach` rows. The transport names are specification text, so this needs a proposal. Owner: the next proposal that edits §24.17 or §26.2, after 0086's implementation, whose SPEC-6 edits the same rows.
+
+### - [ ] F-26.2.11 — `lenny/vcs_token` returns the VCS pool's stored token to any session in the tenant, with no check of the session's plan, the repository, or the requested mode [High] — OPEN
+
+**Spec:** §26.2 Shared Patterns for Coding-Agent Runtimes, **Credential-lease scopes (shared).** ("only issued when the client's `WorkspacePlan.sources[]` contains a `gitClone` entry targeting a private repo"); §26.3 `claude-code`, the `vcs.<provider>.read` row ("short-lived token scoped to the single repo").
+**Evidence:** The handler in `pkg/gateway/mcpfabric/mcptools/mcptools.go` takes `host`, `provider`, and `mode` from the pod, reads no session plan, and calls `deps.VCSCreds.Resolve`. `StoreResolver.Resolve` (`pkg/gateway/provisioning/vcscred/vcscred.go`) uses the scope to find the provider and returns the Secret's stored `token`, which does not vary with `mode` or repository. The tool description says "short-lived", and the value is the pool's long-lived token. F-4.9.44 records that nothing mints, and F-26.2.5 added this tool.
+**Gap:** An agent in any session of the tenant, including a session with no `gitClone` source, can obtain the pool's token for any host the pool serves, with the authority the stored token holds whatever mode it asked for, and can use it from outside the pod until the token is rotated. The audit row records the requested mode, which can differ from the authority the token holds.
+**Suggested resolution:** Through the proposal pipeline, retire the tool or enforce the plan, repository, and mode with a minted token. `designs/egress-and-git-design.md` removes the tool and `git-credential-lenny` in EG-3, with minting in EG-1.
+
+### - [ ] F-26.2.12 — §26.2 describes an `egressProfile` allowlist and an `unrestricted` value that §13.2.6 does not define [Medium] — OPEN
+
+**Spec:** §26.2 Shared Patterns for Coding-Agent Runtimes, **Egress profile.** ("Coding-agent runtimes default to `egressProfile: restricted` ...: HTTPS to the operator-configured allowlist", and "MUST be opted into per pool via `egressProfile: unrestricted`"); §13.2.6 Per-Pool Egress Relaxation and `egressProfile`, the `egressProfile` enum table.
+**Evidence:** `pkg/gateway/externalapi/admin/pools.go` validates the value with `egress.IsValid`, and its refusal names `restricted`, `provider-direct`, and `internet` as the recognised profiles. `restricted` provides no operator-configured HTTPS allowlist. §26.2 also keys these defaults on a runtime category. T-26.2.3 in `TEST-GAPS.md` tests the same text.
+**Gap:** An operator following §26.2 sets a value the API refuses, and a reader expects package registries and Git hosts to be reachable under `restricted`, where they are not.
+**Suggested resolution:** Through the proposal pipeline, remove the paragraph's category defaults and state each reference runtime's profile in its own entry. `designs/egress-and-git-design.md` carries this in EG-9.
 
 ---
 
