@@ -31186,6 +31186,13 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 **Evidence:** `DeriveRequest.RuntimeRef` (`pkg/gateway/sessionserver/derive.go`) overrides the derived session's runtime, and `handleDerive` falls back to `source.RuntimeRef` when it is blank. Neither §15.1 nor §7.1 names the field. `requireReplayRuntimeCompatible` has one caller, `handleReplay`, so a derive onto a runtime with another `executionMode` passes the check a replay fails.
 **Gap:** Code leads the specification on which runtime a derived session may run, and a derive can reach a runtime that §15.1 refuses for the equivalent replay mode.
 **Suggested resolution:** Through the proposal pipeline. State the field in §15.1 and apply the `executionMode` check. `designs/session-replay-design.md` removes `replayMode: workspace_derive` in favour of this field, and `designs/tenant-derived-runtimes-design.md`, DR-9, "Derive", states how it composes. Tests: tier 1 on the check and tier 4 on a derive onto another runtime.
+
+### - [ ] F-15.1.77 — A replay delivers no prompts, so the replayed session idles on a copied workspace [High] — OPEN
+
+**Spec:** §15.1 REST API, **Session Replay Semantics** ("replayed verbatim as the initial message sequence").
+**Evidence:** `handleReplay` (`pkg/gateway/sessionserver/replay.go`) copies the transcript through `CreateWithTranscript` and `CopySessionTx` (`transcriptstore/pgstore/pgstore.go`), which copies rows of every role, including assistant output. In `sessionserver`, the transcript store is read by `transcript.go`, `messages_list.go`, `taskrecord.go`, and `usage.go`, and no start path reads it. `mcptools/send_delivery.go` and the child send path in `mcptools_register.go` write no transcript row. Read only, not run.
+**Gap:** A replay does not re-execute the source's prompts, so the regression test §15.1 describes does not run. A session driven through the MCP send paths has no prompts recorded for any replay.
+**Suggested resolution:** Through the proposal pipeline. `designs/session-replay-design.md` adds a driver that delivers the source's `user` rows in order, and records its alternative. Tests: tier 4 on a replay that re-executes a prompt.
 ---
 
 **Resolution (2026-10-30):** `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is listed under §15.1 in `tests/spec-map.json`; `lenny-test validate-maps` passes.
