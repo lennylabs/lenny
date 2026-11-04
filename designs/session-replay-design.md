@@ -1,6 +1,6 @@
 # Session replay
 
-Status: design for owner review, revision 5, 2026-11-04. Revisions 2 to 5 apply the reviews of revisions 1 to 4, under their own sections, and no review has read revision 5. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 23, `tenant-scoping-identity-design.md` revision 21, and `egress-and-git-design.md` revision 59. Proposals carry the label RP-n.
+Status: design for owner review, revision 6, 2026-11-04. Revisions 2 to 6 apply the reviews of revisions 1 to 5, under their own sections, and no review has read revision 6. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 24, `tenant-scoping-identity-design.md` revision 21, and `egress-and-git-design.md` revision 59. Proposals carry the label RP-n.
 
 ## Problem
 
@@ -142,16 +142,16 @@ The stored plan passed its checks when the source bound it, under that runtime, 
 
 R6 needs a delivery, because nothing delivers prompts today. `deliverBuffered` stays as it is, because its in-line callers cannot wait for a whole run. A single-flight goroutine per session, on the server's lifetime context as `ResumeBacklog` is, delivers the next prompt once the held messages are gone. It uses the same `Send` and `recordDeliveredResponse` as a client's message, and it takes the delivery lock per prompt.
 
-One trigger starts it: `Sweeper`'s pass over the rows this replica coordinates (`coordination/coordination.go`) starts a goroutine for a row with an active run and none running locally, which also covers a takeover and a process restart. `POST .../start` starts it directly as well, so the first prompt does not wait for a sweep.
+One trigger starts it: `Sweeper`'s pass over the rows this replica coordinates (`coordination/coordination.go`) starts a goroutine for a `running` row with an active run and none running locally, which also covers a takeover and a process restart. `Sweep` lists from the read pool, so it passes session IDs, and the goroutine reads the row from the primary, as `DeliverHeldAfterTakeover` does. A deployment with no Redis has no `Sweeper` today, so RP-1 builds the pass there too. `POST .../start` starts the goroutine directly as well, so the first prompt does not wait for a sweep.
 
-The row holds one value, `replayRun`: `idle` between prompts, `in_flight` during a send, and `ended` after a run stops or completes, and every write to it is guarded by the coordination generation, so a stale coordinator can neither send nor end a healthy run.
+The row holds one value, `replayRun`: `idle` between prompts, `in_flight` during a send, and `ended` after a run stops or completes, and every change to it is a compare-and-set of the coordination generation, `replayRun`, and `replayCursor` in `store.Update`, so a stale coordinator or a stale read can neither send nor end a healthy run, and a prompt cannot follow an interrupt.
 
 - **Source.** The goroutine reads the next client prompt from the source session's transcript at each send, by `replaySourceSessionId` and `replayCursor`. Nothing copies the prompts, so the transcript's retention, erasure under §12.8, classification under §12.9, and legal holds apply with no new rule. When the source's rows are gone, the run stops with `source_gone`. `transcriptstore.Entry` gains a sender, empty for a client, so a sibling agent's held message is not sent as the owner's prompt, and `deriveMessageFrom` reads it. `recordDeliveredResponse` appends inbound rows before `Send`, so the prompt of a failed or rejected turn is on the record for a later replay. The new session's own transcript starts empty and records its turns.
-- **When it sends.** It sends only while `replayRun` is `idle` and the row is `running`. A prompt that opens an elicitation or approval keeps its turn in flight, as a client's does. Anything else between prompts ends the run, including any `resume_pending`, because a pod replacement rebuilds the workspace from the plan or an earlier checkpoint, and later prompts would run without the results of earlier ones, so the run could report `replay_completed` on an invalid result.
+- **When it sends.** It sends only while `replayRun` is `idle`, the row is `running`, and `RecoveryGeneration` is 0, and it writes `ended` when that last value is not 0. `commitResume` increments it on every resume, so this covers a pod replacement after a replica crash, when no goroutine was there to see `resume_pending`. A rebuild resets the workspace to the plan or an earlier checkpoint, and later prompts would run without the results of earlier ones, so the run could otherwise report `replay_completed` on an invalid result. A prompt that opens an elicitation or approval keeps its turn in flight, as a client's does.
 - **In flight.** The goroutine writes `in_flight` before each send, and it writes `idle` and advances `replayCursor` on the response. §10.1 can hand a session to another coordinator with the pod and its turn still live, and the new one cannot see that turn end. A sweep that finds `in_flight` with no local goroutine stops the run with `turn_outcome_unknown`, so a prompt is never sent twice. A rolling update of the gateway can therefore stop a replay.
 - **Stopping.** A delivered response advances the run. Every other exit writes `ended` and emits `replay_stopped` with the prompt's index and the reason: `dropped`, `INJECTION_REJECTED`, a `429`, a `PostAgentOutput` rejection, a read or send error, a terminal session, a `resume_pending`, and an interrupt. After the last prompt the gateway writes `ended` and emits `replay_completed`, and the session then behaves as any session waiting for its client.
 - **Interrupts.** An interrupt ends the run with `replay_stopped` and cancels that turn's wait, because a turn in flight holds the delivery lock until its response or stream end, and a resume could not otherwise get through. The session can then take a client's messages, and no goroutine starts again on an `ended` run.
-- **Client traffic.** A client message answers `409 REPLAY_IN_PROGRESS` on any replica while `replayRun` is `idle` or `in_flight`, and an interrupt and an elicitation answer pass. A turn waiting on an elicitation or an approval stays open under `maxElicitationWait`, and `maxClientIdleSeconds` and `maxSessionAge` bound the whole run, so a run cannot hold a pod indefinitely.
+- **Client traffic.** A client message answers `409 REPLAY_IN_PROGRESS` on any replica while `replayRun` is `idle` or `in_flight`, and an interrupt, an elicitation answer, and a `POST /messages` carrying `inReplyTo` that answers `lenny/request_input` pass. A turn waiting on an elicitation or an approval stays open under `maxElicitationWait`, and `maxClientIdleSeconds` and `maxSessionAge` bound the whole run, so a run cannot hold a pod indefinitely.
 
 The transcript holds each client message's text, so attachments are not replayed.
 
@@ -159,7 +159,7 @@ The transcript holds each client message's text, so attachments are not replayed
 
 A replay re-executes the source's tool calls, so a plan that could push would push again. By default the new row's plan has no `writableRepositories`, each `gitClone` write scope becomes the matching read scope, and `writeDefaultClones` is absent. With no writable entry, no `prAuthoring` binding attaches. A push answers 403 from `netagent`, and the agent sees that failure, which is a difference from the source run.
 
-`allowWrites: true` keeps the plan's writes, under the usual checks at bind. Git is the only surface this bounds. A tool that calls another system repeats that call, as §15.1 states.
+`allowWrites: true` keeps the plan's writes, under the usual checks at bind and under DR-9's read-only rule. A writable entry that matches a `runtimeDefault` source therefore reads as read-only where that rule says so, for example when its pool has since turned on `prAuthoring: user`, because `allowWrites` names no repository and a replay composes nothing. Git is the only surface this bounds. A tool that calls another system repeats that call, as §15.1 states.
 
 ### Stops
 
@@ -209,7 +209,7 @@ A platform-owned source runtime has no such rule, because replaying a retired ve
 - §14.1 **Plan binding.**: a replay binds at create from the stored plan, and step 1 of **Runtime workspace defaults.** does not run for it.
 - §10.2 **Session ownership.**, §11, and §13: these name replay alongside derive for ownership, the `derive.isolation_downgrade` event, and first-bind `GET` capabilities. The first two stay, and §13.1's first-bind wording names derive alone.
 - §18 and §23: the mentions of `replayMode`.
-- §7.2 **Message delivery routing**: the prompt source in the delivery of held messages.
+- §7.2 **Message delivery routing**: replay delivery after the held messages, and the sweep that starts it.
 - §12.4 and §15.4: the sender on a `session_messages` row.
 
 ## Stored formats and wire contracts this forces
@@ -254,7 +254,7 @@ It can land before those designs. Each adds its rule to the replay checks when i
 ### Tier 4: integration
 
 - A session creates a file under a prompt, and its replay starts with no such file, at the source's commit, with the target's added clone absent and its dropped clone present, then receives that prompt and creates the file again.
-- Prompts arrive in order with the next sent when the turn ends, assistant rows and a sibling agent's held message are not sent, and the new transcript holds the new responses alone. A sweep after a takeover or a restart continues a run in `idle` from `replayCursor`, and it stops one in `in_flight` with `turn_outcome_unknown` and sends nothing twice, including during an approval wait. A `resume_pending` ends the run, and no prompt reaches the DLQ. An interrupt ends the run, and the client's next message starts no goroutine. A client message answers `REPLAY_IN_PROGRESS` on any replica during a run and never after one ends, each exit emits `replay_stopped`, and two triggers start one goroutine. A stale coordinator can neither send nor end a run. A replay meets the per-runtime concurrency and admission limits, and a refused one releases its upload reservation. A failed turn's prompt stays in the transcript. A source purged mid-run stops with `source_gone`. `POST .../start` returns before the first turn ends.
+- Prompts arrive in order with the next sent when the turn ends, assistant rows and a sibling agent's held message are not sent, and the new transcript holds the new responses alone. A sweep after a takeover or a restart continues a run in `idle` from `replayCursor`, and it stops one in `in_flight` with `turn_outcome_unknown` and sends nothing twice, including during an approval wait. A `resume_pending` ends the run, and no prompt reaches the DLQ. An interrupt ends the run, and the client's next message starts no goroutine. A client message answers `REPLAY_IN_PROGRESS` on any replica during a run and never after one ends, each exit emits `replay_stopped`, and two triggers start one goroutine. A stale coordinator can neither send nor end a run. A replay meets the per-runtime concurrency and admission limits, and a refused one releases its upload reservation. A failed turn's prompt stays in the transcript. A lagging read cannot start a goroutine after an interrupt. After a replica crash and a pod replacement, the run ends rather than sending on a rebuilt tree. A sweep during `starting` starts nothing. An answer to `lenny/request_input` passes during a run. `allowWrites` does not attach a user binding for an `always` clone whose pool later turned on `prAuthoring: user`. A source purged mid-run stops with `source_gone`. `POST .../start` returns before the first turn ends.
 - A target with `injection.supported: false`, a `one_shot` target with several prompts, and a service-mode source refuse before any claim.
 - `env` and `runtimeOptions` copy, and an option the target's schema refuses refuses the replay.
 - A replay binds no second plan at finalize.
@@ -341,3 +341,15 @@ A stop check read revision 4 and `tenant-derived-runtimes-design.md` revision 22
 | Major, the security counter has no stable home | Holds. Fix wider. | SO-2 stores versions, and a `PUT` replaces the body. Both counters move to `content_stop_epochs`. |
 | Major, replay skips the create gates | Holds. Exists today. | Filed as F-15.1.78, for derive as well. |
 | Minors: the read that stamps the counters, copied entries, a row finalized after a stop, the suspension test, upload reservations, and the proposal table | Hold. | Applied. |
+
+## Review of revision 5
+
+A stop check read revision 5 and `tenant-derived-runtimes-design.md` revision 23. It found no Critical or High issue, four Majors, and no path across tenants. Each was checked against the tree, and revision 6 applies them.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, stale sweep rows restart a run | Holds. | `Sweep` lists from the read pool. The goroutine reads the primary, and changes are a compare-and-set in `store.Update`. |
+| Major, `idle` survives a pod loss | Holds. | After a replica crash, no goroutine sees `resume_pending`. `commitResume` increments `RecoveryGeneration`, so the send condition reads it. |
+| Major, `allowWrites` skips DR-9's read-only rule | Holds. | A replay composes nothing, so the rule now runs on the stored entries. |
+| Major, a `runtimeRef` onto an unsupervised target reaches the adapter's identity | Holds. Exists today. | Recorded in `tenant-derived-runtimes-design.md`, and F-15.1.76 now names it. |
+| Minors: a sweep during `starting`, answers to `lenny/request_input`, stale text, and no `Sweeper` without Redis | Hold. | Applied. |
