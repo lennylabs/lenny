@@ -1,6 +1,6 @@
 # Tenant-derived runtimes
 
-Status: design for owner review, revision 6, 2026-11-04. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification. Revisions 2 to 6 apply independent reviews, each under its own "Review of revision" section. A stop check on revision 5 found no Critical, High, or Major issue in this document, and no review has read revision 6. It reads against `egress-and-git-design.md` revision 56, `tenant-scoping-identity-design.md` revision 19, `security-oversight-design.md` revision 18, and `user-credential-delivery-design.md` revision 15. Proposals carry the label DR-n, and defects found here carry the label DF-n. The DF-n defects are filed in `BUILD-GAPS.md`, and the table under "Defects found while verifying" names each F-id.
+Status: design for owner review, revision 7, 2026-11-04. Revision 7 records the owner's choice of this design and adds default git clones as a requirement that is not yet designed. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification. Revisions 2 to 6 apply independent reviews, each under its own "Review of revision" section. A stop check on revision 5 found no Critical, High, or Major issue in this document, and no review has read revision 6 or 7. It reads against `egress-and-git-design.md` revision 56, `tenant-scoping-identity-design.md` revision 20, `security-oversight-design.md` revision 18, and `user-credential-delivery-design.md` revision 15. Proposals carry the label DR-n, and defects found here carry the label DF-n. The DF-n defects are filed in `BUILD-GAPS.md`, and the table under "Defects found while verifying" names each F-id.
 
 ## Problem
 
@@ -9,6 +9,24 @@ Status: design for owner review, revision 6, 2026-11-04. Nothing here is built o
 The immediate need comes from `tenant-scoping-identity-design.md`, "Pods with no per-session policy", and its decision 15. Concurrent and service-mode pods refuse a session whose environment has anything of its own, so an environment that needs such a runtime uses a derived runtime with `sessionPolicy.maxConcurrentSessions: 1`. Today each such environment needs an operator's action, and the route does not work even for an operator (see "Current state").
 
 The capability is general. A tenant admin can also add default workspace files, setup commands, an agent interface, labels, and narrower limits to a runtime the platform has made available.
+
+## Owner's choice
+
+On 2026-11-04 the owner chose this design over a tenant-owned pool on an unchanged base, in these words: "I want derived runtimes for the two reasons you state. I want tenants to define their own default files and git clones." The two reasons are that transparent clients of a shared runtime keep working when an environment adds a deny, and that a tenant admin creates runtimes. The alternative stays in git history as `designs/tenant-owned-pools-design.md`, revision 5, at commit `7a72e0b65`.
+
+### Default git clones
+
+The owner requires default git clones, and this revision does not design them. `WorkspaceDefaults` holds `files` and `setupCommands`, §14.1 **Runtime workspace defaults.** composes them as `inlineFile` sources and setup commands, and no field carries a `gitClone` source. `sharedAssets` has `gitRepository` entries, and this design refuses that field to a tenant.
+
+A setup command running `git clone` is not a substitute, because it has no pinned commit and no credential lease, and it needs `allowSetupCommands`. Adding a `gitClone` source to the defaults needs a change in order: `resolveSubmittedPlan` runs `checkGitCloneAuthBindings` and `PinCommitSHAs` on the client's plan, and `composeRuntimeDefaults` runs afterwards, so a composed source would skip the host-to-pool check and the commit pin.
+
+The design for this must state:
+
+- Which grant flag allows a default clone, and whether a clone counts as code in the way a default file does.
+- Whose credential a private default clone uses, given that the session's user may hold no link or no access to the repository, and what the session answers in that case.
+- How a default clone enters the session's declared repositories under a `required` pool (`user-git-identity-design.md`, "Declared repositories"), and how it is checked against the tenant's repository allowlist.
+- Whether a ref is pinned per session at bind, as §14 states for a client's source, or at the write of the derived runtime.
+- How a default clone behaves on a `restricted` pool with no `gitAccess`, where `egress-and-git-design.md` refuses a plan with a `gitClone` source at create.
 
 ## Scope
 
@@ -31,6 +49,7 @@ These are out of scope:
 - R6. A tenant-derived runtime blocks no platform write, apart from the exceptions DP9 states, and a platform change does not strand a tenant without notice, apart from a stated emergency path.
 - R7. A tenant's security team can forbid the capability and can see what it produced.
 - R8. A deployment that issues no grant behaves as it does today, apart from the defect fixes in DR-1 to DR-3.
+- R9. A tenant admin can define default workspace files and default git clones on a derived runtime. "Fields" covers the files, and "Default git clones" lists what remains to be designed for the clones.
 
 ## Security properties
 
@@ -785,7 +804,7 @@ A stop check on revision 5 found no Critical, High, or Major issue in this docum
 
 ## Decisions
 
-These are open for the owner, and the recommendation is the design above.
+These are open for the owner, and the recommendation is the design above. The owner's choice rules out decision 4's alternative of no tenant defaults in the first version, and it leaves decision 4's grant flags and setup commands open.
 
 | # | Decision | Recommendation | Cost of the recommendation | Alternative |
 | :-- | :-- | :-- | :-- | :-- |

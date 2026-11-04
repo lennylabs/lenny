@@ -12,7 +12,6 @@ This directory holds the test evidence the design documents under `designs/` cit
 | `security-oversight-design.md` | No test ran for this design. |
 | `tenant-scoping-identity-design.md` | No test ran for this design. |
 | `tenant-derived-runtimes-design.md` | No test ran for this design. |
-| `tenant-owned-pools-design.md` | No test ran for this design. |
 
 These files are records of throwaway test runs. They are not product code, and they carry no specification citation. Go source files carry a `.txt` suffix so that they do not join the repository's Go module. Private keys and downloaded third-party files are excluded, and each folder's `README.md` records the URLs and versions of the downloads.
 
