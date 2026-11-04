@@ -1,6 +1,6 @@
 # Forensics and evidence preservation
 
-Status: design for owner review, revision 11, 2026-11-03, after two independent reviews, against `egress-and-git-design.md` revision 51, `user-credential-delivery-design.md` revision 8, and `user-git-identity-design.md` revision 11. Revision 4 added delivered user tokens, and revision 5 corrects that text after review. Nothing in this document is built, staged, or validated. No spike, test, or benchmark has run for it, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
+Status: design for owner review, revision 17, 2026-11-03, after two independent reviews of earlier revisions, against `egress-and-git-design.md` revision 55, `user-credential-delivery-design.md` revision 14, and `user-git-identity-design.md` revision 17. Revisions 12 to 14, 16, and 17 change only these pointers, and revision 15 also withdraws the `security-auditor` default under the owner's decision on SO decision 19. Revision 4 added delivered user tokens, and revision 5 corrects that text after review. Nothing in this document is built, staged, or validated. No spike, test, or benchmark has run for it, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 ## Problem
 
@@ -470,13 +470,13 @@ A compacted object holds several sessions' ciphertext, so a hold on one session'
 
 ### Who may read
 
-The streams are customer data about the customer's own agents. A tenant admin can already read session content (§10.2 `Read other users' sessions`), so a tenant read of `tool` and `exec` grants nothing new. An operator read is the new exposure. Proposed defaults, for `security-oversight-design.md` to decide:
+The streams are customer data about the customer's own agents. A tenant admin can already read session content (§10.2 `Read other users' sessions`), so a tenant read of `tool` and `exec` grants nothing new. An operator read is the new exposure. The defaults are as follows, and `security-oversight-design.md` decision 19 settles that no security role holds one by default. A `security-admin` grants a stream to `security-auditor` through `auditorStreamGrants`, under the delay:
 
 | Permission | Default holders | Operator access |
 | :-- | :-- | :-- |
-| `evidence.read.agent.activity.tool` | `tenant-admin`, `security-auditor` | `forensics.query` with an open case naming the tenant |
-| `evidence.read.agent.activity.exec` | `tenant-admin`, `security-auditor` | Same |
-| `evidence.read.agent.activity.file` | `tenant-admin`, `security-auditor` | Same |
+| `evidence.read.agent.activity.tool` | `tenant-admin` | `forensics.query` with an open case naming the tenant |
+| `evidence.read.agent.activity.exec` | `tenant-admin` | Same |
+| `evidence.read.agent.activity.file` | `tenant-admin` | Same |
 | `evidence.read.agent.activity.exec.args` | None until granted by a tenant admin | Same, and each read writes a custody event |
 
 `tenant-viewer` holds none of these by default, because an activity stream can expose paths and commands of other users' sessions in a form the viewer role's session read does not present today. A tenant admin who is the subject of an investigation can read these streams, which is why the operator's copy is the one under hold.
@@ -741,7 +741,7 @@ The egress design's table lists FE-1 to FE-6 with their EG dependencies, and the
 
 | Other design | Relationship |
 | :-- | :-- |
-| `security-oversight-design.md` SO-1 | SO-1's `security-auditor` holds the activity read permissions if decision 5 is adopted. Neither waits for the other, because `tenant-admin` holds them until SO-1 lands. |
+| `security-oversight-design.md` SO-1 | SO-1's `security-auditor` holds an activity read permission only through `auditorStreamGrants`. Neither waits for the other, because `tenant-admin` holds them throughout. |
 | SO-3 | A per-tenant SIEM receives activity streams through its export. FE-6a states what crosses it, and SO-3 states the destination. |
 | SO-4 | SO-4 must exclude the `forensics.*` prefix from what it mirrors to a tenant, unless a case discloses it. If SO-4 lands first, FE-0 adds the exclusion. |
 | SO-7 | FE-5 adds no right to `lenny-ops`, so it does not conflict with SO-7's narrowing. |
@@ -900,7 +900,7 @@ Each item in the table is open, and nothing in it has been adopted. Decision num
 | 2 | Kata coverage in the first version | `tool_only`, stated in the API. | The highest-risk profile lacks process evidence, and `microvm` is what §5.3 recommends for that risk. | An in-guest sensor: a custom guest kernel and agent, as Ant Group built, with records that remain `self_reported`. |
 | 3 | `standard` coverage | A public producer contract and a tested Tetragon forwarder, with no sensor in the chart. | A deployer installs a privileged DaemonSet itself. | A chart option, which adds the privileged component the egress design avoids, for a profile §5.3 reserves for development. |
 | 4 | Default state | Off at the deployment level. A SaaS operator turns it on, and tenants choose within it. | No evidence exists for a tenant until someone chooses it, and an incident before that has none. | On by default at `tool` level, which is cheap and needs a customer agreement to state it. |
-| 5 | Who reads activity | `tool`, `exec`, and `file` to `tenant-admin` and `security-auditor`, `args` only on grant, and the operator only under an open case. Owned by `security-oversight-design.md`. | A subject tenant admin can read its own streams, and the case requirement slows the operator. | Operator-only: simpler, and it removes the customer's evidence, which `security-oversight-design.md` exists to provide. |
+| 5 | Who reads activity | Settled by the owner with SO decision 19: `tool`, `exec`, and `file` to `tenant-admin`, with `security-auditor` only through `auditorStreamGrants`, `args` only on grant, and the operator only under an open case. The `security-auditor` default is withdrawn. | A subject tenant admin can read its own streams, a customer's security team takes an explicit step and a delay, and the case requirement slows the operator. | Operator-only: simpler, and it removes the customer's evidence, which `security-oversight-design.md` exists to provide. |
 | 6 | Does the tenant learn of a quarantine or hold | No signal by default, a generic existing failure reason, and disclosure as a recorded case action. | A tenant sees a failure whose reason does not state the cause, and an operator can misuse silence. SO-4 must carve it out. | Immediate notice or a distinct reason: simple and transparent, and it warns a malicious tenant. |
 | 7 | Erasure during a hold | Proceed, defer only under an approved basis, and keep the tenant-readable receipt neutral by default, with the customer agreement stating that retention can occur. | A neutral receipt may be inaccurate as a statement to a controller, and that risk is for counsel, since §11.8 calls the operator a processor. | A receipt stating a retention, which hints at an investigation. Blocking erasure, which reveals the hold and delays the tenant's obligation. |
 | 8 | Retention class default | 0 days in the chart, and a SaaS operator sets a period in its agreement, 90 days being a starting value. | Without it, offboarding removes evidence. With it, data outlives the tenant, on a basis counsel must assess. | A non-zero chart default, which makes the promise for every deployer. |
