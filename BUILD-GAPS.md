@@ -29026,6 +29026,13 @@ no caller without a verified gateway client cert.
 
 ---
 
+### - [ ] F-13.4.24 — The adapter's materializer follows symbolic links in a restored tree, so a chained link written by an earlier agent redirects its writes outside the workspace [High] — OPEN
+
+**Spec:** §13.4, the symbolic link target rules; §7.4; §7.1 **Derive restore semantics:**.
+**Evidence:** `extractSymlink` (`pkg/adapter/workspace/extract.go`) and `ValidateSymlinkTarget` (`pkg/upload/upload.go`) clean the target as text. `resolvePath` (`materialize.go`) checks the source path as text. `writeInlineFile`, `writeUploadFile`, `makeDir`, and `overlayTree` then call `os.WriteFile`, `os.OpenFile`, `os.MkdirAll`, and `os.Rename`, which follow links. `ArchiveTree` records links verbatim. `scrub/resolve_linux.go` already uses `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` for removal. Found by reading the code during an independent review and checked against it. Nothing was run.
+**Gap:** A pair such as `a/b/l -> ../..` and `src -> a/b/l/../../other/current/src` passes every lexical check, and at resolution it leaves the slot. An agent can plant it, a checkpoint records it, and a derive or replay restores it ahead of the plan's sources. The plan's next write under `src/` goes through the link at the adapter's UID, into another slot on a concurrent pod. `overlayTree` also follows a single link an agent wrote in the live tree when materialization runs over that tree, with no chain or restore. The forbidden-path check reads the text too, so a longer chain can reach `/run/lenny`. Those reaches were reasoned from the code and not exercised, and the severity assumes they hold.
+**Suggested resolution:** Through the proposal pipeline. Open every materializer write, move, and removal under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, and fail the materialization when a path crosses a link. `designs/egress-and-git-design.md` and `designs/tenant-derived-runtimes-design.md` (DF-15) rely on this. No proposal has been started.
+
 ## §13.5 Delegation Chain Content Security <a id="13.5"></a>
 Audit of spec/13_security-model.md §13.5 (lines 668–683) against the
 implementation tree under pkg/delegation, pkg/gateway/interceptor,
