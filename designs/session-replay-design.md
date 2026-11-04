@@ -1,6 +1,6 @@
 # Session replay
 
-Status: design for owner review, revision 7, 2026-11-04. Revisions 2 to 7 apply the reviews of revisions 1 to 6, under their own sections, and no review has read revision 7. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 25, `tenant-scoping-identity-design.md` revision 21, and `egress-and-git-design.md` revision 59. Proposals carry the label RP-n.
+Status: design for owner review, revision 8, 2026-11-04. Revisions 2 to 8 apply the reviews of revisions 1 to 7, under their own sections, and no review has read revision 8. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 26, `tenant-scoping-identity-design.md` revision 21, and `egress-and-git-design.md` revision 59. Proposals carry the label RP-n.
 
 ## Problem
 
@@ -42,7 +42,7 @@ These are out of scope:
 - RPP1. The replayed session takes the source session's owner, as §10.2 **Session ownership.** states, and credentials are evaluated afresh. From the source it takes the plan, its client prompts, its `env` and `runtimeOptions`, and what `tenant-scoping-identity-design.md` states a replay takes: its environment, `egressLockHosts`, `crossed_from_environment`, and its delegation limit.
 - RPP2. Every check runs against the plan on the replayed session's user, environment, and target pool, as for a plan a client submits.
 - RPP3. A plan carrying content from a tenant-derived runtime is refused after any later content stop on that runtime's grant entry or its tenant's security record, on any route and through any chain of replays or derives, whether or not the content is still on the runtime.
-- RPP4. A plan or an export carrying content from a tenant-derived runtime is refused on a pod with no runtime supervisor, on a replay, a derive, and a delegated child, because it would run at the adapter's identity there.
+- RPP4. A plan with content from a tenant-derived runtime is refused on a pod with no runtime supervisor, because it would run at the adapter's identity there. `tenant-derived-runtimes-design.md` states the same for a derive and for any delegated child's exports.
 
 ## Current state
 
@@ -107,7 +107,7 @@ At create, the gateway reads the source's stored plan and writes a copy on the n
 - **Prompts.** "Delivering prompts" states these.
 - **Snapshot.** The row carries no `WorkspaceSnapshot`, so nothing is restored and no chunk is copied. A resume before the first checkpoint takes the snapshotless rebuild path, which reads the plan, so F-7.3.36 no longer applies to a replay.
 
-The precondition changes. A replay needs a terminal source with at least one prompt in its transcript, and it no longer needs a workspace snapshot. A source whose snapshot retention has passed can therefore be replayed while its row and transcript last.
+The precondition changes. A replay needs a terminal source with at least one prompt in its transcript, and it no longer needs a workspace snapshot. The retention sweep removes a session's snapshot, transcript, and artifacts together (`retentiongc.go`), so a session can be replayed for its retention window, and `extend-retention` lengthens that.
 
 The new row sets `replaySourceSessionId` in place of `ParentWorkspaceRef`. No object is shared, so the field is lineage alone. A replay of a replay reads the plan its source copied, so it starts where the first session started.
 
@@ -169,7 +169,7 @@ A runtime's current state would not hold either. If a `security-admin` sets a fo
 
 The check is one function, which `handleReplay` and `handleDerive` call at create, and which finalize calls again, because a row created before a stop can finalize after it. For each entry, the tenant view must resolve that runtime now, it must not be retired, and both stored values must equal the current ones. A deleted runtime refuses, and names stay consumed, so one cannot be recreated to pass. A runtime that is `incompatible` for another reason, such as `Registered=False`, does not refuse a replay. A plan from before a stop stays refused after the stop is lifted, because a counter only rises.
 
-**Supervisors.** A target with no runtime supervisor runs setup at the adapter's identity, so a pusher's commit or a tenant's default, replayed onto it, would run with the service account token. `tenant-derived-runtimes-design.md` refuses tenant defaults on such a base for that reason. A replay or a derive with a non-empty `planOriginRuntimes` is refused on such a target, and so is a delegated child that receives exports from a parent with one. A child with no tenant origin receiving exports stays allowed: a file from a parent reaches an operator's command on such a pod as a client's plan file does, which is the part of F-7.5.17 that DR-3 leaves open on embedded runtimes, and refusing one route alone would not close it. `runsSupervisor` is an unexported controller function over the CRD, so the gateway uses a new helper over the runtime row, using the `type` and `deploymentModel` that DR-6 mirrors. It requires `registered` to be true and fails closed, because the mirror stores an empty value as `sidecar` and leaves the row stale when it refuses a resource.
+**Supervisors.** A target with no runtime supervisor runs setup at the adapter's identity, so a pusher's commit or a tenant's default, replayed onto it, would run with the service account token. `tenant-derived-runtimes-design.md` refuses tenant defaults on such a base for that reason. A replay or a derive with a non-empty `planOriginRuntimes` is refused on such a target, `tenant-derived-runtimes-design.md`, DR-8, refuses a delegated child's exports on such a target for the same reason. `runsSupervisor` is an unexported controller function over the CRD, so the gateway uses a new helper over the runtime row, using the `type` and `deploymentModel` that DR-6 mirrors. It requires `registered` to be true and fails closed, because the mirror stores an empty value as `sidecar` and leaves the row stale when it refuses a resource.
 
 A platform-owned source runtime has no such rule, because replaying a retired version against its successor is what the route is for. An emergency retirement of a platform runtime concerns its image, and a replay does not run that image.
 
@@ -259,14 +259,14 @@ It can land before those designs. Each adds its rule to the replay checks when i
 - `env` and `runtimeOptions` copy, and an option the target's schema refuses refuses the replay.
 - A replay binds no second plan at finalize.
 - An upload copies to the replayed session, the original's later expiry does not affect it, and an expired upload refuses.
-- A source whose snapshot has been collected replays. A replay resumed before its first checkpoint rebuilds from the plan.
+- A source past its retention window refuses with `no_prompts`. A replay resumed before its first checkpoint rebuilds from the plan.
 - A replay of a replay starts where the first session started. A derived source and a delegated child refuse.
 
 ### Tier 9: security
 
 - A repository off the allowlist, a user who lost access on a `required` pool, and an environment that denies the host each refuse before any claim.
 - With no `allowWrites`, `git push` answers 403 and no write token is minted, and no `prAuthoring` binding attaches.
-- A content forbid, a retirement, a set-false grant flag, and a deletion of a tenant-derived source runtime each refuse, including a replay of an earlier replay onto a platform runtime, including a stop that arrives after the tenant removed the clone, and including after the stop is lifted. A plan bound after the stop replays. A runtime with `Registered=False`, a non-content forbid, and a tenant suspension raise nothing. A row created before a stop refuses at finalize. A pending weakening activated after a forbid does not lower the counter. A derive cancelled before its bind, taken as a source after a stop, refuses. A retired platform source runtime replays. A plan with a tenant origin onto a target with no supervisor refuses, on replay, on derive, and for a delegated child receiving exports, and a target with `registered` false refuses. A derive of a delegated child carries its parent's origins.
+- A content forbid, a retirement, a set-false grant flag, and a deletion of a tenant-derived source runtime each refuse, including a replay of an earlier replay onto a platform runtime, including a stop that arrives after the tenant removed the clone, and including after the stop is lifted. A plan bound after the stop replays. A runtime with `Registered=False`, a non-content forbid, and a tenant suspension raise nothing. A row created before a stop refuses at finalize. A pending weakening activated after a forbid does not lower the counter. A derive cancelled before its bind, taken as a source after a stop, refuses. A retired platform source runtime replays. A plan with a tenant origin onto a target with no supervisor refuses, and a target with `registered` false refuses. A derive of a delegated child carries its parent's origins.
 - A replay keeps the source's `egressLockHosts` and environment, and a caller who left that environment answers 403.
 - A target pod holding a warm store for a clone the plan omits is refused for a user who cannot read it.
 
@@ -364,3 +364,12 @@ A stop check read revision 6 and all of DR-9 in `tenant-derived-runtimes-design.
 | Major, a cancelled derive drops the read check | Holds. | Recorded in `tenant-derived-runtimes-design.md`. |
 | Major, a child's push ignores the parent's ref patterns | Holds. | Recorded in `tenant-derived-runtimes-design.md`. |
 | Minors: `keepRestored` values, `source_gone`, `ref` validation, and idle suspension | Hold. | Applied. `RecoveryGeneration` was read and holds as a send condition. |
+
+## Review of revision 7
+
+A stop check read revision 7 and all of DR-9 in `tenant-derived-runtimes-design.md` revision 25. It found no Critical or High issue, one Major, and no path across tenants. It was checked against the tree, and revision 8 applies it.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, the reason for allowing exports onto unsupervised pods is wrong | Holds. | Revision 7 treated an agent's export as a client's plan file. A client's file needs the client's own authority, and a prompt-injected agent lacks it, so refusing exports does close the agent's route. It also contradicted the reason DR-9 gives for a derive. DR-8 now refuses any export onto such a target. |
+| Minors: a chain recreating a deleted path, and replay after retention | Hold. | Applied. `retentiongc.go` sweeps the transcript with the snapshot, so the statement that a collected source replays is withdrawn. |

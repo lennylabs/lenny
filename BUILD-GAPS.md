@@ -9079,7 +9079,7 @@ Effect: a runtime configured `onTimeout: warn` produces no operationally observa
 **Gap:** A setup command can read the projected service account token and write the credential volume, and on a concurrent pod that volume holds every slot's file. §7.5 treats the pod as the boundary, §13.1's adapter-agent boundary is a UID check, and a process a setup command starts can outlive it. The command also runs from the adapter's image, so the `pip install` in §5.1's example does not touch the runtime's environment. The High rating is a floor, because what the projected service account token can do at the gateway was not traced. A wider reach there raises the rating.
 **Suggested resolution:** Through the proposal pipeline, run setup commands at the agent UID through the runtime supervisor on sidecar pods. `designs/tenant-derived-runtimes-design.md` DR-3 closes this for the adapter's identity. The read of other slots' credential files on a concurrent pod stays, as §13.1 states. No proposal has been started.
 
-**Note (design, 2026-11-04):** On a pod with no runtime supervisor, which DR-3 in `designs/tenant-derived-runtimes-design.md` leaves as it is, a file a delegated parent exports reaches an operator's setup command at the adapter's identity, as a client's plan file does. `designs/session-replay-design.md` refuses this only for content with a tenant-derived origin, and it does not close the general case.
+**Note (design, 2026-11-04):** On a pod with no runtime supervisor, which DR-3 in `designs/tenant-derived-runtimes-design.md` leaves as it is, a client's plan file reaches an operator's setup command at the adapter's identity. A delegated parent's export is the same mechanism under an agent's control, which F-8.7.16 records.
 ---
 
 ### Summary of severity
@@ -31201,6 +31201,13 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 **Evidence:** `create.go` and `create_and_start.go` call `requireConcurrencyLimits` and `requireAdmissionRateLimit`, and `create_and_start.go` calls `requireTenantClassification`. `handleReplay` and `handleDerive` (`pkg/gateway/sessionserver/replay.go`, `derive.go`) call none of them. Read only, not run.
 **Gap:** A tenant's replays and derives go around the per-runtime and per-pool limits on a shared pool, and only the tenant cap holds.
 **Suggested resolution:** Through the proposal pipeline, or a direct fix if the owner prefers. Run the same gates on both handlers for the target. `designs/session-replay-design.md` and `designs/tenant-derived-runtimes-design.md`, DR-9, "Derive", name this. Tests: tier 4 on each limit through each route.
+
+### - [ ] F-8.7.16 — A delegated child's exports reach an operator's setup command at the adapter's identity on a target with no runtime supervisor [High] — OPEN
+
+**Spec:** §8.7 File Export Model; §7.5 Setup Commands; §4.7.10.
+**Evidence:** `composeChildWorkspaceDefaults` places a parent's exports in the child's plan after its defaults. `runsSupervisor` (`pkg/controller/sandbox/supervision.go`) is false on an embedded runtime, and `podspec/embedded.go` mounts the projected service account token there, so an operator's setup command runs at the adapter's identity. Read only, not run.
+**Gap:** A prompt-injected parent on a supervised pod can export a `requirements.txt` to an embedded child whose operator command is `pip install -r requirements.txt`, and that runs attacker-chosen code with the service account token. It needs an embedded target with a setup command that reads workspace files, and a delegation policy that allows that target.
+**Suggested resolution:** Through the proposal pipeline. `designs/tenant-derived-runtimes-design.md`, DR-8, refuses any export onto a target with no runtime supervisor. Tests: tier 1 on the refusal and tier 9 on the route.
 ---
 
 **Resolution (2026-10-30):** `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is listed under §15.1 in `tests/spec-map.json`; `lenny-test validate-maps` passes.
