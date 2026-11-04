@@ -31193,6 +31193,13 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 **Evidence:** `handleReplay` (`pkg/gateway/sessionserver/replay.go`) copies the transcript through `CreateWithTranscript` and `CopySessionTx` (`transcriptstore/pgstore/pgstore.go`), which copies rows of every role, including assistant output. In `sessionserver`, the transcript store is read by `transcript.go`, `messages_list.go`, `taskrecord.go`, and `usage.go`, and no start path reads it. `mcptools/send_delivery.go` and the child send path in `mcptools_register.go` write no transcript row, and `transcriptstore.Entry` records no sender, so a sibling agent's held message reads as a `user` prompt. Read only, not run.
 **Gap:** A replay does not re-execute the source's prompts, so the regression test §15.1 describes does not run. A session driven through the MCP send paths has no prompts recorded for any replay.
 **Suggested resolution:** Through the proposal pipeline. `designs/session-replay-design.md` adds the source's client prompts as a second source in `deliverBuffered`, and records its alternative. Tests: tier 4 on a replay that re-executes a prompt.
+
+### - [ ] F-15.1.78 — Derive and replay skip the admission checks a session create runs [Medium] — OPEN
+
+**Spec:** §11.1, the per-runtime and per-pool limits; §12.9; §15.1 REST API.
+**Evidence:** `create.go` and `create_and_start.go` call `requireConcurrencyLimits` and `requireAdmissionRateLimit`, and `create_and_start.go` calls `requireTenantClassification`. `handleReplay` and `handleDerive` (`pkg/gateway/sessionserver/replay.go`, `derive.go`) call none of them. Read only, not run.
+**Gap:** A tenant's replays and derives go around the per-runtime and per-pool limits on a shared pool, and only the tenant cap holds.
+**Suggested resolution:** Through the proposal pipeline, or a direct fix if the owner prefers. Run the same gates on both handlers for the target. `designs/session-replay-design.md` and `designs/tenant-derived-runtimes-design.md`, DR-9, "Derive", name this. Tests: tier 4 on each limit through each route.
 ---
 
 **Resolution (2026-10-30):** `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is listed under §15.1 in `tests/spec-map.json`; `lenny-test validate-maps` passes.
