@@ -8486,7 +8486,7 @@ Highest-impact gaps to address first: F4 (no auto-transition into `resume_pendin
 **Gap:** A derived or replayed session that fails before its first checkpoint resumes with the source session's session files and without the files its bound plan supplied, so its workspace after resume differs from its workspace before the failure.
 **Suggested resolution:** Through the proposal pipeline, state what a resume restores for a session whose only checkpoint is the copied source snapshot: for example, take the snapshotless rebuild path with 0109's restore as the first materialization tier, or mark the copied checkpoint as not resumable until the session's own first checkpoint lands. The specification states neither, so this needs a proposal. Tests: tier 1 on the resume path selection and tier 4 with a derived session failed before its first checkpoint. Owner: its own proposal, after 0109's implementation, whose restore closure and Binder call sites such a rebuild would reuse.
 **Note (proposal 0109, 2026-10-30):** Proposal 0109's implementation does not discharge this finding, which stays OPEN. Re-confirmed against the tree at `990cffb30`, the last implementation commit of 0109 before its records step, and kept as the entry for this defect rather than filing a duplicate. `resumeOnPod` still takes the snapshot path for any row whose `WorkspaceSnapshot.Ref` is set, and 0109's restore closure (`workspaceRestore` in `pkg/gateway/sessionserver/snapshot_restore.go`) runs only on the bind-time `FinalizeWorkspace`. §7.1 **Derive restore semantics:** is now in the specification, so the proposal this entry names can cite it. The owner is unchanged.
-**Note (design, 2026-11-04):** `designs/tenant-derived-runtimes-design.md`, DR-9, "Derive and replay", depends on this finding closing by its first suggested route, in which a resume with no checkpoint of the session's own repeats the first bind. Otherwise a replaced default clone returns with what an earlier agent planted.
+**Note (design, 2026-11-04):** `designs/tenant-derived-runtimes-design.md`, DR-9, "Derive and replay", depends on this finding closing by its first suggested route, in which a resume with no checkpoint of the session's own repeats the first bind. Otherwise a derived session resumes with no plan applied, and a default clone new to the runtime is missing. `designs/session-replay-design.md` removes the snapshot from a replayed session, so this finding then concerns derive alone.
 
 ### - [ ] F-7.2.46 — An adapter-local `tool_call` with `approvalRequired: true` runs at once, because `HandleToolCall` does not read the flag [Medium] — OPEN
 
@@ -31179,6 +31179,13 @@ Trees audited: `pkg/gateway/mcp/`, `pkg/gateway/mcptools/`, `pkg/gateway/session
 
 Severity legend: **High** MUST/correctness/security regression; **Medium** SHOULD or capability unimplemented; **Low** minor/cosmetic; **Info** noteworthy but not a gap.
 
+
+### - [ ] F-15.1.76 — `POST /v1/sessions/{id}/derive` accepts a `runtimeRef` the specification does not state, and runs no `executionMode` check on it [Medium] — OPEN
+
+**Spec:** §15.1 REST API, the derive row and **Session Replay Semantics**; §7.1 Normal Flow, **Derive session semantics**.
+**Evidence:** `DeriveRequest.RuntimeRef` (`pkg/gateway/sessionserver/derive.go`) overrides the derived session's runtime, and `handleDerive` falls back to `source.RuntimeRef` when it is blank. Neither §15.1 nor §7.1 names the field. `requireReplayRuntimeCompatible` has one caller, `handleReplay`, so a derive onto a runtime with another `executionMode` passes the check a replay fails.
+**Gap:** Code leads the specification on which runtime a derived session may run, and a derive can reach a runtime that §15.1 refuses for the equivalent replay mode.
+**Suggested resolution:** Through the proposal pipeline. State the field in §15.1 and apply the `executionMode` check. `designs/session-replay-design.md` removes `replayMode: workspace_derive` in favour of this field, and `designs/tenant-derived-runtimes-design.md`, DR-9, "Derive", states how it composes. Tests: tier 1 on the check and tier 4 on a derive onto another runtime.
 ---
 
 **Resolution (2026-10-30):** `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is listed under §15.1 in `tests/spec-map.json`; `lenny-test validate-maps` passes.
