@@ -1,6 +1,6 @@
 # Tenant-derived runtimes
 
-Status: design for owner review, revision 12, 2026-11-04. Revisions 9 to 12 apply the review of revision 8 and the stop checks on revisions 9, 10, and 11, under "Review of DR-9 and DR-10". Revision 8 adds default git clones (DR-9) and capacity reservation (DR-10), records the owner's yes on default setup commands, and applies the requests under "Changes requested of other design documents". Revision 7 records the owner's choice of this design. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification. Revisions 2 to 6 apply independent reviews, each under its own "Review of revision" section. A stop check on revision 5 found no Critical, High, or Major issue in this document, and no review has read revisions 6, 7, or 12. It reads against `egress-and-git-design.md` revision 57, `tenant-scoping-identity-design.md` revision 21, `security-oversight-design.md` revision 19, `user-credential-delivery-design.md` revision 15, and `user-git-identity-design.md` revision 18. Proposals carry the label DR-n, and defects found here carry the label DF-n. The DF-n defects are filed in `BUILD-GAPS.md`, and the table under "Defects found while verifying" names each F-id.
+Status: design for owner review, revision 13, 2026-11-04. Revisions 9 to 13 apply the review of revision 8 and the stop checks on revisions 9 to 12, under "Review of DR-9 and DR-10". Revision 8 adds default git clones (DR-9) and capacity reservation (DR-10), records the owner's yes on default setup commands, and applies the requests under "Changes requested of other design documents". Revision 7 records the owner's choice of this design. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification. Revisions 2 to 6 apply independent reviews, each under its own "Review of revision" section. A stop check on revision 5 found no Critical, High, or Major issue in this document, and no review has read revisions 6, 7, or 13. It reads against `egress-and-git-design.md` revision 57, `tenant-scoping-identity-design.md` revision 21, `security-oversight-design.md` revision 19, `user-credential-delivery-design.md` revision 15, and `user-git-identity-design.md` revision 18. Proposals carry the label DR-n, and defects found here carry the label DF-n. The DF-n defects are filed in `BUILD-GAPS.md`, and the table under "Defects found while verifying" names each F-id.
 
 ## Problem
 
@@ -37,7 +37,7 @@ These are out of scope:
 - R6. A tenant-derived runtime blocks no platform write, apart from the exceptions DP9 states, and a platform change does not strand a tenant without notice, apart from a stated emergency path.
 - R7. A tenant's security team can forbid the capability and can see what it produced.
 - R8. A deployment that issues no grant behaves as it does today, apart from the defect fixes in DR-1 to DR-3.
-- R9. A tenant admin can define default workspace files, setup commands, and git clones on a derived runtime, each under its own grant flag.
+- R9. A tenant admin can define default workspace files, setup commands, and git clones on a derived runtime, each under its own grant flag. A default clone can be warmed ahead of time on warm pods.
 - R10. Where the operator and the platform admin allow it, a tenant admin can reserve a minimum number of pods for a derived runtime. The pods exist before any session, other pools cannot take their share of the namespace quota, and with a dedicated node pool other pools cannot take their nodes. No reservation evicts another pod.
 
 ## Security properties
@@ -75,7 +75,7 @@ Each row was checked against the named source.
 | A base change that invalidates a derived runtime is refused | True for `supportedProviders`, `allowSelfRecursion`, `runtimeOptionsSchema`, and the setup timeout pairing, with `BASE_RUNTIME_MUTATION_INVALIDATES_DERIVED` and the names of the affected runtimes. | `derivedRuntimesInvalidatedBy` |
 | Deleting a runtime checks dependents | False, against §15.1's deletion rule. See DF-8. | `handleDeleteRuntime` |
 | An experiment acts only on its own tenant's pools | False. The controller applies experiment effects to any named pool. See DF-9. | `ExperimentVariantSource.ListPoolConfigs`, `ResolveVariantRoles`, `requireTenantResourceAdmin` |
-| Pool ownership exists | False. `ownerTenantId` appears only in `egress-and-git-design.md`, which cites a draft 0111 that is absent from `proposals/`. | Search of `pkg/`, `spec/`, `migrations/`, `charts/`, and `proposals/` |
+| Pool ownership exists | False. `ownerTenantId` appears only in `egress-and-git-design.md`, which cites draft 0111. That draft is on the branch `draft/0111-warm-workspace` and is absent from `proposals/` on this branch. | Search of `pkg/`, `spec/`, `migrations/`, `charts/`, and `proposals/` |
 | The gateway can write pool CRDs | False. It holds `get`, `list`, and `watch` on `sandboxwarmpools`, `sandboxtemplates`, and `runtimes`. The PoolScalingController holds `create`, `update`, and `delete` on the first two. | `gateway-deployment.yaml`, `pool-scaling-controller-rbac.yaml` |
 | A precedent for moving a registry to tenant scope exists | True. Migration `0054` gave `delegation_policies` a `tenant_id`, `lenny_tenant_guard`, and `lenny_tenant_isolation`. | `migrations/0054_delegation_policies_tenant_scoped.up.sql` |
 
@@ -356,7 +356,8 @@ DR-5 adds `lenny.dev/served`, which the gateway stamps at first assignment on an
 | Bound | Holder | Enforcement |
 | :-- | :-- | :-- |
 | `maxRuntimes` | Grant | Checked at write, under a lock on the grant row, so concurrent creates cannot pass together. |
-| `maxOwnedPods` | Grant | One figure governs every check. The tenant's charge T is the sum across its owned pools of `max(inUse, reservedPods) + warmCount + unusable`. `inUse` counts pods in `claimed` and `reserved`, `unusable` counts `draining` and `failed`, and `reservedPods` is 0 on a pool with no reservation. A write or a claim that raises T past the bound is refused: a write answers `422 DERIVATION_BUDGET_EXCEEDED`, under a lock on the grant row, and a claim answers `429 QUOTA_EXCEEDED`. A write lowering T always passes. A claim that leaves T unchanged always passes, which covers a claim within a reservation and a `ClaimSlot` on an occupied pod. `warmCount` stands for `idle`, `warming`, and `sdk_connecting` pods, which `plan.Compute` treats as inventory, and `terminated` is a sink that holds no pod. Counts come from a Sandbox list per owned pool. `agent_pod_state` cannot serve, because `derivePodStates` leaves `tenant_id` empty and each sync clears it. The claim count is not serialized, so overshoot is bounded by concurrent claims. A session ending moves a pod to `unusable`, which can raise T with no check, and claims outside a reservation are then refused until that pod is gone. |
+| `maxOwnedPods` | Grant | One figure governs every check. The tenant's charge T is the sum across its owned pools of `max(inUse, reservedPods) + warmCount + unusable`. `inUse` counts pods in `claimed` and `reserved`, `unusable` counts `draining` and `failed`, and `reservedPods` is 0 on a pool with no reservation. A write or a claim that raises T past the bound is refused: a write answers `422 DERIVATION_BUDGET_EXCEEDED`, under a lock on the grant row, and a claim answers `429 QUOTA_EXCEEDED`. A write lowering T always passes. A claim that leaves T unchanged always passes, which covers a claim within a reservation and a `ClaimSlot` on an occupied pod. `warmCount` stands for `idle`, `warming`, and `sdk_connecting` pods, which `plan.Compute` treats as inventory, and `terminated` is a sink that holds no pod. Counts come from a Sandbox list per owned pool. `agent_pod_state` cannot serve, because `derivePodStates` leaves `tenant_id` empty and each sync clears it. A pool with a non-empty `warm_stop_reasons` charges nothing for `warmCount` or `reservedPods`, and neither does any pool while reservations are off, for `reservedPods`. A session ending moves a pod to `unusable`, which can raise T with no check, and claims outside a reservation are then refused until that pod is gone. |
+| `maxOwnedPods`, at creation | Grant | T decides what a tenant may ask for, and this rule bounds what runs. The PoolScalingController renders the bound on each owned `SandboxWarmPool`, and the WarmPoolController creates no Sandbox in that pool while the owner's non-terminal Sandboxes, listed by owner across all its pools, are at the bound. This covers a warm refill and a reservation's replacement alike. A lowering therefore frees budget at once while the pods it releases still count here, and a pool deleted while its pods drain still counts. |
 | `runtimes.tenantDerivation.maxOwnedPodsTotal` | Helm | The sum of every grant's `maxOwnedPods` stays at or below it, checked at grant write under one lock that only grant writes take. Preflight compares it with the namespace `ResourceQuota`. |
 | Pod size | `resourceClasses` | Set per base in the grant. `LimitRange` still applies. |
 
@@ -499,7 +500,7 @@ A clone adds one risk a file does not have. Whoever can push to the named ref ru
 
 ### Materialization and cost
 
-Default clones are not warmed. Each session fetches them at materialization, and `sharedAssets` stays refused. A tenant admin avoids a slow first fetch through the mirror prefetch resource `egress-and-git-design.md` defines.
+As this revision stands, default clones are not warmed: each session fetches them at materialization, after the pod is claimed, and `sharedAssets` stays refused. The owner requires warming a clone ahead of time, and that design is not yet written. It would rest on the `gitRepository` warm fill and the pod-wide read-only store in draft proposal 0111, which is on the branch `draft/0111-warm-workspace` and is not built. A tenant admin avoids a slow first fetch through the mirror prefetch resource `egress-and-git-design.md` defines.
 
 - A floating ref adds an `ls-refs` call per session create and makes create depend on the egress path. A full commit avoids both.
 - The composed plan counts toward §7.1 **Bind bounds.**, and the pool's fetch retry window covers every clone of a plan together, so defaults use up a client's share of each.
@@ -513,7 +514,7 @@ The answer is a security requirement. The adapter runs the clone at its own UID,
 
 **Symbolic links.** The move, a `replacePath` removal, and every other write the materializer makes run at the adapter's UID, into a tree an earlier session's agent may have written. `extractSymlink` and `ValidateSymlinkTarget` check a link's target lexically, so a restored pair such as `a/b/l -> ../..` and `src -> a/b/l/../../other/current/src` passes both and resolves outside the workspace. `overlayTree` and `writeInlineFile` then follow it. Every materializer write, move, and removal therefore opens its path with `openat2` under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, as `scrub/resolve_linux.go` already does, and a path crossing a link fails the materialization. The writers have this hole today (DF-15, F-13.4.24), so the fix does not wait for this design.
 
-No test has run this, and the behaviour of alternates under the move was not established, because draft 0111 is absent from `proposals/`.
+No test has run this, and the behaviour of alternates under the move was not established. Draft 0111 states the alternates rules, on the branch `draft/0111-warm-workspace`.
 
 ## DR-10: Capacity reservation
 
@@ -533,7 +534,7 @@ Every level is off until the level above it allows it.
 
 | Setting | Set by | Effect |
 | :-- | :-- | :-- |
-| `runtimes.tenantDerivation.reservations.enabled` | Operator (Helm), false by default | While false, the chart renders neither the class nor the split, and a grant cannot allow a reservation. The controller reads the same value, so stored floors stop applying, no pod is marked, `createPod` renders no class on a marked Sandbox with no pod, the budget exemption ends, and `GET` reports the reservation as `inactive`. Pods already running continue. |
+| `runtimes.tenantDerivation.reservations.enabled` | Operator (Helm), false by default | While false, the chart renders neither the class nor the split, and a grant cannot allow a reservation. The controller reads the same value, so stored floors stop applying, no pod is marked, `createPod` renders no class on a marked Sandbox with no pod, T stops charging `reservedPods`, and `GET` reports the reservation as `inactive`. Pods already running continue. |
 | `runtimes.tenantDerivation.reservations.totalPods`, per resource class | Operator (Helm) | The deployment's reservable total, which sizes the reserved quota. |
 | `bases[].maxReservedPods`, per resource class | Platform admin, in the grant | The tenant's allowance, none by default. Across all grants, the allowances for a class stay at or below the total, checked under the lock that grant writes take. Across one grant, all allowances together stay at or below `maxOwnedPods`. |
 | `pool.reservedPods` | Tenant admin, or a platform admin writing for the tenant | The floor on one derived runtime's pool, at or below the allowance across the tenant's pools of that base and class. |
@@ -563,7 +564,7 @@ The controller reads Sandboxes through its cached client, so a stale count can o
 
 ### Budget
 
-`reservedPods` enters the one figure under "Bounds". A pool is charged `reservedPods + warmCount` from the moment the reservation is written, because the warm target keeps `warmCount` warm once sessions have used the reservation. A claim within the reservation leaves T unchanged, so it always passes, and a claim beyond it raises T like any other. With `warmCount` at least 1, a reservation stays below `maxOwnedPods`.
+`reservedPods` enters the one figure under "Bounds". A pool is charged `reservedPods + warmCount` from the moment the reservation is written, because the warm target keeps `warmCount` warm once sessions have used the reservation. A claim within the reservation leaves T unchanged, so it always passes, and a claim beyond it raises T like any other. With `warmCount` at least 1, a reservation stays below `maxOwnedPods`. The floor is subject to the creation rule under "Bounds", so the bound wins when the two conflict, because R5 protects other tenants.
 
 ### Changes after a write
 
@@ -680,7 +681,8 @@ The response warns that `payments` admits the runtime. The controller creates tw
 - **A tenant admin's reach.** A `tenant-admin` can write defaults that run in every session on a derived runtime, including in an environment it does not belong to, because `tenant-scoping-identity-design.md` already leaves it able to add itself as a member. Environments give no boundary against a tenant admin. No control bounds what a default file does once a base command or the runtime reads it, and commands within an allowlist can still do what the allowed tools do.
 - **No per-session consent.** A user selecting a runtime receives its defaults. The plan on `GET /v1/sessions/{id}` shows them after the fact.
 - **Shared capacity.** Budgets bound what a tenant holds, and only DR-10 sets a floor. Tenant-owned pods with no reservation share nodes and the namespace `ResourceQuota` with every other pool, and a quota reached by any pods stops pods of all pools, which is true of session load today. A `maxOwnedPodsTotal` set below the quota limits this for owned pools alone. The bound is a pod count, so a tenant using `large` holds more than one using `small`.
-- **Pod-count overshoot.** The claim check is not serialized, so concurrent claims can pass `maxOwnedPods`.
+- **Pod-count overshoot.** The creation rule reads a cached list and the controller reconciles pools concurrently, so pods can pass `maxOwnedPods` by a small number until the next reconcile.
+- **A busy reservation at its bound.** Pods that are draining count toward `maxOwnedPods` at creation, so a pool whose short sessions keep pods draining can fall below its floor when the tenant is at the bound. An operator gives headroom by setting `maxOwnedPods` above the reservation by what its drains need. `TenantReservationUnmet` reports the shortfall. Real drain durations were not measured.
 - **Reads a user did not ask for.** Under a `required` pool, a default clone reads a repository the session user can read, on the authority of that user's link, which a tenant admin chose and the user did not name. The user's choice of runtime is the only consent, and the plan shows it after the fact. A default command or base command can then send that content wherever the session's egress allows.
 - **Pushers run code.** Whoever can push to a default clone's floating ref runs code in every new session on the runtime, as DR-9 states, until a forbid or a pinned commit applies.
 - **A default clone can lock users out.** A repository removed from the allowlist or a revoked permission refuses new sessions on the runtime for the users affected.
@@ -833,7 +835,7 @@ Each proposal turns this list into tests with `// spec:` annotations at the tier
 - The merge against base and grant, for each row of "Base changes", including an emptied set.
 - `ExperimentVariantSource`: effects reach an owned pool or a sole grantee's pool, a shared pool is untouched, and one tenant's malformed set leaves other tenants' variants applied.
 - `AdmitTenantPin` and `markPinnedIdle` across owned and shared pools, served and unserved, recycling and not.
-- T at the bound: a claim and a write that reach it pass, and those that pass it are refused, a lowering always passes, warming and `sdk_connecting` pods are counted once, `terminated` Sandboxes are not counted, a tenant's pods on shared pools are not counted, and a `ClaimSlot` on an occupied pod leaves T unchanged. T holds across several pools, with and without reservations. The clamp on the PoolScalingController formula and `initialMinWarm`.
+- T at the bound: a claim and a write that reach it pass, and those that pass it are refused, a lowering always passes, warming and `sdk_connecting` pods are counted once, `terminated` Sandboxes are not counted, a tenant's pods on shared pools are not counted, and a `ClaimSlot` on an occupied pod leaves T unchanged. T holds across several pools, with and without reservations. The WarmPoolController creates no Sandbox at the owner's bound, after a lowering followed by a raise, after a `DELETE` with pods draining, and for a reservation's replacement under short sessions. The clamp on the PoolScalingController formula and `initialMinWarm`.
 - A tenant schema with a `file:` `$ref`, a non-compiling schema, and an oversized schema are refused at write.
 - Default clones: each write check refuses, including an uncovered host with a full commit, a write scope, an `auth`-less repository under a pool prefix, `submodules`, `path: .`, a `.git` component in any case, overlapping paths, and a URL with userinfo. `ComposeInto` places clones after files and ahead of client sources.
 - `plan.Compute` given a floor above `warmCount` creates up to the floor, `ForceZeroMinWarm` renders `spec.reservedPods` as 0, and a `scaleToZero` window leaves it. The warm target at `active` below, equal to, and above `reservedPods`, with `draining` and `failed` not counted, a `scaleToZero` window not lowering it, and `warm_stop_reasons` overriding it. T with a reservation: a claim within it passes at the bound even with pods draining, a `reservedPods` write that takes T past the bound is refused, and pods stay at `reservedPods + warmCount` after those claims.
@@ -1055,9 +1057,17 @@ A further stop check read revision 11. It found no Critical or High issue, and r
 | Major, `openat2` under gVisor | Rejected. | gVisor's current `linux64.go` lists `openat2` as supported on both architectures. Whether it honours both `RESOLVE` flags was not read, so a Tier 6 test stays. |
 | Minors: a single live-tree link in F-13.4.24, the §14.1 statement, the lowering row, and the chart's namespace loop | Hold. | Applied. |
 
+A stop check on revision 12 found no Critical or High issue, and T held as an admission figure in every sequence it computed apart from these two. Revision 13 applies one rule for both. No review has read it.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, a lowering frees budget before the pods go | Holds. Fix changed. | The reviewer proposed charging observed warm pods. The creation rule under "Bounds" bounds running pods directly and needs no change to T. |
+| Major, reservation churn has no limit | Holds. Fix changed. | The reviewer offered a per-pool cap or a stated residual. The creation rule applies at the tenant's bound, so it costs availability only there, and the residual is stated. |
+| Minors: the stale exemption text and stopped pools | Hold. | Applied. Whether a resume or retry treats `429` as a wait is not stated and was not traced. |
+
 ## Decisions
 
-These are open for the owner, and the recommendation is the design above. The owner settled part of decision 4: tenants can define default files, setup commands, and git clones, so its alternative of no tenant defaults is gone. The grant flags that decision 4 recommends remain open.
+These are open for the owner, and the recommendation is the design above. The owner settled part of decision 4: tenants can define default files, setup commands, and git clones, so its alternative of no tenant defaults is gone. The grant flags that decision 4 recommends remain open. The owner settled decision 17 and decision 20 as recommended, the latter in the words "go with dedicated pools". The owner reopened decision 16 and decision 22, and those rows are under discussion.
 
 | # | Decision | Recommendation | Cost of the recommendation | Alternative |
 | :-- | :-- | :-- | :-- | :-- |
