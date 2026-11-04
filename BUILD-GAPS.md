@@ -31190,9 +31190,9 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 ### - [ ] F-15.1.77 — A replay delivers no prompts, so the replayed session idles on a copied workspace [High] — OPEN
 
 **Spec:** §15.1 REST API, **Session Replay Semantics** ("replayed verbatim as the initial message sequence").
-**Evidence:** `handleReplay` (`pkg/gateway/sessionserver/replay.go`) copies the transcript through `CreateWithTranscript` and `CopySessionTx` (`transcriptstore/pgstore/pgstore.go`), which copies rows of every role, including assistant output. In `sessionserver`, the transcript store is read by `transcript.go`, `messages_list.go`, `taskrecord.go`, and `usage.go`, and no start path reads it. `mcptools/send_delivery.go` and the child send path in `mcptools_register.go` write no transcript row. Read only, not run.
+**Evidence:** `handleReplay` (`pkg/gateway/sessionserver/replay.go`) copies the transcript through `CreateWithTranscript` and `CopySessionTx` (`transcriptstore/pgstore/pgstore.go`), which copies rows of every role, including assistant output. In `sessionserver`, the transcript store is read by `transcript.go`, `messages_list.go`, `taskrecord.go`, and `usage.go`, and no start path reads it. `mcptools/send_delivery.go` and the child send path in `mcptools_register.go` write no transcript row, and `transcriptstore.Entry` records no sender, so a sibling agent's held message reads as a `user` prompt. Read only, not run.
 **Gap:** A replay does not re-execute the source's prompts, so the regression test §15.1 describes does not run. A session driven through the MCP send paths has no prompts recorded for any replay.
-**Suggested resolution:** Through the proposal pipeline. `designs/session-replay-design.md` adds a driver that delivers the source's `user` rows in order, and records its alternative. Tests: tier 4 on a replay that re-executes a prompt.
+**Suggested resolution:** Through the proposal pipeline. `designs/session-replay-design.md` adds the source's client prompts as a second source in `deliverBuffered`, and records its alternative. Tests: tier 4 on a replay that re-executes a prompt.
 ---
 
 **Resolution (2026-10-30):** `tests/tier5_e2e_kind/gateway_probe_headers_test.go` is listed under §15.1 in `tests/spec-map.json`; `lenny-test validate-maps` passes.

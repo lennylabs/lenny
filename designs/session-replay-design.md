@@ -1,6 +1,6 @@
 # Session replay
 
-Status: design for owner review, revision 2, 2026-11-04. Revision 2 applies the review of revision 1, under "Review of revision 1", and no review has read it. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 20, `tenant-scoping-identity-design.md` revision 21, and `egress-and-git-design.md` revision 59. Proposals carry the label RP-n.
+Status: design for owner review, revision 3, 2026-11-04. Revisions 2 and 3 apply the reviews of revisions 1 and 2, under their own sections, and no review has read revision 3. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 21, `tenant-scoping-identity-design.md` revision 21, and `egress-and-git-design.md` revision 59. Proposals carry the label RP-n.
 
 ## Problem
 
@@ -35,13 +35,14 @@ These are out of scope:
 - R3. A check that would refuse a new session with this plan refuses the replay, before a pod is claimed.
 - R4. A replay does not push to a repository unless the request asks for that.
 - R5. A replay does not bring back content that a stop has ended.
-- R6. The platform delivers the source's prompts to the replayed session, in order, with no client driving them.
+- R6. The platform delivers the source's client prompts to the replayed session, in order, with no client composing them. The client still calls `finalize` and `start`, as for any session.
 
 ## Security properties
 
-- RPP1. The replayed session takes the source session's owner, as §10.2 **Session ownership.** states, and credentials are evaluated afresh. From the source it takes the plan, its prompts, its `env` and `runtimeOptions`, and what `tenant-scoping-identity-design.md` states a replay takes: its environment, `egressLockHosts`, `crossed_from_environment`, and its delegation limit.
+- RPP1. The replayed session takes the source session's owner, as §10.2 **Session ownership.** states, and credentials are evaluated afresh. From the source it takes the plan, its client prompts, its `env` and `runtimeOptions`, and what `tenant-scoping-identity-design.md` states a replay takes: its environment, `egressLockHosts`, `crossed_from_environment`, and its delegation limit.
 - RPP2. Every check runs against the plan on the replayed session's user, environment, and target pool, as for a plan a client submits.
-- RPP3. A plan carrying content from a stopped tenant-derived runtime is refused, on any route and through any chain of replays or derives, so neither is a route around a forbid, a suspension, or a retirement.
+- RPP3. A plan carrying content from a tenant-derived runtime that has ever been stopped since the plan bound is refused, on any route and through any chain of replays or derives, and remediation does not reopen it, so neither route gets around a forbid, a suspension, a retirement, or a grant flag set false.
+- RPP4. Content from a tenant-derived runtime never reaches a pod with no runtime supervisor, where it would run at the adapter's identity.
 
 ## Current state
 
@@ -52,7 +53,8 @@ Other facts this design relies on:
 - `GET /v1/sessions/{id}` shows that a session row stores its composed plan, with `resolvedCommitSha` on each `gitClone` source. §14.1 **Plan binding.** states that a session binds at most one plan.
 - §14 states that an `uploadRef` belongs to the session for which its content was stored and is valid only in a plan bound to that session. `UploadDefaultTTL` in `sessionserver/upload.go` stamps a 7-day TTL on uploads.
 - `workspaceplan.Plan` holds `SchemaVersion`, `Sources`, and `SetupCommands`. `Env` and `RuntimeOptions` are fields on the session row, and `handleReplay` copies neither today.
-- A message delivery is a request and a response. `recordDeliveredResponse` runs when the runtime's turn returns, and it appends the inbound messages and the text parts of the response to the transcript. That append is best-effort, and `mcptools/send_delivery.go` and the child send path make none.
+- `recordDeliveredResponse` runs when the runtime's turn returns, and it appends the inbound messages and the text parts of the response to the transcript. That append is best-effort, and `mcptools/send_delivery.go` and the child send path make none. `transcriptstore.Entry` records a role and no sender, and a held message from a sibling agent is recorded as `user`. `projectMessage` sends a message's text alone, so attachments do not reach the transcript.
+- `deliverBuffered` (`held_delivery.go`) delivers held messages one at a time, stops on a terminal row, checks the coordination lease before each, and runs at start, resume, and takeover. `start.go` calls it in line, on the request's context.
 - `resolveFinalizePlan` composes when a row holds no plan, so a row with an absent plan composes the target's defaults at finalize.
 - `resumeOnPod` takes the snapshotless rebuild path when a row has no `WorkspaceSnapshot`, and that path reads the stored plan.
 - F-14.1.37 means no `gitClone` works in a deployed image today, so a plan with a clone cannot be replayed until the egress design's pod-side clone lands. A plan with no clone is unaffected.
@@ -114,17 +116,20 @@ The gateway answers `422 REPLAY_SOURCE_UNAVAILABLE` with `details.reason`, befor
 
 | Reason | Cause |
 | :-- | :-- |
-| `no_prompts` | The transcript holds no `user` row, as for a session driven through the MCP send paths, which F-15.1.77 also records. |
+| `no_prompts` | The transcript holds no client prompt, as for a session driven through the MCP send paths, which F-15.1.77 also records. |
 | `delegated_source` | The source has a delegation parent. Its exported files and inherited inputs came from that parent, and a replay is a new root. |
 | `upload_expired` | The plan names an upload past its TTL. |
 | `derived_source` | The source was derived. It started from a snapshot that its own checkpoints have since replaced, so its start cannot be rebuilt. |
 | `source_runtime_stopped` | "Stops" below applies. |
+| `target_unsupervised` | "Stops" below applies. |
+| `target_cannot_receive` | The target has `injection.supported: false`, or it is `one_shot` and the source has more than one prompt. Either would fail after a claim and setup. |
+| `service_mode` | Service-mode rows hold no coordination lease, so nothing would deliver the prompts. |
 
 A commit the host no longer serves is not known before the fetch, because a pinned commit skips `ls-refs`. It fails at materialization with `SESSION_CREATION_FAILED`, after the claim.
 
 ### Checks
 
-The stored plan passed its checks when the source bound it, under that runtime, and those checks can have changed. Before the claim, the gateway runs the same check function a client's plan goes through, on the replayed session's user and environment and the target pool, so a check added later needs no second statement here. That covers the auth bindings, named bindings, `egress.allowedHosts`, and `gitClone` sources under the environment, the rule for pods with no per-session policy, a `required` pool's check on the user's link, and `verbatimClientFiles`. `tenant-scoping-identity-design.md` lists these at replay.
+The stored plan passed its checks when the source bound it, under that runtime, and those checks can have changed. Before the claim, the gateway runs the same checks a client's plan goes through, on the replayed session's user and environment and the target pool. No such single function exists today: `resolveSubmittedPlan` takes raw JSON, `Parse` refuses `resolvedCommitSha`, `validatePlanUploadRefs` needs a session, and `enforceSetupCommandPolicy` and DR-9's default-clone run are separate steps. RP-1 therefore extracts one function over a parsed plan, which every bind path calls, so a check added later needs no second statement. It covers the auth bindings, named bindings, `egress.allowedHosts`, and `gitClone` sources under the environment, the rule for pods with no per-session policy, a `required` pool's check on the user's link, and `verbatimClientFiles`. `tenant-scoping-identity-design.md` lists these at replay.
 
 **Setup commands.** The stored plan does not record which commands came from a runtime default, and §7.5 exempts operator-written defaults from `setupCommandPolicy`. A command is exempt on a replay when its text equals a command in the target runtime's operator-written `workspaceDefaults`. Every other command is checked against the target's effective policy, including a tenant's default from the source runtime, and a miss refuses the replay.
 
@@ -132,15 +137,15 @@ The stored plan passed its checks when the source bound it, under that runtime, 
 
 ### Delivering prompts
 
-R6 needs a driver, because nothing delivers prompts today. At create, the insert transaction copies the source's `user` rows, and no other role, into `replay_prompts` for the new row. The new session's own transcript starts empty and records the replay's turns as they happen, so it holds the new runtime's responses and none of the source's.
+R6 needs a delivery, because nothing delivers prompts today. No separate driver is added. `deliverBuffered` already delivers one entry at a time, checks the coordination lease, stops on a terminal row, and runs at start, resume, and takeover, so prompts become a second source in that loop, after the held messages.
 
-Once the session is `running`, the gateway delivers each prompt in order through the path `POST /v1/sessions/{id}/messages` uses, and it sends the next when the previous delivery returns, which is the end of that turn. `replayCursor` on the row records progress, so the replica that next holds the session's coordination lease continues after a crash. A prompt whose delivery result was lost can be sent twice, as a client's retry can.
+- **Source.** The loop reads the next client prompt from the source session's transcript at each send, by `replaySourceSessionId` and `replayCursor`. Nothing copies the prompts, so the transcript's retention, erasure under §12.8, classification under §12.9, and legal holds apply with no new rule. When the source's rows are gone, the run stops with `source_gone`. `transcriptstore.Entry` gains a sender, so a sibling agent's held message, which is recorded as `user`, is not sent as the owner's prompt. The new session's own transcript starts empty and records its turns.
+- **When it pulls.** It pulls only while the row is `running`, and only when the previous prompt's delivery returned its response. A session that is `suspended`, `resume_pending`, or podless holds its place, and the next resume continues. An interrupt writes `suspended`, so it stops the pull, and a resume continues it. The start path calls the loop in line, so the prompt source runs off the request's context.
+- **In flight.** The row records `replayInFlight` before each send, and clears it and advances `replayCursor` on the response. §10.1 can hand a session to another coordinator with the pod and its turn still live, and the new one cannot see that turn end. A takeover or a resume that finds `replayInFlight` set stops the run with `turn_outcome_unknown`, so a prompt is never sent twice. A rolling update of the gateway can therefore stop a replay.
+- **Outcomes.** A delivered response advances the run. Any other outcome stops it, with `replay_stopped` carrying the prompt's index and the reason: `dropped`, `INJECTION_REJECTED`, a `429`, and a `PostAgentOutput` rejection. A terminal session stops it too. After the last prompt the gateway emits `replay_completed`, and the session then behaves as any session waiting for its client.
+- **Client traffic.** While the run is active, a client message answers `409 REPLAY_IN_PROGRESS`, and an interrupt, a resume, and an elicitation answer pass. A turn waiting on an elicitation or an approval stays open under `maxElicitationWait`, and `maxClientIdleSeconds` and `maxSessionAge` bound the whole run, so a run cannot hold a pod indefinitely.
 
-- A turn that waits on an elicitation or an approval stays open until the client answers it or its timeout passes.
-- While the driver runs, a client message answers `409 REPLAY_IN_PROGRESS`, and an interrupt and an elicitation answer pass. A client can therefore stop a run, and it cannot add turns that the source did not have.
-- A failed turn or a terminal session stops the driver and emits `replay_stopped` with the prompt's index. After the last prompt the gateway emits `replay_completed`, and the session then behaves as any session waiting for its client.
-
-The transcript's content is what a replay can send. It holds each message's text, and its append is best-effort, so a lost append loses that prompt. Whether a message with attachments keeps them there was not established.
+The transcript holds each client message's text, so attachments are not replayed, and a lost append loses that prompt.
 
 ### Writes
 
@@ -150,7 +155,13 @@ A replay re-executes the source's tool calls, so a plan that could push would pu
 
 ### Stops
 
-A stored plan can hold content a tenant has since stopped. `tenant-derived-runtimes-design.md` treats a default as code, and a grant flag set false or a forbid is "the stop after a compromise". Its residual "A stored plan outlives a stop" covers a session that is still running. A replay would be a new session, so it is refused. Reading the source's runtime alone would not hold: a replay onto a platform runtime before a forbid leaves a row whose runtime is that platform runtime, and replaying that row would run the same content. Each bind therefore stamps `planOriginRuntimes`, the tenant-derived runtimes whose defaults the plan holds, and a replay or a derive copies its source's set and adds its own. The check is one function: for each name, the tenant view must resolve that runtime now, and it must not be `incompatible`, `retired`, or suspended, and a deleted one refuses too. `handleReplay` and `handleDerive` both call it.
+A stored plan can hold content a tenant has since stopped. `tenant-derived-runtimes-design.md` treats a default as code, and a grant flag set false or a forbid is "the stop after a compromise". Its residual "A stored plan outlives a stop" covers a session that is still running. A replay would be a new session, so it is refused. Reading the source's runtime alone would not hold: a replay onto a platform runtime before a forbid leaves a row whose runtime is that platform runtime, and replaying that row would run the same content. Each bind therefore stamps `planOriginRuntimes`, the tenant-derived runtimes whose defaults the plan holds, each with its bind time. A replay or a derive copies its source's set, keeping the earliest time per name, and adds its own, and a delegated child copies its parent's at bind, because a child's exports came from that parent.
+
+Current state alone would not hold either. If a `security-admin` sets a forbid or an operator sets `allowGitClones` false, and the tenant then removes the clone, the runtime resolves clean, and a replay of a session from before the incident would rerun the pinned commit. The runtime row therefore carries `stoppedAt`, set the first time it is suspended by a forbid, retired, or made `incompatible` by a default flag set false, and never cleared. The Notice worker under DR-6 sets it for a grant write, because the tenant view computes that state on each read.
+
+The check is one function, which `handleReplay` and `handleDerive` both call. For each name in the set, the tenant view must resolve that runtime now, it must not currently be `incompatible`, `retired`, or suspended, and the bind time must be later than any `stoppedAt`. A deleted runtime refuses, and names stay consumed, so one cannot be recreated to pass. A plan from before a stop stays refused after the stop is lifted.
+
+**Supervisors.** A target with no runtime supervisor runs setup at the adapter's identity, so a pusher's commit or a tenant's default, replayed onto it, would run with the service account token. `tenant-derived-runtimes-design.md` refuses tenant defaults on such a base for that reason. A replay or a derive with a non-empty `planOriginRuntimes` onto a target where `runsSupervisor` is false is refused.
 
 A platform-owned source runtime has no such rule, because replaying a retired version against its successor is what the route is for. An emergency retirement of a platform runtime concerns its image, and a replay does not run that image.
 
@@ -162,7 +173,7 @@ A platform-owned source runtime has no such rule, because replaying a retired ve
 - **What setup commands fetch.** `npm install` resolves against the registry on the day it runs. Commit pins do not reach it.
 - **External answers.** Tool calls and model responses are not recorded inputs.
 - **Egress and credentials.** These are the tenant's and the pool's settings on the day of the replay.
-- **Messages the transcript lacks.** A lost append, and any part of a message the transcript does not hold.
+- **Messages the transcript lacks.** A lost append, attachments, and messages from other agents.
 - **A clone the target needs.** A target runtime that relies on a clone it added runs without it, and that shows up as a failed run.
 
 ## Costs
@@ -171,7 +182,8 @@ A platform-owned source runtime has no such rule, because replaying a retired ve
 - Uploads gain a second copy per replay, and those count toward the tenant's storage.
 - A source older than the upload TTL that used uploads cannot be replayed.
 - Replaying a derived session or a delegated child is unavailable.
-- The gateway gains a driver, with its own state on the row.
+- A gateway rolling update can stop a replay in progress, and the client runs it again.
+- A session from before a stop can never be replayed or derived, even after the stop is lifted.
 
 ## Defects found while verifying
 
@@ -188,21 +200,24 @@ A platform-owned source runtime has no such rule, because replaying a retired ve
 - §14.1 **Plan binding.**: a replay binds at create from the stored plan, and step 1 of **Runtime workspace defaults.** does not run for it.
 - §10.2 **Session ownership.**, §11, and §13: these name replay alongside derive for ownership, the `derive.isolation_downgrade` event, and first-bind `GET` capabilities. The first two stay, and §13.1's first-bind wording names derive alone.
 - §18 and §23: the mentions of `replayMode`.
+- §7.2 **Message delivery routing**: the prompt source in the delivery of held messages.
+- §12.4 and §15.4: the sender on a `session_messages` row.
 
 ## Stored formats and wire contracts this forces
 
 | Carrier | Change |
 | :-- | :-- |
 | `POST /v1/sessions/{id}/replay` | Removes `replayMode`, and adds `allowWrites`. The response drops `replayMode`. |
-| Session row | `replaySourceSessionId`, `replayCursor`, and `planOriginRuntimes`, and a replay row has a bound plan, `env`, and `runtimeOptions`, and no `WorkspaceSnapshot` |
-| `replay_prompts` | The source's `user` rows, written in the insert transaction |
+| Session row | `replaySourceSessionId`, `replayCursor`, `replayInFlight`, and `planOriginRuntimes`, and a replay row has a bound plan, `env`, and `runtimeOptions`, and no `WorkspaceSnapshot` |
+| `session_messages` | A sender on each row |
+| Tenant-derived runtime row | `stoppedAt` |
 | Upload store | A copy of an upload under the new session, with a new `uploadRef` |
 
 ## Proposals and dependencies
 
 | Proposal | Contents | Depends on |
 | :-- | :-- | :-- |
-| RP-1 | Everything above, and closing F-15.1.76 and F-15.1.77 | None for a plan with no clone. A plan with a clone needs the egress design's pod-side clone, as any `gitClone` does. "Warm stores on the target" and `coveredStores` arrive with DR-11, and "Stops" with DR-4 and DR-6. |
+| RP-1 | Everything above, and closing F-15.1.76 and F-15.1.77 | None for a plan with no clone. A plan with a clone needs the egress design's pod-side clone, as any `gitClone` does. "Warm stores on the target" and `coveredStores` arrive with DR-11, and "Stops" with DR-4 and DR-6. RP-1 also extracts the plan check function that DR-9 calls. |
 
 It can land before those designs. Each adds its rule to the replay checks when it lands.
 
@@ -230,7 +245,8 @@ It can land before those designs. Each adds its rule to the replay checks when i
 ### Tier 4: integration
 
 - A session creates a file under a prompt, and its replay starts with no such file, at the source's commit, with the target's added clone absent and its dropped clone present, then receives that prompt and creates the file again.
-- Prompts arrive in order with the next sent when the turn ends, assistant rows are not sent, and the new transcript holds the new responses alone. A replica lost mid-run continues from `replayCursor`. A client message answers `REPLAY_IN_PROGRESS`, an interrupt stops the run, and a failed turn emits `replay_stopped`.
+- Prompts arrive in order with the next sent when the turn ends, assistant rows and a sibling agent's held message are not sent, and the new transcript holds the new responses alone. A takeover with no prompt in flight continues from `replayCursor`, and one with a prompt in flight stops with `turn_outcome_unknown` and sends nothing twice. On `resume_pending` no prompt reaches the DLQ. An interrupt holds the run and a resume continues it. A client message answers `REPLAY_IN_PROGRESS`, and each non-response outcome stops the run. A source purged mid-run stops with `source_gone`. `POST .../start` returns before the first turn ends.
+- A target with `injection.supported: false`, a `one_shot` target with several prompts, and a service-mode source refuse before any claim.
 - `env` and `runtimeOptions` copy, and an option the target's schema refuses refuses the replay.
 - A replay binds no second plan at finalize.
 - An upload copies to the replayed session, the original's later expiry does not affect it, and an expired upload refuses.
@@ -241,7 +257,7 @@ It can land before those designs. Each adds its rule to the replay checks when i
 
 - A repository off the allowlist, a user who lost access on a `required` pool, and an environment that denies the host each refuse before any claim.
 - With no `allowWrites`, `git push` answers 403 and no write token is minted, and no `prAuthoring` binding attaches.
-- A forbid, a suspension, a retirement, a set-false grant flag, and a deletion of a tenant-derived source runtime each refuse, including a replay of an earlier replay onto a platform runtime. A retired platform source runtime replays.
+- A forbid, a suspension, a retirement, a set-false grant flag, and a deletion of a tenant-derived source runtime each refuse, including a replay of an earlier replay onto a platform runtime, and including after the tenant removes the clone and after the stop is lifted. A plan bound after the stop replays. A retired platform source runtime replays. A plan with a tenant origin onto a target with no supervisor refuses, on replay and on derive. A derive of a delegated child carries its parent's origins.
 - A replay keeps the source's `egressLockHosts` and environment, and a caller who left that environment answers 403.
 - A target pod holding a warm store for a clone the plan omits is refused for a user who cannot read it.
 
@@ -259,8 +275,8 @@ These are open for the owner, and the recommendation is the design above. The ow
 | 2 | Uploads past their TTL | Refuse the replay | A source that used uploads cannot be replayed after 7 days | Retain a session's uploads as long as its transcript, which costs storage for every session. Or snapshot every session at first bind, which also serves uploads and derived sources, and costs storage and time on each session |
 | 3 | Writes on a replay | Off, with `allowWrites` to keep them | A run that pushes fails where the source succeeded, so it differs from the source | On by default, which matches the source and repeats its pushes on every regression run |
 | 4 | Derived sources | Refused | A forked session cannot be regression tested | Replay from the derived session's starting snapshot, which needs that snapshot retained past its first checkpoint |
-| 5 | A stopped tenant-derived source runtime | Refused, including a deleted one | A tenant that deletes a runtime loses replay of its sessions | Refuse only an explicit stop, which lets a deleted runtime's stored defaults run again |
-| 7 | Who delivers the prompts | A driver in the gateway, sending each `user` row when the previous turn ends | New gateway state, and a run that only an interrupt can change | The client sends them, which needs no driver and leaves §15.1's statement unmet, and every caller writes a harness |
+| 5 | A stopped tenant-derived source runtime | Refuse a plan bound before any stop, permanently, and refuse a deleted runtime | A tenant that deletes a runtime, or a session from before a lifted stop, loses replay and derive | Refuse only while a stop is in force, which reruns a bad commit once the stop is remediated |
+| 7 | Who delivers the prompts | The gateway, as a second source in the delivery of held messages | A run stops on a coordinator handoff with a prompt in flight, because it cannot know the turn's outcome | The client sends them, which needs no gateway change, leaves §15.1's statement unmet, and has every caller write a harness |
 | 6 | Exempting setup commands | By text match against the target's operator-written defaults | A changed base command in a new version falls under the policy, and a replay can be refused for it | Record each command's origin on the stored plan, which is exact and adds a stored field, or exempt nothing, which refuses most replays on a base with an allowlist |
 
 ## Review of revision 1
@@ -275,3 +291,19 @@ An independent review read revision 1. It found no Critical issue and no path ac
 | Major, delegated child sources | Holds. | `tenant-scoping-identity-design.md` has a replay take the source's environment and lock, against RPP1's text. RPP1 is corrected, and a delegated source refuses. |
 | Major, environment settings are not in the plan | Holds. | `workspaceplan.Plan` has no such field. `env` and `runtimeOptions` copy from the row under create validation. |
 | Minors: the width of the read checks, omitted checks, and upload copies | Hold. | Applied. The checks reuse a client plan's check function. |
+
+## Review of revision 2
+
+A stop check read revision 2 and `tenant-derived-runtimes-design.md` revision 20. It found no Critical issue and no path across tenants. Each finding was checked against the tree, and revision 3 applies them.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| High, the stop check passes after remediation | Holds. | DR-6's row reads `incompatible` "until the tenant removes it". `stoppedAt` is set once and compared with each plan's bind time. |
+| Major, a pusher reaches the adapter's identity through an unsupervised target | Holds. | `runsSupervisor` is false on an embedded base, and DR-3 refuses tenant defaults there. Such a target is refused for a plan with a tenant origin. |
+| Major, a return is not a turn end, and an interrupt does not stop the run | Holds. Fix wider. | `deliverBuffered` checks the lease and stops on a terminal row, and it runs at start, resume, and takeover. The separate driver goes, which removes both findings. |
+| Major, duplicate prompts on a handoff | Holds. | `replayInFlight` stops the run, so a prompt is never sent twice. |
+| Major, `user` rows are not all client prompts | Holds. | `Entry` has no sender. It gains one. |
+| Major, `replay_prompts` has no compliance coverage | Holds. Fix wider. | The table goes, and each send reads the source's transcript, so existing rules apply. |
+| Major, the same check function does not exist | Holds. | `resolveSubmittedPlan` takes raw JSON, and `Parse` refuses `resolvedCommitSha`. RP-1 extracts the function. |
+| Major, `snapshotIsOwn` has two meanings | Holds. | Recorded in `tenant-derived-runtimes-design.md`. |
+| Minors: targets that cannot receive, child origins, the client's calls, service mode, and attachments | Hold. | Applied. `projectMessage` sends text alone, so the open statement on attachments becomes a stated limit. |
