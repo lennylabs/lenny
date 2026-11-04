@@ -9079,6 +9079,7 @@ Effect: a runtime configured `onTimeout: warn` produces no operationally observa
 **Gap:** A setup command can read the projected service account token and write the credential volume, and on a concurrent pod that volume holds every slot's file. §7.5 treats the pod as the boundary, §13.1's adapter-agent boundary is a UID check, and a process a setup command starts can outlive it. The command also runs from the adapter's image, so the `pip install` in §5.1's example does not touch the runtime's environment. The High rating is a floor, because what the projected service account token can do at the gateway was not traced. A wider reach there raises the rating.
 **Suggested resolution:** Through the proposal pipeline, run setup commands at the agent UID through the runtime supervisor on sidecar pods. `designs/tenant-derived-runtimes-design.md` DR-3 closes this for the adapter's identity. The read of other slots' credential files on a concurrent pod stays, as §13.1 states. No proposal has been started.
 
+**Note (design, 2026-11-04):** On a pod with no runtime supervisor, which DR-3 in `designs/tenant-derived-runtimes-design.md` leaves as it is, a file a delegated parent exports reaches an operator's setup command at the adapter's identity, as a client's plan file does. `designs/session-replay-design.md` refuses this only for content with a tenant-derived origin, and it does not close the general case.
 ---
 
 ### Summary of severity
