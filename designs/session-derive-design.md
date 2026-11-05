@@ -1,6 +1,6 @@
 # Session derive
 
-Status: design for owner review, revision 4, 2026-11-04. Revisions 2 to 4 apply the reviews of revisions 1 to 3, under their own sections, and no review has read revision 4. This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 29, `tenant-scoping-identity-design.md` revision 22, and `egress-and-git-design.md` revision 59. Proposals carry the label SD-n.
+Status: design for owner review, revision 5, 2026-11-04. Revisions 2 to 5 apply the reviews of revisions 1 to 4, under their own sections, and no review has read revision 5. This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 30, `tenant-scoping-identity-design.md` revision 22, and `egress-and-git-design.md` revision 59. Proposals carry the label SD-n.
 
 ## Problem
 
@@ -48,7 +48,8 @@ Comparing two runs stays out of scope, and `evalRef` only records the link. A se
 - `resolveFinalizePlan` composes when a row holds no plan, and a session with no client plan on a runtime with no defaults stores none, so an absent plan does not tell a session that ran from one that never bound.
 - §14 binds an `uploadRef` to its session, and `UploadDefaultTTL` (`upload.go`) stamps 7 days.
 - `recordDeliveredResponse` appends inbound messages after `Send`, best-effort, and `mcptools/send_delivery.go` and the child send path append none. `transcriptstore.Entry` records no sender, so a sibling agent's held message reads as `user`, and `deriveMessageFrom` (`messages_list.go`) labels it as the client's. `projectMessage` sends text alone.
-- `validateAndBuildCreateRow` in `create.go` runs the admission gates, the `PLATFORM_DEGRADED` gate, and the `PreRoute` and `PostRoute` chains. `handleDerive` and `handleReplay` run none of them (F-15.1.78).
+- `createAdmissionGates` holds the admission gates and `PLATFORM_DEGRADED`, `createAndStartGates` adds `requireTenantClassification`, and `validateAndBuildCreateRow` runs the `PreRoute` and `PostRoute` chains. `handleDerive` and `handleReplay` run none of those, and `handleDerive` makes two early policy calls of its own (F-15.1.78).
+- `reserveDerivedSession` runs ahead of the snapshot copy. `cataloging.Copy` charges nothing to the tenant's storage counter, and `cataloging.DeleteBySession` releases the bytes of live rows, so undoing a copy lowers the counter.
 - `resumeOnPod` takes the checkpoint branch whenever `WorkspaceSnapshot.Ref` is set, so a derived session resumed before its first checkpoint restores the copy with no first bind (F-7.3.36). It takes the rebuild path, which reads the plan, when no snapshot is set.
 - F-14.1.37 means no `gitClone` works in a deployed image today.
 
@@ -74,7 +75,7 @@ Comparing two runs stays out of scope, and `evalRef` only records the link. A se
 
 ### What each mode starts from
 
-At create, the gateway copies the source's stored plan to the new row, with `env` and `runtimeOptions`, so the plan binds at create and composition never runs. Every bind stores a plan, the canonical empty plan where nothing was composed, so an absent plan means the session never bound, in any state.
+At create, the gateway copies the source's stored plan to the new row, with `env` and `runtimeOptions`, so the plan binds at create and composition never runs. Every bind stores a plan, the canonical empty plan where nothing was composed, so an absent plan means the session never bound, in any state. That is new on the paths that store nothing today: `composeRuntimeDefaults` on a create-and-start, and `composeChildWorkspaceDefaults` for an unchanged child. Composition is skipped outright when `derivedFrom` is set.
 
 | | `from: latest` | `from: start` |
 | :-- | :-- | :-- |
@@ -133,7 +134,9 @@ A commit the host no longer serves is not known before the fetch, because a pinn
 
 The plan passed its checks when the source bound it, and those checks can have changed. Before the claim, the gateway runs the checks a client's plan gets. No single function does that today: `resolveSubmittedPlan` takes raw JSON, `Parse` refuses `resolvedCommitSha`, `validatePlanUploadRefs` needs a session, and `enforceSetupCommandPolicy` and DR-9's default-clone run are separate steps. SD-1 extracts one function over a parsed plan, which every bind path calls. It covers the auth bindings, named bindings, `egress.allowedHosts`, and `gitClone` sources under the environment, the rule for pods with no per-session policy, a `required` pool's check on the user's link, and `verbatimClientFiles`.
 
-**Admission.** `handleDerive` calls the shared admission function that SD-1 extracts from `validateAndBuildCreateRow`, for the target, so a gate added to a create needs no second statement. It covers the tenant classification, concurrency, rate limit, playground, draining, and `PLATFORM_DEGRADED` gates, the `env` blocklist on the copied `env`, and the `PreRoute` and `PostRoute` chains, so a deployer's interceptor that rejects a runtime also rejects a `runtimeRef` naming it. An interceptor or an experiment that would rewrite a derive's runtime refuses the derive, because the request named its target. The tenant view resolves the name first, ahead of `requireAdmissionRateLimit`'s `ResolvePool`, so a name from another tenant creates no rate-limit entry. This closes F-15.1.78. `undoDerivedWrites` releases the identifier reservation and objects today, and it gains the storage reservation of each upload copy.
+**Admission.** `handleDerive` calls `createAdmissionGates` with the target, which gains `requireTenantClassification`, and it drops its own two early policy calls, which would otherwise run `PostAuth` twice. It runs the `PreRoute` and `PostRoute` chains from `validateAndBuildCreateRow`, so a deployer's interceptor that rejects a runtime also rejects a `runtimeRef` naming it. An interceptor that would rewrite a derive's runtime refuses the derive, because the request named its target. `routeExperiment` does not run on a derive, for the same reason, so an experiment neither moves nor refuses one. The tenant view resolves the name first, ahead of `requireAdmissionRateLimit`'s `ResolvePool`, so a name from another tenant creates no rate-limit entry. This closes F-15.1.78.
+
+**Order.** Every gate, the plan checks, the stop check, and the `derive.isolation_downgrade` audit run ahead of `reserveDerivedSession` and any copy, so a refusal has nothing to undo, and a refused derive copies nothing and records no downgrade. Each copy, of a checkpoint chunk or an upload, then charges the tenant's storage counter, which `cataloging.Copy` does not do today, so `DeleteBySession` releases only what was charged. A copy that fails has no catalog row, so its reservation is released explicitly.
 
 **Setup commands.** §7.5 exempts operator-written defaults from `setupCommandPolicy`, and the stored plan does not say which commands those are. Each stored command therefore gains an `origin`: `operator`, `tenant`, `client`, or `derive`. On a derive onto the same runtime, an `operator` command stays exempt. On a derive onto another runtime, in either mode, it keeps that origin only when its text is among the target's own operator-written defaults, and otherwise the plan copy relabels it `client`, so the target's effective policy checks it. Under either mode the tree can hold content a client or an agent chose, a plan file under `from: start` or an edited script under `from: latest`, so `npm ci` from another runtime's defaults would otherwise run client-chosen code past a policy the target's operator set. The relabel stays on the copy, so a later derive on that runtime cannot regain the exemption. A `tenant` command is also refused on a target whose policy is not `allowlist` with `shell: false`, as DR-4 requires, because an inert string would otherwise run under a shell. The source's original commands are the only ones that run, plus any the request adds, and the check decides whether the target admits them.
 
@@ -246,7 +249,7 @@ It can land before those designs, and each adds its rule to the checks when it l
 - `from: start` of a `from: latest` session and of a delegated child refuses. `from: start` of a `from: start` session starts where the first session started.
 - A derive binds no second plan at finalize, finalize accepts the derive's `uploadToken`, and an upload no plan names is not materialized.
 - `env` and `runtimeOptions` copy, and an option the target's schema refuses refuses the derive.
-- A derive meets each create gate and the `env` blocklist, a `PreRoute` REJECT on the target refuses it, an interceptor rewriting its runtime refuses it, and a name from another tenant creates no rate-limit entry. `from: start` of a session cancelled before binding refuses with `not_bound`. A refused one releases its reservations. An upload copy past the tenant's storage quota refuses.
+- A derive meets each create gate once and the `env` blocklist, a `PreRoute` REJECT on the target refuses it, an interceptor rewriting its runtime refuses it, and a name from another tenant creates no rate-limit entry. An experiment on the runtime neither moves nor refuses a derive. A refused derive copies nothing and records no downgrade, repeated refusals leave the storage counter unchanged, and a completed copy charges it. `from: start` of a session cancelled before binding refuses with `not_bound`, and so does `from: start` of one that never reached a bind. `from: latest` of a create-and-start session or an unchanged child composes nothing. An upload copy past the tenant's storage quota refuses.
 - Messages read back in order, including a failed turn's, marked undelivered, and one sent through the MCP send paths, and a retried held message appears once. The read returns nothing after retention.
 - An additional command runs after the source's, is refused by the target's policy, reruns on a rebuild of the same session, and is absent from a later derive's plan, so a chain does not accumulate commands and a `from: latest` of the run does not fail on an existing branch.
 
@@ -305,6 +308,15 @@ A stop check read revision 3 and `tenant-derived-runtimes-design.md` revision 29
 | :-- | :-- | :-- |
 | Major, a derive skips the `PreRoute` and `PostRoute` chains | Holds. | `validateAndBuildCreateRow` runs them, and `handleDerive` does not, so a rejected runtime was reachable through `runtimeRef`. A shared admission function replaces the list, and a rewrite refuses. |
 | Minors: the order of the tenant view, the upload cost, and sessions that never bound | Hold. | Applied. A bind always stores a plan, which removes the empty-plan copy rule. |
+
+## Review of revision 4
+
+A stop check read revision 4 and `tenant-derived-runtimes-design.md` revision 29. It found no Critical or High issue, one Major, and no path across tenants. It was checked against the tree, and revision 5 applies it.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, a refused derive lowers the tenant's storage counter | Holds. Exists today for checkpoint chunks, and revision 3 extended it to uploads. | `DeleteBySession` releases live rows' bytes, and `Copy` charges nothing. All refusals now come ahead of the copy, and each copy charges the counter. |
+| Minors: the source of the gates, the experiment refusal, and "every bind stores a plan" | Hold. Fix changed for the experiment. | Revision 4's refusal would have stopped every enrolled user's derive during an experiment. `routeExperiment` does not run on a derive. |
 
 ## Earlier history
 
