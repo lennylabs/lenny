@@ -1,6 +1,6 @@
 # Session derive
 
-Status: design for owner review, revision 2, 2026-11-04. Revision 2 applies the review of revision 1, under "Review of revision 1", and no review has read it. This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 29, `tenant-scoping-identity-design.md` revision 22, and `egress-and-git-design.md` revision 59. Proposals carry the label SD-n.
+Status: design for owner review, revision 3, 2026-11-04. Revisions 2 and 3 apply the reviews of revisions 1 and 2, under their own sections, and no review has read revision 3. This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against `tenant-derived-runtimes-design.md` revision 29, `tenant-scoping-identity-design.md` revision 22, and `egress-and-git-design.md` revision 59. Proposals carry the label SD-n.
 
 ## Problem
 
@@ -78,9 +78,9 @@ At create, the gateway copies the source's stored plan to the new row, with `env
 
 | | `from: latest` | `from: start` |
 | :-- | :-- | :-- |
-| **Tree** | The snapshot. The adapter restores it and materializes none of the plan's sources, so a clone's commit, local commits, and uncommitted changes, an edited default file, and a deleted path all stay as they were. | The plan's sources, at each `resolvedCommitSha`, with no snapshot. |
+| **Tree** | The snapshot. The adapter restores it, and the binder receives none of the plan's sources, so a clone's commit, local commits, and uncommitted changes, an edited default file, and a deleted path all stay as they were. | The plan's sources, at each `resolvedCommitSha`, with no snapshot. |
 | **Source needs** | A snapshot, and `allowStale: true` when the source is live | A plan it has bound or has run under, in any state |
-| **Uploads** | Not needed | Copied to the new session, with `uploadRef` rewritten. An expired upload refuses. |
+| **Uploads** | Dropped from the plan copy, because the snapshot holds their files, and `bindprepare.go` would otherwise fetch each one and fail once it has expired | Copied to the new session, with `uploadRef` rewritten, each reserving against the tenant's storage quota. An expired upload refuses. |
 | **A resume before the first checkpoint** | Repeats the first bind | Takes the rebuild path, which reads the plan |
 
 In both modes the plan stays on the row, because the new session's read checks, its readable set, the read tokens of the provisional binding, a warm repository's restore fetch, and a later derive all read it. Setup commands run at finalize in both modes, followed by `additionalSetupCommands`. A new pod lacks anything installed outside the workspace, so `from: latest` runs them too, over the restored tree. That can change the exact state, because `npm ci` resets `node_modules`, and a command that is unsafe to repeat can fail.
@@ -133,15 +133,15 @@ A commit the host no longer serves is not known before the fetch, because a pinn
 
 The plan passed its checks when the source bound it, and those checks can have changed. Before the claim, the gateway runs the checks a client's plan gets. No single function does that today: `resolveSubmittedPlan` takes raw JSON, `Parse` refuses `resolvedCommitSha`, `validatePlanUploadRefs` needs a session, and `enforceSetupCommandPolicy` and DR-9's default-clone run are separate steps. SD-1 extracts one function over a parsed plan, which every bind path calls. It covers the auth bindings, named bindings, `egress.allowedHosts`, and `gitClone` sources under the environment, the rule for pods with no per-session policy, a `required` pool's check on the user's link, and `verbatimClientFiles`.
 
-**Admission.** `handleDerive` runs `requireTenantClassification`, `requireConcurrencyLimits`, and `requireAdmissionRateLimit` for the target, which closes F-15.1.78. A refused derive releases its snapshot and upload reservations through `undoDerivedWrites`.
+**Admission.** `handleDerive` runs the gates a create runs, for the target: `requireTenantClassification`, `requireConcurrencyLimits`, `requireAdmissionRateLimit`, `requirePlaygroundRuntimeVisible`, `applyPlaygroundCaps`, and `requirePoolNotDraining`, and the `env` blocklist in `validateRequestEnvelope` on the copied `env`. This closes F-15.1.78. `undoDerivedWrites` releases the identifier reservation and objects today, and it gains the storage reservation of each upload copy.
 
-**Setup commands.** §7.5 exempts operator-written defaults from `setupCommandPolicy`, and the stored plan does not say which commands those are. Each stored command therefore gains an `origin`: `operator`, `tenant`, `client`, or `derive`. On a derive, an `operator` command stays exempt under `from: start` and on the source's own runtime, and any other case is checked against the target's effective policy. Under `from: latest` onto another runtime the tree is agent-written, so an exempt `./bootstrap.sh` would run what an agent edited, past a policy the target's operator set. Under `from: start` the tree is the plan's. A `tenant` command is also refused on a target whose policy is not `allowlist` with `shell: false`, as DR-4 requires, because an inert string would otherwise run under a shell. The source's original commands are the only ones that run, plus any the request adds, and the check decides whether the target admits them.
+**Setup commands.** §7.5 exempts operator-written defaults from `setupCommandPolicy`, and the stored plan does not say which commands those are. Each stored command therefore gains an `origin`: `operator`, `tenant`, `client`, or `derive`. On a derive onto the same runtime, an `operator` command stays exempt. On a derive onto another runtime, in either mode, it keeps that origin only when its text is among the target's own operator-written defaults, and otherwise the plan copy relabels it `client`, so the target's effective policy checks it. Under either mode the tree can hold content a client or an agent chose, a plan file under `from: start` or an edited script under `from: latest`, so `npm ci` from another runtime's defaults would otherwise run client-chosen code past a policy the target's operator set. The relabel stays on the copy, so a later derive on that runtime cannot regain the exemption. A `tenant` command is also refused on a target whose policy is not `allowlist` with `shell: false`, as DR-4 requires, because an inert string would otherwise run under a shell. The source's original commands are the only ones that run, plus any the request adds, and the check decides whether the target admits them.
 
 **Warm stores on the target.** A target's pods can hold warm stores for clones the plan does not name, under "Warm clones" in `tenant-derived-runtimes-design.md`, and the agent can read them. The gateway runs the read checks for each warm default clone on the target that the plan omits, and `coveredStores` includes them.
 
 ### Stops
 
-A stored plan can hold content a tenant has since stopped, and a grant flag set false or a forbid is "the stop after a compromise". A derive is a new session, so it is refused. Reading the source's runtime alone would not hold, because a derive onto a platform runtime before a forbid leaves a row whose runtime is that platform runtime. A plan therefore carries `planOriginRuntimes`, the tenant-derived runtimes whose defaults it holds. A derive copies its source's set at create, and it adds nothing, because it composes nothing. A session that composes adds its runtime at bind, and a delegated child copies its parent's at bind, because a child's exports came from that parent.
+A stored plan can hold content a tenant has since stopped, and a grant flag set false or a forbid is "the stop after a compromise". A derive is a new session, so it is refused. Reading the source's runtime alone would not hold, because a derive onto a platform runtime before a forbid leaves a row whose runtime is that platform runtime. A plan therefore carries `planOriginRuntimes`, the tenant-derived runtimes whose defaults it holds. A derive copies its source's set at create, and it adds nothing, because it composes nothing. A session that composes adds its runtime at bind, in the update that binds the plan, and a delegated child copies its parent's at bind, because a child's exports came from that parent.
 
 A runtime's current state would not hold either. If a `security-admin` sets a forbid or an operator sets `allowGitClones` false after the tenant has removed the clone, the runtime looks clean, and a derive of a session from before the incident would rerun the pinned commit. Two counters therefore record stops, in a tenant-keyed `content_stop_epochs` table, outside the grant's and the security record's bodies, because a `PUT` replaces each of those documents and SO-2 stores the record as versions, so a pending weakening written before a forbid would otherwise regress a counter kept inside it. An absent row reads as 0. Each is incremented in the stop's own transaction: the grant entry's, keyed by base, when `allowWorkspaceFiles`, `allowSetupCommands`, or `allowGitClones` is set false, and the security record's, in the transaction that activates a version adding `all`, `setupCommands`, `workspaceFiles`, `gitClones`, or `floatingCloneRefs`, or setting `verbatimClientFiles: forbid`. Each `planOriginRuntimes` entry stores both values, from the same read of the tenant view that composition used.
 
@@ -171,6 +171,7 @@ A derive on the same runtime is not refused. On a pod with no supervisor, the so
 
 - A client that wants a re-run writes the loop, or uses a helper, and it stays attached for the run.
 - A client that re-sends messages repeats pushes and external calls on real systems.
+- An additional command is not repeated by a later derive, so a package it installed outside the workspace is missing under `from: latest` of that run.
 - A derive cannot add files, so a client that needs them uses an additional command. Today's derive can add them at finalize.
 - A tenant's later change to a runtime reaches no derived session, including a security fix to a default file on a platform runtime that a tenant did not stop.
 - A source that used uploads cannot be started from after 7 days.
@@ -229,7 +230,7 @@ It can land before those designs, and each adds its rule to the checks when it l
 ### Tier 1: unit
 
 - The plan copy keeps each `resolvedCommitSha`, composes nothing from the target, and writes an empty plan for a source that ran with none.
-- An `operator` command stays exempt under `from: start` and on the source's runtime, and it is checked under `from: latest` onto another runtime. `tenant`, `client`, and `derive` commands are checked. A `tenant` command is refused on a target without `allowlist` and `shell: false`. A client's `origin` is refused.
+- An `operator` command stays exempt on the same runtime and on another whose defaults hold that text, and it is relabelled `client` and checked otherwise, in both modes, and a later derive on that runtime keeps the relabel. `tenant`, `client`, and `derive` commands are checked. A `tenant` command is refused on a target without `allowlist` and `shell: false`. A client's `origin` is refused.
 - `planOriginRuntimes` copies through a chain.
 - Each refusal reason.
 
@@ -239,13 +240,13 @@ It can land before those designs, and each adds its rule to the checks when it l
 
 ### Tier 4: integration
 
-- `from: latest` keeps a default clone's commit, local commits, and uncommitted changes, an edited default file, and a deleted path, and it adds a clone new to the runtime nowhere. It survives a chain with no checkpoint. Setup commands run again, then additional ones.
+- `from: latest` of a session with an expired upload binds, because the copy drops upload sources. `from: latest` keeps a default clone's commit, local commits, and uncommitted changes, an edited default file, and a deleted path, and it adds a clone new to the runtime nowhere. It survives a chain with no checkpoint. Setup commands run again, then additional ones.
 - `from: start` starts with no file a prompt created, at the source's commit, with the target's added clone absent and its dropped clone present. An upload copies, and an expired one refuses. It works on a live source and on one whose snapshot has been collected.
 - A session resumed before its first checkpoint repeats the first bind under `from: latest`, and it rebuilds from the plan under `from: start`.
 - `from: start` of a `from: latest` session and of a delegated child refuses. `from: start` of a `from: start` session starts where the first session started.
 - A derive binds no second plan at finalize, finalize accepts the derive's `uploadToken`, and an upload no plan names is not materialized.
 - `env` and `runtimeOptions` copy, and an option the target's schema refuses refuses the derive.
-- A derive meets the per-runtime and admission limits, and a refused one releases its reservations.
+- A derive meets the per-runtime, admission, playground, and draining gates, and the `env` blocklist. A refused one releases its reservations. An upload copy past the tenant's storage quota refuses.
 - Messages read back in order, including a failed turn's, marked undelivered, and one sent through the MCP send paths, and a retried held message appears once. The read returns nothing after retention.
 - An additional command runs after the source's, is refused by the target's policy, reruns on a rebuild of the same session, and is absent from a later derive's plan, so a chain does not accumulate commands and a `from: latest` of the run does not fail on an existing branch.
 
@@ -264,15 +265,15 @@ It can land before those designs, and each adds its rule to the checks when it l
 
 ## Decisions
 
-These are open for the owner, and the recommendation is the design above. The owner settled one route with two modes, the exact start, the client sending messages, writes on, setup commands running again on `from: latest`, and moving `evalRef`, and settled these earlier: an expired upload refuses, a source that started from a snapshot refuses `from: start`, and a content stop refuses earlier plans permanently.
+The owner settled the decisions below as recommended on 2026-11-04, in the words "go with your recommendations". The owner also settled one route with two modes, the exact start, the client sending messages, writes on, setup commands running again on `from: latest`, and moving `evalRef`, and settled these earlier: an expired upload refuses, a source that started from a snapshot refuses `from: start`, and a content stop refuses earlier plans permanently.
 
 | # | Decision | Recommendation | Cost of the recommendation | Alternative |
 | :-- | :-- | :-- | :-- | :-- |
-| 1 | Exempting setup commands | An `origin` on each stored command, with `operator` exempt under `from: start` and on the source's own runtime | One stored field, and an old operator command runs on a target whose operator dropped it or never wrote it, under `from: start` | Text match against the target's operator defaults, which refuses a derive when an upgrade changed a command. Or exempt nothing, which refuses most derives on a base with an allowlist |
-| 2 | `additionalSetupCommands` | The request field the owner proposed, under the target's policy | A base whose allowlist omits `git` refuses it, and a command is a convention with no enforcement | Nothing added, which leaves a run on the source's branch |
-| 3 | A hard limit on a run's pushes | None in the first version | An agent can still push outside the run's branch within the entry's patterns | A request field narrowing `allowedRefPatterns` on each writable entry, which `netagent` enforces. It is additive |
-| 4 | Files on a derive | None. A client uses an additional command | A client that added files at finalize today needs a command to fetch them, under the target's policy and egress | Let a client add sources at finalize, which keeps the upload and `path` rules and makes the plan no longer the source's |
-| 5 | The client messages read | `?from=client` on the existing messages route | The route's response keeps its other fields | A new route, as the owner first described, which is more explicit and adds a route |
+| 1 | Exempting setup commands | **Settled, then narrowed by review.** An `origin` on each stored command. An `operator` command stays exempt on the same runtime, and on another whose operator-written defaults hold that text | An upgrade that changed an operator command depends on the new version's policy to run the old one, and a derive is refused otherwise | Exempt under `from: start` as the owner first accepted, which a client can use to run its own content past a target's policy |
+| 2 | `additionalSetupCommands` | **Settled.** The request field the owner proposed, under the target's policy | A base whose allowlist omits `git` refuses it, and a command is a convention with no enforcement | Nothing added, which leaves a run on the source's branch |
+| 3 | A hard limit on a run's pushes | **Settled.** None in the first version | An agent can still push outside the run's branch within the entry's patterns | A request field narrowing `allowedRefPatterns` on each writable entry, which `netagent` enforces. It is additive |
+| 4 | Files on a derive | **Settled.** None. A client uses an additional command | A client that added files at finalize today needs a command to fetch them, under the target's policy and egress | Let a client add sources at finalize, which keeps the upload and `path` rules and makes the plan no longer the source's |
+| 5 | The client messages read | **Settled.** `?from=client` on the existing messages route | The route's response keeps its other fields | A new route, as the owner first described, which is more explicit and adds a route |
 
 
 ## Review of revision 1
@@ -285,6 +286,16 @@ An independent review read revision 1. It found no Critical or High issue, three
 | Major, additional commands carry into later derives | Holds. | A later `from: latest` would fail on `checkout -b`. The origin `derive` is dropped from a plan copy. |
 | Major, the `operator` exemption crosses bases | Holds. Fix changed. | The reviewer proposed storing the base, which would refuse a v1 to v2 regression test. The exemption stands under `from: start`, whose tree is the plan's, and on the source's runtime, and an agent-written tree onto another runtime is checked. |
 | Minors: the command's type and shell, `tenant` on a weak target, DR-3 under SD-P4, ownership of restored repositories, code assuming the old row, missing fields, the sender's default, delivery state, and stale text | Hold. | Applied. |
+
+## Review of revision 2
+
+A stop check read revision 2 and `tenant-derived-runtimes-design.md` revision 29. It found no Critical or High issue, two Majors, and no path across tenants. Each was checked against the tree, and revision 3 applies them.
+
+| Finding | Result | Check and outcome |
+| :-- | :-- | :-- |
+| Major, the `operator` exemption can be evaded | Holds. Narrows a settled decision. | "The tree is the plan's" was wrong, because a client writes that plan's files. A chain also regained the exemption over an agent-written tree. The relabel closes both, and an unchanged command still passes. The owner's settled decision 1 had the broader rule. |
+| Major, `from: latest` still fetches the source's uploads | Holds. | `stageWorkspace` in `bindprepare.go` runs on the plan before `FinalizeWorkspace`, and it calls `Blobs.Get` on each `uploadFile`. The copy drops upload sources. |
+| Minors: upload quota, and the other create gates | Hold. | Applied. |
 
 ## Earlier history
 
