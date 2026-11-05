@@ -31199,7 +31199,7 @@ Severity legend: **High** MUST/correctness/security regression; **Medium** SHOUL
 
 **Spec:** §11.1, the per-runtime and per-pool limits; §12.9; §15.1 REST API.
 **Evidence:** `create.go` and `create_and_start.go` call `requireConcurrencyLimits` and `requireAdmissionRateLimit`, and `create_and_start.go` calls `requireTenantClassification`. `handleReplay` and `handleDerive` (`pkg/gateway/sessionserver/replay.go`, `derive.go`) call none of them. Read only, not run.
-**Gap:** A tenant's replays and derives go around the per-runtime and per-pool limits on a shared pool, and only the tenant cap holds.
+**Gap:** A tenant's replays and derives go around the per-runtime and per-pool limits on a shared pool, and only the tenant cap holds. They also skip the `PreRoute` and `PostRoute` chains and the `PLATFORM_DEGRADED` gate in `validateAndBuildCreateRow`, so a runtime a deployer's interceptor rejects is reachable through derive's `runtimeRef`.
 **Suggested resolution:** Through the proposal pipeline, or a direct fix if the owner prefers. Run the same gates on both handlers for the target. `designs/session-derive-design.md` names this. Tests: tier 4 on each limit through each route.
 
 ### - [ ] F-8.7.16 — A delegated child's exports reach an operator's setup command at the adapter's identity on a target with no runtime supervisor [High] — OPEN
