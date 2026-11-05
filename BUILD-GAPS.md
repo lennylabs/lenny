@@ -29042,6 +29042,13 @@ no caller without a verified gateway client cert.
 **Gap:** A pair such as `a/b/l -> ../..` and `src -> a/b/l/../../other/current/src` passes every lexical check, and at resolution it leaves the slot. An agent can plant it, a checkpoint records it, and a derive or replay restores it ahead of the plan's sources. The plan's next write under `src/` goes through the link at the adapter's UID, into another slot on a concurrent pod. `overlayTree` also follows a single link an agent wrote in the live tree when materialization runs over that tree, with no chain or restore. The forbidden-path check reads the text too, so a longer chain can reach `/run/lenny`. Those reaches were reasoned from the code and not exercised, and the severity assumes they hold.
 **Suggested resolution:** Through the proposal pipeline. Open every materializer write, move, and removal under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, and fail the materialization when a path crosses a link. `designs/egress-and-git-design.md` and `designs/tenant-derived-runtimes-design.md` (DF-15) rely on this. No proposal has been started.
 
+### - [ ] F-13.4.25 — The adapter-local file tools follow symbolic links, so an agent's link makes the adapter read or write outside the workspace at its own UID [High] — OPEN
+
+**Spec:** §13.4, the symbolic link target rules; §28.5.3 Intra-pod (the adapter resolves `read_file`, `write_file`, `list_dir`, and `delete_file` locally); §7.2 `tool_call`.
+**Evidence:** `resolveWorkspacePath` (`pkg/adapter/localtools/localtools.go`) joins the path to the slot root and tests the prefix as text. `readFile`, `writeFile`, `listDir`, and `deleteFile` then call `os.ReadFile`, `os.WriteFile`, `os.ReadDir`, and `os.Remove`, which follow links. `attach.go` dispatches these tools against `workspaceRootForSession` before relaying a frame.
+**Gap:** In the sidecar model the agent runs `ln -s /var/run/secrets/kubernetes.io/serviceaccount/token current/t` and sends a `read_file` for `t`. The adapter reads the file in its own container and returns the projected service account token. `write_file` writes through a link anywhere the adapter's UID can write. F-13.4.24 covers only the materializer.
+**Suggested resolution:** Through the proposal pipeline. Resolve every local tool path with `openat2` under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` against the slot's `current/`, as `scrub/resolve_linux.go` does, and refuse a path that crosses a link. Found by the review of `designs/tenant-derived-runtimes-design.md` revision 46 (DF-18). No proposal has been started.
+
 ## §13.5 Delegation Chain Content Security <a id="13.5"></a>
 Audit of spec/13_security-model.md §13.5 (lines 668–683) against the
 implementation tree under pkg/delegation, pkg/gateway/interceptor,
