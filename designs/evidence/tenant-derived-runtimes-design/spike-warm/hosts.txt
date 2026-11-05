@@ -1,0 +1,8 @@
+github https://github.com/golang/example 7f05d217867b2af52b0a28c6d1c91df97e1b5b39
+gitlab https://gitlab.com/gitlab-org/gitlab-shell.git e3c67cd966308edb1292e916226eeefe8b9e2ca3
+bitbucket https://bitbucket.org/tildeslash/monit.git 2eef01fd56113ae1dc974afabda570ec0735cae8
+codeberg https://codeberg.org/Codeberg/Documentation.git b80969941eab9be67db68627af46da1e59588aff
+gitea https://gitea.com/gitea/tea.git 397e6300ec93937b7745ebcc19b95ca9cb30568b
+sourcehut https://git.sr.ht/~sircmpwn/scdoc 24be30ef17d5ca0162f11b35258c8fa2413d556a
+kernelorg https://git.kernel.org/pub/scm/utils/dtc/dtc.git 54e547173bf0f2a4cc35eba8b5738caf38b9230f
+azure https://dev.azure.com/dnceng-public/public/_git/dotnet-public-wiki af56d96fdbd7c26e9fc94336b6f50dcc6ceff484

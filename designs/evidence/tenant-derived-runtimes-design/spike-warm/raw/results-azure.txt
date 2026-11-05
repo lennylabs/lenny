@@ -1,0 +1,10 @@
+RESULT azure shallow_tip_by_sha ok
+RESULT azure fill_nontip_by_sha ok secs=1 storeKB=144
+RESULT azure noref_refs 0
+RESULT azure store_writable no
+RESULT azure reachable_without_fetch ok
+RESULT azure a0_after_move head=4728a89a4e2f status_lines=0 fsck=ok alternates=/warm/azure.git/objects ownKB=16
+RESULT azure delta_fetch ok ownKB=200 status_lines=0 fsck=ok commit=ok
+RESULT azure base_fetch ok ownKB=104
+RESULT azure noref_fetch ok ownKB=108
+RESULT azure shallow1_fetch ok ownKB=28

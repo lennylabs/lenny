@@ -1,0 +1,244 @@
+// Stand-in for netagent's git path: a loopback-style CONNECT endpoint that
+// terminates TLS for every host with a per-run CA, re-originates to the real
+// host verified against public roots, and logs each smart HTTP request,
+// counting the want and have lines git sends. It injects no credential.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+var (
+	caCert *x509.Certificate
+	caKey  *ecdsa.PrivateKey
+	mu     sync.Mutex
+	logF   *os.File
+	leafs  = map[string]*tls.Certificate{}
+)
+
+func mkCA() {
+	caKey, _ = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "spike per-pod CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour), IsCA: true,
+		KeyUsage: x509.KeyUsageCertSign, BasicConstraintsValid: true}
+	der, _ := x509.CreateCertificate(rand.Reader, t, t, &caKey.PublicKey, caKey)
+	caCert, _ = x509.ParseCertificate(der)
+	os.WriteFile("/out/ca.pem", pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0644)
+}
+
+func leaf(host string) *tls.Certificate {
+	mu.Lock()
+	defer mu.Unlock()
+	if c, ok := leafs[host]; ok {
+		return c
+	}
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: big.NewInt(time.Now().UnixNano()), Subject: pkix.Name{CommonName: host},
+		DNSNames: []string{host}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
+	der, _ := x509.CreateCertificate(rand.Reader, t, caCert, &k.PublicKey, caKey)
+	c := &tls.Certificate{Certificate: [][]byte{der}, PrivateKey: k}
+	leafs[host] = c
+	return c
+}
+
+type one struct {
+	c    net.Conn
+	once sync.Once
+	done chan struct{}
+}
+
+func (o *one) Accept() (net.Conn, error) {
+	var c net.Conn
+	o.once.Do(func() { c = o.c })
+	if c != nil {
+		return &closeNotify{c, o.done}, nil
+	}
+	<-o.done
+	return nil, io.EOF
+}
+func (o *one) Close() error   { return nil }
+func (o *one) Addr() net.Addr { return o.c.LocalAddr() }
+
+type closeNotify struct {
+	net.Conn
+	done chan struct{}
+}
+
+func (c *closeNotify) Close() error {
+	err := c.Conn.Close()
+	select {
+	case <-c.done:
+	default:
+		close(c.done)
+	}
+	return err
+}
+
+type countingBody struct {
+	io.ReadCloser
+	n *int64
+}
+
+func (c countingBody) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	*c.n += int64(n)
+	return n, err
+}
+
+func pktCounts(b []byte) (wants, haves int, cmd string, firstHaves []string, other []string) {
+	for len(b) >= 4 {
+		l, err := strconv.ParseUint(string(b[:4]), 16, 16)
+		if err != nil {
+			return
+		}
+		if l < 4 {
+			b = b[4:]
+			continue
+		}
+		if int(l) > len(b) {
+			return
+		}
+		line := strings.TrimRight(string(b[4:l]), "\n")
+		switch {
+		case strings.HasPrefix(line, "want "):
+			wants++
+		case strings.HasPrefix(line, "have "):
+			haves++
+			if len(firstHaves) < 5 {
+				firstHaves = append(firstHaves, line[5:])
+			}
+		case strings.HasPrefix(line, "command="):
+			cmd = line[8:]
+		default:
+			if len(other) < 12 {
+				other = append(other, line)
+			}
+		}
+		b = b[l:]
+	}
+	return
+}
+
+func handler(host string) http.Handler {
+	target, _ := url.Parse("https://" + host)
+	rp := httputil.NewSingleHostReverseProxy(target)
+	rp.Transport = &http.Transport{Proxy: nil, ForceAttemptHTTP2: false,
+		TLSClientConfig: &tls.Config{ServerName: host}, TLSNextProto: map[string]func(string, *tls.Conn) http.RoundTripper{}}
+	orig := rp.Director
+	rp.Director = func(r *http.Request) { orig(r); r.Host = host }
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body []byte
+		if r.Body != nil {
+			body, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		plain := body
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			if zr, err := gzip.NewReader(bytes.NewReader(body)); err == nil {
+				plain, _ = io.ReadAll(zr)
+			}
+		}
+		wants, haves, cmd, fh, other := pktCounts(plain)
+		var respBytes int64
+		status := 0
+		rec := &statusW{ResponseWriter: w, code: &status, n: &respBytes}
+		start := time.Now()
+		rp.ServeHTTP(rec, r)
+		e := map[string]any{"t": start.Format(time.RFC3339Nano), "host": host, "method": r.Method, "path": r.URL.Path,
+			"query": r.URL.RawQuery, "gitProtocol": r.Header.Get("Git-Protocol"), "ua": r.Header.Get("User-Agent"), "reqBytes": len(body), "status": status,
+			"respBytes": respBytes, "wants": wants, "haves": haves, "command": cmd, "firstHaves": fh, "args": other,
+			"ms": time.Since(start).Milliseconds()}
+		mu.Lock()
+		json.NewEncoder(logF).Encode(e)
+		mu.Unlock()
+	})
+}
+
+type statusW struct {
+	http.ResponseWriter
+	code *int
+	n    *int64
+}
+
+func (s *statusW) WriteHeader(c int) { *s.code = c; s.ResponseWriter.WriteHeader(c) }
+func (s *statusW) Write(b []byte) (int, error) {
+	if *s.code == 0 {
+		*s.code = 200
+	}
+	n, err := s.ResponseWriter.Write(b)
+	*s.n += int64(n)
+	return n, err
+}
+func (s *statusW) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func main() {
+	mkCA()
+	var err error
+	logF, err = os.OpenFile("/out/requests.jsonl", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ln, err := net.Listen("tcp", ":3128")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Print("listening")
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func(c net.Conn) {
+			br := bufio.NewReader(c)
+			req, err := http.ReadRequest(br)
+			if err != nil || req.Method != http.MethodConnect {
+				c.Write([]byte("HTTP/1.1 405 Method Not Allowed\r\n\r\n"))
+				c.Close()
+				return
+			}
+			host, port, _ := net.SplitHostPort(req.Host)
+			if port != "443" {
+				c.Write([]byte("HTTP/1.1 403 Forbidden\r\n\r\n"))
+				c.Close()
+				return
+			}
+			c.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+			tc := tls.Server(c, &tls.Config{Certificates: []tls.Certificate{*leaf(host)}, NextProtos: []string{"http/1.1"}})
+			if err := tc.Handshake(); err != nil {
+				log.Printf("handshake %s: %v", host, err)
+				c.Close()
+				return
+			}
+			o := &one{c: tc, done: make(chan struct{})}
+			srv := &http.Server{Handler: handler(host), ReadHeaderTimeout: 30 * time.Second}
+			srv.Serve(o)
+		}(c)
+	}
+}
