@@ -47214,6 +47214,13 @@ Spec line 2926 specifies one metric: `lenny_diagnostics_request_duration_seconds
 
 ---
 
+
+### - [ ] F-25.6.10 — The `coreDnsStuckEndpoint` remedy patches the CoreDNS Deployment in `kube-system`, and `lenny-ops` holds no right there, while it holds Deployment writes in its own namespace that no code uses [Low] — OPEN
+
+**Spec:** §25.6 fixable findings table (`coreDnsStuckEndpoint`: "Rolling restart of CoreDNS Deployment (`kubectl rollout restart -n kube-system deployment/coredns` equivalent"); §25.4 **ServiceAccount and RBAC** (`lenny-ops-namespace` grants `deployments` `patch` and `update` and `deployments/scale` in the release namespace "for upgrades", and no `kube-system` rule).
+**Evidence:** `cmd/lenny-ops/doctorremediator.go` sets `corednsNamespace = "kube-system"` and patches `restartedAt` there. `charts/lenny/templates/ops-rbac.yaml` binds no Role in `kube-system`, so the remedy gets a 403. No code under `cmd/lenny-ops` or `pkg/ops` patches, updates, or scales a Deployment in the release namespace, so those rights are unused.
+**Gap:** The remedy cannot work as rendered, and `lenny-ops` holds Deployment write rights that only a future upgrade path would use, which keeps it inside the egress PKI boundary.
+**Suggested resolution:** Through the proposal pipeline, with `security-oversight-design.md` decision 18: grant the remedy a `kube-system` Role limited by `resourceNames` to `coredns`, or target the dedicated agent CoreDNS in the release namespace, and drop the unused Deployment rights until an upgrade design needs them. Found while answering decision 18. No proposal has been started.
 ## §25.7 Operational Runbooks <a id="25.7"></a>
 Reviewed: 2026-05-23
 Spec: `spec/25_agent-operability.md` lines 2986–3277.
