@@ -40163,6 +40163,13 @@ change here.
 
 ---
 
+
+### - [ ] F-17.6.28 — §17.6 shows the seed's tenant as one `tenant` object, while the chart and the bootstrap handler take a `tenants` list [Low] — OPEN
+
+**Spec:** §17.6 **Bootstrap seed mechanism.** item 1 (`bootstrap.tenant` with `name` and `displayName`) and the install walkthrough's values block.
+**Evidence:** `charts/lenny/values.yaml` sets `bootstrap.tenants: []`, `bootstrap-configmap.yaml` renders `tenants`, `BootstrapRequest` (`pkg/gateway/externalapi/admin/bootstrap.go`) has `Tenants []TenantPayload`, and `pkg/ctlcli/main.go` reads `tenants`. No reader accepts a singular `tenant`.
+**Gap:** A deployer following §17.6 writes a key the chart ignores. A seed naming several tenants is a normal chart value, which matters to `designs/tenant-derived-runtimes-design.md` decision 15, where an absent `tenantAccess` grants none of them.
+**Suggested resolution:** Through the proposal pipeline, with DR-1: state the `tenants` list in §17.6 and its examples. Found while settling decision 15 (DF-19). No proposal has been started.
 ### Aggregated Counts
 
 - **High:** 7
