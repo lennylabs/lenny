@@ -1,0 +1,862 @@
+# Incremental checkpoints
+
+Status: design for owner review, revision 3, 2026-11-06. Revision 2 added IC-8, which lets a runtime or pool turn checkpointing off and set its own checkpoint interval. Revision 3 adds the cloud benchmarks the owner asked for ("Benchmarks"), a change tracker that removes the stat walk from the pause (IC-1 "Change tracker"), a pause budget expressed as estimated capture time, the levers operators, runtime authors, and tenants have to reduce the cost of checkpoints ("Levers"), and the changes this design makes to Lenny's documentation ("Changes to Lenny's documentation"). No review has read any revision.
+
+## Problem
+
+§4.4 archives a session's whole workspace into one gzip-compressed tar stream on every checkpoint, and a Full-level runtime stays quiesced until the last byte of that stream is uploaded. Both the cost of a checkpoint and the length of the pause grow with the size of the workspace.
+
+- **The pause grows with the workspace.** The adapter sends `checkpoint_request`, archives and uploads every byte, and sends `checkpoint_complete` after the stream ends (`Checkpoint` in `pkg/adapter/checkpoint.go`). §4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling) states the relationship as `expected_quiescence_seconds ≈ workspace_bytes / (100 × 1024 × 1024)`.
+- **A large workspace never completes a checkpoint.** A periodic attempt runs under the 60-second `CheckpointTimeout` (`attemptContext` in `pkg/gateway/checkpoint/checkpointer/checkpointer.go`). A workspace that cannot be archived and uploaded in 60 seconds fails every attempt. Each failed attempt still pauses a Full-level runtime for up to 60 seconds, and the attempt repeats every `periodicCheckpointIntervalSeconds`.
+- **Every attempt starts over.** A tar stream has no reuse between attempts. A session holding a 5 GiB clone uploads 5 GiB on each checkpoint, even when one file changed. The chunks a timed-out attempt uploaded are a prefix of a tar stream that the next attempt cannot use.
+- **The size limit replaces one failure with another.** §4.4.4 (Checkpoint SLOs and Scheduling) caps the workspace at `workspaceSizeLimitBytes`, 512 MiB by default, to bound the pause. A session that clones a large monorepo is then evicted by the `emptyDir.sizeLimit`, or it runs without checkpoints because the pre-checkpoint probe rejects every attempt.
+- **Best-effort checkpoints fail when files change.** The spec describes a Basic or Standard checkpoint as a snapshot with minor inconsistencies. The archive code fails the whole attempt when a file grows during the archive or disappears between the directory walk and the read (see "Measurements").
+- **Interrupts wait for uploads.** The Checkpoint handler holds the pod-wide operation lock from before the size probe until the upload ends (`pkg/adapter/checkpoint.go`, `s.ops.Begin`), so an interrupt waits for the whole upload on every integration level.
+
+## Owner's direction
+
+On 2026-11-05 the owner wrote: "we definitely need to improve checkpointing with a re-design." The owner supplied pointers from another conversation, which "Starting points" evaluates.
+
+On the same day the owner accepted the recommended `checkpointPolicy` values (IC-8), in the words "your recommendation makes sense", and added: "I think a runtime/pool should be able to override the default checkpoint interval if possible."
+
+The owner then asked for measurements on AWS, run independently of the project's test infrastructure, with repositories fetched from the internet, and scoped to "how long it takes to checkpoint and transfer". For the follow-up runs the owner wrote: "Depending on the results, and if needed to find a good solution, try different combinations. If 4 helps, then it should be documented for deployers. Make sure to measure performance impacts of 5." Item 4 is the gVisor KVM platform, and item 5 is the inotify change tracker. The owner added: "Once we're done with the tests and decisions, make sure the design doc includes changes/updates to Lenny's docs, with maybe a new section for checkpointing, with actual benchmarks and all the levers operators and tenants can use to reduce the impact when needed (including things like disabling checkpointing or changing the frequency, running on runc in a dedicated pool (tenant pool), etc.)"
+
+Asked whether the default pause budget should be 5 s or 10 s, the owner chose "10 s default" (decision D7). The same day the owner asked for the Kubernetes checks in "Benchmarks": "Test --file-access-mounts=exclusive with ConfigMaps etc. Test emptydir_mode = "block-plain"'s interaction with the kubelet's emptyDir size limit."
+
+Asked whether the platform has a way to stop a runtime that does not quiesce, such as the cgroup freezer, the owner answered: "no, I don't want the forcing mechanism, thanks". Quiescence therefore stays cooperative. A Full-level runtime pauses itself on `checkpoint_request`, and every other runtime is captured on the best-effort path while it runs.
+
+## Scope
+
+This design covers how the adapter captures a workspace, the stored format, the upload and restore protocol, derive, retention, garbage collection, and the runtime's quiesce contract, for checkpoints and for the seal at session end. It also covers the Runtime and pool settings that turn checkpointing off and set the checkpoint interval. It applies to every isolation profile and every integration level.
+
+The event store, the transcript, and the eviction minimal-state record in §4.4.5 (Checkpoint Storage Failure and Eviction Fallback) are unchanged. Node-level filesystem snapshots are evaluated and deferred (see "Node-level snapshots").
+
+## Requirements
+
+- R1. The time a runtime spends quiesced depends on the number of files in the workspace and on the bytes changed since the last pre-copy pass. It does not depend on the total bytes in the workspace. The target is a P95 pause under 1 second for a workspace of 500,000 files with up to 256 MiB changed since pre-copy, on runc with node-local SSD.
+- R2. A checkpoint uploads only content that the session's retained snapshots do not already hold.
+- R3. Bytes that a failed or timed-out attempt uploaded are reused by the next attempt of the same session.
+- R4. Node disk and the tenant's storage quota bound workspace size. The checkpoint pause no longer sets that bound.
+- R5. The pod keeps the §13.2 capability model. It holds no object-store credential and no `LIST`, `DELETE`, or multipart capability, and the gateway chooses every key it signs.
+- R6. A pod can reference only content that its own session wrote or that its session started from. Naming a hash grants no read.
+- R7. The design works on runc, gVisor, and Kata without node configuration, added privileges, or a particular node filesystem. A filesystem feature speeds up capture where the adapter detects it, and node configuration that a deployer applies lowers the pause further (see "Levers").
+- R11. A snapshot tagged `consistency: consistent` contains every change made before the runtime acknowledged the quiesce. A change source that can lose a change without reporting the loss is not used for a consistent capture.
+- R8. A file that changes during a best-effort capture costs that file's consistency. The attempt still completes.
+- R9. A restore verifies every byte it writes against the content hash recorded for it.
+- R10. Client contracts are unchanged: `GET /v1/sessions/{id}/workspace` still returns a gzip-compressed tar, and a derive still starts from the source's snapshot.
+
+## Security properties
+
+- S1. The gateway signs a `PUT` only for a pack key under the writing session's own prefix, and never for a pack ID its catalog already holds, so a pod cannot overwrite a pack another snapshot references.
+- S2. The gateway accepts a snapshot only when every pack it references is in the session's allowed set (see "Reference closure"). The allowed set comes from Postgres, so a pod that names a foreign pack ID fails the check.
+- S3. The gateway signs a `GET` only for packs that the snapshot being restored references.
+- S4. A restore recomputes the SHA-256 of every chunk and fails the file whose chunk does not match, so a corrupt or substituted pack cannot silently change restored content.
+- S5. The residual exposure matches today's: a compromised pod can write up to `checkpointGrantWindow × packMaxBytes` of chosen bytes into its own session's prefix within the capability TTL. The tenant's quota is charged for those bytes, and garbage collection reclaims any pack that no snapshot references.
+
+## Current state
+
+- `ArchiveTree` (`pkg/adapter/workspace/tree.go`) walks the workspace and the `/sessions` tree, writes a tar, and compresses it with `compress/gzip`. The handler slices the stream into fixed-size chunks and uploads them one at a time against per-chunk presigned `PUT` grants (`streamChunks` and `uploadChunk` in `pkg/adapter/checkpoint.go`).
+- `ExtractTree` restores the stream and stops at a fixed 2 GiB (`maxExtractBytes` in `pkg/adapter/workspace/extract.go`).
+- Derive copies every chunk object of the source checkpoint into the derived session's prefix (§7.1 **Derive copy semantics:**), and §12.5 (Artifact Store) **Workspace deduplication.** states that a future content-addressed format must add reference counting to garbage collection and erasure.
+- Retention keeps the latest 2 checkpoints per session (`pkg/gateway/checkpoint/checkpointretention`), with legal-hold exemptions.
+- A deadline fire leaves a partial manifest that the resume path reassembles into a tar prefix (§10.1.7 (preStop Hook Drain) **Reassembly on resume.**).
+- The embedded SIGSTOP path in `pkg/adapter/embeddedcheckpoint` has no caller outside its own package and tests.
+
+## Starting points
+
+The owner's pointers propose a copy-on-write snapshot, followed by an incremental, deduplicated archive of that snapshot. The table records what each pointer contributes here.
+
+| Pointer | Fit for Lenny | Outcome |
+| :-- | :-- | :-- |
+| An atomic filesystem snapshot on ZFS, Btrfs, or LVM thin volumes, taken before archiving | Requires a chosen node filesystem and privileged operations. Agent pods drop all capabilities (§13.1), and the workspace is an `emptyDir` directory rather than a dataset or subvolume. | Deferred as a node-level provider (see "Node-level snapshots"). |
+| A reflink copy with `cp --reflink=always` | `FICLONE` needs no privilege on XFS with `reflink=1` and on Btrfs. It cloned a 2 GiB file in 1.1 ms, and it was slower than a plain copy for 4 KiB files. On AWS it worked under runc on XFS and returned `EOPNOTSUPP` under gVisor and Kata (see "Benchmarks"). | Adopted for large changed files during the capture pass, when a probe at adapter start finds it available. In practice that is runc only. |
+| restic, BorgBackup, or Kopia for incremental, deduplicated archives | Each tool needs direct repository access with listing and deletion, plus repository locks and pruning. That conflicts with R5. Borg also needs Python and an SSH or local repository. | The techniques are adopted: content-defined chunking, deduplication, packs, and comparison against the parent snapshot's file metadata. The tools are not adopted. |
+| Plain tar is the wrong tool at this frequency | Agreed. | Replaced by packs and a manifest. |
+| An atomic snapshot keeps `.git` consistent, and `git bundle` or `git clone --mirror` otherwise | The quiesced capture pass is point-in-time for Full-level runtimes. A bundle needs git in the adapter image and re-reads history on each run. | Ordered capture of git metadata on the best-effort path (see "Git repositories"). Bundles are not adopted. |
+| Timer and event triggers with a debounce | The gateway's periodic schedule and its existing triggers stay. | A background pre-copy between checkpoints is a later optimization. |
+| restic or Kopia on the live folder works, but the result is not point-in-time | This is the pre-copy pass. | The capture pass closes the gap for Full-level runtimes. |
+
+## Measurements
+
+These numbers were measured on a laptop on 2026-11-05, before the cloud runs. They come from a Docker Desktop VM with no CPU limit and warm page caches. "Benchmarks" holds the cloud measurements, which supersede these where the two overlap.
+
+| Measurement | Environment | Result |
+| :-- | :-- | :-- |
+| Current archive path (a copy of `ArchiveTree`), this repository's `.git` | macOS, Apple M3 Pro, one goroutine, output discarded | 719 MiB in 8.1 s, 89 MiB/s |
+| Same, this repository's `pkg/` | Same | 32 MiB in 0.92 s, 35 MiB/s |
+| Same, 256 MiB of random bytes | Same | 2.8 s, 93 MiB/s |
+| Same, a file appended to during the archive | Same | `archive/tar: write too long`, attempt fails |
+| Same, a file created and removed during the archive | Same | `lstat ...: no such file or directory`, attempt fails |
+| Same, a file rewritten during the archive | Same | No error in one run |
+| Stat-only walk, 420,000 files in 70,000 directories | Linux arm64 container, 12 CPUs, overlayfs over ext4 | Sequential 2.12 s, 4 workers 0.51 s, 16 workers 0.35 s |
+| Same | XFS loopback with `reflink=1` | Sequential 0.62 s, 4 workers 0.16 s, 16 workers 0.22 s |
+| Stat-only walk, 388,091 files | macOS APFS, sequential | 8.9 s |
+| `FICLONE` of a 2 GiB file | XFS loopback with `reflink=1` | 1.1 ms |
+| `FICLONE` of 10,000 files of 4 KiB, against a plain copy | Same | 603 ms against 140 ms |
+| SHA-256 and MD5 throughput in Go | Apple M3 Pro | 2,615 MiB/s and 718 MiB/s |
+| Local copy of 512 MiB with `fsync` | macOS SSD | 1,379 MiB/s |
+
+A parallel stat walk on Linux costs 0.4 to 0.8 µs per file, so the walk alone fits the R1 target at 500,000 files. Today's archive rate of 35 to 93 MiB/s, before any upload, is what makes a whole-workspace pause long.
+
+## Benchmarks
+
+These measurements were taken on AWS between 2026-11-05 and 2026-11-06 with a standalone harness. The harness implements the current method and this design's capture, storage, and restore paths. It runs no Lenny component and uses none of the project's test infrastructure. The scripts, raw results, and analysis are kept outside the repository with the benchmark notes.
+
+### Setup
+
+- **Nodes.** EC2 in `us-west-2` on Amazon Linux 2023, with containerd 2.4.2, runc 1.5.2, gVisor `release-20261102.0` on the systrap platform with directfs, and Kata Containers 4.3.1 on QEMU. Most runs used `m8i.2xlarge` with nested virtualization enabled and a gp3 root volume at its baseline of 3,000 IOPS and 125 MiB/s. Other runs used `i4i.2xlarge` with local NVMe and `m7i.metal-24xl` bare metal with gp3.
+- **Pods.** Each run started one container through nerdctl, limited to 4 CPUs and 8 GiB or to 2 CPUs and 4 GiB, with the workspace on a host directory, which is how the kubelet backs an `emptyDir`. Kubernetes and the kubelet were not involved.
+- **Workspaces.** The harness cloned each repository from GitHub once, stored it in S3 as a tar, and extracted it into the workspace before each run with the page cache dropped.
+
+  | Workspace | History | Files | Directories | Size |
+  | :-- | :-- | --: | --: | --: |
+  | Chromium | Depth 1 | 516,434 | 46,969 | 5.9 GiB |
+  | LLVM | Full | 189,899 | 17,153 | 6.3 GiB |
+  | Linux | Full | 97,281 | Not recorded | 8.1 GiB |
+
+- **Object store.** S3 in the same region, through the AWS SDK. The current method uploads 16 MiB chunks one at a time, as `streamChunks` does. This design's path keeps several pack uploads in flight.
+- **Quiesce.** The harness stands in for a Full-level runtime by sending `SIGSTOP` to the workload's process group at the start of the capture pass and `SIGCONT` at its end. The pause figures therefore leave out the time a runtime takes to reach `checkpoint_ready`.
+- **Scenarios.** "Steady" is a checkpoint after 50 files changed. "After checkout" follows `git checkout HEAD~2000`, on the repositories with full history. "Package install" runs a writer that creates 150,000 files of 4 KiB at 10,000 files per second, and the checkpoint starts 3 seconds after the writer. Other scenarios wrote constantly to a 4 GiB file and ran `git repack -a -d` during the checkpoint.
+- **Variants.** "gVisor exclusive" adds `--file-access-mounts=exclusive`, and "gVisor KVM" adds `--platform=kvm`. "Kata metadata" and "Kata always" set `virtio_fs_cache`, whose default is `auto`. "Kata block" places the workspace on an ext4 file system on a block device passed into the guest, which is what Kata's `emptydir_mode = "block-plain"` gives a pod. Kata guests booted with `sysctl.fs.inotify.max_user_watches=1048576` once the guest limit was found, and containerd ran with `LimitNOFILE=1048576` in the final run.
+- **Checks.** Every steady, after-checkout, and package-install capture was followed by a verification walk while the workload was still stopped, which counted the changes the capture had missed. Every restore verified each chunk's SHA-256. No run reported here missed a change or restored a wrong byte. An earlier tracker version cleared its overflow flag at each swap, and on Kata, where 31,483 watches had failed, it missed 28 changed files. The persistent degraded state in "Change tracker" is the correction, and the runs after it missed none.
+
+### Current method against this design
+
+The table compares the pause on 4 CPUs on `m8i.2xlarge`. The current method's pause is the time it takes to archive and upload the whole workspace, which is how long a Full-level runtime stays quiesced today. Every value in that column is above the 60-second `CheckpointTimeout`, so in the platform today each of these checkpoints would fail after pausing the runtime for 60 seconds. This design's pause is shown for the stat walk and for the change tracker, for the steady scenario.
+
+| Profile | Workspace | Current method: pause | This design: pause, walk | This design: pause, tracker |
+| :-- | :-- | --: | --: | --: |
+| runc | Chromium | 225 s | 1.09 s | 0.12 s |
+| runc | LLVM | 196 s | 0.30 s | 0.03 s |
+| runc | Linux | 322 s | 0.09 s | Not measured |
+| gVisor | Chromium | 311 s | 8.59 s | 0.11 s |
+| gVisor | LLVM | 284 s | 2.93 s | 0.04 s |
+| gVisor | Linux | 459 s | 1.46 s | Not measured |
+| Kata | Chromium | 625 s | 6.40 s | 0.16 s |
+| Kata | LLVM | 671 s | 2.40 s | 0.06 s |
+| Kata | Linux | 1,017 s | 0.60 s | Not measured |
+
+The current method uploaded 2.80 GiB for Chromium, 4.19 GiB for LLVM, and 6.49 GiB for Linux on every checkpoint. This design uploaded 2.97 GiB and 4.31 GiB on the first checkpoint, because zstd at its fastest level compresses less than gzip, and one pack on each steady checkpoint.
+
+The first checkpoint of a session reads and uploads the whole workspace during pre-copy, while the runtime runs. It took 40 to 76 s for Chromium and 18 to 32 s for LLVM under runc, 50 to 113 s under gVisor, and 39 to 83 s under Kata. Its pause was the same as a steady pause, because pre-copy leaves only the files changed during the pass for the capture.
+
+### Pause by configuration
+
+The tables give the pause in seconds as walk / tracker, on `m8i.2xlarge` with nested virtualization unless the row names `metal`. Rows marked 2 CPUs ran with 2 CPUs and 4 GiB, and every other row with 4 CPUs and 8 GiB.
+
+Chromium:
+
+| Configuration | Steady | Package install |
+| :-- | --: | --: |
+| runc | 1.09 / 0.12 | 1.40 / 0.42 |
+| gVisor | 8.59 / 0.11 | 13.76 / 5.87 |
+| gVisor exclusive | 5.86 / 0.12 | 10.39 / 5.95 |
+| gVisor exclusive, 2 CPUs | 6.49 / 0.11 | 16.87 / 5.63 |
+| gVisor, metal | 9.87 / 0.10 | 15.65 / 5.10 |
+| gVisor KVM, metal | 13.69 / 0.11 | 19.85 / 3.52 |
+| gVisor, pod-share mount hint, Kubernetes | 2.75 / 0.13 | 7.45 / 4.14 |
+| Kata | 6.40 / 0.16 | 7.99 / 2.26 |
+| Kata metadata | 2.35 / 0.16 | 4.76 / 2.58 |
+| Kata metadata, metal | 1.64 / 0.12 | 3.60 / 2.82 |
+| Kata block | 1.34 / 0.16 | 1.55 / 0.55 |
+| Kata block, 2 CPUs | 1.73 / 0.15 | 2.47 / 1.84 |
+| Kata block, metal | 1.05 / 0.13 | 1.43 / 0.39 |
+
+LLVM:
+
+| Configuration | Steady | After checkout | Package install |
+| :-- | --: | --: | --: |
+| runc | 0.30 / 0.03 | 0.43 / 0.03 | 0.55 / 0.31 |
+| gVisor | 2.93 / 0.04 | 2.97 / 0.03 | 5.98 / 9.44 |
+| gVisor exclusive | 2.03 / 0.03 | 2.07 / 0.03 | 4.30 / 6.42 |
+| gVisor exclusive, 2 CPUs | 2.32 / 0.03 | 2.27 / 0.03 | 10.40 / 10.91 |
+| gVisor, metal | 3.19 / 0.03 | 3.17 / 0.03 | 6.26 / 8.74 |
+| gVisor KVM, metal | 4.56 / 0.03 | 4.52 / 0.03 | 7.38 / 3.67 |
+| Kata | 2.40 / 0.06 | 2.45 / 0.04 | 3.17 / 1.15 |
+| Kata metadata | 0.74 / 0.03 | 0.75 / 0.03 | 2.08 / 1.79 |
+| Kata metadata, metal | 0.51 / 0.03 | 0.58 / 0.03 | 1.82 / 2.04 |
+| Kata block | 0.30 / 0.03 | 0.42 / 0.05 | 0.56 / 0.30 |
+| Kata block, 2 CPUs | 0.43 / 0.03 | 0.47 / 0.03 | 0.89 / 0.62 |
+| Kata block, metal | 0.31 / 0.03 | 0.46 / 0.03 | 0.54 / 0.25 |
+
+An earlier run on nested `m8i.2xlarge` measured gVisor KVM at 7.55 / 0.04 s for the LLVM steady pause, and Kata always at 2.35 / 0.16 s for Chromium and 0.75 / 0.04 s for LLVM. Kata always matched Kata metadata.
+
+The package-install columns are not a comparison between walk and tracker. The walk run and the tracker run each restarted the writer, and the number of files written by the halt differed between them by up to a factor of 3. What the columns show is the pause for 10,000 to 100,000 freshly written files. In the walk and tracker columns of the same row, the read cost per changed file was the same.
+
+### What the pause consists of
+
+The pause has a change-source part and a read part. These are the per-unit costs measured in the package-install scenario on 4 CPUs.
+
+| Configuration | Stat walk, per file in the workspace | Read, per changed 4 KiB file | Tracker barrier wait during package install |
+| :-- | --: | --: | --: |
+| runc | 1.6 to 2.1 µs | 5 to 7 µs | 0.2 to 0.3 s |
+| gVisor | 15 to 17 µs | 51 to 56 µs | 3.9 to 6.1 s |
+| gVisor exclusive | 11 µs | 46 to 49 µs | 3.9 to 4.0 s |
+| gVisor KVM, metal | 24 to 27 µs | 47 to 48 µs | 3.5 to 3.7 s |
+| Kata | 12 µs | 62 to 69 µs | 0.7 to 1.6 s |
+| Kata metadata | 3.9 to 4.6 µs | 116 to 129 µs | 0.5 to 0.9 s |
+| Kata metadata, metal | 2.7 to 3.2 µs | 67 to 70 µs | 0.7 to 1.1 s |
+| Kata block | 1.6 to 2.6 µs | 6 to 8 µs | 0.2 to 0.4 s |
+
+The tracker removes the stat walk. Under gVisor it replaces the walk with a barrier wait when files are being created at 10,000 per second, because the tracker reads events more slowly than the workload produces them, and the halt waits for the backlog. Under runc and on a Kata block volume both parts stay small.
+
+### Effect of the tracker on the runtime's work
+
+The harness ran each workload six times in alternation, three times without the tracker and three times with it, after a warm-up run. The table gives the medians, in seconds, without / with the tracker.
+
+| Configuration | Create 50,000 files | Delete 50,000 files | `git status`, Chromium | `git checkout HEAD~2000`, LLVM |
+| :-- | --: | --: | --: | --: |
+| runc | 0.59 / 0.65 (+10%) | 0.32 / 0.37 (+14%) | 0.99 / 0.98 | 2.17 / 2.23 (+3%) |
+| gVisor | 3.01 / 5.05 (+68%) | 0.63 / 0.81 (+27%) | 9.41 / 9.49 | 5.68 / 6.21 (+9%) |
+| gVisor exclusive | 2.75 / 4.53 (+65%) | 0.61 / 0.75 (+24%) | 7.33 / 7.09 | 4.80 / 5.19 (+8%) |
+| gVisor exclusive, 2 CPUs | 2.74 / 6.24 (+128%) | 0.62 / 1.06 (+71%) | 7.52 / 7.41 | 5.22 / 5.56 (+7%) |
+| gVisor, metal | 3.14 / 4.52 (+44%) | 0.60 / 0.79 (+32%) | 10.26 / 10.29 | 5.73 / 6.12 (+7%) |
+| gVisor KVM, metal | 3.00 / 3.64 (+21%) | 0.91 / 0.99 (+9%) | 13.23 / 13.10 | 7.00 / 7.20 (+3%) |
+| Kata | 14.22 / 15.64 (+10%) | 6.77 / 7.25 (+7%) | 19.30 / 19.34 | 11.94 / 12.41 (+4%) |
+| Kata metadata | 13.81 / 15.12 (+9%) | 6.75 / 6.85 (+2%) | 6.30 / 6.29 | 8.91 / 9.47 (+6%) |
+| Kata block | 0.50 / 0.58 (+16%) | 0.24 / 0.52 (+117%) | 1.15 / 1.25 | 2.22 / 2.85 (+28%) |
+| Kata block, 2 CPUs | 0.47 / 0.61 (+30%) | 0.24 / 0.49 (+104%) | 1.20 / 1.20 | 2.22 / 7.35 (+232%) |
+
+Workloads that read files, such as `git status`, are unaffected. Workloads that create or delete many files pay the tracker's event handling, which runs on the pod's CPUs. Under gVisor, creating 50,000 files took 0.6 to 3.5 s longer. On a Kata block volume with 2 CPUs, two of the three checkouts with the tracker took 7.4 s against 2.2 s, which is the largest effect measured.
+
+### Isolation variants
+
+- **gVisor exclusive file access** lowered the stat walk by 30 to 32% and left the read cost unchanged. In Kubernetes it also stopped every kubelet update from reaching the sandbox (see "Kubernetes checks"), so this design rules it out.
+- **gVisor's pod-share mount hint** made the stat walk 3.2 times faster than the default mount and restore 3.2 times faster, and it is the only gVisor configuration on which the tracker sees writes from another container (see "Kubernetes checks").
+- **gVisor KVM** made the stat walk slower than systrap on both node types. On bare metal it was 39 to 43% slower, and under nested virtualization it was 2.6 times slower. Tracker setup was 37 to 39% slower on metal. File creation with the tracker running was faster than under systrap, at 3.64 s against 4.52 s for 50,000 files. KVM does not reduce the checkpoint pause, so this design does not recommend it for checkpointing.
+- **Kata cache modes.** `virtio_fs_cache = "metadata"` made the stat walk 2.7 to 3.2 times faster than the default and doubled the read cost per small file under nested virtualization. `always` measured the same as `metadata`.
+- **Kata block volume** gave the lowest pause of any Kata variant, about the same as runc, and a tracker setup cost close to runc's. The workspace is then a file system inside the guest, so the host cannot read it.
+- **Bare metal** lowered Kata's walk pause by up to 31% against nested virtualization. It did not help gVisor, whose pause on `m7i.metal-24xl` was 9 to 15% longer than on `m8i.2xlarge`, which has a newer CPU.
+
+### Sizing
+
+- **CPUs.** With 2 CPUs in place of 4, the steady walk pause grew 11 to 43%. The package-install pause under gVisor grew 1.6 to 2.4 times, and the first checkpoint of Chromium under gVisor took 208 s against 139 s.
+- **Disks.** Local NVMe on `i4i.2xlarge` did not lower the pause under runc or gVisor against gp3, because the changed files were in the page cache. It made the first checkpoint faster under runc, at 22 s against 31 s for Chromium.
+
+### Restore
+
+A restore downloads the packs, verifies every chunk, and writes each file once. The tables give the seconds until the restored tree is complete, which is when the runtime can start. The `sync` column is the time a following `sync` took to flush the written data to disk, which a restore does not wait for.
+
+Chromium on `m8i.2xlarge` with 4 CPUs, against today's tar restore in the same container:
+
+| Configuration | Container memory limit | Today's tar restore | This design | `sync` after this design |
+| :-- | :-- | --: | --: | --: |
+| runc, gp3 at 3,000 IOPS and 125 MiB/s | 8 GiB | 75 s | 159 to 168 s | 8 to 13 s |
+| runc, gp3 at 3,000 IOPS and 125 MiB/s | 28 GiB | 59 s | 88 to 96 s | 91 to 97 s |
+| runc, gp3 at 16,000 IOPS and 1,000 MiB/s | 8 GiB | 63 s | 32 to 35 s | 3 to 6 s |
+| runc, gp3 at 16,000 IOPS and 1,000 MiB/s | 28 GiB | 66 s | 18 to 24 s | 18 to 22 s |
+| gVisor, gp3 at 3,000 IOPS | 8 GiB | 102 s | 185 s | Not measured |
+| gVisor, gp3 at 16,000 IOPS and 1,000 MiB/s | 8 GiB | 104 s | 45 to 49 s | 1 to 2 s |
+
+Each range covers five restores that applied packs in random order and in path order, with 4, 8, and 16 packs in flight. Neither the order nor the concurrency changed the result. The gp3 baseline of 3,000 IOPS is what limits this design's restore of 516,000 small files, and at 16,000 IOPS the restore took half the time of today's tar restore. A larger memory limit let more of the written data wait in the page cache, which shortened the restore and moved the same work into the flush.
+
+Other configurations, gp3 at its baseline, 4 CPUs and 8 GiB:
+
+| Configuration | Chromium | LLVM |
+| :-- | --: | --: |
+| runc | 172 s | 56 s |
+| gVisor exclusive | 176 s | 62 s |
+| Kata | 157 s | 72 s |
+| Kata metadata | 137 s | 54 s |
+| Kata metadata, metal | 40 s | 21 s |
+| Kata block | 75 s | 53 s |
+| Kata block, 2 CPUs | 83 s | 40 s |
+| Kata block, metal | 73 s | 34 s |
+
+Today's tar restore took 71 to 75 s for Chromium and 75 s for LLVM under runc, 102 s and 87 s under gVisor, and 234 s and 147 s under Kata on the same nodes. LLVM's 6.2 GiB in 190,000 files restored faster than tar on every configuration. Kata's shared file system on bare metal restored fastest. Its writes go through the host-side virtio-fs daemon into the node's page cache, outside the pod's memory limit, which matches the effect of the 28 GiB limit under runc.
+
+### Kubernetes checks
+
+These checks ran on 2026-11-06 on a single-node k3s cluster (kubelet 1.37.2) on `m8i.2xlarge`, using the same containerd, runc, gVisor, and Kata builds, with one RuntimeClass per configuration. The Kata block configuration set `emptydir_mode = "block-plain"` in a configuration file Kata ships, because Kata 4.3.1 refuses a `KATA_CONF_FILE` outside its shipped set.
+
+Inotify across containers. A pod ran the tracker in one container and wrote from a second container into the shared `emptyDir`: 200 new files in a new directory, an append to an existing file, and a rename.
+
+| Configuration | Workspace mount seen in the pod | Dirty paths reported |
+| :-- | :-- | --: |
+| runc | `xfs` from the node | 202 |
+| gVisor | `9p` | 0 |
+| gVisor exclusive | `9p` | 0 |
+| gVisor, pod-share mount hint | `tmpfs` | 202 |
+| gVisor exclusive, pod-share mount hint | `tmpfs` | 202 |
+| Kata | `virtiofs` | 0 |
+| Kata block-plain | `ext4` on `/dev/sda`, with `discard` | 202 |
+
+Kubelet-updated volumes. Each pod mounted a ConfigMap, a Secret, a downward API volume with the pod's labels, and a projected volume with a service account token that expires after 600 s. The test changed the ConfigMap, the Secret, and a label, and read the files every 5 s.
+
+| Configuration | ConfigMap, Secret, and label updates | Token refresh at 80% of its lifetime |
+| :-- | :-- | :-- |
+| runc | Seen after 11 s | Refreshed |
+| gVisor | Seen after 11 s | Refreshed |
+| gVisor exclusive | Not seen in 360 s | Not refreshed by 560 s |
+| Kata | Seen after 11 s | Refreshed |
+
+With `--file-access-mounts=exclusive` the sandbox kept serving the files it had cached, so a pod would read its expired token until it restarted.
+
+`emptyDir` size limit. Each pod had an `emptyDir` with `sizeLimit: 1Gi`. It wrote 600 MiB, deleted it and wrote 600 MiB again, and then wrote 600 MiB more.
+
+| Configuration | After 600 MiB | After delete and rewrite | After 1,200 MiB live |
+| :-- | :-- | :-- | :-- |
+| runc | 600 MiB on the node | 600 MiB | Evicted |
+| gVisor | 898 MiB on the node | 600 MiB | Evicted |
+| gVisor, pod-share mount hint | 600 MiB in `.gvisor.filestore.<id>` | 600 MiB | Evicted |
+| Kata | 600 MiB on the node | 600 MiB | Evicted |
+| Kata block-plain | 687 MiB in `disk.img` | 687 MiB | Evicted |
+
+Every configuration was evicted with "Usage of EmptyDir volume "ws" exceeds the limit "1Gi"". The kubelet's usage figure trailed the node's disk usage by up to a minute on Kata and Kata block-plain, so eviction there came that much later. Under gVisor's default mount the node's usage read 898 MiB after 600 MiB had been written, the kubelet counted the 898 MiB, and the excess was gone after the rewrite. On Kata block-plain, a deleted file returned its space through `discard`, and the file system's metadata took 87 MiB of the limit.
+
+gVisor's pod-share mount. The Chromium benchmark ran in Kubernetes under gVisor with 4 CPUs and 8 GiB, once on the default mount and once with the mount hints, with the tracker and the workload in one container.
+
+| Measurement | Default mount (`9p`) | Pod-share mount (`tmpfs`) |
+| :-- | --: | --: |
+| Steady pause, walk / tracker | 8.70 s / 0.12 s | 2.75 s / 0.13 s |
+| Package-install pause, walk / tracker | 14.75 s / 7.32 s | 7.45 s / 4.14 s |
+| Parallel stat walk of 516,434 files | 8.43 s | 2.21 s |
+| Tracker setup, wall / CPU | 9.5 s / 35.7 s | 2.7 s / 9.3 s |
+| Create 50,000 files, without / with the tracker | 3.13 s / 5.41 s | 1.87 s / 2.95 s |
+| Delete 50,000 files, without / with the tracker | 0.64 s / 0.80 s | 0.26 s / 0.50 s |
+| Restore | 177 s | 56 s |
+| Most host descriptors held by the sentry | 113,221 | 777 |
+
+The first checkpoint on the pod-share mount in walk mode took 631 s, of which 577 s was spent waiting for uploads to S3 after the pre-copy read had finished in 40 s. The tracker-mode first checkpoint that followed uploaded the same bytes without waiting, so the stall came from the upload path rather than the mount. Its pause was 2.81 s.
+
+### What the benchmarks do not cover
+
+- A Full-level runtime's own time to quiesce, which adds to every pause.
+- A multi-node cluster, and the adapter and runtime images Lenny ships. The Kubernetes checks used generic images on one node.
+- Clouds other than AWS, and Arm nodes.
+- Upload through presigned URLs and through the gateway's grant protocol.
+
+## IC-1: Capture in passes
+
+A checkpoint runs a pre-copy pass, a capture pass, and an upload pass. The runtime is quiesced only during the capture pass.
+
+### Pre-copy
+
+The adapter walks `/workspace/slots/{sessionId}/current/` while the runtime runs. For each regular file it reads the file's identity with `lstat`: device, inode, size, `mtime` in nanoseconds, `ctime` in nanoseconds, and mode. It compares that identity with the adapter's file index from the session's previous snapshot. When the change tracker is healthy, the pre-copy walk also cross-checks it: a file whose identity changed and that the tracker did not report marks the tracker degraded (see "Change tracker").
+
+- A file whose identity matches a trusted index entry keeps the entry's chunk list without a read.
+- Every other file is read, split into chunks, and hashed. A chunk whose ID the dedup set holds is referenced. A new chunk is compressed and appended to the open pack, and a full pack is uploaded.
+- The adapter records each file's identity from before the read and checks it with `fstat` after the read. A file whose identity changed during the read is marked dirty so that the capture pass reads it again.
+
+Pre-copy reads files with a bounded worker pool and keeps several pack uploads in flight. It holds no operation lock, so interrupts proceed. Packs it confirms stay usable when the attempt later fails (R3).
+
+### Capture
+
+On a Full-level runtime the capture pass runs under the cooperative handshake on `CH-RUNTIMEOPS`.
+
+1. The adapter takes the pod-wide operation lock and sends `checkpoint_request` with `deadlineMs` set to the pause budget.
+2. After `checkpoint_ready`, the adapter builds the changed set: files whose identity differs from the index, dirty files, and racy entries (see "Change detection"). With a healthy change tracker, the adapter writes a barrier file, waits until the tracker has read the barrier's event, and takes the tracker's dirty paths, then reads the identity of those paths only. Without a healthy tracker, the adapter walks the workspace again with a parallel stat-only walk, which also records directories, symlinks, and modes.
+3. The adapter decided before step 1 whether the capture fits the pause budget, from an estimate built during pre-copy (see "Pause budget and convergence"). If the changed set found in step 2 exceeds that estimate by more than the budget allows, the adapter ends the capture without reading.
+4. The adapter captures each changed file. A file of at least `reflinkMinBytes` (default 1 MiB) is cloned into the spool with `FICLONE` when the spool accepted the start-up probe. Every other changed file is read, chunked, and hashed, and its new chunks are written to the spool uncompressed. The adapter copies `/sessions/{sessionId}`, which is a tmpfs capped at 256 MiB, in full.
+5. The adapter sends `checkpoint_complete` with status `ok` and releases the lock. The snapshot's file list is complete at this point, and only the spooled bytes remain to upload.
+
+The pause is the handshake, plus the tracker swap or the stat walk, plus the time to read or clone the changed files from local disk. Recently written files are usually in the page cache. On the measured nodes the stat walk costs about 2 µs per file under runc and on a Kata block volume, 3 to 5 µs on Kata's shared file system with the metadata cache, and 11 to 27 µs under gVisor and under Kata's default cache mode. Reading a changed 4 KiB file costs 5 to 13 µs under runc and a Kata block volume and 46 to 129 µs under gVisor and Kata's shared file system (see "Benchmarks").
+
+The spool is `/workspace/staging/checkpoint/`, on the same volume as the slots, which `FICLONE` requires. The adapter removes spooled data once its pack is confirmed.
+
+### Upload
+
+After the runtime resumes, the adapter chunks any cloned files, compresses the spooled chunks into packs, uploads them, uploads the manifest, and asks the gateway to finalize the snapshot. A failure in this pass fails the checkpoint without affecting the runtime, and the packs already confirmed stay usable by the next attempt.
+
+### Pause budget and convergence
+
+The capture pass is bounded by `checkpointPauseBudgetSeconds` (default 10), which is a time. A byte budget alone is not enough: on Kata's shared file system with a package install running, a changed set of 40 MiB in 10,000 files took 1.8 s to read, while a single changed 400 MiB file took 0.03 s to clone under runc. The adapter therefore estimates the capture time before it sends `checkpoint_request`:
+
+```
+estimate = change-source cost + changed files × per-file read cost + changed bytes ÷ read rate
+```
+
+- The change-source cost is the duration of the last stat walk, or the tracker's swap time plus its event backlog multiplied by its measured cost per event. The backlog is the byte count pending on the inotify descriptor, which `FIONREAD` reports, divided by the event size.
+- The per-file cost and the read rate are measured on the pod during the preceding pre-copy pass, so they reflect the isolation profile and the disk.
+- The changed set is the set the pre-copy pass marked dirty, plus files the tracker reported after the pass.
+- Bytes that the capture will clone with `FICLONE` count at the measured clone cost instead of the read rate.
+
+`checkpointCaptureBudgetBytes` (default 512 MiB) stays as a cap on the spool's disk use. Admission rejects a `checkpointPauseBudgetSeconds` of 60 or more, because a Full-level runtime resumes on its own 60 seconds after `checkpoint_ready` and the capture would then no longer be point-in-time. When the estimate is over the pause budget, the adapter skips the handshake for this round, runs another pre-copy round, and estimates again, as live migration does, up to `checkpointPreCopyRounds` (default 3) rounds. When the changed set found during the capture exceeds the estimate by more than the remaining budget, the adapter ends the capture with `checkpoint_complete` status `failed` and reason `precopy_required` and takes another round. Another round reduces only the changed set. When the change-source cost alone, which is the stat walk without a tracker, exceeds the budget, further rounds cannot bring the estimate under it, so the adapter skips them and captures on the best-effort path at once. A workspace of about 600,000 files under gVisor without a tracker is that case, because its walk alone takes more than 10 s whatever changed. Chromium's 516,000 files walked in 8.6 s, which fits the 10 s default and leaves 1.4 s for changed files.
+
+The benchmark harness decided with a byte estimate, which is the defect this formula corrects. Its timings bear out the terms of the formula. An unpaused stat walk predicted the paused walk that followed it with a median ratio of 1.13 and a worst case of 2.66 while files were being created. Under the tracker, the barrier wait took 0.2 to 0.4 s on runc and 3.5 to 6.1 s on gVisor during sustained file creation, because the tracker had a backlog of unread events at the halt (see "Benchmarks"). A dirty-set peek does not see that backlog, so the estimate takes it from the tracker's queue depth.
+
+If the last round is still over budget, the adapter captures without quiescing, as on the best-effort path, and tags the snapshot `consistency: best-effort`. The session gets a usable checkpoint, and `lenny_checkpoint_consistency_downgrade_total` counts the event. When the pause budget expires during a capture, the adapter ends the capture, the runtime resumes, and the attempt continues on the best-effort path.
+
+### Best-effort capture
+
+On a Basic or Standard runtime the adapter runs the same passes without the handshake and without the operation lock. The capture pass tolerates change instead of failing:
+
+- A file whose identity changes during its read is read again, up to `bestEffortRereads` (default 2) times. A file still changing after that is stored as last read, and the manifest flags it `torn`.
+- A file or directory that disappears between the walk and the read is left out of the snapshot.
+- The attempt never fails because a file changed.
+- New chunks stream into the packer as they are read. Nothing is frozen on this path, so nothing has to be held in memory or in the spool. The first harness version buffered the chunks of a best-effort capture in memory and was killed when a 4 GiB database file changed.
+
+The snapshot is tagged `consistency: best-effort` and records the count of torn files.
+
+On the measured nodes, under the harness's 512 MiB byte budget, a 4 GiB file under constant writes was over budget in every round on gVisor and Kata, where `FICLONE` is unavailable, and the attempt ended on this path with no pause and the file flagged `torn`. Under runc the same file was cloned during the pause in 2.0 to 2.5 s, and the snapshot stayed consistent.
+
+### Git repositories
+
+The adapter treats a directory that contains a `.git` directory, or a `.git` file that names a git directory, as a repository.
+
+- **Lock files.** Files named `*.lock` under a git directory are left out of every snapshot. A restored lock file blocks the next git command that needs the lock, and git treats a missing lock file as unlocked.
+- **Temporary packs.** Files named `tmp_pack_*`, `tmp_idx_*`, and `tmp_rev_*` under `objects/pack/` are left out of every snapshot. Git writes them during a fetch or a repack and renames them into place when they are complete, so a captured copy is always incomplete. On LLVM a running `git repack -a -d` held a 374 to 411 MiB temporary pack. With the exclusion the pause was 0.03 to 0.07 s on every runtime. Without it, the capture on most gVisor and Kata variants stayed over budget and fell to best effort.
+- **Order on the best-effort path.** The adapter captures `HEAD`, `refs/`, `packed-refs`, `index`, and the remaining metadata before `objects/`. Git writes objects before it updates the refs that point to them, so a ref captured earlier names objects that already existed when the adapter read `objects/`. Git removes objects only through gc, prune, or repack. When a pack listed earlier disappears during the read, the adapter lists `objects/pack/` once more.
+- **Repacks.** `git gc` and `git repack` write new packfiles whose bytes differ from the old ones, so a repack causes the history to upload again. Decision D6 proposes disabling automatic maintenance in workspace repositories.
+- **Alternates.** Objects reached through `objects/info/alternates` outside the slot, such as the warm stores in `tenant-derived-runtimes-design.md`, are not captured. Restore relies on that design's restore completion to reconnect them.
+
+### Change detection
+
+An index entry is trusted when its identity matches the file's current identity and the entry is not racy. An entry is racy when the file's `mtime` falls within `racyWindow` (default 2 s) before the instant the read that produced the entry started. This is git's rule for racily clean index entries. A write within the timestamp granularity of an earlier read leaves `mtime` unchanged, so a racy entry is re-read during the capture pass. `ctime` detects mode changes and renames onto the path, and the inode detects a replacement by rename.
+
+### Change tracker
+
+The stat walk is the largest part of the pause on gVisor and Kata, and its cost grows with the number of files in the workspace. The change tracker removes the walk from the pause by recording which paths changed since the last capture.
+
+- **Mechanism.** The adapter runs one tracker per session slot. The tracker adds an inotify watch on every directory under the slot with the mask `IN_MODIFY | IN_ATTRIB | IN_CLOSE_WRITE | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_DELETE_SELF | IN_MOVE_SELF`, and it keeps a set of dirty file paths and dirty directory paths. A directory created later gets a watch when its `IN_CREATE` event arrives, and the tracker then lists it once, so files created before the watch existed still enter the dirty set.
+- **Swap.** At the capture, the adapter writes a barrier file in the slot root and asks the tracker to swap. The tracker reads events until it sees the barrier, returns the dirty set, and starts an empty one. Every event queued before the barrier is therefore in the returned set.
+- **Fallback.** The capture walks in place of the swap when the tracker reports an `IN_Q_OVERFLOW` since the last swap, when an `inotify_add_watch` call has failed, when the tracker started after the previous snapshot, or when the pre-copy cross-check found a change the tracker did not report. A failed watch and a failed cross-check mark the tracker degraded until the adapter restarts it, because a directory without a watch stays unwatched. An overflow clears at the next walk. `lenny_checkpoint_tracker_fallback_total` counts each fallback by reason.
+- **Visibility across containers.** The tracker runs in the adapter container, and the runtime writes from the agent container. The adapter sees those writes only when both containers reach the workspace through one mount inside the kernel or sentry that delivers the events. In a single-node Kubernetes cluster on 2026-11-06, 200 files created, 1 file appended to, and 1 file renamed from a second container of the pod produced 202 dirty paths under runc, under gVisor with the pod-share mount hint described below, and on a Kata block volume. They produced none under gVisor's default mount and none on Kata's shared file system. The adapter therefore decides from the workspace mount's file system type, which it reads from `/proc/self/mountinfo`, whether a tracker can run (see "Change tracker setting").
+- **Limits.** The tracker needs one watch per directory. The measured workspaces needed 46,969 watches for Chromium and 17,153 for LLVM. A slot whose directory count exceeds `checkpointTrackerMaxWatches` (default 262,144) runs without a tracker.
+- **runc.** Under runc the watches count against the node kernel's per-user limits, `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances`, and every process on the node that runs as the same host UID shares them. Every adapter on a node runs as the same UID, so all trackers on the node share one budget. The kernel sizes `max_user_watches` from memory, and the measured 32 GiB nodes allowed 255,070 watches, which five Chromium-sized workspaces exhaust. `max_user_instances` defaults to 128, and each tracker uses one instance. A tracker whose watch fails falls back to the walk, so exhaustion costs pause length rather than correctness. Deployers raise both limits with a sysctl on runc nodes (see "Levers"). Whether Kubernetes user namespaces (`hostUsers: false`) give each pod its own budget was not tested. Under gVisor and Kata the limits belong to the sandbox or the guest kernel, so pods on a node do not share them.
+- **gVisor.** Under gVisor's default mount, each container of the pod reaches the `emptyDir` through its own gofer mount, and the sentry delivers an inotify event only to watches on the mount the change was made through. A tracker in the adapter container therefore sees none of the agent container's writes. The pod annotations `dev.gvisor.spec.mount.<volume>.share: pod`, `.type: bind`, `.options: rw`, and `.source: <volume>` make the volume one mount owned by the sentry and shared by the pod's containers. The sentry then keeps the volume's content in a single file, `.gvisor.filestore.<id>`, in the `emptyDir` directory on the node, the kubelet's size accounting counts that file, and events cross containers. The containerd runtime handler for gVisor has to pass `dev.gvisor.*` pod annotations through to runsc, which is a node setting. On that mount the stat walk was 3.2 times faster than on the default mount, and Chromium restored in 56 s against 177 s, because the sentry writes one file on the node in place of 516,000 (see "Benchmarks"). The content is page cache on the node, as on the default mount: a pod with a 1 GiB memory limit wrote 3 GiB into the volume without an OOM kill.
+- **gVisor descriptors.** On the default mount, the sentry holds one host file descriptor for each watched directory, in addition to its cached dentries, and the sandbox inherits containerd's `LimitNOFILE`, which is 65,535 on a default install. In single-container runs with Chromium's watches in place, the first walk exhausted that limit. File opens inside the sandbox then failed with `EMFILE`, for every process in it, and inotify events stopped arriving without an overflow event or an error. On the pod-share mount the sentry held at most 777 host descriptors during the same benchmark, against 113,221 on the default mount, so the hint removes the hazard and no descriptor limit has to change. The tracker never runs on the default mount, because the adapter sees `9p` there.
+- **Kata.** The guest kernel sizes `fs.inotify.max_user_watches` from guest memory, and a 2 GiB guest allows 15,514 watches. Chromium's watches failed with `ENOSPC`, and the tracker marked itself degraded and fell back to walks as specified. The Kata `kernel_params` setting `sysctl.fs.inotify.max_user_watches=1048576` removes the limit. On Kata's default shared file system, virtio-fs, a change made from one container produces no event in another container's watches. With `emptydir_mode = "block-plain"`, the volume is an `ext4` file system inside the guest, mounted by both containers, and events cross containers. On Kata the tracker therefore requires `block-plain`.
+- **Cost.** Tracker setup took 0.2 to 1.8 s under runc, on a Kata block volume, and on Kata's shared file system with the metadata cache, 2.7 to 8.4 s on Kata's default cache mode, and 2.4 to 14.5 s under gVisor. The setup used up to 480 MiB of memory, and the tracker settled at 35 to 130 MiB. Events cost 20 to 45 µs of CPU each under runc and Kata and 30 to 60 µs under gVisor. The effect on the runtime's own file operations is in "Benchmarks".
+
+The tracker is an optimization of the change source. Correctness rests on the fallback rules and on the racy rule, which apply to tracked paths in the same way as to walked ones.
+
+## IC-2: Storage format
+
+### Chunks
+
+A file of at least 1 MiB is split with content-defined chunking (FastCDC with a gear hash), with a minimum of 256 KiB, an average of 1 MiB, and a maximum of 4 MiB. A smaller file is one chunk. A chunk's ID is the SHA-256 of its uncompressed bytes. Content-defined boundaries keep an insertion near the start of a large file from changing every later chunk.
+
+### Packs
+
+A pack is a sequence of compressed chunk frames followed by a footer that lists each chunk's ID, offset, compressed length, uncompressed length, and compression method. The target size is 16 MiB, which matches today's `DefaultChunkSizeBytes`, and `packMaxBytes` is 32 MiB. A pack's ID is the SHA-256 of its bytes. Packing small chunks keeps the object count and the per-request cost down for workspaces with many small files.
+
+### Manifests
+
+A snapshot's manifest is a sorted stream of entries, one per path. Each entry records the type, mode, size, `mtime`, symlink target, chunk ID list, and flags such as `torn`. The format is versioned. The manifest stream is itself chunked with content-defined chunking and stored in packs, so an unchanged region of a large manifest deduplicates across snapshots.
+
+The snapshot root lives in Postgres: the format version, the manifest's chunk list, the referenced pack IDs, the consistency tag, the parent snapshot, and counts of files, logical bytes, new bytes, and torn files.
+
+### Object keys
+
+A pack is stored at `/{tenant_id}/checkpoints/{session_id}/packs/{pack_id}`, where `session_id` is the session whose pod wrote the pack. The per-attempt `{checkpoint_id}` prefix is removed, because packs outlive the attempt that wrote them.
+
+### Compression and encryption
+
+Chunks are compressed with zstd from `github.com/klauspost/compress`, which `go.mod` already carries as an indirect dependency through `minio-go`. A chunk whose compressed size is at least 97% of its input is stored uncompressed, which skips packfiles and media. Encryption is unchanged: each `PUT` replays the signed server-side encryption headers that §13.2 defines per backend.
+
+## IC-3: Checkpoint stream
+
+The `Checkpoint` stream in `schemas/lenny-adapter.proto` keeps its gateway-driven grant and confirm structure, and its messages change from tar chunks to packs.
+
+- `CheckpointStart` adds `parent_snapshot_id`, `pack_target_bytes`, `pause_budget_ms`, `capture_budget_bytes`, and `precopy_rounds`. It drops `chunk_encoding`.
+- `CheckpointProbe` reports `workspace_bytes`, `file_count`, and `estimated_new_bytes`, which is the size of the files whose identity changed. The gateway reserves quota against the estimate.
+- `PackReady` declares `pack_id`, `length`, and `content_md5`. The gateway answers `PackGrant` with a single-key `PUT` capability that signs `Content-Length`, `Content-MD5`, and the encryption headers, or it answers `CheckpointAbort`. It refuses a grant for a `pack_id` its catalog holds (S1).
+- `PackCommitted` confirms an upload. The gateway checks the object's length with `StatObject` and inserts a pack row in state `unreferenced`, with a lease.
+- `CaptureDone` reports `quiesced_ms`, `consistency`, `changed_files`, `torn_files`, and `rounds`.
+- `SnapshotReady` carries the manifest chunk list and the referenced pack IDs, sent in batches for large snapshots. The gateway runs the reference closure check and writes the snapshot row and its pack references in one transaction.
+- `CheckpointSummary` and `CheckpointFailed` keep their meaning.
+
+On `CH-RUNTIMEOPS`, `checkpoint_complete` changes meaning from "the snapshot is uploaded" to "the snapshot is captured". The runtime's 60-second autonomous resume stays as a safety net, and `deadlineMs` carries the pause budget. Today every periodic attempt sends `deadline_ms = 0`, because nothing sets the checkpointer's `Deadline` (see "Defects found while verifying").
+
+The gateway's `SweepDue` runs due attempts concurrently, up to `checkpointConcurrency` per replica (default 16). Today it runs them one at a time, so one slow session delays every other session on the replica. The gateway carries grants and catalog writes, and the pack bytes travel between the pod and object storage.
+
+## IC-4: Catalog, reference closure, and quota
+
+### Catalog
+
+| Table | Columns |
+| :-- | :-- |
+| `checkpoint_packs` | `pack_id`, `tenant_id`, `owner_session_id`, `bytes`, `state` (`unreferenced` or `referenced`), `lease_expires_at`, `created_at`, `deleted_at` |
+| `checkpoint_snapshots` | `snapshot_id`, `tenant_id`, `session_id`, `parent_snapshot_id`, `trigger`, `consistency`, `manifest_chunks`, counts, `created_at`, `deleted_at` |
+| `checkpoint_snapshot_packs` | `snapshot_id`, `pack_id` |
+
+### Reference closure
+
+A session's allowed set is the union of these packs:
+
+- packs that the session's own retained snapshots reference;
+- packs that the snapshot the session started from references, for a derived session; and
+- `unreferenced` packs that the session owns with an unexpired lease.
+
+The gateway accepts a snapshot only when its referenced pack IDs are all in the allowed set. The allowed set leaves out the source session's later snapshots, so a session derived from a live source cannot read content the source wrote after the derive. The adapter builds its dedup set from the same sources, using the manifest it holds locally, and it never asks the gateway whether a hash exists. The gateway therefore answers no existence question that would reveal another session's content.
+
+The manifest's chunk-to-pack mapping is untrusted input. It can name only bytes inside packs the gateway authorized for the snapshot, and S4 detects a mapping that names the wrong bytes.
+
+### Quota
+
+The tenant is charged once for each pack, at confirmation, and the charge is released when the pack is deleted. A checkpoint therefore charges for its new bytes only. Today every checkpoint charges for the whole workspace. The reservation at the start of an attempt uses `estimated_new_bytes`.
+
+## IC-5: Restore, derive, download, and seal
+
+### Restore
+
+The gateway selects the snapshot: the latest finalized snapshot on resume, or the starting snapshot at a derived session's first bind. It signs `GET` capabilities for that snapshot's packs as the restore requests them, which keeps each capability's 30-second TTL meaningful for large restores.
+
+The adapter fetches the manifest chunks first, then the packs, with `restoreConcurrency` (default 8) requests in flight. It decompresses each chunk, verifies its SHA-256 (S4), writes the files with the same path containment and symlink rules as `ExtractTree`, and applies modes and `mtime`. It builds the file index from the identities of the files it wrote, so the first pre-copy after a restore reads nothing. The restore limit is the pool's `workspaceSizeLimitBytes` in place of the fixed 2 GiB.
+
+Restore time still grows with workspace size. Lazy restore, which fetches a file on first access, is out of scope.
+
+### Derive
+
+A derive writes a snapshot row for the new session that references the source snapshot's manifest and packs, and it copies no object. The new snapshot becomes the derived session's starting snapshot, which places its packs in the derived session's allowed set. `session-derive-design.md` keeps its modes: `from: latest` uses this reference, and `from: start` rebuilds from the plan as that design states. Decision D2 records the alternative of copying packs.
+
+### Download
+
+`GET /v1/sessions/{id}/workspace` stays a gzip-compressed tar stream. The gateway renders it from the manifest and the packs, using its own object-store credentials, and streams it to the client.
+
+### Seal
+
+The seal runs the same passes with trigger `seal`, and the resulting snapshot becomes `final_workspace_ref`.
+
+## IC-6: Retention, garbage collection, erasure, and legal hold
+
+- **Retention.** The latest 2 snapshots per session are retained, as today, and legal hold suspends rotation.
+- **Pack reclamation.** Garbage collection deletes a pack when no live snapshot references it and its lease has expired. It computes liveness with a query over `checkpoint_snapshot_packs` instead of a stored counter, so the count cannot drift. The deletion path keeps the §12.5 rules: soft delete first, guarded quota release, then the object delete, with the backstop sweep.
+- **Compaction.** When the adapter builds its dedup set, it treats chunks in packs that the parent snapshot uses below `packRewriteThreshold` (default 0.5) as absent. Their live chunks go into new packs, and the sparse pack loses its last reference after rotation. Compaction needs no gateway knowledge of chunks.
+- **Erasure.** `DeleteByUser` deletes the user's snapshots. A pack that another user's derived snapshot references stays until that snapshot goes. This matches today's outcome, where the derive copy survives the source user's erasure.
+- **Partial manifests.** The tar-prefix reassembly in §10.1.7 **Reassembly on resume.** is removed (decision D4). A timed-out attempt leaves confirmed packs that the next attempt reuses, and a resume uses the latest finalized snapshot.
+
+## IC-7: Size limits and drain budgets
+
+- **Workspace limit.** `workspaceSizeLimitBytes` keeps its name and now bounds disk use and storage. The controller renders `emptyDir.sizeLimit` on the workspace volume as the sum of the slot limits plus the spool budget. The adapter's probe and the restore use the same value. Decision D3 sets the default.
+- **Attempt deadline.** The 60-second `CheckpointTimeout` splits into the pause budget and `checkpointAttemptTimeoutSeconds` (default 300) for the whole attempt. The first checkpoint of a session holding a large clone can span several attempts, and each attempt continues from the packs the previous ones confirmed.
+- **Drain caps.** The tier table in §10.1.7 sizes the preStop wait by total workspace bytes. Under this design a drain checkpoint uploads the bytes changed since the last snapshot, so the table becomes one `evictionCheckpointCapSeconds` (default 90). The webhook's grace-period floor and BarrierAck floor keep their structure with that single cap.
+- **Barrier hold.** The §10.1.8 barrier holds tool-call dispatch until the capture pass ends instead of until the upload ends.
+
+## IC-8: Checkpoint policy, interval, and change tracker
+
+Today the only checkpoint setting is the gateway-wide interval, `--checkpoint-interval`, which the chart sets from `periodicCheckpointIntervalSeconds`. A value of 0 falls back to the 600-second default (`interval` in `pkg/gateway/checkpoint/checkpointer/checkpointer.go`), so no setting turns checkpointing off. Neither a Runtime nor a pool can set a policy or an interval.
+
+### Policy
+
+The Runtime definition (§5.1) and the pool configuration (§5.2) each take an optional `checkpointPolicy`:
+
+| Value | Checkpoints during the session | Seal at session end | Effect on the rest of the platform |
+| :-- | :-- | :-- | :-- |
+| `full` (default) | Periodic, pre-scale-down, drain, barrier, and eviction checkpoints run as IC-1 states. | Runs. | Unchanged. |
+| `sealOnly` | None. | Runs, and its snapshot becomes `final_workspace_ref`. | A pod failure or an eviction resumes the session with `resumeMode: conversation_only` and `workspaceLost: true`, from the §4.4.5 minimal-state record. An idle or suspended session keeps its pod, and the `maxSuspendedPodHoldSeconds` release is not taken. `GET /v1/sessions/{id}/workspace` and a derive `from: latest` read the sealed snapshot once the session ends. |
+| `none` | None. | Does not run. | Everything under `sealOnly`, and the session never has a workspace snapshot. `GET /v1/sessions/{id}/workspace` returns `404 RESOURCE_NOT_FOUND`. A derive `from: latest` returns `422 DERIVE_SOURCE_UNAVAILABLE` with `details.reason: checkpointing_disabled`, while a derive `from: start` still rebuilds from the plan. |
+
+The effective policy is the stricter of the two values, in the order `full`, `sealOnly`, and `none`, where an unset value counts as `full`. The runtime author knows whether the runtime's state lives in workspace files, and the operator owns the pool's storage budget, so either one can turn checkpointing down and neither can turn it back up. A runtime that `tenant-derived-runtimes-design.md` derives from a base inherits the base's policy and can only make it stricter.
+
+The policy has these further effects:
+
+- **Credential rotation.** A runtime that declares `credentialCapabilities.hotRotation: false` rotates by checkpoint and restart (§4.9). Under `sealOnly` or `none` that restart has no checkpoint, so the session restarts with `resumeMode: conversation_only`. Pool admission answers such a combination with a `Warning` naming the consequence.
+- **Freshness.** Sessions whose effective policy is `sealOnly` or `none` are left out of `lenny_checkpoint_stale_sessions` and the `CheckpointStale` alert.
+- **Visibility.** The session envelope reports the effective `checkpointPolicy`, so a client knows before a failure whether the workspace survives one.
+- **Drain.** The preStop path and the §10.1.8 barrier skip the checkpoint step for these sessions, and the webhook's grace-period floor leaves out the checkpoint cap for a pool whose effective policy is `none`.
+
+The policy is separate from a runtime's ability to quiesce. A runtime whose `lifecycle_support` leaves out `"checkpoint"` still gets checkpoints under `full`, captured on the best-effort path without a `checkpoint_request`. Today the adapter sends `checkpoint_request` to such a runtime anyway, because the Checkpoint handler never calls `Supports("checkpoint")` (see "Defects found while verifying").
+
+### Interval
+
+The Runtime definition and the pool configuration each take an optional `periodicCheckpointIntervalSeconds`. The effective interval for a session is resolved in this order:
+
+1. the pool's value, when set;
+2. otherwise the Runtime's value, when set;
+3. otherwise the gateway default (`periodicCheckpointIntervalSeconds`, 600 seconds).
+
+The gateway clamps the result to the deployer's bounds, `checkpoint.minIntervalSeconds` (default 60) and `checkpoint.maxIntervalSeconds` (default 3600). The pool's value wins over the Runtime's because the operator pays for the pool's object storage and its gateway load, and the deployer's bounds protect the gateway and the object store from any single pool. Decision D9 records the alternative.
+
+The gateway's schedule then carries a per-session interval. The first-checkpoint jitter applies `periodicCheckpointJitterFraction` to the session's own effective interval. The freshness SLO and `CheckpointStale` measure each session against its own effective interval. An interval has no effect under `sealOnly` or `none`.
+
+A short interval is cheap under IC-1, because each checkpoint uploads only the bytes changed since the last one. Under the current implementation, a 60-second interval on a 1 GiB workspace would halt a Full-level runtime for about 27 seconds of every minute, at the archive rates in "Measurements" and a 100 MiB/s upload. The interval override therefore lands together with IC-1 or after it, and never before it.
+
+### Change tracker setting
+
+The pool configuration takes an optional `checkpointChangeTracker` with the values `auto` (default) and `off`. Under `auto` the adapter runs the tracker when the workspace mount's file system type is one on which writes from the agent container reach the adapter container's watches: a node file system under runc, `ext4` on a Kata block volume, and the sentry's `tmpfs` under gVisor's pod-share mount hint. It leaves the tracker off on `9p`, which is gVisor's default mount, on `virtiofs`, which is Kata's shared file system, and on any other `fuse` file system. No value forces the tracker on, because on those file systems it would miss changes without reporting the loss, which R11 forbids. `off` keeps every capture on the stat walk.
+
+The pod controller renders the gVisor mount hint annotations for the workspace volume on every `sandboxed` pod. They take effect on nodes whose containerd runtime handler passes `dev.gvisor.*` annotations to runsc, and they are ignored elsewhere, where the adapter sees `9p` and walks. The adapter reports the effective value and the tracker's state in `lenny_checkpoint_tracker_state`.
+
+## Levers
+
+The pause, its frequency, and the cost of checkpoints depend on settings held by four parties. The deployer installs the chart and owns the nodes. The operator defines pools and grants them to tenants. The runtime author writes the Runtime definition and the runtime. The tenant chooses among the runtimes and pools it has access to and, under `tenant-derived-runtimes-design.md`, derives its own runtimes. The measured effects come from "Benchmarks".
+
+### Whether to checkpoint and how often
+
+| Lever | Set by | Effect | Measured effect | Cost |
+| :-- | :-- | :-- | :-- | :-- |
+| `checkpointPolicy: sealOnly` or `none` (IC-8) | Operator on the pool, runtime author on the Runtime, tenant on a derived runtime | No checkpoint runs during the session, so the runtime never pauses for one. | The pause and its upload are removed. | A pod failure or eviction resumes the session without its workspace. Under `none` the session also has no final snapshot. |
+| `periodicCheckpointIntervalSeconds` (IC-8) | Operator on the pool, runtime author on the Runtime, within the deployer's `checkpoint.minIntervalSeconds` and `checkpoint.maxIntervalSeconds` | Sets how often the pause occurs. | The share of time paused is the pause divided by the interval. For Chromium under gVisor that is 8.6 s in 600 s, or 1.4%, with the stat walk, and 0.11 s in 600 s, or 0.02%, with the tracker. At a 60-second interval the walk pause is 14% of the time. | A longer interval loses more work on a pod failure. |
+| Integration level | Runtime author | A runtime that leaves `"checkpoint"` out of `lifecycle_support` is captured on the best-effort path while it runs, with no pause. A Full-level runtime pauses for a consistent snapshot. | A best-effort capture has no pause. | The snapshot is tagged `consistency: best-effort`, and a file written during the capture is flagged `torn`. |
+
+### Where the session runs
+
+| Lever | Set by | Effect | Measured effect | Cost |
+| :-- | :-- | :-- | :-- | :-- |
+| A runc pool granted to one tenant | Operator: a pool with `isolationProfile: standard`, granted with `lenny-ctl admin pools grant-access`, on nodes tainted for that tenant | Moves the tenant's sessions to the profile with the lowest pause, and makes `FICLONE` available for large changed files on XFS nodes. | Chromium's walk pause is 1.09 s against 8.59 s under gVisor and 6.40 s under Kata, and a 4 GiB file under constant writes is captured consistently in 2.0 to 2.5 s. | runc isolates with cgroups and namespaces only. The isolation guide recommends `standard` for low-risk workloads, so this lever fits a tenant whose code the operator trusts. |
+| CPU allocation | Operator, through the pool's resource class | The capture runs on the pod's CPUs. | 2 CPUs in place of 4 lengthened the steady walk pause by 11 to 43% and the gVisor package-install pause by 1.6 to 2.4 times. | Node capacity. |
+| Node disk | Deployer | Affects the first checkpoint and restore, which read or write the whole workspace. | A gp3 volume at 16,000 IOPS and 1,000 MiB/s restored Chromium in 32 to 35 s under runc and 45 to 49 s under gVisor, against 159 to 168 s and 185 s at the gp3 baseline of 3,000 IOPS and 125 MiB/s. Local NVMe made Chromium's first checkpoint under runc 22 s against 31 s on gp3. Neither changed the pause. | gp3 charges for IOPS above 3,000 and throughput above 125 MiB/s, and NVMe instance types cost more. |
+
+### Node configuration for gVisor
+
+| Lever | Set by | Effect | Measured effect | Cost |
+| :-- | :-- | :-- | :-- | :-- |
+| Pass `dev.gvisor.*` pod annotations to runsc | Deployer, with `pod_annotations = ['dev.gvisor.*']` on the containerd runtime handler for gVisor | Lets the mount hints that the pod controller renders on every `sandboxed` pod reach runsc, so the workspace becomes one sentry-owned mount shared by the pod's containers. Without it the adapter sees `9p` and walks. | In Kubernetes, Chromium's steady pause fell from 8.70 s to 2.75 s with the walk and to 0.13 s with the tracker. The package-install pause fell from 14.75 s to 7.45 s with the walk and from 7.32 s to 4.14 s with the tracker. Tracker setup fell from 9.5 s to 2.7 s, and Chromium restored in 56 s against 177 s. The sentry held at most 777 host descriptors. | The workspace is stored on the node as one `.gvisor.filestore.<id>` file, so the node cannot read its files. Managed gVisor offerings that do not pass the annotations keep the walk. |
+| `--file-access-mounts=exclusive` | Do not set | Lets the sentry cache file metadata for every mount of the sandbox. | The stat walk was 30 to 32% faster. In Kubernetes, ConfigMap, Secret, and downward API updates never reached the sandbox, and the projected service account token was not refreshed, so a pod keeps an expired token. | Ruled out. The pod-share mount hint gives a larger gain on the workspace volume alone. |
+| `--platform=kvm` | Deployer | Replaces systrap with KVM for system call interception. | The stat walk was 39 to 43% slower on bare metal and 2.6 times slower under nested virtualization, and tracker setup was 37 to 39% slower. | Not recommended for checkpointing. It requires bare metal or nested virtualization. |
+
+### Node configuration for runc
+
+| Lever | Set by | Effect | Measured effect | Cost |
+| :-- | :-- | :-- | :-- | :-- |
+| `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` | Deployer, with a sysctl on runc nodes | Raises the watch and instance budget that every adapter on the node shares, because all of them run as one host UID. | The measured 32 GiB nodes allowed 255,070 watches and 128 instances, so five Chromium-sized workspaces, or 128 trackers, exhaust a node. Past that, trackers fall back to the walk, at 1.09 s for Chromium in place of 0.12 s. | Kernel memory for the watches. The kernel's default gives the watch limit 1% of memory, about 1.3 KiB per watch. |
+
+### Node configuration for Kata
+
+| Lever | Set by | Effect | Measured effect | Cost |
+| :-- | :-- | :-- | :-- | :-- |
+| `kernel_params = "... sysctl.fs.inotify.max_user_watches=1048576"` | Deployer, in the Kata `configuration.toml` | Raises the guest's watch limit, which a 2 GiB guest sets to 15,514. It matters together with `block-plain`, because the tracker runs only there. | With the higher limit, Chromium's 46,969 watches succeeded. | Guest kernel memory for the watches. |
+| `emptydir_mode = "block-plain"` | Deployer, in the Kata `configuration.toml` | Places each `emptyDir` on a block device with an `ext4` file system inside the guest, mounted with `discard`, in place of the shared file system. It is the only Kata mode on which the change tracker sees the agent container's writes. | The lowest Kata pause measured: 1.34 s with the walk and 0.16 s with the tracker for Chromium, and about the same as runc for LLVM. Tracker setup fell from 8.4 s to 1.1 s. Chromium restored in 75 s against 157 s on the shared file system. In Kubernetes the kubelet evicted a pod that exceeded its `emptyDir` `sizeLimit`, and deleted files returned their space to the node. | The host cannot read the workspace. The backing file, `disk.img`, has an apparent size of 100 GiB, so `df` inside the guest reports space the `sizeLimit` does not grant. The `ext4` metadata took 87 MiB of the limit. `block-encrypted` is the variant with encryption at rest. |
+| `virtio_fs_cache = "metadata"` | Deployer, in the Kata `configuration.toml` | Lets the guest cache file metadata from the shared file system. | The stat walk was 2.7 to 3.2 times faster than the default, and reading small changed files was about 2 times slower under nested virtualization. `always` measured the same. | The guest sees changes made from the host side of a shared volume later. |
+| Bare-metal nodes | Deployer | Removes nested virtualization. | The Kata walk pause was up to 31% lower. | Instance type and price. |
+
+### The workspace and the pause budget
+
+| Lever | Set by | Effect | Measured effect | Cost |
+| :-- | :-- | :-- | :-- | :-- |
+| `checkpointExcludes` (D5) | Runtime author on the Runtime, tenant on a derived runtime | Leaves regenerable directories such as `node_modules/` and build outputs out of every snapshot. | The stat walk and tracker setup scale with the number of files and directories, at the per-file costs in "Benchmarks". | The excluded files are absent after a restore and must be regenerated. |
+| Git maintenance off (D6) | Platform default in the injected git configuration | Keeps automatic `git gc` from rewriting packfiles. | After a repack, the next checkpoint uploaded the repository's history again: 16 to 54 s for LLVM and Linux against 1 to 10 s for a steady checkpoint. | Repositories grow loose objects until something repacks them. |
+| `checkpointPauseBudgetSeconds` (default 10) and `checkpointPreCopyRounds` (default 3) | Operator on the pool, below 60 s | Bounds the pause. A capture estimated over the budget takes another pre-copy round, and after the last round, or at once when the walk alone exceeds the budget, it runs on the best-effort path. | At 10 s, Chromium's 8.6 s walk under gVisor without a tracker fits, and so does every package-install pause with the tracker on 4 CPUs, the longest of which was 9.4 s. The package-install pauses under gVisor without a tracker, 10.4 to 19.9 s, do not fit. A 4 GiB file under constant writes went to the best-effort path with no pause on gVisor and Kata. | A lower budget produces more best-effort snapshots. A higher one allows longer pauses, and an interrupt waits until the pause ends. |
+| `checkpointChangeTracker` | Operator on the pool | Removes the stat walk from the pause. | The steady pause was 0.03 to 0.16 s on every profile. | The tracker's memory and CPU, and 10 to 128% longer file creation and deletion in the workload (see "Benchmarks"). |
+
+## Node-level snapshots
+
+Node-level copy-on-write snapshots give an atomic capture whose cost does not depend on file count. They need a per-pod volume on a snapshot-capable filesystem. One possible route is generic ephemeral volumes from a local CSI driver that offers `VolumeSnapshot` on ZFS or Btrfs, in place of `emptyDir`. The capture pass would become a snapshot request, and an uploader with access to a clone of the snapshot would perform the upload pass.
+
+This design defers that route for these reasons:
+
+- It requires node pools on a particular filesystem and a privileged CSI driver.
+- Warm pools would move from `emptyDir` to per-pod volumes, which adds provisioning time to every warm pod.
+- A volume holds every slot of a multi-session pod, so the snapshot covers more than one session.
+- The uploader needs a mount of the snapshot that the agent pod does not have today.
+
+The adapter's capture step is an internal interface with operations to freeze the changed set and to read the frozen data, so a node-level provider can replace the `FICLONE` and read paths later.
+
+## Relationship to other designs
+
+- **`egress-and-git-design.md`** moves git into the pod and injects git configuration. Decision D6 adds maintenance settings to that configuration.
+- **`tenant-derived-runtimes-design.md`** keeps warm repository stores outside the slot and reconnects them at restore. This design does not capture those stores, and it reduces what a session's own clone costs after the first checkpoint.
+- **`session-derive-design.md`** keeps its routes and modes. This design changes how `from: latest` stores its starting point.
+- **`forensics-evidence-preservation-design.md`** treats a compromised pod's checkpoints as suspect. S2 and S4 limit what such a checkpoint can reference or substitute. They do not make its content trustworthy.
+
+## Costs
+
+- **Postgres.** Each attempt writes one row per new pack and one row per referenced pack. A 5 GiB workspace in 16 MiB packs references about 320 packs per snapshot.
+- **Adapter CPU.** SHA-256 ran at 1.1 to 1.7 GiB/s on one core of the measured x86 nodes and at 2.6 GiB/s on the arm64 laptop. zstd at its fastest level compressed at 0.85 to 2.0 GiB/s on one core. The tracker adds 20 to 60 µs of CPU per file system event (see "Change tracker").
+- **Adapter memory and disk.** The file index holds about 128 bytes per file, so 500,000 files take about 64 MiB. The adapter stores the index as a file under `/workspace/staging/checkpoint/`. The spool needs up to `checkpointCaptureBudgetBytes` of disk on the workspace volume. The tracker used up to 480 MiB during setup and 35 to 130 MiB afterwards for 17,000 to 47,000 watched directories, and the pod's memory limit has to leave room for it.
+- **Complexity.** The design adds a storage format, a catalog with reference-based garbage collection, and a format conversion for the download route. It removes the partial-manifest reassembly path and the tiered drain table.
+- **Storage.** Retained bytes fall to the unique content of the latest 2 snapshots, plus sparse-pack overhead bounded by `packRewriteThreshold`.
+
+## Defects found while verifying
+
+These defects exist in the tree today, and none is filed in `BUILD-GAPS.md` yet. Some of them are worth fixing before this design lands.
+
+| Defect | Location | Severity |
+| :-- | :-- | :-- |
+| The workspace `emptyDir` has no `sizeLimit`, and the adapter's limit defaults to 0, which disables the probe. §4.4.4 **Hard workspace size limit.** requires both, with a 512 MiB default. | `podVolumes` in `pkg/controller/sandbox/podspec/volumes.go`; `--workspace-size-limit-bytes` in `cmd/lenny-adapter/main.go` | High |
+| The SIGSTOP checkpoint path has no production caller, while F-4.4.7 is marked closed. | `pkg/adapter/embeddedcheckpoint` | High |
+| A best-effort archive fails the attempt when a file grows or disappears during the archive. | `archiveRoot` in `pkg/adapter/workspace/tree.go` | Medium |
+| An interrupt waits for the whole checkpoint upload, because the operation lock spans the upload. | `Checkpoint` in `pkg/adapter/checkpoint.go` | Medium |
+| `SweepDue` runs due checkpoints one at a time. | `pkg/gateway/checkpoint/checkpointer/schedule.go` | Medium |
+| A restore stops at a fixed 2 GiB, whatever `workspaceSizeLimitBytes` allows. | `maxExtractBytes` in `pkg/adapter/workspace/extract.go` | Medium |
+| The pool-config webhook admits a `workspaceSizeLimitBytes` above 512 MiB and gives it the 90-second cap. | `MaxTieredCheckpointCapSeconds` in `pkg/admission/pool_config_validator/validator.go` | Low |
+| Periodic attempts send `deadline_ms = 0`, which tells the runtime it has no time to quiesce. | `CheckpointStart` in `pkg/gateway/checkpoint/checkpointer/checkpointer.go` | Low |
+| §4.4.4 recommends `.lennyignore` excludes for checkpoints, and checkpoints ignore that file. | `pkg/workspacepack` honors it for client uploads only | Low |
+| The adapter sends `checkpoint_request` to a runtime whose `lifecycle_support` leaves out `"checkpoint"`. The interrupt, credential-rotation, and deadline paths each check the runtime's declared capability, and the checkpoint path does not. | `Checkpoint` in `pkg/adapter/checkpoint.go` | Medium |
+| A `gitClone` source holds the whole archive in gateway memory, and no byte cap was found in `pkg/gateway/provisioning/gitref`. | `CloneArchive` in `pkg/gateway/provisioning/gitref/archive.go` | Medium |
+| The operator guide's pool example sets `checkpointPolicy: {enabled: true, intervalSeconds: 600}`, and the configuration reference lists `pool.checkpointing.enabled`, `pool.checkpointing.interval`, `pool.checkpointing.workspaceSizeLimitBytes`, and a Runtime field `capabilities.checkpoint`. No spec section, schema, or code defines any of them, so an operator who sets `enabled: false` expects checkpoints to stop and they do not. | `docs/operator-guide/configuration.md` (Pool Configuration example); `docs/reference/configuration.md` (Checkpointing configuration) | Medium |
+| The spec contradicts itself on Basic-level checkpoints. §4.4.3 **Checkpoint quiescence strategy by level:** gives Basic and Standard runtimes a best-effort snapshot without pausing. The §15.4.3 (Runtime Integration Levels) table row **Checkpoint / restore** and the Basic-level paragraph of §28.5.3 (Intra-pod) state that Basic has no checkpoint support. The runtime author guide follows §15.4.3. Decision D12 resolves it. | `spec/04_system-components.md`, `spec/15_external-api-surface.md`, `spec/28_communication-channels.md`, `docs/runtime-author-guide/lifecycle.md`, `docs/runtime-author-guide/integration-levels.md` | Medium |
+| The troubleshooting guide answers a long checkpoint with "Reduce `workspaceSizeLimitBytes`; use `.lennyignore`". Checkpoints ignore `.lennyignore`, and lowering the size limit evicts sessions whose workspace is larger. | `docs/operator-guide/troubleshooting.md` (Checkpoint Failures) | Low |
+| The architecture overview describes a checkpoint as a tar of `/workspace/slots/{sessionId}/current`, and the observability guide states a P95 checkpoint duration objective of 2 s at 100 MB, measured from quiescence through upload. Both follow the current method, and both change under this design. | `docs/getting-started/concepts.md`, `docs/operator-guide/observability.md` | Low |
+
+## Specification sections affected
+
+- §4.4.2 (Checkpoint Atomicity and Partial Manifests): the atomic unit becomes a snapshot row with its pack references, and partial manifests are removed.
+- §4.4.3 (Checkpoint Quiescence, Timeout, and Abort Handling): the passes, the pause budget, convergence, best-effort tolerance, and the meaning of `checkpoint_complete`.
+- §4.4.4 (Checkpoint SLOs and Scheduling): the SLO measures the pause, the size limit bounds disk and storage, and scheduling and freshness use each session's effective interval.
+- §4.4.5 (Checkpoint Storage Failure and Eviction Fallback): retry budgets apply per pack.
+- §4.5 (Artifact Store) **Workspace lineage:**: snapshot identity and lineage.
+- §4.9 (Credential Leasing Service): checkpoint-and-restart rotation under `sealOnly` and `none`.
+- §5.1 (Runtime) and §5.2 (Pool Configuration and Execution Modes): `checkpointPolicy` and `periodicCheckpointIntervalSeconds` on both, the resolution rules, and the pool admission `Warning`.
+- §5.2 (Pool Configuration and Execution Modes): `checkpointChangeTracker` and `checkpointTrackerMaxWatches`.
+- §5.3 (Isolation Profiles): the node configuration that lowers the pause on `sandboxed` and `microvm` nodes, stated as deployer guidance: passing `dev.gvisor.*` annotations to runsc and the effect of `--file-access-mounts=exclusive` on kubelet-updated volumes for gVisor, and the Kata guest watch limit and `emptydir_mode`.
+- §6.4 (Pod Filesystem Layout): the pod controller renders the gVisor pod-share mount hint annotations for the workspace volume on every `sandboxed` pod.
+- §6.2 (Pod State Machine): idle suspension and the `maxSuspendedPodHoldSeconds` release under `sealOnly` and `none`.
+- §6.4 (Pod Filesystem Layout): the workspace `sizeLimit` and the spool directory.
+- §7.1 (Normal Flow): the seal, **Derive copy semantics:**, and **Derive restore semantics:**.
+- §7.3 (Retry and Resume): the restore steps and the restore limit.
+- §10.1.7 (preStop Hook Drain): the single drain cap, and removal of the chunked tar model and its reassembly.
+- §10.1.8 (Rolling Updates and the CheckpointBarrier Protocol): the barrier hold ends after the capture pass.
+- §11.2 (Budgets and Quotas) and §12.5 (Artifact Store): quota per pack, reference-based garbage collection, compaction, and **Workspace deduplication.**
+- §12.8 (Compliance Interfaces): erasure and legal hold over shared packs.
+- §13.2 (Network Isolation) **Checkpoint capability model.**: the pack key layout, signed `Content-MD5`, and `GET` scoping by snapshot.
+- §15 (External API Surface): `GET /v1/sessions/{id}/workspace` keeps its contract and returns 404 under `none`, the derive refusal gains the `checkpointing_disabled` reason, and the session envelope reports the effective `checkpointPolicy`.
+- §15.4.3 (Runtime Integration Levels) and §28.5.3 (Intra-pod): the Basic-level checkpoint statement, as decision D12 resolves it.
+- §16 (Observability): the new metrics including the tracker's, the redefined `CheckpointDurationHigh` alert, a pause objective in place of the duration objective, and `CheckpointStale` leaving out sessions under `sealOnly` and `none`.
+- §18 (Build Sequence): the checkpoint benchmark measures the pause and the new-byte rate.
+- §28.5.3 (Intra-pod): the `checkpoint_request` and `checkpoint_complete` rows for `CH-RUNTIMEOPS`.
+
+## Stored formats and wire contracts this forces
+
+| Surface | Change |
+| :-- | :-- |
+| `schemas/lenny-adapter.proto` | Pack messages on `Checkpoint`, `CaptureDone`, `SnapshotReady`, and restore messages that name packs. |
+| `CH-RUNTIMEOPS` | `checkpoint_complete` confirms the capture, and `deadlineMs` carries the pause budget. |
+| Postgres | `checkpoint_packs`, `checkpoint_snapshots`, and `checkpoint_snapshot_packs`, which replace the partial-manifest table and the per-checkpoint chunk rows. |
+| Object keys | `/{tenant_id}/checkpoints/{session_id}/packs/{pack_id}`. |
+| Pack and manifest formats | Versioned binary formats, with codecs in the adapter and the gateway. |
+| Pool configuration | `checkpointPauseBudgetSeconds`, `checkpointCaptureBudgetBytes`, `checkpointPreCopyRounds`, `checkpointAttemptTimeoutSeconds`, `evictionCheckpointCapSeconds`, `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, `checkpointChangeTracker`, and `checkpointTrackerMaxWatches`. |
+| Runtime definition | `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, and `checkpointExcludes` (D5). |
+| Chart values | `checkpoint.minIntervalSeconds` and `checkpoint.maxIntervalSeconds`. |
+| Session envelope | The effective `checkpointPolicy`. |
+| Metrics | `lenny_checkpoint_pause_seconds`, `lenny_checkpoint_new_bytes_total`, `lenny_checkpoint_precopy_rounds`, `lenny_checkpoint_torn_files_total`, `lenny_checkpoint_consistency_downgrade_total`, `lenny_checkpoint_tracker_state`, `lenny_checkpoint_tracker_fallback_total`, and `lenny_checkpoint_tracker_watches`. |
+
+The platform has no deployments, so the old format gets no migration or dual-read path.
+
+## Changes to Lenny's documentation
+
+The documentation changes land with the spec changes, after the owner approves the design. Published pages cite no spec section numbers, so the pages below state behavior and settings directly.
+
+### New page: `docs/operator-guide/checkpointing.md`
+
+A new Operator Guide page, titled "Checkpointing", sits after "Observability" in the navigation. It covers these topics:
+
+1. **How a checkpoint runs.** The pre-copy, capture, and upload passes, which pass pauses a Full-level runtime, why the first checkpoint of a session takes longer without pausing longer, and how a restore verifies what it writes.
+2. **Consistency by integration level.** A Full-level runtime gets a consistent snapshot and pauses for the capture. Every other runtime gets a best-effort snapshot with no pause, as decision D12 settles. The platform never pauses a runtime by force.
+3. **Benchmarks.** The steady and package-install pause tables for Chromium and LLVM, the per-file cost table, the tracker's effect on file creation and deletion, and restore times, from "Benchmarks" in this design. The page states the date, the node types, the component versions, and the harness's quiesce stand-in. It states that a deployer's own numbers depend on CPU, disk, and workspace layout, and it names the metrics that measure them in production.
+4. **Operator levers.** `checkpointPolicy`, `periodicCheckpointIntervalSeconds` and the deployer's interval bounds, `checkpointChangeTracker`, `checkpointPauseBudgetSeconds`, `checkpointPreCopyRounds`, `checkpointCaptureBudgetBytes`, `workspaceSizeLimitBytes`, CPU allocation through the resource class, and a `standard` pool granted to one tenant on tainted nodes, each with its measured effect and its cost, as in "Levers".
+5. **Node configuration for deployers.** For gVisor, the containerd `pod_annotations = ['dev.gvisor.*']` setting that lets the workspace mount hints reach runsc, with the measured gain and the symptom of its absence (the tracker stays off and the walk pause applies). The statements that `--file-access-mounts=exclusive` stops kubelet updates from reaching the sandbox and must not be set, and that `--platform=kvm` makes checkpoints slower. For Kata, `emptydir_mode = "block-plain"`, which the tracker requires, `kernel_params` for the guest watch limit, and `virtio_fs_cache = "metadata"` for deployers who keep the shared file system. For runc, the `fs.inotify.max_user_watches` and `fs.inotify.max_user_instances` sysctls. Node disk choice and gp3 IOPS for the first checkpoint and for restore.
+6. **Runtime author and tenant levers.** Declaring `"checkpoint"` in `lifecycle_support` or leaving it out, `checkpointPolicy` and `periodicCheckpointIntervalSeconds` on the Runtime, `checkpointExcludes`, the same settings on a derived runtime, and asking the operator for a dedicated pool.
+7. **Monitoring.** `lenny_checkpoint_pause_seconds`, `lenny_checkpoint_consistency_downgrade_total`, `lenny_checkpoint_torn_files_total`, `lenny_checkpoint_new_bytes_total`, the tracker metrics, and what each alert means.
+
+### Updates to existing pages
+
+| Page | Change |
+| :-- | :-- |
+| `docs/operator-guide/configuration.md` | The pool example replaces the undefined `checkpointPolicy: {enabled, intervalSeconds}` block with `checkpointPolicy: full`, `periodicCheckpointIntervalSeconds: 600`, and `checkpointChangeTracker: auto`, and links to the checkpointing page. |
+| `docs/reference/configuration.md` | The "Checkpointing configuration" table drops `pool.checkpointing.enabled`, `pool.checkpointing.interval`, and `pool.checkpointing.workspaceSizeLimitBytes`, and lists every pool and Runtime field in "Stored formats and wire contracts this forces" with its default and bounds, plus the chart values `checkpoint.minIntervalSeconds` and `checkpoint.maxIntervalSeconds`. The Runtime row `capabilities.checkpoint` is replaced by a pointer to the `"checkpoint"` entry of `lifecycle_support`. |
+| `docs/reference/metrics.md` and `docs/operator-guide/observability.md` | The checkpoint metrics tables add the new metrics. The "Checkpoint duration (100MB)" objective becomes a pause objective, as in §16. |
+| `docs/alerting/rules.yaml` and `docs/alerting/openslo.yaml` | `CheckpointDurationHigh` and `CheckpointDurationBurnRate` measure `lenny_checkpoint_pause_seconds`. `CheckpointStale` leaves out sessions whose policy is `sealOnly` or `none` and measures each session against its own interval. |
+| `docs/operator-guide/troubleshooting.md` | "Checkpoint Failures" drops the `.lennyignore` and size-limit advice. It adds best-effort downgrades and what lowers them, the tracker's state by file system type and the node setting each state points to, tracker fallbacks by reason, and a Full-level runtime that is slow to send `checkpoint_ready`. |
+| `docs/runbooks/checkpoint-stale.md` | The runbook measures staleness against each session's effective interval, leaves out `sealOnly` and `none`, and explains that a large workspace's first checkpoint can span several attempts. |
+| `docs/runtime-author-guide/lifecycle.md` | The "Checkpointing" section states the Basic-level behavior as D12 settles it. The Full-level example carries `deadlineMs` as the pause budget, `checkpoint_complete` arrives once the capture ends, and the section gives the measured pause range and links to the checkpointing page. It states that the platform does not pause a runtime that does not quiesce, and it describes `checkpointExcludes` and `checkpointPolicy` on the Runtime. |
+| `docs/runtime-author-guide/integration-levels.md` | The "Checkpoint and restore" and "Credential rotation" rows and the Basic-level paragraph match D12, and the handshake example's default deadline is the pause budget. |
+| `docs/reference/adapter-contract.md` | `checkpoint_complete` means the snapshot is captured, and `deadlineMs` carries the pause budget. |
+| `docs/getting-started/concepts.md` and `docs/getting-started/architecture.md` | The checkpoint description changes from a tar of the slot to incremental packs and a manifest, and the presigned exception for checkpoint chunk objects names packs. |
+| `docs/api/internal.md` | The `Checkpoint` stream messages follow IC-3. |
+| `docs/client-guide/session-lifecycle.md` | The session envelope reports the effective `checkpointPolicy`, and the page states which policies resume with `workspaceLost: true`. |
+| `docs/operator-guide/namespace-and-isolation.md` | The isolation profile summary links to the checkpointing page for the checkpoint cost of each profile. |
+| `docs/operator-guide/scaling.md` and `docs/reference/configuration.md` | `capacityPlanning.avgWorkspaceSizeMB` estimates the first checkpoint, and checkpoint bandwidth after it follows the rate of changed bytes. |
+| `docs/reference/glossary.md` | Entries for pre-copy, capture pass, pause, change tracker, pack, and best-effort snapshot. |
+
+## Tests
+
+### Tier 1: unit
+
+- Chunk boundaries are deterministic, and an insertion changes only nearby chunks.
+- Pack and manifest codecs round-trip and reject truncated or reordered input.
+- The racy rule re-reads an entry whose `mtime` falls inside the window.
+- The reference closure check rejects a foreign pack, a pack from the source's later snapshot, and an expired `unreferenced` pack.
+- Convergence: over budget, the adapter takes another round and falls back to best-effort after the last one.
+- Policy resolution picks the stricter value, and a derived runtime cannot loosen its base's policy.
+- Interval resolution prefers the pool, then the Runtime, then the gateway default, and clamps to the deployer's bounds.
+- The pause estimate sums the change-source cost, the per-file cost, and the byte cost, adds the tracker backlog, and counts reflinked bytes at the clone cost.
+- The tracker's swap returns every path changed before the barrier, an overflow forces the next capture to walk, and a failed watch keeps the tracker degraded across swaps.
+- `checkpointChangeTracker: auto` resolves to on for `standard` and `microvm` and to off for `sandboxed`.
+
+### Tier 2: component
+
+- Pool admission returns the `Warning` for `sealOnly` or `none` with `hotRotation: false`, and accepts an interval outside the deployer's bounds only as a clamped value.
+
+### Tier 3: contract
+
+- `Checkpoint` message order and every abort arm.
+- `checkpoint_complete` is sent once the capture ends, before any pack of the upload pass.
+
+### Tier 4: integration
+
+- A checkpoint and restore round trip against MinIO, with byte-for-byte comparison.
+- A second checkpoint after a one-file change uploads one pack.
+- A timed-out attempt's packs are reused by the next attempt.
+- A derive references packs without copies, and garbage collection keeps them while the derived snapshot lives.
+- Quota is charged once per pack and released at deletion.
+- Under `sealOnly`, no checkpoint runs during the session, the seal runs, and a pod failure resumes with `conversation_only`.
+- Under `none`, the seal does not run, `GET /v1/sessions/{id}/workspace` returns 404, and a derive `from: latest` is refused.
+- Two pools with different intervals are checkpointed on their own schedules, and `CheckpointStale` measures each against its own interval.
+- A runtime whose `lifecycle_support` leaves out `"checkpoint"` receives no `checkpoint_request` and is captured on the best-effort path.
+- With the watch limit set below the workspace's directory count, the tracker reports degraded, every capture walks, and a verification walk finds no missed change.
+- A directory created after the tracker started, and the files written into it before its watch existed, are in the next capture.
+- A running `git repack` leaves no `tmp_pack_*` file in the snapshot, and the restored repository passes `git fsck`.
+
+### Tier 5: e2e on Kind
+
+- A 5 GiB workspace checkpoints with a pause under budget and restores on a new pod.
+- A drain checkpoint fits `evictionCheckpointCapSeconds`.
+- The rendered workspace volume carries `sizeLimit`.
+
+### Tier 6: e2e in the cloud
+
+- The pause, the tracker, and restore for a pod with the adapter as a sidecar under runc, gVisor, and Kata, including inotify events from the agent container reaching the adapter container's tracker.
+- The tracker on a `sandboxed` node whose containerd handler drops `dev.gvisor.*` annotations stays off under `auto`, and on a node that passes them it runs and reports no fallback.
+- A tracker in the adapter container sees the agent container's writes on every configuration where `auto` turns it on, and `auto` leaves it off on `9p` and `virtiofs`.
+- The `FICLONE` probe on each profile's workspace volume.
+- Kata with `emptydir_mode = "block-plain"` under the kubelet's `emptyDir` size accounting.
+
+### Tier 7: load
+
+- Concurrent git operations during best-effort captures produce restorable repositories, and the attempt never fails on a changed file.
+- An interrupt during the upload pass is acknowledged within the interrupt deadline.
+- Concurrent attempts per replica with one slow session.
+- A writer creating 10,000 files per second during the capture keeps the pause within the budget or ends on the best-effort path, with no missed change in either case.
+
+### Tier 8: chaos
+
+- An adapter crash in each pass, a gateway failover during finalization, and a lease expiry for orphaned packs.
+
+### Tier 9: security
+
+- A pod that names a foreign pack ID is refused.
+- A `PUT` for an existing pack ID is refused.
+- A `GET` outside the snapshot's packs is refused.
+- A substituted pack is detected at restore.
+
+### Tier 11: documentation
+
+- Runbooks for `CheckpointDurationHigh` and `CheckpointStale` describe the pause metric and the convergence fallback.
+- The checkpointing page's settings, defaults, and metric names match the configuration reference and the metrics reference.
+
+## Decisions
+
+| ID | Decision | Recommendation | Alternative |
+| :-- | :-- | :-- | :-- |
+| D1 | Deduplication scope | Per session and its starting snapshot, as "Reference closure" states. | Tenant-wide deduplication across sessions. It saves the first upload of a repository that many sessions clone, but the server would have to answer whether a hash exists, which opens a confirmation attack and needs proof of ownership. |
+| D2 | Derive storage | A reference to the source's packs, with reference-based garbage collection. | Copy every pack, as derive copies chunks today. The cost grows with workspace size. |
+| D3 | Default `workspaceSizeLimitBytes` | 10 GiB for the default resource class, with the class's `ephemeral-storage` request rendered to match. | Keep 512 MiB. Large clones then keep failing. |
+| D4 | Partial-manifest reassembly | Remove it. | Keep a pack-level partial snapshot. The design reuses confirmed packs instead. |
+| D5 | Exclusions | A runtime-declared `checkpointExcludes` list for regenerable directories such as `node_modules/`, empty by default. | No exclusions, or honor a workspace `.lennyignore`, which lets the agent choose what survives a restore. |
+| D6 | Git maintenance | Set `gc.auto=0` and `maintenance.auto=false` in the pod's injected git configuration. | Leave maintenance on and accept a history re-upload after each repack. |
+| D7 | Pause budget defaults | Settled by the owner on 2026-11-06: a 10 s pause budget. The spool cap stays at 512 MiB and the pre-copy rounds at 3, followed by best-effort capture. Admission rejects a budget of 60 s or more. | A 5 s budget, which revision 3's first draft recommended. It halves the longest interrupt delay a checkpoint causes, and it sends Chromium-sized workspaces under gVisor without a tracker to the best-effort path. |
+| D8 | `checkpointPolicy` values and resolution | Settled by the owner on 2026-11-05: `full`, `sealOnly`, and `none` on the Runtime and the pool, with the stricter value winning. | None. |
+| D9 | Interval resolution between the Runtime and the pool | The pool's value wins, clamped to the deployer's bounds. | The shorter of the two values wins. That protects more of the runtime's work, and it lets a runtime author raise a pool's storage and gateway load without the operator's consent. |
+| D10 | Change source for the capture | An inotify change tracker with the stat walk as its fallback, `checkpointChangeTracker: auto` by default, which runs the tracker only on workspace file systems where the agent container's writes reach the adapter's watches: a node file system under runc, gVisor's pod-share mount, and a Kata block volume. Measured steady pause: 0.03 to 0.16 s on every profile. | The stat walk only. The pause then grows with file count, to 8.6 s for Chromium under gVisor. A fanotify tracker with file system marks needs `CAP_SYS_ADMIN`, which agent pods do not hold. |
+| D11 | Pause budget | An estimated capture time, decided before `checkpoint_request` from rates measured during pre-copy, with `checkpointCaptureBudgetBytes` kept as the spool cap. | A byte budget, as in revision 2. It misses captures of many small files, which cost 50 to 130 µs each on gVisor and Kata's shared file system. |
+| D12 | Basic-level checkpoints | Basic runtimes get the best-effort snapshot that §4.4.3 states, with no pause, and §15.4.3, §28.5.3, and the runtime author guide change to match. The adapter needs nothing from the runtime for a best-effort capture. | Basic runtimes get no checkpoint, as §15.4.3 states. A pod failure then loses the workspace of every Basic session, and credential rotation restarts them without a workspace. |
+| D13 | Deployer guidance for gVisor, Kata, and runc | The pod controller renders the gVisor pod-share mount hints on `sandboxed` pods, and the guide tells deployers to pass `dev.gvisor.*` annotations to runsc. Recommend `emptydir_mode = "block-plain"` and the guest watch limit on Kata nodes, and the inotify sysctls on runc nodes. State that `--file-access-mounts=exclusive` must not be set and that `--platform=kvm` slows checkpoints. List `virtio_fs_cache = "metadata"` for Kata deployers who keep the shared file system. | Leave node configuration out of Lenny's documentation. Deployers on gVisor and Kata then run with the walk pause or a degraded tracker without knowing why. |
+
+## Not verified
+
+- A Full-level runtime's own quiesce time. The harness used `SIGSTOP` on the workload as a stand-in.
+- Restore through the gateway's grant protocol and presigned URLs. The harness restored with direct SDK access.
+- Clouds other than AWS, Arm nodes, and Kubernetes node images other than Amazon Linux 2023. The Kubernetes checks ran on a single-node k3s cluster with kubelet 1.37.
+- Whether Kubernetes user namespaces give each pod its own inotify budget under runc.
+- Which managed gVisor offerings pass `dev.gvisor.*` pod annotations to runsc. Where they do not, `sandboxed` pools keep the walk.
+- The pod-share mount with the tracker and the workload in separate containers under load. The benchmark ran both in one container, and the cross-container check wrote 202 paths.
+- Kata `block-plain` with more than one workspace volume per pod, and its behavior when the node's disk fills, since `disk.img` is sparse.
+- Ranged `GET` requests on presigned URLs for each backend, which would let a restore skip unused chunks of a pack. This design fetches whole packs.
+- Whether `Content-MD5` binds into the signature on each backend. It does on SigV4 backends that sign it. An Azure SAS does not bind request headers, so on Azure the write-time check depends on the adapter, and S4 is the control.
+- Timestamp granularity on the node kernels Lenny targets. `racyWindow` is set conservatively.
+- Which local CSI drivers provide `VolumeSnapshot` on ZFS or Btrfs, for the deferred node-level provider.
+
+The Kubernetes checks settled three items that revision 3's first draft listed here: inotify across containers, `--file-access-mounts=exclusive` against kubelet-updated volumes, and `block-plain` against the `emptyDir` size limit. The cloud runs settled items that revision 2 listed here: `FICLONE` is available under runc only, the stat walk's cost under gVisor and Kata is in "Benchmarks", and zstd's fastest level compresses at 0.85 to 2.0 GiB/s per core. Cold reads of small files ran at 17 to 38 MiB/s on gp3 and at 154 to 351 MiB/s on local NVMe, and the capture read recently changed files from the page cache in every scenario.
