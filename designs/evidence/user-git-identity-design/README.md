@@ -11,6 +11,7 @@ This folder holds the test evidence behind `designs/user-git-identity-design.md`
 | `spike-gh/go/`, `spike-gh/gitopt/go/` | The test programs: the `netagent` prototype, the recording stub, the attack client, and the origin. |
 | `spike-gh/gitopt/t/`, `spike-gh/*.sh`, `spike-gh/*.py`, `spike-gh/policy-*.json` | The drivers, the policies, and the presets as data. |
 | `gh-history/out/`, `gh-history/scripts/` | The `gh` mutation history across releases, and the scripts that read it. |
+| `spike-ghlive/` | The live GitHub runs of 2026-11-06 for S1, S2, S3, S5, S6, S15, and S16, against organization `lenny-test`: `RESULTS.md`, the scripts, and their output, with no token in any file. |
 | `review-repro/` | The scripts a review used to reproduce `gh` and `glab` stopping under the prior `insteadOf` configuration. Their output was not kept. |
 
 ## Date and environment

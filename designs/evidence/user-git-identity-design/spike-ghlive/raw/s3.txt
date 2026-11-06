@@ -1,0 +1,19 @@
+== control: bob opens, alice approves, no other push
+push(bob-opens-control): 0
+CASE control: PR #3 approve=[200	{"id":5804537009,"node_id":"PRR_kwDOVlY8hc8AAAABWfo0sQ","user":{"login":"lennylabsdev","id":353446916,"nod] last-commit=[{"author":"itsfivepastnine","committer":"itsfivepastnine"}] state={"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","mergeable":"MERGEABLE"}
+== A: bob opens, App installation token pushes (alice's agent, author alice), alice approves
+push(bob-opens-app): 0
+push(push-app): 0
+CASE app: PR #4 approve=[200	{"id":5804539834,"node_id":"PRR_kwDOVlY8hc8AAAABWfo_ug","user":{"login":"lennylabsdev","id":353446916,"nod] last-commit=[{"author":"lennylabsdev","committer":"lennylabsdev"}] state={"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","mergeable":"MERGEABLE"}
+== B: bob opens, alice's user token pushes, alice approves
+push(bob-opens-user): 0
+push(push-user): 0
+CASE user: PR #5 approve=[200	{"id":5804543476,"node_id":"PRR_kwDOVlY8hc8AAAABWfpN9A","user":{"login":"lennylabsdev","id":353446916,"nod] last-commit=[{"author":"lennylabsdev","committer":"lennylabsdev"}] state={"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE"}
+== C: bob opens, alice's scoped child pushes, alice approves
+push(bob-opens-child): 0
+push(push-child): 0
+CASE child: PR #6 approve=[200	{"id":5804548570,"node_id":"PRR_kwDOVlY8hc8AAAABWfph2g","user":{"login":"lennylabsdev","id":353446916,"nod] last-commit=[{"author":"lennylabsdev","committer":"lennylabsdev"}] state={"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE"}
+== D: bob opens, App pushes, bob (the author) approves
+push(bob-opens-author): 0
+push(push-author): 0
+CASE author: PR #7 approve=[422	{"message":"Unprocessable Entity","errors":["Review Can not approve your own pull request"],"documentation] last-commit=[{"author":"itsfivepastnine","committer":"itsfivepastnine"}] state={"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE"}

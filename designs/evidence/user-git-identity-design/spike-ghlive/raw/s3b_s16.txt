@@ -1,0 +1,10 @@
+== S3 variant: App push with an author that is no GitHub account, alice approves
+approve: 200	
+CASE app-unattributed: PR #8 state={"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","baseRefName":"main"}
+== S16: approval after a base change
+test-repo PR #9: reviews before=["APPROVED"], base change status=200	, reviews after=["APPROVED"], state={"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","baseRefName":"spike/s16-base-1793987435"}
+test-repo-2 PR #3: reviews before=["APPROVED"], base change status=200	, reviews after=["APPROVED"], state={"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN","baseRefName":"spike/s16-base-1793987451"}
+== PR body limit, larger
+body 524288 chars: 200 {"len":524288,"message":null,"errors":[]}
+body 1048576 chars: 200 {"len":1048576,"message":null,"errors":[]}
+body 4194304 chars: 200 {"len":4194304,"message":null,"errors":[]}

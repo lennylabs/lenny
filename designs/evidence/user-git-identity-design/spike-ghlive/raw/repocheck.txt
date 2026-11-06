@@ -1,0 +1,8 @@
+== test-repo
+{"private":false,"default_branch":"main","size":5}
+{"has_commit":true,"message":null}
+[{"type":"deletion","parameters":null},{"type":"non_fast_forward","parameters":null},{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":false,"required_reviewers":[],"require_code_owner_review":false,"dismissal_restriction":{"enabled":false,"allowed_actors":[]},"require_last_push_approval":true,"required_review_thread_resolution":false,"require_extra_approval_for_unattributed_changes":true,"allowed_merge_methods":["merge","squash","rebase"]}}]
+== test-repo-2
+{"private":false,"default_branch":"main","size":0}
+{"has_commit":true,"message":null}
+[]

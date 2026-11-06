@@ -1,0 +1,22 @@
+parent valid at start: 200
+== create 14 children with identical scope, checking every earlier child after each creation
+create #1: http 200 issued=yes msg= [x-ratelimit-remaining: 9965 x-ratelimit-resource: core ] alive: c1:200 parent:200
+create #2: http 200 issued=yes msg= [x-ratelimit-remaining: 9964 x-ratelimit-resource: core ] alive: c1:200 c2:200 parent:200
+create #3: http 200 issued=yes msg= [x-ratelimit-remaining: 9963 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 parent:200
+create #4: http 200 issued=yes msg= [x-ratelimit-remaining: 9962 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 parent:200
+create #5: http 200 issued=yes msg= [x-ratelimit-remaining: 9961 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 parent:200
+create #6: http 200 issued=yes msg= [x-ratelimit-remaining: 9960 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 parent:200
+create #7: http 200 issued=yes msg= [x-ratelimit-remaining: 9959 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 parent:200
+create #8: http 200 issued=yes msg= [x-ratelimit-remaining: 9958 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 parent:200
+create #9: http 200 issued=yes msg= [x-ratelimit-remaining: 9957 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 parent:200
+create #10: http 200 issued=yes msg= [x-ratelimit-remaining: 9956 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 c10:200 parent:200
+create #11: http 200 issued=yes msg= [x-ratelimit-remaining: 9955 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 c10:200 c11:200 parent:200
+create #12: http 200 issued=yes msg= [x-ratelimit-remaining: 9954 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 c10:200 c11:200 c12:200 parent:200
+create #13: http 200 issued=yes msg= [x-ratelimit-remaining: 9953 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 c10:200 c11:200 c12:200 c13:200 parent:200
+create #14: http 200 issued=yes msg= [x-ratelimit-remaining: 9952 x-ratelimit-resource: core ] alive: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 c10:200 c11:200 c12:200 c13:200 c14:200 parent:200
+== refresh the parent three times
+refresh 1: {"refreshed":true,"expires_in":28800,"refresh_token_expires_in":15638400,"new_refresh_token":true}
+refresh 2: {"refreshed":true,"expires_in":28800,"refresh_token_expires_in":15638399,"new_refresh_token":true}
+refresh 3: {"refreshed":true,"expires_in":28800,"refresh_token_expires_in":15638400,"new_refresh_token":true}
+parent valid at end: 200
+children at end: c1:200 c2:200 c3:200 c4:200 c5:200 c6:200 c7:200 c8:200 c9:200 c10:200 c11:200 c12:200 c13:200 c14:200

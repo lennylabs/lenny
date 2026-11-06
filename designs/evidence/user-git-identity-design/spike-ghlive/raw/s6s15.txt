@@ -1,0 +1,40 @@
+== S6
+parent repo permissions (user token, App holds contents:write): {"admin":false,"maintain":false,"push":true,"triage":true,"pull":true}
+metadata-only child repo permissions: {"admin":false,"maintain":false,"push":true,"triage":true,"pull":true}
+collaborator permission endpoint, parent: 200 {"permission":"write","role_name":"write"}
+collaborator permission endpoint, metadata-only child: 200
+GET /user/emails with parent (App has emails:read): 200 verified-primary-present: [true]
+GET /user/emails with contents-only child: 200	[{"email":"lennylabsdev@gmail.com","primary":true,"verified":true,"visibility":"public"}]
+GET /user/emails with emails:read child: 200
+child with empty repositories list: {"issued":false,"selection":null,"message":"Invalid request.\n\n1 item required; only 0 were supplied.","errors":null}
+== S15 setup: alice opens a PR on each repo
+branch on test-repo: 201
+PR test-repo #2
+branch on test-repo-2: 201
+PR test-repo-2 #2
+== S15 approve: bob's child (pull_requests:write, contents:read) approves alice's PR on test-repo
+REST approve: 200	{"id":5804512685,"node_id":"PRR_kwDOVlY8hc8AAAABWfnVrQ","user":{"login":"itsfivepastnine","id":353446532,"node_id":"U_kgDOFREqhA","avata
+== S15 merge with pull_requests:write alone (test-repo-2, no rules)
+REST merge by bob child: 403	{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com/rest/pulls/pulls#merge-a-pull-request","status":"403"}
+GraphQL merge by bob child: {"data":{"mergePullRequest":null},"errors":["Resource not accessible by integration"]}
+== S15 node-ID mutation outside the child's repository
+bob child scoped to test-repo comments on test-repo-2 PR by node id: {"data":{"addComment":null},"errors":["Resource not accessible by integration"]}
+bob child scoped to test-repo creates PR on test-repo-2 via REST: 403	{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com/rest/pulls/pulls#cr
+== S15 request forms (parent token, harmless targets)
+GraphQL batch (array body): {
+  "message": "Body should be a JSON object",
+  "documentation_url": "https://docs.github.com/graphql",
+  "status": "400"
+}
+ 400
+ 200
+REST form body (issue comment on PR 2): {"id":null,"message":"Problems parsing JSON"}
+method override header (POST with X-HTTP-Method-Override: DELETE on a ref): 422; ref still exists: 200
+method override _method query: 422; ref still exists: 200
+== S15 PR body limit (PATCH on PR 2)
+body 65536 chars: 200 {"len":65536,"message":null,"errors":[]}
+body 65537 chars: 200 {"len":65537,"message":null,"errors":[]}
+body 262144 chars: 200 {"len":262144,"message":null,"errors":[]}
+== S15 performed_via_github_app on a comment made with a child
+comment via child: {"user":"itsfivepastnine","performed_via_github_app":"lenny-spike-test-app"}
+review via child: [{"user":"itsfivepastnine","state":"APPROVED"}]
