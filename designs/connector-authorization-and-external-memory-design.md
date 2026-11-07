@@ -1,6 +1,6 @@
 # Connector authorization and external memory
 
-Status: design for owner review, revision 3, 2026-11-03, with no independent review yet. Revision 2 recorded the owner's answers to the open decisions and added "Instructions for reviewers of other designs". Revision 3 settled the last one, the link check before an explicit resume. Revision 4 recorded the Claude Code bridge spike under "CA-9". Revision 5 delivered the bridge to every sidecar `type: agent` pod. Revision 6 records the startup measurement and the owner's choice of a separate init container. It reads against `user-git-identity-design.md` revision 9, `user-credential-delivery-design.md` revision 6, `tenant-scoping-identity-design.md` revision 10, `tenant-outbound-connector-design.md` revision 9, and `egress-and-git-design.md` revision 49. Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline.
+Status: design for owner review, revision 7, 2026-11-06, with no independent review yet. Revision 2 recorded the owner's answers to the open decisions and added "Instructions for reviewers of other designs". Revision 3 settled the last one, the link check before an explicit resume. Revision 4 recorded the Claude Code bridge spike under "CA-9". Revision 5 delivered the bridge to every sidecar `type: agent` pod. Revision 6 recorded the startup measurement and the owner's choice of a separate init container. Revision 7 changes only pointers after the user credential documents split. It reads against `user-credential-delivery-design.md` revision 19, `user-git-identity-design.md` revision 28, `tenant-scoping-identity-design.md` revision 10, `tenant-outbound-connector-design.md` revision 9, and `egress-and-git-design.md` revision 49. Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -22,7 +22,7 @@ Sessions still need a way to reach state that outlives a pod. MCP connectors are
 - An expired token is sent as it is and never refreshed **[measured]**.
 - A session with no delegation policy is offered every active connector in the tenant **[source]**.
 - A stock coding CLI cannot dial the adapter's connector sockets **[source]**.
-- The OAuth callback is open to an account-link attack, recorded in `user-git-identity-design.md` under "Defects found while verifying" **[source]**.
+- The OAuth callback is open to an account-link attack, recorded in `user-credential-delivery-design.md` under "Defects found while verifying" **[source]**.
 - A delegated child loses its parent's Environment, so a token linked under that Environment is not found **[measured]**.
 
 This design removes built-in memory and fixes the connector path so the external route is usable for any connector.
@@ -47,7 +47,7 @@ Out of scope:
 - A reference memory server. The owner may add one when a customer asks.
 - Moving connector tokens out of the gateway (F-4.3.1).
 
-`user-git-identity-design.md` owns account links to repository hosts, and `user-credential-delivery-design.md` owns tokens delivered to pods. A connector token stays on the gateway path, and its use by the gateway remains the one way it is spent. "§9.3" means §9.3 Connector Definition and OAuth/OIDC throughout.
+`user-credential-delivery-design.md` owns account links and tokens delivered to pods, and `user-git-identity-design.md` configures them for repository hosts. A connector token stays on the gateway path, and its use by the gateway remains the one way it is spent. "§9.3" means §9.3 Connector Definition and OAuth/OIDC throughout.
 
 ## Terms
 
@@ -81,7 +81,7 @@ These are settled by the owner, and the rationale stays here so a later reader d
 | An explicit resume checks links first | The check runs before an explicit resume of a released pod starts its new process, so a user who links gets the connector on that resume. See "CA-6". |
 | The bridge reaches every runtime | The platform delivers it to every sidecar `type: agent` pod, using the runtime supervisor's delivery pattern. See "CA-9". |
 | The bridge keeps its own init container | The owner chose this over sharing `lenny-supervisor-stage`, accepting about one second per pod and leaving the supervisor untouched. See "CA-9". |
-| The shared OAuth flow lands first | It is its own proposal, "CA-0", ahead of this design's other proposals and of UG-1. "Instructions for reviewers of other designs" carries the changes this requires elsewhere. |
+| The shared OAuth flow lands first | It is its own proposal, "CA-0", ahead of this design's other proposals and of UC-2 in `user-credential-delivery-design.md`. "Instructions for reviewers of other designs" carries the changes this requires elsewhere. |
 
 ## Requirements
 
@@ -153,7 +153,7 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 
 ### CA-0: Shared OAuth link flow
 
-The account-link attack exists in today's code, and tying its fix to either feature would leave it open until that feature ships. The owner therefore decided that the shared flow is its own proposal and lands first. It takes the hardened sequence in `user-git-identity-design.md` under "Flow", moves it into `pkg/connectoroauth`, and converts today's §9.3 handlers to it, which closes the defect with no other feature.
+The account-link attack exists in today's code, and tying its fix to either feature would leave it open until that feature ships. The owner therefore decided that the shared flow is its own proposal and lands first. It takes the hardened sequence in `user-credential-delivery-design.md` under "Flow" in UC-2, moves it into `pkg/connectoroauth`, and converts today's §9.3 handlers to it, which closes the defect with no other feature.
 
 | Piece | Owner |
 | :-- | :-- |
@@ -163,11 +163,11 @@ The account-link attack exists in today's code, and tying its fix to either feat
 | Callback validation: signature, single consumption, cookie nonce, and `iss` where the provider returns it | Shared |
 | A hook that receives the validated code and verifier | Shared interface |
 | What the start page displays, the per-provider callback path, and any digest compared on return | Supplied by each caller |
-| Code exchange and token storage | Connectors: the gateway, into the connector credential row. UG-1: the Token Service, with identity binding and a confirmation page. |
+| Code exchange and token storage | Connectors: the gateway, into the connector credential row. UC-2: the Token Service, with identity binding and a confirmation page. |
 
 ### Connector routes
 
-The record this flow writes stays the existing connector credential row, because `user-git-identity-design.md` withdrew any route for a link token to reach the connector path.
+The record this flow writes stays the existing connector credential row, because `user-git-identity-design.md` withdrew any route for a link token to reach the connector path, under "User tokens on a VCS host".
 
 | Route | Purpose |
 | :-- | :-- |
@@ -186,11 +186,11 @@ The record this flow writes stays the existing connector credential row, because
 5. The gateway exchanges the code and stores the token with the endpoint digest from "CA-2".
 6. The gateway resolves every pending connector prompt for that tenant, user, connector, and Environment, and notifies the affected sessions under "CA-8".
 
-An impersonation bearer is refused on every link route, as `user-git-identity-design.md` requires for `/v1/user-links`.
+An impersonation bearer is refused on every link route, as `user-credential-delivery-design.md` requires for `/v1/user-links` under "Flow".
 
 ## CA-2: Token lifecycle
 
-**Refresh.** `bearerFor` refreshes when a token has fewer than 5 minutes left, and once more after a 401 from the server. Refresh rotation means one writer per credential, so the row carries `refresh_lease_holder` and `refresh_lease_until`, using the lease form under "Refresh" in `user-git-identity-design.md`. Other replicas re-read the row for up to 5 seconds. Both durations are operator-tunable.
+**Refresh.** `bearerFor` refreshes when a token has fewer than 5 minutes left, and once more after a 401 from the server. Refresh rotation means one writer per credential, so the row carries `refresh_lease_holder` and `refresh_lease_until`, using the lease form under "Refresh" in `user-credential-delivery-design.md`. Other replicas re-read the row for up to 5 seconds. Both durations are operator-tunable.
 
 - `invalid_grant` deletes the token, and the user is unlinked from then on.
 - A transient refresh failure returns the transient error and keeps the row.
@@ -554,7 +554,7 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 - A `preConnect: true` runtime starts before a session binds. A stock CLI's MCP configuration written at that point lists no connector for that session **[pending]**.
 - The probe tells only whether listing needs auth. A server that lists different tools once authenticated gives a `false` runtime the authenticated list at its next start, since a linked user lists with their token.
 - A stock client's rendering of a `tools/list` error or an omitted server is outside Lenny's control. Claude Code does not show the `tools/list` error to the model **[measured]**.
-- A user in two Environments links twice, which §4.3 scoping implies and the owner accepted for the separation it gives. `user-git-identity-design.md` keys host links per user, so the two kinds of link behave differently.
+- A user in two Environments links twice, which §4.3 scoping implies and the owner accepted for the separation it gives. `user-credential-delivery-design.md` keys account links per user, under "Stored links" and its decision 30, so the two kinds of link behave differently.
 - The capability snapshot does not notice a changed tool until a refresh, as "CA-8" states.
 
 ## Alternatives rejected
@@ -588,13 +588,13 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 
 The owner instructed that this document edit no other design. These items are for a reviewer agent working on the named design, which applies them there. Other work is editing these designs on this branch, so locate each item by heading and quoted text, check that it still holds against the current text, and report any item that no longer fits rather than forcing it.
 
-### `user-git-identity-design.md`
+### `user-credential-delivery-design.md`
 
-**Owner decision: the OAuth flow is a shared proposal, "CA-0", which lands before UG-1.** Apply these changes:
+**Owner decision: the OAuth flow is a shared proposal, "CA-0", which lands before UC-2.** Apply these changes:
 
-1. **"UG-1: Account linking", "Flow".** Replace the mechanics in steps 2 to 5 with a reference to "CA-0" in this document: the one-time flow identifier, the OIDC login and subject check, the cookie nonce, the signed `state`, and callback validation. Keep what is specific to UG-1: step 1, the token trust record display and digest comparison, the per-provider callback path, and steps 6 and 7, including the hand-off to the Token Service, identity binding, `allowedAccounts`, and the confirmation page. Check that the "CA-0" hook carries everything those steps need, and report any gap back to this document.
-2. **"Dependencies".** Add "CA-0" to the "UG-1 (linking)" row, with the reason that the flow's mechanics come from it.
-3. **"Reuse of §9.3".** This list explains why host links do not reuse §9.3, and its conclusion stands because of `ConnectorDefinition` requiring an MCP server, the per-person link, and F-4.3.1. Three bullets stop being true once this design lands, so restate them as today's state or remove them from the reasons:
+1. **"UC-2: The `oauth2Link` source and account linking", "Flow".** Replace the mechanics in steps 2 to 5 with a reference to "CA-0" in this document: the one-time flow identifier, the OIDC login and subject check, the cookie nonce, the signed `state`, and callback validation. Keep what is specific to UC-2: step 1, the token trust record display and digest comparison, the per-provider callback path, and steps 6 and 7, including the hand-off to the Token Service, identity binding, `allowedAccounts`, and the confirmation page. Check that the "CA-0" hook carries everything those steps need, and report any gap back to this document.
+2. **"Dependencies".** Add "CA-0" to the UC-2 row, with the reason that the flow's mechanics come from it.
+3. **"Reuse of §9.3".** This list explains why account links do not reuse §9.3, and its conclusion stands because of `ConnectorDefinition` requiring an MCP server, the per-person link, and F-4.3.1. Three bullets stop being true once this design lands, so restate them as today's state or remove them from the reasons:
    - "The §9.3 flow runs from a tool call inside a session": "CA-A" adds linking before a session.
    - "Connector refresh has no caller, and no store has a refresh lease": "CA-B" adds both.
    - "The callback is open to the account-link attack": "CA-0" closes it.
@@ -602,12 +602,10 @@ The owner instructed that this document edit no other design. These items are fo
    - "Account linking in §9.3": state that "CA-0" closes it.
    - "Refresh absent": state that "CA-B" closes it.
    - "Session input under impersonation": remove `handleMemoryWrite` and `lenny/memory_write`, which "CA-G" deletes.
-5. **"Refresh".** No change to UG-1's behaviour. Note that "CA-B" adopts the same lease form for connector credentials, so a later change to that form considers both.
-6. **Session create.** A session can need a host link and a connector link at once, and both designs refuse before any pod claim with a `403`: `USER_LINK_REQUIRED` and `CONNECTOR_LINK_REQUIRED`. Agree with this document on one response that reports every missing link, so a user does not link, retry, and get refused again. Both checks must also run after experiment routing, as "CA-4" states under "Placement".
+5. **"Refresh".** No change to UC-2's behaviour. Note that "CA-B" adopts the same lease form for connector credentials, so a later change to that form considers both.
+6. **Session create.** A session can need an account link and a connector link at once, and both designs refuse before any pod claim with a `403`: `USER_LINK_REQUIRED` and `CONNECTOR_LINK_REQUIRED`. Agree with this document on one response that reports every missing link, so a user does not link, retry, and get refused again. Both checks must also run after experiment routing, as "CA-4" states under "Placement".
 
-Leave these unchanged: the link record in the Token Service, decision 3 on connectors on a `required` pool's hosts, and the withdrawal of `hostLink`.
-
-### `user-credential-delivery-design.md`
+Leave the link record in the Token Service unchanged, under "Stored links".
 
 **Owner decision: built-in memory goes, and impersonation on linked connectors is an accepted risk.** Apply these changes:
 
@@ -615,6 +613,14 @@ Leave these unchanged: the link record in the Token Service, decision 3 on conne
 2. **"Specification sections affected".** Remove "§9.4: memory writes refuse an impersonation bearer."
 3. **"Tests", "Tier 4: integration".** Remove `lenny/memory_write` from the impersonation bearer test.
 4. **"Current state".** The row "Other session input refuses an impersonation bearer" names memory writes as a fact about today's tree. Keep it until "CA-G" lands.
+
+### `user-git-identity-design.md`
+
+**Owner decision: "CA-0" lands before UC-2, on which UG-1 depends.** Apply this change:
+
+1. **"When the check runs".** The repository check refuses a session with `USER_LINK_REQUIRED` before any pod claim. That refusal joins the one response that the **Session create** item under `user-credential-delivery-design.md` asks for, and the check must also run after experiment routing, as "CA-4" states under "Placement".
+
+Leave these unchanged: decision 3 on connectors on a `required` pool's hosts, and the withdrawal of `hostLink`, both under "User tokens on a VCS host".
 
 ### `egress-and-git-design.md`
 
@@ -680,14 +686,14 @@ Each test carries its `// spec:` annotation once the specification lands.
 | Generated MCP configuration under `preConnect` | Stock CLI on warm pools | Launch a warm pod and bind a session. |
 | Added startup from `lenny-tools-stage` on a real pod | Sizing warm-pool refill. About one second is measured on stand-in pods under "CA-9". | Measure a controller-rendered pod with and without the init container, under gVisor and Kata, including the image's first pull. |
 | Interaction store lookup by tenant, user, connector, and Environment | "CA-1" step 6 | Read `interactionstore` at proposal time. A new index may be needed. |
-| OIDC availability on the start page in `apiKey` and dev modes | "CA-0" | Settle it in that proposal, since the start page is shared with UG-1. |
+| OIDC availability on the start page in `apiKey` and dev modes | "CA-0" | Settle it in that proposal, since the start page is shared with UC-2. |
 | MCP resource indicator requirement | "CA-2" | Read the MCP authorization page, and test a server that enforces audience. |
 
 ## Proposal split and order
 
 | Proposal | Content | Depends on |
 | :-- | :-- | :-- |
-| CA-0 | Shared OAuth link flow in `pkg/connectoroauth`, with today's §9.3 handlers converted to it. Closes the account-link defect. | Nothing. It lands first, and UG-1 depends on it. |
+| CA-0 | Shared OAuth link flow in `pkg/connectoroauth`, with today's §9.3 handlers converted to it. Closes the account-link defect. | Nothing. It lands first, and UC-2 depends on it. |
 | CA-A | Connector routes (CA-1), and the removal of the admin OAuth routes. | CA-0 |
 | CA-B | Refresh, lease, and endpoint binding (CA-2). | CA-A |
 | CA-C | Default deny and Environment on children and derived sessions (CA-3). | The tenant-scoping decision |
@@ -698,7 +704,7 @@ Each test carries its `// spec:` annotation once the specification lands.
 | CA-H | Stdio bridge, the `lenny-tools` image, init container, volume, and webhook rule (CA-9). | Ships with the Claude Code and Codex integrations |
 | CA-I | `deferredToolDiscovery` true path and `list_changed` (CA-8). The field and its `false` default land in CA-E. | The stock CLI spike, or a runtime asking for it |
 
-`user-git-identity-design.md` rates the account-link defect High wherever a connector is a confidential client, which is why CA-0 comes first. CA-C's default deny and the child Environment fix close a capability-filter bypass that exists today, and they also stand alone.
+`user-credential-delivery-design.md` rates the account-link defect High under "Defects found while verifying" wherever a connector is a confidential client, which is why CA-0 comes first. CA-C's default deny and the child Environment fix close a capability-filter bypass that exists today, and they also stand alone.
 
 ## Sources
 
