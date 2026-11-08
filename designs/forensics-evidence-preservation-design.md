@@ -1,6 +1,6 @@
 # Forensics and evidence preservation
 
-Status: design for owner review, revision 26, 2026-11-08. Nothing in this document is built, staged, or validated. It reads against [`egress-and-git-design.md`](egress-and-git-design.md) revision 56, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19, [`user-git-identity-design.md`](user-git-identity-design.md) revision 28, and [`github-credential-addon-design.md`](github-credential-addon-design.md) revision 1. Every decision under "Decisions" is recorded as settled. No spike, test, benchmark, production component, or live provider write has run for this design, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 27, 2026-11-08. Nothing in this document is built, staged, or validated. It reads against [`egress-and-git-design.md`](egress-and-git-design.md) revision 56, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19, [`user-git-identity-design.md`](user-git-identity-design.md) revision 28, and [`github-credential-addon-design.md`](github-credential-addon-design.md) revision 1. Every decision under "Decisions" is recorded as settled. No spike, test, benchmark, production component, or live provider write has run for this design, and every number under "Volume and cost" is a planning assumption. Claims about Lenny were checked against the specification and the tree on 2026-11-02 and 2026-11-03. Claims about external products come from the pages listed under "Sources" and were read rather than tested. Proposals carry the label FE-n. "Review history" at the end records how the design reached this form.
 
 ## Problem
 
@@ -40,7 +40,7 @@ This design consumes the envelope, the provenance values, `lenny-evidence`, the 
 | Freeze | Stopping every process in the runtime container without killing it: SIGSTOP from the runtime supervisor inside the pod, or `runsc pause` or `cgroup.freeze` from the node. See "Freezing the agent". |
 | `keepalive` | A regular container this design adds to every agent pod. It sleeps until SIGTERM, so the pod stays non-terminal and the kubelet keeps its volumes. See "Keeping the volumes". |
 | Session disposition | A quarantine request's `sessionDisposition`: `fail` ends the pod's sessions as a lost pod would, and `resume` recovers them on a replacement pod. |
-| Forensics reconciler | A loop in `lenny-controller` that creates a quarantined pod's PodDisruptionBudget and a held store's VolumeSnapshot, carries out a quarantine's release, and retries each incomplete step. |
+| Forensics reconciler | A loop in `lenny-controller` that creates a quarantined pod's PodDisruptionBudget and a held store's VolumeSnapshot, writes the `pod_quarantines` row for a pod quarantined through the break-glass label, carries out a quarantine's release, and retries each incomplete step. |
 | Evidence reconciler | `lenny-evidence-reconcile`, FE-4's service that compares evidence sources and writes a finding to `evidence.reconcile` when they disagree. Its rules carry names that start with `R-`. |
 | Legal hold | The existing tenant-visible hold of §12.8, which a tenant admin can set, list, and release on its own sessions and artifacts. This design leaves it unchanged. |
 | Security hold | FE-3's platform-only hold, which the tenant under investigation can neither see nor release. It covers a tenant, a user, a session, a pod, or a mirror store for a time range, and it copies or marks the held material. |
@@ -218,7 +218,7 @@ The design adds one small record, the case, and no new control-plane service.
                        +--> mirror parent (held flag)
                        +--> lenny-evidence (held markers)
 
- lenny-controller: forensics reconciler (PDBs, VolumeSnapshots, release, retrying each step)
+ lenny-controller: forensics reconciler (PDBs, VolumeSnapshots, break-glass rows, release, retrying each step)
  lenny-evidence-reconcile: reads evidence, writes findings through lenny-evidence
  lenny-activity-collector (DaemonSet, FE-6b): gVisor remote sink --> lenny-evidence
 ```
@@ -249,7 +249,7 @@ The design adds one small record, the case, and no new control-plane service.
 | Method and path | Behaviour |
 | :-- | :-- |
 | `POST /v1/admin/quarantines` | Body: `caseId`, one of `podName` with `namespace` or `sessionId`, optional `includeDelegationTree`, `sessionDisposition` (`fail` by default, or `resume`), `preserve` and `freeze` (each `true` by default, see "Order and failure behaviour" and "Freezing the agent"), and `reason`. Returns `202` with the quarantine identifier, `affectedSessions`, and a per-step status including `preserve` and `freeze`. `dryRun` is refused, as on other action endpoints (§15.1). |
-| `GET /v1/admin/quarantines` and `GET /v1/admin/quarantines/{id}` | Lists every quarantined pod across tenants for `platform-forensics` and `platform-admin`, oldest first, with filters `caseId`, `tenantId`, `state`, and `olderThan`. Returns each step's status, the node, and the age of the quarantine. A pod quarantined through the break-glass label appears too: the WarmPoolController writes a row with `setBy: label` when it sees the label with no row, once the session store (Postgres) is reachable, and until then `GET` reports such pods from the Sandbox informer with `state: unregistered`. |
+| `GET /v1/admin/quarantines` and `GET /v1/admin/quarantines/{id}` | Lists every quarantined pod across tenants for `platform-forensics` and `platform-admin`, oldest first, with filters `caseId`, `tenantId`, `state`, and `olderThan`. Returns each step's status, the node, and the age of the quarantine. A pod quarantined through the break-glass label appears too. The forensics reconciler writes a row with `origin: break_glass` and a custody event when it sees the label with no row, once the session store (Postgres) is reachable, and until then `GET` reports such pods from the Sandbox informer with `state: unregistered` (decision 27). |
 | `POST /v1/admin/quarantines/{id}/release` | Body: `justification` and `acknowledgeEvidenceLoss`, required when no capture is registered. Moves the pod to `draining`. |
 
 `lenny-ctl admin forensics quarantine set|get|list|release` maps to these, in a new §24 subsection beside §24.11. A request naming a session whose pod is gone returns `409 QUARANTINE_NO_POD`, and the response points to a security hold. Each pod has at most one active quarantine, and a repeat request adds the new case to it.
@@ -258,7 +258,7 @@ The design adds one small record, the case, and no new control-plane service.
 
 | Carrier | Fields | Authority |
 | :-- | :-- | :-- |
-| `pod_quarantines` row (session store, platform-scoped, because a lookup by pod UID has no tenant context) | Identifier, pod UID, name, namespace, node, pool, tenant, sessions, case, state (`applying`, `active`, `released`), step status, set and release principals and times | The record of the quarantine |
+| `pod_quarantines` row (session store, platform-scoped, because a lookup by pod UID has no tenant context) | Identifier, pod UID, name, namespace, node, pool, tenant, sessions, case, origin (`api` or `break_glass`), state (`applying`, `active`, `released`; `GET` reports a labelled pod with no row as `unregistered`), step status, set and release principals and times | The record of the quarantine |
 | Pod label `lenny.dev/quarantine=<id>` | Quarantine identifier | The enforcement signal, read from informers with no database call |
 | `SandboxClaim.status.phase = quarantined` | New gateway-owned binding state (§4.6.3) | Excludes the claim from orphan GC and hold expiry |
 | Regular container `keepalive` in every agent pod (decision 25) | A static binary that sleeps and exits on SIGTERM, with its own UID, no volume mounts, and a minimal request | Keeps the pod non-terminal, so the kubelet keeps its volumes (below) |
@@ -336,7 +336,7 @@ The API returns every session on the pod. A concurrent-slot pod can hold several
 | :-- | :-- |
 | `CH-PRESERVE` unacknowledged at the timeout | The sequence continues, and `preserve: unacknowledged` is reported. The runtime may lose `CH-MSGSOCK` when the coordinator hold times out, so the runbook captures memory at once. `keepalive` still protects the volumes. |
 | Freeze fails or is unavailable | `freeze: failed` or `unavailable` is reported, and the capture Job freezes from the node. |
-| Postgres is down | The API refuses. A cluster admin in `forensics.breakGlassGroups` can stamp the label with `kubectl`, which denies egress, mints, and network paths at once. The webhook logs the requesting user. When Postgres returns, the forensics reconciler creates the row with origin `break_glass` and a custody event, and the Kubernetes audit log is the record of who stamped it. |
+| Postgres is down | The API refuses. A cluster admin in `forensics.breakGlassGroups` can stamp the label with `kubectl`, which denies egress, mints, and network paths at once. The webhook logs the requesting user. Until Postgres returns, `GET /v1/admin/quarantines` reports the pod as `unregistered`. When Postgres returns, the forensics reconciler creates the row with `origin: break_glass` and a custody event (decision 27), and the Kubernetes audit log is the record of who stamped it. |
 | API server is down | The row is committed and the label step retries. `pkg/binding`'s store re-read applies the state within its 30-second bound. The informers serve their last cache. |
 | Webhook unavailable | Every labelled write and delete is refused, which is the fail-closed direction. |
 | Pod already terminating | The API returns `409 QUARANTINE_NO_POD`. |
@@ -824,7 +824,7 @@ The `audit_range` row under "Problem" is already recorded: F-12.8.7 and F-12.8.2
 
 - §4.4.3 and §4.4.4: the stuck-checkpoint exit that replaces the liveness probe, and the statement that the size-limit eviction reaches a quarantined pod.
 - §4.7.10 and §28.5.3: the `keepalive` container, the `freeze` request on `CH-SUPERVISE`, and the preservation state.
-- §4.6.1, §4.6.3, and §6.2: the `quarantined` binding state and phase, the projection and drain edges, orphan GC exclusion, the label check in `lenny-sandboxclaim-guard`, the forensics reconciler's PDB and VolumeSnapshot grants, and role-based access control (RBAC).
+- §4.6.1, §4.6.3, and §6.2: the `quarantined` binding state and phase, the projection and drain edges, orphan GC exclusion, the label check in `lenny-sandboxclaim-guard`, the forensics reconciler's PDB and VolumeSnapshot grants and its write of break-glass `pod_quarantines` rows, and role-based access control (RBAC).
 - §4.7, §28.3, and §28.5: `CH-PRESERVE`, `CH-ACTIVITYREPORT`, and the `activity` frame on `CH-MSGSOCK`, with register rows. These identifiers are proposals under the naming law.
 - §4.7.11: the adapter's validation of `activity` frames.
 - §5.2, §5.3, §17.2, and §17.5: the `activityMonitoring` pool field, the monitored RuntimeClass name, and the collector and `lenny-forensics` namespace rules, with admission inventory and preflight checks.
@@ -834,7 +834,7 @@ The `audit_range` row under "Problem" is already recorded: F-12.8.7 and F-12.8.2
 - §11.2.1: the `evidence.usage` billing event and `evidenceQuotaBytes`.
 - §11.7: the `forensics.*` events under CMP-058, the anchor retention rule, and a correction of the "6004 File System Activity" class name (OCSF v1.1.0 lists File System Activity as class 1001, and Datastore Activity as 6005), filed with the paragraph's other wrong class names as F-11.7.27.
 - §11.8: quarantine, security holds, the evidence reconciler, and the capture runbook as first-responder primitives.
-- §12.2 and §12.6: `pod_quarantines`, `security_holds`, cases, `evidence_session_keys`, and `EvidenceStore`'s escrow operation.
+- §12.2 and §12.6: `pod_quarantines` with its `origin` column (`api` or `break_glass`), `security_holds`, cases, `evidence_session_keys`, and `EvidenceStore`'s escrow operation.
 - §12.8: removal of `audit_range` and `workspace_snapshot` from the ledger in step 0(c) and Phase 3.5(c), a separate security-hold step in teardown, `EnsureCopied` on every deletion path, hold basis and deferred erasure, key destruction, mirror purge, the retention class, and the post-restore gate.
 - §12.9: rows for activity streams, captures, and retained evidence.
 - §13.1 and §13.2: the `keepalive` container identity, selector exclusions on every agent policy, the collector and evidence reconciler rows, and the deletion rule in `lenny-label-immutability`.
@@ -936,10 +936,10 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 
 ### Tier 2: component
 
-- The WarmPoolController projects `quarantined` from the label, excludes the pod from warm counts, creates the PDB, and releases to `draining` only after the row's release.
+- The WarmPoolController projects `quarantined` from the label, excludes the pod from warm counts, and releases to `draining` only after the row's release.
 - `lenny-label-immutability` refuses a deletion and a label removal from every caller except the controller after release, and it admits a break-glass group's stamp.
 - `lenny-sandboxclaim-guard` refuses a claim for a labelled pod, including a race with a stamp.
-- The forensics reconciler creates a `VolumeSnapshot`, reports an absent class, and retries an incomplete step after a restart.
+- The forensics reconciler creates a `VolumeSnapshot`, reports an absent class, and retries an incomplete step after a restart. The forensics reconciler creates the PDB, and writes a break-glass row with `origin: break_glass` once Postgres is reachable.
 
 ### Tier 3: contract
 
@@ -995,7 +995,7 @@ These describe behaviour to pin. None exists yet. Every test carries its `// spe
 
 ### Tier 8: chaos
 
-- Quarantine during a Postgres outage (break glass), during an API server outage (store re-read), and with a lost binding push (the 30-second bound).
+- Quarantine during a Postgres outage (break glass), where `GET /v1/admin/quarantines` reports the pod as `unregistered` until Postgres returns and the forensics reconciler then writes one row with `origin: break_glass` and one custody event, during an API server outage (store re-read), and with a lost binding push (the 30-second bound).
 - A node eviction of a quarantined pod records `forensics.evidence_lost`.
 - A crash of the gateway between each step of the quarantine order leaves the forensics reconciler to finish it, with no pod retired. An unreachable adapter at `CH-PRESERVE` produces the stated status, and the volumes survive the hold timeout.
 - `lenny-evidence` loss during materialization, during activity ingest, and during a sweep leaves nothing deleted.
@@ -1054,6 +1054,7 @@ Revision 24 recorded every decision as settled. Decision numbers are referenced 
 | 24 | Hold basis | **Settled**, in the owner's word "ok". A required enumerated `basis` and `basisRef` per hold, with erasure deferred only for `legal_obligation` and `legal_claims` by default. | Each hold needs the operator's own judgement of its basis, which slows the first minutes, so an investigator quarantines first and sets the hold once a basis exists. An incident-response basis alone loses material to erasure and to tenant deletion, and a store hold is treated the same way. | Treat security response as deferring by default, which asserts a legal conclusion in code. |
 | 25 | `keepalive` container | **Settled**, in the owner's word "ok". A regular container in every agent pod, at a minimal request. | One more container per pod, including warm pods, a small density cost, a reserved UID, and an image to pin. | Rely on the sidecar adapter staying alive, which leaves embedded pods and an exited adapter losing the volumes. An ephemeral container at quarantine time, which is unverified and is subject to the cred-guard webhook. |
 | 26 | Stuck checkpoint on embedded pods | **Settled**, in the owner's word "ok". The adapter exits on `checkpointStuck`, and agent pods carry no liveness probe, which matches the tree. | A deadlocked adapter whose watchdog also hangs goes undetected by the kubelet, until the gateway's gRPC keepalive probes on its pod connection and the orphan session reconciler act. | Keep the probe, so a node-side freeze of an embedded pod kills the container, or route it through `keepalive`, which adds a proxy to a component meant to do nothing. |
+| 27 | Writer of a break-glass quarantine row | **Settled**, in the owner's word "ok". The forensics reconciler writes the row with `origin: break_glass` and a custody event once the session store (Postgres) is reachable, and `GET` reports the labelled pod as `unregistered` until then. The WarmPoolController projects the label and creates no row. | The row's principal is the forensics reconciler, so the Kubernetes audit log remains the record of who stamped the label. | The WarmPoolController writes the row when it projects the label, which gives a second writer of `pod_quarantines` and a controller loop that otherwise reads only informers. |
 
 ## Validation owed
 
@@ -1131,6 +1132,7 @@ These notes were carried in the status line of earlier revisions.
 - Revision 24 records every decision as settled, replaces every reliance on counsel with each operator's own legal assessment, decision 4 with separate settings per stream, after two independent reviews of earlier revisions. Revision 24 followed independent security and consistency reviews whose final stop check found no Major or higher issue. That check traced the last round's changes and was not an end-to-end read, and no production component or live provider write has run.
 - Revision 25 changes only pointers after the user credential documents split.
 - Revision 26 followed a pass for a reader new to the project. It added "Scope", "Terms", "Terms from other designs and the platform", "Labels from other designs", and "High-level design", moved the revision notes out of the status line and the review records to the end of the document, linked every citation of another design, named the object and the setting behind each configuration value, replaced the egress design's interface label with the name "pod credential API", and split "the reconciler" into the forensics reconciler and the evidence reconciler. An independent reader review followed, and this revision also applied its findings: it added Terms rows for the audit chain and anchor, the legal-hold ledger, the evidence envelope, incarnations, tags, roles, admission webhooks, the runtime SDK, and the watchlist, stated the rules of decisions 6 and 12 where they are cited, and qualified the uses of hold, binding, store, model, keepalive, and tier. After a validation pass, it named the operator's forensics investigator Frank in every scenario, so that the name has one role across the designs, and replaced the **Lost before quarantine.** residual risk's pool-level retention claim with the tenant's `agentActivity.retentionDays` and the deployment's `retentionClass: security`, and changed no rule.
+- Revision 27 applied decision 27, which the owner settled on 2026-11-08. The forensics reconciler is the writer of a break-glass `pod_quarantines` row, with `origin: break_glass` and a custody event, once Postgres is reachable. It replaced the `GET /v1/admin/quarantines` row's `setBy: label` row written by the WarmPoolController, added `origin` (`api` or `break_glass`) and the `unregistered` report to the data model, moved PDB creation in the Tier 2 tests from the WarmPoolController to the forensics reconciler, and aligned "Terms", "Architecture", the failure table, "Specification sections affected", and the Tier 8 break-glass test.
 
 ### Review of revision 7
 
