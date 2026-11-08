@@ -1,6 +1,6 @@
 # Built-in experiment provider removal
 
-Status: design for owner review, revision 3, 2026-11-07, with no independent review yet. The owner has chosen contract documentation for deployers on vendors without an OFREP server ("Vendor coverage"). It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label AB-n, and requirements carry the label ABR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 4, 2026-11-08, with no independent review yet. The owner has chosen contract documentation for deployers on vendors without an OFREP server ("Vendor coverage"). It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label AB-n, and requirements carry the label ABR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -78,7 +78,7 @@ This design builds on mechanisms the specification and the tree define. The tabl
 
 | Term | Meaning |
 | :-- | :-- |
-| Gateway | Lenny's API gateway, the process through which every client request passes and which creates sessions. One gateway process serves every tenant. |
+| Gateway | Lenny's API gateway, the only externally facing component, through which every client request passes and which creates sessions ([§4.1](../spec/04_system-components.md#41-edge-gateway-replicas)). It runs as several replicas, and each replica serves every tenant. |
 | Tenant record and `experimentTargeting` | The tenant configuration, stored in the `tenants` table and written through `PUT /v1/admin/tenants/{id}`. Its `experimentTargeting` block, stored in the `tenants.experiment_targeting` JSONB column, configures external targeting with `timeoutMs`, `circuitBreaker`, and either an `ofrep` block or a vendor block. |
 | `ExperimentDefinition` | The admin API resource for an A/B experiment on a base runtime ([§10.7](../spec/10_gateway-internals.md#107-experiment-primitives)). It names `variants`, each a runtime with its own variant pool and a `weight`, a `targeting` block with `mode` (`percentage` or `external`) and `sticky` (`user`, `session`, or `none`), and `propagation.childSessions`. |
 | Variant, control, and base runtime | A variant is one arm of an experiment. A session that no variant claims runs the experiment's base runtime and is recorded with the reserved variant `control`. |
@@ -180,7 +180,7 @@ The SDK path is removed despite this loss. No deployment exists, the SDK path ha
 | The initialization context is created and discarded with `_ = initCtx`. | `Cache.For` | `DefaultInitTimeout` does not bound the wait for that call. |
 | No per-evaluation deadline reaches the SDK path. `experimentTargeting.timeoutMs` is applied only as the OFREP HTTP client timeout. | `buildExternalEvaluator`, `resolveExternalClient` | The [§10.7](../spec/10_gateway-internals.md#107-experiment-primitives) 200 ms budget is not enforced for SDK providers. |
 | The Statsig and Unleash SDKs initialize process-global state, so a second configuration for either is rejected. | `Cache.For`, package comment | On one gateway process, only one tenant can use each of those vendors. A second tenant receives `targeting_failed` on every session. |
-| The tests use an in-memory OpenFeature provider or a fake client. | `experimentprovider_test.go`, `experimentrouter_sdkprovider_internal_test.go` | No test in the tree drives a vendor SDK against a live or stub vendor endpoint. `TEST-GAPS.md` T-10.7.9 records the missing coverage. |
+| The tests use an in-memory OpenFeature provider or a fake client. | `experimentprovider_test.go`, `experimentrouter_sdkprovider_internal_test.go` | No test in the tree drives a vendor SDK against a live or stub vendor endpoint, and no `TEST-GAPS.md` finding records that gap. T-10.7.9 records a related gap: external targeting, through OFREP or an SDK provider, has no cloud-provider parity coverage at tier 6. |
 
 **Size of the SDK path [measured].** Both builds use `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 -trimpath -ldflags='-s -w'`. The second replaces `experimentprovider.go` with a stub through an overlay, so the router and wiring remain and the result slightly understates the removal.
 
@@ -443,3 +443,4 @@ This section records how the design reached its current form. No independent rev
 
 - Revision 2, dated 2026-11-03, is the first revision in the repository's history. It records the owner's choice of contract documentation for deployers on vendors without an OFREP server.
 - Revision 3, dated 2026-11-07, followed a pass for a reader new to the project. It added "Terms", "Terms from other designs and the platform", "Labels from other designs", "High-level design", and the evidence sources under the tag table, named the object and the field behind each configuration value, and linked the specification sections and the other designs the text cites. It changed no rule.
+- Revision 4, dated 2026-11-08, corrected the "Current state" row that cited T-10.7.9 for the missing vendor SDK test, which T-10.7.9 does not record, and the "Gateway" term, which described one gateway process where the gateway runs as several replicas, that a validation pass found, and changed no rule.
