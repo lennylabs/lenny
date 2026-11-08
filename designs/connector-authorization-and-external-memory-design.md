@@ -1,6 +1,6 @@
 # Connector authorization and external memory
 
-Status: design for owner review, revision 9, 2026-11-08, with no independent review yet. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19, [`user-git-identity-design.md`](user-git-identity-design.md) revision 28, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 10, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 9, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 49. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 10, 2026-11-08, with no independent review yet. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19, [`user-git-identity-design.md`](user-git-identity-design.md) revision 28, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 10, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 9, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 49. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -25,7 +25,7 @@ Sessions still need a way to reach state that outlives a pod. MCP connectors are
 - A session with no delegation policy is offered every active connector in the tenant **[source]**.
 - A stock coding CLI cannot dial the adapter's connector sockets **[source]**.
 - The OAuth callback is open to an account-link attack, recorded in [`user-credential-delivery-design.md`, "Defects found while verifying"](user-credential-delivery-design.md#defects-found-while-verifying) **[source]**.
-- A delegated child loses its parent's Environment, so a token linked under that Environment is not found **[measured]**.
+- A delegated child loses its parent's environment, so a token linked under that environment is not found **[measured]**.
 
 This design removes built-in memory and fixes the connector path so the external route is usable for any connector.
 
@@ -55,11 +55,11 @@ Out of scope:
 
 | Term | Meaning |
 | :-- | :-- |
-| Connector link | A stored connector token for one tenant, connector, user, and Environment. The gateway holds it as a row in its connector credential store, `connectorcredstore`. |
-| Linked user | A user who holds a usable connector link for the session's Environment. |
-| Unlinked user | A user who holds no usable connector link for that connector and Environment, even though the connector is registered and permitted. |
+| Connector link | A stored connector token for one tenant, connector, user, and environment. The gateway holds it as a row in its connector credential store, `connectorcredstore`. |
+| Linked user | A user who holds a usable connector link for the session's environment. |
+| Unlinked user | A user who holds no usable connector link for that connector and environment, even though the connector is registered and permitted. |
 | Shared OAuth link flow | The hardened browser flow that links a person's account at an OAuth2 provider. "CA-0" moves it into `pkg/connectoroauth`, where connectors and the account links of [`user-credential-delivery-design.md`](user-credential-delivery-design.md) both use it. |
-| Link URL | A Lenny URL that starts the shared OAuth link flow for one subject, connector, and Environment. The user opens it in a browser. See "CA-1". |
+| Link URL | A Lenny URL that starts the shared OAuth link flow for one subject, connector, and environment. The user opens it in a browser. See "CA-1". |
 | Endpoint digest | A digest of a connector's `mcpServerUrl`, `authorizationEndpoint`, and `tokenEndpoint`, recorded on each connector link. A link whose digest no longer matches is treated as absent. See "CA-2". |
 | Probe | The call the gateway makes to a connector's server with no token, a `tools/list` with an empty bearer, to learn whether listing tools needs authorization. See "CA-4". |
 | Link check | The evaluation in "CA-4" that decides whether a connector needs a link before a runtime starts. |
@@ -86,9 +86,9 @@ This design builds on mechanisms that other designs and the specification define
 | MCP | The Model Context Protocol, a JSON-RPC protocol between a client, here an agent runtime, and a server that offers tools. `initialize` opens a connection, `tools/list` returns the server's tools, `tools/call` calls one, and `notifications/tools/list_changed` tells the client that the list changed. |
 | Connector | An external MCP server that a deployer registers as a `ConnectorDefinition` ([§9.3](../spec/09_mcp-integration.md#connectordefinition-as-first-class-resource)). Its optional `auth` block names the OAuth2 endpoints and client the gateway uses to obtain a user's token. The gateway makes every call to the server on a session's behalf, through code this document calls the invoker (`invoker.go`). The invoker's function `bearerFor` looks up the user's token for each call. |
 | OAuth2, OIDC, and PKCE | OAuth2 is the protocol through which a provider issues a user's access token and refresh token to a client. OpenID Connect (OIDC) is the login layer on OAuth2 that Lenny uses to sign a user in. Proof Key for Code Exchange (PKCE) binds an authorization code to the client that started the flow. |
-| Environment | A tenant's named project context ([§10.6](../spec/10_gateway-internals.md#106-environment-resource-and-rbac-model)), with members, selectors for the runtimes and connectors it offers, and a default delegation policy. A session records the Environment it runs in. |
-| Delegation policy | A `DelegationPolicy` resource ([§8.3](../spec/08_recursive-delegation.md#83-delegation-policy-and-lease)) that lists what a session may delegate to or reach, including targets of type `connector`. A policy attaches to a runtime or serves as an Environment's default. `AuthorizeConnector` checks a connector against two policy layers: the runtime-level policy and the Environment's default policy. A layer resolves when its reference names an active policy, and a connector is permitted only when every resolved layer permits it. |
-| Capability filter and capability snapshot | An Environment's `connectorSelector` ([§10.6](../spec/10_gateway-internals.md#106-environment-resource-and-rbac-model)) allows or denies connector tools by capability, such as `read` or `write`. This document calls it the §10.6 filter. The capabilities come from a snapshot, `conn.ToolCapabilities`, that §5.1 infers from a server's MCP tool annotations at registration and on refresh. |
+| Environment | A tenant's named project context ([§10.6](../spec/10_gateway-internals.md#106-environment-resource-and-rbac-model)), with members, selectors for the runtimes and connectors it offers, and a default delegation policy. A session records the environment it runs in. |
+| Delegation policy | A `DelegationPolicy` resource ([§8.3](../spec/08_recursive-delegation.md#83-delegation-policy-and-lease)) that lists what a session may delegate to or reach, including targets of type `connector`. A policy attaches to a runtime or serves as an environment's default. `AuthorizeConnector` checks a connector against two policy layers: the runtime-level policy and the environment's default policy. A layer resolves when its reference names an active policy, and a connector is permitted only when every resolved layer permits it. |
+| Capability filter and capability snapshot | An environment's `connectorSelector` ([§10.6](../spec/10_gateway-internals.md#106-environment-resource-and-rbac-model)) allows or denies connector tools by capability, such as `read` or `write`. This document calls it the §10.6 filter. The capabilities come from a snapshot, `conn.ToolCapabilities`, that §5.1 infers from a server's MCP tool annotations at registration and on refresh. |
 | Runtime, `type: agent`, and pool | A runtime ([§5.1](../spec/05_runtime-registry-and-pool-model.md#51-runtime)) is a registered agent program, and a `type: agent` runtime runs agent sessions. A pool keeps warm pods for a runtime, ready for a session to claim. |
 | Integration level | How much of the adapter protocol a runtime implements: Basic, Standard, or Full ([§15.4.3](../spec/15_external-api-surface.md#1543-runtime-integration-levels)). |
 | Runtime adapter and adapter manifest | The adapter ([§4.7](../spec/04_system-components.md#47-runtime-adapter)) is Lenny's process in each agent pod. It talks to the gateway and serves MCP to the runtime. It writes the adapter manifest, `/run/lenny/adapter-manifest.json`, which lists the MCP servers the runtime may use and a nonce the runtime presents in `initialize`. |
@@ -107,13 +107,13 @@ This design builds on mechanisms that other designs and the specification define
 | Interceptors | Deployer hooks the gateway calls at named phases ([§4.8](../spec/04_system-components.md#48-gateway-policy-engine)). `PreConnectorRequest` and `PostConnectorResponse` see each connector call and its response. `PreRoute` runs before a session's runtime and pool are final and can rewrite them. |
 | Experiment routing | The assignment of a session to an experiment variant's runtime or pool ([§10.7](../spec/10_gateway-internals.md#107-experiment-primitives)), done by `routeExperiment` at create and `ApplyExperimentRouting` at delegation. |
 | Delegation | A session can start child sessions through `lenny/delegate_task`, and they form a delegation tree under a root session. A delegation lease records what a child receives from its parent. |
-| Derive and replay | Derive (`POST /v1/sessions/{id}/derive`) starts a new root session from a copy of an existing session's workspace. Replay (`POST /v1/sessions/{id}/replay`) starts a new session that replays a source session's prompt history against another runtime version, and [`session-derive-design.md`](session-derive-design.md) merges it into derive. |
+| Derive | Derive (`POST /v1/sessions/{id}/derive`) starts a new root session from an existing session, from its latest snapshot or from its stored plan, under [`session-derive-design.md`](session-derive-design.md). That design also removes the former replay route, `POST /v1/sessions/{id}/replay`, which it merges into derive. |
 | Session states and restart paths | A `suspended` session has paused, either holding its pod or having released it. The retry driver restarts a session's runtime after a retryable failure, through `resume_pending` and `resuming`, and a session whose retries are exhausted waits in `awaiting_client_action` ([§7.3](../spec/07_session-lifecycle.md#73-retry-and-resume)). Tree recovery restores the sessions of a delegation tree after a failure ([§8.10](../spec/08_recursive-delegation.md#810-delegation-tree-recovery)). A credential-rotation restart restarts a runtime at the Basic and Standard integration levels so that it picks up a rotated credential ([§4.7.8](../spec/04_system-components.md#478-credential-rotation-by-integration-level)). |
 | External protocol adapters | Gateway front ends that serve other client protocols, such as `OpenAICompletionsAdapter` at `/v1/chat/completions`, and create sessions on the client's behalf (§15). Each declares an `AdapterCapabilities` record, whose `supportsElicitation` says whether the adapter can show an elicitation to its client. |
 | Token Service | The Lenny service that stores user and provider credentials and mints short-lived tokens from them ([§4.3](../spec/04_system-components.md#43-token-service)). Connector tokens are outside it: the gateway stores and decrypts them. |
 | Account link | A person's stored authorization at an OAuth2 provider under [`user-credential-delivery-design.md`](user-credential-delivery-design.md), kept in the Token Service and created through `/v1/user-links`. It is separate from a connector link. |
 | Impersonation bearer | A token a `platform-admin` obtains through `/v1/admin/impersonation` to act as a user ([§13.3](../spec/13_security-model.md#133-credential-flow), **Platform-admin impersonation**). |
-| `netagent` and `lenny-egress` | `netagent` is the egress proxy container in each agent pod, and `lenny-egress` is the central egress proxy through which agent traffic leaves the cluster. Both belong to [`egress-and-git-design.md`](egress-and-git-design.md). Connector calls run on the gateway and pass through neither. |
+| `netagent` and `lenny-egress` | `netagent` is the egress proxy container that the egress design adds to an agent pod that uses the local egress endpoint, and `lenny-egress` is the central egress proxy through which agent traffic leaves the cluster. Both belong to [`egress-and-git-design.md`](egress-and-git-design.md). Connector calls run on the gateway and pass through neither. |
 | `lenny-pod-security` | The admission webhook that refuses an agent pod spec breaking the pod rules of [§13.1](../spec/13_security-model.md#131-pod-security). |
 | `lenny-compliance` | The runtime adapter conformance harness, which runs the battery of [§15.4.6](../spec/15_external-api-surface.md#1546-conformance-test-suite). |
 | `lenny-ctl` | Lenny's command-line client ([§24](../spec/24_lenny-ctl-command-reference.md#24-lenny-ctl-command-reference)). |
@@ -139,11 +139,11 @@ This design removes the built-in memory and makes connectors that need per-user 
 
 The rest of this section states each part in the design's terms, which "Terms" above defines.
 
-**Shared link flow and connector routes (CA-0, CA-1).** CA-0 moves the hardened OAuth flow of [UC-2](user-credential-delivery-design.md#uc-2-the-oauth2link-source-and-account-linking) into a shared package and converts today's §9.3 handlers to it, which closes the account-link attack. CA-1 adds the `/v1/connector-links` routes and `lenny-ctl connector link`, so a user links a connector for an Environment before any session exists, from any client.
+**Shared link flow and connector routes (CA-0, CA-1).** CA-0 moves the hardened OAuth flow of [UC-2](user-credential-delivery-design.md#uc-2-the-oauth2link-source-and-account-linking) into a shared package and converts today's §9.3 handlers to it, which closes the account-link attack. CA-1 adds the `/v1/connector-links` routes and `lenny-ctl connector link`, so a user links a connector for an environment before any session exists, from any client.
 
 **Token lifecycle (CA-2).** The gateway refreshes a connector token near expiry under a lease on the connector credential row, deletes it when a refresh returns `invalid_grant`, the OAuth error that means the refresh token is no longer valid, and treats it as absent once the connector's endpoint digest changes.
 
-**Access and Environment (CA-3).** A session reaches a connector only when a delegation policy grants it. A delegated child carries its parent's Environment, and a derived session its source's, so each finds the same links. A child whose delegation crosses a sharing path instead carries the target Environment, and needs a link there.
+**Access and environment (CA-3).** A session reaches a connector only when a delegation policy grants it. A delegated child carries its parent's environment, and a derived session its source's, so each finds the same links. A child whose delegation crosses a sharing path instead carries the target environment, and needs a link there.
 
 **Link check (CA-4).** At session creation, the gateway evaluates each permitted connector as `open`, `linked`, `needs_link`, or `unknown`, and sends a probe only for a user with no token. A runtime with `deferredToolDiscovery: false` is refused with `403 CONNECTOR_LINK_REQUIRED` and a link URL for each connector that needs one, unless the caller defers that connector with `deferConnectors`.
 
@@ -159,7 +159,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 ```
  Browser ──(link URL, CA-0, CA-1)───────────> Gateway ──(code exchange)──> OAuth provider
-                                                 │ connector link: tenant, connector, user, Environment
+                                                 │ connector link: tenant, connector, user, environment
  Client ──(create session, link check, CA-4)─> Gateway
                                                  ▲
                                                  │ tool calls, and the typed error back (CA-5)
@@ -182,7 +182,7 @@ These are settled by the owner, and the rationale stays here so a later reader d
 | The runtime declares tolerance | "The runtime should indicate whether they can gracefully handle failed `tools/list`". See "CA-8". |
 | A parent retries after a link | No push notification. The refusal carries `details.retryAfterSeconds`. See "CA-7". |
 | Impersonation and linked connectors | "Accept and document the risk." No check is added for this design's sake. See "Limits". |
-| Connector tokens stay keyed by Environment | The reason is separation: a token granted in one project context is not the token another context draws. Policy controls access under either key, with or without the Environment, so policy is not the reason. |
+| Connector tokens stay keyed by environment | The reason is separation: a token granted in one project context is not the token another context draws. Policy controls access under either key, with or without the environment, so policy is not the reason. |
 | The capability snapshot stays | "Keep the snapshot and don't change anything else." A deployer who wants enforcement downstream uses OAuth scopes. See "CA-8". |
 | An explicit resume checks links first | The check runs before an explicit resume of a released pod starts its new process, so a user who links gets the connector on that resume. See "CA-6". |
 | The bridge reaches every runtime | The platform delivers it to every sidecar `type: agent` pod, using the runtime supervisor's delivery pattern. See "CA-9". |
@@ -198,7 +198,7 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 - CAR-3. A runtime learns that a connector needs authorization through a typed error, and Lenny stores no copy of a connector's tools.
 - CAR-4. A runtime that cannot recover from a failed `tools/list` never starts with a connector that would fail it, unless Lenny has no way to know (the probe's `unknown` result in "CA-4").
 - CAR-5. An implicit restart never fails because a connector link is missing.
-- CAR-6. A delegated child uses its parent's user and Environment for connector tokens. When the delegation crosses a sharing path, the child uses the parent's user and the target Environment.
+- CAR-6. A delegated child uses its parent's user and environment for connector tokens. When the delegation crosses a sharing path, the child uses the parent's user and the target environment.
 - CAR-7. No authorization URL or connector token reaches a pod, a runtime, or a model.
 - CAR-8. An expired token refreshes without user involvement while its refresh token is valid.
 - CAR-9. A session reaches a connector only when a delegation policy grants it.
@@ -232,24 +232,24 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 
 | Claim | Truth | Evidence |
 | :-- | :-- | :-- |
-| Tokens are per user | True. They are keyed on tenant, connector, user, and Environment. Another user's call gets a 401. | `connectorcredstore.go`, **[measured]** |
+| Tokens are per user | True. They are keyed on tenant, connector, user, and environment. Another user's call gets a 401. | `connectorcredstore.go`, **[measured]** |
 | A linked user can list and call tools | True. | **[measured]**; `TestExternalMCPToolPerDelegationScoping` and `TestOAuthConnector` pass |
 | §9.3's in-session prompt exists | False. `bearerFor` returns an empty string, the client dials with no token, and the error is a generic failure. No code raises a connector-initiated elicitation, and a comment in `mcptools/elicitation.go` calls that path "future". | `invoker.go`, **[measured]** |
 | Refresh happens | False. `RefreshAccessToken` and `RotateAccessToken` have no non-test caller, and an expired token with a valid refresh token gets a 401 with zero refresh calls. | **[measured]** |
-| A token under another Environment is found | False. The lookup is exact, and a mismatch reads as a 401. | **[measured]** |
+| A token under another environment is found | False. The lookup is exact, and a mismatch reads as a 401. | **[measured]** |
 | Each connector has its own `tools/list` | True. The adapter opens one `@lenny-connector-<id>` socket per connector, and the provider binds to that connector. | `connectortoolprovider.go`, `connectormcp.go` |
 | `initialize` on a connector socket contacts the external server | False. The adapter answers it locally, so the failure first appears at `tools/list`. | `pkg/adapter/mcp/server.go` |
 | An external 401 reaches the runtime as such | False. It becomes gRPC `Internal`, then JSON-RPC `-32603`, with the status only in message text. | `leasecontrol/connectortools.go`, `mcp/server.go` |
 | The adapter can send `list_changed` | False. It declares `tools: {}`, and its loop only answers requests. | `mcp/server.go` |
 | A session with no policy gets no connectors | False. `AuthorizeConnector` permits when no layer resolves. | `connectorauthz.go` |
 | A child keeps its parent's user | True. | `buildChildSession`, **[measured]** |
-| A child keeps its parent's Environment | False. A parent in `team-a` produces a child with an empty Environment. The child therefore also loses the Environment's default policy and its `connectorSelector` capability filter. | `buildChildSession`, **[measured]** |
-| A derived session keeps its source's Environment | No code in `derive.go` copies it. | `derive.go` **[source]** |
+| A child keeps its parent's environment | False. A parent in `team-a` produces a child with an empty environment. The child therefore also loses the environment's default policy and its `connectorSelector` capability filter. | `buildChildSession`, **[measured]** |
+| A derived session keeps its source's environment | No code in `derive.go` copies it. | `derive.go` **[source]** |
 | A connector prompt reaches the user through an intercepting parent | False. `WalkChain` stops at an intercepting ancestor for connector and agent initiators alike. | `pkg/elicitation/chain.go`, **[measured]** |
 | A gateway-originated elicitation has a precedent | True. §8.6 lease extension raises one through the interaction store. | `leaseelicit.go` |
 | A resume reopens connector servers | True. `Resume` calls `sessionConnectors`, rewrites the manifest, and starts the runtime, while a pod-held resume starts no process. | `pkg/adapter/resume.go`, `sessionserver/resume.go` |
 | A failed connector resolution aborts a start | False. It leaves the session with no connector servers. | `pkg/adapter/connectormcp.go` |
-| Derived sessions lose connector tokens | The specification says so in §7.1, under **Connector state.** The code keys tokens by user, so a derived session by the same user in the same Environment finds them. | §7.1, `connectorcredstore.go` |
+| Derived sessions lose connector tokens | The specification says so in §7.1, under **Connector state.** The code keys tokens by user, so a derived session by the same user in the same environment finds them. | §7.1, `connectorcredstore.go` |
 | Connector tokens are erased with a user | True. `connectorCreds` is in the `tokens` eraser. | `cmd/lenny-gateway/adminrouter.go`, `tenant_erasers.go` |
 | Memory REST routes are in §15.1 | False. `route_table.go` mounts them and §15.1 has no row for them. | **[source]** |
 | Each connector tool call has an audit event | False. The audit catalog has events for connector administration and the OAuth flow. A tool call produces a trace span, and `PreConnectorRequest` and `PostConnectorResponse` interceptors see it. | `invoker.go`, `pkg/observability/audit/catalog.go` |
@@ -278,19 +278,19 @@ The record the shared flow of "CA-0" writes for a connector stays the existing c
 | Route | Purpose |
 | :-- | :-- |
 | `POST /v1/connector-links` | Body `{"connector": "memory", "environment": "team-a"}`. Returns `linkUrl`. |
-| `GET /v1/connector-links` | Lists the caller's links with connector, Environment, expiry, and whether a refresh token exists. It returns no token. |
+| `GET /v1/connector-links` | Lists the caller's links with connector, environment, expiry, and whether a refresh token exists. It returns no token. |
 | `DELETE /v1/connector-links/{connector}?environment=` | Removes the caller's link and revokes it at the provider when the provider has a revocation endpoint. |
 | `GET /v1/connector-links/start/{flow}` | The browser start page. |
 | `GET /v1/connector-links/callback` | The provider's redirect target. |
 
 `lenny-ctl connector link <id> [--environment <name>]` wraps the first route and prints or opens the URL. `POST /v1/admin/connectors/{name}/oauth/authorize` and `GET /v1/admin/connectors/oauth/callback` are removed in proposal "CA-A", under "Proposal split and order", since no deployment depends on them.
 
-1. The link URL is a Lenny URL for a shared flow naming the subject and Environment.
+1. The link URL is a Lenny URL for a shared flow naming the subject and environment.
 2. The shared start page runs its login and subject checks.
 3. The start page names the connector and its endpoint hosts, runs `CheckConnectorURLDomain`, which checks that the provider URL's host matches the connector's `expectedDomain`, and redirects.
 4. The shared callback validates the return and calls the connector hook. A missing or mismatched cookie aborts the flow.
 5. The gateway exchanges the code and stores the token with the endpoint digest from "CA-2".
-6. The gateway resolves every pending connector prompt for that tenant, user, connector, and Environment, and notifies the affected sessions under "CA-8".
+6. The gateway resolves every pending connector prompt for that tenant, user, connector, and environment, and notifies the affected sessions under "CA-8".
 
 An impersonation bearer is refused on every link route, as [`user-credential-delivery-design.md`, "Flow"](user-credential-delivery-design.md#flow) requires for `/v1/user-links`.
 
@@ -305,19 +305,19 @@ An impersonation bearer is refused on every link route, as [`user-credential-del
 
 **Resource indicator.** A resource indicator (RFC 8707) is a `resource` parameter that names the server a token is for. `BuildAuthorizationURL` sends no `resource` parameter **[source]**. A proposal checks the MCP authorization page for its requirement on resource indicators and adds the parameter if the page requires it **[pending]**.
 
-## CA-3: Connector access and Environment
+## CA-3: Connector access and environment
 
-**Default deny.** `AuthorizeConnector` returns `ErrConnectorNotPermitted` when no policy layer resolves, for every connector, which §8.3 evaluates as a candidate of type `connector`. An error resolving a policy fails closed. Carol grants the connector with a `DelegationPolicy` target of type `connector`, on the runtime or as the Environment's default. This reverses the "conservative fall-through" comment in `connectorauthz.go`, which stays correct for other candidate types.
+**Default deny.** `AuthorizeConnector` returns `ErrConnectorNotPermitted` when no policy layer resolves, for every connector, which §8.3 evaluates as a candidate of type `connector`. An error resolving a policy fails closed. Carol grants the connector with a `DelegationPolicy` target of type `connector`, on the runtime or as the environment's default. This reverses the "conservative fall-through" comment in `connectorauthz.go`, which stays correct for other candidate types.
 
-**Environment on a child.** The row `buildChildSession` writes carries the parent's Environment, or the target Environment when the delegation crosses a sharing path under [decision 14](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14). [`tenant-scoping-identity-design.md`, "TS-3: Session environment context and cross-environment sharing"](tenant-scoping-identity-design.md#ts-3-session-environment-context-and-cross-environment-sharing) already requires this under **Delegated child's environment**, and **Effects on existing features** in the same section states that connectors read that field. This design depends on that change and lands it itself if that design has not landed first.
+**Environment on a child.** The row `buildChildSession` writes carries the parent's environment, or the target environment when the delegation crosses a sharing path under [decision 14](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14). [`tenant-scoping-identity-design.md`, "TS-3: Session environment context and cross-environment sharing"](tenant-scoping-identity-design.md#ts-3-session-environment-context-and-cross-environment-sharing) already requires this under **Delegated child's environment**, and **Effects on existing features** in the same section states that connectors read that field. This design depends on that change and lands it itself if that design has not landed first.
 
-**Environment on a derived session.** A derived or replayed session carries its source's Environment, as that design also requires under **Derive**. §7.1 **Connector state.** is rewritten: a connector link belongs to a user and an Environment, so a derived session reuses it under those keys.
+**Environment on a derived session.** A derived session carries its source's environment, as that design also requires under **Derive**. §7.1 **Connector state.** is rewritten: a connector link belongs to a user and an environment, so a derived session reuses it under those keys.
 
 ## CA-4: Link check
 
 ### Evaluation
 
-For each active connector the session's policy permits, in the Environment the session will run in, and excluding deferred connectors:
+For each active connector the session's policy permits, in the environment the session will run in, and excluding deferred connectors:
 
 | Situation | Result |
 | :-- | :-- |
@@ -339,13 +339,13 @@ A linked user sends no probe, so the cost falls only on users without a token.
 
 The check runs after experiment routing and the late `PreRoute` chain, because both can rewrite the runtime and pool, and the capability it reads belongs to the final runtime. In `create.go` that is after `routeExperiment` and `preRouteAfterExperiment` and before `claimMintPersist`. §7.1's credential pre-check, step 3, which refuses a session when no large language model (LLM) provider credential is available, runs before step 3a's experiment routing, so the link check is a new step between 3a and step 4, the warm pod claim. No pod is claimed while a person is in a browser. Like the credential pre-check, it is a point-in-time check rather than a reservation.
 
-It applies to `POST /v1/sessions`, `POST /v1/sessions/start`, derive, replay, and the external protocol adapters' implicit session creation. It applies to sessions with `executionMode: session`.
+It applies to `POST /v1/sessions`, `POST /v1/sessions/start`, derive, and the external protocol adapters' implicit session creation. It applies to sessions with `executionMode: session`.
 
 ### Outcome
 
 | Runtime `deferredToolDiscovery` | Any connector `needs_link` | Result |
 | :-- | :-- | :-- |
-| `false` (default) | Yes | `403 CONNECTOR_LINK_REQUIRED` (error category `POLICY`) with `details.connectors`, each with `id`, `displayName`, `environment`, and `linkUrl`. Naming the Environment makes a link held under another Environment easy to diagnose. |
+| `false` (default) | Yes | `403 CONNECTOR_LINK_REQUIRED` (error category `POLICY`) with `details.connectors`, each with `id`, `displayName`, `environment`, and `linkUrl`. Naming the environment makes a link held under another environment easy to diagnose. |
 | `true` | Yes | The session is created, and the response lists the same connectors under `unlinkedConnectors` so a client can link early. |
 | Either | No | The session is created. |
 
@@ -440,7 +440,7 @@ These paths exist today **[source]**:
 
 ### Identity
 
-A child uses `parent.UserID` **[measured]**, so the parent's user's link is the right token, and `TestExternalMCPToolPerDelegationScoping` covers policy scoping on that path. With "CA-3" a child that does not cross also has the parent's Environment. Under [`tenant-scoping-identity-design.md`, "Cross-environment sharing (decision 14)"](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14), which the owner settled on 2026-11-03, a child that crosses a sharing path runs in the target Environment, uses that Environment's `connectorSelector`, and needs a link there, because §4.3 keys connector tokens on the Environment.
+A child uses `parent.UserID` **[measured]**, so the parent's user's link is the right token, and `TestExternalMCPToolPerDelegationScoping` covers policy scoping on that path. With "CA-3" a child that does not cross also has the parent's environment. Under [`tenant-scoping-identity-design.md`, "Cross-environment sharing (decision 14)"](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14), which the owner settled on 2026-11-03, a child that crosses a sharing path runs in the target environment, uses that environment's `connectorSelector`, and needs a link there, because §4.3 keys connector tokens on the environment.
 
 ### Check at delegation
 
@@ -474,7 +474,7 @@ An LLM parent reads the typed error, and a programmatic orchestrator handles it 
 | Question | Answer | Evidence |
 | :-- | :-- | :-- |
 | Does the child's token lookup use the right user? | Yes. | **[measured]** |
-| Does it use the right Environment? | Not today. "CA-3" fixes it. | **[measured]** |
+| Does it use the right environment? | Not today. "CA-3" fixes it. | **[measured]** |
 | Does a child's connector set come from its own policy? | Yes. `ListSessionConnectors` and `CallTool` both evaluate the child session's policies. | `connectorauthz.go` |
 | Can a child reach a human for OAuth at any depth? | Yes by §9.2 and `ShouldSuppress`. `WalkChain` then stops at an interceptor, which "CA-5" fixes. | **[measured]** |
 | Does a refusal leak resources? | No. The error path undoes the export and returns the budget. | `service.go` |
@@ -632,11 +632,11 @@ The server scopes data by the token's `sub` claim, because Lenny forwards the us
 **Worked example.**
 
 1. Alice creates a Claude Code session. The runtime has `deferredToolDiscovery: false`, she has no link, and the probe returns 401, so she receives `403 CONNECTOR_LINK_REQUIRED` with a `linkUrl`.
-2. She opens the URL, logs in, approves, and the token is stored for `acme`, `memory`, Alice, and the session's Environment.
+2. She opens the URL, logs in, approves, and the token is stored for `acme`, `memory`, Alice, and the session's environment.
 3. She retries. The check reads `linked`, a pod is claimed, the manifest lists `memory`, the wrapper writes the CLI's MCP configuration, and `tools/list` returns the server's own tools.
 4. Hours later the token nears expiry, and the next call refreshes it.
 5. Her pod fails. The retry driver restores the session, and the manifest lists `memory` again.
-6. The agent delegates to a reviewer runtime with `memory` granted. The child uses Alice's link in the same Environment.
+6. The agent delegates to a reviewer runtime with `memory` granted. The child uses Alice's link in the same environment.
 
 Bob's first session is refused the same way. He passes `deferConnectors: ["memory"]`, and his session runs without it and without further prompts.
 
@@ -660,7 +660,7 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 - A runtime with `capabilities.preConnect: true` starts before a session binds. A stock CLI's MCP configuration written at that point lists no connector for that session **[pending]**.
 - The probe tells only whether listing needs auth. A server that lists different tools once authenticated gives a runtime with `deferredToolDiscovery: false` the authenticated list at its next start, since a linked user lists with their token.
 - A stock client's rendering of a `tools/list` error or an omitted server is outside Lenny's control. Claude Code does not show the `tools/list` error to the model **[measured]**.
-- A user in two Environments links twice, which keying tokens by Environment under §4.3 scoping implies and the owner accepted for the separation it gives. [`user-credential-delivery-design.md`, "Stored links"](user-credential-delivery-design.md#stored-links) keys account links per user, under its [decision 30](user-credential-delivery-design.md#decisions), so the two kinds of link behave differently.
+- A user in two environments links twice, which keying tokens by environment under §4.3 scoping implies and the owner accepted for the separation it gives. [`user-credential-delivery-design.md`, "Stored links"](user-credential-delivery-design.md#stored-links) keys account links per user, under its [decision 30](user-credential-delivery-design.md#decisions), so the two kinds of link behave differently.
 - The capability snapshot does not notice a changed tool until a refresh, as "CA-8" states.
 
 ## Alternatives rejected
@@ -680,7 +680,7 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 | No link check on an explicit resume | The process would start without the connector, and the connector list of a runtime with `deferredToolDiscovery: false` is fixed at start, so a user who then links waits for another restart. |
 | Refuse impersonated messages on sessions with a linked connector | The owner accepted the risk instead, since this blocks support work on those sessions. |
 | Block connector calls after impersonated input | The owner accepted the risk instead, and this needs new state carried through delegation. |
-| Key connector tokens per user | The owner kept the Environment key. It can be loosened later more easily than it could be added. |
+| Key connector tokens per user | The owner kept the environment key. It can be loosened later more easily than it could be added. |
 | Read tool annotations live for the §10.6 filter | The owner kept the snapshot and asked for no other change. |
 | Push a message to a parent when a link completes | See "CA-7". |
 | Keep memory in the gateway behind a flag | It keeps the erasure and isolation obligations for every deployment that may enable it. |
@@ -749,7 +749,7 @@ Each lands through `change-proposal`.
 | §5.1 Runtime | Add `capabilities.deferredToolDiscovery`. |
 | §7.1 Normal Flow | Add the link check after step 3a. Rewrite **Connector state.** |
 | §7.2 and §7.3 | Add the explicit resume check and implicit restart rule. |
-| §8.2, §8.3, and §8.5 | Add the delegation check, deferral inheritance, and the child's Environment. Remove the memory tools and their schemas. |
+| §8.2, §8.3, and §8.5 | Add the delegation check, deferral inheritance, and the child's environment. Remove the memory tools and their schemas. |
 | §9.1 | Remove the memory tools. Add the bridge note. |
 | §9.2 | State connector prompts: gateway origin, interceptor skip, deduplication, lifetime, and URL domain rule. |
 | §9.3 | Replace the OAuth flow, add refresh and endpoint binding, and state default deny and the typed error. |
@@ -775,7 +775,7 @@ The tiers are the stages of the repository's test suite, which `lenny-test --tie
 | :-- | :-- |
 | 1, unit | Link check table, including probe cache expiry and each status. `WalkChain` skips interception for connectors. `AuthorizeConnector` default deny. Endpoint digest mismatch. Error mapping at each layer. Deferral inheritance. |
 | 3, contract | `CONNECTOR_LINK_REQUIRED` over REST and MCP. `-32010` on `tools/list`, and `isError` on `tools/call`. |
-| 4, integration | Each row of the "CA-6" table. Create, link, retry, then call. Refresh on expiry. `invalid_grant` unlinks. Delegation refusal with `retryAfterSeconds`, retry, and deferral, with the export undone and budget returned. Child in the parent's Environment finds the link. Derived session reuses a link. The stub server moves from 401 to 200 within the cache window. |
+| 4, integration | Each row of the "CA-6" table. Create, link, retry, then call. Refresh on expiry. `invalid_grant` unlinks. Delegation refusal with `retryAfterSeconds`, retry, and deferral, with the export undone and budget returned. Child in the parent's environment finds the link. Derived session reuses a link. The stub server moves from 401 to 200 within the cache window. |
 | 5, end to end on Kind | A pod on Kind has `/lenny-tools/lenny-mcp-stdio` on a read-only mount in a minimal runtime image and runs it there. The webhook refuses a read-write mount of the volume. An embedded pod has no such volume. |
 | 7a, local load | Concurrent refresh yields one provider call per credential, extending `connector_oauth_refresh_race` to the real store. Prompt deduplication across replicas. |
 | 8, chaos | Probe timeout on create and on resume. Token endpoint outage during refresh. Callback landing on a replica that does not hold the session. |
@@ -793,7 +793,7 @@ Each test carries its `// spec:` annotation once the specification lands.
 | Bridge transport in a pod, with abstract sockets and `SO_PEERCRED` | "CA-9" | Round trip in the conformance suite, for each CLI. Claude Code passed on macOS with filesystem sockets. |
 | Generated MCP configuration under `preConnect` | Stock CLI on warm pools | Launch a warm pod and bind a session. |
 | Added startup from `lenny-tools-stage` on a real pod | Sizing warm-pool refill. About one second is measured on stand-in pods under "CA-9". | Measure a controller-rendered pod with and without the init container, under gVisor and Kata, including the image's first pull. |
-| Interaction store lookup by tenant, user, connector, and Environment | "CA-1" step 6 | Read `interactionstore` at proposal time. A new index may be needed. |
+| Interaction store lookup by tenant, user, connector, and environment | "CA-1" step 6 | Read `interactionstore` at proposal time. A new index may be needed. |
 | OIDC availability on the start page in `apiKey` and dev modes, where a user authenticates with an API key or, under `global.devMode=true`, with no credential, rather than through an OIDC login | "CA-0" | Settle it in that proposal, since the start page is shared with UC-2. |
 | MCP resource indicator requirement | "CA-2" | Read the MCP authorization page, and test a server that enforces audience. |
 
@@ -804,15 +804,15 @@ Each test carries its `// spec:` annotation once the specification lands.
 | CA-0 | Shared OAuth link flow ([CA-0](#ca-0-shared-oauth-link-flow)) in `pkg/connectoroauth`, with today's §9.3 handlers converted to it. Closes the account-link defect. | Nothing. It lands first, and [UC-2](user-credential-delivery-design.md#uc-2-the-oauth2link-source-and-account-linking) depends on it. |
 | CA-A | Connector routes ([CA-1](#ca-1-link-flow)), and the removal of the admin OAuth routes. | CA-0 |
 | CA-B | Refresh, lease, and endpoint binding ([CA-2](#ca-2-token-lifecycle)). | CA-A |
-| CA-C | Default deny and Environment on children and derived sessions ([CA-3](#ca-3-connector-access-and-environment)). | The [tenant-scoping decision](tenant-scoping-identity-design.md#decisions) |
+| CA-C | Default deny and environment on children and derived sessions ([CA-3](#ca-3-connector-access-and-environment)). | The [tenant-scoping decision](tenant-scoping-identity-design.md#decisions) |
 | CA-D | Typed error and connector prompts ([CA-5](#ca-5-propagating-the-failure)). | CA-A |
-| CA-E | Link check at create, derive, replay, and external adapters, plus `deferConnectors` ([CA-4](#ca-4-link-check)). | CA-A, CA-C |
+| CA-E | Link check at create, derive, and external adapters, plus `deferConnectors` ([CA-4](#ca-4-link-check)). | CA-A, CA-C |
 | CA-F | Resume and restart rules ([CA-6](#ca-6-resume-and-restart)), and delegation ([CA-7](#ca-7-delegated-children)). | CA-D, CA-E |
 | CA-G | Memory removal ([CA-10](#ca-10-removing-built-in-memory)) and the external pattern documentation. | CA-A through CA-F, so the documented replacement works when memory goes |
 | CA-H | Stdio bridge, the `lenny-tools` image, init container, volume, and webhook rule ([CA-9](#ca-9-stdio-bridge)). | Ships with the Claude Code and Codex integrations |
 | CA-I | `deferredToolDiscovery` true path and `list_changed` ([CA-8](#ca-8-runtime-capability-and-late-tools)). The field and its `false` default land in CA-E. | The stock CLI spike, or a runtime asking for it |
 
-[`user-credential-delivery-design.md`, "Defects found while verifying"](user-credential-delivery-design.md#defects-found-while-verifying) rates the account-link defect High wherever a connector is a confidential client, which is why CA-0 comes first. CA-C's default deny and the child Environment fix close a capability-filter bypass that exists today, and they also stand alone.
+[`user-credential-delivery-design.md`, "Defects found while verifying"](user-credential-delivery-design.md#defects-found-while-verifying) rates the account-link defect High wherever a connector is a confidential client, which is why CA-0 comes first. CA-C's default deny and the child environment fix close a capability-filter bypass that exists today, and they also stand alone.
 
 ## Sources
 
@@ -836,3 +836,4 @@ These notes were carried in the status line of earlier revisions.
 - Revision 7 changed only pointers after the user credential documents split.
 - Revision 8, dated 2026-11-07, followed a pass for a reader new to the project. It added "Terms from other designs and the platform", "Labels from other designs", "High-level design", the evidence sources under the tag table, and terms for the probe, the link URL, the endpoint digest, the stdio bridge, `deferredToolDiscovery`, the account-link attack, the subject, the pool-level `required` flag, user erasure, the senses of lease, the adapter authentication modes, and the runtime wrapper. It moved "CA-0" to its own section ahead of "CA-1", moved the revision history from the status line to this section, named the setting behind each `true` and `false` runtime, linked each citation of another design to the file and heading it names, glossed terms used once, such as depth suppression and `connectortools.Bridge`, and named the test tiers. It changed no rule.
 - Revision 9, dated 2026-11-08, corrected the citations of the **Delegated child's environment** and **Derive** rules in "TS-3: Session environment context and cross-environment sharing", the treatment of decision 14 as unsettled in "CA-3", "CA-7", and the reviewer instructions, the heading cited for the user credential design's Impersonation paragraph, the point at which Coder checks external account links, and the condition for nonce-only mode, that a validation pass found, and changed no rule. Decision 14 settled on cross-environment sharing, under which a crossing child takes the target Environment and needs a link there, and the revision states that case in "High-level design" and CAR-6 as well.
+- Revision 10, dated 2026-11-08, updated the text after a re-read of `user-credential-delivery-design.md`, `user-git-identity-design.md`, `tenant-scoping-identity-design.md`, `tenant-outbound-connector-design.md`, and `egress-and-git-design.md` at their current revisions, and changed no rule. It wrote "environment" in lowercase, as the tenant scoping design and the other designs write it. It removed replay as a session creation path from the "Derive" term, "Environment on a derived session", the paths the link check covers under "Placement", and the CA-E row, because `session-derive-design.md` merges replay into derive, as the tenant scoping design's "Derive" term states. It also stated that `netagent` sits in an agent pod that uses the local egress endpoint, as the egress design's "Terms" defines it.
