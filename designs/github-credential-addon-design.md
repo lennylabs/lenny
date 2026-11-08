@@ -1,6 +1,6 @@
 # GitHub credential add-on
 
-Status: design for owner review, revision 2, 2026-11-07. Nothing in this document is built or staged. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19 and [`user-git-identity-design.md`](user-git-identity-design.md) revision 28. The owner has settled [decisions](#decisions) 1 (per-session child tokens), 5 (the child's permissions), and 8 (the preset body). Decision 7 (a per-person limit on child mints) is open. The live GitHub spikes S1, S2, S3, S5, S6, S15, and S16 ran on `github.com` on 2026-11-06, and GitHub Enterprise Server (GHES) is untested. Every other measurement ran against a recording stub, and **the stub proves forwarding only**. Statements about GitHub and GHES come from the pages under "Sources". Proposals carry the label GH-n. "Review history" and "Capture history" at the end record how the design reached this form.
+Status: design for owner review, revision 3, 2026-11-08. Nothing in this document is built or staged. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19 and [`user-git-identity-design.md`](user-git-identity-design.md) revision 28. The owner has settled [decisions](#decisions) 1 (per-session child tokens), 5 (the child's permissions), and 8 (the preset body). Decision 7 (a per-person limit on child mints) is open, and decisions 2, 3, 4, and 6 carry a recommendation for owner review. The live GitHub spikes S1, S2, S3, S5, S6, S15, and S16 ran on `github.com` on 2026-11-06, and GitHub Enterprise Server (GHES) is untested. Every other measurement ran against a recording stub, and **the stub proves forwarding only**. Statements about GitHub and GHES come from the pages under "Sources". Proposals carry the label GH-n. "Review history" and "Capture history" at the end record how the design reached this form.
 
 Each factual claim about behaviour carries one of these tags where the source matters. They are the tags [`user-git-identity-design.md`](user-git-identity-design.md) defines, stated here for this document's evidence.
 
@@ -303,7 +303,7 @@ The properties below are request form fields of the preset format, which [`user-
 | Earlier smaller | 69 | 23 | 0 | 0 | 11 |
 | **This table, GHES and github.com** | **63** | **23** | **6** | **0** | **11** |
 
-The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo deploy-key delete`, `gh api -X PUT .../contents/...`, and `gh api -X DELETE .../branches/main/protection`. Outside the matrix, `gh ssh-key add`, `gh ssh-key delete`, and `gh gpg-key add` are refused, and `gh gpg-key delete` did not confirm, because the stub has no key to list, while its raw `DELETE` is refused. **`gh release upload` on GHES and `gh secret` and `gh variable` with `--env`, and their deletes, pass.** `writeForm` refused no `gh` or `glab` command in the matrix. Across 7 `gh` versions on both client images and both flavours, 12 rows each, 8 writes were forwarded, merge was refused, and 0 others were refused.
+The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo deploy-key delete`, `gh api -X PUT .../contents/...`, and `gh api -X DELETE .../branches/main/protection`. Of the 11 with no write, 4 are reads and 7 are stub limits (6 `project` commands and `discussion create`). Coverage is of the commands listed rather than every flag. Outside the matrix, `gh ssh-key add`, `gh ssh-key delete`, and `gh gpg-key add` are refused, and `gh gpg-key delete` did not confirm, because the stub has no key to list, while its raw `DELETE` is refused. **`gh release upload` on GHES and `gh secret` and `gh variable` with `--env`, and their deletes, pass.** `writeForm` refused no `gh` or `glab` command in the matrix.
 
 **Attack rows [measured].** The same 1,230 rows on each of GHES, github.com, and `ghe.com`: **1,069 refused, 160 reached with no denied action, 0 denied actions with the credential**, and 1 denied action with no credential through an opaque tunnel (a connection `netagent` passes through without terminating TLS), which is refused when that host is bound to a generic rule set (rules a binding sets with no preset). With 280 added rows for the added mutations, all refused, the totals are 1,350, 160, 0, and 0 of 1,510. The spike follow-up's 4 denied actions were a `query` naming a denied field or spreading a `Mutation` fragment and `POST /repos/acme/widgets/graphql`, and the rules above closed them. No value reached a wrong host in the audit.
 
@@ -329,7 +329,7 @@ The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo
 | `gh api graphql` with an aliased refused mutation | Refused **[measured]** | Not reached | |
 | A new `gh` command using a mutation the preset does not name | Passes | As the token permits | **[design]**. This is the accepted cost. |
 
-**Command result [measured].** Under the final preset, 103 `gh` commands on each of Alpine and Debian, GHES and github.com: **63 forwarded, 23 denied actions refused, 0 denied actions missed, 6 others refused, and 11 with no write at the stub**, of which 4 are reads and 7 are stub limits (6 `project` commands and `discussion create`). The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo deploy-key delete`, `gh api -X PUT .../contents/...`, and `gh api -X DELETE .../branches/main/protection`. The earlier smaller preset gave 69, 23, 0, 0, and 11. Coverage is of the commands listed rather than every flag. **The stub proves forwarding only.**
+**Command result [measured].** The counts under the final preset are under "Preset body", **Commands [measured]**. **The stub proves forwarding only.**
 
 **Version drift [measured].** Under the final preset, all 7 versions on Alpine and Debian, on both flavours, 12 rows each: 8 writes forwarded, merge refused, and 0 others refused at every version. The only non-zero exit other than merge is `pr edit` with metadata on 2.86.0 and 2.87.0 on github.com, on a stub limit with no refusal. An earlier run against the allowlist, on the Alpine client:
 
@@ -338,7 +338,7 @@ The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo
 | 2.72.0, 2.73.0 | 0 | 8, including `pr create --reviewer --assignee` |
 | 2.86.0, 2.87.0, 2.93.0, 2.94.0, 2.103.3 | 0 | 6 (`pr edit`, `pr comment`) |
 
-Two rows on github.com, 2.86.0 and 2.87.0 `pr edit` with metadata, exit 1 on a stub limit with no filter refusal. The allowlist here includes the `Time-Zone` fix, which forwarded the `Time-Zone` header `gh` sends on any image with `/etc/localtime` after the allowlist's forwarded-header list had refused every GraphQL request carrying it.
+The same `pr edit` rows exited 1 on the stub limit in that run. The allowlist there includes the `Time-Zone` fix, which forwarded the `Time-Zone` header `gh` sends on any image with `/etc/localtime` after the allowlist's forwarded-header list had refused every GraphQL request carrying it.
 
 **Widening `permissions`.** A tenant that wants `gh issue` or `gh run` widens the template. **Once `contents: write` is granted, the host no longer refuses merges, `PUT contents`, `createCommitOnBranch`, or ref writes, and the deny preset alone stands between an agent and those operations.** The same holds for `actions: write`, and any new operation in those families passes until the preset names it. The owner settled decision 5 with this stated.
 
@@ -513,6 +513,7 @@ Read on 2026-11-02 and 2026-11-03. These pages were read and their behaviour was
 
 - Revision 1, 2026-11-06, took its content from [`user-git-identity-design.md`](user-git-identity-design.md) revision 27 and [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 18.
 - Revision 2 followed a pass for a reader new to the project. It added a tag table and an evidence note, "Terms" ahead of "High-level design" with GitHub terms, "Terms from other designs and the platform", and "Labels from other designs", a plain-language opening and a diagram in "High-level design", links to other designs and to the labels they define, and interface names in place of the egress design's interface numbers, and changed no rule.
+- Revision 3 corrected the status line, which omitted that decisions 2, 3, 4, and 6 await owner review, and removed the command counts and the version drift result that GH-3 stated twice, that a validation pass found, and changed no rule.
 
 ## Capture history
 
