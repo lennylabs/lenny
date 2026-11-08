@@ -1,6 +1,6 @@
 # Connector authorization and external memory
 
-Status: design for owner review, revision 8, 2026-11-07, with no independent review yet. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19, [`user-git-identity-design.md`](user-git-identity-design.md) revision 28, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 10, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 9, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 49. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 9, 2026-11-08, with no independent review yet. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 19, [`user-git-identity-design.md`](user-git-identity-design.md) revision 28, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 10, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 9, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 49. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -92,7 +92,7 @@ This design builds on mechanisms that other designs and the specification define
 | Runtime, `type: agent`, and pool | A runtime ([§5.1](../spec/05_runtime-registry-and-pool-model.md#51-runtime)) is a registered agent program, and a `type: agent` runtime runs agent sessions. A pool keeps warm pods for a runtime, ready for a session to claim. |
 | Integration level | How much of the adapter protocol a runtime implements: Basic, Standard, or Full ([§15.4.3](../spec/15_external-api-surface.md#1543-runtime-integration-levels)). |
 | Runtime adapter and adapter manifest | The adapter ([§4.7](../spec/04_system-components.md#47-runtime-adapter)) is Lenny's process in each agent pod. It talks to the gateway and serves MCP to the runtime. It writes the adapter manifest, `/run/lenny/adapter-manifest.json`, which lists the MCP servers the runtime may use and a nonce the runtime presents in `initialize`. |
-| Adapter authentication modes | The adapter authenticates each client on its sockets in one of two modes. By default it checks the connecting process's user ID through `SO_PEERCRED`, the kernel's report of a Unix socket peer's credentials, and requires the manifest nonce. In nonce-only mode the nonce alone authenticates, and the adapter adds a per-connection challenge, `adapterChallenge`, that the client must answer. A runtime with `requireSoPeercred: false`, on a pool that sets `acknowledgeNonceOnlyAuth`, selects nonce-only mode, for a sandbox such as gVisor where `SO_PEERCRED` is unreliable ([§4.7](../spec/04_system-components.md#47-runtime-adapter), [§5.1](../spec/05_runtime-registry-and-pool-model.md#51-runtime)). |
+| Adapter authentication modes | The adapter authenticates each client on its sockets in one of two modes. By default it checks the connecting process's user ID through `SO_PEERCRED`, the kernel's report of a Unix socket peer's credentials, and requires the manifest nonce. In nonce-only mode the nonce alone authenticates, and the adapter adds a per-connection challenge, `adapterChallenge`, that the client must answer. A runtime with `requireSoPeercred: false`, on a pool that sets `acknowledgeNonceOnlyAuth`, selects nonce-only mode, for an isolation environment in which the adapter's `SO_PEERCRED` self-test fails, which §4.7 expects for gVisor only if validation confirms a divergence ([§4.7](../spec/04_system-components.md#47-runtime-adapter), [§5.1](../spec/05_runtime-registry-and-pool-model.md#51-runtime)). |
 | Connector socket and platform server | The adapter serves each connector on its own abstract Unix socket, `@lenny-connector-<id>`, and serves Lenny's platform tools, such as `lenny/delegate_task`, on a platform server. The adapter forwards each call to the gateway. The specification's channel identifiers for these conversations are `CH-MCP-CONNECTOR` and `CH-MCP-PLATFORM` ([§28.5.3](../spec/28_communication-channels.md#2853-intra-pod)). |
 | `LNK-POD-GRPC` and `CH-HOLDERFORWARD` | `LNK-POD-GRPC` is the gRPC connection from a gateway replica to a pod's adapter. `CH-HOLDERFORWARD` forwards a request that reached one gateway replica to the session's coordinating replica ([§28.3](../spec/28_communication-channels.md#283-registers)). |
 | Gateway replica | One instance of Lenny's API gateway. One replica coordinates each session under a lease. |
@@ -143,7 +143,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 **Token lifecycle (CA-2).** The gateway refreshes a connector token near expiry under a lease on the connector credential row, deletes it when a refresh returns `invalid_grant`, the OAuth error that means the refresh token is no longer valid, and treats it as absent once the connector's endpoint digest changes.
 
-**Access and Environment (CA-3).** A session reaches a connector only when a delegation policy grants it. A delegated child carries its parent's Environment, and a derived session its source's, so each finds the same links.
+**Access and Environment (CA-3).** A session reaches a connector only when a delegation policy grants it. A delegated child carries its parent's Environment, and a derived session its source's, so each finds the same links. A child whose delegation crosses a sharing path instead carries the target Environment, and needs a link there.
 
 **Link check (CA-4).** At session creation, the gateway evaluates each permitted connector as `open`, `linked`, `needs_link`, or `unknown`, and sends a probe only for a user with no token. A runtime with `deferredToolDiscovery: false` is refused with `403 CONNECTOR_LINK_REQUIRED` and a link URL for each connector that needs one, unless the caller defers that connector with `deferConnectors`.
 
@@ -177,7 +177,7 @@ These are settled by the owner, and the rationale stays here so a later reader d
 | Remove built-in memory | The owner asked for "Dropping memory store in Lenny + replacing with this generic mechanism". |
 | No stored tool catalog | The owner rejected registering tools and arguments apart from the MCP server: "that creates a shadow config that will be out of sync". `tools/list` always asks the server. |
 | The authorization failure reaches the runtime | "Shouldn't the auth error be propagated to the runtime so it knows it needs to authenticate?" The failure is translated at the gateway boundary, because the runtime's server is the adapter's local server. See "CA-5". |
-| A link check runs regardless of runtime | The owner: "the Coder-style check makes sense no matter what". Coder, a cloud development environment product, checks a user's external account links before it starts a workspace, and the owner's phrase refers to a check of that kind. |
+| A link check runs regardless of runtime | The owner: "the Coder-style check makes sense no matter what". Coder, a cloud development environment product, requires a user to link each external account that a workspace template names before it creates or updates the workspace, unless the template marks that account optional. The owner's phrase refers to a check of that kind. |
 | The trigger is a connector property | The owner replaced a pool-level "required" flag with "requiring auth to list tools". This design detects that property live, for the owner's own reason that a stored flag can drift. |
 | The runtime declares tolerance | "The runtime should indicate whether they can gracefully handle failed `tools/list`". See "CA-8". |
 | A parent retries after a link | No push notification. The refusal carries `details.retryAfterSeconds`. See "CA-7". |
@@ -198,7 +198,7 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 - CAR-3. A runtime learns that a connector needs authorization through a typed error, and Lenny stores no copy of a connector's tools.
 - CAR-4. A runtime that cannot recover from a failed `tools/list` never starts with a connector that would fail it, unless Lenny has no way to know (the probe's `unknown` result in "CA-4").
 - CAR-5. An implicit restart never fails because a connector link is missing.
-- CAR-6. A delegated child uses its parent's user and Environment for connector tokens.
+- CAR-6. A delegated child uses its parent's user and Environment for connector tokens. When the delegation crosses a sharing path, the child uses the parent's user and the target Environment.
 - CAR-7. No authorization URL or connector token reaches a pod, a runtime, or a model.
 - CAR-8. An expired token refreshes without user involvement while its refresh token is valid.
 - CAR-9. A session reaches a connector only when a delegation policy grants it.
@@ -309,9 +309,9 @@ An impersonation bearer is refused on every link route, as [`user-credential-del
 
 **Default deny.** `AuthorizeConnector` returns `ErrConnectorNotPermitted` when no policy layer resolves, for every connector, which §8.3 evaluates as a candidate of type `connector`. An error resolving a policy fails closed. Carol grants the connector with a `DelegationPolicy` target of type `connector`, on the runtime or as the Environment's default. This reverses the "conservative fall-through" comment in `connectorauthz.go`, which stays correct for other candidate types.
 
-**Environment on a child.** The row `buildChildSession` writes carries the parent's Environment. [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) already requires this under "Delegated child's Environment" and [decision 14](tenant-scoping-identity-design.md#decisions). This design depends on that change and lands it itself if that design has not landed first.
+**Environment on a child.** The row `buildChildSession` writes carries the parent's Environment, or the target Environment when the delegation crosses a sharing path under [decision 14](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14). [`tenant-scoping-identity-design.md`, "TS-3: Session environment context and cross-environment sharing"](tenant-scoping-identity-design.md#ts-3-session-environment-context-and-cross-environment-sharing) already requires this under **Delegated child's environment**, and **Effects on existing features** in the same section states that connectors read that field. This design depends on that change and lands it itself if that design has not landed first.
 
-**Environment on a derived session.** A derived or replayed session carries its source's Environment, as that design also requires. §7.1 **Connector state.** is rewritten: a connector link belongs to a user and an Environment, so a derived session reuses it under those keys.
+**Environment on a derived session.** A derived or replayed session carries its source's Environment, as that design also requires under **Derive**. §7.1 **Connector state.** is rewritten: a connector link belongs to a user and an Environment, so a derived session reuses it under those keys.
 
 ## CA-4: Link check
 
@@ -440,7 +440,7 @@ These paths exist today **[source]**:
 
 ### Identity
 
-A child uses `parent.UserID` **[measured]**, so the parent's user's link is the right token, and `TestExternalMCPToolPerDelegationScoping` covers policy scoping on that path. With "CA-3" the child also has the parent's Environment. Under the cross-Environment alternative of [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14), a child in another Environment evaluates under its own Environment and needs a link there.
+A child uses `parent.UserID` **[measured]**, so the parent's user's link is the right token, and `TestExternalMCPToolPerDelegationScoping` covers policy scoping on that path. With "CA-3" a child that does not cross also has the parent's Environment. Under [`tenant-scoping-identity-design.md`, "Cross-environment sharing (decision 14)"](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14), which the owner settled on 2026-11-03, a child that crosses a sharing path runs in the target Environment, uses that Environment's `connectorSelector`, and needs a link there, because §4.3 keys connector tokens on the Environment.
 
 ### Check at delegation
 
@@ -715,7 +715,7 @@ Leave the link record in the Token Service unchanged, under "Stored links".
 
 **Owner decision: built-in memory goes, and impersonation on linked connectors is an accepted risk.** Apply these changes:
 
-1. **"Impersonation".** Remove the "Memory, unconditionally" bullet with no replacement. Do not extend the session input check to sessions holding a connector link.
+1. **"Limits under both deliveries", the Impersonation paragraph.** Remove the "Memory, unconditionally" bullet with no replacement. Do not extend the session input check to sessions holding a connector link.
 2. **"Specification sections affected".** Remove "§9.4: memory writes refuse an impersonation bearer."
 3. **"Tests", "Tier 4: integration".** Remove `lenny/memory_write` from the impersonation bearer test.
 4. **"Current state".** The row "Other session input refuses an impersonation bearer" names memory writes as a fact about today's tree. Keep it until "CA-G" lands.
@@ -734,7 +734,7 @@ Leave these unchanged: decision 3 on connectors on the hosts of a VCS pool with 
 
 ### `tenant-scoping-identity-design.md`
 
-No edit. "CA-3" depends on "Delegated child's Environment", and on a derived session following its source's Environment. If decision 14 settles on the cross-Environment alternative, or if either rule changes, report it to this document, because a child's token lookup reads that field.
+No edit. "CA-3" depends on **Delegated child's environment** and **Derive** under "TS-3: Session environment context and cross-environment sharing". Decision 14 settled on cross-environment sharing, and "CA-3" and "CA-7" follow it. If either rule changes, report it to this document, because a child's token lookup reads that field.
 
 ### Other designs
 
@@ -835,3 +835,4 @@ These notes were carried in the status line of earlier revisions.
 - Revision 6 recorded the startup measurement and the owner's choice of a separate init container.
 - Revision 7 changed only pointers after the user credential documents split.
 - Revision 8, dated 2026-11-07, followed a pass for a reader new to the project. It added "Terms from other designs and the platform", "Labels from other designs", "High-level design", the evidence sources under the tag table, and terms for the probe, the link URL, the endpoint digest, the stdio bridge, `deferredToolDiscovery`, the account-link attack, the subject, the pool-level `required` flag, user erasure, the senses of lease, the adapter authentication modes, and the runtime wrapper. It moved "CA-0" to its own section ahead of "CA-1", moved the revision history from the status line to this section, named the setting behind each `true` and `false` runtime, linked each citation of another design to the file and heading it names, glossed terms used once, such as depth suppression and `connectortools.Bridge`, and named the test tiers. It changed no rule.
+- Revision 9, dated 2026-11-08, corrected the citations of the **Delegated child's environment** and **Derive** rules in "TS-3: Session environment context and cross-environment sharing", the treatment of decision 14 as unsettled in "CA-3", "CA-7", and the reviewer instructions, the heading cited for the user credential design's Impersonation paragraph, the point at which Coder checks external account links, and the condition for nonce-only mode, that a validation pass found, and changed no rule. Decision 14 settled on cross-environment sharing, under which a crossing child takes the target Environment and needs a link there, and the revision states that case in "High-level design" and CAR-6 as well.
