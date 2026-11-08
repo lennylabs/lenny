@@ -1,6 +1,6 @@
 # Session derive
 
-Status: design for owner review, revision 10, 2026-11-08. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 30, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 22, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 59. The owner has settled the decisions under "Decisions". This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Proposals carry the label SD-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 10, 2026-11-08. Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 30, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 29, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 70. The owner has settled the decisions under "Decisions". This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Proposals carry the label SD-n. "Review history" at the end records how the design reached this form.
 
 ## Problem
 
