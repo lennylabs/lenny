@@ -1,6 +1,6 @@
 # Billing resource attribution
 
-Status: design for owner review, revision 9, 2026-11-08. Nothing in this document is built, staged, or validated, and no test, spike, or benchmark has run for it. It reads against [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 59 and [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) revision 28. The owner has settled decisions 1 to 14, and the design is written to them. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification, as "Current state" records. Proposals carry the label BR-n, and defects found while verifying carry the label DF-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 9, 2026-11-08. Nothing in this document is built, staged, or validated, and no test, spike, or benchmark has run for it. It reads against [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 60 and [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) revision 28. The owner has settled decisions 1 to 14, and the design is written to them. Statements about the tree were checked by reading the code, the chart, the migrations, and the specification, as "Current state" records. Proposals carry the label BR-n, and defects found while verifying carry the label DF-n. "Review history" at the end records how the design reached this form.
 
 ## Problem
 
