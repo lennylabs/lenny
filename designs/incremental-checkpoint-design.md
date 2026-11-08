@@ -1,6 +1,6 @@
 # Incremental checkpoints
 
-Status: design for owner review, revision 4, 2026-11-08. No review has read any revision. The owner has settled decisions D7 and D8, and has ruled out a mechanism that forces a runtime to pause (see "Owner's direction"). Proposals carry the label IC-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 5, 2026-11-08. No review has read any revision. The owner has settled decisions D7, D8, and D14, and has ruled out a mechanism that forces a runtime to pause (see "Owner's direction"). Proposals carry the label IC-n. "Review history" at the end records how the design reached this form.
 
 **Evidence sources.** The measurements this design cites come from a laptop and from AWS. "Measurements" holds runs on a laptop on 2026-11-05 against a copy of today's archive code. "Benchmarks" holds runs on AWS on 2026-11-05 and 2026-11-06, made with the *harness*, a standalone program that implements both today's checkpoint method and this design's capture, storage, and restore paths and runs no Lenny component. Its "Kubernetes checks" ran the same builds on a single-node cluster. A pause written as *walk / tracker* gives the figure with the stat walk and with the change tracker as the change source. "Benchmark terms" under "Terms" defines the scenarios and configurations the tables name.
 
@@ -176,6 +176,8 @@ Asked whether the default pause budget should be 5 s or 10 s, the owner chose "1
 
 Asked whether the platform has a way to stop a runtime that does not quiesce, such as the cgroup freezer, which suspends every process in a container's control group, the owner answered: "no, I don't want the forcing mechanism, thanks". Quiescence therefore stays cooperative. A Full-level runtime pauses itself on `checkpoint_request`, and every other runtime is captured on the best-effort path while it runs.
 
+On 2026-11-08 the owner accepted, in the word "ok", the recommended placement of the settings this design names with defaults ([decision D14](#decisions)). The pack format and capture settings are constants that the specification states, `checkpointConcurrency` is a gateway setting from the chart, and `restoreConcurrency` is an adapter setting that the controller passes from the chart to every agent pod.
+
 ## Requirements
 
 - R1. The time a runtime spends quiesced depends on the number of files in the workspace and on the bytes changed since the last pre-copy pass. It does not depend on the total bytes in the workspace. The target is a P95 pause under 1 second for a workspace of 500,000 files with up to 256 MiB changed since pre-copy, on runc with node-local SSD.
@@ -196,7 +198,7 @@ Asked whether the platform has a way to stop a runtime that does not quiesce, su
 - S2. The gateway accepts a snapshot only when every pack it references is in the session's allowed set (see "Reference closure"). The allowed set comes from Postgres, so a pod that names a foreign pack ID fails the check.
 - S3. The gateway signs a `GET` only for packs that the snapshot being restored references.
 - S4. A restore recomputes the SHA-256 of every chunk and fails the file whose chunk does not match, so a corrupt or substituted pack cannot silently change restored content.
-- S5. The residual exposure matches today's: a compromised pod can write up to `checkpointGrantWindow × packMaxBytes` of chosen bytes into its own session's prefix within the grant TTL. `checkpointGrantWindow` is the number of upload grants the gateway keeps outstanding at once, 4 by default ([§10.1](../spec/10_gateway-internals.md#101-horizontal-scaling)), and `packMaxBytes` is the largest pack IC-2 allows. The tenant's quota is charged for those bytes, and garbage collection reclaims any pack that no snapshot references.
+- S5. The residual exposure matches today's: a compromised pod can write up to `checkpointGrantWindow × packMaxBytes` of chosen bytes into its own session's prefix within the grant TTL. `checkpointGrantWindow` is the number of upload grants the gateway keeps outstanding at once, 4 by default ([§10.1](../spec/10_gateway-internals.md#101-horizontal-scaling)), and `packMaxBytes` is the largest pack IC-2 allows, a constant of 32 MiB. The bound holds because the gateway refuses a grant for a pack whose declared length exceeds `packMaxBytes`, so the size a grant can carry is a gateway constant rather than a pod's report. The tenant's quota is charged for those bytes, and garbage collection reclaims any pack that no snapshot references.
 
 ## Current state
 
@@ -242,7 +244,7 @@ On a Full-level runtime the capture pass runs under the cooperative handshake on
 1. The adapter takes the pod-wide operation lock and sends `checkpoint_request` with `deadlineMs` set to the pause budget.
 2. After `checkpoint_ready`, the adapter builds the changed set: files whose identity differs from the index, dirty files, and racy entries (see "Change detection"). With a healthy change tracker, the adapter writes a barrier file, waits until the tracker has read the barrier's event, and takes the tracker's dirty paths, then reads the identity of those paths only. Without a healthy tracker, the adapter walks the workspace again with a parallel stat-only walk, which also records directories, symlinks, and modes.
 3. The adapter decided before step 1 whether the capture fits the pause budget, from an estimate built during pre-copy (see "Pause budget and convergence"). If the changed set found in step 2 exceeds that estimate by more than the budget allows, the adapter ends the capture without reading.
-4. The adapter captures each changed file. A file of at least `reflinkMinBytes` (default 1 MiB) is cloned into the spool with `FICLONE` when the spool passed the reflink probe. Every other changed file is read, chunked, and hashed, and its new chunks are written to the spool uncompressed. The adapter copies `/sessions/{sessionId}`, which is a tmpfs capped at 256 MiB, in full.
+4. The adapter captures each changed file. A file of at least `reflinkMinBytes`, a constant of 1 MiB, is cloned into the spool with `FICLONE` when the spool passed the reflink probe. Every other changed file is read, chunked, and hashed, and its new chunks are written to the spool uncompressed. The adapter copies `/sessions/{sessionId}`, which is a tmpfs capped at 256 MiB, in full.
 5. The adapter sends `checkpoint_complete` with status `ok` and releases the lock. The snapshot's file list is complete at this point, and only the spooled bytes remain to upload.
 
 The pause is the handshake, plus the tracker swap or the stat walk, plus the time to read or clone the changed files from local disk. Recently written files are usually in the page cache. On the measured nodes the stat walk costs about 2 µs per file under runc and on a Kata block volume, 3 to 5 µs on Kata's shared file system with the metadata cache, and 11 to 27 µs under gVisor and under Kata's default cache mode. Reading a changed 4 KiB file costs 5 to 13 µs under runc and a Kata block volume and 46 to 129 µs under gVisor and Kata's shared file system (see "Benchmarks").
@@ -276,7 +278,7 @@ If the last round is still over budget, the adapter captures without quiescing, 
 
 On a Basic or Standard runtime the adapter runs the same passes without the handshake and without the operation lock. The capture pass tolerates change instead of failing:
 
-- A file whose identity changes during its read is read again, up to `bestEffortRereads` (default 2) times. A file still changing after that is stored as last read, and the manifest flags it `torn`.
+- A file whose identity changes during its read is read again, up to `bestEffortRereads` times, a constant of 2. A file still changing after that is stored as last read, and the manifest flags it `torn`.
 - A file or directory that disappears between the walk and the read is left out of the snapshot.
 - The attempt never fails because a file changed.
 - New chunks stream into the packer as they are read. No pause holds the workspace still on this path, so nothing has to be held in memory or in the spool. The first harness version buffered the chunks of a best-effort capture in memory and was killed when a 4 GiB database file changed.
@@ -297,7 +299,7 @@ The adapter treats a directory that contains a `.git` directory, or a `.git` fil
 
 ### Change detection
 
-An index entry is trusted when its identity matches the file's current identity and the entry is not racy. An entry is racy when the file's `mtime` falls within `racyWindow` (default 2 s) before the instant the read that produced the entry started. This is git's rule for racily clean index entries. A write within the timestamp granularity of an earlier read leaves `mtime` unchanged, so a racy entry is re-read during the capture pass. `ctime` detects mode changes and renames onto the path, and the inode detects a replacement by rename.
+An index entry is trusted when its identity matches the file's current identity and the entry is not racy. An entry is racy when the file's `mtime` falls within `racyWindow`, a constant of 2 s, before the instant the read that produced the entry started. This is git's rule for racily clean index entries. A write within the timestamp granularity of an earlier read leaves `mtime` unchanged, so a racy entry is re-read during the capture pass. `ctime` detects mode changes and renames onto the path, and the inode detects a replacement by rename.
 
 ### Change tracker
 
@@ -324,7 +326,7 @@ A file of at least 1 MiB is split with content-defined chunking (FastCDC with a 
 
 ### Packs
 
-A pack is a sequence of compressed chunk frames followed by a footer that lists each chunk's ID, offset, compressed length, uncompressed length, and compression method. The target size is 16 MiB, which matches today's `DefaultChunkSizeBytes`, and `packMaxBytes` is 32 MiB. A pack's ID is the SHA-256 of its bytes. Packing small chunks keeps the object count and the per-request cost down for workspaces with many small files.
+A pack is a sequence of compressed chunk frames followed by a footer that lists each chunk's ID, offset, compressed length, uncompressed length, and compression method. The target size is 16 MiB, which matches today's `DefaultChunkSizeBytes`. `packMaxBytes` is a constant of 32 MiB that the specification states, and no setting changes it. The gateway refuses a grant for a pack larger than `packMaxBytes` (see IC-3), because the bound in S5 depends on it. A pack's ID is the SHA-256 of its bytes. Packing small chunks keeps the object count and the per-request cost down for workspaces with many small files.
 
 ### Manifests
 
@@ -346,7 +348,7 @@ The `Checkpoint` stream in `schemas/lenny-adapter.proto` keeps its gateway-drive
 
 - `CheckpointStart` adds `parent_snapshot_id`, `pack_target_bytes`, `pause_budget_ms`, `capture_budget_bytes`, and `precopy_rounds`. It drops `chunk_encoding`, which today names the tar chunks' encoding, `tar` or `tar.gz`.
 - `CheckpointProbe`, the adapter's first frame, carries the size probe's result. It reports `workspace_bytes`, `file_count`, and `estimated_new_bytes`, which is the size of the files whose identity changed. The gateway reserves quota against the estimate.
-- `PackReady` declares `pack_id`, `length`, and `content_md5`. The gateway answers `PackGrant` with a single-key `PUT` grant that signs `Content-Length`, `Content-MD5`, and the encryption headers, or it answers `CheckpointAbort`, which tells the adapter to stop the attempt. It refuses a grant for a `pack_id` its catalog holds (S1).
+- `PackReady` declares `pack_id`, `length`, and `content_md5`. The gateway answers `PackGrant` with a single-key `PUT` grant that signs `Content-Length`, `Content-MD5`, and the encryption headers, or it answers `CheckpointAbort`, which tells the adapter to stop the attempt. It refuses a grant for a `pack_id` its catalog holds (S1), and it answers `CheckpointAbort` without signing anything when the declared `length` is zero or larger than `packMaxBytes`, so the size a grant can carry is a gateway constant and the bound in S5 holds.
 - `PackCommitted` confirms an upload. The gateway checks the object's length with `StatObject` and inserts a pack row in state `unreferenced`, with a lease.
 - `CaptureDone` reports `quiesced_ms`, `consistency`, `changed_files`, `torn_files`, and `rounds`.
 - `SnapshotReady` carries the manifest chunk list and the referenced pack IDs, sent in batches for large snapshots. The gateway runs the reference closure check and writes the snapshot row and its pack references in one transaction.
@@ -354,7 +356,7 @@ The `Checkpoint` stream in `schemas/lenny-adapter.proto` keeps its gateway-drive
 
 On `CH-RUNTIMEOPS`, `checkpoint_complete` changes meaning from "the snapshot is uploaded" to "the snapshot is captured". The runtime's 60-second autonomous resume stays as a safety net, and `deadlineMs` carries the pause budget. Today every periodic attempt sends `deadline_ms = 0`, because nothing sets the checkpointer's `Deadline` (see "Defects found while verifying").
 
-The gateway's `SweepDue` runs due attempts concurrently, up to `checkpointConcurrency` per gateway replica (default 16). Today it runs them one at a time, so one slow session delays every other session on the replica. The gateway carries grants and catalog writes, and the pack bytes travel between the pod and object storage.
+The gateway's `SweepDue` runs due attempts concurrently, up to `checkpointConcurrency` per gateway replica, 16 by default. `checkpointConcurrency` is a gateway setting: the chart value `gateway.checkpointConcurrency` renders as the gateway's environment variable `LENNY_CHECKPOINT_CONCURRENCY`, which the gateway flag `--checkpoint-concurrency` reads, as `gateway.checkpointGrantWindow` renders as `LENNY_CHECKPOINT_GRANT_WINDOW`. Today it runs them one at a time, so one slow session delays every other session on the replica. The gateway carries grants and catalog writes, and the pack bytes travel between the pod and object storage.
 
 ## IC-4: Catalog, reference closure, and quota
 
@@ -388,7 +390,7 @@ The tenant is charged once for each pack, at confirmation, and the charge is rel
 
 The gateway selects the snapshot: the latest finalized snapshot on resume, or the starting snapshot at a derived session's first bind, when the session is first attached to a pod. It signs `GET` grants for that snapshot's packs as the restore requests them, which keeps each grant's 30-second TTL meaningful for large restores.
 
-The adapter fetches the manifest chunks first, then the packs, with `restoreConcurrency` (default 8) requests in flight. It decompresses each chunk, verifies its SHA-256 (S4), writes the files with the same rules as `ExtractTree`, under which no path may escape the workspace root through `..` or an absolute path, a symlink is restored only when its target resolves inside the root, and setuid and setgid bits are dropped, and applies modes and `mtime`. It builds the file index from the identities of the files it wrote, so the first pre-copy after a restore reads nothing. The restore limit is the pool's `workspaceSizeLimitBytes` in place of the fixed 2 GiB.
+The adapter fetches the manifest chunks first, then the packs, with `restoreConcurrency` requests in flight, 8 by default. `restoreConcurrency` is an adapter setting: the chart value `controller.adapterRestoreConcurrency` renders as the controller flag `--adapter-restore-concurrency`, and the controller passes it as the adapter flag `--restore-concurrency` to every agent pod it creates. It decompresses each chunk, verifies its SHA-256 (S4), writes the files with the same rules as `ExtractTree`, under which no path may escape the workspace root through `..` or an absolute path, a symlink is restored only when its target resolves inside the root, and setuid and setgid bits are dropped, and applies modes and `mtime`. It builds the file index from the identities of the files it wrote, so the first pre-copy after a restore reads nothing. The restore limit is the pool's `workspaceSizeLimitBytes` in place of the fixed 2 GiB.
 
 Restore time still grows with workspace size. Lazy restore, which fetches a file on first access, is out of scope.
 
@@ -408,7 +410,7 @@ The seal runs the same passes with trigger `seal`, and the resulting snapshot be
 
 - **Retention.** The latest 2 snapshots per session are retained, as today, and legal hold suspends rotation.
 - **Pack reclamation.** Garbage collection deletes a pack when no live snapshot references it and its lease has expired. It computes liveness with a query over `checkpoint_snapshot_packs` instead of a stored counter, so the count cannot drift. The deletion path keeps the rules of [§12.5 Artifact Store](../spec/12_storage-architecture.md#125-artifact-store): soft delete first, guarded quota release, then the object delete, with the backstop sweep. The guarded quota release returns the tenant's quota only when the soft delete changed the row, so two concurrent deleters cannot release it twice. The backstop sweep is a periodic garbage collection pass that deletes objects a failed primary cleanup left behind.
-- **Compaction.** When the adapter builds its dedup set, it treats chunks in packs that the parent snapshot uses below `packRewriteThreshold` (default 0.5) as absent. Their live chunks go into new packs, and the sparse pack loses its last reference after rotation. Compaction needs no gateway knowledge of chunks.
+- **Compaction.** When the adapter builds its dedup set, it treats chunks in packs that the parent snapshot uses below `packRewriteThreshold`, a constant of 0.5, as absent. Their live chunks go into new packs, and the sparse pack loses its last reference after rotation. Compaction needs no gateway knowledge of chunks.
 - **Erasure.** `DeleteByUser` deletes the user's snapshots. A pack that another user's derived snapshot references stays until that snapshot goes. This matches today's outcome, where the derive copy survives the source user's erasure.
 - **Partial manifests.** The tar-prefix reassembly in [§10.1.7 preStop Hook Drain](../spec/10_gateway-internals.md#1017-prestop-hook-drain) **Reassembly on resume.** is removed ([decision D4](#decisions)). A timed-out attempt leaves confirmed packs that the next attempt reuses, and a resume uses the latest finalized snapshot.
 
@@ -819,8 +821,8 @@ These defects exist in the tree today, and none is filed in `BUILD-GAPS.md` yet.
 ## Specification sections affected
 
 - [§4.4.2 Checkpoint Atomicity and Partial Manifests](../spec/04_system-components.md#442-checkpoint-atomicity-and-partial-manifests): the atomic unit becomes a snapshot row with its pack references, and partial manifests are removed.
-- [§4.4.3 Checkpoint Quiescence, Timeout, and Abort Handling](../spec/04_system-components.md#443-checkpoint-quiescence-timeout-and-abort-handling): the passes, the pause budget, convergence, best-effort tolerance, and the meaning of `checkpoint_complete`.
-- [§4.4.4 Checkpoint SLOs and Scheduling](../spec/04_system-components.md#444-checkpoint-slos-and-scheduling): the SLO measures the pause, the size limit bounds disk and storage, and scheduling and freshness use each session's effective interval.
+- [§4.4.3 Checkpoint Quiescence, Timeout, and Abort Handling](../spec/04_system-components.md#443-checkpoint-quiescence-timeout-and-abort-handling): the passes, the pause budget, convergence, best-effort tolerance, and the meaning of `checkpoint_complete`. The section states the capture constants `reflinkMinBytes` (1 MiB), `racyWindow` (2 s), and `bestEffortRereads` (2).
+- [§4.4.4 Checkpoint SLOs and Scheduling](../spec/04_system-components.md#444-checkpoint-slos-and-scheduling): the SLO measures the pause, the size limit bounds disk and storage, and scheduling and freshness use each session's effective interval. The section states that the gateway runs up to `checkpointConcurrency` due attempts at once per replica.
 - [§4.4.5 Checkpoint Storage Failure and Eviction Fallback](../spec/04_system-components.md#445-checkpoint-storage-failure-and-eviction-fallback): retry budgets apply per pack.
 - [§4.5 Artifact Store](../spec/04_system-components.md#45-artifact-store) **Workspace lineage:**: snapshot identity and lineage.
 - [§4.9 Credential Leasing Service](../spec/04_system-components.md#49-credential-leasing-service): checkpoint-and-restart rotation under `checkpointPolicy: sealOnly` and `none`.
@@ -831,15 +833,16 @@ These defects exist in the tree today, and none is filed in `BUILD-GAPS.md` yet.
 - [§6.2 Pod State Machine](../spec/06_warm-pod-model.md#62-pod-state-machine): idle suspension and the `maxSuspendedPodHoldSeconds` release under `checkpointPolicy: sealOnly` and `none`.
 - [§6.4 Pod Filesystem Layout](../spec/06_warm-pod-model.md#64-pod-filesystem-layout): the workspace `sizeLimit` and the spool directory.
 - [§7.1 Normal Flow](../spec/07_session-lifecycle.md#71-normal-flow): the seal, **Derive copy semantics:**, and **Derive restore semantics:**.
-- [§7.3 Retry and Resume](../spec/07_session-lifecycle.md#73-retry-and-resume): the restore steps and the restore limit.
+- [§7.3 Retry and Resume](../spec/07_session-lifecycle.md#73-retry-and-resume): the restore steps, the restore limit, and the adapter's `restoreConcurrency`.
 - [§10.1.7 preStop Hook Drain](../spec/10_gateway-internals.md#1017-prestop-hook-drain): the single drain cap, and removal of the chunked tar model and its reassembly.
 - [§10.1.8 Rolling Updates and the CheckpointBarrier Protocol](../spec/10_gateway-internals.md#1018-rolling-updates-and-the-checkpointbarrier-protocol): the barrier hold ends after the capture pass.
-- [§11.2 Budgets and Quotas](../spec/11_policy-and-controls.md#112-budgets-and-quotas) and [§12.5 Artifact Store](../spec/12_storage-architecture.md#125-artifact-store): quota per pack, reference-based garbage collection, compaction, and **Workspace deduplication.**
+- [§11.2 Budgets and Quotas](../spec/11_policy-and-controls.md#112-budgets-and-quotas) and [§12.5 Artifact Store](../spec/12_storage-architecture.md#125-artifact-store): quota per pack, reference-based garbage collection, compaction, and **Workspace deduplication.** §12.5 states the compaction constant `packRewriteThreshold` (0.5). In §11.2, **Hard cap on checkpoint writes.** clamps each declared pack length to `packMaxBytes` in place of `chunk_size_bytes`.
 - [§12.8 Compliance Interfaces](../spec/12_storage-architecture.md#128-compliance-interfaces): erasure and legal hold over shared packs.
-- [§13.2.3 Checkpoint Capability Model](../spec/13_security-model.md#1323-checkpoint-capability-model): the pack key layout, signed `Content-MD5`, and `GET` scoping by snapshot.
+- [§13.2.3 Checkpoint Capability Model](../spec/13_security-model.md#1323-checkpoint-capability-model): the pack key layout, signed `Content-MD5`, `GET` scoping by snapshot, and the constant `packMaxBytes` (32 MiB). The gateway refuses a grant for a pack larger than `packMaxBytes`, and the residual exposure becomes `checkpointGrantWindow × packMaxBytes`.
 - [§15 External API Surface](../spec/15_external-api-surface.md#15-external-api-surface): `GET /v1/sessions/{id}/workspace` keeps its contract and returns 404 under `checkpointPolicy: none`, the derive refusal gains the `checkpointing_disabled` reason, and the session envelope reports the effective `checkpointPolicy`.
 - [§15.4.3 Runtime Integration Levels](../spec/15_external-api-surface.md#1543-runtime-integration-levels) and [§28.5.3 Intra-pod](../spec/28_communication-channels.md#2853-intra-pod): the Basic-level checkpoint statement, as decision D12 resolves it.
 - [§16 Observability](../spec/16_observability.md#16-observability): the new metrics including the tracker's, the redefined `CheckpointDurationHigh` alert, a pause objective in place of the duration objective, and `CheckpointStale` leaving out sessions under `checkpointPolicy: sealOnly` and `none`.
+- [§17.8.1 Operational Defaults — Quick Reference](../spec/17_deployment-topology.md#1781-operational-defaults--quick-reference): a row for `gateway.checkpointConcurrency` (16) beside the `checkpointGrantWindow` row, and a row for `controller.adapterRestoreConcurrency` (8).
 - [§18 Build Sequence](../spec/18_build-sequence.md#18-build-sequence): the checkpoint benchmark measures the pause and the new-byte rate.
 - [§28.5.3 Intra-pod](../spec/28_communication-channels.md#2853-intra-pod): the `checkpoint_request` and `checkpoint_complete` rows for `CH-RUNTIMEOPS`.
 
@@ -854,7 +857,10 @@ These defects exist in the tree today, and none is filed in `BUILD-GAPS.md` yet.
 | Pack and manifest formats | Versioned binary formats, with codecs in the adapter and the gateway. |
 | Pool configuration | `checkpointPauseBudgetSeconds`, `checkpointCaptureBudgetBytes`, `checkpointPreCopyRounds`, `checkpointAttemptTimeoutSeconds`, `evictionCheckpointCapSeconds`, `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, `checkpointChangeTracker`, and `checkpointTrackerMaxWatches`. |
 | Runtime definition | `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, and `checkpointExcludes` ([D5](#decisions)). |
-| Chart values | `checkpoint.minIntervalSeconds` and `checkpoint.maxIntervalSeconds`. |
+| Constants | `packMaxBytes` (32 MiB), `packRewriteThreshold` (0.5), `reflinkMinBytes` (1 MiB), `racyWindow` (2 s), and `bestEffortRereads` (2). The specification states them, and no setting changes them. The gateway refuses a pack grant whose declared length exceeds `packMaxBytes`. |
+| Gateway environment variable and flag | `LENNY_CHECKPOINT_CONCURRENCY`, read by `--checkpoint-concurrency`, 16 by default. |
+| Controller and adapter flags | The controller flag `--adapter-restore-concurrency`, which the controller passes to the adapter of every agent pod it creates as `--restore-concurrency`, 8 by default. |
+| Chart values | `checkpoint.minIntervalSeconds`, `checkpoint.maxIntervalSeconds`, `gateway.checkpointConcurrency`, and `controller.adapterRestoreConcurrency`. |
 | Session envelope | The effective `checkpointPolicy`. |
 | Metrics | `lenny_checkpoint_pause_seconds`, `lenny_checkpoint_new_bytes_total`, `lenny_checkpoint_precopy_rounds`, `lenny_checkpoint_torn_files_total`, `lenny_checkpoint_consistency_downgrade_total`, `lenny_checkpoint_tracker_state`, `lenny_checkpoint_tracker_fallback_total`, and `lenny_checkpoint_tracker_watches`. |
 
@@ -881,7 +887,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 | Page | Change |
 | :-- | :-- |
 | `docs/operator-guide/configuration.md` | The pool example replaces the undefined `checkpointPolicy: {enabled, intervalSeconds}` block with `checkpointPolicy: full`, `periodicCheckpointIntervalSeconds: 600`, and `checkpointChangeTracker: auto`, and links to the checkpointing page. |
-| `docs/reference/configuration.md` | The "Checkpointing configuration" table drops `pool.checkpointing.enabled`, `pool.checkpointing.interval`, and `pool.checkpointing.workspaceSizeLimitBytes`, and lists every pool and Runtime field in "Stored formats and wire contracts this forces" with its default and bounds, plus the chart values `checkpoint.minIntervalSeconds` and `checkpoint.maxIntervalSeconds`. The Runtime row `capabilities.checkpoint` is replaced by a pointer to the `"checkpoint"` entry of `lifecycle_support`. |
+| `docs/reference/configuration.md` | The "Checkpointing configuration" table drops `pool.checkpointing.enabled`, `pool.checkpointing.interval`, and `pool.checkpointing.workspaceSizeLimitBytes`, and lists every pool and Runtime field in "Stored formats and wire contracts this forces" with its default and bounds, plus the chart values `checkpoint.minIntervalSeconds`, `checkpoint.maxIntervalSeconds`, `gateway.checkpointConcurrency`, and `controller.adapterRestoreConcurrency`. The Runtime row `capabilities.checkpoint` is replaced by a pointer to the `"checkpoint"` entry of `lifecycle_support`. |
 | `docs/reference/metrics.md` and `docs/operator-guide/observability.md` | The checkpoint metrics tables add the new metrics. The "Checkpoint duration (100MB)" objective becomes a pause objective, as in §16. |
 | `docs/alerting/rules.yaml` and `docs/alerting/openslo.yaml` | `CheckpointDurationHigh` and `CheckpointDurationBurnRate` measure `lenny_checkpoint_pause_seconds`. `CheckpointStale` leaves out sessions whose effective `checkpointPolicy` is `sealOnly` or `none` and measures each session against its own interval. |
 | `docs/operator-guide/troubleshooting.md` | "Checkpoint Failures" drops the `.lennyignore` and size-limit advice. It adds best-effort downgrades and what lowers them, the tracker's state by file system type and the node setting each state points to, tracker fallbacks by reason, and a Full-level runtime that is slow to send `checkpoint_ready`. |
@@ -909,6 +915,8 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 - Interval resolution prefers the pool, then the Runtime, then the gateway default, and clamps to the deployer's bounds.
 - The pause estimate sums the change-source cost, the per-file cost, and the byte cost, adds the tracker backlog, and counts reflinked bytes at the clone cost.
 - The tracker's swap returns every path changed before the barrier file, an overflow forces the next capture to walk, and a failed watch keeps the tracker degraded across swaps.
+- The gateway's pack grant check refuses a declared length of zero or above `packMaxBytes` and accepts a length equal to `packMaxBytes`.
+- The gateway reads `checkpointConcurrency` from `LENNY_CHECKPOINT_CONCURRENCY`, 16 when unset, and the controller's pod builder renders `--restore-concurrency` on the adapter from `--adapter-restore-concurrency`.
 - `checkpointChangeTracker: auto` resolves from the workspace mount's file system type: to on for a node file system under runc, for `ext4` on a Kata block volume, and for `tmpfs` under gVisor's pod-share mount hint, and to off for `9p`, `virtiofs`, and any other `fuse` file system.
 
 ### Tier 2: component
@@ -919,6 +927,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 
 - `Checkpoint` message order and every abort arm.
 - `checkpoint_complete` is sent once the capture ends, before any pack of the upload pass.
+- A `PackReady` whose `length` exceeds `packMaxBytes` receives `CheckpointAbort`, and no `PackGrant` is sent.
 
 ### Tier 4: integration
 
@@ -940,6 +949,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 - A 5 GiB workspace checkpoints with a pause under budget and restores on a new pod.
 - A drain checkpoint fits `evictionCheckpointCapSeconds`.
 - The rendered workspace volume carries `sizeLimit`.
+- With `gateway.checkpointConcurrency` and `controller.adapterRestoreConcurrency` set in the chart, the gateway Deployment carries `LENNY_CHECKPOINT_CONCURRENCY` with that value, and the adapter of a new agent pod carries `--restore-concurrency` with that value.
 
 ### Tier 6: e2e in the cloud
 
@@ -963,6 +973,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 ### Tier 9: security
 
 - A pod that names a foreign pack ID is refused.
+- A pod that declares a pack larger than `packMaxBytes` receives no grant, and the attempt aborts.
 - A `PUT` for an existing pack ID is refused.
 - A `GET` outside the snapshot's packs is refused.
 - A substituted pack is detected at restore.
@@ -971,6 +982,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 
 - Runbooks for `CheckpointDurationHigh` and `CheckpointStale` describe the pause metric and the convergence fallback.
 - The checkpointing page's settings, defaults, and metric names match the configuration reference and the metrics reference.
+- The configuration reference lists `gateway.checkpointConcurrency` and `controller.adapterRestoreConcurrency` with the defaults the chart's `values.yaml` sets.
 
 ## Decisions
 
@@ -989,6 +1001,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 | D11 | Pause budget | An estimated capture time, decided before `checkpoint_request` from rates measured during pre-copy, with `checkpointCaptureBudgetBytes` kept as the spool cap. | A byte budget, as in revision 2. It misses captures of many small files, which cost 50 to 130 µs each on gVisor and Kata's shared file system. |
 | D12 | Basic-level checkpoints | Basic runtimes get the best-effort snapshot that §4.4.3 states, with no pause, and §15.4.3, §28.5.3, and the runtime author guide change to match. The adapter needs nothing from the runtime for a best-effort capture. | Basic runtimes get no checkpoint, as §15.4.3 states. A pod failure then loses the workspace of every Basic session, and credential rotation restarts them without a workspace. |
 | D13 | Deployer guidance for gVisor, Kata, and runc | The pod controller renders the gVisor pod-share mount hints on pods of pools with `isolationProfile: sandboxed`, and the guide tells deployers to pass `dev.gvisor.*` annotations to runsc. Recommend `emptydir_mode = "block-plain"` and the guest watch limit on Kata nodes, and the inotify sysctls on runc nodes. State that `--file-access-mounts=exclusive` must not be set and that `--platform=kvm` slows checkpoints. List `virtio_fs_cache = "metadata"` for Kata deployers who keep the shared file system. | Leave node configuration out of Lenny's documentation. Deployers on gVisor and Kata then run with the walk pause or a degraded tracker without knowing why. |
+| D14 | Where the checkpoint settings live | Settled by the owner on 2026-11-08, in the word "ok": `packMaxBytes` (32 MiB), `racyWindow` (2 s), `bestEffortRereads` (2), `reflinkMinBytes` (1 MiB), and `packRewriteThreshold` (0.5) are constants that the specification states, and the gateway refuses a pack grant larger than `packMaxBytes`. `checkpointConcurrency` (16) is a gateway setting from the chart value `gateway.checkpointConcurrency` with a §17.8.1 row. `restoreConcurrency` (8) is an adapter setting from the chart value `controller.adapterRestoreConcurrency`, which the controller passes to every agent pod. | Make every setting configurable. A configurable `packMaxBytes` changes the bound in S5 per deployment, and the other constants change the pack format or the capture's correctness rules without a measured need. |
 
 ## Not verified
 
@@ -1001,7 +1014,7 @@ A new Operator Guide page, titled "Checkpointing", sits after "Observability" in
 - Kata `block-plain` with more than one workspace volume per pod, and its behavior when the node's disk fills, since `disk.img` is sparse.
 - Ranged `GET` requests on presigned URLs for each backend, which would let a restore skip unused chunks of a pack. This design fetches whole packs.
 - Whether `Content-MD5` binds into the signature on each backend. It does on SigV4 (AWS Signature Version 4) backends that sign it. An Azure SAS (shared access signature) does not bind request headers, so on Azure the write-time check depends on the adapter, and S4 is the control.
-- Timestamp granularity on the node kernels Lenny targets. `racyWindow` is set conservatively.
+- Timestamp granularity on the node kernels Lenny targets. The constant `racyWindow` is set conservatively.
 - Which local CSI drivers provide `VolumeSnapshot` on ZFS or Btrfs, for the deferred node-level provider.
 
 The Kubernetes checks settled three items that revision 3's first draft listed here: inotify across containers, `--file-access-mounts=exclusive` against kubelet-updated volumes, and `block-plain` against the `emptyDir` size limit. The cloud runs settled items that revision 2 listed here: `FICLONE` is available under runc only, the stat walk's cost under gVisor and Kata is in "Benchmarks", and zstd's fastest level compresses at 0.85 to 2.0 GiB/s per core. Cold reads of small files ran at 17 to 38 MiB/s on gp3 and at 154 to 351 MiB/s on local NVMe, and the capture read recently changed files from the page cache in every scenario.
@@ -1017,3 +1030,4 @@ These notes were carried in the status line of earlier revisions.
 - Revision 2 added IC-8, which lets a runtime or pool turn checkpointing off and set its own checkpoint interval.
 - Revision 3 added the cloud benchmarks the owner asked for ("Benchmarks"), a change tracker that removes the stat walk from the pause (IC-1, "Change tracker"), a pause budget expressed as estimated capture time, the levers operators, runtime authors, and tenants have to reduce the cost of checkpoints ("Levers"), and the changes this design makes to Lenny's documentation ("Changes to Lenny's documentation").
 - Revision 4 followed a pass for a reader new to the project. It added "Terms" with its tables of platform terms, benchmark terms, and labels from other designs, "High-level design", and the evidence sources note. It moved "Owner's direction" after "High-level design", and "Measurements" and "Benchmarks" after the proposals they measure. It named the object that holds each setting the text cites, linked the specification sections and other designs the text cites, and moved the revision history from the status line to these notes. It corrected a Tier 1 test that still resolved `checkpointChangeTracker: auto` by isolation profile, which IC-8 resolves by the workspace mount's file system type. After an independent reader review it added terms for trusted entries, the spool cap, the size and reflink probes, interrupts, warm pods, the pod controller, the resource class, claim and bind, the plan, tar chunks and partial manifests, the tiered drain cap, the CheckpointBarrier, and the pool-config admission webhook's floors. It glossed the `Checkpoint` stream messages, `ExtractTree`'s rules, the guarded quota release and backstop sweep, the suspended-session release, and the first-checkpoint jitter. It also used "tar chunk", "git packfile", "barrier file", "grant", and "pause" consistently. After a validation pass, it reworded the "Problem" bullet on the size limit, which described the specified eviction and size probe as current behaviour although the tree sets neither limit by default, and changed no rule.
+- Revision 5 applied [decision D14](#decisions), which the owner settled on 2026-11-08. It made `packMaxBytes`, `racyWindow`, `bestEffortRereads`, `reflinkMinBytes`, and `packRewriteThreshold` constants that the specification states, and it added the rule that the gateway refuses a pack grant whose declared length is zero or exceeds `packMaxBytes`, to IC-2, IC-3, and S5. It made `checkpointConcurrency` a gateway setting from the chart value `gateway.checkpointConcurrency` through `LENNY_CHECKPOINT_CONCURRENCY`, and `restoreConcurrency` an adapter setting that the controller passes from the chart value `controller.adapterRestoreConcurrency` through the controller flag `--adapter-restore-concurrency` to the adapter flag `--restore-concurrency`. It added these to "Stored formats and wire contracts this forces", "Specification sections affected", the configuration reference row, and the tests.
