@@ -1,6 +1,6 @@
 # Connector authorization and external memory
 
-Status: design for owner review, revision 10, 2026-11-08, with no independent review yet. It reads against [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 24, [`user-git-identity-design.md`](user-git-identity-design.md) revision 32, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 30, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 27, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 72. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 11, 2026-11-09, with no independent review yet. It reads against [`runtime-routing-design.md`](runtime-routing-design.md) revision 7, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 3, [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 2, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 24, [`user-git-identity-design.md`](user-git-identity-design.md) revision 32, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 30, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 27, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 72. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -63,6 +63,7 @@ Out of scope:
 | Endpoint digest | A digest of a connector's `mcpServerUrl`, `authorizationEndpoint`, and `tokenEndpoint`, recorded on each connector link. A link whose digest no longer matches is treated as absent. See "CA-2". |
 | Probe | The call the gateway makes to a connector's server with no token, a `tools/list` with an empty bearer, to learn whether listing tools needs authorization. See "CA-4". |
 | Link check | The evaluation in "CA-4" that decides whether a connector needs a link before a runtime starts. |
+| Combined missing-links response | The single refusal at session creation that reports every connector link and account link the user still needs, which "CA-4" defines under "Combined missing-links response" and [`user-credential-delivery-design.md`](user-credential-delivery-design.md#flow) shares. |
 | Deferred connector | A connector the caller chose to run without for a session and its descendants. The request field `deferConnectors` names it. |
 | `deferredToolDiscovery` | The runtime capability `capabilities.deferredToolDiscovery`, which "CA-8" adds to the Runtime resource of §5.1. A runtime with `deferredToolDiscovery: true` keeps a connector server whose `tools/list` failed and lists again when the server says its tools changed. The default is `false`. |
 | Explicit resume | `POST /v1/sessions/{id}/resume`, or the `lenny/resume_session` tool, which posts to the same route. |
@@ -105,7 +106,7 @@ This design builds on mechanisms that other designs and the specification define
 | Elicitation and URL mode | An MCP request in which a server asks the human for input. A URL-mode elicitation asks the user to open a URL, such as a login page. [§9.2](../spec/09_mcp-integration.md#92-elicitation-chain) passes an elicitation hop by hop up the delegation tree to the human-facing edge, the client. The interaction store (`interactionstore`) holds pending elicitations, and `maxElicitationWait`, 600 seconds by default and set per pool, bounds how long one stays pending. |
 | Intercepting parent | A parent session configured to answer its children's elicitations itself rather than forward them to the human. `WalkChain` in `pkg/elicitation` stops at the first intercepting ancestor. |
 | Interceptors | Deployer hooks the gateway calls at named phases ([§4.8](../spec/04_system-components.md#48-gateway-policy-engine)). `PreConnectorRequest` and `PostConnectorResponse` see each connector call and its response. `PreRoute` runs before a session's runtime and pool are final and can rewrite them. |
-| Experiment routing | The assignment of a session to an experiment variant's runtime or pool ([§10.7](../spec/10_gateway-internals.md#107-experiment-primitives)), done by `routeExperiment` at create and `ApplyExperimentRouting` at delegation. |
+| `PreRoute` chain, revision, and post-chain point | [`runtime-routing-design.md`](runtime-routing-design.md#rt-2-the-interceptor-contract) runs the `PreRoute` interceptors as one chain on every creation path, `kind: create`, `kind: delegate`, and `kind: derive`, and a `MODIFY` from any of them can change the runtime and pool. [`runtime-revisions-design.md`](runtime-revisions-design.md#rv-2-selection) then picks a revision of the final runtime: an immutable, numbered copy of the runtime's versioned fields, `capabilities` among them. The post-chain point ([RT-2](runtime-routing-design.md#post-chain-point)) follows, and every check that depends on the runtime, the revision, or the pool runs there on the chosen revision, before the pod claim. |
 | Delegation | A session can start child sessions through `lenny/delegate_task`, and they form a delegation tree under a root session. A delegation lease records what a child receives from its parent. |
 | Derive | Derive (`POST /v1/sessions/{id}/derive`) starts a new root session from an existing session, from its latest snapshot or from its stored plan, under [`session-derive-design.md`](session-derive-design.md). That design also removes the former replay route, `POST /v1/sessions/{id}/replay`, which it merges into derive. |
 | Session states and restart paths | A `suspended` session has paused, either holding its pod or having released it. The retry driver restarts a session's runtime after a retryable failure, through `resume_pending` and `resuming`, and a session whose retries are exhausted waits in `awaiting_client_action` ([§7.3](../spec/07_session-lifecycle.md#73-retry-and-resume)). Tree recovery restores the sessions of a delegation tree after a failure ([§8.10](../spec/08_recursive-delegation.md#810-delegation-tree-recovery)). A credential-rotation restart restarts a runtime at the Basic and Standard integration levels so that it picks up a rotated credential ([§4.7.8](../spec/04_system-components.md#478-credential-rotation-by-integration-level)). |
@@ -120,7 +121,7 @@ This design builds on mechanisms that other designs and the specification define
 | Semantic cache | An optional, per-pool cache of model responses keyed by embedding similarity ([§4.9, "Semantic Caching"](../spec/04_system-components.md#semantic-caching)). Its code, `semanticcache`, imports the memory store's embedder. |
 | F-n.n.n | An identifier such as F-4.3.1 names a finding filed in `BUILD-GAPS.md` at the repository root, the audit of gaps between the specification and the code. F-4.3.1 is the finding that the gateway holds Key Management Service (KMS) decrypt rights in its own process, so it can decrypt stored tokens itself. |
 | Kind, gVisor, and Kata | Kind runs a Kubernetes cluster in Docker containers for testing. gVisor and Kata are sandboxed container runtimes that Lenny's isolation profiles use. |
-| Test tiers | The stages of the repository's test suite, from tier 0 (static checks) to tier 12 (cloud load), named in the "Tests" table. |
+| Test tiers | The stages of the repository's test suite, which `lenny-test --tier` runs. The "Tests" table names the tiers this design uses. |
 
 ### Labels from other designs
 
@@ -129,7 +130,10 @@ This document cites proposals of other designs by label and links each citation 
 | Labels | Design | What they name |
 | :-- | :-- | :-- |
 | UC-2 | [`user-credential-delivery-design.md`](user-credential-delivery-design.md#uc-2-the-oauth2link-source-and-account-linking) | The `oauth2Link` source and account linking, whose hardened link flow "CA-0" shares. |
-| UG-1 | [`user-git-identity-design.md`](user-git-identity-design.md#ug-1-vcs-link-kinds) | Version control system (VCS) link kinds, the VCS layer's proposal that depends on UC-2. |
+| UG-1 and UG-2 | [`user-git-identity-design.md`](user-git-identity-design.md) | [UG-1](user-git-identity-design.md#ug-1-vcs-link-kinds) version control system (VCS) link kinds, the VCS layer's proposal that depends on UC-2, and [UG-2](user-git-identity-design.md#ug-2-repository-authorization) repository authorization, whose check refuses a user with no link. |
+| RT-2 | [`runtime-routing-design.md`](runtime-routing-design.md#rt-2-the-interceptor-contract) | The interceptor contract: the single `PreRoute` chain and the post-chain point. |
+| RV-1, RV-2, and RV-6 | [`runtime-revisions-design.md`](runtime-revisions-design.md) | [RV-1](runtime-revisions-design.md#rv-1-revisions) the field classes, under which `capabilities` is versioned, [RV-2](runtime-revisions-design.md#rv-2-selection) revision selection at session creation, and [RV-6](runtime-revisions-design.md#rv-6-sessions-over-time) the revision a resumed or delegated session runs. |
+| MP-3 and MP-5 | [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) | [MP-3](mcp-protocol-upgrade-design.md#mp-3-elicitation) elicitation, including the per-version forms of the combined missing-links response, and [MP-5](mcp-protocol-upgrade-design.md#mp-5-intra-pod-servers) the move of the adapter's intra-pod servers to the supported MCP versions. |
 
 ## High-level design
 
@@ -145,7 +149,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 **Access and environment (CA-3).** A session reaches a connector only when a delegation policy grants it. A delegated child carries its parent's environment, and a derived session its source's, so each finds the same links. A child whose delegation crosses a sharing path instead carries the target environment, and needs a link there.
 
-**Link check (CA-4).** At session creation, the gateway evaluates each permitted connector as `open`, `linked`, `needs_link`, or `unknown`, and sends a probe only for a user with no token. A runtime with `deferredToolDiscovery: false` is refused with `403 CONNECTOR_LINK_REQUIRED` and a link URL for each connector that needs one, unless the caller defers that connector with `deferConnectors`.
+**Link check (CA-4).** At session creation, at the post-chain point that follows the `PreRoute` chain and revision selection, the gateway evaluates each permitted connector as `open`, `linked`, `needs_link`, or `unknown`, and sends a probe only for a user with no token. A session whose chosen revision has `deferredToolDiscovery: false` is refused with `403 CONNECTOR_LINK_REQUIRED` and a link URL for each connector that needs one, unless the caller defers that connector with `deferConnectors`. The refusal also reports the account links the user lacks, in one combined response.
 
 **Failure propagation and connector prompts (CA-5).** An authorization failure at the external server reaches the runtime as a typed MCP error on `tools/list`, or as an `isError` result on `tools/call`. The gateway raises one connector prompt per delegation tree and connector to the human, with a Lenny link URL that no pod or agent sees.
 
@@ -262,8 +266,8 @@ The account-link attack exists in today's code, and tying its fix to either feat
 | Piece | Owner |
 | :-- | :-- |
 | One-time flow identifier, with a 10-minute lifetime, naming a subject | Shared |
-| Start page: OIDC login, and refusal when the logged-in tenant and subject differ from the flow's | Shared |
-| A nonce in a `__Host-` cookie (a cookie prefix a browser accepts only over HTTPS, with path `/` and no `Domain`), PKCE, and an OAuth `state` parameter, which the provider returns unchanged, signing the flow identifier and the nonce's hash | Shared |
+| Start page: OIDC login at the tenant's identity source, through the "Browser login" of [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md), whose shared resolver supplies the tenant and subject, and refusal when the logged-in tenant and subject differ from the flow's | Shared |
+| A nonce in a `__Host-` cookie (a cookie prefix a browser accepts only over HTTPS, with path `/` and no `Domain`), set `HttpOnly`, `Secure`, and `SameSite=Lax` so the browser sends it on the provider's top-level redirect back, PKCE, and an OAuth `state` parameter, which the provider returns unchanged, signing the flow identifier and the nonce's hash | Shared |
 | Callback validation: signature, single consumption, cookie nonce, and the `iss` issuer parameter of RFC 9207 where the provider returns it | Shared |
 | A hook that receives the validated code and verifier | Shared interface |
 | What the start page displays, the per-provider callback path, and any digest compared on return | Supplied by each caller |
@@ -296,7 +300,7 @@ An impersonation bearer is refused on every link route, as [`user-credential-del
 
 ## CA-2: Token lifecycle
 
-**Refresh.** `bearerFor` refreshes when a token has fewer than 5 minutes left, and once more after a 401 from the server. Refresh-token rotation, in which a provider issues a new refresh token on each refresh and invalidates the old one, means one writer per credential, so the row carries `refresh_lease_holder` and `refresh_lease_until`, using the lease form in [`user-credential-delivery-design.md`, "Refresh"](user-credential-delivery-design.md#refresh). Other replicas re-read the row for up to 5 seconds. Both durations are operator-tunable.
+**Refresh.** `bearerFor` refreshes when a token has fewer than 5 minutes left, and once more after a 401 from the server. Refresh-token rotation, in which a provider issues a new refresh token on each refresh and invalidates the old one, means one writer per credential, so the row carries `refresh_lease_holder` and `refresh_lease_until`, using the lease form in [`user-credential-delivery-design.md`, "Refresh"](user-credential-delivery-design.md#refresh): a 30-second lease set by a conditional update. Other replicas re-read the row for up to 5 seconds. The 5-minute refresh threshold, the lease length, and the 5-second wait are operator-tunable. Both designs use one lease form, so a later change to it considers account links and connector credentials together, as that section notes.
 
 - `invalid_grant` deletes the token, and the user is unlinked from then on.
 - A transient refresh failure returns the transient error and keeps the row.
@@ -337,13 +341,13 @@ A linked user sends no probe, so the cost falls only on users without a token.
 
 ### Placement
 
-The check runs after experiment routing and the late `PreRoute` chain, because both can rewrite the runtime and pool, and the capability it reads belongs to the final runtime. In `create.go` that is after `routeExperiment` and `preRouteAfterExperiment` and before `claimMintPersist`. §7.1's credential pre-check, step 3, which refuses a session when no large language model (LLM) provider credential is available, runs before step 3a's experiment routing, so the link check is a new step between 3a and step 4, the warm pod claim. No pod is claimed while a person is in a browser. Like the credential pre-check, it is a point-in-time check rather than a reservation.
+The check runs at the post-chain point of [RT-2](runtime-routing-design.md#post-chain-point): after the `PreRoute` chain, whose interceptors can change the runtime and pool, after revision selection ([RV-2](runtime-revisions-design.md#rv-2-selection)), and before the pod claim. It reads `capabilities.deferredToolDiscovery` from the chosen revision, merged with a derived runtime's own fields where one applies, because `capabilities` is a versioned field under [RV-1](runtime-revisions-design.md#rv-1-revisions) and the revision decides which binary the session runs. The connector set it evaluates comes from the policy and environment of the final row. In `create.go` the post-chain point replaces the split segments `preRouteBeforeExperiment` and `preRouteAfterExperiment`, which runtime routing deletes with the experiment code, and precedes `claimMintPersist`. §7.1's credential pre-check, step 3, which refuses a session when no large language model (LLM) provider credential is available, runs before the chain, and step 3a, as runtime routing rewrites it, describes the chain, revision selection, and the post-chain point, so the link check is part of step 3a and precedes step 4, the warm pod claim. No pod is claimed while a person is in a browser. Like the credential pre-check, it is a point-in-time check rather than a reservation.
 
 It applies to `POST /v1/sessions`, `POST /v1/sessions/start`, derive, and the external protocol adapters' implicit session creation. It applies to sessions with `executionMode: session`.
 
 ### Outcome
 
-| Runtime `deferredToolDiscovery` | Any connector `needs_link` | Result |
+| `deferredToolDiscovery` of the chosen revision | Any connector `needs_link` | Result |
 | :-- | :-- | :-- |
 | `false` (default) | Yes | `403 CONNECTOR_LINK_REQUIRED` (error category `POLICY`) with `details.connectors`, each with `id`, `displayName`, `environment`, and `linkUrl`. Naming the environment makes a link held under another environment easy to diagnose. |
 | `true` | Yes | The session is created, and the response lists the same connectors under `unlinkedConnectors` so a client can link early. |
@@ -351,13 +355,15 @@ It applies to `POST /v1/sessions`, `POST /v1/sessions/start`, derive, and the ex
 
 The request accepts `deferConnectors: ["memory"]`, stored on the session row. A deferred connector raises no prompt. On a runtime with `deferredToolDiscovery: false` it is left out of the manifest. On a runtime with `deferredToolDiscovery: true` it stays in the manifest, and its `tools/list` returns the typed error. A link that exists when a runtime starts wins over a deferral, so a user who links later gets the connector at the next start.
 
+**Combined missing-links response.** A session can need a connector link and an account link at once. The account link check of [`user-credential-delivery-design.md`, "Flow"](user-credential-delivery-design.md#flow) and the repository check of [UG-2](user-git-identity-design.md#ug-2-repository-authorization) answer `USER_LINK_REQUIRED` when the user has no link, and both run at the same post-chain point. The gateway runs all of these checks before it answers and returns one `403` (error category `POLICY`) that reports every missing link, so a user links once and retries once. `details.connectors` lists the connectors as the table above states, and `details.userLinks` lists the account links, each with the link provider's name and its `linkUrl`, as that design states. The code is `CONNECTOR_LINK_REQUIRED` when every missing link is a connector link, and `USER_LINK_REQUIRED` otherwise. A client that handles either code reads both lists.
+
 **Why every permitted connector counts.** The owner replaced the pool-level "required" flag with this property, so a session is refused for a connector it might not use. Default deny keeps the set to what an administrator granted, and `deferConnectors` handles the rest. A workload that cannot run without a connector does not defer it.
 
 **Clients.**
 
 - A client that cannot pass the field, such as a stock OpenAI SDK, shows the error, and its user runs `lenny-ctl connector link`.
 - An automated caller with no browser defers.
-- Clients that create sessions through Lenny's MCP interface receive the same `details` in the tool error.
+- Clients that create sessions through Lenny's MCP interface receive the combined missing-links response as a tool error with the same `details`. [MP-3](mcp-protocol-upgrade-design.md#mp-3-elicitation) of [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) adds a form per protocol version for a client that declared URL-mode elicitation, with one URL-mode elicitation per missing link, and keeps this tool error for every other client. Each form reaches only the client that called create, so CAR-7 holds.
 
 ## CA-5: Propagating the failure
 
@@ -369,7 +375,7 @@ The runtime is an MCP client, and its server is the adapter's local server, whic
 - A client that ran OAuth itself would hold the token in the pod, against CP-1.
 - The person is at the Lenny client. Claude Code's documentation says a `claude -p` run cannot run the OAuth flow **[documented]**.
 
-MCP's `URLElicitationRequiredError` (`-32042`) has the right meaning, since the adapter's server needs third-party authorization that must not transit the client. It also puts the URL in the client's hands inside a pod with no browser and arrives in protocol version `2025-11-25`, where the adapter speaks `2025-03-26` **[documented]** **[source]**. CAR-7 keeps the URL out of the pod.
+MCP's `URLElicitationRequiredError` (`-32042`) has the right meaning, since the adapter's server needs third-party authorization that must not transit the client. It also puts the URL in the client's hands, and the client here is the runtime, inside a pod with no browser. CAR-7 keeps the URL out of the pod, and that is the reason this design does not use the error. The error arrives in protocol version `2025-11-25`, and the adapter speaks `2025-03-26` today **[documented]** **[source]**. [MP-5](mcp-protocol-upgrade-design.md#mp-5-intra-pod-servers) moves the adapter to `2025-11-25` and `2026-07-28`, so the protocol version stops being an obstacle, and CAR-7 still excludes the error.
 
 ### Translation
 
@@ -413,7 +419,9 @@ These paths exist today **[source]**:
 | Message arrives for a released session | `messages_delivery.go`, `suspended_backlog.go` | Yes | Sender only | Implicit restart. |
 | Retry driver, `resume_pending` to `resuming` | `failure.go`, resume driver | Yes | No | Implicit restart. |
 | Credential-rotation restart at the Basic and Standard integration levels | §15.4.3 matrix | Yes | No | Implicit restart. |
-| Tree recovery | §8.2, §7.3 | Yes | No | Implicit restart. |
+| Tree recovery | §8.10, §7.3 | Yes | No | Implicit restart. |
+
+**The revision a restart reads.** A resume or restart runs no `PreRoute` chain. Each rule below reads `capabilities.deferredToolDiscovery` from the revision the new process will run: the session's recorded `runtimeRevision`, or the revision the session moves to when that revision's pod set is gone, as [RV-6](runtime-revisions-design.md#rv-6-sessions-over-time) states under **Retry and resume.**
 
 **Implicit restart.** `ListSessionConnectors` is the one call every start path reaches: start, SDK warm, and `Resume` all go through `sessionConnectors` **[source]**. It gains the rule below, so a restart needs no path-specific code.
 
@@ -444,9 +452,9 @@ A child uses `parent.UserID` **[measured]**, so the parent's user's link is the 
 
 ### Check at delegation
 
-The link check runs in `buildChildSession` immediately after `ApplyExperimentRouting`, because routing can change the child's runtime and the capability belongs to the final runtime. Export materialization, which copies the files the parent exports into the child's workspace ([§8.7](../spec/08_recursive-delegation.md#87-file-export-model)), runs earlier in that function, and a returned error already undoes it through `undoChildExport`, and the deferred release returns the delegation tree budget, the per-tree counters of nodes, memory, children, and tokens that a delegation reserves **[source]**. The refusal therefore wastes export work but leaves no child row, pod, or budget behind. §8.3's credential pre-check at delegation is the precedent.
+The link check runs in `buildChildSession` at the post-chain point of [RT-2](runtime-routing-design.md#post-chain-point) for `kind: delegate`: after the `PreRoute` chain, whose interceptors can change the child's runtime and pool, and after revision selection for the child's runtime ([RV-6](runtime-revisions-design.md#rv-6-sessions-over-time), **Delegation.**). It reads `capabilities.deferredToolDiscovery` from the child's chosen revision. Today's call site, immediately after `ApplyExperimentRouting`, goes with the experiment code that runtime routing removes. Export materialization, which copies the files the parent exports into the child's workspace ([§8.7](../spec/08_recursive-delegation.md#87-file-export-model)), runs earlier in that function, and a returned error already undoes it through `undoChildExport`, and the deferred release returns the delegation tree budget, the per-tree counters of nodes, memory, children, and tokens that a delegation reserves **[source]**. The refusal therefore wastes export work but leaves no child row, pod, or budget behind. §8.3's credential pre-check at delegation is the precedent.
 
-| Child runtime `deferredToolDiscovery` | Child's permitted connector `needs_link` | `lenny/delegate_task` result |
+| `deferredToolDiscovery` of the child's chosen revision | Child's permitted connector `needs_link` | `lenny/delegate_task` result |
 | :-- | :-- | :-- |
 | `false` | Yes, and not deferred | `CONNECTOR_LINK_REQUIRED` with `details.connectors` naming `id` and `displayName`, and `details.retryAfterSeconds`. The tool error carries no URL. The gateway raises one connector prompt against the parent session. |
 | `true` | Yes | The child starts. Its `tools/list` fails, and the prompt is raised from the child. The child lists again after `list_changed`. |
@@ -629,6 +637,8 @@ connectors:
 
 The server scopes data by the token's `sub` claim, because Lenny forwards the user's token and adds no user identity of its own. Carol then grants `memory` through a delegation policy.
 
+**Prerequisite: F-9.3.19.** The example registers a confidential client through `clientSecretRef`. The chart gives the gateway no `get` on that Secret, so under the chart's defaults the token exchange fails at the callback, as [`user-credential-delivery-design.md`, "Defects found while verifying"](user-credential-delivery-design.md#defects-found-while-verifying) records under F-9.3.19. The example works once F-9.3.19 is fixed. Until then, a deployer registers a public client, with no `clientSecretRef`, or grants the gateway read access to the named Secret.
+
 **Worked example.**
 
 1. Alice creates a Claude Code session. The runtime has `deferredToolDiscovery: false`, she has no link, and the probe returns 401, so she receives `403 CONNECTOR_LINK_REQUIRED` with a `linkUrl`.
@@ -671,7 +681,7 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 | A pool-level `required` flag | It answers a different question from the one that decides the failure, and `deferConnectors` covers the workload case. |
 | A stored `requiresAuthToListTools` field | It drifts. The probe asks the server. |
 | Pass the 401 through | See "CA-5". |
-| `URLElicitationRequiredError` to the runtime | It places the URL in the pod and needs a newer protocol version. |
+| `URLElicitationRequiredError` to the runtime | It places the URL in the pod, against CAR-7. |
 | An empty `tools/list` instead of an error | It hides the failure from the runtime, which is the opposite of the owner's decision. |
 | Block `tools/list` until the user finishes | It exceeds client startup timeouts. |
 | Refuse restarts with a missing link | It turns recoverable failures into session and tree failures. |
@@ -696,6 +706,8 @@ The owner instructed that this document edit no other design. These items are fo
 
 ### `user-credential-delivery-design.md`
 
+[`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 25 applied the items of this subsection.
+
 **Owner decision: the OAuth flow is a shared proposal, "CA-0", which lands before UC-2.** Apply these changes:
 
 1. **"UC-2: The `oauth2Link` source and account linking", "Flow".** Replace the mechanics in steps 2 to 5 with a reference to "CA-0" in this document: the one-time flow identifier, the OIDC login and subject check, the cookie nonce, the signed `state`, and callback validation. Keep what is specific to UC-2: step 1, the token trust record display and digest comparison, the per-provider callback path, and steps 6 and 7, including the hand-off to the Token Service, identity binding, `allowedAccounts`, and the confirmation page. Check that the "CA-0" hook carries everything those steps need, and report any gap back to this document.
@@ -709,7 +721,7 @@ The owner instructed that this document edit no other design. These items are fo
    - "Refresh absent": state that "CA-B" closes it.
    - "Session input under impersonation": remove `handleMemoryWrite` and `lenny/memory_write`, which "CA-G" deletes.
 5. **"Refresh".** No change to UC-2's behaviour. Note that "CA-B" adopts the same lease form for connector credentials, so a later change to that form considers both.
-6. **Session create.** A session can need an account link and a connector link at once, and both designs refuse before any pod claim with a `403`: `USER_LINK_REQUIRED` and `CONNECTOR_LINK_REQUIRED`. Agree with this document on one response that reports every missing link, so a user does not link, retry, and get refused again. Both checks must also run after experiment routing, as "CA-4" states under "Placement".
+6. **Session create.** A session can need an account link and a connector link at once, and both designs refuse with a `403`: `USER_LINK_REQUIRED` and `CONNECTOR_LINK_REQUIRED`. Adopt the combined missing-links response that "CA-4" defines, so a user does not link, retry, and get refused again. Both checks run at the post-chain point of [RT-2](runtime-routing-design.md#post-chain-point), as "CA-4" states under "Placement", and the refusal of a `userCredential` binding on a pod that can serve another session reads the final pool there.
 
 Leave the link record in the Token Service unchanged, under "Stored links".
 
@@ -722,9 +734,11 @@ Leave the link record in the Token Service unchanged, under "Stored links".
 
 ### `user-git-identity-design.md`
 
+[`user-git-identity-design.md`](user-git-identity-design.md) revision 33 applied the item of this subsection.
+
 **Owner decision: "CA-0" lands before UC-2, on which UG-1 depends.** Apply this change:
 
-1. **"When the check runs".** The repository check refuses a session with `USER_LINK_REQUIRED` before any pod claim. That refusal joins the one response that the **Session create** item under [`user-credential-delivery-design.md`](user-credential-delivery-design.md) asks for, and the check must also run after experiment routing, as "CA-4" states under "Placement".
+1. **"When the check runs".** The repository check refuses a session with `USER_LINK_REQUIRED` before the pod claim. That refusal joins the combined missing-links response that "CA-4" defines, and the check runs at the post-chain point of [RT-2](runtime-routing-design.md#post-chain-point), as "CA-4" states under "Placement".
 
 Leave these unchanged: decision 3 on connectors on the hosts of a VCS pool with `userAuthorization: required`, and the withdrawal of `hostLink`, both under "User tokens on a VCS host".
 
@@ -736,9 +750,15 @@ Leave these unchanged: decision 3 on connectors on the hosts of a VCS pool with 
 
 No edit. "CA-3" depends on **Delegated child's environment** and **Derive** under "TS-3: Session environment context and cross-environment sharing". Decision 14 settled on cross-environment sharing, and "CA-3" and "CA-7" follow it. If either rule changes, report it to this document, because a child's token lookup reads that field.
 
+### `security-oversight-design.md`
+
+**Owner decision: built-in memory goes.** Apply this change:
+
+1. **"User credentials and request rules" under SO-2.** The **Impersonation** item states that the session input check refuses an impersonation bearer "on every memory write and delete". "CA-G" removes built-in memory and its routes and tools, so remove that clause and keep the refusal on `/v1/credentials` writes. Do not extend the check to sessions holding a connector link, because the owner accepted that risk (see "Limits").
+
 ### Other designs
 
-[`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md), [`security-oversight-design.md`](security-oversight-design.md), and [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) need no change. The first has `§9.3` reader-page work of its own, a sentence and link on §9.3 and `docs/tutorials/using-connectors.md` that separate MCP connectors from outbound connectors, and a connector's probe uses the same dial path as its other calls.
+[`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) and [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) need no change. The first has `§9.3` reader-page work of its own, a sentence and link on §9.3 and `docs/tutorials/using-connectors.md` that separate MCP connectors from outbound connectors, and a connector's probe uses the same dial path as its other calls.
 
 ## Specification changes
 
@@ -747,7 +767,7 @@ Each lands through `change-proposal`.
 | Section | Change |
 | :-- | :-- |
 | §5.1 Runtime | Add `capabilities.deferredToolDiscovery`. |
-| §7.1 Normal Flow | Add the link check after step 3a. Rewrite **Connector state.** |
+| §7.1 Normal Flow | Add the link check to the post-chain point, which runtime routing's edit of step 3a places between the `PreRoute` chain and the pod claim. Rewrite **Connector state.** |
 | §7.2 and §7.3 | Add the explicit resume check and implicit restart rule. |
 | §8.2, §8.3, and §8.5 | Add the delegation check, deferral inheritance, and the child's environment. Remove the memory tools and their schemas. |
 | §9.1 | Remove the memory tools. Add the bridge note. |
@@ -758,7 +778,7 @@ Each lands through `change-proposal`.
 | §13.1 Pod Security | Add a `lenny-tools` volume rule beside **Runtime supervisor volume.**, including the stage container's UID, the read-only mount, and the `lenny-pod-security` enforcement. |
 | §17 Deployment Topology | Add the digest-pinned `lenny-tools` image to the images an install renders, following how the chart names the supervisor image. |
 | §12 Storage Architecture, including §12.8 | Remove the role, the erasure preflight and guidance, and the erasure steps. Add `externalDataNotErased`. |
-| §15.1 and §15.4 | Add the link routes, `CONNECTOR_LINK_REQUIRED` with `details.retryAfterSeconds` on delegation, `deferConnectors`, and `unlinkedConnectors`. Add the `-32010` error, the compliance check, and the stdio note. Remove memory helpers. |
+| §15.1 and §15.4 | Add the link routes, `CONNECTOR_LINK_REQUIRED` with `details.retryAfterSeconds` on delegation, the combined missing-links response with `details.connectors` and `details.userLinks`, `deferConnectors`, and `unlinkedConnectors`. Add the `-32010` error, the compliance check, and the stdio note. Remove memory helpers. |
 | §16.1, §16.5, and §16.7 | Remove memory metrics and alerts. Add audit events `connector_link.created`, `connector_link.removed`, and `connector_link.endpoint_changed`, and the event `session.connector_unavailable`. |
 | §18 Build Sequence | Remove memory from Phase 13 and Phase 17b, and place the connector work. |
 | §22.4 No Built-In Memory Extraction | Rewrite, since Lenny no longer provides the `MemoryStore` interface. |
@@ -773,9 +793,9 @@ The tiers are the stages of the repository's test suite, which `lenny-test --tie
 
 | Tier | Coverage |
 | :-- | :-- |
-| 1, unit | Link check table, including probe cache expiry and each status. `WalkChain` skips interception for connectors. `AuthorizeConnector` default deny. Endpoint digest mismatch. Error mapping at each layer. Deferral inheritance. |
-| 3, contract | `CONNECTOR_LINK_REQUIRED` over REST and MCP. `-32010` on `tools/list`, and `isError` on `tools/call`. |
-| 4, integration | Each row of the "CA-6" table. Create, link, retry, then call. Refresh on expiry. `invalid_grant` unlinks. Delegation refusal with `retryAfterSeconds`, retry, and deferral, with the export undone and budget returned. Child in the parent's environment finds the link. Derived session reuses a link. The stub server moves from 401 to 200 within the cache window. |
+| 1, unit | Link check table, including probe cache expiry and each status. The check reads `deferredToolDiscovery` from the chosen revision, at create, at delegation, and on resume. `WalkChain` skips interception for connectors. `AuthorizeConnector` default deny. Endpoint digest mismatch. Error mapping at each layer. Deferral inheritance. |
+| 3, contract | `CONNECTOR_LINK_REQUIRED` over REST and MCP. The combined missing-links response with a connector link and an account link both missing, and the code each mix produces. `-32010` on `tools/list`, and `isError` on `tools/call`. |
+| 4, integration | Each row of the "CA-6" table. Create, link, retry, then call. A `PreRoute` interceptor or route that moves a session or a delegated child to a runtime whose chosen revision has `deferredToolDiscovery: false` is refused at the post-chain point, with no pod claimed. Refresh on expiry. `invalid_grant` unlinks. Delegation refusal with `retryAfterSeconds`, retry, and deferral, with the export undone and budget returned. Child in the parent's environment finds the link. Derived session reuses a link. The stub server moves from 401 to 200 within the cache window. |
 | 5, end to end on Kind | A pod on Kind has `/lenny-tools/lenny-mcp-stdio` on a read-only mount in a minimal runtime image and runs it there. The webhook refuses a read-write mount of the volume. An embedded pod has no such volume. |
 | 7a, local load | Concurrent refresh yields one provider call per credential, extending `connector_oauth_refresh_race` to the real store. Prompt deduplication across replicas. |
 | 8, chaos | Probe timeout on create and on resume. Token endpoint outage during refresh. Callback landing on a replica that does not hold the session. |
@@ -806,7 +826,7 @@ Each test carries its `// spec:` annotation once the specification lands.
 | CA-B | Refresh, lease, and endpoint binding ([CA-2](#ca-2-token-lifecycle)). | CA-A |
 | CA-C | Default deny and environment on children and derived sessions ([CA-3](#ca-3-connector-access-and-environment)). | The [tenant-scoping decision](tenant-scoping-identity-design.md#decisions) |
 | CA-D | Typed error and connector prompts ([CA-5](#ca-5-propagating-the-failure)). | CA-A |
-| CA-E | Link check at create, derive, and external adapters, plus `deferConnectors` ([CA-4](#ca-4-link-check)). | CA-A, CA-C |
+| CA-E | Link check at create, derive, and external adapters, plus `deferConnectors` and the combined missing-links response ([CA-4](#ca-4-link-check)). | CA-A, CA-C, and the interceptor contract proposal of [`runtime-routing-design.md`](runtime-routing-design.md#proposal-split-and-order), which adds the post-chain point |
 | CA-F | Resume and restart rules ([CA-6](#ca-6-resume-and-restart)), and delegation ([CA-7](#ca-7-delegated-children)). | CA-D, CA-E |
 | CA-G | Memory removal ([CA-10](#ca-10-removing-built-in-memory)) and the external pattern documentation. | CA-A through CA-F, so the documented replacement works when memory goes |
 | CA-H | Stdio bridge, the `lenny-tools` image, init container, volume, and webhook rule ([CA-9](#ca-9-stdio-bridge)). | Ships with the Claude Code and Codex integrations |
@@ -837,3 +857,4 @@ These notes were carried in the status line of earlier revisions.
 - Revision 8, dated 2026-11-07, followed a pass for a reader new to the project. It added "Terms from other designs and the platform", "Labels from other designs", "High-level design", the evidence sources under the tag table, and terms for the probe, the link URL, the endpoint digest, the stdio bridge, `deferredToolDiscovery`, the account-link attack, the subject, the pool-level `required` flag, user erasure, the senses of lease, the adapter authentication modes, and the runtime wrapper. It moved "CA-0" to its own section ahead of "CA-1", moved the revision history from the status line to this section, named the setting behind each `true` and `false` runtime, linked each citation of another design to the file and heading it names, glossed terms used once, such as depth suppression and `connectortools.Bridge`, and named the test tiers. It changed no rule.
 - Revision 9, dated 2026-11-08, corrected the citations of the **Delegated child's environment** and **Derive** rules in "TS-3: Session environment context and cross-environment sharing", the treatment of decision 14 as unsettled in "CA-3", "CA-7", and the reviewer instructions, the heading cited for the user credential design's Impersonation paragraph, the point at which Coder checks external account links, and the condition for nonce-only mode, that a validation pass found, and changed no rule. Decision 14 settled on cross-environment sharing, under which a crossing child takes the target Environment and needs a link there, and the revision states that case in "High-level design" and CAR-6 as well.
 - Revision 10, dated 2026-11-08, updated the text after a re-read of `user-credential-delivery-design.md`, `user-git-identity-design.md`, `tenant-scoping-identity-design.md`, `tenant-outbound-connector-design.md`, and `egress-and-git-design.md` at their current revisions, and changed no rule. It wrote "environment" in lowercase, as the tenant scoping design and the other designs write it. It removed replay as a session creation path from the "Derive" term, "Environment on a derived session", the paths the link check covers under "Placement", and the CA-E row, because `session-derive-design.md` merges replay into derive, as the tenant scoping design's "Derive" term states. It also stated that `netagent` sits in an agent pod that uses the local egress endpoint, as the egress design's "Terms" defines it.
+- Revision 11, dated 2026-11-09, applies the design sync review of 2026-11-08, the owner's answer to its question Q6, and the reviewer instructions of [`runtime-routing-design.md`](runtime-routing-design.md) revision 7, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 3, and [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 2. "Placement" under "CA-4" and "Check at delegation" under "CA-7" move the link check to the post-chain point of RT-2, after the single `PreRoute` chain and revision selection, and read `capabilities.deferredToolDiscovery` from the chosen revision. "CA-6" reads it from the revision a resume runs. The "Experiment routing" term and the §7.1 step 3a wording are gone. "CA-4" defines the combined missing-links response, with `details.userLinks` beside `details.connectors`, and names the per-version forms of MP-3 for MCP clients, which settles Q6 as the tool error `details`. "CA-5" and "Alternatives rejected" rest the rejection of `-32042` on CAR-7. "External memory pattern" names F-9.3.19 as a prerequisite of its example. "Instructions for reviewers of other designs" gains a security-oversight item for its memory clause, and the lease cross-note in "CA-2" states the shared form. The tree recovery citation, the test tier gloss, and the "Both durations" sentence are corrected, and CA-E depends on runtime routing's interceptor contract proposal. The "CA-0" table states the start page's login through the tenant scoping design's browser login and the cookie's `HttpOnly` and `SameSite=Lax` attributes, which the user credential design's flow needs from the shared flow.
