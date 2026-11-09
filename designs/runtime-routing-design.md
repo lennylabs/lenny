@@ -1,6 +1,6 @@
 # Runtime routing
 
-Status: design for owner review, revision 6, 2026-11-08, with no independent review yet. Revision 5 replaced the design that revision 4 described under the title "Built-in experiment provider removal" and the file name `experiment-provider-removal-design.md`. The owner has settled every decision in "Decisions" except O6. It reads against [`session-derive-design.md`](session-derive-design.md) revision 12 and [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 1. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RT-n, and requirements carry the label RTR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 6, 2026-11-08, with no independent review yet. Revision 5 replaced the design that revision 4 described under the title "Built-in experiment provider removal" and the file name `experiment-provider-removal-design.md`. The owner has settled every decision in "Decisions" except O6. It reads against [`session-derive-design.md`](session-derive-design.md) revision 12 and [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 2. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RT-n, and requirements carry the label RTR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
