@@ -1,6 +1,6 @@
 # MCP protocol upgrade
 
-Status: design for owner review, revision 2, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 26, and [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 31. "Decisions" lists what the owner has settled and what remains open. The design stages no specification edit; the changes go through `change-proposal` after review. Proposals carry the label MP-n, and requirements carry the label MPR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 2, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 26, and [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 32. "Decisions" lists what the owner has settled and what remains open. The design stages no specification edit; the changes go through `change-proposal` after review. Proposals carry the label MP-n, and requirements carry the label MPR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
