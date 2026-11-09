@@ -1,6 +1,6 @@
 # Delegation availability
 
-Status: design for owner review, revision 1, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 32, [`runtime-routing-design.md`](runtime-routing-design.md) revision 11, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 7, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 64, [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 2, [`security-oversight-design.md`](security-oversight-design.md) revision 47, and [`session-derive-design.md`](session-derive-design.md) revision 15. "Decisions" lists what is settled and what remains open for the owner. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label DA-n, and requirements carry the label DAR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 2, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 32, [`runtime-routing-design.md`](runtime-routing-design.md) revision 11, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 7, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 64, [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 2, [`security-oversight-design.md`](security-oversight-design.md) revision 47, and [`session-derive-design.md`](session-derive-design.md) revision 15. "Decisions" lists what is settled and what remains open for the owner. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label DA-n, and requirements carry the label DAR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -19,8 +19,8 @@ The owner asked for this: "If that's not the case today already, the ability for
 It is not the case today. No setting at the platform, tenant, runtime, or pool level makes delegation unavailable, and every session of a `type: agent` runtime is offered `lenny/delegate_task` **[source]**:
 
 - The Runtime fields that concern delegation, `delegationPolicyRef` and `allowSelfRecursion`, decide which targets a session may reach and whether a runtime may repeat in its own lineage. Neither turns delegation off. Pools carry no delegation field, and the tenant record carries none.
-- A `DelegationPolicy` with no allow rule permits no target. The gateway applies the policy's rules to `lenny/discover_agents` and to connector authorization, and it does not apply them to `lenny/delegate_task`, so such a policy empties discovery and leaves delegation open ("Current state").
-- The platform MCP server inside the pod lists every tool the gateway's `/mcp` endpoint registers, for every session, whatever its configuration.
+- A `DelegationPolicy` with no allow rule permits no target. The gateway applies the policy's rules to `lenny/discover_agents` and to connector authorization, and it does not apply them to `lenny/delegate_task`, so such a policy empties discovery and leaves delegation open ("Current state", F-8.3.14).
+- The platform MCP server inside the pod lists every tool the gateway's `/mcp` endpoint registers, for every session, whatever its configuration (F-9.1.13).
 
 One part of the request already has a settled answer. [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md#client-delegation-limits-decision-26) settled, as its decision 26, that a client creating a session with `delegationLease.maxDepth: 0` disables delegation for that session, that the gateway refuses `lenny/delegate_task` with `403 DELEGATION_DISABLED`, and that the intra-pod tool list omits the tool for that session. Its proposal TS-3 carries the work. This design builds the levels above the session on the same refusal and the same list filtering, and it settles the questions decision 26 leaves open for the session level.
 
@@ -43,7 +43,7 @@ One part of the request already has a settled answer. [`tenant-scoping-identity-
 **Out of scope:**
 
 - Per-tool switches for the other platform tools. "DA-7" reviews each tool and finds an existing control for each, and O7 records the recommendation.
-- Which targets a session may reach. `DelegationPolicy` decides that, and the defect that `lenny/delegate_task` does not evaluate the policy's rules is recorded under "Defects found while verifying" for its own proposal.
+- Which targets a session may reach. `DelegationPolicy` decides that, and the defect that `lenny/delegate_task` does not evaluate the policy's rules is recorded under "Defects found while verifying" for its own proposal. `BUILD-GAPS.md` files it as F-8.3.14.
 - An environment level. An environment's `defaultDelegationPolicy` already restricts targets for the sessions created in it ([§10.6](../spec/10_gateway-internals.md#106-environment-resource-and-rbac-model)).
 - Publishing a runtime's delegation availability in discovery (`GET /v1/runtimes`).
 
@@ -172,7 +172,7 @@ Open for the owner. Each carries a recommendation:
 | DAR-5 | A change at the tenant, runtime, or pool level governs the next `lenny/delegate_task` call of every running session it reaches. |
 | DAR-6 | Making delegation unavailable ends no running child, and a parent with children keeps the tools that manage them. |
 | DAR-7 | A deployment that sets none of the new values behaves as today. |
-| DAR-8 | A session cannot reach a root-session creation tool from its pod, so the setting cannot be bypassed by creating a new root. TS-3's allow-list provides this, and this design depends on it. |
+| DAR-8 | A session cannot reach a root-session creation tool from its pod, so the setting cannot be bypassed by creating a new root. TS-3's allow-list provides this, and this design depends on it. F-9.1.13 records the defect. |
 
 ## Current state
 
@@ -180,15 +180,15 @@ Open for the owner. Each carries a recommendation:
 
 **`maxDepth` cannot be 0 today [source].** §8.2 **Effective `maxDepth` resolution** requires every effective lease to carry a positive integer, and every layer of its chain can only produce one. A client's `delegationLease` at creation is validated, stored, and echoed with no effect (F-8.2.34). TS-3 wires it and admits 0 as decision 26.
 
-**`DelegationPolicy` rules are not applied to `lenny/delegate_task` [source].** `DelegationPolicy.Evaluate` has these production callers: `filterByEffectiveDelegationPolicy` for `lenny/discover_agents` (`pkg/gateway/mcpfabric/mcptools/mcptools.go`), `connectorauthz` for connector calls, and the pool isolation audit. The `lenny/delegate_task` handler (`mcptools_register.go`) checks environment scope through `runtimeAuthorizedForCaller` and `crossEnvReachable`, and `Service.detectCycle` (`pkg/gateway/mcpfabric/delegation/service.go`) reads the *target* runtime's `delegationPolicyRef` for the self-recursion layer and the content policy. No step evaluates the calling session's policy rules against the target. A policy that allows nothing therefore hides every target from discovery and blocks no delegation. The audit note 8.3-H1 in `BUILD-GAPS.md` records the missing call with no checkbox or F-id.
+**`DelegationPolicy` rules are not applied to `lenny/delegate_task` [source].** `DelegationPolicy.Evaluate` has these production callers: `filterByEffectiveDelegationPolicy` for `lenny/discover_agents` (`pkg/gateway/mcpfabric/mcptools/mcptools.go`), `connectorauthz` for connector calls, and the pool isolation audit. The `lenny/delegate_task` handler (`mcptools_register.go`) checks environment scope through `runtimeAuthorizedForCaller` and `crossEnvReachable`, and `Service.detectCycle` (`pkg/gateway/mcpfabric/delegation/service.go`) reads the *target* runtime's `delegationPolicyRef` for the self-recursion layer and the content policy. No step evaluates the calling session's policy rules against the target. A policy that allows nothing therefore hides every target from discovery and blocks no delegation. The audit note 8.3-H1 in `BUILD-GAPS.md` records the missing call with no checkbox or F-id, and revision 2 files it as F-8.3.14.
 
-**`approvalMode: deny` refuses the caller's own call [source].** §8.4 defines `deny` as "Delegation not permitted" on the lease. `lenny/delegate_task` accepts `approvalMode` as an argument, and `validateDelegation` returns `ErrDelegationDenied` (`DELEGATION_DENIED`) when the caller passes `deny`, before it reads the parent. Nothing stores the value on the child's lease, and nothing sets it on a root, so a runtime can only refuse itself (F-8.4.1's resolution).
+**`approvalMode: deny` refuses the caller's own call [source].** §8.4 defines `deny` as "Delegation not permitted" on the lease. `lenny/delegate_task` accepts `approvalMode` as an argument, and `validateDelegation` returns `ErrDelegationDenied` (`DELEGATION_DENIED`) when the caller passes `deny`, before it reads the parent. Nothing stores the value on the child's lease, and nothing sets it on a root, so a runtime can only refuse itself (F-8.4.1's resolution). Revision 2 files this as F-8.4.4.
 
 **How the tool list is built [source].**
 
 - The adapter starts the platform MCP server once per pod (`startPlatformMCP`, `pkg/adapter/platformmcp.go`). Each `tools/list` goes to `platformToolProvider.List`, which resolves the calling session through `callingSession` and forwards `ListPlatformTools` with that session's ID over `GatewayControl` (`pkg/adapter/platformtoolprovider.go`).
 - The gateway's `Bridge.ListPlatformTools` (`pkg/gateway/gatewaycontrol/platformtools/platformtools.go`) ignores the session ID and returns `Catalog()` of the gateway's `/mcp` server. Its comment states that "the catalog is uniform across type:agent sessions".
-- That catalog holds every tool `mcptools.Register` installs: the tools of §9.1's table, `lenny/vcs_token`, and the client-facing tools such as `lenny/create_session`, `lenny/create_and_start_session`, `lenny/list_sessions`, and `lenny/upload_files`. A runtime can call `lenny/create_session` from its pod and start a new root session outside its delegation lease. TS-3 found this and allow-lists the bridge to §9.1's table.
+- That catalog holds every tool `mcptools.Register` installs: the tools of §9.1's table, `lenny/vcs_token`, and the client-facing tools such as `lenny/create_session`, `lenny/create_and_start_session`, `lenny/list_sessions`, and `lenny/upload_files`. A runtime can call `lenny/create_session` from its pod and start a new root session outside its delegation lease. TS-3 found this and allow-lists the bridge to §9.1's table. `BUILD-GAPS.md` already records it as F-9.1.13, so revision 2 files no new finding for it.
 - `lenny/delegate_task` is never refused for being disabled, because nothing disables it.
 
 **The server cannot announce a change [source].** `initializeResponse` in `pkg/adapter/mcp/server.go` declares `"tools": {}` with no `listChanged`, and the serve loop only answers requests. The server speaks MCP `2025-03-26`, which MP-5 replaces. CA-8 found the same for connector servers and proposes the adapter changes and a gateway-to-adapter RPC, `NotifyConnectorToolsChanged`, for a runtime that declares `deferredToolDiscovery`.
@@ -283,7 +283,7 @@ The gateway counts refusals in `lenny_delegation_disabled_refusals_total{disable
 
 The list changes only when "may delegate" changes. "Has a child" becomes true only through a delegation, which requires "may delegate", and stays true, so a session that loses delegation keeps the tools that manage the children it has (DAR-6).
 
-`Bridge.CallPlatformTool` does not check the list. A call to a tool the session's list omits reaches the handler, which answers `DELEGATION_DISABLED` for `lenny/delegate_task` and the existing answers for the others. A call to a name outside TS-3's allow-list answers `ErrPlatformToolNotFound`. Today `callTool` in `pkg/adapter/mcp/server.go` reports any forwarded failure as JSON-RPC `-32603` **[source]**, and this design has the adapter report the not-found status as `-32602`, the MCP error for an unknown tool **[external]**.
+`Bridge.CallPlatformTool` does not check the list. A call to a tool the session's list omits reaches the handler, which answers `DELEGATION_DISABLED` for `lenny/delegate_task` and the existing answers for the others. A call to a name outside TS-3's allow-list answers `ErrPlatformToolNotFound`. Today `callTool` in `pkg/adapter/mcp/server.go` reports any forwarded failure as JSON-RPC `-32603` **[source]** (F-15.4.8), and this design has the adapter report the not-found status as `-32602`, the MCP error for an unknown tool **[external]**.
 
 The gateway `/mcp` endpoint keeps one catalog for every client, as TS-3 states, because a connection names no session until a call does. The refusal covers it.
 
@@ -411,13 +411,15 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 ## Defects found while verifying
 
-These are not filed, because this design edits no other file. Each needs an entry in `BUILD-GAPS.md`:
+Revision 2 files these in `BUILD-GAPS.md`, at the owner's request of 2026-11-09, under the ID in the "BUILD-GAPS" column:
 
-| Defect | Evidence |
-| :-- | :-- |
-| `lenny/delegate_task` does not evaluate the calling session's `DelegationPolicy` rules against the target, so a policy's allow list does not limit delegation, against §8.3 "Dynamic tag evaluation at delegation time". The audit note 8.3-H1 records it with no checkbox or F-id. | "Current state", `DelegationPolicy` paragraph. |
-| `approvalMode: deny` refuses the caller's own call and is never stored on a lease, against §8.4 and the lease example of §8.3. | "Current state", `approvalMode` paragraph. O6 proposes the fix. |
-| §8.5 uses "delegation-capable pod", which the specification does not define. | §8.5 opening sentence. |
+| Defect | Evidence | BUILD-GAPS |
+| :-- | :-- | :-- |
+| `lenny/delegate_task` does not evaluate the calling session's `DelegationPolicy` rules against the target, so a policy's allow list does not limit delegation, against §8.3 "Dynamic tag evaluation at delegation time". The audit note 8.3-H1 records it with no checkbox or F-id. | "Current state", `DelegationPolicy` paragraph. | F-8.3.14 |
+| `approvalMode: deny` refuses the caller's own call and is never stored on a lease, against §8.4 and the lease example of §8.3. | "Current state", `approvalMode` paragraph. O6 proposes the fix. | F-8.4.4 |
+| A runtime can call `lenny/create_session` and the other client-facing tools from its pod, because the platform MCP server lists and forwards the whole `/mcp` catalog. | "Current state", "How the tool list is built". TS-3 closes it. | F-9.1.13, filed before this design. |
+| The adapter reports a forwarded unknown tool as JSON-RPC `-32603`, where MCP specifies `-32602`. | "DA-4 Tool list". | F-15.4.8 |
+| §8.5 uses "delegation-capable pod", which the specification does not define. | §8.5 opening sentence. | Not filed. The owner's request of 2026-11-09 did not name it. |
 
 ## Instructions for reviewers of other designs
 
@@ -434,7 +436,7 @@ These are not filed, because this design edits no other file. Each needs an entr
 1. **DA-A**, after TS-3's proposal, whose calling-session parent, allow-list, `DELEGATION_DISABLED`, and stored `maxDepth` it extends: the specification edits; the levels, the resolver, and the refusal; the per-session list; the derived runtime and owned pool rules; the derive narrowing; and the meaning of `approvalMode: deny`.
 2. **DA-B**, after CA-8's adapter notification work and MP-5: `listChanged`, the bind notification, the generalized RPC, the fan-out, and the cache hints.
 
-The defect that `lenny/delegate_task` does not apply `DelegationPolicy` rules is independent of both and takes its own proposal.
+The defect that `lenny/delegate_task` does not apply `DelegationPolicy` rules (F-8.3.14) is independent of both and takes its own proposal.
 
 ## Sources
 
@@ -447,3 +449,4 @@ The defect that `lenny/delegate_task` does not apply `DelegationPolicy` rules is
 ### Revision notes
 
 - Revision 1, 2026-11-09: first draft, written from the owner's request for delegation configurable per runtime or pool with platform and tenant defaults, and from the owner's later thought that sessions should be able to disable delegation, which O5 answers by reusing decision 26 of [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md#client-delegation-limits-decision-26).
+- Revision 2, 2026-11-09: files the defects found while writing this design in `BUILD-GAPS.md`, at the owner's request of 2026-11-09, as F-8.3.14, F-8.4.4, and F-15.4.8. The pod's reach to `lenny/create_session` was already filed as F-9.1.13, so it gains that ID and no new finding.
