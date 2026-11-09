@@ -1,12 +1,12 @@
 # Runtime revisions
 
-Status: design for owner review, revision 5, 2026-11-09. A cross-design sync review ran on 2026-11-08, and revision 3 applied its findings. Nothing here is built or staged. It reads against [`runtime-routing-design.md`](runtime-routing-design.md) revision 10, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 62, [`session-derive-design.md`](session-derive-design.md) revision 14, [`egress-and-git-design.md`](egress-and-git-design.md) revision 74, [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) revision 29, and [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) revision 8. "Decisions" lists what the owner has settled and what remains open. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RV-n, and requirements carry the label RVR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 6, 2026-11-09. A cross-design sync review ran on 2026-11-08, and revision 3 applied its findings. Nothing here is built or staged. It reads against [`runtime-routing-design.md`](runtime-routing-design.md) revision 10, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 62, [`session-derive-design.md`](session-derive-design.md) revision 14, [`egress-and-git-design.md`](egress-and-git-design.md) revision 74, [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) revision 29, and [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) revision 8. "Decisions" lists what the owner has settled and what remains open. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RV-n, and requirements carry the label RVR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
 | Tag | Meaning |
 | :-- | :-- |
-| **[source]** | Read in the Lenny tree or the specification on 2026-11-08. |
+| **[source]** | Read in the Lenny tree or the specification on 2026-11-08, or on 2026-11-09 for the claims revision 6 added. |
 | **[design]** | What this design requires. Nothing implements it. |
 | **[estimate]** | A planning figure computed from stated assumptions and approximate AWS list prices. Nothing measured it. |
 
@@ -28,14 +28,19 @@ This design adds revisions to runtimes. A revision is an immutable copy of the f
 
 - Immutable runtime revisions for the fields that define a runtime's pods ("RV-1").
 - Revision selection at session creation, and `runtimeRevision` on the session record, `session_start`, billing events, and session metrics ("RV-2").
-- Pods per pool and revision, with the warm count split by weight ("RV-3").
+- Pod sets per pool, keyed on the hash of a revision's pod-affecting fields, with the warm count split by weight ("RV-3").
 - A rollout procedure at the runtime level that replaces the pool-level `RuntimeUpgrade` ("RV-4").
 - Base revisions for derived runtimes ("RV-5").
 - Revision rules for resume, retry, delegation, and derive ("RV-6").
+- Session options on revisions: an inline, versioned `runtimeOptionsSchema`, validation of a session's `runtimeOptions` at the post-chain point against the chosen revision, and their delivery in `session_start` ("RV-7").
+- Discovery of the revision a caller would be assigned ("Discovery" under "RV-2").
 
 **Changed:**
 
 - The pod builder reads the image, command, and environment from the revision rather than from the live `Runtime` resource.
+- The `Runtime` resource's `runtimeOptionsSchemaRef` becomes an inline `runtimeOptionsSchema`, as the admin API carries it, and the built-in reference runtimes' schemas become files in the repository.
+- §5.1's override-replace merge of `runtimeOptionsSchema` and its rule that a derived schema names only the base's properties give way to validation against the base revision's schema and the derived runtime's schema separately.
+- The `runtimeOptions` field of the pod-scoped adapter manifest moves to `session_start`.
 - §5.1's statement that `image` is immutable through the API. A change to `image` creates a revision.
 - `type` and `executionMode`, which §5.1 lets an API write change today, become fixed. A different value needs a new runtime.
 - Checks at session creation that read a versioned field read it from the chosen revision, at the post-chain point of [`runtime-routing-design.md`](runtime-routing-design.md#rt-2-the-interceptor-contract).
@@ -56,7 +61,10 @@ This design adds revisions to runtimes. A revision is an immutable copy of the f
 | Term | Meaning |
 | :-- | :-- |
 | Revision | An immutable, numbered copy of a runtime's versioned fields, written `claude-worker` revision 7. Revision numbers increase by one per runtime. |
-| Versioned fields | The runtime fields that define what runs in a pod. A change to any of them creates a revision. "RV-1" lists them. |
+| Versioned fields | The runtime fields that define what runs in a pod and what the binary in it can do. A change to any of them creates a revision. "RV-1" lists them and divides them into pod-affecting and gateway-read fields. |
+| Pod-affecting fields | The versioned fields whose values reach the pod or its template: the pod builder puts them in the pod, or the gateway sends the field's own value to the pod's adapter at bind. |
+| Gateway-read fields | The versioned fields that only the gateway reads, such as `runtimeOptionsSchema`. A change to them alone needs no new pods. |
+| Pod hash | The hash of a revision's pod-affecting fields. Revisions with the same pod hash share a pod set. |
 | Live fields | The runtime fields the gateway enforces or publishes. A change to any of them applies to new sessions at once and creates no revision. |
 | Write | Any operation that creates or changes a runtime record: `POST /v1/admin/runtimes`, `PUT /v1/admin/runtimes/{name}`, an apply of a `Runtime` custom resource that the RuntimeReconciler mirrors, and the bootstrap upsert of `lenny-ctl bootstrap` with `--force-update`. |
 | Traffic | The runtime's list of active revisions and their integer weights. A runtime with no rollout in progress has one active revision at full weight. |
@@ -65,9 +73,9 @@ This design adds revisions to runtimes. A revision is an immutable copy of the f
 | Rollout settings | The runtime's `rollout` object: `policy`, `key`, `canaryPercent`, `drainTimeoutSeconds`, and `ownedPoolWarmTimeoutSeconds`. "Rollout settings" under "RV-1" defines each. |
 | Post-chain point | The step at session creation, after the `PreRoute` chain has fixed the runtime and pool and after this design has chosen the revision, where the gateway runs every check that depends on the runtime, the revision, or the pool. [`runtime-routing-design.md`](runtime-routing-design.md#rt-2-the-interceptor-contract) defines it as RT-2's post-chain checks. |
 | Promote | The operator action that gives a revision the full weight at once, without waiting for its pods to warm. A write can request it with `?rollout=immediate`. |
-| Retention | The platform-level period after which an unreferenced revision record is deleted, 365 days by default. |
+| Retention | The platform-level period after which an unreferenced revision record, and schema content no revision references, is deleted, 365 days by default. |
 | Rollout key | The value the gateway hashes to choose a revision: the user ID, the root session ID, or a random value, set by the runtime's `rollout.key`. |
-| Pod set | The warm pods of one pool built from one revision. A pool has one pod set outside a rollout and one per active revision during a rollout. |
+| Pod set | The warm pods of one pool built for one pod hash. A pool has one pod set outside a rollout. During a rollout it has one per distinct pod hash among the active revisions, so a rollout whose new revision changes only gateway-read fields adds none. |
 
 ### Terms from other designs and the platform
 
@@ -86,6 +94,9 @@ This design adds revisions to runtimes. A revision is an immutable copy of the f
 | Routing labels | The `routing` map on a session that records the `PreRoute` chain's decisions ([`runtime-routing-design.md`](runtime-routing-design.md)). |
 | Root session | The top-level session of a delegation tree. A derived session is a new root. |
 | `session_start` | The first frame the adapter sends a runtime for a session ([§28.5.3](../spec/28_communication-channels.md#2853-intra-pod)). |
+| `runtimeOptions` and `runtimeOptionsSchema` | `runtimeOptions` is the session field that carries runtime-specific options, at most 64 KB of JSON, which the runtime reads at start. `runtimeOptionsSchema` is the JSON Schema a runtime registers for them ([§14](../spec/14_workspace-plan-schema.md#14-workspace-plan-schema), the `runtimeOptions` field notes). A runtime with no schema receives its options unvalidated, with a `RuntimeOptionsUnschematized` warning. |
+| Delegation `TaskSpec` | The request a runtime sends with `delegate_task` to start a delegated child ([§8.2](../spec/08_recursive-delegation.md#82-delegation-mechanism)), which the `DelegationPolicy` of [§8.3](../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) checks. |
+| Discovery | `GET /v1/runtimes` and `list_runtimes`, which list the runtimes a caller may use with their published fields, and the web playground's form, which [§27.4](../spec/27_web-playground.md#274-ui-surface) generates from a runtime's `runtimeOptionsSchema`. |
 | Resume | The reattachment of a session to a new pod from its checkpoint after a pod loss or a suspension ([§7.3](../spec/07_session-lifecycle.md#73-retry-and-resume)). |
 | Derive | A new session that starts from an earlier session's snapshot ([`session-derive-design.md`](session-derive-design.md)). |
 | `platform-admin` and `tenant-admin` | Lenny's administrative roles for the whole platform and for one tenant. |
@@ -111,17 +122,19 @@ Fields the gateway enforces, such as setup command policy and limits, stay outsi
 
 The rest of this section states each part in the design's terms, which "Terms" above defines.
 
-**Revisions (RV-1).** A write that changes a versioned field creates the next revision. Live fields change in place. The runtime's `rollout` policy decides whether the new revision reaches traffic once its pods are warm, waits for an operator, or takes every new session at once. A write or an operator can request the last of these for one urgent change. Revisions are kept until a platform-wide retention period passes and nothing references them.
+**Revisions (RV-1).** A write that changes a versioned field creates the next revision. Live fields change in place. Versioned fields divide into pod-affecting fields, which reach the pod, and gateway-read fields, such as the options schema, which only the gateway reads. The runtime's `rollout` policy decides whether the new revision reaches traffic once its pods are warm, waits for an operator, or takes every new session at once. A write or an operator can request the last of these for one urgent change. Revisions are kept until a platform-wide retention period passes and nothing references them.
 
-**Selection (RV-2).** After the `PreRoute` chain has fixed the runtime and pool, the gateway hashes the rollout key over the runtime's traffic to choose a revision. The post-chain point then runs every check that depends on the runtime, the revision, or the pool, and a check that reads a versioned field reads the chosen revision. The session records `runtimeRevision`, and `session_start`, billing events, and session metrics carry it.
+**Selection (RV-2).** After the `PreRoute` chain has fixed the runtime and pool, the gateway hashes the rollout key over the runtime's traffic to choose a revision. The post-chain point then runs every check that depends on the runtime, the revision, or the pool, and a check that reads a versioned field reads the chosen revision. The session records `runtimeRevision`, and `session_start`, billing events, and session metrics carry it. Discovery shows each caller the revision it would be assigned.
 
-**Pods (RV-3).** During a rollout each pool keeps a pod set per active revision. The PoolScalingController splits the pool's warm count by weight. The pod builder reads the image, command, and environment from the revision, and the warm list comes from the revision's `sharedAssets`. A rollout's extra pods on a tenant's owned pool do not count against the tenant's budget.
+**Pods (RV-3).** During a rollout each pool keeps a pod set per distinct pod hash among the active revisions, so revisions that differ only in gateway-read fields share one. The PoolScalingController splits the pool's warm count by weight. The pod builder reads the image, command, and environment from the revision, and the warm list comes from the revision's `sharedAssets`. A rollout's extra pods on a tenant's owned pool do not count against the tenant's budget.
 
 **Rollout (RV-4).** The `RuntimeUpgrade` phases move from a pool to a runtime and act on traffic: warm the new revision, shift weight, stop new sessions on the old revision, wait for its sessions, and delete its pod sets.
 
 **Derived runtimes (RV-5).** A derived runtime has no revisions of its own. A session on it uses a revision of the base chosen by the base's traffic, with the derived runtime's fields merged on top. A narrowing that the derived runtime declares has to hold against every revision in the base's traffic.
 
 **Sessions over time (RV-6).** A resumed or retried session stays on its revision while that revision has pods. A delegated child and a derive choose a revision as a create does.
+
+**Session options (RV-7).** A runtime's options schema is stored inline on the revision and compiled when it is written. A session's options are validated at the post-chain point against the chosen revision's schema, and against a derived runtime's own schema as well, so the options a session runs with are the options its revision accepts. The runtime receives them in `session_start`.
 
 ```
  Write to runtime claude-worker (API, custom resource, or bootstrap)
@@ -144,16 +157,16 @@ The rest of this section states each part in the design's terms, which "Terms" a
  Revision selection: HMAC("revision/" + runtime name, rollout key) over traffic
         │   traffic: rev 6 weight 90, rev 7 weight 10
         ▼
- Post-chain point: every runtime, revision, and pool check, on the chosen revision
-        │
+ Post-chain point: every runtime, revision, and pool check, on the chosen revision,
+        │            including runtimeOptions against the revision's schema
         ▼
- Claim from the pool's pod set for the chosen revision
+ Claim from the pool's pod set for the chosen revision's pod hash
         │
         ▼
  Session record: runtime, runtimeRevision, pool, routing labels
 ```
 
-"Limits" states what the change costs: a pod set per active revision during a rollout, more pod sets for owned pools outside their tenants' budgets, and a resumed session that can change revision once its revision is retired.
+"Limits" states what the change costs: a pod set per distinct pod hash during a rollout, more pod sets for owned pools outside their tenants' budgets, a resumed session that can change revision once its revision is retired, and options that the new revision's schema can refuse.
 
 ## Decisions
 
@@ -175,18 +188,20 @@ Settled by the owner on 2026-11-09, as Q1 of the cross-design sync review:
 | :-- | :-- |
 | D8 | While a platform rollout is in progress, the rollout's extra pod set on an owned pool is exempt from the tenant's `maxOwnedPods`, its warm target, and `reservations.totalPods`, as decision 35 of [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md#decisions) exempts pods that a platform cause failed. Under `automatic`, the rollout waits for each owned pool's new pod set with a timeout, and then moves traffic with cold starts on that pool. In the owner's word, "ok". The idle minutes of the extra pod set are billed to the platform rather than the owning tenant, which the owner settled on 2026-11-09 in the word "ok". |
 
-Open:
+Settled by the owner on 2026-11-09, in the owner's words "Go with this":
 
-| ID | Question | Status |
-| :-- | :-- | :-- |
-| O2 | Which fields are versioned? | "RV-1" proposes a classification and the rule behind it. `runtimeOptionsSchema` has no class and waits for a review of where the gateway reads it. The owner asked for more context before deciding, which "Field classes" gives. |
+| ID | Decision |
+| :-- | :-- |
+| D9 | Which fields are versioned (formerly O2). The classification of "Field classes" under "RV-1" stands, and `runtimeOptionsSchema` is versioned and gateway-read. The `Runtime` resource carries the schema inline, the built-in reference runtimes' schemas ship as files, no component fetches a schema URL, a write compiles the schema and refuses one that does not compile, and the revision stores the schema by digest ("RV-7"). A session's options are validated at the post-chain point against the chosen revision's schema, and a derived runtime's own schema is a second, separate check. Validation against every revision in the traffic was rejected, because renaming an option would then refuse every client as soon as the new revision entered the traffic. Versioned fields split into pod-affecting and gateway-read fields, and revisions with the same pod hash share a pod set, so a rollout that changes only gateway-read fields warms nothing ("RV-1", "RV-3", and "RV-4"). Discovery shows the revision a caller would be assigned ("Discovery" under "RV-2"). The options reach the runtime in `session_start`, the delegation `TaskSpec` and a derive can carry them, an interceptor cannot change them ([`runtime-routing-design.md`, "RT-2 The interceptor contract"](runtime-routing-design.md#rt-2-the-interceptor-contract)), and a resume onto a revision whose schema refuses them fails with a recorded reason ("RV-6"). |
+
+No decision is open.
 
 ## Requirements
 
 | ID | Requirement |
 | :-- | :-- |
 | RVR-1 | A change to a versioned field never changes the pods of a revision that already exists. |
-| RVR-2 | A client asks for a runtime by name alone, and a rollout changes no request or response field apart from the reported revision. |
+| RVR-2 | A client asks for a runtime by name alone. During a rollout, discovery output can depend on the revision the caller would be assigned, and the acceptance of `runtimeOptions` can depend on the session's revision. A rollout changes no other request or response field apart from the reported revision. |
 | RVR-3 | During a rollout, new sessions reach each active revision in proportion to its weight, and the same rollout key reaches the same revision while the traffic is unchanged. |
 | RVR-4 | A rollout can be paused and rolled back until the old revision's pod sets are deleted. |
 | RVR-5 | A change to a live field applies to the next session on every revision. |
@@ -196,6 +211,8 @@ Open:
 | RVR-9 | A check at session creation that reads a versioned field reads the chosen revision. A check at a write or at pool admission that reads a versioned field holds for every revision in the runtime's traffic. |
 | RVR-10 | A rollout never deletes a quarantined pod or its Sandbox. |
 | RVR-11 | Under `automatic` and `manual`, a revision's weight rises only after its pod sets hold their share of the warm target at the new weight. Only `immediate`, a promote, and a rollback move traffic before that. |
+| RVR-12 | A session runs only with `runtimeOptions` that the chosen revision's schema accepts, and on a derived runtime with its own schema, that schema as well. The options the post-chain point validates are the options the runtime receives. |
+| RVR-13 | Revisions whose pod-affecting fields hash the same share one pod set, and a rollout whose new revision differs only in gateway-read fields warms no pod set. |
 
 ## Current state
 
@@ -211,6 +228,15 @@ Open:
 
 **Readers of versioned fields at session creation [source, from the sync review].** Several checks read fields that this design versions from the runtime row: connector authorization reads `capabilities.deferredToolDiscovery`, the export refusal of DR-8 and session derive's supervisor refusal read `deploymentModel` and `type`, the grant conditions of tenant-derived runtimes read `requireSoPeercred`, and pool admission reads `credentialCapabilities.proxyDialect`. "RV-2" states where each reads once revisions exist.
 
+**Session options [source, 2026-11-09].** The `Runtime` resource names its schema by URL in `runtimeOptionsSchemaRef`, and the admin API stores it inline. The defects below are filed in `BUILD-GAPS.md` as findings of 2026-11-09, and "RV-7" closes each:
+
+- The RuntimeReconciler mirrors a `runtimeOptionsSchemaRef` as `{"$ref": "<url>"}`. `validateAgainstSchema` in `pkg/gateway/sessionserver/envelope.go` reads a schema that fails to compile as no constraint, so a `$ref` schema validates nothing, and a `file://` `$ref` reads the gateway's filesystem.
+- A derived schema replaces the base's under §5.1's merge, and the write checks only property names, so a derived schema can widen the base's to no constraint.
+- `required` is not enforced when a request carries no options, because the check returns before validation.
+- Options are validated in `validateAndBuildCreateRow`, between the two `PreRoute` segments, against the runtime the request named, so a later interceptor that changes the runtime leaves them checked against the wrong schema.
+- Options never reach the runtime: the runtime SDKs read them from the pod-scoped manifest, and nothing writes that field.
+- The RuntimeReconciler's mirror does not call `derivedRuntimesInvalidatedBy`, and it clears a schema the admin API set whenever the resource carries no `runtimeOptionsSchemaRef`.
+
 ## RV-1 Revisions
 
 ### Field classes
@@ -223,12 +249,35 @@ A runtime's fields fall into three groups by what they describe:
 
 The first two groups are versioned, and the gateway reads them from the session's revision. The third group is live, so a security tightening reaches the next session on every revision without a rollout.
 
+Versioned fields split by who reads them (D9). A pod-affecting field reaches the pod or its template: the pod builder puts it in the pod, or the gateway sends the field's own value to the pod's adapter at bind. A gateway-read field is read only by the gateway, including where the gateway turns it into session data, such as a plan. A pod built for one revision can serve a session of another revision whose pod-affecting fields are the same, so the pod set is keyed on the hash of the pod-affecting fields ("RV-3").
+
 | Class | Fields | On change |
 | :-- | :-- | :-- |
-| Versioned | `image`, `command`, `env`, `deploymentModel`, `isolationProfile`, `sharedAssets`, `sdkWarmBlockingPaths`, `workspaceDefaults`, `workspaceTier`, `integrationLevel`, `requireSoPeercred`, `restartable`, `minPlatformVersion`, `checkpointExcludes`, `capabilities`, and `credentialCapabilities` | A new revision. |
+| Versioned, pod-affecting | `image`, `command`, `env`, `deploymentModel`, `isolationProfile`, `sharedAssets`, `sdkWarmBlockingPaths`, `workspaceTier`, `requireSoPeercred`, `restartable`, `minPlatformVersion`, `checkpointExcludes`, and `capabilities.preConnect` | A new revision with a new pod hash, whose pod sets warm before traffic moves. |
+| Versioned, gateway-read | `runtimeOptionsSchema`, the other `capabilities` entries, `credentialCapabilities`, `integrationLevel`, and `workspaceDefaults` | A new revision that shares the pod set of the revision with the same pod hash. |
 | Live | `setupCommandPolicy`, `setupPolicy`, `limits`, `sessionPolicy`, `archivePolicy`, `delegationPolicyRef`, `allowSelfRecursion`, `supportedProviders`, `allowedResourceClasses`, `defaultPoolConfig`, `capabilityInferenceMode`, `toolCapabilityOverrides`, `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, `agentInterface`, `publishedMetadata`, `labels`, and `rollout` | Applied to the next session on every revision. |
-| Pending review (O2) | `runtimeOptionsSchema`, which the `Runtime` resource spells `runtimeOptionsSchemaRef` | Unclassified. See below. |
 | Fixed | `name`, `type`, `executionMode`, and `baseRuntime` | Refused. A different value needs a new runtime. |
+
+Each versioned field was placed by its reader in the tree, read on 2026-11-09:
+
+| Field | Reader | Kind |
+| :-- | :-- | :-- |
+| `image`, `command`, and `env` | The sandbox controller's pod builder, from the live `Runtime` resource (`pkg/controller/sandbox/controller.go`). | Pod-affecting |
+| `deploymentModel` | The pod builder, which runs the runtime supervisor on a sidecar pod (`supervision.go`), and the gateway's checks at the post-chain point. | Pod-affecting |
+| `workspaceTier` | The pod builder, which adds the `T4` node isolation (`podspec/t4_node_isolation.go`). | Pod-affecting |
+| `requireSoPeercred` | The pod builder, which sets nonce-only mode (`podspec/nonce_only.go`). | Pod-affecting |
+| `restartable` | Computed from `command`, `executionMode`, and `capabilities.preConnect` (`runtime_restartable.go`). The pod builder reads it before it creates a `restart` pod, and pool admission reads it. | Pod-affecting |
+| `capabilities.preConnect` | The sandbox controller, which SDK-warms the pod (`sdkwarm.go`), and `restartable`. | Pod-affecting |
+| `sharedAssets` | The pod builder, the adapter's warm layout (`pkg/adapter/warmlayout.go`), and the warm list. | Pod-affecting |
+| `sdkWarmBlockingPaths` | The gateway at bind, which sends the list to the adapter in the bind request and decides a demotion with it (`podsession/sdkdemotion.go`). | Pod-affecting |
+| `minPlatformVersion` | The gateway, which writes it into the pod-scoped adapter manifest at bind (`adapterclient`), checks it at a write, and publishes it in discovery. | Pod-affecting |
+| `checkpointExcludes` | Not in the tree. Under [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md), the capture on the pod leaves the listed directories out. | Pod-affecting |
+| `isolationProfile` | The gateway's recycle scrub reporter (`scrubreporter_seams.go`). The pod builder takes the pod's runtime class from the template's `isolationProfile`, and a pool with none takes the platform default rather than the runtime's. | Pod-affecting, as the owner placed it; see the note below |
+| `capabilities.interaction`, `capabilities.injection`, `capabilities.midSessionUpload`, and `capabilities.deferredToolDiscovery` | The gateway: delivery and injection rules, pool admission (`poolstore.go`), uploads to a running session (`upload_to_session.go`), the link check of [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md), which adds `deferredToolDiscovery`, and discovery. | Gateway-read |
+| `credentialCapabilities` | The gateway: credential pre-claim (`credential_preclaim.go`) and pool admission. | Gateway-read |
+| `integrationLevel` | The gateway, which compares it with the level the adapter reports at bind (`podsession/integrationlevel.go`), and discovery. | Gateway-read |
+| `workspaceDefaults` | The gateway, which composes it into the session's plan. The pod receives the plan as session data, and a base runtime's warm repositories come from `sharedAssets` (decision 32 of [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md#decisions)). | Gateway-read; see the note below |
+| `runtimeOptionsSchema` | The gateway: options validation, discovery, and the playground. | Gateway-read |
 
 Notes on the classification:
 
@@ -241,7 +290,9 @@ Notes on the classification:
 - `archivePolicy` governs how the gateway extracts uploaded archives, so it is live.
 - `type` and `executionMode` change how the gateway dispatches every session and which pools can serve the runtime, so a revision cannot carry them. Making them fixed is a change from §5.1, which lets an API write change them today.
 - A check at a write or at pool admission that reads a versioned field holds for every revision in the runtime's traffic, because the pool serves all of them. A pool with `deliveryMode: proxy` requires `credentialCapabilities.proxyDialect`, so admission checks every revision in the traffic, and a write that creates a revision without it is refused while such a pool references the runtime. A check at session creation reads the chosen revision at the post-chain point ("RV-2").
-- `runtimeOptionsSchema` is the hard case. It describes the options the binary accepts, which argues for versioned. The gateway validates a session's `runtimeOptions` at create. With the post-chain point after revision selection, validation can read the chosen revision. The review decides among three outcomes: live, with the operator keeping the schema compatible with every running binary; versioned, with validation at the post-chain point against the chosen revision; or versioned, with validation against every revision in the traffic.
+- `runtimeOptionsSchema` describes the options the binary accepts, so it is versioned (D9). Only the gateway reads it, so a schema fix shares the pod set of the revision it amends. "RV-7" states how the schema is stored and how a session's options are validated against the chosen revision.
+- `isolationProfile` and `workspaceDefaults` are placed by judgement. The runtime's `isolationProfile` reaches no pod in the tree, but it states the runtime's sandbox profile, so it stays pod-affecting, and the cost of that choice is a warm-up that a change to it alone does not need. `workspaceDefaults` reaches a pod only inside a session's plan, which the gateway composes per session, so a warm pod holds nothing from it. "Validation owed" asks the owner to confirm both.
+- `description`, the admin-facing text, stays live with `agentInterface` and `publishedMetadata`, as the discovery description in the third group above. The owner's statement of D9 named descriptions among the gateway-read fields, and no description field describes the binary, so "Validation owed" asks the owner to confirm this placement.
 - `sharedAssets` entries that reference an artifact are pinned to the artifact's content digest in the revision, so a later change to the artifact behind the same reference does not change an existing revision.
 - A live field that the platform already validates against derived runtimes keeps that validation.
 
@@ -260,12 +311,12 @@ The `rollout` object is live, and only a `platform-admin` writes it on a platfor
 
 ### A write
 
-A write is any of the operations "Terms" lists. Each one computes a hash over the versioned fields:
+A write is any of the operations "Terms" lists. Each one computes a hash over the versioned fields, and the pod hash over the pod-affecting fields:
 
 - The first write of a runtime creates revision 1 at full weight.
 - A write whose hash equals the latest revision's creates no revision. A `PUT` that changes only live fields, a re-apply of an unchanged custom resource, and a bootstrap upsert with no change all fall here.
 - A write whose hash differs creates the next revision, records the writer and the time, and starts a rollout under the runtime's `rollout.policy`:
-  - `automatic` (default, D3): the new revision enters at weight 0, its pod sets warm to their target, and traffic then moves to it in one step. An owned pool whose new pod set is not warm after `rollout.ownedPoolWarmTimeoutSeconds` no longer holds the move, and that pool's sessions on the new revision wait on pod creation until its pod set warms (D8). An operator can still pause or roll back.
+  - `automatic` (default, D3): the new revision enters at weight 0, its pod sets warm to their target, and traffic then moves to it in one step. A new revision whose pod hash equals an active revision's shares that revision's warm pod sets, so traffic moves without a warm-up. An owned pool whose new pod set is not warm after `rollout.ownedPoolWarmTimeoutSeconds` no longer holds the move, and that pool's sessions on the new revision wait on pod creation until its pod set warms (D8). An operator can still pause or roll back.
   - `manual`: the new revision enters at weight 0 and waits for an operator to drive "RV-4".
   - `immediate`: the new revision takes the full weight at once, and every earlier revision drains. New sessions that arrive before the new pod sets are warm wait on pod creation, as a session does today when a pool has no idle pod. Sessions already running on earlier revisions continue, and an operator who needs them stopped uses the existing force-terminate action.
 - **Urgent changes.** A change that must reach the next session, such as an image with a security fix, uses `immediate` without changing the runtime's policy, in one of two ways:
@@ -277,14 +328,14 @@ A write through the `Runtime` custom resource follows the same rules. The Runtim
 
 ### Record
 
-The registry gains a `runtime_revisions` table keyed on runtime name and revision number. Each row holds the versioned fields, their hash, the writer, and the creation time. A row is never updated. Inline `sharedAssets` content is stored once per content digest in a separate table that rows reference, because most revisions change only the image and would otherwise copy the same files.
+The registry gains a `runtime_revisions` table keyed on runtime name and revision number. Each row holds the versioned fields, their hash, the pod hash, the writer, and the creation time. A row is never updated. Inline `sharedAssets` content is stored once per content digest in a separate table that rows reference, because most revisions change only the image and would otherwise copy the same files. `runtimeOptionsSchema` content is stored the same way, once per digest of its canonical JSON, and the row holds the digest, which the revision's hash covers ("RV-7").
 
 `GET /v1/admin/runtimes/{name}` returns the live fields, the latest revision's versioned fields, the traffic, and the rollout state. `GET /v1/admin/runtimes/{name}/revisions` lists revisions with pagination.
 
 ### Retention
 
 - Every revision is kept until the retention period passes (D4). The gateway flag `--runtime-revision-retention`, default 365 days, sets the period for the whole platform.
-- A daily job deletes revisions older than the period that no traffic entry and no live session references, in batches, and deletes stored asset content no remaining revision references.
+- A daily job deletes revisions older than the period that no traffic entry, no live session, and no pod set's template references, in batches, and deletes stored asset content and schema content that no remaining revision references.
 - A finished session keeps its `runtimeRevision` number after the revision's record is deleted. `GET` of a deleted revision returns `410 REVISION_EXPIRED`.
 - A `platform-admin` can delete one revision early with `DELETE /v1/admin/runtimes/{name}/revisions/{n}` when no traffic entry and no live session references it. This removes a revision whose `env` held a value that should not have been stored.
 
@@ -296,7 +347,7 @@ The estimates below are unmeasured and assume Postgres compresses large JSON val
 | :-- | --: | --: | --: |
 | 100 platform runtimes, one versioned change a week | 5,200 | 2 to 10 KB | 10 to 50 MB |
 | 100 platform runtimes, one versioned change a day | 36,500 | 2 to 10 KB | 70 to 370 MB |
-| 100 platform runtimes, an image build pushed 20 times a day by CI | 730,000 | 0.5 to 2 KB with assets stored once | 0.4 to 1.5 GB |
+| 100 platform runtimes, an image build pushed 20 times a day by CI | 730,000 | 0.5 to 2 KB with assets and schemas stored once | 0.4 to 1.5 GB |
 
 - Revisions grow with platform runtimes and their change rate. Derived runtimes, including every tenant-derived runtime, create none (D5), so the count does not grow with tenants. A derived runtime's own fields stay on its runtime row.
 - A `Runtime` resource cannot exceed the Kubernetes object size limit of about 1.5 MB, which bounds a single revision written through that path. The admin API applies the same bound.
@@ -319,22 +370,31 @@ Revision selection:
 2. Picks the rollout key under `rollout.key`: the user ID under `user`, the root session ID under `session` or for an anonymous session under `user`, and a random UUID under `random`.
 3. Computes `HMAC-SHA256(key = "revision/" + runtime name, message = rollout key)` with the bucketing function that [RT-4](runtime-routing-design.md#rt-4-runtime-routes) defines, and walks the active revisions in ascending order by cumulative weight.
 
-**Checks on the chosen revision.** Every check at the post-chain point that reads a versioned field reads the chosen revision, merged with the derived runtime's fields where one applies. That covers, among others, `capabilities.deferredToolDiscovery` for the link checks of [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md), `deploymentModel` and `type` for the delegation export refusal of DR-8 and the supervisor refusal of [`session-derive-design.md`](session-derive-design.md), `requireSoPeercred` for the grant conditions of tenant-derived runtimes, and `runtimeOptionsSchema` once O2 places it. A check that fails refuses the session as it does today. The gateway does not try another revision, because the session's revision follows its rollout key.
+**Checks on the chosen revision.** Every check at the post-chain point that reads a versioned field reads the chosen revision, merged with the derived runtime's fields where one applies. That covers, among others, `capabilities.deferredToolDiscovery` for the link checks of [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md), `deploymentModel` and `type` for the delegation export refusal of DR-8 and the supervisor refusal of [`session-derive-design.md`](session-derive-design.md), `requireSoPeercred` for the grant conditions of tenant-derived runtimes, and `runtimeOptionsSchema` for the session's options ("RV-7"). A check that fails refuses the session as it does today. The gateway does not try another revision, because the session's revision follows its rollout key.
 
-**Claim.** The gateway claims from the pool's pod set for the chosen revision. An empty pod set takes the existing path for a pool with no idle pod, and the gateway does not substitute another revision, because substitution would move the split away from the weights under load.
+**Claim.** The gateway claims from the pool's pod set for the chosen revision's pod hash. An empty pod set takes the existing path for a pool with no idle pod, and the gateway does not substitute a pod set of another pod hash, because substitution would move the split away from the weights under load.
 
 The session record gains `runtimeRevision`. The session response, `session_start` (as `runtimeRevision`), the adapter manifest's per-session fields, billing events (as `runtime_revision`), and the session metrics `lenny_session_total`, `lenny_session_error_total`, and `lenny_session_duration_seconds` (as the label `runtime_revision`) carry it. Active revisions bound the label's values.
 
 The revision is not written into the routing labels, because the `PreRoute` chain did not choose it.
 
+### Discovery
+
+Discovery publishes versioned fields: `capabilities`, `integrationLevel`, `minPlatformVersion`, and `runtimeOptionsSchema`. During a rollout the revisions in the traffic can disagree on them, so discovery and the playground show one revision's values, chosen per caller (D9):
+
+- Under `rollout.key: user`, for a caller with a user ID, the revision the caller would be assigned, computed with the HMAC of the selection steps above and the caller's user ID as the rollout key.
+- Under `rollout.key: session` or `random`, and for a caller without a user, the revision with the highest weight, the older revision on a tie.
+
+Each entry reports `runtimeRevision` beside those fields. A derived runtime's entry uses its base's traffic and name, as selection does ("RV-5"). The rule covers every versioned field that discovery publishes. A session the caller then creates under `rollout.key: user` lands on the revision discovery showed while the traffic is unchanged and no route or interceptor moves it to another runtime, so its options pass the schema the playground rendered.
+
 ## RV-3 Pods
 
-- `SandboxTemplate` gains `runtimeRevision`. The warm pool controller keeps one `SandboxWarmPool` and `SandboxTemplate` pair per pool and active revision, labelled with the revision, and deletes a pair when its revision leaves traffic and no session uses it. It never deletes a Sandbox whose pod carries the `lenny.dev/quarantine` label: the pair stays while such a Sandbox exists, and the deletion reports it to the forensics reconciler, as FE-1's "Retirement paths" states for pool deletion (RVR-10).
-- The pod builder reads `image`, `command`, `env`, and the other versioned fields from the revision named by the pod's template. It no longer reads them from the live `Runtime` resource, so no edit reaches an existing revision's pods (RVR-1). For an owned pool, the template's `podRuntimeRef` (DR-2) names the base and `runtimeRevision` names the base revision.
-- **Warm list per revision.** The warm list comes partly from the revision's `sharedAssets`, so the PoolScalingController renders one warm list per pool and revision, onto that revision's template. The hosts the list adds to a warm pod's reach and the readable set of a pod before binding, which [`egress-and-git-design.md`](egress-and-git-design.md#effective-policy) and "Warm clones" under [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md#warm-clones) read from the pool row today, key on pool and revision, so a pod warming for revision 7 reaches only revision 7's repositories.
-- The PoolScalingController computes the pool's warm target from the pool's demand history, as §4.6.2 states, and splits it across pod sets by weight, with a floor of one pod for an active revision at positive weight. Under `automatic`, a new revision's pod set warms to the full target before traffic moves. The pool's demand history is shared by its revisions, so a new revision has no cold-start gap.
-- During a rollout a pool holds up to the sum of its pod sets' targets. Outside a rollout it holds one pod set.
-- **Owned pools during a base rollout (D8).** On an owned pool, the pods of every pod set other than the one for the revision with the highest weight, the older revision on a tie, count in neither the tenant's charge nor the creation rule of `maxOwnedPods`, and a pool with a reservation places that extra pod set outside its reserved pods, so `reservations.totalPods` is unchanged. This holds while the platform rollout is in progress, as decision 35 exempts pods failed by a platform cause. The namespace `ResourceQuota` still bounds the extra pods. When the rollout ends, the remaining pod set is the pool's only one and counts as before. A rollout cannot raise what a tenant is charged, and a tenant at its bound still gets the new revision. `pool.idle_usage` in [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md#poolidle_usage) attributes the extra pod set's idle minutes to the platform rather than the owning tenant.
+- `SandboxTemplate` gains `podHash` and `runtimeRevision`. The warm pool controller keeps one `SandboxWarmPool` and `SandboxTemplate` pair per pool and distinct pod hash among the active revisions, labelled with the pod hash, and deletes a pair when no active revision has its pod hash and no session uses it. The template's `runtimeRevision` names the lowest-numbered revision with that pod hash, and every revision with the pod hash gives the pod builder the same pod-affecting values (RVR-13). It never deletes a Sandbox whose pod carries the `lenny.dev/quarantine` label: the pair stays while such a Sandbox exists, and the deletion reports it to the forensics reconciler, as FE-1's "Retirement paths" states for pool deletion (RVR-10).
+- The pod builder reads `image`, `command`, `env`, and the other pod-affecting fields from the revision named by the pod's template. It no longer reads them from the live `Runtime` resource, so no edit reaches an existing revision's pods (RVR-1). For an owned pool, the template's `podRuntimeRef` (DR-2) names the base and `runtimeRevision` names the base revision.
+- **Warm list per revision.** The warm list comes partly from the revision's `sharedAssets`, so the PoolScalingController renders one warm list per pool and pod set, onto that pod set's template. `sharedAssets` is pod-affecting, so revisions that share a pod set share its warm list, and "per pool and revision" below resolves through the revision's pod set. The hosts the list adds to a warm pod's reach and the readable set of a pod before binding, which [`egress-and-git-design.md`](egress-and-git-design.md#effective-policy) and "Warm clones" under [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md#warm-clones) read from the pool row today, key on pool and revision, so a pod warming for revision 7 reaches only revision 7's repositories.
+- The PoolScalingController computes the pool's warm target from the pool's demand history, as §4.6.2 states, and splits it across pod sets by the summed weight of the active revisions in each, with a floor of one pod for a pod set whose revisions hold positive weight. Under `automatic`, a new revision's pod set warms to the full target before traffic moves. A new revision that shares a pod set adds nothing to warm, because the pod set already holds the share of the revisions in it. The pool's demand history is shared by its revisions, so a new revision has no cold-start gap.
+- During a rollout a pool holds up to the sum of its pod sets' targets. Outside a rollout it holds one pod set. A rollout whose new revision changes only gateway-read fields keeps one pod set throughout.
+- **Owned pools during a base rollout (D8).** On an owned pool, the pods of every pod set other than the one that holds the revision with the highest weight, the older revision on a tie, count in neither the tenant's charge nor the creation rule of `maxOwnedPods`, and a pool with a reservation places that extra pod set outside its reserved pods, so `reservations.totalPods` is unchanged. This holds while the platform rollout is in progress, as decision 35 exempts pods failed by a platform cause. The namespace `ResourceQuota` still bounds the extra pods. When the rollout ends, the remaining pod set is the pool's only one and counts as before. A rollout cannot raise what a tenant is charged, and a tenant at its bound still gets the new revision. `pool.idle_usage` in [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md#poolidle_usage) attributes the extra pod set's idle minutes to the platform rather than the owning tenant.
 
 ## RV-4 Rollout
 
@@ -344,12 +404,14 @@ The §10.5 phases move from a pool to a runtime and act on traffic. Every pool o
 | :-- | :-- |
 | `Pending` | The new revision exists at weight 0. Its pod sets warm to the share of the target that `rollout.canaryPercent` sets, or to the full target under `automatic`, with an owned pool waited on for at most `rollout.ownedPoolWarmTimeoutSeconds`. |
 | `Expanding` | The new revision's weight rises to `rollout.canaryPercent`, then by operator steps, or to the full weight in one step under `automatic`. Each increase warms first, as "Warm before weight" states. |
-| `Draining` | The new revision holds the full weight. The old revision receives no new sessions, and its sessions run to completion or until `rollout.drainTimeoutSeconds`, after which the remaining ones end with a checkpoint. |
-| `Contracting` | The old revision's pod sets are deleted, apart from any quarantined Sandbox, which stays with its pair until FE-1 releases it (RVR-10). |
+| `Draining` | The new revision holds the full weight. The old revision receives no new sessions, and its sessions run to completion or until `rollout.drainTimeoutSeconds`, after which the remaining ones end with a checkpoint. A session whose revision shares a pod set with the new revision is not ended, because no pod set of its pod hash is deleted. |
+| `Contracting` | The old revision's pod sets that no active revision shares are deleted, apart from any quarantined Sandbox, which stays with its pair until FE-1 releases it (RVR-10). |
 | `Complete` | One revision remains active. |
 | `Paused` | Weights and pod sets hold. Reachable from every phase except `Complete`. |
 
 - **Warm before weight.** Every weight increase under `automatic` or `manual`, including `proceed` and `set-weight`, first raises the new revision's pod sets to their share of the warm target at the requested weight. The weight moves once they hold it. Until then the old revision keeps its share at the current weight, so a step adds at most the new revision's increase in warm pods. The wait is bounded by `rollout.warmTimeoutSeconds` on platform pools and by `rollout.ownedPoolWarmTimeoutSeconds` on owned pools. `status` reports a pending step and each pod set's warm count against its share (RVR-11).
+- **Gateway-read rollouts.** A new revision whose pod hash equals the old revision's shares the old revision's pod sets, which already hold the warm target at the summed weight, so each weight increase moves at once and no phase waits for a warm-up. The traffic weights still apply: under `manual` with `canaryPercent: 5`, 5% of new sessions run on the new revision, read its gateway-read fields, and have their options validated against its schema, while every session claims from the same pod sets (RVR-13).
+- **Options the new revision refuses.** Before `Contracting`, `status` reports how many suspended sessions on the old revision hold `runtimeOptions` that the new revision's schema refuses, because each of them fails its resume once its pod set is gone ("RV-6").
 - **Rollback.** Until `Contracting`, rollback returns the full weight to the old revision and drains the new one. Rollback does not wait for warm pods, because the new revision is the one being left. A weight of 0 releases a revision's idle warm pods, so a rollback after the old revision reached weight 0 starts new sessions cold until its pod sets warm again. After `Complete`, an operator rolls back by writing the old revision's versioned fields, which creates a new revision with the old content and starts a rollout.
 - **Promote.** A promote moves the rollout from any phase before `Draining` straight to `Draining`, with the newest revision at full weight. It does not wait for the new pod sets to warm.
 - **Surface.** `/v1/admin/runtimes/{name}/rollout` replaces `/v1/admin/pools/{name}/upgrade-*`, and `lenny-ctl admin runtimes rollout` with `status`, `proceed`, `set-weight`, `promote`, `pause`, `resume`, and `rollback` replaces `lenny-ctl admin pools upgrade`. Only a `platform-admin` drives a rollout of a platform runtime.
@@ -359,18 +421,56 @@ The §10.5 phases move from a pool to a runtime and act on traffic. Every pool o
 ## RV-5 Derived runtimes
 
 - **What a derived runtime carries.** §5.1 forbids a derived runtime to set `image`, `command`, `env`, `integrationLevel`, `requireSoPeercred`, `type`, `executionMode`, `isolationProfile`, and the interaction and injection capabilities. It lets one override `credentialCapabilities` and set the other `capabilities` entries, and append to `sharedAssets` and `workspaceDefaults`. Tenant-derived runtimes may narrow `credentialCapabilities` and append `workspaceDefaults` under their grant, and [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) lets a tenant set `checkpointExcludes` on a derived runtime. A derived runtime therefore carries values for versioned fields, kept on its own runtime row.
-- **Merge.** A session on a derived runtime chooses a revision from the base's traffic, using the base's name in the hash, and merges the derived runtime's fields over that revision's fields under §5.1's merge algorithm. An override replaces the revision's value, and an append adds to it. The merged result is what the post-chain point and the pod builder read.
+- **Merge.** A session on a derived runtime chooses a revision from the base's traffic, using the base's name in the hash, and merges the derived runtime's fields over that revision's fields under §5.1's merge algorithm. An override replaces the revision's value, and an append adds to it. The merged result is what the post-chain point and the pod builder read. `runtimeOptionsSchema` is the exception: it does not merge, and "RV-7" validates a session's options against the base revision's schema and the derived runtime's schema separately.
 - **Why no derived revisions (D5).** The binary comes from the base, so the base's traffic alone decides which binary a session runs. A derived runtime's own fields change in place, and a write to them applies to the next session on every base revision, as a live field does.
 - **Narrowing holds against every base revision.** A restrict-only or narrowing value, such as a narrowed `credentialCapabilities.proxyDialect` or a subset of `supportedProviders`, has to hold against every revision in the base's traffic, because any of them can serve the next session. A write to the derived runtime checks every revision in the traffic, and a new base revision is checked against every derived runtime.
-- **Pools.** Pools on a derived runtime, including owned pools under [DR-5](tenant-derived-runtimes-design.md#dr-5-owned-pools), keep a pod set per active base revision during a base rollout, sized as "RV-3" states, with the owned-pool exemption of D8.
+- **Options schemas across base revisions.** A base revision that drops a property a derived schema names leaves that option unusable on the sessions that revision serves, because the base schema refuses it, and the derived runtime stays compatible. A derived schema that lists a property in `required` while some revision in the base's traffic forbids that property would refuse every session on that revision, so the tenant-derived runtime reads as `incompatible` under DR-6, and DR-6's notice names the property and the revision. A revision forbids a property when its schema gives the property the schema `false`, or omits it from `properties` under `additionalProperties: false`. A conflict of any other form surfaces as `RUNTIME_OPTIONS_INVALID` at session creation.
+- **Pools.** Pools on a derived runtime, including owned pools under [DR-5](tenant-derived-runtimes-design.md#dr-5-owned-pools), keep a pod set per distinct pod hash among the active base revisions during a base rollout, sized as "RV-3" states, with the owned-pool exemption of D8.
 - **Base writes and platform-owned derived runtimes.** A base write that creates a revision invalidating a platform-owned derived runtime is refused and names the runtime, as §5.1 refuses such a change today.
 - **Base writes and tenant-derived runtimes.** A base write always succeeds under [DR-6](tenant-derived-runtimes-design.md#dr-6-base-changes). A tenant-derived runtime is evaluated against every revision in the base's traffic, the new one included, and reads as `incompatible` while any of them breaks it. New sessions then answer `409 DERIVED_RUNTIME_UNAVAILABLE` until the tenant edits the runtime or the breaking revision leaves the traffic. DR-6's notice fires when the write creates the base revision, and its text names the revision, the rollout policy, and whether the revision makes the runtime `incompatible`. The notice no longer means the change has already reached the tenant's sessions.
 
 ## RV-6 Sessions over time
 
-- **Retry and resume.** A retried or resumed session claims from its recorded revision's pod set while that pod set exists. A revision does not leave the registry while a live session references it. A resumable session can outlive `rollout.drainTimeoutSeconds`, and when its pod set is gone, it resumes on the revision with the highest weight, the gateway updates `runtimeRevision`, and it emits `session.runtime_revision_changed` (D7).
-- **Delegation.** A delegated child chooses a revision of its own runtime by "RV-2". Under `rollout.key: session`, the key is the root session ID, so a delegation tree stays on one revision of each runtime it uses.
-- **Derive.** A derive chooses a revision by "RV-2" like a create. It does not inherit its source's revision (D2).
+- **Retry and resume.** A retried or resumed session claims from the pod set of its recorded revision's pod hash while that pod set exists, which includes a pod set the revision shares with an active revision. A revision does not leave the registry while a live session references it. A resumable session can outlive `rollout.drainTimeoutSeconds`, and when its pod set is gone, it resumes on the revision with the highest weight, the gateway updates `runtimeRevision`, and it emits `session.runtime_revision_changed` (D7).
+- **Options on a revision change.** A resume that moves to another revision under D7 validates the session's stored `runtimeOptions` against the new revision's schema, as "Validation" under "RV-7" states. When the schema refuses them, the resume fails, the session records the reason `runtime_options_invalid` with the new revision and the validation report, and the session's snapshot is kept. The recovery path is a derive `from: latest` with a `runtimeOptions` override ([`session-derive-design.md`, "Request"](session-derive-design.md#request)), which the new revision's schema validates at the post-chain point. "Options the new revision refuses" under "RV-4" reports the sessions at risk before `Contracting`.
+- **Delegation.** A delegated child chooses a revision of its own runtime by "RV-2". Under `rollout.key: session`, the key is the root session ID, so a delegation tree stays on one revision of each runtime it uses. The delegation `TaskSpec` carries `runtimeOptions` for the child, which "RV-7" validates against the child's revision.
+- **Derive.** A derive chooses a revision by "RV-2" like a create. It does not inherit its source's revision (D2). Its options are the source's or the request's, validated against the chosen revision ("RV-7").
+
+## RV-7 Session options
+
+### Schema storage
+
+- **Inline on both paths.** The `Runtime` resource carries `runtimeOptionsSchema` inline, as the admin API does, in place of `runtimeOptionsSchemaRef`. The platform has no deployments, so the rename has no compatibility shim. The RuntimeReconciler mirrors the inline schema as it mirrors the other fields, and a mirror write passes the checks of a base write that the admin API applies, `derivedRuntimesInvalidatedBy` included.
+- **Reference schemas as files.** The schemas of the built-in reference runtimes, which exist today only inline in §14, become files under `schemas/runtime-options/`, one per runtime, such as `schemas/runtime-options/claude-code.json`. `schemas/embed.go` widens its embed pattern to that directory, so the binaries carry them, and the chart renders each file into its reference runtime's `Runtime` resource.
+- **No fetch.** No component fetches a schema URL. The compiler has no loader, so a `$ref` that leaves the document does not resolve, and the schema fails to compile.
+- **Compiled at write.** Every write compiles the schema and refuses one that does not compile: a platform write with `400 VALIDATION_ERROR` naming `runtimeOptionsSchema`, and a tenant's write with `422 INVALID_DERIVED_RUNTIME` and `details.field`. A tenant-written derived schema is also refused when it carries `$schema`, `$id`, or a `$ref` other than a local `#/...` reference ([`tenant-derived-runtimes-design.md`, "Fields"](tenant-derived-runtimes-design.md#fields)). A platform-shipped file may carry `$id`, which the platform strips before it compiles the schema.
+- **Stored by digest.** The revision stores the schema content once per digest and holds the digest, which the revision's hash covers ("Record"). "Retention" deletes schema content that no revision references. The gateway caches compiled schemas by digest, so session creation compiles none.
+
+### Validation
+
+The size and syntax checks stay early, and schema validation runs at the post-chain point and on a resume that changes revision:
+
+- **Early.** At request validation, the gateway applies the 64 KB size cap and parses the JSON, as it does today. These checks need no runtime.
+- **The post-chain point.** On every creation kind, the gateway validates the session's options against the chosen revision's schema: a create, a create-and-start (whose request gains the `runtimeOptions` field), a derive, and a delegated child. The mid-chain validation in `validateAndBuildCreateRow` is removed.
+- **A resume that changes revision.** A resume that moves to another revision under D7 validates the stored options against the new revision's schema ("RV-6").
+
+The rules wherever the schema validation runs:
+
+- On a derived runtime that carries its own schema, such as a tenant-derived runtime, the gateway compiles the base revision's schema and the derived schema as separate resources, and both must accept the options. This replaces §5.1's override-replace merge, under which the derived schema took the base's place. §5.1's rule that a derived schema names only the base's properties is dropped, together with the subset paragraph of §14 that answers `INVALID_DERIVED_RUNTIME` for it, because a derived schema can only add constraints when both schemas validate.
+- A request with no options is validated as an empty object, so a schema's `required` refuses it.
+- A runtime and revision with no schema accept any options and emit `RuntimeOptionsUnschematized`, as §14 states today.
+
+### Refusal
+
+A refusal answers `400 RUNTIME_OPTIONS_INVALID` with the validation report, as today, and `details.runtimeRevision`. When the `PreRoute` chain moved the session to another runtime, the refusal also carries `details.runtime` and `details.interceptor_ref`, which names the last modifier. The counter `lenny_runtime_options_refused_total`, labelled `runtime` and `runtime_revision`, counts refusals, so an operator sees a rollout that refuses clients' options.
+
+### Delivery
+
+The adapter delivers the validated options in `session_start`, beside `runtimeRevision`, and the `runtimeOptions` field of the pod-scoped adapter manifest is removed. The Go, Python, and TypeScript runtime SDKs read the options from `session_start`. A resume rewrites the frame with the session's stored options, so a resumed runtime receives what was validated. The options an interceptor sees cannot change, because [`runtime-routing-design.md`, "RT-2 The interceptor contract"](runtime-routing-design.md#rt-2-the-interceptor-contract) makes `runtimeOptions` immutable in the `PreRoute` and `PostRoute` payloads (RVR-12).
+
+### Delegation
+
+The delegation `TaskSpec` gains `runtimeOptions`, which the child session stores. The gateway validates them at the post-chain point against the child's chosen revision, and the parent's `DelegationPolicy` may refuse them. §8.2's statement that §14 defines the full session creation schema, `runtimeOptions` included, then holds for the `TaskSpec` as well.
 
 ## Worked example: an upgrade on AWS
 
@@ -419,6 +519,16 @@ An operator who wants to watch the new revision on a small share of users first 
 2. `proceed` gives revision 8 a weight of 5. Under the default `rollout.key: user`, the same users reach revision 8 for as long as the weights hold. The operator compares session failures and latency by the `runtime_revision` label.
 3. `set-weight 25`, `set-weight 50`, and `promote` complete the rollout. Each step warms revision 8's larger share before the weight moves ("Warm before weight"), and the warm target is split by weight, so the warm pod count stays near the target throughout. The extra cost is about $1 to $2. A `promote` skips the warm-up of its own step, so the operator promotes once revision 8 already holds most of the weight.
 
+### A schema-only fix
+
+After revision 8 completes, the operator finds that its `runtimeOptionsSchema` caps `maxTokens` at 4,096 where the binary accepts 32,000, and writes the corrected schema.
+
+1. The write changes a gateway-read field alone, so it creates revision 9 with revision 8's pod hash. Revision 9 shares revision 8's pod set.
+2. Under `automatic`, the rollout moves revision 9 to the full weight at once, because the shared pod set already holds the warm target. Karpenter adds no node and no node pulls an image.
+3. `Draining` ends no session, because revision 8's pod set stays as revision 9's, and `Contracting` deletes nothing.
+
+The fix costs no warm-up: no extra node, no image pull, and no cold start. Under `manual` with `canaryPercent: 5`, the weights still apply, so 5% of users have their options validated against revision 9's schema while every session claims from the one pod set.
+
 ### Effect on customers
 
 - A running session stays on its revision until it ends, so the rollout interrupts no session.
@@ -434,13 +544,15 @@ An operator who wants to watch the new revision on a small share of users first 
 
 ## Limits
 
-- **Pods during a rollout.** A pool holds a pod set per active revision, so a rollout raises the warm pod count until `Contracting`.
-- **Tenant-derived pools multiply the cost.** A base rollout gives every pool on every derived runtime of that base a pod set per active revision. On owned pools the platform carries that cost outside the tenants' budgets (D8), bounded by the namespace `ResourceQuota`.
+- **Pods during a rollout.** A pool holds a pod set per distinct pod hash among the active revisions, so a rollout that changes a pod-affecting field raises the warm pod count until `Contracting`. A rollout that changes only gateway-read fields adds no pods.
+- **Tenant-derived pools multiply the cost.** A base rollout that changes a pod-affecting field gives every pool on every derived runtime of that base a pod set per distinct pod hash. On owned pools the platform carries that cost outside the tenants' budgets (D8), bounded by the namespace `ResourceQuota`.
 - **Cold starts on owned pools.** An owned pool whose new pod set does not warm within `rollout.ownedPoolWarmTimeoutSeconds` serves its first sessions on the new revision cold.
 - **A breaking base revision stops tenant runtimes during the canary.** A tenant-derived runtime that one revision in the traffic breaks reads as `incompatible` for the whole rollout, including while that revision holds a small weight.
 - **No revision choice.** A client cannot send a session, or a derive, to a specific revision (D2). A regression test against a new revision runs once the rollout gives the test's rollout key that revision.
 - **Live fields are not staged.** A change to a live field reaches every revision at once. A live-field change that a new binary needs has to stay compatible with the old revision while both run.
-- **A retired revision moves resumable sessions.** A session suspended longer than the drain timeout resumes on another revision (D7).
+- **A retired revision moves resumable sessions.** A session suspended longer than the drain timeout resumes on another revision (D7), and that resume fails when the new revision's schema refuses the session's options. The client recovers with a derive that replaces the options.
+- **Options depend on the revision during a rollout.** A client sent to the new revision has its options validated against the new schema, so a renamed or removed option refuses the clients the new revision serves while the old revision accepts it. Discovery shows each caller the schema of the revision it would be assigned only under `rollout.key: user`.
+- **A pod-affecting judgement can cost a warm-up.** A field placed as pod-affecting that no pod reads, such as the runtime's `isolationProfile` in the tree, warms a pod set it does not need.
 - **One rollout at a time.** A runtime has at most one rollout in progress. A non-urgent change during a canary waits for a rollback or completion, and an `immediate` change ends the canary.
 - **Cold starts under `immediate`.** Sessions created before the new pod sets are warm wait for pod creation.
 - **Revision history costs storage.** "Storage and performance" estimates it, and a CI pipeline that writes an image on every build produces the largest case.
@@ -454,6 +566,11 @@ An operator who wants to watch the new revision on a small share of users first 
 - **Substitute another revision when a pod set is empty.** It moves the split away from the weights under load and hides an undersized pod set.
 - **Give derived runtimes their own revisions.** The binary comes from the base, so a derived revision would add a second traffic table that cannot change which image a session runs, and every base revision would multiply by every derived revision. A derived runtime's own values merge over the selected base revision instead (D5).
 - **Count the rollout's extra pods in the tenant's budget.** A platform rollout would push a tenant at its bound into `QUOTA_EXCEEDED` for a change the tenant did not make (D8).
+- **Keep `runtimeOptionsSchema` live.** Every running binary would have to accept every option the one live schema admits, so a binary that adds or renames an option could not ship its schema with it.
+- **Validate options against every revision in the traffic.** A new revision that renames an option would refuse every client as soon as it entered the traffic, at any weight, including the clients the old revision still serves (D9).
+- **Merge a derived schema over the base's.** A replacing derived schema can widen the base's to no constraint, and a name check does not prevent that. Separate validations against both schemas hold the base's constraints with no merge rule.
+- **Fetch schemas by URL.** Session creation would depend on a remote host, and a `file:` reference reads the gateway's filesystem. The schemas ship in the binaries and the chart instead.
+- **Key pod sets on the revision.** A schema fix would warm a full pod set and drain the old one, at the cost of a pod-affecting rollout, for a field no pod reads.
 
 ## Specification changes
 
@@ -461,34 +578,44 @@ The following edits locate their targets by heading:
 
 | Section | Change |
 | :-- | :-- |
-| [§5.1 Runtime](../spec/05_runtime-registry-and-pool-model.md#51-runtime), opening, "Inheritance Rules", and "Normative Merge Algorithm" | Add revisions, the field classes, the write rule, `rollout`, and the revision record. Make `type` and `executionMode` fixed. Replace "Base runtime mutability" with the field classes. State that a derived runtime's fields merge over the selected base revision, that a narrowing holds against every revision in the base's traffic, and that the refusal of an invalidating base write applies to platform-owned derived runtimes. |
-| [§5.2](../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) and [§4.6.2](../spec/04_system-components.md#462-poolscalingcontroller-pool-configuration) | Add pod sets per revision, the warm split, the warm list per pool and revision, and pool admission against every revision in the traffic. |
-| [§4.6.1](../spec/04_system-components.md#461-warm-pool-controller-pod-lifecycle) | The warm pool controller keeps a template and warm pool pair per pool and active revision, skips a quarantined Sandbox when it deletes a pair, and the pod builder reads the revision. |
-| [§4.7.6](../spec/04_system-components.md#476-adapter-manifest-field-reference) and [§28.5.3](../spec/28_communication-channels.md#2853-intra-pod) | Add `runtimeRevision` to the per-session fields and `session_start`. |
-| [§7.1 Normal Flow](../spec/07_session-lifecycle.md#71-normal-flow) | Add revision selection after the `PreRoute` chain and before the post-chain point, and state that the post-chain point reads versioned fields from the chosen revision. |
-| [§7.3 Retry and Resume](../spec/07_session-lifecycle.md#73-retry-and-resume) | Add the revision rule of "RV-6". |
+| [§5.1 Runtime](../spec/05_runtime-registry-and-pool-model.md#51-runtime), opening, "Inheritance Rules", and "Normative Merge Algorithm" | Add revisions, the field classes with the pod-affecting and gateway-read kinds, the write rule, `rollout`, and the revision record with the pod hash and the schema digest. Make `type` and `executionMode` fixed. Replace "Base runtime mutability" with the field classes. State that a derived runtime's fields merge over the selected base revision, that a narrowing holds against every revision in the base's traffic, and that the refusal of an invalidating base write applies to platform-owned derived runtimes. Replace the `runtimeOptionsSchema` merge row, an override with a property-name subset rule, with the separate validations of "RV-7" against both schemas, and state that a schema is compiled at write and refused when it does not compile. |
+| [§5.2](../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) and [§4.6.2](../spec/04_system-components.md#462-poolscalingcontroller-pool-configuration) | Add pod sets per pod hash, the warm split by summed weight, the warm list per pool and pod set, and pool admission against every revision in the traffic. |
+| [§4.6.1](../spec/04_system-components.md#461-warm-pool-controller-pod-lifecycle) | The warm pool controller keeps a template and warm pool pair per pool and distinct pod hash, skips a quarantined Sandbox when it deletes a pair, and the pod builder reads the revision the template names. |
+| [§4.7.6](../spec/04_system-components.md#476-adapter-manifest-field-reference) and [§28.5.3](../spec/28_communication-channels.md#2853-intra-pod) | Add `runtimeRevision` to the per-session fields, and `runtimeRevision` and `runtimeOptions` to `session_start`. State that a resume rewrites `session_start` with the stored options. |
+| [§7.1 Normal Flow](../spec/07_session-lifecycle.md#71-normal-flow) | Add revision selection after the `PreRoute` chain and before the post-chain point, and state that the post-chain point reads versioned fields from the chosen revision and validates `runtimeOptions` against its schema. |
+| [§7.3 Retry and Resume](../spec/07_session-lifecycle.md#73-retry-and-resume) | Add the revision rule of "RV-6", and the failure of a resume onto a revision whose schema refuses the stored options, with its recorded reason and the kept snapshot. |
+| [§8.2 Delegation Mechanism](../spec/08_recursive-delegation.md#82-delegation-mechanism) | Add `runtimeOptions` to the delegation `TaskSpec`, validated at the post-chain point against the child's revision and subject to the `DelegationPolicy`, so the citation of §14 for the session creation schema holds for the `TaskSpec`. |
+| [§14 Workspace Plan Schema](../spec/14_workspace-plan-schema.md#14-workspace-plan-schema), the `runtimeOptions` field notes, and [§14.1](../spec/14_workspace-plan-schema.md#141-workspaceplan-schema-versioning), **Outer-envelope validation of `CreateSessionRequest` fields.** | State that options are validated at the post-chain point against the chosen revision's schema, and against a derived runtime's schema separately, that absent options are validated as an empty object, and that a refusal carries `details.runtimeRevision`. Move the built-in schemas to `schemas/runtime-options/` with a pointer from §14, remove the `https://schemas.lenny.dev/runtime-options/` URLs, and remove the paragraph that refuses a derived schema's new property names with `INVALID_DERIVED_RUNTIME`. |
+| [§26](../spec/26_reference-runtime-catalog.md) | State that each reference runtime carries its schema inline, rendered from its file under `schemas/runtime-options/`, in place of a URL. |
+| [§27.4 UI surface](../spec/27_web-playground.md#274-ui-surface) | State that the session configuration form uses the schema of the revision discovery reports for the caller. |
 | [§10.5](../spec/10_gateway-internals.md#105-upgrade-and-rollback-strategy) | Replace the pool-level `RuntimeUpgrade` with the runtime rollout of "RV-4". |
 | [§11.2.1 Billing Event Stream](../spec/11_policy-and-controls.md#1121-billing-event-stream) | Add `runtime_revision`. |
-| [§12.2](../spec/12_storage-architecture.md#122-storage-roles) | Add the revision table, the asset content table, and the retention rule with its flag. |
-| [§15.1 REST API](../spec/15_external-api-surface.md#151-rest-api) | Add the revision, rollout, promote, and revision delete endpoints, `?rollout=immediate` on runtime writes, `runtimeRevision` on session responses, `ROLLOUT_IN_PROGRESS`, and `REVISION_EXPIRED`. Remove the pool upgrade endpoints. |
-| [§15.5 API Versioning and Stability](../spec/15_external-api-surface.md#155-api-versioning-and-stability), the `Runtime` resource | Add `rollout` to the spec and `latestRevision` and the traffic to the status. The proposal's verifier confirms that this is where the resource's schema is stated, or finds the section that states it. |
-| [§16.1](../spec/16_observability.md#161-metrics), [§16.5](../spec/16_observability.md#165-alerting-rules-and-slos), and [§16.6](../spec/16_observability.md#166-operational-events-catalog) | Add the `runtime_revision` label, `session.runtime_revision_changed`, and the runtime labels on the rollout metrics and alerts. |
+| [§12.2](../spec/12_storage-architecture.md#122-storage-roles) | Add the revision table, the asset and schema content tables, and the retention rule with its flag. |
+| [§15.1 REST API](../spec/15_external-api-surface.md#151-rest-api) | Add the revision, rollout, promote, and revision delete endpoints, `?rollout=immediate` on runtime writes, `runtimeRevision` on session responses and discovery entries, the per-caller revision rule of "Discovery", `runtimeOptions` on create-and-start, `details.runtimeRevision`, `details.runtime`, and `details.interceptor_ref` on `RUNTIME_OPTIONS_INVALID`, the suspended-session count in rollout `status`, `ROLLOUT_IN_PROGRESS`, and `REVISION_EXPIRED`. Remove the pool upgrade endpoints. |
+| [§15.5 API Versioning and Stability](../spec/15_external-api-surface.md#155-api-versioning-and-stability), the `Runtime` resource | Add `rollout` to the spec, replace `runtimeOptionsSchemaRef` with the inline `runtimeOptionsSchema`, and add `latestRevision` and the traffic to the status. The proposal's verifier confirms that this is where the resource's schema is stated, or finds the section that states it. |
+| [§15.7 Runtime Author SDKs](../spec/15_external-api-surface.md#157-runtime-author-sdks) | State that `CreateRequest.RuntimeOptions` comes from `session_start`. |
+| [§16.1](../spec/16_observability.md#161-metrics), [§16.5](../spec/16_observability.md#165-alerting-rules-and-slos), and [§16.6](../spec/16_observability.md#166-operational-events-catalog) | Add the `runtime_revision` label, `lenny_runtime_options_refused_total`, `session.runtime_revision_changed`, and the runtime labels on the rollout metrics and alerts. |
 | [§24](../spec/24_lenny-ctl-command-reference.md) | Replace `lenny-ctl admin pools upgrade` with `lenny-ctl admin runtimes rollout`. |
 
 ## Non-specification changes
 
 | Area | Change |
 | :-- | :-- |
-| `pkg/gateway/runtime/runtimestore` | The revision table, the hash, traffic, and rollout state. |
-| `pkg/controller/runtime` | The hash on mirror, and `latestRevision` and traffic in the resource status. |
-| `pkg/apis/lenny/v1alpha1` | `runtimeRevision` on `SandboxTemplate`, the status fields on `Runtime`, and `rollout` on the spec. Regenerate the CRD manifests. |
-| `pkg/controller/sandbox` and `podspec` | Read versioned fields from the revision. |
-| `pkg/controller/warmpool` and `pkg/controller/poolscaling` | Pod sets per revision, the warm split, the warm list per revision, the owned-pool exemption of D8, and the quarantine skip. |
-| `pkg/gateway/sessionserver` post-chain point | The checks that read versioned fields read the chosen revision. |
+| `pkg/gateway/runtime/runtimestore` | The revision table, the hash and the pod hash, the schema content table by digest, traffic, and rollout state. |
+| `pkg/controller/runtime` | The hash on mirror, the inline schema in place of `runtimeOptionsSchemaFromRef`, the base-write checks of `derivedRuntimesInvalidatedBy` on mirror, and `latestRevision` and traffic in the resource status. |
+| `pkg/apis/lenny/v1alpha1` | `podHash` and `runtimeRevision` on `SandboxTemplate`, the status fields on `Runtime`, `rollout` on the spec, and `runtimeOptionsSchema` in place of `runtimeOptionsSchemaRef`. Regenerate the CRD manifests. |
+| `schemas/runtime-options/` and `schemas/embed.go` | One schema file per reference runtime, taken from §14, and the embed pattern widened to the directory. |
+| `charts/lenny` | `templates/reference-runtimes.yaml` and the reference runtime values render each schema file inline. Regenerate `pkg/embedded/manifests/manifests.yaml`. |
+| `pkg/gateway/externalapi/admin` runtime writes | Compile the schema at write, refuse a schema that does not compile, refuse `$schema`, `$id`, and a non-local `$ref` on a tenant-written schema, and strip `$id` from a platform-shipped file. |
+| `pkg/controller/sandbox` and `podspec` | Read pod-affecting fields from the revision the template names. |
+| `pkg/controller/warmpool` and `pkg/controller/poolscaling` | Pod sets per pod hash, the warm split by summed weight, the warm list per pod set, the owned-pool exemption of D8, and the quarantine skip. |
+| `pkg/gateway/sessionserver` post-chain point | The checks that read versioned fields read the chosen revision. Options validation moves out of `validateAndBuildCreateRow` to the post-chain point, with the compiled-schema cache by digest, the separate validations against both schemas on a derived runtime, the empty-object validation of absent options, the refusal details, and the refusal counter. |
+| `pkg/gateway/sessionserver` resume and `pkg/gateway/mcpfabric` delegation | Options validation on a resume that changes revision, with the recorded reason, and `runtimeOptions` on the delegation `TaskSpec`. |
+| `pkg/gateway/sessionserver` discovery and `pkg/gateway/playground` | The per-caller revision of "Discovery" and `runtimeRevision` on each entry. |
 | `pkg/gateway/upgrade/runtimeupgrade` and `pkg/runtime/upgrade/state` | Runtime-level rollout on traffic. |
 | `pkg/gateway/sessionserver` and `pkg/gateway/mcpfabric` | Revision selection, `runtimeRevision` on the record, resume by revision, and billing. |
 | `pkg/gateway/externalapi/admin` and `pkg/ctlcli` | The revision and rollout endpoints and commands. |
-| `pkg/adapter`, `schemas/lenny-adapter.proto`, and the runtime SDKs | `runtimeRevision`. |
+| `pkg/adapter`, `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, and the runtime SDKs | `runtimeRevision`, and `runtimeOptions` in `session_start`, rewritten on resume. The Go, Python, and TypeScript SDKs read the options from `session_start`, and the manifest's `runtimeOptions` field is removed. |
 | `migrations` | The revision table, `sessions.runtime_revision`, and the rollout state. |
 | `docs/` | An operator guide page on revisions and rollouts, linked from the routing guide of [`runtime-routing-design.md`](runtime-routing-design.md). |
 
@@ -496,12 +623,12 @@ The following edits locate their targets by heading:
 
 | Tier | Coverage |
 | :-- | :-- |
-| 1 | Field classification and the hash, and a write changing `type` or `executionMode` refused. A live-field write creates no revision. Selection shares and stability per key, and the single-revision shortcut (RVR-3). The resume rule for a retired revision. The retention job keeps referenced revisions and deletes unreferenced ones past the period, and an early delete of a referenced revision is refused. An `immediate` write during a rollout ends it. A derived runtime's override and append merge over the selected base revision, and a narrowing that one revision in the traffic breaks is refused at the derived write and reads as `incompatible` on a base write. The charge of an owned pool during a base rollout leaves out the extra pod set (D8). |
-| 2 | Against envtest: a `Runtime` resource change creates a revision and leaves existing pods' templates unchanged (RVR-1), the warm pool controller creates and deletes pod sets per revision, and the resource status reports the traffic. |
-| 3 | `session_start` and the manifest carry `runtimeRevision`. The rollout endpoints. |
-| 4 | On the compose stack: sessions split by weight across revisions, a delegated child under `rollout.key: session` matches its root, a derive selects by traffic, a resume stays on its revision, billing events and metrics carry it, and a live-field change reaches both revisions at once (RVR-2, RVR-5, RVR-7, RVR-8). A session on a derived runtime runs a base revision (RVR-6). With revision 6 at `deploymentModel: sidecar` and revision 7 at `embedded`, a delegated child with exports passes on revision 6 and is refused on revision 7, and a session on a runtime whose revisions differ in `capabilities.deferredToolDiscovery` takes the link check of its chosen revision (RVR-9). |
+| 1 | Field classification and the hash, and a write changing `type` or `executionMode` refused. A live-field write creates no revision. Selection shares and stability per key, and the single-revision shortcut (RVR-3). The resume rule for a retired revision. The retention job keeps referenced revisions and deletes unreferenced ones past the period, and an early delete of a referenced revision is refused. An `immediate` write during a rollout ends it. A derived runtime's override and append merge over the selected base revision, and a narrowing that one revision in the traffic breaks is refused at the derived write and reads as `incompatible` on a base write. The charge of an owned pool during a base rollout leaves out the extra pod set (D8). Two revisions that differ only in `runtimeOptionsSchema`, `credentialCapabilities`, or `capabilities.interaction` have one pod hash, and two that differ in `image`, `sdkWarmBlockingPaths`, or `capabilities.preConnect` have two (RVR-13). The warm split sums the weights of the revisions sharing a pod set. A schema that does not compile is refused at write. A tenant schema with `$schema`, `$id`, a remote `$ref`, or a `file:` `$ref` is refused, a local `#/...` `$ref` passes, and a platform file's `$id` is stripped before compiling. A schema write stores one content row per digest, and the retention job deletes unreferenced schema content. Options validate against the chosen revision's schema and, on a derived runtime, against both schemas, with a value the base allows and the derived schema refuses refused and the reverse refused too. Absent options meet a schema's `required`. Discovery under `rollout.key: user` reports the revision the caller's HMAC selects, and otherwise the highest-weight revision, the older on a tie. A derived schema that requires a property one revision in the traffic forbids reads as `incompatible`, and one that only names it stays compatible. |
+| 2 | Against envtest: a `Runtime` resource change creates a revision and leaves existing pods' templates unchanged (RVR-1), the warm pool controller creates and deletes pod sets per pod hash, a schema-only change creates no pod set, and the resource status reports the traffic. The RuntimeReconciler mirrors an inline schema, refuses a mirror that invalidates a platform-owned derived runtime, and creates no revision when it reconciles an unchanged resource. |
+| 3 | `session_start` carries `runtimeRevision` and `runtimeOptions`, a resumed session's `session_start` carries the stored options, and the manifest carries `runtimeRevision` and no `runtimeOptions`. The Go, Python, and TypeScript SDKs expose the options from `session_start`. The rollout endpoints, the discovery entry's `runtimeRevision`, and the `RUNTIME_OPTIONS_INVALID` details. The chart renders each reference runtime with its schema inline, and each file under `schemas/runtime-options/` compiles. |
+| 4 | On the compose stack: sessions split by weight across revisions, a delegated child under `rollout.key: session` matches its root, a derive selects by traffic, a resume stays on its revision, billing events and metrics carry it, and a live-field change reaches both revisions at once (RVR-2, RVR-5, RVR-7, RVR-8). A session on a derived runtime runs a base revision (RVR-6). With revision 6 at `deploymentModel: sidecar` and revision 7 at `embedded`, a delegated child with exports passes on revision 6 and is refused on revision 7, and a session on a runtime whose revisions differ in `capabilities.deferredToolDiscovery` takes the link check of its chosen revision (RVR-9). With revision 7 accepting option `model` and revision 8 renaming it, a session sent to revision 8 with `model` is refused with `RUNTIME_OPTIONS_INVALID` naming revision 8 and counted under that `runtime_revision`, and one sent to revision 7 passes, on a create, a create-and-start, a derive, and a delegated child (RVR-12). A route that moves a session to another runtime yields a refusal naming that runtime and the last modifier. A child whose `TaskSpec` options the `DelegationPolicy` refuses is refused. A suspended session whose revision is retired and whose options revision 8 refuses fails its resume with `runtime_options_invalid`, keeps its snapshot, and is counted in rollout `status` before `Contracting`, and a derive `from: latest` with replaced options recovers it. |
 | 5, owned pools and forensics | On Kind: a base rollout on a tenant at its `maxOwnedPods` bound warms the new pod set without a `QUOTA_EXCEEDED`, an owned pool that cannot warm moves after `ownedPoolWarmTimeoutSeconds`, a pod warming for one revision reaches only that revision's warm list, and `Contracting` leaves a quarantined Sandbox and its pair in place (RVR-10). |
-| 5 | On Kind: an `automatic` rollout warms the new pod set before moving traffic, a `manual` `set-weight` holds the weight until the new pod set reaches its share and enters `Paused` with the weight unchanged when `warmTimeoutSeconds` passes (RVR-11), a `manual` rollout pauses and rolls back with the old pod set intact, `Contracting` deletes the old pod set only after its sessions end (RVR-4), and an `immediate` write or a promote sends the next session to the new revision before its pod set is warm. |
+| 5 | On Kind: an `automatic` rollout warms the new pod set before moving traffic, a `manual` `set-weight` holds the weight until the new pod set reaches its share and enters `Paused` with the weight unchanged when `warmTimeoutSeconds` passes (RVR-11), a `manual` rollout pauses and rolls back with the old pod set intact, `Contracting` deletes the old pod set only after its sessions end (RVR-4), and an `immediate` write or a promote sends the next session to the new revision before its pod set is warm. A schema-only rollout under `automatic` moves traffic with no new pod, and under `manual` at weight 5 sends that share of sessions to the new revision while every session claims from the one pod set, and `Draining` ends none of them (RVR-13). |
 | 7a | Concurrent creates during a weight change keep each key on one revision per traffic version, under `-race`. |
 | 8 | A gateway restart during `Expanding` keeps the traffic and the phase. |
 | 11 | The rollout guide's commands match the CLI, and the rollout alerts resolve to runbooks. |
@@ -514,7 +641,9 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 | :-- | :-- | :-- |
 | Confirm that no controller replaces warm pods whose image differs from the `Runtime` resource | "Current state" infers a mixed pool from the absence of such code. | Open. |
 | Confirm how a runtime registered only through the admin API reaches the pod builder, which reads the `Runtime` resource | "RV-3" moves the pod builder to the revision, and both registration paths must produce one. | Open. |
-| Review where the gateway reads each versioned field, and settle `runtimeOptionsSchema` | O2 and "RV-1" place the fields by reading their descriptions. The sync review found readers of `capabilities.deferredToolDiscovery`, `deploymentModel`, `type`, and `requireSoPeercred` before selection, which "RV-2" moves to the post-chain point. Other readers may exist. | Open, for the owner's review. |
+| Review where the gateway reads each versioned field, and settle `runtimeOptionsSchema` | O2 asked it. The sync review found readers of `capabilities.deferredToolDiscovery`, `deploymentModel`, `type`, and `requireSoPeercred` before selection, which "RV-2" moves to the post-chain point. | Settled by D9. "Field classes" places each versioned field by its reader in the tree, read on 2026-11-09. |
+| Confirm the placement of `isolationProfile`, `workspaceDefaults`, and `description` | "Field classes" places `isolationProfile` and `workspaceDefaults` by judgement and keeps `description` live, while D9 named descriptions among the gateway-read fields. | Open, for the owner. |
+| Confirm that each built-in schema in §14 compiles as a standalone file with no `$ref` outside the document | "RV-7" moves them to `schemas/runtime-options/` and compiles every schema at write. | Open, for the proposal. |
 | Confirm that the controller can render a warm list and the pre-bind reach per pool and revision | "RV-3" keys them on the revision, and the egress decision service reads them from the pool row today. | Open. |
 | Measure the revisions table at a million rows: insert rate, the retention job's batch time, and listing latency | "Storage and performance" is an estimate. | Open. |
 | Confirm that artifact references in `sharedAssets` resolve to a content digest that a revision can pin | "Field classes" pins them. | Open. |
@@ -524,7 +653,7 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 ## Instructions for reviewers of other designs
 
-- [`runtime-routing-design.md`](runtime-routing-design.md): its reviewer confirms that RT-2 states the order of "RV-2" (the `PreRoute` chain, revision selection, the post-chain point on the chosen revision, then the claim), that `runtimeRevision` stays out of the routing labels, and that the bucketing function is shared.
+- [`runtime-routing-design.md`](runtime-routing-design.md): its reviewer confirms that RT-2 states the order of "RV-2" (the `PreRoute` chain, revision selection, the post-chain point on the chosen revision, then the claim), that `runtimeRevision` stays out of the routing labels, and that the bucketing function is shared. Its reviewer also confirms that `runtimeOptions` is immutable in the `PreRoute` and `PostRoute` payloads, and that the post-chain table carries a `runtimeOptions` row for every creation kind, as "RV-7" requires.
 - [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md): its reviewer:
   - restates DR-6's notice as firing when a base revision is created, and states that `baseStatus` and `incompatible` evaluate against every revision in the base's traffic;
   - drops the DR-6 rows for `type` and `executionMode`, which become fixed, and states that the rows for `deploymentModel` and `requireSoPeercred` evaluate per revision;
@@ -534,10 +663,11 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
   - keys the warm list under "Warm clones", its hosts, and the readable set before binding on pool and revision;
   - moves DR-8's delegation export refusal to the post-chain point on the chosen revision's `deploymentModel`;
   - restates DR-6's row for base `workspaceDefaults`, which is versioned, as applying to plans composed from a revision created after the write;
-  - replaces the pool-level `upgrade` route and the §10.5 row in "Specification sections affected" with the runtime rollout, and the "Removes the base's `Runtime` resource" row with its effect on every revision in the traffic.
-- [`session-derive-design.md`](session-derive-design.md): its reviewer states that a derive selects a revision by traffic and does not inherit its source's revision, and that SD-1's target checks, including the supervisor refusal on `deploymentModel`, run at the post-chain point on the chosen revision.
+  - replaces the pool-level `upgrade` route and the §10.5 row in "Specification sections affected" with the runtime rollout, and the "Removes the base's `Runtime` resource" row with its effect on every revision in the traffic;
+  - replaces the `runtimeOptionsSchema` row of "Fields", its subset-of-names rule, with the separate validations of "RV-7" against both schemas and the write refusals of a tenant schema, and adds the DR-6 row of "Options schemas across base revisions" under "RV-5".
+- [`session-derive-design.md`](session-derive-design.md): its reviewer states that a derive selects a revision by traffic and does not inherit its source's revision, and that SD-1's target checks, including the supervisor refusal on `deploymentModel`, run at the post-chain point on the chosen revision. Its reviewer also states that a derive request may carry `runtimeOptions`, validated at the post-chain point against the chosen revision, as the recovery path of "RV-6".
 - [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md): its reviewer states that the link checks read `capabilities.deferredToolDiscovery` from the chosen revision at the post-chain point.
-- [`egress-and-git-design.md`](egress-and-git-design.md): its reviewer keys the warm list, the warm-list hosts in "Effective policy", and the pre-bind readable set on pool and revision.
+- [`egress-and-git-design.md`](egress-and-git-design.md): its reviewer keys the warm list, the warm-list hosts in "Effective policy", and the pre-bind readable set on pool and revision, which resolves through the revision's pod set.
 - [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md): its reviewer adds a row to FE-1's "Retirement paths" for a rollout's `Contracting`, which skips a quarantined Sandbox and its pair.
 - [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md): its reviewer states that `checkpointPolicy` and `periodicCheckpointIntervalSeconds` are live, that `checkpointExcludes` is versioned, and that a tenant's `checkpointExcludes` on a derived runtime merges over the selected base revision.
 - [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md): its reviewer adds `runtime_revision` to the common envelope of `session.pod_usage`.
@@ -547,10 +677,11 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 One proposal, after the second proposal of [`runtime-routing-design.md`](runtime-routing-design.md), whose shared bucketing function it uses:
 
 1. Land the specification edits.
-2. Add the revision record and the hash on both registration paths, with every runtime at one revision, and move the pod builder to the revision.
-3. Add pod sets per revision, the warm split, and selection.
-4. Move the rollout procedure to the runtime and retire the pool-level endpoints.
-5. Update the documentation and records.
+2. Move `runtimeOptionsSchema` inline on the `Runtime` resource, ship the reference schemas as files, compile schemas at write, and move options validation to the post-chain point and their delivery to `session_start`. These close the defects under "Session options" in "Current state" and need no revision.
+3. Add the revision record, the hash, and the pod hash on both registration paths, with every runtime at one revision, and move the pod builder to the revision.
+4. Add pod sets per pod hash, the warm split, selection, and discovery by revision.
+5. Move the rollout procedure to the runtime and retire the pool-level endpoints.
+6. Update the documentation and records.
 
 ## Review history
 
@@ -568,3 +699,4 @@ This section records how the design reached its current form. A cross-design syn
   - The diagram's hash key matches "RV-2", owned pools cite DR-5 in place of DR-2, and the reviewer instructions cover the designs the sync review found affected.
 - Revision 4, dated 2026-11-09, follows the owner's request for a worked AWS example and a fix to manual steps. "RV-4" adds "Warm before weight" (RVR-11): a `manual` step now warms the new revision's share before its weight rises, as `automatic` already did, and `rollout.warmTimeoutSeconds` pauses a rollout whose platform pod sets cannot warm. Revision 3 let `set-weight` move traffic at once, so a large step started new sessions cold. "Worked example: an upgrade on AWS" estimates the temporary footprint and cost of a rollout for an operator with one runtime.
 - Revision 5, dated 2026-11-09, applies the owner's decision N5 of that date, settled in the owner's word "ok". D8 and "Owned pools during a base rollout (D8)" under "RV-3" state that the idle minutes of a base rollout's extra pod set on an owned pool are billed to the platform rather than the owning tenant, as `pool.idle_usage` of `billing-resource-attribution-design.md` attributes them, which matches D8's exemption of those pods from the tenant's charge and limits.
+- Revision 6, dated 2026-11-09, records the owner's settlement of O2 as decision D9, given in the owner's words "Go with this", and changes these rules. Under S1, the `Runtime` resource carries `runtimeOptionsSchema` inline, the reference runtimes' schemas become files under `schemas/runtime-options/` that `schemas/embed.go` embeds and the chart renders, no component fetches a schema URL, a write compiles the schema and refuses one that does not compile, a tenant-written schema may not carry `$schema`, `$id`, or a non-local `$ref`, and the revision stores the schema by digest, which "Retention" collects and the gateway's compiled-schema cache keys on. Under S2, the schema is versioned and a session's options are validated against the chosen revision's schema, RVR-2 is amended, and validation against every revision in the traffic is recorded as rejected. Under Rule 1, the size cap and the parse stay early, schema validation runs at the post-chain point on every creation kind and on a resume that changes revision, a derived schema is a second, separate validation in place of §5.1's merge and its name-subset rule, and absent options meet `required`. Under Rule 4, a refusal carries `details.runtimeRevision`, with `details.runtime` and `details.interceptor_ref` when the chain moved the session, and `lenny_runtime_options_refused_total` counts refusals. Under Rule 5, the options reach the runtime in `session_start`, rewritten on resume. Under S3, the delegation `TaskSpec` carries `runtimeOptions`. Under S4, "Discovery" under "RV-2" shows each caller the revision it would be assigned. Under S5, versioned fields split into pod-affecting and gateway-read fields, placed by their readers in the tree, pod sets key on the pod hash, and a rollout that changes only gateway-read fields warms nothing, which "RV-3", "RV-4", the worked example, "Limits", and the tests state. Under R2, a resume onto a revision whose schema refuses the stored options fails with a recorded reason and keeps its snapshot, and rollout `status` counts such sessions before `Contracting`. Under R5, a derived schema that requires a property a revision in the traffic forbids makes a tenant-derived runtime `incompatible`. "Current state" records the session options defects filed in `BUILD-GAPS.md` that day, and RVR-12, RVR-13, "RV-7", and the alternatives, specification changes, non-specification changes, validation items, reviewer instructions, and proposal steps follow.
