@@ -1,6 +1,6 @@
 # LLM response cache removal
 
-Status: design for owner review, revision 1, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md) revision 11, and [`security-oversight-design.md`](security-oversight-design.md) revision 47. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RC-n, and requirements carry the label RCR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 2, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md) revision 11, and [`security-oversight-design.md`](security-oversight-design.md) revision 47. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RC-n, and requirements carry the label RCR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -26,7 +26,7 @@ The cache as built has defects beyond the cost of carrying it:
 - A cache hit records no token usage, so a hit is invisible to quotas, budgets, and billing **[source]**.
 - The per-pool `ttl`, `similarityThreshold`, and `backend` are validated and stored, and no code reads them **[source]**.
 
-Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache the computed prefix of a prompt inside their own service, and the model still generates a new response for every request **[external]**. Lenny forwards the Anthropic `cache_control` fields unchanged and does not meter the cached token counts the provider reports **[source]**. The owner's request does not cover provider-side caching. This design keeps the passthrough unless the owner decides otherwise (O1), and it records that Lenny undercounts input tokens whenever a runtime uses provider caching (O2).
+Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache the computed prefix of a prompt inside their own service, and the model still generates a new response for every request **[external]**. Lenny forwards the Anthropic `cache_control` fields unchanged and does not meter the cached token counts the provider reports **[source]**. The owner's request does not cover provider-side caching. This design keeps the passthrough unless the owner decides otherwise (O1), and it records that Lenny undercounts input tokens whenever a runtime uses provider caching (O2, F-11.2.38).
 
 ## Scope
 
@@ -185,15 +185,17 @@ All of the following was read on 2026-11-09 **[source]**:
 ### Provider prompt caching today
 
 - The Anthropic translator forwards the request body unchanged, and the Bedrock and Vertex translators re-encode it with every field kept except `model`, so `cache_control` reaches all three Anthropic-format providers **[source]**. Bedrock accepts `cache_control` on content blocks of an InvokeModel body, and at the top level for the models its guide lists **[external]**.
-- The proxy mounts only `POST /llm-proxy/v1/messages` and always translates from the Anthropic dialect, so the OpenAI and Azure translators are unreachable from the proxy today **[source]**. OpenAI and Azure OpenAI cache automatically, with no request field needed **[external]**.
-- `extractAnthropicUsage` and the streaming `applySSEUsage` read `input_tokens` and `output_tokens` alone **[source]**. Anthropic's `input_tokens` counts only the tokens after the last cache breakpoint, and the total input is `cache_read_input_tokens + cache_creation_input_tokens + input_tokens` **[external]**. Lenny's authoritative input count therefore omits every cached token. §11.2, **Quota Update Timing**, says the proxy extracts `input_tokens` and `output_tokens` and that a runtime cannot influence quota accounting by underreporting **[source]**.
+- The proxy mounts only `POST /llm-proxy/v1/messages` and always translates from the Anthropic dialect, so the OpenAI and Azure translators are unreachable from the proxy today **[source]** (F-4.9.48). F-4.9.10 recorded the missing route among its evidence and was closed by provider dispatch, with the dialect route placed out of scope, so F-4.9.48 records the route and F-4.9.10 stays closed. OpenAI and Azure OpenAI cache automatically, with no request field needed **[external]**.
+- `extractAnthropicUsage` and the streaming `applySSEUsage` read `input_tokens` and `output_tokens` alone **[source]**. Anthropic's `input_tokens` counts only the tokens after the last cache breakpoint, and the total input is `cache_read_input_tokens + cache_creation_input_tokens + input_tokens` **[external]**. Lenny's authoritative input count therefore omits every cached token. §11.2, **Quota Update Timing**, says the proxy extracts `input_tokens` and `output_tokens` and that a runtime cannot influence quota accounting by underreporting **[source]**. F-11.2.38 records the undercount.
 - Neither the specification nor the tree mentions `cache_control`, `cache_read_input_tokens`, or `cache_creation_input_tokens`. The Open Responses translator writes `cached_tokens: 0` because it does not track them **[source]**.
-- No BUILD-GAPS finding records the cached-token undercount **[source]**.
+- Revision 1 found no BUILD-GAPS finding for the cached-token undercount **[source]**. Revision 2 files it as F-11.2.38.
 
 ### Records
 
 | Record | State | Relation |
 | :-- | :-- | :-- |
+| F-11.2.38 | Open | The cached-token undercount of "Provider prompt caching today", filed by revision 2. RC-B closes it. |
+| F-4.9.48 | Open | The proxy's missing `openai` dialect route, filed by revision 2. It needs its own proposal, and RC-B's OpenAI metering depends on it. |
 | F-12.8.53 | Open | Per-replica semantic cache and billing buffer erased only on one replica. The cache half goes with the cache, and the billing buffer half stays. |
 | F-4.9.13, F-4.9.14, F-12.2.16, F-12.8.15 | Closed | Built or wired the cache. They stay as history. |
 | T-4.9.15 | Open | `TestSemanticCacheTenantIsolation` for a similar query. |
@@ -239,7 +241,7 @@ The admin API decodes pool payloads without refusing unknown fields **[source]**
 - F-12.8.53 is narrowed to the billing buffer, with a note that the cache half went with RC-A **[design]**.
 - T-4.9.15, T-12.1.1, and T-12.2.5 are resolved as obsolete with a pointer to RC-A, and T-12.1.5, T-12.1.6, T-12.1.7, and T-12.7.2 drop the cache from their text **[design]**.
 - The closed findings and `scripts/refactor/manifest` stay as written.
-- A new BUILD-GAPS finding records the cached-token undercount of "Provider prompt caching today", owned by RC-B **[design]**.
+- F-11.2.38 records the cached-token undercount of "Provider prompt caching today", owned by RC-B **[design]**.
 
 ## RC-5 Provider prompt caching
 
@@ -353,7 +355,7 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 | :-- | :-- | :-- |
 | Confirm the usage field names of a Claude InvokeModel response on Bedrock and of a Claude response on Vertex AI | RC-5's metering reads `cache_read_input_tokens` and `cache_creation_input_tokens`. The Bedrock guide shows the Converse names and defers the InvokeModel body to the model reference, and the Vertex page was not read. | Open. |
 | Confirm which Anthropic streaming events carry `cache_read_input_tokens` and `cache_creation_input_tokens` | `applySSEUsage` takes `input_tokens` from `message_start` today, and RC-5 extends it. | Open. |
-| Confirm whether OpenAI's `prompt_tokens` and `input_tokens`, and Azure's, include `cached_tokens` | RC-5 adds cached tokens only where the total omits them. The guides read on 2026-11-09 did not state it verbatim. | Open. Matters once the OpenAI dialect endpoint exists. |
+| Confirm whether OpenAI's `prompt_tokens` and `input_tokens`, and Azure's, include `cached_tokens` | RC-5 adds cached tokens only where the total omits them. The guides read on 2026-11-09 did not state it verbatim. | Open. Matters once the OpenAI dialect endpoint exists (F-4.9.48). |
 | Count the `§12.8 step N` citations and confirm none cites step 2 for anything other than the cache | The renumbering sweep depends on it. Two code sites cite step 2, both for the cache **[source]**. | Open, for the proposal. |
 | Confirm no deployer-facing document outside `docs/` describes `cachePolicy` | RCR-2. | Open. |
 | Confirm whether the admin API should refuse unknown pool fields | "RC-2" relies on today's silent acceptance. | Open, outside this design. |
@@ -370,7 +372,7 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 | Proposal | Content | Depends on |
 | :-- | :-- | :-- |
 | RC-A | The removal: RC-1 to RC-4. | Nothing. It rebases on CA-G if CA-G lands first. |
-| RC-B | Provider prompt caching under O1 and O2: the §4.9 passthrough statement, the usage count, the billing fields, and the new finding's closure (RC-5). | The owner's answers to O1 and O2. It is independent of RC-A. |
+| RC-B | Provider prompt caching under O1 and O2: the §4.9 passthrough statement, the usage count, the billing fields, and the closure of F-11.2.38 (RC-5). | The owner's answers to O1 and O2. It is independent of RC-A. |
 
 RC-A can land first because it removes behaviour and adds none. RC-B fixes a metering gap that exists with or without the semantic cache.
 
@@ -388,3 +390,4 @@ No review has run.
 ### Revision notes
 
 - Revision 1, dated 2026-11-09, follows the owner's request to remove the LLM response caching Lenny provides. It records the semantic cache as specified and built, the false-match behaviour observed by running the shipped store, the passthrough and the cached-token undercount of provider prompt caching, and the open decisions O1 and O2.
+- Revision 2, dated 2026-11-09, files the defects found while writing this design in `BUILD-GAPS.md`, at the owner's request of 2026-11-09: the cached-token undercount as F-11.2.38 and the missing `openai` dialect route of the LLM proxy as F-4.9.48. F-4.9.10 stays closed, and F-4.9.48 cites it.
