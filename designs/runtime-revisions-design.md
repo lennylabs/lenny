@@ -1,6 +1,6 @@
 # Runtime revisions
 
-Status: design for owner review, revision 3, 2026-11-09. A cross-design sync review ran on 2026-11-08, and revision 3 applies its findings. Nothing here is built or staged. It reads against [`runtime-routing-design.md`](runtime-routing-design.md) revision 7, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 61, [`session-derive-design.md`](session-derive-design.md) revision 13, [`egress-and-git-design.md`](egress-and-git-design.md) revision 73, [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) revision 29, and [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) revision 7. "Decisions" lists what the owner has settled and what remains open. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RV-n, and requirements carry the label RVR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 4, 2026-11-09. A cross-design sync review ran on 2026-11-08, and revision 3 applied its findings. Nothing here is built or staged. It reads against [`runtime-routing-design.md`](runtime-routing-design.md) revision 7, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 61, [`session-derive-design.md`](session-derive-design.md) revision 13, [`egress-and-git-design.md`](egress-and-git-design.md) revision 73, [`forensics-evidence-preservation-design.md`](forensics-evidence-preservation-design.md) revision 29, and [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) revision 7. "Decisions" lists what the owner has settled and what remains open. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RV-n, and requirements carry the label RVR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -8,6 +8,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree or the specification on 2026-11-08. |
 | **[design]** | What this design requires. Nothing implements it. |
+| **[estimate]** | A planning figure computed from stated assumptions and approximate AWS list prices. Nothing measured it. |
 
 ## Problem
 
@@ -194,6 +195,7 @@ Open:
 | RVR-8 | The session record, `session_start`, billing events, and session metrics carry the revision. |
 | RVR-9 | A check at session creation that reads a versioned field reads the chosen revision. A check at a write or at pool admission that reads a versioned field holds for every revision in the runtime's traffic. |
 | RVR-10 | A rollout never deletes a quarantined pod or its Sandbox. |
+| RVR-11 | Under `automatic` and `manual`, a revision's weight rises only after its pod sets hold their share of the warm target at the new weight. Only `immediate`, a promote, and a rollback move traffic before that. |
 
 ## Current state
 
@@ -253,7 +255,8 @@ The `rollout` object is live, and only a `platform-admin` writes it on a platfor
 | `key` | `user`, `session`, or `random`, as "RV-2" states. | `user` |
 | `canaryPercent` | The weight a `manual` rollout gives the new revision when the operator first proceeds, and the share of the warm target its pod sets warm to in `Pending`. Unset, the operator sets each weight with `set-weight`. `automatic` ignores it. | Unset |
 | `drainTimeoutSeconds` | How long `Draining` waits for the old revision's sessions, after which the remaining ones end with a checkpoint, as §10.5 states for the pool-level procedure today. | The runtime's `maxSessionAge` |
-| `ownedPoolWarmTimeoutSeconds` | How long `automatic` waits for an owned pool's new pod set to warm before it moves traffic with cold starts on that pool (D8). | 600 |
+| `warmTimeoutSeconds` | How long a weight increase under `automatic` or `manual` waits for the new revision's pod sets on platform pools to reach their share of the warm target. When it passes, the rollout enters `Paused` with the weight unchanged and emits `upgrade_progressed` with the reason `warm_timeout`. | 1800 |
+| `ownedPoolWarmTimeoutSeconds` | How long a weight increase waits for an owned pool's new pod set to warm before it moves traffic with cold starts on that pool (D8). An owned pool's capacity sits outside the platform's control, so this wait ends by moving traffic rather than by pausing. | 600 |
 
 ### A write
 
@@ -340,13 +343,14 @@ The §10.5 phases move from a pool to a runtime and act on traffic. Every pool o
 | Phase | Traffic and pods |
 | :-- | :-- |
 | `Pending` | The new revision exists at weight 0. Its pod sets warm to the share of the target that `rollout.canaryPercent` sets, or to the full target under `automatic`, with an owned pool waited on for at most `rollout.ownedPoolWarmTimeoutSeconds`. |
-| `Expanding` | The new revision's weight rises to `rollout.canaryPercent`, then by operator steps, or to the full weight in one step under `automatic`. |
+| `Expanding` | The new revision's weight rises to `rollout.canaryPercent`, then by operator steps, or to the full weight in one step under `automatic`. Each increase warms first, as "Warm before weight" states. |
 | `Draining` | The new revision holds the full weight. The old revision receives no new sessions, and its sessions run to completion or until `rollout.drainTimeoutSeconds`, after which the remaining ones end with a checkpoint. |
 | `Contracting` | The old revision's pod sets are deleted, apart from any quarantined Sandbox, which stays with its pair until FE-1 releases it (RVR-10). |
 | `Complete` | One revision remains active. |
 | `Paused` | Weights and pod sets hold. Reachable from every phase except `Complete`. |
 
-- **Rollback.** Until `Contracting`, rollback returns the full weight to the old revision and drains the new one. After `Complete`, an operator rolls back by writing the old revision's versioned fields, which creates a new revision with the old content and starts a rollout.
+- **Warm before weight.** Every weight increase under `automatic` or `manual`, including `proceed` and `set-weight`, first raises the new revision's pod sets to their share of the warm target at the requested weight. The weight moves once they hold it. Until then the old revision keeps its share at the current weight, so a step adds at most the new revision's increase in warm pods. The wait is bounded by `rollout.warmTimeoutSeconds` on platform pools and by `rollout.ownedPoolWarmTimeoutSeconds` on owned pools. `status` reports a pending step and each pod set's warm count against its share (RVR-11).
+- **Rollback.** Until `Contracting`, rollback returns the full weight to the old revision and drains the new one. Rollback does not wait for warm pods, because the new revision is the one being left. A weight of 0 releases a revision's idle warm pods, so a rollback after the old revision reached weight 0 starts new sessions cold until its pod sets warm again. After `Complete`, an operator rolls back by writing the old revision's versioned fields, which creates a new revision with the old content and starts a rollout.
 - **Promote.** A promote moves the rollout from any phase before `Draining` straight to `Draining`, with the newest revision at full weight. It does not wait for the new pod sets to warm.
 - **Surface.** `/v1/admin/runtimes/{name}/rollout` replaces `/v1/admin/pools/{name}/upgrade-*`, and `lenny-ctl admin runtimes rollout` with `status`, `proceed`, `set-weight`, `promote`, `pause`, `resume`, and `rollback` replaces `lenny-ctl admin pools upgrade`. Only a `platform-admin` drives a rollout of a platform runtime.
 - **Schema migrations.** The `drainFirst` and `schemaVersion` fields of §10.5 move to the runtime rollout unchanged.
@@ -367,6 +371,66 @@ The §10.5 phases move from a pool to a runtime and act on traffic. Every pool o
 - **Retry and resume.** A retried or resumed session claims from its recorded revision's pod set while that pod set exists. A revision does not leave the registry while a live session references it. A resumable session can outlive `rollout.drainTimeoutSeconds`, and when its pod set is gone, it resumes on the revision with the highest weight, the gateway updates `runtimeRevision`, and it emits `session.runtime_revision_changed` (D7).
 - **Delegation.** A delegated child chooses a revision of its own runtime by "RV-2". Under `rollout.key: session`, the key is the root session ID, so a delegation tree stays on one revision of each runtime it uses.
 - **Derive.** A derive chooses a revision by "RV-2" like a create. It does not inherit its source's revision (D2).
+
+## Worked example: an upgrade on AWS
+
+An operator offers one runtime, `claude-worker`, to every customer and runs it on Amazon EKS in `us-east-1`, with Karpenter provisioning nodes. The operator ships a new image and wants no customer to notice. The figures are **[estimate]**: they follow from the assumptions below and from approximate AWS list prices, which "Validation owed" lists for checking.
+
+| Assumption | Value |
+| :-- | :-- |
+| Pools | One pool for `claude-worker`. |
+| Agent pod request | 1 vCPU and 4 GiB, for the runtime and the adapter together. |
+| Node type | `m7i.4xlarge` (16 vCPU and 64 GiB) at about $0.81 an hour on demand, holding about 14 agent pods after DaemonSets. |
+| Peak load | 2,000 live sessions and a warm target of 300 pods, on about 165 nodes, which cost about $133 an hour. |
+| Off-peak load, at 03:00 UTC | 400 live sessions and a warm target of 60 pods, on about 33 nodes. |
+| Image | 3 GB compressed, in Amazon ECR. |
+| `maxSessionAge` | 7,200 seconds, the default of §11.3. |
+| Warm-up time | 5 to 10 minutes for a pod set, covering node launch, the image pull, and the runtime's start. |
+
+### Default rollout at off-peak
+
+The runtime keeps the default `rollout.policy: automatic`.
+
+1. The operator writes the new image with `PUT /v1/admin/runtimes/claude-worker`. The write changes a versioned field, so it creates revision 8 at weight 0 and starts a rollout in `Pending`.
+2. Revision 8's pod set warms to the full warm target of 60 pods. Karpenter adds about 5 nodes, and each new node pulls the image once. No session reaches revision 8 yet.
+3. The rollout enters `Expanding` and gives revision 8 the full weight. New sessions claim revision 8's warm pods. Revision 7's weight is 0, so its warm target is 0 and its 60 idle pods are deleted.
+4. In `Draining`, the roughly 400 sessions on revision 7 continue until they end. A resumed session returns to revision 7 while its pod set exists. No session outlives `maxSessionAge`, and `drainTimeoutSeconds` defaults to it, so the drain ends within 2 hours and ends no session early. Nodes carry no revision, so revision 8's pods fill the capacity that revision 7's sessions release.
+5. `Contracting` deletes revision 7's pod set, and Karpenter consolidates the nodes that are left underused.
+
+The operator follows the rollout with `lenny-ctl admin runtimes rollout status` and can run `rollback` until `Contracting`.
+
+| Temporary cost | Off-peak | Peak, for comparison |
+| :-- | :-- | :-- |
+| Second warm pod set during the warm-up, about 15 minutes | 5 nodes, about $1 | 22 nodes and 352 vCPU, about $4.50 |
+| Underused nodes during the drain, before consolidation | about 3 nodes for an hour, about $2.50 | about 14 nodes for an hour, about $11 |
+| Image pulls, one per node | about 100 GB | about 500 GB |
+| Image pulls through a NAT gateway, at $0.045 per GB | about $5 | about $22 |
+| Image pulls through an S3 gateway endpoint | $0 | $0 |
+| ECR storage for the new image | about $0.30 a month | about $0.30 a month |
+| Total | about $4 to $9 | about $15 to $40 |
+
+The rollout costs less than an hour of the fleet. Its largest item is the second warm pod set during the warm-up, which scales with the warm target. The warm target follows demand, so a rollout at off-peak needs the fewest extra nodes and is the least exposed to an EC2 capacity shortage.
+
+### Canary rollout
+
+An operator who wants to watch the new revision on a small share of users first sets `rollout.policy: manual` and `rollout.canaryPercent: 5` before writing the image.
+
+1. In `Pending`, revision 8's pod set warms to 5% of the warm target: 3 pods at off-peak, or 15 pods on 1 or 2 extra nodes at peak.
+2. `proceed` gives revision 8 a weight of 5. Under the default `rollout.key: user`, the same users reach revision 8 for as long as the weights hold. The operator compares session failures and latency by the `runtime_revision` label.
+3. `set-weight 25`, `set-weight 50`, and `promote` complete the rollout. Each step warms revision 8's larger share before the weight moves ("Warm before weight"), and the warm target is split by weight, so the warm pod count stays near the target throughout. The extra cost is about $1 to $2. A `promote` skips the warm-up of its own step, so the operator promotes once revision 8 already holds most of the weight.
+
+### Effect on customers
+
+- A running session stays on its revision until it ends, so the rollout interrupts no session.
+- A new session claims a warm pod of the revision it is sent to, so the rollout adds no cold start.
+- A rollback after revision 7 reached weight 0 starts new sessions cold for the warm-up time.
+- An `immediate` write or a promote moves traffic before the new pods are warm, so new sessions start cold for the warm-up time. They exist for urgent fixes.
+
+### Preparation
+
+- An S3 gateway endpoint lets nodes download ECR image layers at no data charge, and ECR interface endpoints cost about $0.01 an hour for each availability zone. Without them, each node pulls the image through the NAT gateway.
+- The Karpenter `NodePool` limits, the EC2 vCPU service quota, and the agent namespace's `ResourceQuota` each need room for twice the warm target during the warm-up: 352 vCPU at the peak in the example.
+- A rollout at off-peak keeps the temporary footprint smallest.
 
 ## Limits
 
@@ -437,7 +501,7 @@ The following edits locate their targets by heading:
 | 3 | `session_start` and the manifest carry `runtimeRevision`. The rollout endpoints. |
 | 4 | On the compose stack: sessions split by weight across revisions, a delegated child under `rollout.key: session` matches its root, a derive selects by traffic, a resume stays on its revision, billing events and metrics carry it, and a live-field change reaches both revisions at once (RVR-2, RVR-5, RVR-7, RVR-8). A session on a derived runtime runs a base revision (RVR-6). With revision 6 at `deploymentModel: sidecar` and revision 7 at `embedded`, a delegated child with exports passes on revision 6 and is refused on revision 7, and a session on a runtime whose revisions differ in `capabilities.deferredToolDiscovery` takes the link check of its chosen revision (RVR-9). |
 | 5, owned pools and forensics | On Kind: a base rollout on a tenant at its `maxOwnedPods` bound warms the new pod set without a `QUOTA_EXCEEDED`, an owned pool that cannot warm moves after `ownedPoolWarmTimeoutSeconds`, a pod warming for one revision reaches only that revision's warm list, and `Contracting` leaves a quarantined Sandbox and its pair in place (RVR-10). |
-| 5 | On Kind: an `automatic` rollout warms the new pod set before moving traffic, a `manual` rollout pauses and rolls back with the old pod set intact, `Contracting` deletes the old pod set only after its sessions end (RVR-4), and an `immediate` write or a promote sends the next session to the new revision before its pod set is warm. |
+| 5 | On Kind: an `automatic` rollout warms the new pod set before moving traffic, a `manual` `set-weight` holds the weight until the new pod set reaches its share and enters `Paused` with the weight unchanged when `warmTimeoutSeconds` passes (RVR-11), a `manual` rollout pauses and rolls back with the old pod set intact, `Contracting` deletes the old pod set only after its sessions end (RVR-4), and an `immediate` write or a promote sends the next session to the new revision before its pod set is warm. |
 | 7a | Concurrent creates during a weight change keep each key on one revision per traffic version, under `-race`. |
 | 8 | A gateway restart during `Expanding` keeps the traffic and the phase. |
 | 11 | The rollout guide's commands match the CLI, and the rollout alerts resolve to runbooks. |
@@ -456,6 +520,7 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 | Confirm that artifact references in `sharedAssets` resolve to a content digest that a revision can pin | "Field classes" pins them. | Open. |
 | Confirm that resume claims by the session's recorded pool and can be extended to the revision | "RV-6" relies on it. | Open. |
 | Measure the warm pod cost of a base rollout with tenant-derived pools | "Limits" states the cost without a number. | Open. |
+| Check the AWS prices and measure the warm-up time in "Worked example: an upgrade on AWS" | The example uses approximate list prices and an assumed warm-up time of 5 to 10 minutes. | Open. |
 
 ## Instructions for reviewers of other designs
 
@@ -501,3 +566,4 @@ This section records how the design reached its current form. A cross-design syn
   - "RV-3" keys the warm list and the pre-bind reach on pool and revision, adds the owned-pool exemption (D8), and keeps quarantined Sandboxes through a rollout (RVR-10).
   - "RV-1" classifies the fields revision 2 left out, uses the API name `runtimeOptionsSchema`, lists `type` and `executionMode` under "Changed", and defines the rollout settings, including `canaryPercent`, `drainTimeoutSeconds`, and `ownedPoolWarmTimeoutSeconds`.
   - The diagram's hash key matches "RV-2", owned pools cite DR-5 in place of DR-2, and the reviewer instructions cover the designs the sync review found affected.
+- Revision 4, dated 2026-11-09, follows the owner's request for a worked AWS example and a fix to manual steps. "RV-4" adds "Warm before weight" (RVR-11): a `manual` step now warms the new revision's share before its weight rises, as `automatic` already did, and `rollout.warmTimeoutSeconds` pauses a rollout whose platform pod sets cannot warm. Revision 3 let `set-weight` move traffic at once, so a large step started new sessions cold. "Worked example: an upgrade on AWS" estimates the temporary footprint and cost of a rollout for an operator with one runtime.
