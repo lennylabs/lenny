@@ -15828,9 +15828,20 @@ gauge-cleared-on-missing).
 **Gap:** A webhook pod that outlives one certificate renewal fails closed on every admission request it serves. In a long-running deployment this halts all agent-pod creation cluster-wide on a schedule set by the certificate lifetime, and nothing in the platform detects or repairs it. `CertExpiryImminent` does not fire, because the stored certificate is valid. `pkg/mtls/certreload` already implements the reload the spec requires and is used by the gateway's client paths and the adapter, but the webhook server and the token-service server do not use it.
 **Suggested resolution:** Serve the webhook through a `tls.Config` whose `GetCertificate` is a `certreload.Reloader` over the mounted keypair (and the same for the token-service server credentials). Add a tier-5 or tier-2 test that renews the certificate under a running webhook and asserts that admission keeps working. Add the admission webhooks and their renewal behavior to the §10.3 certificate table through a proposal.
 
+### - [ ] F-10.3.27 — The gateway dials every external interceptor in plaintext on a chart install, because the chart never renders the interceptor TLS flags [High] — OPEN
+
+**Spec:** §10.3 mTLS PKI, **Gateway ↔ Interceptor mTLS peer validation (NET-063).** ("Neither side falls back to CA-only trust"); §4.8 Gateway Policy Engine.
+**Evidence:**
+- `dialInterceptor` (`cmd/lenny-gateway/policychain_seams.go`) dials with `insecure.NewCredentials()` when `--external-interceptor-tls-cert`, `--external-interceptor-tls-key`, and `--external-interceptor-ca` are all empty. No dev-mode or service-mesh check guards that branch. Both callers in `cmd/lenny-gateway/interceptors.go` pass the three flags, which `cmd/lenny-gateway/flags.go` defines with the fallbacks `LENNY_EXTERNAL_INTERCEPTOR_TLS_CERT`, `LENNY_EXTERNAL_INTERCEPTOR_TLS_KEY`, and `LENNY_EXTERNAL_INTERCEPTOR_CA`.
+- No file under `charts/` names any of the three flags or the three environment variables.
+- A render on 2026-11-09, `helm template lenny charts/lenny -f charts/lenny/presets/values-tier2.yaml --set global.spiffeTrustDomain=lenny-test-lenny-system --set coredns.clusterIP=10.96.0.53 --set 'gateway.interceptorNamespaces={acme-policy}' --set mtls.interceptorCertificates.enabled=true`, gives the gateway `--dev-mode=false` and `--interceptor-namespaces=acme-policy`. The render also emits the interceptor `Certificate` for the namespace. It passes none of the three TLS flags or variables.
+- The SPIFFE peer check (`spiffe.InterceptorPeerVerifier`) and the handshake histogram sit on the mTLS branch only, so neither runs on a chart install.
+**Gap:** On a production chart install, every interceptor call carries session envelopes in cleartext. The gateway does not authenticate the endpoint it dials, so any workload that answers on the interceptor Service's address can read the envelopes or answer `MODIFY` or `REJECT`. The interceptor certificate the chart issues is never used by the gateway. The `lenny_interceptor_mtls_handshake_duration_seconds` alert never fires, because no handshake takes place.
+**Suggested resolution:** Render the gateway's mTLS leaf and the cluster CA into the three flags whenever `gateway.interceptorNamespaces` is non-empty. Make the gateway refuse to dial plaintext outside dev mode and the service-mesh mode where `mtls.enabled` is `false`, and refuse to start while an interceptor is registered without TLS material. Add a chart unit test for the flags and a tier 5 test that reaches an in-cluster interceptor over mTLS with the SPIFFE check. `designs/runtime-routing-design.md` carries this in RT-5, and states the in-cluster and mTLS rules as RTR-8.
+
 ### Summary
 
-- High-severity gaps: G1, G2, G3, G4, G5, G6, G7, G8, G9, G10, G11, G12, G13, G14, G15, G17, G18, G20, G23, and F-10.3.26.
+- High-severity gaps: G1, G2, G3, G4, G5, G6, G7, G8, G9, G10, G11, G12, G13, G14, G15, G17, G18, G20, G23, F-10.3.26, and F-10.3.27.
 - Medium-severity gaps: G16, G19, G21.
 - Low-severity gaps: G22, G25.
 - Info: G24.
