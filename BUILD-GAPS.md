@@ -12181,6 +12181,15 @@ Counting note: F7 + F8 are intertwined (correctness + missing constant); listing
 
 ---
 
+### - [ ] F-8.7.17 — `ExportPaths` checks a file's resolved path and then reads it by path, so an agent that swaps a parent directory for a symlink between the two can export a file outside its workspace [High] — OPEN
+
+**Spec:** §8.7 File Export Model ("Source glob resolution must not follow symlinks outside `/workspace/slots/{sessionId}/current`. The gateway resolves each matched path to its real path (`realpath`) and rejects any file whose resolved path is outside the workspace root.").
+**Evidence:** `addExportFile` in `pkg/adapter/exportpaths.go` calls `filepath.EvalSymlinks(path)`, checks the result against the workspace root, then calls `os.Stat(real)` and `os.ReadFile(real)`, each of which resolves `real` again from the file system. The agent owns the workspace and can replace a directory on that path with a symlink after the check and before the read. Found by the adversarial review of `designs/message-delivery-design.md` "MD-18 Files" on 2026-11-10 and confirmed by reading the code. Nothing was run.
+**Gap:** The adapter runs in its own container at its own UID and holds the pod's service account token. A parent agent that wins the race exports a file the adapter can read and the agent cannot, such as the adapter's token or another session's slot on a pod with several slots, into a child session the same agent controls. The check the specification requires holds only at the instant of the check.
+**Suggested resolution:** Direct fix, because §8.7 already states the outcome. Open each source with `openat2` and `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS` from a directory descriptor of the workspace root, or walk the path one component at a time with `O_NOFOLLOW`, and run the regular-file check with `fstat` and the read on that descriptor. `designs/message-delivery-design.md` (MD-18, review finding H1) states the same rule for output files. Verify `openat2` under gVisor and Kata. Tests: tier 1 with a symlink swapped in after resolution, and tier 9 against an export of the adapter's token path.
+
+---
+
 ## §8.8 TaskRecord and TaskResult Schema <a id="8.8"></a>
 **Spec file:** `spec/08_recursive-delegation.md` (lines 804–998)
 **Reviewed:** 2026-05-22
