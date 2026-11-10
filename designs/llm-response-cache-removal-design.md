@@ -1,6 +1,6 @@
 # LLM response cache removal
 
-Status: design for owner review, revision 2, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md) revision 11, and [`security-oversight-design.md`](security-oversight-design.md) revision 47. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RC-n, and requirements carry the label RCR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 3, 2026-11-09, after one adversarial review. Nothing here is built or staged. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md) revision 11, and [`security-oversight-design.md`](security-oversight-design.md) revision 47. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RC-n, and requirements carry the label RCR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -26,7 +26,7 @@ The cache as built has defects beyond the cost of carrying it:
 - A cache hit records no token usage, so a hit is invisible to quotas, budgets, and billing **[source]**.
 - The per-pool `ttl`, `similarityThreshold`, and `backend` are validated and stored, and no code reads them **[source]**.
 
-Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache the computed prefix of a prompt inside their own service, and the model still generates a new response for every request **[external]**. Lenny forwards the Anthropic `cache_control` fields unchanged and does not meter the cached token counts the provider reports **[source]**. The owner's request does not cover provider-side caching. This design keeps the passthrough unless the owner decides otherwise (O1), and it records that Lenny undercounts input tokens whenever a runtime uses provider caching (O2, F-11.2.38).
+Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache the computed prefix of a prompt inside their own service, and the model still generates a new response for every request **[external]**. Lenny forwards the Anthropic `cache_control` fields unchanged and does not meter the cached token counts the provider reports **[source]**. The owner's request does not cover provider-side caching. The owner settled on 2026-11-09 that Lenny keeps the passthrough and never strips or rewrites `cache_control` (D2), and this design records that Lenny undercounts input tokens whenever a runtime uses provider caching (F-11.2.38). Since revision 3, the metering correction and the proposal that lands it belong to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) ("O2" and "RC-B" below are pointers to it).
 
 ## Scope
 
@@ -41,18 +41,21 @@ Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache
 
 - §12.8's user erasure sequence and tenant deletion order lose their cache steps, and the user erasure steps after the removed one are renumbered ("RC-1").
 - §11.7's compliance downgrade ratchet loses the item that re-enabled `cacheScope: tenant`. The ratchet stays.
-- Phase 17b of the build sequence drops semantic caching from its title and deliverables.
+- Phase 17b of the build sequence drops semantic caching from its title and deliverables, and the retired anchors of the retitled §18.39 heading and `TESTING.md` §13.36 heading get redirects ("RC-1").
 
 **Added:**
 
-- A statement in §4.9 that the LLM proxy forwards provider prompt-caching fields unchanged, with the isolation each provider applies, if the owner keeps the passthrough (O1, "RC-5").
-- Cached input tokens in the authoritative usage count, if the owner accepts O2 ("RC-5").
+- The content of a statement in §4.9 that the LLM proxy forwards provider prompt-caching fields unchanged and never strips or rewrites `cache_control`, with the isolation each provider applies and the residual risk within a shared upstream (D2, "RC-5"). RC-B lands the statement, and RC-B now belongs to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md).
+
+**Moved:**
+
+- Cached input tokens in the authoritative usage count, which revision 2 placed here as O2 and RC-B. [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) owns them.
 
 **Out of scope:**
 
 - Response caching for any other surface, such as idempotent replay under [§11.5](../spec/11_policy-and-controls.md#115-idempotency), the routing cache, or the token cache. These caches hold no LLM responses.
 - The OpenAI dialect endpoint of the proxy. §4.9 describes `POST {proxyUrl}/v1/chat/completions` for `proxyDialect: openai`, and the gateway mounts only `POST /llm-proxy/v1/messages` **[source]**. "Current state" records this for filing.
-- Token metering beyond cached tokens, which [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md) also leaves to §11.2.
+- Token metering, cached tokens included. [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md) leaves it to §11.2, and [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) owns the correction.
 
 ## Terms
 
@@ -69,6 +72,7 @@ Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache
 | Regulated tenant | A tenant whose `complianceProfile` is `soc2`, `fedramp`, or `hipaa`, as [`security-oversight-design.md`](security-oversight-design.md) defines it. The cache rule that this design removes refused `cacheScope: tenant` for `hipaa` and `fedramp`. |
 | Erasure step | One store's deletion in §12.8's `DeleteByUser` dependency-ordered deletion sequence, or one store in the tenant deletion order of Phase 4. Code cites a user erasure step by number, as `§12.8 step 6`. |
 | Authoritative usage | The token counts the LLM proxy extracts from the provider's response. §11.2 makes them the quota and budget record for proxy-mode sessions and ignores the pod's own reports. |
+| Anchor-move map | `tests/spec-anchor-moves.json`, the register of `kind: spec-anchor-moves` that the `specshift` anchor pass reads. Each entry names a retired anchor and the heading that succeeds it, and the pass rewrites every link into the retired anchor. `tests/registers/README.md` describes it, and **N3** of [§28.1 Naming law](../spec/28_communication-channels.md#281-naming-law) states that an anchor that has to change moves through the anchor-redirect map so that a redirect exists for every inbound link **[source]**. |
 
 ### Terms from other designs and the platform
 
@@ -83,20 +87,23 @@ Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache
 | :-- | :-- |
 | [CA-10](connector-authorization-and-external-memory-design.md#ca-10-removing-built-in-memory) | Removal of the built-in memory store of §9.4, in the connector authorization design. It owns `memorystore`, which defines the embedder the semantic cache imports, and it edits Phase 17b and §12.8 as this design does. |
 | CA-G | The proposal of the connector authorization design that lands CA-10 ([proposal split](connector-authorization-and-external-memory-design.md#proposal-split-and-order)). |
+| LLM upstream | The record that [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) adds in place of LLM credential pools: an endpoint, a credential source, a channel, a contract, a model allowlist, and a rate card. Provider cache isolation follows the provider account or workspace behind an upstream's credential. That design also defines the posture report of tenants that share an upstream, the warning when a shared upstream is granted to a `hipaa` or `fedramp` tenant, and the identity attributes the proxy forwards to an upstream. |
+| Identity attributes | The attributes of a request, such as its tenant, user, and session, that the LLM proxy forwards to the upstream under [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md), which specifies them. An operator-run LLM gateway behind Lenny can use them to choose a provider workspace or key per user. |
+| RC-B and O2 | Labels that revision 2 of this design gave to the metering correction and its open decision. Revision 3 moves both to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md), as the owner decided on 2026-11-09. RC-B also lands the §4.9 passthrough statement of "RC-5". |
 
 ## High-level design
 
 Lenny stops caching LLM responses. Every request a proxy-mode pod sends goes to the provider, the provider's response goes back through the `PostLLMResponse` phase, and the proxy records the provider's token usage for every request. The specification loses the semantic cache, its storage role, its key family, its erasure steps, its compliance rule, and its error code. The code loses the cache packages, the proxy seam, the flag, the pool fields, and the columns. Nothing replaces the cache inside Lenny, because no specified guarantee depended on it: it was disabled by default, no SLO counted on it, and no metric or alert measured it.
 
-Provider prompt caching stays as it is today unless the owner decides otherwise. The proxy forwards the pod's request body unchanged to Anthropic-format providers, so a runtime that sets `cache_control` gets the provider's cache, its lower latency, and its lower price. That cache stores no response, and the provider isolates it by organization or workspace. The design recommends keeping the passthrough and stating it in §4.9 (O1). It also recommends correcting the usage count, which today ignores the cached-token counts and so lets a runtime move most of its input tokens outside Lenny's quotas (O2).
+Provider prompt caching stays as it is today, as the owner settled (D2). The proxy forwards the pod's request body unchanged to Anthropic-format providers and never strips or rewrites `cache_control`, so a runtime that sets it gets the provider's cache, its lower latency, and its lower price. That cache stores no response, and the provider isolates it by organization, workspace, or project. Cache isolation therefore follows the provider account or workspace behind the LLM upstream of [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md), so a regulated tenant gets its own upstream. Strict isolation between users of one tenant is not a Lenny feature: the proxy forwards identity attributes to the upstream, and an operator-run LLM gateway behind Lenny can choose a provider workspace or key per user. §4.9 states the passthrough, the isolation, and the residual risk within a shared upstream. The usage count, which today ignores the cached-token counts, is corrected by the LLM upstreams and cost budgets design (O2 and RC-B moved there).
 
 The parts:
 
-- **Specification removal (RC-1).** Every section that names the cache drops it, and §12.8's numbered user erasure steps are renumbered.
+- **Specification removal (RC-1).** Every section that names the cache drops it, §12.8's numbered user erasure steps are renumbered, and the retitled headings get anchor redirects.
 - **Code removal (RC-2).** The cache packages, the proxy seam, the flag, the pool fields, the error code, the erasure wiring, and their tests are deleted.
 - **Data and configuration (RC-3).** A new migration drops the two pool columns, and the chart and documentation lose their cache references.
 - **Records (RC-4).** Open audit findings that exist only for the cache are resolved as obsolete, and findings that name it in passing are corrected.
-- **Provider prompt caching (RC-5).** §4.9 states the passthrough and its isolation, and the authoritative usage counts cached tokens, per O1 and O2.
+- **Provider prompt caching passthrough (RC-5).** The content of the §4.9 statement of the passthrough, its isolation, the provider retention facts, and the residual risk, under D2. RC-B in the LLM upstreams and cost budgets design lands it.
 
 ## Decisions
 
@@ -105,13 +112,14 @@ Settled by the owner on 2026-11-09:
 | ID | Decision |
 | :-- | :-- |
 | D1 | Lenny's own LLM response cache is removed. In the owner's words: "Remove caching LLM response currently provided by Lenny." |
+| D2 | Provider prompt caching passes through. The owner answered "ok" to the recommendation of revision 2's O1, which the adversarial review labelled C1, and the rule reads: Lenny never strips or rewrites `cache_control`. Provider cache isolation follows the LLM upstream's provider account or workspace, and [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) defines upstreams, the posture report of tenants that share an upstream, and the warning when a shared upstream is granted to a `hipaa` or `fedramp` tenant. A regulated tenant gets its own upstream. Strict isolation between users within a tenant is not a Lenny feature: the proxy forwards identity attributes, such as tenant, user, and session, to the upstream, so an operator-run LLM gateway behind Lenny can choose a provider workspace or key per user, and the upstreams design specifies the attributes. The residual risk within a shared upstream stays documented: `cache_read_input_tokens` and latency let users detect each other's prompt prefixes ("RC-5"). The rejected options were stripping `cache_control` in the translators and a pool setting that allows or strips it. Stripping raises cost and latency for every runtime that uses the cache, and it would be incomplete, because OpenAI and Azure OpenAI cache automatically with no request field **[external]**. |
 
-Open, for the owner:
+Moved:
 
 | ID | Question | Options | Recommendation |
 | :-- | :-- | :-- | :-- |
-| O1 | Does the LLM proxy keep forwarding provider prompt-caching controls such as `cache_control`? | (a) Keep the passthrough with no Lenny setting, and state it in §4.9 with each provider's isolation. (b) Strip `cache_control` in the translators. (c) Add a pool setting that allows or strips it. | (a). The provider cache stores no response, so the false-match and response-sharing defects of the semantic cache do not arise. It is isolated per provider organization or workspace **[external]**. Stripping it raises cost and latency for every runtime that uses it, and it would be incomplete, because OpenAI and Azure OpenAI cache automatically with no request field **[external]**. A deployer who must keep tenants apart at the provider gives each tenant's pools credentials from a separate provider organization or workspace, and §4.9 states this. |
-| O2 | How do the provider's cached-token counts enter Lenny's authoritative usage? | (a) As today: count `input_tokens` alone, which excludes cache reads and writes on the Anthropic format. (b) Count the sum of `input_tokens`, `cache_read_input_tokens`, and `cache_creation_input_tokens` as input tokens for quotas and budgets, and carry the read and write counts as separate fields on billing events. (c) Weight cached tokens by the provider's price multipliers. | (b). Option (a) lets a runtime place a large prefix under `cache_control` and have Lenny count only the uncached tail, which defeats §11.2's statement that a runtime cannot influence quota accounting. Option (c) depends on per-model prices that change and differ across providers **[external]**. Separate fields let a deployer price cache reads and writes in its own billing. |
+| O1 | Settled as D2. | | Revision 2 recorded the passthrough as open decision O1. |
+| O2 | Moved. | | Revision 3 moves O2, the treatment of the provider's cached-token counts in Lenny's authoritative usage, to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md), as the owner decided on 2026-11-09. Revision 2 recommended counting the sum of the uncached, cache-read, and cache-write tokens and rejected weighting by price; the owner's settlement of budgets in estimated cost by a per-upstream rate card changes that ground, and the moved decision is answered there. |
 
 ## Requirements
 
@@ -119,8 +127,8 @@ Open, for the owner:
 - RCR-2. After RC-A, no specification section, pool field, admin or bootstrap payload field, flag, Helm value or comment, Redis key family, table column, storage role, error code, erasure step, metric, or test refers to the semantic cache.
 - RCR-3. The LLM proxy records the provider's usage for every request it serves.
 - RCR-4. User erasure and tenant deletion keep their order and their other steps after the cache steps go.
-- RCR-5. Under O1 option (a), the proxy forwards `cache_control` and every other provider field of an Anthropic Messages request unchanged to `anthropic_direct`, `aws_bedrock`, and `vertex_ai`.
-- RCR-6. Under O2 option (b), the authoritative input count of a proxied Anthropic-format request equals `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`, on the non-streaming and the streaming paths.
+- RCR-5. Under D2, the proxy forwards `cache_control`, at the top level and on content blocks, and every other provider field of an Anthropic Messages request to `anthropic_direct` byte for byte, and to `aws_bedrock` and `vertex_ai` with every field kept apart from the rehosting the translators already perform. The proxy does not rewrite a top-level `cache_control` into block-level breakpoints, and it relays the provider's answer when the provider refuses a top-level `cache_control` for the model ("Provider prompt caching today").
+- RCR-6. Moved with O2 to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md). The identifier is not reused.
 
 ## Current state
 
@@ -151,6 +159,10 @@ The specification contradicts itself on the cache's status. §4.9 and §12 speci
 
 No section of §16 defines a metric or alert for the cache, and no SLO refers to it **[source]**.
 
+Retitling §18.39 retires its anchor, `#1839-phase-17b--memory-semantic-caching-eval-hooks`, which `spec/README.md` links. RC-3 retitles `TESTING.md` §13.36, "Phase 17b — Memory, semantic caching, eval hooks", which retires the anchor `#1336-phase-17b--memory-semantic-caching-eval-hooks` that §18.2 row 17b and the §18.39 exit criteria link. No file under `docs/` links either anchor **[source]**. The anchor-move map holds no entry today **[source]**.
+
+The adversarial review of revision 2 confirmed that no eval or replay feature depends on the cache, and that no migration other than 0070 and 0078 creates or reads `cache_scope` or `cache_policy`. A read of the tree on 2026-11-09 agrees: the only migrations naming either column are those two and their down files **[source]**.
+
 ### Tree
 
 All of the following was read on 2026-11-09 **[source]**:
@@ -161,8 +173,8 @@ All of the following was read on 2026-11-09 **[source]**:
 | `pkg/gateway/llmproxy/semanticcache/redisstore` | The Redis store under `t:{tenant_id}:scache:`. No production code imports it. Only tests do. |
 | `pkg/gateway/llmproxy/proxycache` | `Adapter`, which implements the proxy's `ProxyCache` seam. It reads the pool's `CachePolicy.Enabled` and `Strategy` and its `CacheScope`, resolves the session's user for `per-user`, takes the model from the request body, and uses the whole request body as the query text. |
 | `pkg/gateway/llmproxy/llmproxy/handler.go` | The `ProxyCache` interface and `Handler.Cache`. After the `PreLLMRequest` phase, a non-streaming request is looked up. A hit runs `PostLLMResponse` over the stored body and returns it, skipping translation, credential resolution, the upstream call, and usage recording. A miss stores the translated response before `PostLLMResponse`. |
-| `cmd/lenny-gateway` | `--llm-semantic-cache` and `LENNY_LLM_SEMANTIC_CACHE` in `flags.go`, off by default. When set, `adminrouter.go` builds one `semanticcache.InMemory` per replica with the default embedder, TTL, and threshold, and `llmproxy.go` wraps it in `proxycache.New` for the proxy. `llmproxy_server.go` passes it to the handler. The same instance feeds the user erasers (`userCacheErasers`) and the tenant erasers (`cacheTenantErasers` in `tenant_erasers.go`). `sessionUserLookup` in `runserver.go` serves the per-user scope. `erasure_contract.go` asserts the store satisfies the erasure contract. |
-| `pkg/gateway/storage/erasure` | The rank `"semantic_cache": 20` in `order.go`. |
+| `cmd/lenny-gateway` | `--llm-semantic-cache` and `LENNY_LLM_SEMANTIC_CACHE` in `flags.go`, off by default. When set, `adminrouter.go` builds one `semanticcache.InMemory` per replica with the default embedder, TTL, and threshold, and `llmproxy.go` wraps it in `proxycache.New` for the proxy. `llmproxy_server.go` passes it to the handler, and `main.go` threads it from `buildAdminRouter` as `erasureSemanticCache`. The same instance feeds the user erasers (`userCacheErasers`) and the tenant erasers (`cacheTenantErasers` in `tenant_erasers.go`). `sessionUserLookup` in `runserver.go` serves the per-user scope. `erasure_contract.go` asserts the store satisfies the erasure contract. |
+| `pkg/gateway/storage/erasure` | The rank `"semantic_cache": 20` in `order.go`, and the doc comments in `contract.go` that name `SemanticCache` beside `MemoryStore` as a pluggable role. |
 | `pkg/gateway/credentials/credentialpoolstore` | `CredentialPool.CacheScope`, `CredentialPool.CachePolicy`, the `CachePolicy` struct with `Enabled`, `Strategy`, `TTLSeconds`, `SimilarityThreshold`, and `Backend`, `validateCachePolicy`, and `validCacheScope`. `pgstore` reads and writes the `cache_scope` and `cache_policy` columns. |
 | `pkg/gateway/externalapi/admin` | `cacheScope` and `cachePolicy` on `CredentialPoolPayload`, `CachePolicyPayload`, `validateCacheScope` with the `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` refusal, `toCachePolicy` and `fromCachePolicy`, and in `bootstrap.go` `bootstrapCacheScope` and the pool upsert's cache fields. |
 | `pkg/gateway/externalapi/errorclassify` | The `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` entry. |
@@ -184,18 +196,21 @@ All of the following was read on 2026-11-09 **[source]**:
 
 ### Provider prompt caching today
 
-- The Anthropic translator forwards the request body unchanged, and the Bedrock and Vertex translators re-encode it with every field kept except `model`, so `cache_control` reaches all three Anthropic-format providers **[source]**. Bedrock accepts `cache_control` on content blocks of an InvokeModel body, and at the top level for the models its guide lists **[external]**.
+- The Anthropic translator forwards the request body unchanged, and the Bedrock and Vertex translators re-encode it with every field kept except `model`, so `cache_control` reaches all three Anthropic-format providers **[source]**. No translator rewrites a top-level `cache_control` into block-level breakpoints **[source]**.
+- A top-level `cache_control` is Anthropic's automatic caching, and not every provider accepts it for every model **[external]**. Bedrock's guide lists the Claude models that support automatic caching on InvokeModel, and states that other models return a `ValidationException` for the top-level field. Anthropic's guide states that the legacy Bedrock integration, which serves Claude Opus 4.6 and earlier, returns a 400 for it. Google Cloud's prompt-caching page for Claude documents `cache_control` on content blocks and does not document the top-level placement. Block-level `cache_control` is accepted on all three.
 - The proxy mounts only `POST /llm-proxy/v1/messages` and always translates from the Anthropic dialect, so the OpenAI and Azure translators are unreachable from the proxy today **[source]** (F-4.9.48). F-4.9.10 recorded the missing route among its evidence and was closed by provider dispatch, with the dialect route placed out of scope, so F-4.9.48 records the route and F-4.9.10 stays closed. OpenAI and Azure OpenAI cache automatically, with no request field needed **[external]**.
-- `extractAnthropicUsage` and the streaming `applySSEUsage` read `input_tokens` and `output_tokens` alone **[source]**. Anthropic's `input_tokens` counts only the tokens after the last cache breakpoint, and the total input is `cache_read_input_tokens + cache_creation_input_tokens + input_tokens` **[external]**. Lenny's authoritative input count therefore omits every cached token. §11.2, **Quota Update Timing**, says the proxy extracts `input_tokens` and `output_tokens` and that a runtime cannot influence quota accounting by underreporting **[source]**. F-11.2.38 records the undercount.
+- `extractAnthropicUsage` and the streaming `applySSEUsage` read `input_tokens` and `output_tokens` alone **[source]**. Anthropic's `input_tokens` counts only the tokens after the last cache breakpoint, and the total input is `cache_read_input_tokens + cache_creation_input_tokens + input_tokens` **[external]**. Lenny's authoritative input count therefore omits every cached token. §11.2, **Quota Update Timing**, says the proxy extracts `input_tokens` and `output_tokens` and that a runtime cannot influence quota accounting by underreporting **[source]**. F-11.2.38 records the undercount, and [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) corrects it.
 - Neither the specification nor the tree mentions `cache_control`, `cache_read_input_tokens`, or `cache_creation_input_tokens`. The Open Responses translator writes `cached_tokens: 0` because it does not track them **[source]**.
 - Revision 1 found no BUILD-GAPS finding for the cached-token undercount **[source]**. Revision 2 files it as F-11.2.38.
+- Provider retention, read on 2026-11-09 **[external]**: Anthropic's cache has a 5-minute lifetime, refreshed at no cost each time the entry is used, and a 1-hour lifetime at a higher write price. Under zero data retention, Anthropic holds cache representations in memory for the lifetime and deletes them after expiry. On Bedrock and on Google Cloud, Claude caches take the same 5-minute and 1-hour lifetimes, and Bedrock resets the lifetime on each hit. OpenAI's GPT-5.6 and later models keep a cached prefix for a minimum of 30 minutes by default, or 12 hours on request in the Responses API, and OpenAI states that it may retain an entry longer than the requested minimum and that the encrypted tensors are retained for at most 24 hours. OpenAI's earlier models offer `in_memory` retention, which keeps an entry for about 5 to 10 minutes of inactivity and at most one hour, and `24h` extended retention, which is the default for an organization without zero data retention. Revision 2 stated OpenAI's retention as "up to 24 hours under extended retention", which describes the earlier models only.
+- Provider isolation, read on 2026-11-09 **[external]**: Anthropic isolates caches by workspace on the Claude API, Claude Platform on AWS, and Microsoft Foundry, and by organization on Bedrock and on Claude models on Google Cloud (Google managed). Google Cloud's own page states that a cache is unique to its Google Cloud project. OpenAI does not share caches across organizations, and Azure OpenAI does not share them across subscriptions.
 
 ### Records
 
 | Record | State | Relation |
 | :-- | :-- | :-- |
-| F-11.2.38 | Open | The cached-token undercount of "Provider prompt caching today", filed by revision 2. RC-B closes it. |
-| F-4.9.48 | Open | The proxy's missing `openai` dialect route, filed by revision 2. It needs its own proposal, and RC-B's OpenAI metering depends on it. |
+| F-11.2.38 | Open | The cached-token undercount of "Provider prompt caching today", filed by revision 2. RC-B closes it, and RC-B now belongs to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md). |
+| F-4.9.48 | Open | The proxy's missing `openai` dialect route, filed by revision 2. It needs its own proposal, and the OpenAI metering of the LLM upstreams and cost budgets design depends on it. |
 | F-12.8.53 | Open | Per-replica semantic cache and billing buffer erased only on one replica. The cache half goes with the cache, and the billing buffer half stays. |
 | F-4.9.13, F-4.9.14, F-12.2.16, F-12.8.15 | Closed | Built or wired the cache. They stay as history. |
 | T-4.9.15 | Open | `TestSemanticCacheTenantIsolation` for a similar query. |
@@ -213,6 +228,8 @@ The specification loses every statement in the table under "Specification" **[de
 **Compliance.** §11.7 item 1 lists the controls that remain: the SIEM requirement, `audit.grantCheckInterval`, and `audit.pgaudit.enabled`. §15.1 loses `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED`.
 
 **Build sequence and comparison.** §18.1 item 6 and §18.2 row 17b drop "semantic caching". §18.39 drops the `SemanticCacheStore` deliverable, its preflight, and `semantic_cache_test`, which also removes the dangling citation of §21. The title of §18.39 changes, and `spec/README.md` follows it. §23 loses the matrix row, and §23.1 item 9 loses its last sentence.
+
+**Anchor redirects.** The proposal adds two entries to the anchor-move map **[design]**. The first maps `1839-phase-17b--memory-semantic-caching-eval-hooks` to the retitled §18.39 heading in `spec/18_build-sequence.md`. The second maps `1336-phase-17b--memory-semantic-caching-eval-hooks` to the retitled §13.36 heading in `TESTING.md`. The proposal runs the `specshift` anchor pass, which rewrites the link in `spec/README.md` and the two links in §18.2 and §18.39, and it leaves the map as `tests/registers/README.md` states for a completed pass. CA-G retitles the same two headings when it removes memory, so the proposal that lands second maps the anchor the first one left.
 
 ## RC-2 Code removal
 
@@ -241,29 +258,34 @@ The admin API decodes pool payloads without refusing unknown fields **[source]**
 - F-12.8.53 is narrowed to the billing buffer, with a note that the cache half went with RC-A **[design]**.
 - T-4.9.15, T-12.1.1, and T-12.2.5 are resolved as obsolete with a pointer to RC-A, and T-12.1.5, T-12.1.6, T-12.1.7, and T-12.7.2 drop the cache from their text **[design]**.
 - The closed findings and `scripts/refactor/manifest` stay as written.
-- F-11.2.38 records the cached-token undercount of "Provider prompt caching today", owned by RC-B **[design]**.
+- F-11.2.38 records the cached-token undercount of "Provider prompt caching today", owned by RC-B in [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) **[design]**.
 
-## RC-5 Provider prompt caching
+## RC-5 Provider prompt caching passthrough
 
-**Passthrough (O1).** Under the recommended option (a), §4.9's "Native translator" states that the proxy forwards an Anthropic Messages request body, including `cache_control`, unchanged apart from the provider rehosting the translator already performs, and that a provider's prompt cache is the provider's own mechanism **[design]**. It states the isolation each provider documents **[external]**:
+This section states what the §4.9 statement of the passthrough says under D2 **[design]**. RC-B lands it, and RC-B belongs to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) since revision 3, because that design rewrites the §4.9 LLM proxy around the LLM upstream record and the statement names the upstream.
 
-- Anthropic's API isolates caches by workspace within an organization, and Bedrock and the Google-managed Claude models on Google Cloud isolate them by organization.
+**Passthrough.** §4.9's "Native translator" states that the proxy forwards an Anthropic Messages request body, including `cache_control` at the top level and on content blocks, unchanged apart from the provider rehosting the translator already performs, and that a provider's prompt cache is the provider's own mechanism. It states that the proxy does not rewrite a top-level `cache_control`, so a runtime that sends one to a provider or model that refuses it receives the provider's refusal (RCR-5). Bedrock refuses it for a model outside its automatic-caching list, and Anthropic's guide states a 400 for it on the legacy Bedrock integration **[external]**. Google Cloud's Claude page documents only the block placement, and "Validation owed" asks whether Google-managed Vertex accepts the top-level field.
+
+**Isolation.** It states the isolation each provider documents **[external]**:
+
+- Anthropic isolates caches by workspace on the Claude API, Claude Platform on AWS, and Microsoft Foundry, and by organization on Bedrock and on Claude models on Google Cloud (Google managed). Google Cloud's page states that a cache is unique to its Google Cloud project.
 - OpenAI does not share caches across organizations, and Azure OpenAI does not share them across subscriptions.
 
-It states that pools of different tenants holding credentials of one provider organization or workspace share that provider's cache, so a request can observe from latency that another tenant sent an identical prefix, and that a deployer who must prevent this gives each tenant credentials from a separate organization or workspace. The provider returns no stored response, so no response content crosses tenants **[external]**. Provider cache retention is the provider's: five minutes or one hour on Anthropic's API, and up to 24 hours under OpenAI's extended retention **[external]**, which a deployer with a regulated tenant checks against its provider agreement.
+Cache isolation therefore follows the provider account, workspace, or project behind the credential of the LLM upstream that serves the request. Two tenants whose upstreams use one provider workspace share that provider's cache, so a regulated tenant gets an upstream of its own, with a credential from a separate provider workspace, organization, or project. [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) reports in posture the tenants that share an upstream and warns when a shared upstream is granted to a `hipaa` or `fedramp` tenant, and §4.9 cites both. The provider returns no stored response, so no response content crosses tenants or users **[external]**.
 
-**Metering (O2).** Under the recommended option (b) **[design]**:
+**Isolation between users.** It states that strict isolation between the users of one tenant is not a Lenny feature. The proxy forwards identity attributes of each request, such as its tenant, user, and session, to the upstream, as the upstreams design specifies, so an operator who runs its own LLM gateway behind Lenny as the upstream can choose a provider workspace or key per user there.
 
-- `extractAnthropicUsage` and `applySSEUsage` read `cache_read_input_tokens` and `cache_creation_input_tokens` beside `input_tokens`. On the streaming path, `applySSEUsage` reads them from whichever usage-bearing event carries them, which "Validation owed" confirms.
-- `Usage` gains `CacheReadInputTokens` and `CacheCreationInputTokens`, and its input total for quotas, the token budget, and `tokens_input` is the sum of the three counts.
-- §11.2, **Quota Update Timing**, names the sum. §11.2.1 adds `tokens_cache_read` and `tokens_cache_write` to `token_usage.checkpoint` and the session usage events, each a part of `tokens_input`.
-- For the OpenAI formats, the proposal confirms whether `prompt_tokens` and `input_tokens` already include `cached_tokens` and adds them only where they do not ("Validation owed").
+**Residual risk within a shared upstream.** It states that the users of an upstream share its provider cache, which inside a tenant is the normal configuration. One user's agent can therefore detect that another user of the same upstream sent an identical prompt prefix recently, through the `cache_read_input_tokens` count in its own response as well as through latency. The signal reveals that a prefix was sent within the cache lifetime, and the content of a prefix only to an agent that already holds that content to test. Lenny does not remove the signal, because the count is the input to metering and a runtime that sets `cache_control` reads it.
+
+**Retention.** It states that provider cache retention is the provider's, as "Provider prompt caching today" records: 5 minutes or 1 hour for Claude on every platform the proxy reaches, and for OpenAI a 30-minute or 12-hour minimum on GPT-5.6 and later models, with retention of at most 24 hours, and `in_memory` or `24h` retention on earlier models **[external]**. A deployer with a regulated tenant checks these against its provider agreement.
+
+**Metering (moved).** Revision 2 stated the metering correction here under O2. It moved to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) with RC-B.
 
 ## What replaces the cache's guarantees
 
 | Guarantee or effect | After removal |
 | :-- | :-- |
-| Lower cost and latency for a repeated non-streaming request | No replacement in Lenny. Provider prompt caching lowers the cost and latency of a repeated prefix for runtimes that use it (O1). A runtime may cache inside its own process for its own session. |
+| Lower cost and latency for a repeated non-streaming request | No replacement in Lenny. Provider prompt caching lowers the cost and latency of a repeated prefix for runtimes that use it (D2). A runtime may cache inside its own process for its own session. |
 | Tenant, user, and session isolation of cached responses | No stored responses exist, so the rule has no subject. |
 | Erasure of cached pairs on user erasure and tenant deletion | The gateway holds no LLM response, so the erasure steps have nothing to delete. F-12.8.53's cache half closes. |
 | Refusal of cross-user sharing for `hipaa` and `fedramp` tenants | No cross-user response sharing exists. The §11.7 ratchet keeps its other controls. |
@@ -274,28 +296,28 @@ It states that pools of different tenants holding credentials of one provider or
 
 - LLM requests and responses are no longer stored in gateway memory or, under the unwired Redis store, in Redis. §12.9 loses a T3 class, and §12.8's residency list loses an entry **[design]**.
 - The false-match defect goes, so no session receives a response written for a different request, and no user in a `cacheScope: tenant` pool receives another user's response **[design]**.
-- The cross-user timing side-channel of `cacheScope: tenant` goes. The provider-side timing signal of identical prefixes remains, and RC-5 states it (O1).
+- The cross-user timing side-channel of `cacheScope: tenant` goes. The provider-side signal of identical prefixes remains, through latency and through `cache_read_input_tokens`, between users of one upstream, and RC-5 states it (D2).
 - The gap in which a raised compliance profile left `cacheScope: tenant` in force goes with the field.
 - No unredacted pre-`PostLLMResponse` content is held between requests.
-- Under the current usage count, provider caching lets a runtime keep most of its input outside quotas and budgets. Removing the semantic cache does not change that, and O2 does **[source]**.
+- Under the current usage count, provider caching lets a runtime keep most of its input outside quotas and budgets. Removing the semantic cache does not change that **[source]**, and [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) corrects it.
 
 ## Billing effects
 
 - A request that a hit would have answered now reaches the provider and is billed by the provider and metered by Lenny. With the cache off by default, and absent from the chart, an installation that never set `LENNY_LLM_SEMANTIC_CACHE` sees no change **[source]**.
-- `tokens_input` stays an uncached-tail count until RC-B lands. Under O2 option (b) it becomes the full input count, and the cached parts are visible as separate fields for a deployer that prices them at the provider's reduced rates.
+- `tokens_input` stays an uncached-tail count until RC-B lands in [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md), which states the corrected billing fields.
 
 ## Limits
 
 - Lenny offers no response caching. A deployer that wants it runs it outside Lenny, and this design specifies no integration for it.
-- Under O1 option (a), Lenny does not control provider cache retention or cross-tenant prefix timing. It documents them.
-- Under O2 option (b), quotas count a cache read as a full input token, though providers bill it at a fraction of the base rate **[external]**. A deployer that wants price-weighted quotas reads the separate fields.
+- Under D2, Lenny does not control provider cache retention or the prefix signal between users or tenants that share an upstream. It documents them. A deployer gives a tenant its own upstream where the signal matters between tenants, and an operator-run LLM gateway behind Lenny can separate users by the forwarded identity attributes.
+- Under D2, a runtime that sends a top-level `cache_control` to a provider or model that refuses it receives the refusal, because the proxy does not rewrite the field.
 
 ## Alternatives rejected
 
 - **Fix the cache instead of removing it.** Exact matching on a normalized body would end the false matches, but the owner asked for removal (D1), and exact repeats are what provider prompt caching already serves at the prefix level.
 - **Keep an empty step 2 in §12.8.** It would avoid renumbering, and it leaves a placeholder step in a normative sequence. The citation sweep is mechanical.
 - **Disable the cache and keep the code.** The specification would still describe a feature, and the erasure, isolation, and compliance rules would remain obligations with no behaviour behind them.
-- **Strip provider caching fields with the semantic cache.** Recorded under O1. It raises cost for runtimes, and it cannot turn off OpenAI's automatic caching.
+- **Strip provider caching fields with the semantic cache.** Recorded under D2. It raises cost for runtimes, and it cannot turn off OpenAI's automatic caching.
 
 ## Specification changes
 
@@ -305,9 +327,8 @@ The following edits locate their targets by heading:
 | :-- | :-- |
 | [§4.9](../spec/04_system-components.md#49-credential-leasing-service), opening | Remove "Semantic Caching" from the list of subsections. |
 | [§4.9, "Semantic Caching"](../spec/04_system-components.md#semantic-caching) | Delete the subsection. |
-| [§4.9, "LLM Reverse Proxy"](../spec/04_system-components.md#llm-reverse-proxy), **Native translator.** | Under O1 (a), state the passthrough of `cache_control` and the provider isolation and retention of "RC-5". Under O2 (b), state that usage extraction reads the cached-token counts. |
-| [§11.2 Budgets and Quotas](../spec/11_policy-and-controls.md#112-budgets-and-quotas), **Quota Update Timing:** | Under O2 (b), the proxy-mode count is the sum of uncached, cache-read, and cache-write input tokens. |
-| [§11.2.1 Billing Event Stream](../spec/11_policy-and-controls.md#1121-billing-event-stream) | Under O2 (b), add `tokens_cache_read` and `tokens_cache_write`. |
+| [§4.9, "LLM Reverse Proxy"](../spec/04_system-components.md#llm-reverse-proxy), **Native translator.** | Under D2, the passthrough of `cache_control` without rewriting, the provider isolation, the isolation between users, the residual risk within a shared upstream, and the retention of "RC-5". RC-B in [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) lands this edit. |
+| [§11.2 Budgets and Quotas](../spec/11_policy-and-controls.md#112-budgets-and-quotas) and [§11.2.1 Billing Event Stream](../spec/11_policy-and-controls.md#1121-billing-event-stream) | Moved with O2 and RC-B to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md). |
 | [§11.7 Audit Logging](../spec/11_policy-and-controls.md#117-audit-logging), **Compliance profile downgrade ratchet.** | Remove `cacheScope: tenant` from item 1. |
 | [§12.1](../spec/12_storage-architecture.md#121-design-principle) | Remove `SemanticCache` from the pluggable example. |
 | [§12.2](../spec/12_storage-architecture.md#122-storage-roles) | Remove the `SemanticCache` row and its name in the Redis prefix rule. |
@@ -316,7 +337,7 @@ The following edits locate their targets by heading:
 | [§12.8](../spec/12_storage-architecture.md#128-compliance-interfaces) | Remove the erasure scope row, `DeleteByUser` step 2 with the renumbering of later steps, `SemanticCache` from the Phase 4 order, and semantic cache entries from the residency list. |
 | [§12.9](../spec/12_storage-architecture.md#129-data-classification) | Remove the "Semantic cache entries" row. |
 | [§15.1](../spec/15_external-api-surface.md#151-rest-api) | Remove `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED`. |
-| [§18.1](../spec/18_build-sequence.md#181-phasing-intent), [§18.2](../spec/18_build-sequence.md#182-phase-map), and [§18.39](../spec/18_build-sequence.md#1839-phase-17b--memory-semantic-caching-eval-hooks) | Remove semantic caching from item 6, row 17b, and the Phase 17b title, deliverables, and exit criteria. Update `spec/README.md`. |
+| [§18.1](../spec/18_build-sequence.md#181-phasing-intent), [§18.2](../spec/18_build-sequence.md#182-phase-map), and [§18.39](../spec/18_build-sequence.md#1839-phase-17b--memory-semantic-caching-eval-hooks) | Remove semantic caching from item 6, row 17b, and the Phase 17b title, deliverables, and exit criteria. Update `spec/README.md`. Redirect the retired §18.39 anchor and the retired `TESTING.md` §13.36 anchor through the anchor-move map ("RC-1"). |
 | [§23](../spec/23_competitive-landscape.md#23-competitive-landscape) and [§23.1](../spec/23_competitive-landscape.md#231-why-lenny) | Remove the matrix row and the last sentence of item 9. |
 
 ## Non-specification changes
@@ -324,7 +345,9 @@ The following edits locate their targets by heading:
 | Area | Change |
 | :-- | :-- |
 | `pkg/gateway/llmproxy/semanticcache`, `semanticcache/redisstore`, and `proxycache` | Delete. |
-| `pkg/gateway/llmproxy/llmproxy` | Remove `ProxyCache` and the cache paths in `handler.go`, and `cache_test.go`. Under O2 (b), extend `Usage`, `extractAnthropicUsage`, and `applySSEUsage`. |
+| `pkg/gateway/llmproxy/llmproxy` | Remove `ProxyCache` and the cache paths in `handler.go`, and `cache_test.go`. The usage extraction changes belong to RC-B in [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md). |
+| `tests/spec-anchor-moves.json` | The two anchor redirects of "RC-1", consumed by the `specshift` anchor pass. |
+| `pkg/gateway/storage/erasure/contract.go` and `cmd/lenny-gateway/main.go` | Remove `SemanticCache` from the doc comments, and the `erasureSemanticCache` threading. |
 | `cmd/lenny-gateway` | Remove the flag, the in-memory store, its threading through the admin router and erasers, `sessionUserLookup`, the erasure contract assertion, and the cache cases of the wiring tests. |
 | `pkg/gateway/storage/erasure` | Remove the `semantic_cache` rank and `semanticcache_wiring_test.go`. |
 | `pkg/gateway/credentials/credentialpoolstore` and `pgstore` | Remove the cache fields, their validation, and the column reads and writes. |
@@ -341,11 +364,11 @@ The following edits locate their targets by heading:
 
 | Tier | Coverage |
 | :-- | :-- |
-| 1 | Two identical non-streaming requests through the proxy handler each reach the upstream and each record usage (RCR-1, RCR-3). A credential pool written with `cacheScope` or `cachePolicy` in its payload reads back without either field. The user erasure order and the tenant deletion order contain no cache entry and keep their other entries in order (RCR-4). Under O1 (a), a request with block-level and top-level `cache_control` reaches the upstream fake byte for byte for `anthropic_direct`, and with `cache_control` intact after rehosting for `aws_bedrock` and `vertex_ai` (RCR-5). Under O2 (b), a response and a stream whose usage carries cache reads and writes record the sum as input and the parts separately (RCR-6). |
+| 1 | Two identical non-streaming requests through the proxy handler each reach the upstream and each record usage (RCR-1, RCR-3). A credential pool written with `cacheScope` or `cachePolicy` in its payload reads back without either field. The user erasure order and the tenant deletion order contain no cache entry and keep their other entries in order (RCR-4). Under D2, a request with block-level and top-level `cache_control` reaches the upstream fake byte for byte for `anthropic_direct`, and for `aws_bedrock` and `vertex_ai` it reaches the fake with both placements intact after rehosting and with no breakpoint added or moved. An upstream fake that answers a top-level `cache_control` with a 400 or a `ValidationException` has that answer relayed to the pod unchanged (RCR-5). |
 | 2 | The migration drops both columns on a real Postgres, and the pool store round-trips a pool without them. |
 | 3 | The admin pool endpoints and the bootstrap upsert return no cache fields, and the error catalogue has no `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED`. |
-| 4 | On the compose stack, a proxy-mode session's repeated request is billed twice in `token_usage.checkpoint`, and under O2 (b) a session using `cache_control` against the upstream fake charges its quota with the full input count. |
-| Static | A repository check finds no `semanticcache`, `proxycache`, `cachePolicy`, `cacheScope`, `scache`, or `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` outside migrations 0070 and 0078, the new migration, the records, `proposals/`, and `scripts/refactor/manifest` (RCR-2). |
+| 4 | On the compose stack, a proxy-mode session's repeated request is billed twice in `token_usage.checkpoint`. |
+| Static | A repository check finds no `semanticcache`, `proxycache`, `cachePolicy`, `cacheScope`, `scache`, or `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` outside migrations 0070 and 0078, the new migration, the records, `proposals/`, and `scripts/refactor/manifest` (RCR-2). The citation resolver finds no link into either retired Phase 17b anchor. |
 
 Every test carries the `// spec:` annotation, and tests at tier 2 and above carry `// diagnosis:`, as `test-coverage.md` requires.
 
@@ -353,9 +376,9 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 | Item | Why it matters | Status |
 | :-- | :-- | :-- |
-| Confirm the usage field names of a Claude InvokeModel response on Bedrock and of a Claude response on Vertex AI | RC-5's metering reads `cache_read_input_tokens` and `cache_creation_input_tokens`. The Bedrock guide shows the Converse names and defers the InvokeModel body to the model reference, and the Vertex page was not read. | Open. |
-| Confirm which Anthropic streaming events carry `cache_read_input_tokens` and `cache_creation_input_tokens` | `applySSEUsage` takes `input_tokens` from `message_start` today, and RC-5 extends it. | Open. |
-| Confirm whether OpenAI's `prompt_tokens` and `input_tokens`, and Azure's, include `cached_tokens` | RC-5 adds cached tokens only where the total omits them. The guides read on 2026-11-09 did not state it verbatim. | Open. Matters once the OpenAI dialect endpoint exists (F-4.9.48). |
+| The metering items of revision 2: the usage field names on Bedrock InvokeModel and on Vertex, the streaming events that carry the cache counts, and whether OpenAI's totals include cached tokens | They moved with O2 and RC-B. | Moved to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md). |
+| Confirm whether Claude models on Google Cloud (Google managed) accept a top-level `cache_control` on `rawPredict` | RC-5 documents which providers refuse the top-level field. Google Cloud's prompt-caching page for Claude documents only the block placement. | Open, for RC-B. |
+| Reconcile Anthropic's statement of organization-level cache isolation on Google Cloud (Google managed) with Google Cloud's statement that a cache is unique to its project | RC-5's isolation statement names both. | Open, for RC-B. |
 | Count the `§12.8 step N` citations and confirm none cites step 2 for anything other than the cache | The renumbering sweep depends on it. Two code sites cite step 2, both for the cache **[source]**. | Open, for the proposal. |
 | Confirm no deployer-facing document outside `docs/` describes `cachePolicy` | RCR-2. | Open. |
 | Confirm whether the admin API should refuse unknown pool fields | "RC-2" relies on today's silent acceptance. | Open, outside this design. |
@@ -363,7 +386,8 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 ## Instructions for reviewers of other designs
 
 - [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md): "Out of scope" says CA-10 moves the embedder code into `semanticcache` if the cache outlives memory. Under this design the cache goes, so the embedder stays with the memory store and goes with it. CA-G and RC-A both edit Phase 17b and renumber the §12.8 `DeleteByUser` steps, and the second to land rebases on the first. Its Terms row "Semantic cache" becomes historical once RC-A lands.
-- [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md): it leaves token metering to §11.2. Under O2 (b), RC-B adds `tokens_cache_read` and `tokens_cache_write` to §11.2.1, and any correction rule that names `tokens_input` and `tokens_output` decides whether the new fields are correctable.
+- [`billing-resource-attribution-design.md`](billing-resource-attribution-design.md): it leaves token metering to §11.2. The billing fields revision 2 proposed moved with O2 and RC-B to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md).
+- [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md): it takes over RC-B and O2. RC-B lands the §4.9 passthrough statement whose content "RC-5" states under this design's D2, including RCR-5 and its tier 1 test, the corrected retention facts, the isolation between users through forwarded identity attributes, and the residual risk within a shared upstream. It also carries the open validation items on Google Cloud of "Validation owed". RC-A removes `cachePolicy` and `cacheScope` from credential pools, whose LLM use that design removes, so the proposal that lands second rebases on the first.
 - [`security-oversight-design.md`](security-oversight-design.md): the regulated-tenant controls lose the cross-user cache refusal. No other control depends on it.
 - Any design that cites `§12.8 step N` for N of 3 and above cites the number RC-A gives the step, or better, the step's store name.
 
@@ -372,7 +396,7 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 | Proposal | Content | Depends on |
 | :-- | :-- | :-- |
 | RC-A | The removal: RC-1 to RC-4. | Nothing. It rebases on CA-G if CA-G lands first. |
-| RC-B | Provider prompt caching under O1 and O2: the §4.9 passthrough statement, the usage count, the billing fields, and the closure of F-11.2.38 (RC-5). | The owner's answers to O1 and O2. It is independent of RC-A. |
+| RC-B | Moved to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md): the §4.9 passthrough statement under this design's D2 ("RC-5"), the usage count, the billing fields, and the closure of F-11.2.38. | That design's own order, and the owner's settlement D2 for the passthrough statement. It is independent of RC-A. |
 
 RC-A can land first because it removes behaviour and adds none. RC-B fixes a metering gap that exists with or without the semantic cache.
 
@@ -381,13 +405,18 @@ RC-A can land first because it removes behaviour and adds none. RC-B fixes a met
 - Anthropic, "Prompt caching", https://platform.claude.com/docs/en/build-with-claude/prompt-caching, read 2026-11-09 (redirected from https://docs.claude.com/en/docs/build-with-claude/prompt-caching). It covers `cache_control`, the TTLs, the usage fields, the statement that `input_tokens` covers only tokens after the last breakpoint, the price multipliers, and workspace and organization isolation.
 - OpenAI, "Prompt caching", https://developers.openai.com/api/docs/guides/prompt-caching, read 2026-11-09 (redirected from https://platform.openai.com/docs/guides/prompt-caching). It covers automatic caching, `prompt_cache_key`, retention, `cached_tokens`, and isolation across organizations. The page was read in part, so the claim about whether `prompt_tokens` includes cached tokens is not taken from it.
 - Microsoft, "Prompt caching" for Azure OpenAI, https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/prompt-caching, read 2026-11-09. It covers automatic caching and isolation across subscriptions.
-- Amazon Web Services, "Prompt caching for faster model inference", https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, read 2026-11-09. It covers `cache_control` in the InvokeModel body for Claude.
+- Amazon Web Services, "Prompt caching for faster model inference", https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html, read 2026-11-09. It covers `cache_control` in the InvokeModel body for Claude, the models that support top-level automatic caching, the `ValidationException` for other models, and the 5-minute and 1-hour lifetimes.
+- Google Cloud, "Prompt caching" for Claude on Vertex AI, https://docs.cloud.google.com/vertex-ai/generative-ai/docs/partner-models/claude/prompt-caching, read 2026-11-09. It covers block-level `cache_control`, the 5-minute and 1-hour lifetimes, and isolation per Google Cloud project.
+- Anthropic, "Claude Models on Google Cloud (Google managed)", https://platform.claude.com/docs/en/build-with-claude/claude-models-on-google-cloud/google-managed, read 2026-11-09. It lists prompt caching among the supported features and states no rule for a top-level `cache_control`.
+
+Revision 3 reread the Anthropic and OpenAI prompt-caching pages on 2026-11-09 for the retention and isolation facts of "Provider prompt caching today", including Anthropic's statement that the legacy Bedrock integration returns a 400 for a top-level `cache_control`.
 
 ## Review history
 
-No review has run.
+An adversarial review read revision 2 on 2026-11-09. Revision 3 applies its findings on this design and the owner's answers of the same date. Its metering corrections moved to [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) with O2 and RC-B.
 
 ### Revision notes
 
 - Revision 1, dated 2026-11-09, follows the owner's request to remove the LLM response caching Lenny provides. It records the semantic cache as specified and built, the false-match behaviour observed by running the shipped store, the passthrough and the cached-token undercount of provider prompt caching, and the open decisions O1 and O2.
 - Revision 2, dated 2026-11-09, files the defects found while writing this design in `BUILD-GAPS.md`, at the owner's request of 2026-11-09: the cached-token undercount as F-11.2.38 and the missing `openai` dialect route of the LLM proxy as F-4.9.48. F-4.9.10 stays closed, and F-4.9.48 cites it.
+- Revision 3, dated 2026-11-09, applies the owner's answers of 2026-11-09 and the adversarial review of revision 2. The owner's answers read, for this design: "Removal side: add an anchor redirect for retitled §18.39 (`TESTING.md` links it); the review confirmed that no eval or replay feature and no `cacheScope` migration depends on the cache." "O1 (C1) open, with recommendation: keep passthrough and strip nothing. Cache isolation follows the upstream's provider account or workspace, so a regulated tenant gets its own upstream. Document the residual risk that one user's agent can detect another user's prompt prefixes within a tenant, through `cache_read_input_tokens` as well as latency. Correct the provider retention facts, and fix RCR-5 and its test: a top-level `cache_control` may be refused by Bedrock and Google-managed Vertex, and the proxy does not rewrite it." "O2 and RC-B move to the LLM upstreams and cost budgets design. Leave a pointer." In response, RC-1 adds anchor redirects for the retired §18.39 anchor and for the retired `TESTING.md` §13.36 anchor. The tree shows that `spec/README.md` links the §18.39 anchor and that §18.2 and §18.39 link the `TESTING.md` §13.36 anchor, and that `TESTING.md` itself links neither, so both redirects are recorded. "Current state" records the review's confirmation. Later on 2026-11-09 the owner answered C1 with "ok", settling O1 as D2 with this rule, as relayed: Lenny never strips or rewrites `cache_control`; provider cache isolation follows the LLM upstream's provider account or workspace, with the posture report of tenants that share an upstream and the warning for a shared upstream granted to a `hipaa` or `fedramp` tenant defined in the LLM upstreams and cost budgets design; a regulated tenant gets its own upstream; and the residual risk within a shared upstream stays documented. A correction of the same day dropped per-user upstreams: strict isolation within a tenant is not a Lenny feature, and the proxy forwards identity attributes (tenant, user, session, and others) to the upstream, so an operator-run LLM gateway behind Lenny can choose per-user provider workspaces or keys itself. In response, D2 records the rule, RC-5 is narrowed to the passthrough with the corrected retention and isolation facts, the isolation between users through forwarded identity attributes, and the residual risk within a shared upstream, and RCR-5 and its tier 1 test now require that a top-level `cache_control` is forwarded without rewriting and that a provider refusal is relayed. O2, RC-B, RCR-6, the metering text, and the metering validation items leave this design, with pointers. Two files that name the cache and that revision 2 omitted, `pkg/gateway/storage/erasure/contract.go` and `cmd/lenny-gateway/main.go`, join "Current state" and "Non-specification changes".
