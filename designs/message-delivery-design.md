@@ -1,14 +1,14 @@
 # Message delivery
 
-Status: design for owner review, revision 2, 2026-11-09, with no independent review yet. Nothing here is built or staged. It reads against [`client-tools-design.md`](client-tools-design.md) revision 4, [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) revision 4, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 7, [`session-derive-design.md`](session-derive-design.md) revision 15, [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) revision 9, [`security-oversight-design.md`](security-oversight-design.md) revision 47, [`delegation-availability-design.md`](delegation-availability-design.md) revision 3, and [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 2. It is built from the read-only investigation of 2026-11-09 into messages that arrive while a runtime works, whose recommendations S1 to S10 the owner accepted on 2026-11-09 with the additions recorded under "Decisions". The owner settled every open decision of revision 1 on 2026-11-09, and no decision remains open. This design re-verifies that investigation's tree and specification claims. It stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label MD-n, requirements carry MDR-n, decisions that began as open questions carry O-n, defects carry MDF-n, and the proposals that land the design carry MD-A to MD-C under "Proposal split and order". "Review history" at the end records the revisions.
+Status: design for owner review, revision 3, 2026-11-10, with no independent review yet. Nothing here is built or staged. It reads against [`client-tools-design.md`](client-tools-design.md) revision 4, [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) revision 4, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 7, [`session-derive-design.md`](session-derive-design.md) revision 15, [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md) revision 9, [`security-oversight-design.md`](security-oversight-design.md) revision 47, [`delegation-availability-design.md`](delegation-availability-design.md) revision 3, [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 2, and [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md) revision 2. It is built from the read-only investigation of 2026-11-09 into messages that arrive while a runtime works, whose recommendations S1 to S10 the owner accepted on 2026-11-09 with the additions recorded under "Decisions". Revision 3 adds what a runtime reports to clients during a turn: activity, streamed output, reasoning, files, approvals raised inside a harness, and turn and usage events. It comes from a proposal of 2026-11-10 that two reviews read, one for its design and one for its coverage of the agent harnesses, and the owner settled its decisions as A1 to A11 and G3 on 2026-11-10. No decision is open. This design re-verifies the tree and specification claims it rests on. It stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label MD-n, requirements carry MDR-n, decisions that began as open questions carry O-n or A-n, defects carry MDF-n, and the proposals that land the design carry MD-A to MD-D under "Proposal split and order". "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
 | Tag | Meaning |
 | :-- | :-- |
-| **[source]** | Read in the Lenny tree or the specification on 2026-11-09. |
-| **[external]** | Read on an external documentation page or in a public repository on 2026-11-09. "Sources" lists the pages. |
-| **[unverified]** | An external claim that the pages read on 2026-11-09 do not state. "Validation owed" lists each one. |
+| **[source]** | Read in the Lenny tree or the specification on 2026-11-09, or on 2026-11-10 for "MD-15" to "MD-21". |
+| **[external]** | Read on an external documentation page or in a public repository on 2026-11-09 or 2026-11-10. "Sources" lists the pages. |
+| **[unverified]** | A claim that the pages and code read do not state. "Validation owed" lists each one. |
 | **[design]** | What this design requires. Nothing implements it. |
 
 ## Problem
@@ -27,6 +27,8 @@ The wire protocol between the adapter and the runtime does not cause any of this
 
 The owner asked for a general machinery that covers today's cases and later ones. This design gives every message a delivery intent, lets each runtime declare the intents it accepts, gives every message an explicit state from acceptance to consumption, and keeps the gateway's custody of a message until the runtime reports that it consumed it. The non-interrupting mode the harnesses default to becomes the intent `steer`, which a runtime declares when it can take a message at any time.
 
+A person who watches a coding agent also expects to see what it does while a turn runs: the tool it runs, the plan it follows, the text it writes, and the questions its harness asks before it runs a command. Every harness surveyed on 2026-11-10 streams these **[external]**. Lenny's path from the runtime to the client carries none of them in a form a client can use **[source]**. The gateway's executor drops every runtime frame other than `response` and an approval-gated `tool_call`, the `status` frame included. An output part cannot grow while it streams. `lenny/output` reaches the gateway on a different link from the stdout frames and skips the `PostAgentOutput` interceptors and the transcript. A harness's permission request for a tool that Lenny does not route has no way to reach the client. "MD-15" to "MD-21" add these reports.
+
 ## Scope
 
 **Added:**
@@ -39,6 +41,13 @@ The owner asked for a general machinery that covers today's cases and later ones
 - A drain call in the runtime SDKs that returns the messages queued for a session between model steps ("MD-12").
 - The session events `message_state` and `turn_end`, and per-message delivery receipts on REST and MCP ("MD-7").
 - Two rules for sessions created on a provider surface. Client tools are offered only in turns a client request caused, and a turn that no client request caused never appears in a provider-surface response ("MD-8", O3).
+- Activity: the `activity` frame and SessionEvent kind, with an open `kind`, the operations `start`, `update`, `patch`, `append`, and `end`, turn and session lifetimes, recording that the runtime asks for under a rate cap, a size cap, and the current state of open activities on attach ("MD-15", A2, A3, A7, and A10).
+- Streaming output: the stdout `output` frame as the only output path, with `append`, `end`, and `reset` on a streaming part ("MD-16", A5 and A6).
+- Reasoning as a `reasoning_trace` part with `signature`, `encrypted`, and `redacted`, or as a `thinking` activity, as the runtime chooses ("MD-17", A1).
+- File parts that name a workspace path, which the adapter uploads to the artifact store ("MD-18", A11).
+- `lenny/request_approval`, which brings a harness's own permission requests into the tool-use approval path, with a policy for unattended sessions ("MD-19", A4).
+- The session events `turn_start`, `usage`, and `activity`, and `status` and `usage` on `turn_end` ("MD-20", A8).
+- The projection of each report on REST, MCP, A2A, the provider surfaces, and AG-UI, under the rule that every report translates to AG-UI without loss ("MD-21", G3).
 
 **Changed:**
 
@@ -49,18 +58,26 @@ The owner asked for a general machinery that covers today's cases and later ones
 - The client-tools hold rule applies only to runtimes that do not declare `steer`, and the cold-history builder gains an ordering rule ("MD-10").
 - An inbox delivery to a held session on a provider surface is delivered on arrival under the ordinary intent rules, in place of waiting for the next client turn ("MD-8", O3).
 - The reference runtime declarations of [§26](../spec/26_reference-runtime-catalog.md#26-reference-runtime-catalog) ("MD-13").
+- `response.output` carries only the parts the runtime has not already emitted on an `output` frame ("MD-16").
+- The executor's frame reader routes every runtime frame and no longer blocks while a tool call awaits approval ("MD-6", "MD-19").
+- §13's gateway-mediated file delivery gains output files as a second exception, beside checkpoint chunks ("MD-18").
 
 **Removed:**
 
 - The executor's turn token (`attachConn.token`) and the rule that discards a `response` with no registered turn.
 - The synchronous `output` member of the REST message response.
 - The delivery timeout of 30 seconds that §7.2 measures against a consumption acknowledgement no frame carries.
+- `lenny/output`, whose output reaches the gateway on its own link ("MD-16", A6).
 
 **Out of scope:**
 
 - Steering by a provider-surface client. A Chat Completions, Responses, or Messages API client cannot correct its own running turn, because each request is one turn, as the provider APIs define it ("MD-8").
 - Scheduled delivery, priority ordering, context-only messages, and the other future cases of "MD-14". The machinery accommodates them, and none ships in v1.
-- Retraction of output and session events. Output already streamed cannot be recalled, and output the gateway has not yet sent to a client is ignored for now ("MD-11", "Blast radius").
+- Retraction of output and session events. Output already streamed cannot be recalled, and output the gateway has not yet sent to a client is ignored for now ("MD-11", "Blast radius"). A runtime's `reset` of a part that is still streaming is not a retraction, and "MD-16" states it.
+- Activity on the provider surfaces, and Messages API event types for it, which a later version may add behind a request header ("MD-21", A9).
+- Relay of a delegated child session's activity into its parent's stream ("MD-15", A7).
+- Files larger than 5 GiB, which need multipart uploads ("MD-18", A11).
+- An AG-UI endpoint. v1 states the projection and builds no adapter ("MD-21", G3).
 - Multi-thread sessions, which the owner left out of v1 under G2. `threadId` keeps its v1 meaning.
 - The fix of each tree defect as a separate change. The owner decided that the defects under "Defects found while verifying" are fixed later under a holistic plan.
 
@@ -87,6 +104,14 @@ The owner asked for a general machinery that covers today's cases and later ones
 | Custody | The gateway's obligation to keep a message and redeliver it until the runtime reports its consumption (O4). |
 | Drain call | The runtime SDK call that returns the messages queued in the runtime process for a session while a handler runs ("MD-12"). |
 | Provider surfaces | The Chat Completions, Responses, and Messages API surfaces, whose clients follow a provider's API. |
+| Activity | A runtime's report of what it is doing, keyed by an `id` the runtime chooses, which the gateway shows to clients and keeps out of model history ("MD-15"). |
+| Activity kind | The open string `kind` of an activity. "MD-15" lists the conventional kinds, and a custom kind takes the `x-<vendor>/` prefix. |
+| Open activity | An activity that has started and has not ended. |
+| Recorded activity | An activity started with `record: true`, whose final state the gateway writes to the transcript when it ends ("MD-15"). |
+| Streaming part | An output part emitted with `status: "streaming"`, which later `output` frames grow by its `id` until it ends or is reset ("MD-16"). |
+| File part | A `file` output part that names a workspace path, which the adapter uploads to the artifact store before the gateway releases the part ("MD-18"). |
+| Harness approval | A permission request that a harness raises for a tool it runs itself, which the runtime forwards with `lenny/request_approval` ("MD-19"). |
+| AG-UI | The Agent-User Interaction Protocol, an open event protocol between agent backends and user interfaces that CopilotKit maintains. Version 1.0 was published on 2026-09-17 **[external]**. |
 
 ### Terms from other designs and the platform
 
@@ -113,6 +138,12 @@ The owner asked for a general machinery that covers today's cases and later ones
 | Warm and cold turn | A warm turn continues a held session. A cold turn starts a new session and delivers the earlier conversation as history. |
 | Checkpoint | The adapter's snapshot of a session's workspace and runtime state, from which a session resumes on a new pod ([§7.3](../spec/07_session-lifecycle.md#73-retry-and-resume), and [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md)). |
 | Test tiers | The stages of the test suite that `.claude/rules/test-coverage.md` defines: 0 static checks, 1 unit, 3 contract, 4 integration on the compose stack, 5 end to end on Kind, 7a local concurrency, 8 chaos, 9 security, 10 runtime adapter conformance, and 11 documentation. |
+| `MessagePart` | The output part format of §28.5.3 "Internal `MessagePart` format", with `type`, `id`, `inline` or `ref`, `mimeType`, and `status` (`streaming`, `complete`, or `failed`). Its registry includes `text`, `file`, and `reasoning_trace`. |
+| `PostAgentOutput` | The interceptor phase of [§4.8](../spec/04_system-components.md#48-gateway-policy-engine) that receives output parts before delivery and may modify or reject them. |
+| Artifact store | The object store of [§4.5](../spec/04_system-components.md#45-artifact-store) for workspace snapshots, staged parts, and uploads. A part stored there is addressed by a `lenny-blob://` URI (§28.5.3). |
+| `ExportPaths` | The adapter RPC that copies files out of a live workspace for delegation, with checks that each path stays inside the workspace (§8.7). |
+| Isolation profile | A pool's `standard`, `sandboxed` (gVisor), or `microvm` (Kata) runtime class. |
+| `llm_request_completed` | The `CH-RUNTIMEOPS` message by which a Full-level runtime reports an LLM call's end, optionally with its token counts (§28.5.3). |
 
 ### Labels from other designs
 
@@ -121,7 +152,7 @@ The owner asked for a general machinery that covers today's cases and later ones
 | T5, T9, O3, CT-5, CT-7, CTR-4, and CTR-5 | [`client-tools-design.md`](client-tools-design.md) | The settled rule that inbox deliveries wait while client calls are pending for a runtime that does not declare `steer`, the settled `abandonPendingToolCalls` rule, the settled decision on deliveries held across a tool loop, the pending-calls part with its "Steer-declaring runtimes" subsection, continuation with its "Order of history entries" rule, and the requirements that no inbox delivery reaches a runtime without `steer` while calls are pending and that no call is outstanding inside a runtime. |
 | T16 | [`client-tools-design.md`](client-tools-design.md#decisions) | The settled rule that client tools are offered only in turns a client request caused, which that design takes from O3 of this design. |
 | CT-A | [`client-tools-design.md`](client-tools-design.md#proposal-split-and-order) | That design's core proposal. |
-| AM-4, AM-5, and AM-A | [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) | Conversation input, continuity with the in-flight join, and the proposal that lands conversation input on the OpenAI translators. |
+| AM-4, AM-5, AM-6, and AM-A | [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) | Conversation input, continuity with the in-flight join, the mapping of output parts to Messages content blocks, and the proposal that lands conversation input on the OpenAI translators. |
 | RV-1 and RV-2 | [`runtime-revisions-design.md`](runtime-revisions-design.md#rv-1-revisions) | Revisions with their field classes and the per-tenant capability override, and revision selection with the `runtime_revision` metric label. |
 | SD-1 | [`session-derive-design.md`](session-derive-design.md#sd-1-one-route) | The derive route, and "Reading client messages", which gives transcript entries a sender and a delivery state. |
 | IC-4 | [`incremental-checkpoint-design.md`](incremental-checkpoint-design.md#ic-4-catalog-reference-closure-and-quota) | The checkpoint catalog. |
@@ -163,6 +194,22 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 **Extension (MD-14).** A new intent states its gateway behaviour per turn state, its runtime obligation, and its states, and is declared when the runtime has to act on it.
 
+During a turn the runtime also reports what it is doing. Activity frames show tools, plans, steps, and other progress, and the gateway keeps the current state of every open activity, so a client that connects mid-turn sees it. Output streams as the model writes it. Reasoning is content or activity, as the runtime chooses. A file the agent produces is copied to the artifact store and offered to the client as a download. A harness's own permission requests reach the client through the approval flow that Lenny's tools use. Every report translates to AG-UI without loss.
+
+**Activity (MD-15).** An `activity` frame starts, updates, patches, appends to, or ends an activity by `id`. `kind` is open, and conventions name the common kinds. The gateway keeps open activities and sends them on attach, records an activity in the transcript only when the runtime asks, caps recorded activity per minute, and closes a turn's open activities when the turn ends. The adapter caps a frame at 1 MiB and merges rapid updates.
+
+**Output (MD-16).** The stdout `output` frame is the only output path. A streaming part grows by `append`, ends by `end`, and is discarded by `reset`. `lenny/output` is removed.
+
+**Reasoning (MD-17).** A `reasoning_trace` part carries the provider's signature or encrypted value and enters the transcript. A `thinking` activity shows reasoning without recording it.
+
+**Files (MD-18).** A `file` part names a workspace path. The adapter uploads the file in one `PUT` against a capability the gateway signs, and the gateway replaces the path with a `lenny-blob://` reference. The limit is 5 GiB, a runtime can lower it, and the file has the session's retention.
+
+**Harness approvals (MD-19).** `lenny/request_approval` sends a harness's permission request through the `tool_use` approval path, and a declared policy answers for unattended sessions.
+
+**Turn and usage events (MD-20).** `turn_start` and `usage` events are added, and `turn_end` carries a status and usage. Usage comes from the gateway's metering and from the runtime's report, each labelled with its source.
+
+**Surfaces (MD-21).** Each report has a projection on REST, MCP, and A2A, provider surfaces carry output and reasoning only, and every report has a lossless AG-UI projection, through a `CUSTOM` event where AG-UI has none.
+
 ```
  sender (client, agent, system, external)
    │ message {id, delivery: steer | queue | interrupt | absent}
@@ -184,6 +231,18 @@ The rest of this section states each part in the design's terms, which "Terms" a
                            delivered or consumed entry ──> too_late (no change)
    │
    └─> events on the session stream: message_state, output, turn_end
+```
+
+```
+ runtime (stdout, CH-MSGSOCK)                     adapter                         gateway
+   activity {op, id, kind, ...} ──> size cap, merge updates, route by session ──> PostAgentActivity, apply patch,
+                                                                                   keep open set, stamp turn ──> activity event
+   output {parts: part | append | end | reset} ──────────────────────────────────> PostAgentOutput on each completed part,
+                                                                                   transcript ──> output event
+   output {file part, path} ──> resolve path, request grant ──> PUT to artifact store ──> check size, set ref ──> output event
+   lenny/request_approval (platform MCP) ────────────────────────────────────────> tool_use requested ──> client or policy
+                                                                                   turn_start, turn_end, usage events
+ client attaches ──> replayed events, then one activity snapshot of the open activities
 ```
 
 ## Decisions
@@ -217,6 +276,23 @@ Settled by the owner on 2026-11-09 with revision 2, from the open decisions of r
 | O5 | Whether a client may retract a message it sent, as S8 lets a runtime do. | Option (a). A client retracts its own message through `DELETE /v1/sessions/{id}/messages/{messageId}` and the generated MCP tool, with the results and rules of "MD-11". S8 builds the operation for runtimes, and the client route reuses it with no further state or store change. A `queue` message can wait for a long turn, and the user who queued it may change their mind, as Claude Code and Cursor let a user remove a queued message **[external]**. Retraction succeeds only while the message is `pending`, so it never races the runtime. | MD-7, MD-11 |
 | G2 | Whether a session carries several concurrent conversations, each named by `threadId`. | Left out of v1. The owner wrote: "ok to leave out of v1". No harness keeps separate concurrent conversations in one process. Threads would multiply the per-thread delivery machinery, because intents, open turns, attribution, and custody would each be kept per thread. Separate sessions and delegation cover the use cases. `threadId` and `inReplyTo` already let a later version add threads with no schema change. | "Scope" |
 
+Settled by the owner on 2026-11-10 with revision 3, from the activity proposal of 2026-11-10 and its two reviews. The owner answered A1 and A8 with a change to the recommendation, proposed the recording rule of A2, asked for JSON Patch in A3, and answered "ok" to the rest. The owner also noted that replay "is being redesigned completely and moved out of Lenny", which [`session-derive-design.md`](session-derive-design.md) records: a client reads its own messages with SD-1's read and re-sends them, so activity in the transcript has no effect on replay.
+
+| ID | Question | Decision | Where |
+| :-- | :-- | :-- | :-- |
+| G3 | Whether Lenny's events follow AG-UI. | The owner wrote: "Lenny's event model needs to be translatable into AG-UI without losing information. But we should not give up on anything we believe is important that isn't supported by AG-UI yet." Every event has a lossless AG-UI projection, through `CUSTOM` where AG-UI has no event, and Lenny keeps the features AG-UI lacks. v1 adds no AG-UI endpoint, because Lenny is session-based while AG-UI is run-based and the client re-sends state on each run, and because it would be a fourth client surface. | MD-21 |
+| A1 | Whether reasoning is conversation content or activity. | The owner wrote: "I think it could be either, depending on what the runtime implements." The runtime chooses: a `reasoning_trace` part for content, or a `thinking` activity. Lenny does not convert between them. | MD-17 |
+| A2 | Whether activity persists. | The owner asked whether the runtime could "indicate which activities should be recorded to history" with a cap on "events written to history per unit of time", and then answered "ok" to recording each recorded activity's final state only. Activity stays out of the transcript unless the runtime sets `record: true`, the gateway writes one row when such an activity ends, `activity.recordPerMinute` caps the rows, and every open activity is sent on attach and resume. | MD-15 |
+| A3 | Which update operations activity has. | The owner asked to "support JSON Patch where applicable". `start`, `update`, `patch` for an object or array `detail`, `append` for a string, and `end`. The gateway applies each patch before forwarding it. | MD-15 |
+| A4 | Whether approvals raised inside a harness reach the client. | "ok". `lenny/request_approval` feeds the `tool_use` approval path, with `harnessApprovals` for unattended sessions. | MD-19 |
+| A5 | How output streams. | "ok". `append`, `end`, and `reset` on a streaming part. A session with a `PostAgentOutput` interceptor receives each part once, completed. | MD-16 |
+| A6 | Whether `lenny/output` stays. | "ok". It is removed, and the stdout `output` frame is the only output path. | MD-16 |
+| A7 | Whether a child session's activity is relayed to its parent. | "ok". It is not relayed. The parent links to the child by `childSessionId`. | MD-15 |
+| A8 | Where mid-turn usage comes from. | The owner wrote: "we should support both". Usage events carry `source: gateway` from metering and `source: runtime` from `llm_request_completed`. Budgets read only the gateway source. | MD-20 |
+| A9 | What the provider surfaces show. | "ok". Output and reasoning only. Activity on the Messages API behind a request header is future work. | MD-21 |
+| A10 | How large an activity frame can be. | "ok", and the owner wrote: "I don't think we need to store activity frames as files." An adapter-enforced cap of 1 MiB by default, configurable by the operator, with no blob references. An oversized frame is dropped and the client receives `lost`. | MD-15 |
+| A11 | How a large file the agent produces reaches the user. | The owner chose "straight to storage" (A11a), a "5 GiB default. Runtimes can lower it" (A11b), and the "same retention as the session" (A11c). The owner had asked whether the gateway can pull a workspace file and proposed that the file be "stored in blob storage by sending it via stdout through the adapter/gateway first". The design keeps the copy in blob storage and moves the bytes on the checkpoint transfer path, because stdout is limited to 50 MiB per line, base64 grows binary content by a third, and a large file on stdout would hold every later frame behind it. `ExportPaths` returns all its files in one response, so it cannot move a large file. The owner asked whether this works for gVisor and Kata: it does, because checkpoint transfer works under every isolation profile. | MD-18 |
+
 ## Requirements
 
 | ID | Requirement |
@@ -236,6 +312,18 @@ Settled by the owner on 2026-11-09 with revision 2, from the open decisions of r
 | MDR-13 | A turn that no client request caused carries no `conversation.clientTools`, on every surface (O3). |
 | MDR-14 | A provider-surface response carries only output of the turn that consumed the request's own message, from the point of that consumption. The output of a turn that no client request caused never appears in a provider-surface response, and reaches the transcript and the session's REST and MCP event streams (O3). |
 | MDR-15 | When a session resumes from a checkpoint, every message the runtime reported consumed after that checkpoint is reported `consumed_unrecorded` and is not redelivered (O4). |
+| MDR-16 | Activity never reaches a model. A recorded activity's transcript row is skipped by every cold-history builder, by conversation input, and by SD-1's client-message read (A2). |
+| MDR-17 | A client that attaches or resumes receives the current state of every open activity of the session before any later activity event (A2). |
+| MDR-18 | Neither coalescing nor a rate limit drops a `start` or an `end`, and coalescing never reorders an activity against another session-scoped frame of the session. |
+| MDR-19 | The gateway applies every `patch` to its own copy before it forwards the frame, and a patch that fails reaches no client (A3). |
+| MDR-20 | Every open activity with `lifetime: turn` ends when its turn closes or the runtime process ends, and every open `session` activity ends when the session ends. |
+| MDR-21 | Every runtime output reaches the gateway on the session's `CH-MSGSOCK` frames, and every completed output part passes `PostAgentOutput` before it reaches the transcript. On a session with a `PostAgentOutput` interceptor, no client receives a part before the interceptor answers (A5, A6). |
+| MDR-22 | The session's frame reader never blocks on a tool-use approval or a harness approval. |
+| MDR-23 | A file part's bytes never travel on stdout, `CH-ATTACH`, or through the gateway. The gateway releases a file part only after it confirms the stored object's size against the capability it signed (A11). |
+| MDR-24 | An output file is kept for the session's retention, and erasure and legal holds apply to it as to the session's transcript (A11c). |
+| MDR-25 | Every usage event names its source, and budgets read only gateway-metered usage (A8). |
+| MDR-26 | Every SessionEvent kind and payload has an AG-UI projection that loses no information (G3). |
+| MDR-27 | A harness approval that no client answers within the approval timeout is answered by the session's `harnessApprovals.unattended` policy, which defaults to `deny` (A4). |
 
 ## Current state
 
@@ -297,6 +385,25 @@ The investigation surveyed the harnesses, and this design re-read the pages its 
 - Anthropic tool use: "Tool result blocks must immediately follow their corresponding tool use blocks in the message history", and in the user message that carries them "the `tool_result` blocks must come FIRST in the content array. Any text must come AFTER all tool results."
 
 The investigation found no harness that places a message between a tool call and its result.
+
+### Runtime reports during a turn
+
+These were read in the tree and the specification on 2026-11-10 **[source]**:
+
+- `PodExecutor.handleFrame` (`pkg/gateway/session/executor/podstream.go`) routes an approval-required `tool_call` to the approval gate, completes the turn on `response`, and discards every other frame, the `status` frame of the `CH-MSGSOCK` card included. `maybeGateToolCall` calls `AwaitApproval` on the reader's goroutine, so the session's reader reads nothing while a call awaits approval.
+- `lenny/output` goes from the adapter's platform MCP server (`pkg/adapter/platformmcp.go`) over the gateway control link to `registerOutputTool` (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`), which publishes `agent_output` to the event bus. It runs no `PostAgentOutput` chain and writes no transcript entry. `Server.recordDeliveredResponse` (`pkg/gateway/sessionserver/messages_delivery.go`) runs `PostAgentOutput` and transcribes only the `text` parts of the final `response`.
+- §15 "SessionEvent Kind Registry" is closed, and an added kind needs a `SessionEvent` schema version bump. Its `output` row says that "The runtime emits an `agent_output` frame". No such `CH-MSGSOCK` frame exists, and `agent_output` is the bus event's name. The bus itself is open-typed (`sessionevents.Event.Type` in `pkg/gateway/session/sessionevents/events.go`).
+- `MessagePart` (§28.5.3 "Internal `MessagePart` format") has an open `type` with the `x-<vendor>/` namespace, an `id`, and `status: streaming | complete | failed`, and its registry has `reasoning_trace` and `file`. No rule appends to a part by `id`.
+- §28.5.3 stores a part up to 64 KB inline, stages a part from 64 KB to 50 MB in the artifact store with a `lenny-blob://` reference, and refuses a larger part with `413 MESSAGEPART_TOO_LARGE`. A live-delivery blob expires after 1 hour by default.
+- The adapter reads stdout lines up to `maxJSONLFrameBytes = 50 * 1024 * 1024` (`pkg/adapter/socketruntime.go`). §4.7.10 states that a longer line stops the adapter reading the connection and fails each session on it with `runtime_crash`. Binary content travels base64-encoded inside the line.
+- `sessionScopedFrameTypes` (`pkg/adapter/attach.go`) lists `message`, `tool_call`, `tool_result`, `response`, `set_tracing_context`, and `status`. Any other frame type passes through to every Attach stream on the pod.
+- The replay buffer holds 512 events by default (§10.4 "Event replay buffer"), and the Redis relay trims each session's stream to 256 entries (`DefaultStreamMaxLen` in `pkg/gateway/session/sessionevents/redisrelay.go`). §10.4 already separates volatile events from reconstructible ones on a coordinator handoff.
+- `PostAgentOutput` receives `MessagePart[]` and may modify or reject it (§4.8, the phase payload table).
+- `ExportPaths` (`schemas/lenny-adapter.proto`) returns every exported file's bytes in one response. Checkpoint chunks travel between the pod and the artifact store against presigned capabilities for one key, one method, and an exact `Content-Length` (§13.2, NET-071), and §13's "File delivery" row calls them the one exception to gateway-mediated delivery.
+- `GET /v1/sessions/{id}/artifacts` lists the session's artifact catalog rows (`handleListArtifacts` in `pkg/gateway/sessionserver/session_subresources.go`) and reads nothing from the pod. §15.1 also lists `GET /v1/sessions/{id}/artifacts/{path}`, which `route_table.go` does not register.
+- `llm_request_completed` on `CH-RUNTIMEOPS` optionally carries `inputTokens` and `outputTokens` (§28.5.3).
+
+The harness survey of 2026-11-10 found these **[external]**. Every harness streams assistant text token by token. Claude Code, Codex, Gemini CLI in its Agent Client Protocol mode, and Cursor in its Agent Client Protocol mode report tool runs with streamed output, plans or todo lists, reasoning, and permission requests for their own tools. The Claude Messages API requires thinking blocks to return with their signatures. AG-UI 1.0 has events for streaming text, tool calls, reasoning with encrypted values, open-typed activity snapshots with JSON Patch deltas, subagents, and interrupts that end a run.
 
 ## MD-1 Delivery intents
 
@@ -391,7 +498,7 @@ Transitions: `pending` to `delivered`, `retracted`, `expired`, or `dropped`; `de
 
 **Open turn [design, O1].** The gateway's session state records whether a turn is open:
 
-- A turn opens when the gateway writes a message while no turn is open, and when the runtime emits output, a `tool_call`, or a `consumed` frame while no turn is open. A `retract` frame ("MD-11") opens no turn, because it produces no work for the session.
+- A turn opens when the gateway writes a message while no turn is open, and when the runtime emits output, a `tool_call`, or a `consumed` frame while no turn is open. A `retract` frame ("MD-11") opens no turn, because it produces no work for the session, and an `activity` frame opens none ("MD-15"). An `output` frame is output and opens a turn ("MD-16").
 - A turn closes on the runtime's `response`, and on the end of the runtime process.
 
 The open turn replaces `ready_for_input` as the condition a `queue` message waits for. A runtime that writes no `response` keeps its turn open, as it keeps a turn open today, and the session's idle and heartbeat rules apply to it unchanged. The turn ordinal increments at each opening, and `turn_end` events carry it.
@@ -426,7 +533,7 @@ The session stays `running` on the interrupt path. The `POST /v1/sessions/{id}/i
 
 **Writer [design, S9].** `PodExecutor` gains `Deliver(ctx, sessionID, []Envelope) ([]WriteResult, error)`, which writes each envelope on the session's `CH-ATTACH` stream and returns once the writes succeed or the stream fails. It takes no turn token, and a write is allowed while a turn is open. `attachConn.token`, `acquireTurn`, and the turn registration leave `podstream.go`.
 
-**Reader [design].** The stream's reader routes every frame: `consumed` and `response` update inbox states and the open-turn state through one session-scoped recorder, `response` output goes to the transcript and the event stream, and an unsolicited response is recorded under "MD-4". Nothing is discarded for want of a waiter.
+**Reader [design].** The stream's reader routes every frame: `consumed` and `response` update inbox states and the open-turn state through one session-scoped recorder, `response` and `output` frames go to the transcript and the event stream under "MD-16", `activity` frames go to "MD-15", and an unsolicited response is recorded under "MD-4". Nothing is discarded for want of a waiter. An approval-required `tool_call` and a `lenny/request_approval` call wait off the reader's goroutine, so the reader keeps reading during an approval (MDR-22, MDF-8).
 
 **Turn waiter [design].** `AwaitConsumingTurn(ctx, sessionID, messageID) (TurnResult, error)` returns the `response` of the turn that consumed the message, or the failed turn's error. The provider-surface adapters and replay use it. A waiter that stops waiting leaves nothing registered on the stream, because the reader's routing does not depend on waiters.
 
@@ -445,7 +552,7 @@ The session stays `running` on the interrupt path. The `POST /v1/sessions/{id}/i
 | `message_state` | `{ "messageId", "state", "intent", "fromKind", "turn"?, "reason"? }` | A message of the session changes state, including to `retracted` and to `consumed_unrecorded`. A move to `consumed_unrecorded` also reaches the sending session's stream for a message from another session ("MD-3"). The payload carries no content. |
 | `turn_end` | `{ "turn", "consumed": [ids], "unsolicited": bool, "error"? }` | A `response` closes a turn. |
 
-The registry is closed, so the addition takes the `SessionEvent` schema revision the registry requires. The session's `output` events carry the turn's output as they do today. Adapters that do not list the kinds in `SupportedEventKinds` do not receive them, under the registry's dispatch-filter rule.
+"MD-15" adds `activity`, and "MD-20" adds `turn_start` and `usage` and extends `turn_end`. The registry is closed, so the additions take the `SessionEvent` schema revision the registry requires. The session's `output` events carry the turn's output as they do today. Adapters that do not list the kinds in `SupportedEventKinds` do not receive them, under the registry's dispatch-filter rule.
 
 **Client retraction [design, O5].** Under O5, a client retracts its own `pending` message: `DELETE /v1/sessions/{id}/messages/{messageId}` runs the retraction of "MD-11" for a message the caller sent to the session and answers `200` with `{ "messageId", "result" }`, where `result` is `retracted`, `too_late`, or `unknown`. A message the caller did not send answers `unknown`, under MDR-11. The MCP tool is generated from the route under §15.2.1 rule 4.
 
@@ -537,7 +644,7 @@ The adapter relays it on `CH-ATTACH` to the stream of the session it names, as a
 | A pending client tool call on a REST or MCP session | The call's runtime `id` from `clientToolCalls` | The call is still in the session's pending set. | A results message cleared the set first. | The gateway removes the call from the pending set with the conditional write [CT-5](client-tools-design.md#ct-5-pending-calls-and-the-hold-rule) uses for results, and emits a `tool_use` event with `target: "client"` and phase `retracted`. The next results message answers exactly the calls that remain, and one that names a retracted call is refused with `409 CLIENT_TOOL_CALLS_RETRACTED`. When no call remains, the session has no pending calls. |
 | A client tool call on a provider surface (Messages, Chat Completions, or Responses) | The call's runtime `id` | Never. | Always. | None. A returned call cannot be withdrawn on these surfaces: the pending set stays, the client sends results as the provider's API requires, and the runtime ignores them. |
 | A message the runtime sent to another session through `lenny/send_message`, to its parent, a child, or a sibling | The `messageId` of the receipt, or the id the runtime supplied | The message is `pending` in the recipient's inbox or DLQ. | The message is in any other state: `delivered`, `consumed`, `expired`, or `dropped`. | The entry moves to `retracted` and leaves the store, it is never delivered, and the recipient's event stream receives `message_state` with `retracted` and no content. |
-| Output and session events | None, because output parts and events carry no id | Never in v1. | Not applicable. | Ignored for now ("Blast radius"). Output already streamed to a client cannot be recalled. |
+| Output and session events | None, because output parts and events carry no id | Never in v1. | Not applicable. | Ignored for now ("Blast radius"). Output already streamed to a client cannot be recalled. A part still streaming can be discarded with `reset` ("MD-16"), which is not a retraction. |
 | Anything else: a child's `task` from `lenny/delegate_task`, a `tool_call`, another sender's message, or an id the gateway does not know | Any | Never. | Never. | `unknown`. A runtime stops a child with `lenny/cancel_child`. |
 
 A retracted `interrupt` message is never delivered, and an interrupt the gateway already requested for it proceeds, because the runtime may already be stopping.
@@ -583,6 +690,8 @@ Output and session events are not small, so they are ignored for now. Output par
 
 **Busy reporting [design].** A handler that holds a drained message across a wait for client results takes a busy hold only while it works. Holding a message is not work, so the session idles and suspends as §15.7 states.
 
+**Activity, output, files, and approvals [design].** The SDKs add `ReportActivity(ctx, Activity)` in Go, `report_activity()` in Python, and `reportActivity()` in TypeScript, which write `activity` frames, with helpers for each operation and an `End` that sets the final status. `Output` writes the `output` frame, with a streaming writer that emits `append`, `end`, and `reset`. A file helper emits a `file` part by workspace path. `RequestApproval` calls `lenny/request_approval` and returns the decision. The client SDKs keep events as `{type, data}` strings, so the new kinds reach applications with no client SDK release, and typed helpers for the conventional kinds are optional.
+
 ## MD-13 Reference runtimes
 
 The tree holds no reference-runtime adapter source, so each change is a declaration in §26 and `pkg/embedded/stack/catalog.go`, and an adapter change in the runtime's own repository **[design]**:
@@ -597,6 +706,17 @@ The tree holds no reference-runtime adapter source, so each change is a declarat
 | `langgraph`, `mastra`, `openai-assistants`, and `crewai` | `queue`, `interrupt` | `queue` | Their frameworks' mid-run input was not checked for these runtimes, and the LangGraph open-source framework accepts no input into a running graph **[external]**. |
 
 Each runtime that declares `interrupt` handles `interrupt_request` today, because each declares `immediate`. §26.3 "Bootstrap behavior" gains the stream-json invocation and the mid-turn behaviour, and §26.2 states the default for the coding-agent runtimes.
+
+**Activity, output, and approvals in the reference adapters [design].** The adapter of each harness-wrapping runtime translates the harness's stream into the frames of "MD-15" to "MD-19". The harness review of 2026-11-10 found these interfaces **[external]**:
+
+| Runtime | Interface | Translation |
+| :-- | :-- | :-- |
+| `claude-code` | The CLI's `stream-json` output, or the TypeScript Agent SDK, run with `--include-partial-messages`, `--include-hook-events`, and `--forward-subagent-text`. The Python Agent SDK's parser drops `redacted_thinking` and every unknown top-level message type, so the adapter does not use it. | Text deltas become `output` `append` entries. `thinking` and `redacted_thinking` blocks become `reasoning_trace` parts with their signatures. `tool_use` and `tool_result` blocks of the harness's own tools become `tool` activities, and tools that the adapter's MCP servers serve are skipped, because the gateway reports them as `tool_use`. TodoWrite input becomes the `plan`. Hook events become `hook` activities. `can_use_tool` becomes `lenny/request_approval`, and AskUserQuestion becomes an elicitation. |
+| `codex` | The app-server protocol. `codex exec --json` has no deltas, no approvals, and no turn id. | `item/*` notifications become activities and output, `item/commandExecution/outputDelta` becomes `append`, and `item/*/requestApproval` becomes `lenny/request_approval`. |
+| `gemini-cli` | `--acp`. Its `stream-json` output drops thoughts, retries, compression, approvals, and non-string tool output. | Agent Client Protocol `session/update` variants map to output, `thinking`, `tool`, and `plan`, and `session/request_permission` becomes `lenny/request_approval`. |
+| `cursor-cli` | `agent acp`. Its `stream-json` output has no thinking, approvals, todo lists, or error event. | As for `gemini-cli`. |
+
+A generic adapter for Agent Client Protocol harnesses is a runtime SDK deliverable, because several harnesses expose that protocol.
 
 ## MD-14 Future use cases and the extension rule
 
@@ -624,6 +744,255 @@ Each runtime that declares `interrupt` handles `interrupt_request` today, becaus
 6. The enum stays closed: an unknown intent is refused with `400 INVALID_DELIVERY_VALUE`, and registration refuses an unknown declared intent.
 7. A new intent comes with a conformance case in §15.4.6 and a mapping row on each surface that exposes it.
 
+## MD-15 Activity
+
+The owner settled A2, A3, A7, and A10 on 2026-11-10 and kept the activity `kind` open-ended under conventions. Activity is the runtime's own report of what it is doing. The gateway shows it to clients, keeps the current state of every open activity, and keeps it out of model history **[design]**.
+
+### Frame
+
+```json
+{
+  "type": "activity",
+  "sessionId": "sess_01J9...",
+  "op": "start",
+  "id": "act_7",
+  "kind": "tool",
+  "lifetime": "turn",
+  "record": true,
+  "parentId": "act_2",
+  "agent": "explorer",
+  "summary": "Running npm test",
+  "detail": { "toolKind": "execute", "command": "npm test", "output": "" }
+}
+```
+
+| Field | Set on | Meaning |
+| :-- | :-- | :-- |
+| `id` | Every frame | The runtime's identifier for the activity, unique within the session. |
+| `op` | Every frame | `start`, `update`, `patch`, `append`, or `end`. |
+| `kind` | `start` | An open string. "Conventional kinds" lists the kinds clients can rely on, and a custom kind takes the `x-<vendor>/` prefix that custom `MessagePart` types use. The gateway checks no `detail` schema for any kind. |
+| `lifetime` | `start` | `turn`, the default, or `session`. A `turn` activity ends with its turn. A `session` activity, such as a plan, spans turns. |
+| `record` | `start` | `true` asks the gateway to write the activity's final state to the transcript when it ends ("Recording"). The default is `false`. |
+| `parentId` | `start` | The id of an enclosing activity, for nesting, such as a tool run inside a step or a subagent. |
+| `agent` | `start` | The name of the harness-internal subagent that produced the activity. |
+| `status` | `start`, `update`, `end` | `active`, the default on `start`, then `completed`, `failed`, or `cancelled` on `end`. |
+| `summary` | `start`, `update`, `end` | A one-line text for display. |
+| `detail` | `start`, `update`, `end` | Any JSON value, a string included. |
+| `patch` | `patch` | An RFC 6902 JSON Patch applied to `detail` when `detail` is an object or an array. |
+| `path` and `text` | `append` | `text` is appended to the string at the RFC 6901 JSON Pointer `path` inside `detail`. An empty `path` names `detail` itself when `detail` is a string. |
+
+`kind`, `lifetime`, `record`, `parentId`, and `agent` are fixed at `start`. A frame that changes one is dropped with the reason `immutable_field`.
+
+### Operations
+
+| `op` | Effect |
+| :-- | :-- |
+| `start` | Creates the activity. An `id` the session already used is dropped with the reason `duplicate_id`. |
+| `update` | Replaces `summary`, `detail`, and `status` with the values the frame carries. A member the frame omits keeps its value. |
+| `patch` | Applies `patch` to `detail`. The gateway applies the patch to its own copy before it forwards the frame, and a patch that fails to apply is dropped with the reason `patch_failed` and reaches no client (A3). |
+| `append` | Appends `text` to the string at `path`. A `path` that names no string is dropped with the reason `invalid_target`. JSON Patch has no string append, so `append` covers growing text such as a command's output. |
+| `end` | Sets the final `status`, and optionally a final `summary` and `detail`, and closes the activity. A frame for an ended `id` is dropped with the reason `ended_id`. |
+
+A frame for an `id` the session never started is dropped with the reason `unknown_id`. Every drop is counted on `lenny_activity_dropped_total{runtime, runtime_revision, reason}`, and the gateway emits an `activity` event with `op: "lost"`, the `id`, and the reason, so a client knows its copy of that activity missed a change.
+
+### Conventional kinds
+
+The kinds below are conventions that runtime authors and clients share. A runtime may send any kind.
+
+| Kind | Meaning | Conventional `detail` members |
+| :-- | :-- | :-- |
+| `tool` | A tool the harness runs itself, such as its shell or file editor. A tool call that Lenny routes is reported by the `tool_use` event and never as activity. | `toolKind` (the Agent Client Protocol values `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, and `other`), `title`, `toolUseId` (the harness's call id), `input`, `output` (a string, grown by `append`), `changes` (`[{path, change: add \| modify \| delete, diff?}]`), and `locations` (`[{path, line?}]`). |
+| `plan` | The agent's plan or todo list. One per session, with `lifetime: session`, replaced by `update` or changed by `patch`. A plan proposed for the user's approval is an elicitation ("MD-19"). | `entries` (`[{id?, content, status: pending \| in_progress \| completed, priority?}]`). |
+| `step` | A named phase of the agent's work. | `name`. |
+| `thinking` | Reasoning shown as status ("MD-17"). | `text` (grown by `append`), `durationMs`, and `estimatedTokens`. |
+| `subagent` | A subagent the harness runs inside its own process, such as a Claude Code task. Activities the subagent produces name it in `agent` and its activity in `parentId`. | `name` and `description`. |
+| `compaction` | The harness compacting its context. | `tokensBefore` and `tokensAfter`. |
+| `context` | The fill of the model's context window. | `usedTokens` and `windowTokens`. |
+| `diff` | The workspace changes of a turn. | `files` (`[{path, additions, deletions}]`). |
+| `hook` | A harness hook run. | `event`, `name`, and `output`. |
+| `retry` | A model or tool call the harness retries. | `attempt`, `reason`, and `delayMs`. |
+| `notice` | A message for the user that is not conversation content. | `severity` (`info`, `warning`, or `error`), `title`, and `description`. |
+| `waiting` | The harness waits on something outside Lenny. | `on`. |
+| `mode` | The harness changed its mode, such as a plan mode. | `mode`. |
+| `model` | The harness changed its model. | `model`. |
+
+### Turn and close rules
+
+- Activity never opens or closes a turn ("MD-4"). The gateway stamps each activity event with `turn`, the ordinal of the open turn, when a turn is open.
+- When a turn closes, every open activity of that turn with `lifetime: turn` ends `cancelled` with `reason: "turn_ended"`. When the runtime process ends, every open activity ends `cancelled` with `reason: "runtime_exit"`. When the session ends, every open `session` activity ends `cancelled` with `reason: "session_ended"`. A client spinner therefore always stops.
+- Activity counts as agent work for idle suspension, as §6.2 counts `agent_output` and `tool_use`.
+
+### Current state and attach (A2)
+
+The gateway keeps the current state of every open activity of a session in a Redis hash keyed by activity id, on the session's data shard, so any gateway replica that coordinates the session holds it. The hash is bounded by `activity.maxOpen` (default 256) and `activity.snapshotMaxBytes` (default 8 MiB) per session. A `start` past either bound is dropped with the reason `open_limit`.
+
+On every attach and every resume, after the replayed events, the gateway sends one `activity` event with `op: "snapshot"` that lists every open activity, with a fresh `SeqNum` as the synthesized frames of §10.4 "Coordinator-handoff reattach" take. Activity events are volatile events under §10.4 "volatile vs. reconstructible events": a resume whose range lost only activity events receives the snapshot and no `gap_detected` for them. When the replay ring must evict, it evicts first an activity event whose `id` has a later event in the ring, so activity does not push other events out of the ring.
+
+### Recording (A2)
+
+Activity stays out of the transcript unless the runtime starts it with `record: true`. When a recorded activity ends, the gateway writes one transcript row with the role `activity` that carries the activity's `kind`, `summary`, `detail`, final `status`, `agent`, `parentId`, `turn`, and its start and end times, at the position of its `start`. Intermediate updates are not recorded.
+
+`activity.recordPerMinute` (default 60, operator-configurable) caps the recorded rows per session per minute. A recorded activity that ends over the cap is still shown live, and the gateway writes one marker row for the minute that states how many activities it did not record, and counts them on `lenny_activity_unrecorded_total`.
+
+Recorded rows never reach a model: the cold-history builders of CT-7 and AM-4, conversation input, and SD-1's `GET /v1/sessions/{id}/messages?from=client` skip them. `GET /v1/sessions/{id}/transcript` returns them. Transcript retention, [§12.8](../spec/12_storage-architecture.md#128-compliance-interfaces) erasure, and legal holds apply to them as to every transcript row.
+
+### Adapter rules
+
+- **Size (A10).** The adapter parses each `activity` frame and drops one larger than `activity.maxFrameBytes` (default 1 MiB, operator-configurable) with the reason `oversize`. The session continues. Activity has no blob references: content larger than the cap is a file part ("MD-18") that an activity names by path.
+- **Coalescing.** The adapter holds the newest `update` per `id` for at most `activity.minIntervalMs` (default 250 ms) and concatenates consecutive `append` frames to the same `id` and `path`. It never holds `start`, `patch`, or `end`, and before it relays any other session-scoped frame of the session it relays every held frame in the order of their newest writes. Coalescing therefore skips intermediate states and never reorders an activity against output, `tool_call`, `consumed`, or `response`.
+- **Routing.** `activity` and `output` join `sessionScopedFrameTypes` in `pkg/adapter/attach.go`, so the demultiplexer relays them to their own session's stream alone.
+
+### Gateway rules
+
+- **Interceptors.** A new interceptor phase, `PostAgentActivity`, receives each activity frame as JSON before the gateway applies and forwards it. `MODIFY` may change `summary`, `detail`, `patch`, and `text`, and may not change `id`, `kind`, `op`, `parentId`, or `status`. `REJECT` drops the frame, writes the audit record other phases write, and never fails the turn. A rejected `end` still closes the activity, with its `summary` and `detail` removed, so the close rule holds. The phase follows the failure policy each interceptor declares, as the other phases do. `PostAgentOutput` does not fit, because its payload is `MessagePart[]`.
+- **Trust.** Activity is the runtime's claim about itself. No audit record, policy decision, budget, or approval reads it.
+- **Opt-out.** A subscriber passes `activity: "none"` on `lenny/attach_session` and on `GET /v1/sessions/{id}/events` to receive no activity events. The default delivers them.
+
+### Child sessions (A7)
+
+A delegated child session's activity stays on the child's stream. The parent's `tool_use` event for `lenny/delegate_task` carries `childSessionId`, and a client that wants the child's detail attaches to the child. A subagent that a harness runs inside its own process is a `subagent` activity of the session, because Lenny learns of it only from the harness.
+
+## MD-16 Output streaming
+
+The owner settled A5 and A6 on 2026-11-10 **[design]**.
+
+**One path (A6).** A runtime emits output on the stdout `output` frame, at every integration level. `lenny/output` leaves the platform tool set, and the runtime SDKs' `Output` call writes the frame. `response.output` carries only the parts the runtime has not already emitted on an `output` frame. Every output therefore reaches the gateway on the session's `CH-MSGSOCK` frames, in write order, and passes the same interceptor and transcript rules.
+
+```json
+{ "type": "output", "sessionId": "sess_01J9...", "parts": [{ "id": "p1", "type": "text", "status": "streaming", "inline": "Found" }] }
+{ "type": "output", "sessionId": "sess_01J9...", "parts": [{ "op": "append", "id": "p1", "inline": " the failing test." }] }
+{ "type": "output", "sessionId": "sess_01J9...", "parts": [{ "op": "end", "id": "p1" }] }
+```
+
+**Part operations (A5).**
+
+| Entry | Effect |
+| :-- | :-- |
+| A `MessagePart` without `op` | A whole part with `status: "complete"`, the default, or the start of a streaming part with `status: "streaming"`, which then needs an `id`. |
+| `{op: "append", id, inline}` | Appends `inline` to a streaming part of type `text` or `reasoning_trace`. |
+| `{op: "end", id, status?}` | Ends a streaming part with `status` `complete`, the default, or `failed`. |
+| `{op: "reset", id}` | Discards a streaming part, for example when the harness retries a model call halfway through. Clients remove what they rendered of it, and neither the transcript nor `PostAgentOutput` ever receives it. |
+
+A streaming part still open when its turn closes ends `failed`. A `reset` is not a retraction under "MD-11": it applies only to a part that has not completed, and the part never reaches the transcript.
+
+**Turn.** An `output` frame opens a turn when none is open, as output opens one under "MD-4".
+
+**Interceptors (A5).** `PostAgentOutput` runs once on each completed part, before the part reaches the transcript. On a session whose interceptor chain includes a `PostAgentOutput` interceptor, the gateway holds a streaming part's deltas and releases the completed, intercepted part as one event, so the policy sees every byte before any client does and streaming is lost on that session. A session with no such interceptor receives the deltas as they arrive.
+
+**Transcript.** The transcript records each completed part once, at the position of its first frame, which is the position the cold-history builder of "MD-10" reads.
+
+**Events.** The `output` SessionEvent carries the frame's entries, so a client applies `append`, `end`, and `reset` as the runtime wrote them. An adapter that does not declare `outputDeltas` in its outbound capabilities receives each part once, completed.
+
+## MD-17 Reasoning
+
+The owner settled A1 on 2026-11-10: "I think it could be either, depending on what the runtime implements." The runtime chooses where its reasoning goes, declares nothing, and Lenny does not convert one form into the other **[design]**.
+
+- **As content.** The runtime emits a `reasoning_trace` output part, the registry type of §28.5.3 that AM-6 maps to a Messages API `thinking` block. The part gains `signature` (an opaque string the provider issued), `encrypted` (an opaque provider value), and `redacted` (`true` when the provider withheld the text, in which case `inline` is absent and `encrypted` carries the provider's data). The part streams under "MD-16", passes `PostAgentOutput`, and enters the transcript, cold history, and derive history. A `MODIFY` may not change `signature` or `encrypted`, and a `MODIFY` that changes the `inline` of a part carrying `signature` removes the signature, because the provider refuses an altered block.
+- **As activity.** The runtime emits a `thinking` activity whose `detail.text` carries the reasoning. It stays out of the transcript unless recorded, and it never reaches a model or a provider surface.
+
+A runtime has to emit reasoning as content when a Messages API client must send thinking blocks back with their signatures, or when the reasoning must survive in the transcript and in cold history.
+
+## MD-18 Files
+
+The owner settled A11 on 2026-11-10: the file goes "straight to storage", the size limit is a "5 GiB default. Runtimes can lower it", and the file has the "same retention as the session". A file the agent produces for the user is copied into the artifact store and offered as a download. Its bytes never travel on stdout, on `CH-ATTACH`, or through the gateway **[design]**.
+
+**Part.** A `file` part may name a workspace path in place of `inline` or `ref`:
+
+```json
+{ "type": "file", "id": "p9", "path": "out/report.parquet", "name": "report.parquet", "mimeType": "application/vnd.apache.parquet" }
+```
+
+`path` is relative to the session's workspace root and is mutually exclusive with `inline` and `ref`. Small files can still be sent inline under §28.5.3's rules.
+
+**Flow.**
+
+1. The adapter resolves `path` inside the session's workspace with the checks `ExportPaths` applies: the realpath stays inside the workspace root, a symlink may not escape it, and the target is a regular file. A failed check ends the part `failed` with the reason `file_not_found`, `outside_workspace`, or `not_regular_file`.
+2. The adapter relays the part with `sizeBytes`. The gateway checks the size against the effective limit, the smaller of the operator's `files.maxBytes` (default 5 GiB) and the revision's `capabilities.output.maxFileBytes`, and reserves the size against the tenant's storage quota as a checkpoint reserves its chunks ([§11.2](../spec/11_policy-and-controls.md#112-budgets-and-quotas)). A file over the limit or the quota ends the part `failed` with the reason `too_large` or `quota_exceeded`.
+3. The gateway mints a presigned capability for one `PUT` of one object, `/{tenant_id}/outputs/{session_id}/{part_id}`, with the exact `Content-Length`, and sends it to the adapter in a `file_upload_grant` frame on the session's `CH-ATTACH` stream. The adapter consumes the frame and never writes it to the runtime.
+4. The adapter uploads the file in one `PUT`, computes its SHA-256 while it reads it, and reports the result with the digest.
+5. The gateway reads the stored object's size, refuses a mismatch, writes the `artifact_store` row with `artifact_type: output_file`, settles the reservation, sets `ref` to the object's `lenny-blob://` URI, and releases the part to `PostAgentOutput` as complete.
+
+Until step 5, clients see the part with `status: "streaming"` and its `name`, `mimeType`, and `sizeBytes`. Later frames are not held behind the upload, and the part keeps the position of its first frame. A `REJECT` from `PostAgentOutput`, which may read the object through `ref` to scan it, withholds the part and deletes the object.
+
+**Size (A11b).** 5 GiB is the largest object S3 and MinIO accept in a single `PUT`, and the checkpoint transfer this flow reuses opens no multipart upload. `capabilities.output.maxFileBytes` is versioned and gateway-read under RV-1, and it can only lower the operator's limit.
+
+**Retention (A11c).** The `lenny-blob://` URI of an output file takes the session's retention as its `ttl`, in place of the 1-hour live-delivery default of §28.5.3. The object follows the session's retention, erasure under §12.8, and legal holds on the session, as the transcript that points to it does.
+
+**Isolation profiles.** The flow works on `standard`, `sandboxed` (gVisor), and `microvm` (Kata) pools. The adapter reads the workspace volume it already shares with the runtime and uploads over the pod network under the egress policy and presigned capabilities that checkpoint chunk transfer uses ([§13.2](../spec/13_security-model.md#132-network-isolation), NET-071), which §4.4 requires under every isolation profile. Upload throughput is lower under gVisor's network stack and Kata's shared filesystem **[unverified]**.
+
+**Security model.** §13's "File delivery" row names checkpoint chunk objects as the one exception to gateway-mediated delivery. Output files become a second exception, under the same capability rules: one key under the session's `outputs` prefix, the `PUT` method alone, an exact `Content-Length`, and a short expiry. The pod holds no object-store credential.
+
+**Consistency.** The runtime finishes writing a file before it emits the part. A file that changes during the upload produces a copy that matches no single version of it, and the gateway detects it only when the size changes.
+
+**Download.** A REST client downloads the file with `GET /v1/blobs/{ref}`, and `GET /v1/sessions/{id}/artifacts` lists it. "MD-21" states the other surfaces.
+
+## MD-19 Harness approvals
+
+The owner settled A4 on 2026-11-10. Coding harnesses ask permission before running their own tools, for example Claude Code's `can_use_tool`, Codex's `item/*/requestApproval`, and the Agent Client Protocol's `session/request_permission` **[external]**. Lenny's tool-use approval path (SO-5a) covers only tools that Lenny routes **[source]**, so today an adapter has to approve a harness's tools automatically or leave the harness waiting **[design]**.
+
+**Tool.** The platform MCP server gains `lenny/request_approval`, which a Standard or Full runtime calls for a harness's request:
+
+```json
+{ "toolUseId": "toolu_01A", "tool": "Bash", "input": { "command": "rm -rf build/" }, "title": "Delete the build directory", "reason": "Clean rebuild requested" }
+```
+
+It returns `{ "decision": "approved" | "denied", "updatedInput"?, "message"?, "source": "client" | "policy" }`. `updatedInput` carries a client's edit of the input, which the harness applies, as Claude Code's `updatedInput` and AG-UI's `editedArgs` do **[external]**.
+
+**Path.** The gateway emits a `tool_use` event with `target: "harness"` and phase `requested`, approval required, which takes the projection approval-required `tool_use` events take today: MCP `elicitation/create`, and the REST routes `POST /v1/sessions/{id}/tool-use/{toolCallId}/approve` and `.../deny`. The approve route accepts `updatedInput`. The call blocks until a decision or the approval timeout of SO-5a.
+
+**Unattended sessions.** The session create request takes `harnessApprovals: { "allowTools": [...], "unattended": "deny" | "allow" }`, with a default on the runtime revision. A tool in `allowTools` is approved at once without asking. When no client answers within the approval timeout, the gateway answers with `unattended`, which defaults to `deny`. A tenant's policy may narrow both members. Each decision writes the approval audit record SO-5a writes, with `source`.
+
+**Boundary.** The harness runs the tool inside the pod, so Lenny relays the decision and cannot enforce it. The sandbox and the egress policy remain the security boundary, and the approval is a user-facing gate.
+
+**Reader.** The approval waits off the session's frame reader, so frames keep flowing while a harness or a Lenny tool waits for approval (MDF-8).
+
+**Questions.** A harness's structured question to the user, such as Claude Code's AskUserQuestion, and a plan proposed for approval, such as Codex plan mode or Claude Code's ExitPlanMode, are elicitations through `lenny/request_elicitation`, and their answers return through the elicitation path.
+
+## MD-20 Turn and usage events
+
+The owner settled A8 on 2026-11-10: "we should support both" **[design]**.
+
+| Kind | Payload | Fires when |
+| :-- | :-- | :-- |
+| `turn_start` | `{ "turn", "causedBy"?, "fromKind"? }` | A turn opens ("MD-4"). `causedBy` names the causing message. |
+| `turn_end` | `{ "turn", "status", "consumed", "unsolicited", "usage"?, "error"? }` | A turn closes. `status` is `completed`, `failed`, `interrupted`, or `runtime_exit`. `usage` totals the turn's usage events by source. This extends the payload of "MD-7". |
+| `usage` | `{ "turn"?, "source", "model"?, "upstream"?, "inputTokens", "outputTokens", "cacheReadTokens"?, "cacheWriteTokens"?, "costUnits"? }` | An LLM call completes. |
+
+- `source: "gateway"` is the gateway's metering of a call through its LLM proxy, with the cost units of [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md). Budgets read only this source.
+- `source: "runtime"` is the runtime's own report, from the counts on `llm_request_completed` on `CH-RUNTIMEOPS` (§28.5.3). It covers a runtime that calls a provider directly, and it is shown for display.
+- When both sources report the same call, a client sees two events, and the runtime author guide tells clients to prefer the gateway figure.
+- The fill of the model's context window is the `context` activity kind.
+
+## MD-21 Surfaces and AG-UI
+
+The owner settled G3 on 2026-11-10: "Lenny's event model needs to be translatable into AG-UI without losing information. But we should not give up on anything we believe is important that isn't supported by AG-UI yet." Lenny adds no AG-UI endpoint in v1 **[design]**.
+
+**Rule (G3, MDR-26).** Every SessionEvent kind and payload has an AG-UI projection that loses no information: a standard AG-UI event where one carries the content, and otherwise a `CUSTOM` event named `lenny.<kind>` with the Lenny payload as its value. A Lenny feature that AG-UI lacks stays, and the projection carries it in `CUSTOM`. A later AG-UI adapter implements the table below.
+
+| Lenny | AG-UI 1.0 |
+| :-- | :-- |
+| Session and turn | Thread and run. `turn_start` maps to `RUN_STARTED`, and `turn_end` to `RUN_FINISHED` or `RUN_ERROR`, with the turn's usage as `TokenUsage`. The turn ordinal travels in `metadata`. |
+| Streaming text part | `TEXT_MESSAGE_START`, `TEXT_MESSAGE_CONTENT`, and `TEXT_MESSAGE_END`. `reset` maps to `CUSTOM` `lenny.output_reset`, because AG-UI has no reset. |
+| `reasoning_trace` part | `REASONING_START`, the `REASONING_MESSAGE_*` events, `REASONING_ENCRYPTED_VALUE` for `encrypted`, and `REASONING_END`. |
+| Activity | `ACTIVITY_SNAPSHOT` with `activityType` set to the kind on `start`, `update`, and `end`, and `ACTIVITY_DELTA` on `patch` and `append`, where an `append` becomes a patch that replaces the string. `lifetime`, `record`, `turn`, and `lost` travel in `metadata` or `CUSTOM`. A `subagent` activity also maps to `SUBAGENT_STARTED` and `SUBAGENT_FINISHED`, and `agent` to `subagentRunId`. |
+| `tool_use` of a Lenny-routed tool | `TOOL_CALL_START`, `TOOL_CALL_ARGS`, `TOOL_CALL_END`, and `TOOL_CALL_RESULT`, marked `"ag-ui:tool-execution": "server"`. |
+| Harness approval and approval-required `tool_use` | `RUN_FINISHED` with an `interrupt` outcome of reason `tool_call`, whose `responseSchema` carries `approved` and `updatedInput`, and a resume on the next run. AG-UI ends a run at an interrupt while the Lenny turn stays open, so one Lenny turn can span several AG-UI runs. |
+| Elicitation | `RUN_FINISHED` with an `interrupt` outcome of reason `input_required`. |
+| File part | `CUSTOM` `lenny.file` with the download URL, name, MIME type, and size. |
+| `usage` mid-turn, `message_state`, `consumed`, retraction, intents, and `lost` | `CUSTOM`, because AG-UI reports usage only at a run's end and has no delivery states. |
+
+**Other surfaces.**
+
+| Surface | Activity | Output and reasoning | Files |
+| :-- | :-- | :-- | :-- |
+| REST SSE (`GET /v1/sessions/{id}/events`) | `event: activity`, with the snapshot on attach and on `Last-Event-ID` resume. | `event: output` with the frame's entries. | `ref`, downloaded with `GET /v1/blobs/{ref}`. |
+| MCP, both served versions | `notifications/lenny/activity` on the attach stream. When the attach request carries a `progressToken`, the newest active top-level activity's `summary` also goes out as `notifications/progress`, with a per-request counter as `progress`. MCP logging is not used, because `2026-07-28` deprecates it **[external]**. | Streaming content on the attach stream. | A `resource_link` to the gateway's download URL. |
+| MCP `2026-07-28` with Tasks | The newest active top-level activity's `summary` as the task's status message **[unverified]**, beside `notifications/lenny/activity` on `lenny/attach_session`. | As above. | As above. |
+| A2A, when its adapter ships | `TaskStatusUpdateEvent` in state `working` with the `summary` and a data part carrying the activity, coalesced to at most one per second per session for webhooks. | `TaskArtifactUpdateEvent` with `append` and `lastChunk`. | A file part with the gateway's download URL. |
+| Messages API, Chat Completions, and Responses | None (A9). | Their native deltas. A signed `reasoning_trace` maps to a Messages `thinking` block, and a redacted one to `redacted_thinking` (AM-6). | A text part with the file's name, size, and REST download route. |
+
+**Provider surfaces later (A9).** A later version may let a Messages API client set a request header, such as `Lenny-Events: activity`, to also receive activity as additional server-sent event types, such as `event: lenny_activity`. Anthropic's streaming documentation asks clients to tolerate event types they do not know **[external]**. Stock SDK clients would not set the header. v1 builds none of it, and nothing in v1 blocks it.
+
 ## Worked example
 
 Alice, of tenant `acme`, runs the `claude-code` runtime through REST. Its revision declares `modes: [steer, queue, interrupt]`.
@@ -642,6 +1011,17 @@ A second example covers a provider surface under O3. Bob, of tenant `acme`, uses
 2. The child finishes and sends the parent "The regression is in commit 4f2a." No turn is open, so the message takes the direct path and opens a turn. Its envelope carries no `conversation.clientTools`. The runtime writes a summary of the finding, which reaches the transcript and the session's REST and MCP event streams. No Messages response carries it, and the turn writes no response record and no digest.
 3. Bob sends his next request while that turn runs. Its history up to the last assistant message matches the stored digest, so it is a warm turn, and its message takes the steer path with its `conversation.clientTools`. The runtime writes `consumed` for the message, answers, and ends the turn with a call to `open_ticket`. Bob's response carries the output that followed the `consumed` frame and a `tool_use` block, with `stop_reason: "tool_use"`.
 
+A third example covers what Alice sees during a turn. Her session runs `claude-code`, whose adapter uses `stream-json`, and her deployment configures no `PostAgentOutput` interceptor.
+
+1. Alice sends "Fix the flaky test and export the failure report." The gateway emits `turn_start` with turn 3.
+2. Claude Code writes its todo list. The adapter writes `activity` `start` for `plan_1` with `kind: plan`, `lifetime: session`, and three entries, and Alice's client draws the list.
+3. Claude Code runs `npm test`. The adapter writes `activity` `start` for `act_9` with `kind: tool` and `record: true`, then `append` frames that grow `detail.output`, which it merges every 250 ms. The command needs approval, so the adapter calls `lenny/request_approval` and Alice approves it on the REST approve route. Frames keep flowing while she decides.
+4. Alice's laptop sleeps and her client reconnects. It receives the replayed events and one `activity` snapshot with `plan_1` and `act_9`, so it redraws both.
+5. The test ends. The adapter writes `end` for `act_9` with `status: completed`, the gateway writes its final state to the transcript, and a `patch` marks the plan's first entry completed.
+6. Claude Code writes its explanation, which streams as `output` `append` entries to part `p4` and ends with `end`. The transcript records `p4` once, after `PostAgentOutput`.
+7. Claude Code writes a 300 MB failure report to `out/failures.parquet` and emits a `file` part with that path. Alice's client shows the part as `streaming` with its name and size while the adapter uploads it in one `PUT`. The gateway confirms the size, sets `ref`, and releases the part, and Alice downloads it with `GET /v1/blobs/{ref}`.
+8. The runtime writes its `response`. The gateway emits `usage` events with `source: gateway` for each proxied model call during the turn, and `turn_end` with `status: completed` and the turn's usage. `plan_1` stays open, because its lifetime is the session.
+
 ## Limits
 
 - **Runtime cooperation.** `steer` works only as well as the runtime's placement of messages. The gateway cannot check that a runtime places a message after tool results, and the conformance cases of §15.4.6 test it against recorded model requests.
@@ -655,6 +1035,13 @@ A second example covers a provider surface under O3. Bob, of tenant `acme`, uses
 - **A client request can wait for another turn.** Under O3, on a runtime that does not declare `steer`, a client request that arrives during a turn another session's message caused waits for that turn's `response`, and a non-streaming client's timeout bounds the wait.
 - **Retraction is not recall.** A retraction succeeds only before delivery. A message a recipient received, a client tool call a provider-surface client holds, and output already streamed stay where they are, and the runtime receives `too_late`. A REST or MCP client that already started a retracted call's tool learns of the retraction only from the event, and the tool's side effects stand.
 - **Output is not retracted.** Under S8, retraction of output and session events is ignored for now ("MD-11", "Blast radius").
+- **Activity is the runtime's claim.** The gateway cannot check that an activity describes what the runtime does, so nothing that decides policy, audit, or billing reads it.
+- **A pod loss loses unended activity.** Open activities end `cancelled` with `runtime_exit`, and the restored runtime starts its own.
+- **Interceptors cost streaming.** A session with a `PostAgentOutput` interceptor receives each part once, completed (A5).
+- **Harness approvals are not enforced.** The harness runs the tool, and Lenny relays the decision ("MD-19"). A Basic runtime has no platform MCP server, so it cannot call `lenny/request_approval`.
+- **Runtime-reported usage needs Full level.** `llm_request_completed` travels on `CH-RUNTIMEOPS`, so a Basic or Standard runtime that calls a provider directly reports no usage.
+- **Files change under upload.** A file the runtime changes while the adapter uploads it produces a copy that matches no version of it, and the gateway detects it only when the size changes ("MD-18").
+- **Files over 5 GiB.** They need multipart uploads, which v1 does not open.
 
 ## Alternatives rejected
 
@@ -666,6 +1053,14 @@ A second example covers a provider surface under O3. Bob, of tenant `acme`, uses
 - **Holding inbox deliveries to a provider-surface session until the next client turn.** Revision 1 recommended it, so that a delivery would join work a client is waiting for. A message to an idle held session then waited for the client's next request or its TTL, and every provider surface needed a hold of its own. Delivery on arrival with the two rules of "MD-8" keeps the turn away from the client with no surface-specific hold (O3).
 - **Custody until a checkpoint records the consumption.** Revision 1 recommended it, so that a restored runtime would receive again a message it consumed after its checkpoint. The redelivery can repeat side effects that the checkpoint does not undo, and a runtime that never checkpoints would keep every consumed message in the inbox until the session ends. The `consumed_unrecorded` report leaves the choice to resend with the sender (O4).
 - **Gateway-side ordering of steered messages into model history.** The gateway does not see the runtime's model requests, and only the runtime knows where its model steps fall.
+- **Activity as a flag on `output`.** Every consumer of `output` would have to check the flag: the transcript, cold history, the provider adapters, `TaskRecord`, and `PostAgentOutput`. A consumer that missed it would put display state into a model's history.
+- **A closed list of activity kinds.** The owner asked for an open `kind` governed by conventions, so a runtime can report what its harness reports without a Lenny release.
+- **Transient activity with no current state.** A client that attaches mid-turn would see nothing until the next update, and the short replay buffers would lose the rest.
+- **Every activity update in the transcript.** A test run can produce thousands of updates, which would push other events out of the replay buffers and grow the transcript. The runtime chooses what to record, and only final states are recorded (A2).
+- **Blob references for large activity.** The owner decided that activity frames are not stored as files (A10). A large result is a file part.
+- **Files through stdout.** A stdout line is limited to 50 MiB, base64 grows binary content by a third, and a large file would hold every later frame of the runtime behind it (A11).
+- **Files through the gateway.** Streaming the bytes through the gateway would let an interceptor scan them in flight, at the cost of gateway bandwidth for every file. The owner chose the direct upload (A11a), and an interceptor reads the stored object through `ref`.
+- **An AG-UI endpoint in v1.** AG-UI is run-based and re-sends state on each run, while Lenny is session-based, and it would be a fourth client surface (G3).
 
 ## Specification changes
 
@@ -688,6 +1083,17 @@ A second example covers a provider surface under O3. Bob, of tenant `acme`, uses
 | §24 `lenny` command reference | `--delivery` on `lenny session send`. |
 | §26 Reference Runtime Catalog, §26.1 to §26.11 | The declarations of "MD-13" and the `claude-code` bootstrap. |
 | §29.3 Interactive message send | Step 8 rewritten, the steps that cite path numbers retargeted, and the `deliverNow` wait removed from the scenario. |
+| §28.5.3 Intra-pod, `CH-MSGSOCK` card and "Internal `MessagePart` format" | The `activity` and `output` frames, the part operations `append`, `end`, and `reset`, `signature`, `encrypted`, and `redacted` on `reasoning_trace`, `path` on `file`, the `file_upload_grant` frame, `response.output` without already-emitted parts, `activity` and `output` in the session-scoped frame list, the output-file row of the blob TTL table, and a stdout line limit above the largest legal part after encoding (MDF-10). |
+| §4.8 Gateway Policy Engine | The `PostAgentActivity` phase, and `PostAgentOutput` on each completed part, with the hold of deltas on a session that configures it. |
+| §8.5 Delegation Tools, §9 MCP Integration, and the `CH-MCP-PLATFORM` card | `lenny/output` removed, and `lenny/request_approval` added. |
+| §10.4 Gateway Reliability | Activity events as volatile events, the activity snapshot on attach and resume, and eviction of superseded activity events first. |
+| §13 Security Model and §13.2 Network Isolation | Output files as the second exception to gateway-mediated delivery, with their presigned capability. |
+| §5.1 Runtime | `capabilities.output.maxFileBytes`, and the revision default of `harnessApprovals`. |
+| §15 External API Surface, "SessionEvent Kind Registry" and the per-kind wire projections | `activity`, `turn_start`, and `usage`, `turn_end` extended, the `output` row corrected to name the stdout `output` frame (MDF-9), `tool_use` with `target: "harness"`, the `activity: "none"` opt-out, `outputDeltas`, and the projections of "MD-21". |
+| §15.1 REST API | `harnessApprovals` on session create, `updatedInput` on the approve route, the output-file listing, and the `artifacts/{path}` route registered or removed (MDF-11). |
+| §15.4.6 Conformance Test Suite | The Standard-level case that requires `lenny/output` calls `lenny/request_input` and `lenny/request_approval`. |
+| §6.2 and §16.1 Metrics | Activity as agent work for idle suspension, and `lenny_activity_dropped_total`, `lenny_activity_unrecorded_total`, and `lenny_output_file_bytes_total`. |
+| §12 Storage Architecture | Output files in the artifact store, with the session's retention, erasure, and legal holds. |
 
 ## Non-specification changes
 
@@ -704,6 +1110,14 @@ A second example covers a provider surface under O3. Bob, of tenant `acme`, uses
 - `sdks/client/go/lenny` and the CLI: receipts and output from events.
 - `pkg/embedded/stack/catalog.go`: the reference declarations.
 - `docs/`: the runtime author guide on intents and the drain call, and the REST and MCP pages.
+- `pkg/gateway/session/executor`: the reader routes `activity` and `output`, and approval waits move off the reader's goroutine.
+- A new activity package under `pkg/gateway/session`: the open-activity hash in Redis, patch and append application, the close rule, recording with its rate cap, and the attach snapshot.
+- `pkg/gateway/policy` and the interceptor chain: `PostAgentActivity`, and `PostAgentOutput` per completed part with the delta hold.
+- `pkg/gateway/mcpfabric/mcptools`: `lenny/output` removed and `lenny/request_approval` added.
+- `pkg/adapter`: `activity` and `output` in `sessionScopedFrameTypes`, the activity size cap and coalescing, the file part's path checks, upload, and digest, and the stdout line limit of MDF-10.
+- `pkg/gateway/sessionserver`: `harnessApprovals`, the output-file grant and confirmation, and the events of "MD-20".
+- `schemas/lenny-adapter-jsonl.schema.json` and `schemas/lenny-adapter.proto`: the new frames and the grant.
+- `docs/`: the conventional activity kinds, the streaming writer, file parts, harness approvals, and the AG-UI projection table.
 
 ## Defects found while verifying
 
@@ -716,6 +1130,12 @@ These defects were found by reading the code and the specification on 2026-11-09
 | MDF-3 | `Classify` merges path 5 into path 2 and lacks path 4: a running session always takes direct delivery, and `delivery: "immediate"` is never acted on. The MCP send path passes no `delivery` value at all. | `Classify` in `pkg/gateway/session/messagerouting/messagerouting.go`; its callers in `messages_delivery.go` and `send_delivery.go`. | Filed in BUILD-GAPS.md as F-7.2.48 |
 | MDF-4 | `capabilities.injection.modes` is declared in §5.1 and §26 and defined nowhere. The CRD comment gives it a third meaning, and no code reads it beyond validation and the controller mirror. | §5.1 "Runtime"; `InjectionCapabilityCRD.Modes` in `pkg/apis/lenny/v1alpha1/runtime_types.go`; `validateCapabilities` in `pkg/gateway/externalapi/admin/runtimes.go`. | Filed in BUILD-GAPS.md as F-5.1.38 |
 | MDF-5 | `ready_for_input` is normative in §7.2 and absent from the `CH-MSGSOCK` frames, so path 2 and path 5 cannot be told apart on the wire. §29.3 step 8 records the gap. | §7.2 "`ready_for_input` — normative definition"; §28.5.3 `CH-MSGSOCK` **Messages.**; §29.3 step 8. | Filed in BUILD-GAPS.md as F-7.2.49 |
+| MDF-6 | The executor drops the `status` frame and every runtime frame other than `response` and an approval-gated `tool_call`. | `PodExecutor.handleFrame` in `pkg/gateway/session/executor/podstream.go`. | Filed in BUILD-GAPS.md as F-28.5.3.5 |
+| MDF-7 | Output streamed through `lenny/output` runs no `PostAgentOutput` chain and reaches no transcript entry, so a redaction interceptor misses streamed output and the transcript omits it. | `registerOutputTool` in `pkg/gateway/mcpfabric/mcptools/mcptools_register.go`; `Server.recordDeliveredResponse` in `pkg/gateway/sessionserver/messages_delivery.go`. | Filed in BUILD-GAPS.md as F-4.8.28 |
+| MDF-8 | The session's frame reader blocks in the approval gate, so no frame of the session is read while a call awaits approval. | `PodExecutor.handleFrame` and `maybeGateToolCall` in `podstream.go`. | Filed in BUILD-GAPS.md as F-28.5.3.6 |
+| MDF-9 | The §15 registry row for `output` names an `agent_output` runtime frame, which does not exist. `agent_output` is the event bus's name. | §15 "SessionEvent Kind Registry"; §28.5.3 `CH-MSGSOCK` card. | Filed in BUILD-GAPS.md as F-28.5.3.7 |
+| MDF-10 | A legal binary part of up to 50 MB exceeds the 50 MiB stdout line once base64-encoded, and the overlong line stops the adapter reading the connection and fails every session on it. | `maxJSONLFrameBytes` in `pkg/adapter/socketruntime.go`; §28.5.3 part size table; §4.7.10 runtime exit table. | Filed in BUILD-GAPS.md as F-28.5.3.8 |
+| MDF-11 | §15.1 lists `GET /v1/sessions/{id}/artifacts/{path}`, and the gateway registers no such route. | §15.1 "Artifacts and introspection"; `pkg/gateway/sessionserver/route_table.go`. | Filed in BUILD-GAPS.md as F-15.1.84 |
 
 Further observations bear on this design and are recorded for the specification owner without filing:
 
@@ -723,20 +1143,21 @@ Further observations bear on this design and are recorded for the specification 
 - §26.3 declares `modes: [immediate, queued]` for `claude-code` and states no behaviour for a message that reaches it while `claude` works.
 - The REST message response returns the turn's `output` synchronously, which the Go client SDK reads. "MD-7" removes it.
 - The §5.1 "Standalone Runtime" example declares `interaction: one_shot` with `injection.modes`, although a `one_shot` runtime consumes one message.
+- The activity proposal of 2026-11-10 assumed a built-in scrubber of leased credentials on output. No such scrubber exists for output, so activity relies on `PostAgentActivity` interceptors as output relies on `PostAgentOutput`.
 
 ## Tests
 
 | Tier | Coverage |
 | :-- | :-- |
-| 1 | `Classify` for every named path and turn state, each intent, `input_required`, and results messages. The default-intent resolution, the override narrowing, and the refusal of an undeclared intent. Inbox state transitions, including every refused transition, `pending` to `retracted`, and `consumed` to `consumed_unrecorded` against a checkpoint's consumed set with a recorded newest id, with an unrecorded newest id, and empty. Rule 1 of "MD-8": no `conversation.clientTools` on an envelope that opens a turn no client request caused, and `no_tools_declared` for calls in such a turn. Rule 2: the response cut at the consumption of the request's message, from a `consumed` frame and from `response.consumed`. Attribution of a `response` without `consumed`, unsolicited responses, and unknown consumed ids. The cold-history ordering rule with entries consumed during pending calls. Registration rules for `modes` and `defaultMode`. The retraction result for each row of the "MD-11" table: a pending call, a call answered first, a call on each provider surface, a `pending`, `delivered`, `consumed`, `expired`, and `dropped` message, a child's `task`, another sender's message, an unknown id, a repeated id, and an empty `ids` list. The SDK drain call, consumption reporting, deduplication, and `Retract` in each language. |
-| 3 | The JSONL schema for the `consumed`, `retract`, and `retract_result` frames and the `response` member against the runtime SDKs. Per-message receipts and the client retraction route against the OpenAPI document and the generated MCP tools. The `message_state` and `turn_end` payloads, `message_state` with `consumed_unrecorded` and its reason, and `tool_use` with phase `retracted`. |
-| 4 | On the compose stack: a steered REST message during a running turn returns `delivered` at once and appears in `turn_end.consumed`; a queued message waits for the turn end; an interrupt with acknowledgement and with a timeout; `lenny/send_message` from a parent returns before the child's turn ends; a provider-surface turn that consumes an inbox delivery. Under O3, on held Messages API and Responses sessions: a child's message between client requests is delivered on arrival, its envelope carries no `conversation.clientTools`, and its output reaches the REST and MCP event streams and no response; the client's next request is answered with its own turn's output, steered into the running turn on a `steer` runtime and waiting for its `response` on a `queue` runtime; a client request with client tools steered into such a turn returns calls to them; a tool-use approval in such a turn resolves through the approvals API; `lenny/request_input` in such a turn is refused; the next request's digest still matches. Retraction: a REST client receives the `tool_use` retraction event and a later results message naming the call is refused with `409 CLIENT_TOOL_CALLS_RETRACTED`; a partial retraction leaves the remaining calls answerable; a Responses, a Chat Completions, and a Messages API session answer `too_late` and still deliver the client's results; a parent's message pending in a child's DLQ is retracted and never delivered, and the child's stream receives `message_state` `retracted`; a delivered message answers `too_late`; each state-changing retraction writes its audit event; a client retraction under O5. |
-| 5 | A resume on Kind with `delivered` entries redelivered and deduplicated, including an entry whose consumption report the pod loss cut off, no consumed message redelivered, and `consumed_unrecorded` events on the recipient's and the sender's streams. A coordinator handoff with the durable inbox. A retraction of a message to a recipient coordinated by another gateway replica. |
-| 7a | Concurrent steer, queue, and interrupt messages to one session keep acceptance order per intent. A retraction racing the write of the same entry at a turn end, and racing a resume's delivery of held messages: exactly one wins, and the result matches the outcome. A client-call retraction racing a results message: exactly one takes effect. A send racing a resume. No send waits on the delivery lock for a turn. A provider-surface request racing an inbox delivery to an idle held session: whichever is written first opens the turn, and the response carries only output from the consumption of the request's message. |
-| 8 | Pod loss after consumption and before a checkpoint, with no redelivery and a `consumed_unrecorded` event under O4. Redis loss with the durable inbox, including a retraction while Redis is unreachable, which answers an error to the SDK call and changes nothing. Coordinator crash with `delivered` entries. |
-| 9 | `interrupt` from an agent outside the messaging scope, an intent override that tries to bypass a tenant override, a retraction naming another session's message or another tenant's message (`unknown`, with no difference in timing or result between an existing and a missing id), a client retraction of another user's message, a `retract` frame on a pod with several slots that carries another session's `sessionId`, absence of content in retraction audit records and events, and `from.kind` overwrite by the adapter. |
-| 10 | Conformance for a `steer` runtime: it consumes a message during a tool call and places it after the result in its recorded model request, reports consumption, drops a redelivered id, and accepts a message while client calls are pending. A `steer` runtime that receives a client request steered into a turn another session's message caused writes `consumed` for it before the output that answers it. Conformance for `interrupt`, for a `queue`-only Basic runtime, and for a runtime that retracts its pending client calls and then ignores results answered `too_late`. |
-| 11 | The runtime author guide's intent table and drain example against the SDKs, and the REST page's receipts against the gateway. |
+| 1 | `Classify` for every named path and turn state, each intent, `input_required`, and results messages. The default-intent resolution, the override narrowing, and the refusal of an undeclared intent. Inbox state transitions, including every refused transition, `pending` to `retracted`, and `consumed` to `consumed_unrecorded` against a checkpoint's consumed set with a recorded newest id, with an unrecorded newest id, and empty. Rule 1 of "MD-8": no `conversation.clientTools` on an envelope that opens a turn no client request caused, and `no_tools_declared` for calls in such a turn. Rule 2: the response cut at the consumption of the request's message, from a `consumed` frame and from `response.consumed`. Attribution of a `response` without `consumed`, unsolicited responses, and unknown consumed ids. The cold-history ordering rule with entries consumed during pending calls. Registration rules for `modes` and `defaultMode`. The retraction result for each row of the "MD-11" table: a pending call, a call answered first, a call on each provider surface, a `pending`, `delivered`, `consumed`, `expired`, and `dropped` message, a child's `task`, another sender's message, an unknown id, a repeated id, and an empty `ids` list. The SDK drain call, consumption reporting, deduplication, and `Retract` in each language. Activity: each operation, every drop reason, immutable fields, patch application and a failed patch that reaches no client, `append` to a string and to a non-string, the close rule at a turn end, a process end, and a session end, recording at the cap and over it with the marker row, and exclusion of recorded rows from cold history, conversation input, and `from=client`. Output: `append`, `end`, and `reset`, a streaming part open at a turn end, `response.output` without emitted parts, and the delta hold under a `PostAgentOutput` interceptor. `reasoning_trace` with `signature` under `MODIFY`. The file part's path checks, limits, quota, and size mismatch. `harnessApprovals` with `allowTools`, a timeout, and each `unattended` value. Usage events by source. The AG-UI projection of every kind and payload. |
+| 3 | The JSONL schema for the `consumed`, `retract`, and `retract_result` frames and the `response` member against the runtime SDKs. Per-message receipts and the client retraction route against the OpenAPI document and the generated MCP tools. The `message_state` and `turn_end` payloads, `message_state` with `consumed_unrecorded` and its reason, and `tool_use` with phase `retracted`. The `activity`, `output`, and `file_upload_grant` frames against the JSONL schema and the runtime SDKs, the `activity`, `turn_start`, `turn_end`, and `usage` payloads, `lenny/request_approval` against the platform MCP schema, and `harnessApprovals` and `updatedInput` against the OpenAPI document. |
+| 4 | On the compose stack: a steered REST message during a running turn returns `delivered` at once and appears in `turn_end.consumed`; a queued message waits for the turn end; an interrupt with acknowledgement and with a timeout; `lenny/send_message` from a parent returns before the child's turn ends; a provider-surface turn that consumes an inbox delivery. Under O3, on held Messages API and Responses sessions: a child's message between client requests is delivered on arrival, its envelope carries no `conversation.clientTools`, and its output reaches the REST and MCP event streams and no response; the client's next request is answered with its own turn's output, steered into the running turn on a `steer` runtime and waiting for its `response` on a `queue` runtime; a client request with client tools steered into such a turn returns calls to them; a tool-use approval in such a turn resolves through the approvals API; `lenny/request_input` in such a turn is refused; the next request's digest still matches. Retraction: a REST client receives the `tool_use` retraction event and a later results message naming the call is refused with `409 CLIENT_TOOL_CALLS_RETRACTED`; a partial retraction leaves the remaining calls answerable; a Responses, a Chat Completions, and a Messages API session answer `too_late` and still deliver the client's results; a parent's message pending in a child's DLQ is retracted and never delivered, and the child's stream receives `message_state` `retracted`; a delivered message answers `too_late`; each state-changing retraction writes its audit event; a client retraction under O5. On the compose stack: activity reaches REST SSE and MCP attach streams in write order with output, a client that attaches mid-turn receives the snapshot, `activity: "none"` suppresses it, a 2 MiB activity frame is dropped with `lost` and the session continues, a streaming part arrives as deltas without an interceptor and once with one, a file part uploads to MinIO and downloads through `GET /v1/blobs/{ref}`, a harness approval resolves on the REST route and by policy, and frames flow while an approval waits. |
+| 5 | A resume on Kind with `delivered` entries redelivered and deduplicated, including an entry whose consumption report the pod loss cut off, no consumed message redelivered, and `consumed_unrecorded` events on the recipient's and the sender's streams. A coordinator handoff with the durable inbox. A retraction of a message to a recipient coordinated by another gateway replica. On Kind: a file part uploads from a `sandboxed` pool and a `microvm` pool, and a coordinator handoff keeps the open-activity set. |
+| 7a | Concurrent steer, queue, and interrupt messages to one session keep acceptance order per intent. A retraction racing the write of the same entry at a turn end, and racing a resume's delivery of held messages: exactly one wins, and the result matches the outcome. A client-call retraction racing a results message: exactly one takes effect. A send racing a resume. No send waits on the delivery lock for a turn. A provider-surface request racing an inbox delivery to an idle held session: whichever is written first opens the turn, and the response carries only output from the consumption of the request's message. Activity coalescing against interleaved output, `consumed`, and `response` frames keeps write order. Concurrent `patch` frames on one activity apply in write order. A file upload racing the turn's `response` keeps the part's position. |
+| 8 | Pod loss after consumption and before a checkpoint, with no redelivery and a `consumed_unrecorded` event under O4. Redis loss with the durable inbox, including a retraction while Redis is unreachable, which answers an error to the SDK call and changes nothing. Coordinator crash with `delivered` entries. Pod loss with open activities ends them `cancelled`, and pod loss during a file upload ends the part `failed` and releases the quota reservation. |
+| 9 | `interrupt` from an agent outside the messaging scope, an intent override that tries to bypass a tenant override, a retraction naming another session's message or another tenant's message (`unknown`, with no difference in timing or result between an existing and a missing id), a client retraction of another user's message, a `retract` frame on a pod with several slots that carries another session's `sessionId`, absence of content in retraction audit records and events, and `from.kind` overwrite by the adapter. A file part whose path escapes the workspace by `..` or a symlink, a grant used for another key or a `GET`, an activity frame or a file part carrying another session's `sessionId` on a pod with several slots, and a `PostAgentActivity` `MODIFY` that tries to change `id` or `status`. |
+| 10 | Conformance for a `steer` runtime: it consumes a message during a tool call and places it after the result in its recorded model request, reports consumption, drops a redelivered id, and accepts a message while client calls are pending. A `steer` runtime that receives a client request steered into a turn another session's message caused writes `consumed` for it before the output that answers it. Conformance for `interrupt`, for a `queue`-only Basic runtime, and for a runtime that retracts its pending client calls and then ignores results answered `too_late`. Conformance for activity frames, streaming output with `reset`, a file part, and `lenny/request_approval`, and the Standard-level case without `lenny/output`. |
+| 11 | The runtime author guide's intent table and drain example against the SDKs, and the REST page's receipts against the gateway. The conventional kinds table, the streaming writer, the file helper, and the AG-UI projection table against the SDKs and the gateway. |
 
 ## Validation owed
 
@@ -746,6 +1167,12 @@ Further observations bear on this design and are recorded for the specification 
 - Whether Gemini CLI's model steering leaves its experimental status, and how a hint travels with `functionResponse` parts in a headless run.
 - Mid-run input in Mastra, the OpenAI Assistants API, and CrewAI.
 - Whether OpenAI's Responses API states an adjacency rule for function call outputs, which the investigation found only for Chat Completions through a third-party error page.
+- That a presigned `PUT` whose expiry passes during a long upload completes, because S3 and MinIO check the expiry when the request starts.
+- Upload throughput of a multi-gigabyte file from a `sandboxed` and a `microvm` pool.
+- Whether S3 and MinIO verify a SHA-256 checksum on a presigned `PUT`, which would let the gateway sign the digest.
+- The name of the task status-message field under MCP `2026-07-28` with Tasks.
+- The Claude Code flags `--include-partial-messages`, `--include-hook-events`, and `--forward-subagent-text` in the version the reference runtime pins.
+- How AG-UI carries a file or binary content part, which the pages read did not state.
 
 ## Instructions for reviewers of other designs
 
@@ -757,6 +1184,13 @@ Further observations bear on this design and are recorded for the specification 
 - [`security-oversight-design.md`](security-oversight-design.md): a `steer` runtime receives messages while SO-5a holds one of its tool calls for approval, and a message never resolves an approval. No change to SO-5a. The retraction audit events of "MD-11" join the audit catalog, and no interceptor phase runs on a retraction.
 - [`delegation-availability-design.md`](delegation-availability-design.md): no change. `lenny/send_message` keeps its availability row, and its call no longer blocks on the target's turn.
 - [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md): no change. The generated `send_message` arguments gain `delivery`, and the client retraction tool of O5 is generated from the REST route.
+- [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md), for revision 3: AM-6 maps a `reasoning_trace` part with `signature` to a `thinking` block and a redacted one to `redacted_thinking`, states how it returns a reasoning part whose signature an interceptor removed, maps output `append` entries to `content_block_delta`, and returns a file part as a text part with the download route. The adapter does not declare `activity`.
+- [`client-tools-design.md`](client-tools-design.md), for revision 3: output reaches the gateway only on `output` and `response` frames, so CT-4's validation and CT-6's projection read one path. A harness approval is a `tool_use` event with `target: "harness"` and no client tool call.
+- [`security-oversight-design.md`](security-oversight-design.md), for revision 3: SO-5a's approval path gains `target: "harness"` from `lenny/request_approval`, `updatedInput` on approve, `harnessApprovals`, and `source` on the approval audit record. The approval wait moves off the frame reader. Output files become a second exception to gateway-mediated delivery under §13.
+- [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md), for revision 3: the attach stream carries `notifications/lenny/activity`, `notifications/progress` for a request with a `progressToken`, and `resource_link` for a file part. `lenny/output` leaves the platform tool set, and `lenny/request_approval` joins it.
+- [`session-derive-design.md`](session-derive-design.md), for revision 3: SD-1's `from=client` read skips the `activity` transcript rows, and a derived session copies no output file.
+- [`runtime-revisions-design.md`](runtime-revisions-design.md), for revision 3: RV-1 lists `capabilities.output.maxFileBytes` and the `harnessApprovals` default as versioned and gateway-read.
+- [`llm-upstreams-and-cost-budgets-design.md`](llm-upstreams-and-cost-budgets-design.md): the proxy's settlement of each call emits a `usage` event with `source: gateway` and its cost units.
 
 ## Proposal split and order
 
@@ -764,7 +1198,8 @@ Further observations bear on this design and are recorded for the specification 
 | :-- | :-- | :-- |
 | MD-A | The delivery core: MD-1 to MD-7, MD-9, MD-12, and MD-14, and the message rows of MD-11 (the `retract` and `retract_result` frames, the `retracted` state, routing, audit, and the SDK call), with the specification changes to §5.1, §7.2, §7.3, §8.5, §11.7, §15.1, §15.2, §15.4, §15.7, §16.1, §24, §28.5.3, and §29.3. It replaces the mechanisms of MDF-1 to MDF-5 under the owner's holistic plan. | None. |
 | MD-B | Provider surfaces and client tools: MD-8 and MD-10, the client-call rows of MD-11, and the cold-history ordering rule. | MD-A, AM-A of the Messages design, and CT-A of the client-tools design. |
-| MD-C | Reference runtimes: MD-13, with the adapter changes in each runtime's repository. | MD-A. |
+| MD-C | Reference runtimes: MD-13, with the adapter changes in each runtime's repository. | MD-A, and MD-D for the translation of activity, output, and approvals. |
+| MD-D | Runtime reports during a turn: MD-15 to MD-21, the reference-adapter translation of MD-13, and the SDK calls of MD-12, with the specification changes to §4.8, §5.1, §6.2, §8.5, §9, §10.4, §12, §13, §15, §15.1, §15.4.6, §16.1, and §28.5.3. It replaces the mechanisms of MDF-6 to MDF-10. | MD-A. |
 
 ## Sources
 
@@ -778,9 +1213,22 @@ Each page below was read on 2026-11-09. The investigation of the same date read 
 - Gemini CLI: [Model steering](https://github.com/google-gemini/gemini-cli/blob/1930f25394c4b6338b64ffdb43083fca41614798/docs/cli/model-steering.md).
 - LangGraph: [Double texting](https://docs.langchain.com/langgraph-platform/double-texting).
 
+Each page and repository below was read on 2026-11-10 for revision 3, by the coverage review of the activity proposal or by this design:
+
+- AG-UI: [Introduction](https://docs.ag-ui.com/introduction), [Events](https://docs.ag-ui.com/concepts/events), [Interrupts](https://docs.ag-ui.com/concepts/interrupts), [Reasoning](https://docs.ag-ui.com/concepts/reasoning), [Activity events](https://docs.ag-ui.com/spec/1.0/events/activity), the repository [ag-ui-protocol/ag-ui](https://github.com/ag-ui-protocol/ag-ui) at `deefd383` (`docs/spec/1.0/schema.json`), and the npm registry entry of `@ag-ui/core`, whose version 1.0.0 was published on 2026-09-17 and whose latest version is 1.0.4.
+- Anthropic: [Streaming](https://platform.claude.com/docs/en/build-with-claude/streaming), which states that "new event types may be added, and your code should handle unknown event types gracefully".
+- Claude Code and the Agent SDK: the [CLI reference](https://code.claude.com/docs/en/cli-reference), [headless mode](https://code.claude.com/docs/en/headless), the Agent SDK pages on streaming output, permissions, user input, todo tracking, hooks, and subagents, the TypeScript SDK `sdk.d.ts` of `@anthropic-ai/claude-agent-sdk` 0.3.322, and the Python SDK at `3cf3446b`.
+- Codex: [App server](https://learn.chatgpt.com/docs/app-server), [Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode), and `codex-rs/app-server-protocol` and `codex-rs/exec` at `2df46573`.
+- Gemini CLI at `1930f253`: `packages/core/src/output`, `packages/cli/src/acp/acpSession.ts`, and `docs/cli/headless.md`.
+- Cursor: [output format](https://cursor.com/docs/cli/reference/output-format), [headless](https://cursor.com/docs/cli/headless), and [ACP](https://cursor.com/docs/cli/acp).
+- Agent Client Protocol: [agentclientprotocol/agent-client-protocol](https://github.com/agentclientprotocol/agent-client-protocol) at `3961af94`, schema v1.30.0.
+- MCP: the [2026-07-28 specification](https://modelcontextprotocol.io/specification/2026-07-28), including its changelog and the progress, cancellation, and logging pages.
+- A2A: [a2aproject/A2A](https://github.com/a2aproject/A2A) at tag v1.0.1.
+- The OpenAI Agents SDK, the Vercel AI SDK, and LangGraph streaming pages, as the coverage review lists them.
+
 ## Review history
 
-No review has read this design.
+No independent review has read this design. Revision 3's additions were built from two reviews of the activity proposal, recorded in the revision notes.
 
 ### Revision notes
 
@@ -794,3 +1242,11 @@ No review has read this design.
   - O5, "ok": a client retracts its own `pending` message through `DELETE /v1/sessions/{id}/messages/{messageId}` and the generated MCP tool.
   - Multi-thread sessions, "ok to leave out of v1": recorded as G2, because no harness keeps separate concurrent conversations in one process, threads would multiply the per-thread delivery machinery, separate sessions and delegation cover the use cases, and `threadId` and `inReplyTo` already let a later version add threads with no schema change.
   - The design now reads against [`client-tools-design.md`](client-tools-design.md) revision 4, which records rule 1 as T16, and [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) revision 4, which states both rules. The label row for the client-tools design's O3 now calls it settled, as that design's revision 3 records.
+
+- Revision 3, 2026-11-10: adds what a runtime reports to clients during a turn, from the activity proposal of 2026-11-10, a review of its design, a review of its coverage of the agent harnesses, and the owner's answers of 2026-11-10.
+  - The owner's earlier direction on the proposal: the activity `kind` is open-ended under conventions, the size cap is a safety net, and `detail` is any JSON value or text.
+  - The design review kept activity as its own frame and SessionEvent kind, found that stdout's 50 MiB line limit cannot serve as the activity cap, found that the replay ring and the Redis relay would lose events to busy activity, found that `lenny/output` and the approval gate break the order of a session's frames, and asked for a `PostAgentActivity` phase.
+  - The coverage review found that the proposal needed update operations, streaming output, reasoning as content, harness approvals, correlation ids, a close rule, turn and usage events, and the current state on reconnect, and it listed the interfaces the reference adapters need.
+  - The owner settled G3 and A1 to A11, recorded under "Decisions". A1 changed the recommendation from reasoning as content to the runtime's choice. A2 took the owner's proposal that the runtime chooses what is recorded, with final states only. A3 added JSON Patch. A8 changed to both sources. A10 dropped blob references from activity. A11 added file parts after the owner asked how a large generated file reaches the user.
+  - "MD-15" to "MD-21", requirements MDR-16 to MDR-27, the third worked example, defects MDF-6 to MDF-11, and proposal MD-D are added. "MD-4", "MD-6", "MD-7", "MD-11", "MD-12", and "MD-13" gain the rules that connect them.
+  - Corrections made while writing: the proposal's credential scrubber on output does not exist, and AG-UI had published version 1.0 on 2026-09-17, which an earlier answer to the owner said it had not.

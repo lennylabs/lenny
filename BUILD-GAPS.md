@@ -3304,6 +3304,13 @@ registry today is the config + cooldown source of truth the §4.8 line-1034 /
 **Gap:** A deployer who registers a `PostAgentOutput` interceptor, or the `GuardrailsInterceptor`, to redact or reject agent output has that policy applied on REST and MCP and bypassed on `/v1/chat/completions` and `/v1/responses`. A client that is refused or redacted on one surface receives the same output unfiltered by sending the request to the other.
 **Suggested resolution:** Direct fix, because §4.8 already states the outcome. Run the `PostAgentOutput` chain over the output parts in both translators before they are encoded, map a `REJECT` to the provider-format error each surface uses for a refused request, and apply a `MODIFY` before any part reaches the response or the stream. Run `PreToolResult` on client tool results on these surfaces when `designs/client-tools-design.md` adds them (its CTR-6). Tests: tier 1 on each handler with a test chain that modifies and rejects, and tier 4 with a registered external interceptor on each surface.
 
+### - [ ] F-4.8.28 — Output streamed through `lenny/output` runs no `PostAgentOutput` chain and reaches no transcript entry [High] — OPEN
+
+**Spec:** §4.8 Gateway Policy Engine, the phase payload table (the `PostAgentOutput` row: "The agent's response output before delivery to the client (or to the parent session in a delegation)"); §8.5 Delegation Tools, `lenny/output` ("Emit output parts to the parent/client").
+**Evidence:** `lenny/output` travels from the adapter's platform MCP server (`platformToolProvider` in `pkg/adapter/platformmcp.go`) over the gateway control link to `registerOutputTool` (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`), which publishes `agent_output` to the event bus with no interceptor call and no transcript write. `Server.recordDeliveredResponse` (`pkg/gateway/sessionserver/messages_delivery.go`) runs `PostAgentOutput` and transcribes only the `text` parts of the final `response`. Found while writing revision 3 of the message delivery design on 2026-11-10, from the reviews of its activity proposal, and confirmed by reading the code. Nothing was run.
+**Gap:** A deployer's redaction or guardrail interceptor at `PostAgentOutput` applies to a turn's final `response` and is bypassed by every part the runtime streams through `lenny/output`, and the transcript omits those parts. The tool also reaches the gateway on a different link from the stdout frames, so its output can arrive out of order with them.
+**Suggested resolution:** Through the proposal pipeline. `designs/message-delivery-design.md` ("MD-16", decision A6) removes `lenny/output`, makes the stdout `output` frame the only output path, runs `PostAgentOutput` on each completed part before the transcript, and cites this finding as MDF-7. The fix follows under its proposal MD-D. Tests: tier 1 on the interceptor call per completed part and tier 4 on a redacting interceptor against streamed output.
+
 ### Coverage notes
 
 - **Tests present:** Solid unit coverage for the chain core
@@ -31482,6 +31489,13 @@ in the MCP Management Server inventory.
 **Gap:** In a production deployment that registers a runtime named `echo`, a request that omits `model` runs on it and returns its output with a `200`, which a client can take for an answer from the runtime it meant to call. In a deployment that registers none, the request fails with an error that names a runtime the client did not ask for. The shared creation gates still apply, so the request reaches no runtime the caller could not reach by naming it. §15 states no rule for an empty `model`.
 **Suggested resolution:** Through the proposal pipeline. `designs/anthropic-messages-api-design.md` covers this as DF-4, closed by its proposal AM-A, which refuses a request with no `model` with `400 invalid_request_error` and states the rule in §15. Remove the `echo` default from both constructors, and add a tier 1 test for each translator.
 
+### - [ ] F-15.1.84 — §15.1 lists `GET /v1/sessions/{id}/artifacts/{path}`, and the gateway registers no such route [Medium] — OPEN
+
+**Spec:** §15.1 REST API, **Artifacts and introspection:** (`GET /v1/sessions/{id}/artifacts/{path}`, "Download a specific artifact/file").
+**Evidence:** `pkg/gateway/sessionserver/route_table.go` registers `GET /v1/sessions/{id}/artifacts` (`handleListArtifacts` in `session_subresources.go`, which lists the session's artifact catalog rows) and registers no route with a path suffix. Found while writing revision 3 of the message delivery design on 2026-11-10, from the reviews of its activity proposal, and confirmed by reading the code. Nothing was run.
+**Gap:** A client that follows §15.1 to download one artifact receives `404` for a route the specification promises. `GET /v1/blobs/{ref}` downloads a staged part by its reference, which the listing returns, so the listing and the blob route cover the case through another path that §15.1 does not connect to it.
+**Suggested resolution:** Through the proposal pipeline, either register the route over the artifact catalog or remove it from §15.1 and state that a listed artifact downloads through `GET /v1/blobs/{ref}`. `designs/message-delivery-design.md` cites this finding as MDF-11, because its output files ("MD-18") are listed and downloaded this way. Tests: tier 3 on the route against the OpenAPI document and tier 4 on a download.
+
 ## §15.2 MCP API <a id="15.2"></a>
 Scope: `spec/15_external-api-surface.md` §15.2 (lines 1280–1374) and §15.2.1 (lines 1376–1414).
 Trees audited: `pkg/gateway/mcp/`, `pkg/gateway/mcptools/`, `pkg/gateway/sessionserver/`, `pkg/gateway/errorclassify/`, `pkg/gateway/adapter/`, `pkg/api/v1/session/`, `sdks/client/go/lenny/`, `tests/tier3_contract/rest_mcp_consistency/`, `cmd/lenny-gateway/main.go`.
@@ -52464,6 +52478,42 @@ Spec: `spec/28_communication-channels.md` §28.5.3 Intra-pod, the `CH-MSGSOCK` c
 **Evidence:** `PodExecutor.Send` (`pkg/gateway/session/executor/pod.go`) runs one turn per message: it takes the stream's turn token, writes the envelope, and waits for the reader to hand it that turn's `response`. `attachConn.token` (`podstream.go`) is a capacity-1 channel that `runTurn` acquires and `completeTurn` returns, and `completeTurn` discards "A `response` with no turn registered". A batch of messages on `POST /v1/sessions/{id}/messages` therefore runs as that many sequential turns. F-15.1.80 records the Chat Completions consequence of the same loop. Found by the messaging investigation of 2026-11-09 and confirmed by reading the code. Nothing was run.
 **Gap:** Output a runtime emits after background work or after a child's result, with no message outstanding, is dropped with no record. A runtime that reads two queued messages and answers both with one `response` leaves the second `Send` waiting until its context ends. The specification states neither the pairing nor the outcome of a `response` that answers no message, so a runtime author cannot tell which behaviour the gateway expects.
 **Suggested resolution:** Through the proposal pipeline, state in §28.5.3 how a `response` relates to the messages it answers, for example by naming the message ids it consumed, and what the gateway does with a `response` that answers none, then change the executor to match. `designs/message-delivery-design.md` cites this finding, and the fix follows later under that design's holistic plan for message delivery. Tests: tier 1 on the executor's turn accounting and tier 3 on the frame exchange.
+
+---
+
+### - [ ] F-28.5.3.5 — The executor discards the `status` frame and every runtime frame other than `response` and an approval-gated `tool_call` [Medium] — OPEN
+
+**Spec:** §28.5.3 Intra-pod, the `CH-MSGSOCK` card, which lists `status` among the runtime-to-adapter frames; §15 External API Surface, "SessionEvent Kind Registry".
+**Evidence:** `PodExecutor.handleFrame` (`pkg/gateway/session/executor/podstream.go`) calls `maybeGateToolCall`, then unmarshals the frame and returns unless its `type` is `response`. The adapter relays `status` to the session's Attach stream (`sessionScopedFrameTypes` in `pkg/adapter/attach.go`), and nothing on the gateway reads it. Found while writing revision 3 of the message delivery design on 2026-11-10, from the reviews of its activity proposal, and confirmed by reading the code. Nothing was run.
+**Gap:** A runtime that reports progress with the `status` frame the card defines reaches no client, no event, and no record, and a runtime author cannot tell from the specification that the frame is dropped.
+**Suggested resolution:** Through the proposal pipeline. `designs/message-delivery-design.md` ("MD-15", "MD-6") replaces `status` with the `activity` frame, routes every frame in the executor's reader, and cites this finding as MDF-6. The fix follows under that design's proposal MD-D. Tests: tier 1 on the reader's routing and tier 4 on activity reaching the event stream.
+
+---
+
+### - [ ] F-28.5.3.6 — The session's frame reader blocks in the tool-use approval gate, so no frame of the session is read while a call awaits approval [Medium] — OPEN
+
+**Spec:** §28.5.3 Intra-pod, the `CH-MSGSOCK` card, **Delivery semantics:** (frames of a session arrive interleaved and in order); §15 External API Surface, the approval-required `tool_use` projection.
+**Evidence:** `PodExecutor.handleFrame` (`pkg/gateway/session/executor/podstream.go`) runs `maybeGateToolCall` on the reader's goroutine, and `maybeGateToolCall` waits in `AwaitApproval` until a decision or a timeout. Found while writing revision 3 of the message delivery design on 2026-11-10, from the reviews of its activity proposal, and confirmed by reading the code. Nothing was run.
+**Gap:** While one tool call waits for a person to approve it, output, a `response`, and every other frame the runtime writes for the session wait behind it. A runtime that runs several tool calls at once cannot report the others, and the `consumed` frames that `designs/message-delivery-design.md` requires during an approval hold cannot arrive.
+**Suggested resolution:** Through the proposal pipeline. `designs/message-delivery-design.md` ("MD-6", "MD-19", requirement MDR-22) moves the approval wait off the reader and cites this finding as MDF-8. The fix follows under its proposal MD-D. Tests: tier 1 on the reader during an approval and tier 4 on output arriving while an approval waits.
+
+---
+
+### - [ ] F-28.5.3.7 — The §15 registry row for `output` names an `agent_output` runtime frame, which no channel carries [Low] — OPEN
+
+**Spec:** §15 External API Surface, "SessionEvent Kind Registry", the `output` row ("The runtime emits an `agent_output` frame; each frame becomes one `SessionEvent`"); §28.5.3 Intra-pod, the `CH-MSGSOCK` card, whose frame list has no `agent_output`.
+**Evidence:** `agent_output` is the event-bus type that `registerOutputTool` (`pkg/gateway/mcpfabric/mcptools/mcptools_register.go`) publishes for `lenny/output`. No `CH-MSGSOCK` frame of that name exists in the card or in `schemas/lenny-adapter-jsonl.schema.json`. Found while writing revision 3 of the message delivery design on 2026-11-10, from the reviews of its activity proposal, and confirmed by reading the code. Nothing was run.
+**Gap:** A runtime author who reads the registry writes a frame that the adapter and the gateway do not know.
+**Suggested resolution:** Through the proposal pipeline. `designs/message-delivery-design.md` ("MD-16") makes the stdout `output` frame the only output path, corrects the registry row to name it, and cites this finding as MDF-9. Tests: tier 11 on the registry text against the JSONL schema.
+
+---
+
+### - [ ] F-28.5.3.8 — A legal binary `MessagePart` of up to 50 MB exceeds the 50 MiB stdout line once base64-encoded, and the overlong line fails every session on the connection [Medium] — OPEN
+
+**Spec:** §28.5.3 Intra-pod, "Internal `MessagePart` format" (a part up to 50 MB is staged to the blob store, and a larger part is refused with `413 MESSAGEPART_TOO_LARGE`; binary content is base64 inside `inline`); §4.7.10 Deployment model, the runtime exit table (a line longer than the adapter's line limit stops the adapter reading the connection and fails each session with `runtime_crash`).
+**Evidence:** `maxJSONLFrameBytes = 50 * 1024 * 1024` in `pkg/adapter/socketruntime.go`, passed to `bufio.Scanner.Buffer` through `linefanout.Hub.Serve`, and `maxFrameBytes` in `sdks/runtime/go/runtime/runtime.go` matches it. Base64 grows content by a third, so a 40 MB binary part becomes a line of about 53 MB. Found while writing revision 3 of the message delivery design on 2026-11-10, from the reviews of its activity proposal, and confirmed by reading the code. Nothing was run.
+**Gap:** A runtime that emits a part the specification allows ends the adapter's reading of its connection, and every session that connection serves fails with `runtime_crash`, those of other users on a pod with several slots included.
+**Suggested resolution:** Through the proposal pipeline, set the stdout line limit above the largest legal part after encoding and the frame's envelope, or have the adapter refuse an overlong line without ending the scan, and state the rule in §28.5.3. `designs/message-delivery-design.md` cites this finding as MDF-10, and its file parts ("MD-18") keep large files off stdout. Tests: tier 1 on the scanner at the limit and tier 4 on a 50 MB binary part.
 
 ---
 
