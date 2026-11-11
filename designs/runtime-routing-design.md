@@ -1,6 +1,6 @@
 # Runtime routing
 
-Status: design for owner review, revision 11, 2026-11-09, with no independent review yet. Revision 5 replaced the design that revision 4 described under the title "Built-in experiment provider removal" and the file name `experiment-provider-removal-design.md`. The owner has settled every decision in "Decisions". It reads against [`session-derive-design.md`](session-derive-design.md) revision 16, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 10, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 65, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 32, [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 26, [`user-git-identity-design.md`](user-git-identity-design.md) revision 34, [`egress-and-git-design.md`](egress-and-git-design.md) revision 74, and [`security-oversight-design.md`](security-oversight-design.md) revision 47. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RT-n, and requirements carry the label RTR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 12, 2026-11-10, with no independent review yet. Revision 5 replaced the design that revision 4 described under the title "Built-in experiment provider removal" and the file name `experiment-provider-removal-design.md`. The owner has settled every decision in "Decisions". It reads against [`session-derive-design.md`](session-derive-design.md) revision 16, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 10, [`tenant-derived-runtimes-design.md`](tenant-derived-runtimes-design.md) revision 65, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 32, [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md) revision 12, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 26, [`user-git-identity-design.md`](user-git-identity-design.md) revision 34, [`egress-and-git-design.md`](egress-and-git-design.md) revision 74, and [`security-oversight-design.md`](security-oversight-design.md) revision 47. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RT-n, and requirements carry the label RTR-n. "Review history" at the end records the revisions.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -72,7 +72,8 @@ Rolling out a new version of one runtime is a related problem with a different o
 
 | Term | Meaning |
 | :-- | :-- |
-| Route | A runtime route: an admin resource that names one runtime a request can ask for and the target runtimes that sessions asking for it run on, each with a weight. "RT-4" defines it. |
+| Route | A runtime route: an admin resource that maps a name a request can ask for, either a runtime or an alias, to the target runtimes that sessions asking for it run on, each with a weight. "RT-4" defines it. |
+| Alias | A route whose requested name is no runtime in the tenant view, such as an Anthropic model ID. A request that asks for the alias runs on the route's targets ("RT-4", **Aliases.**). |
 | Target | One entry of a route: a runtime, an optional pool, and an integer weight. A target may be the requested runtime itself. |
 | Routing key | The value a route hashes to place a session on a target. The route's `key` field selects it: the user ID under `key: user`, the root session ID under `key: session`, or a fresh random value under `key: random`. |
 | Root session | The top-level session of a delegation tree. A session that is not a delegated child is its own root, and a derived session is a new root. |
@@ -148,7 +149,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 **Routing labels (RT-3).** The session record gains a `routing` map that only `PreRoute` interceptors write. It replaces `experimentContext` on `session_start`, in delegation leases, and in billing events. A delegated child and a derived session start with the map of the session they come from.
 
-**Runtime routes (RT-4).** A tenant-scoped admin resource maps a requested runtime to weighted targets. The route interceptor hashes the routing key to pick a target and writes the route and target names into the routing labels. Routes hold no pool settings, and each target pool scales from its own demand.
+**Runtime routes (RT-4).** A tenant-scoped admin resource maps a requested runtime to weighted targets. The route interceptor hashes the routing key to pick a target and writes the route and target names into the routing labels. Routes hold no pool settings, and each target pool scales from its own demand. A route's requested name may name no runtime, which makes it an alias: a client of the Messages API or the OpenAI translators that asks for a model ID such as `claude-sonnet-5-5` reaches the runtimes the alias's targets name, and the models list shows the alias.
 
 **In-cluster interceptors (RT-5).** Registration accepts only a Service name in a namespace listed in `gateway.interceptorNamespaces`. The chart supplies the gateway's mTLS material, and the gateway refuses plaintext outside dev mode and service-mesh mode.
 
@@ -217,6 +218,12 @@ Settled by the owner on 2026-11-09, during the review that compared every design
 | D14 | A delegated child that crosses into another environment through a sharing path keeps its parent's routing labels, as any delegated child does under D9 (review question Q8). |
 | D15 | A tenant can see an interceptor that a `platform-admin` registers for it: [`security-oversight-design.md`](security-oversight-design.md) mirrors the registration to each listed tenant, lists it in the tenant's security posture, and states whether operator access approval applies to it (review question Q7). |
 
+Settled by the owner on 2026-11-10:
+
+| ID | Decision |
+| :-- | :-- |
+| D17 | A route's requested name may name no runtime, which makes the route an alias, and the models list shows a tenant's aliases. This settles O9 of [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) in the owner's words "go with the recommendation". A separate alias table would duplicate routes. The per-runtime admission limits move after the chain, so neither an alias nor a route moves a session past them ("RT-4", **Aliases.**, "Before the chain", and "Discovery"). |
+
 Open:
 
 | ID | Question | Recommendation |
@@ -238,6 +245,7 @@ Open:
 | RTR-9 | A tenant-scoped interceptor is never called for another tenant's request, and no policy of another tenant can reference it. |
 | RTR-10 | Every interceptor call after creation carries the session context, and every phase's payload carries the fields §4.8 states for it. |
 | RTR-11 | A retried or resumed session keeps the runtime, pool, and routing labels it was created with. |
+| RTR-12 | A request that names an alias runs on the alias's targets, judged by every per-runtime check on the final runtime, and the models list shows the alias only to a caller who can use each of its targets. |
 
 ## Current state
 
@@ -423,7 +431,7 @@ A route is a tenant-scoped admin resource:
 ```yaml
 # POST /v1/admin/routes
 name: claude-worker-canary
-runtime: claude-worker        # the runtime name a session request asks for
+runtime: claude-worker        # the name a session request asks for: a runtime or an alias
 key: user                     # user | session | random
 targets:
   - runtime: claude-worker
@@ -434,12 +442,23 @@ targets:
 ```
 
 - A tenant has at most one route per `runtime`, so a request matches at most one route. A route matches on the requested runtime alone (D8).
+- **Aliases.** A route's `runtime` may name no runtime in the tenant view. Such a route is an alias, and a request that asks for that name runs on the route's targets. The name follows the runtime name rules of §5.1, so it contains no `/` and cannot be read as the scoped model namespace `environments/{name}/{model}` of §10.6. Admission refuses an alias that names a runtime outside the tenant view, because the name would then reach two different runtimes depending on which tenant asks. When a runtime of the alias's name later enters the tenant view, the route applies to requests for that runtime as any route does.
 - Targets name runtimes. A target that names a route, or a route whose `runtime` is another route's target within the same tenant, is refused, so resolution is one step.
 - Weights are non-negative integers with a positive sum. A target's share is its weight divided by the sum. A weight of 0 stops new sessions on that target.
 - Admission refuses a target outside the tenant view, a pool that does not belong to its target's runtime or that the tenant cannot select, and a target whose pools are all weaker than the requested runtime's default pool. The last rule moves the admission check of §10.7 to routes. Each rule holds for every active revision of the runtimes the route names.
 - A route write that names a target runtime whose default clones carry `write` values answers with a `Warning` header naming those runtimes, because the route can add push access to the sessions it moves. [`tenant-derived-runtimes-design.md`, "Write scope"](tenant-derived-runtimes-design.md#write-scope) gives an experiment write the same warning today.
 - Updates use `If-Match`. A route has no status. Deleting it stops routing at once.
 - A `tenant-admin` writes routes for their own tenant, and a `platform-admin` writes routes for any tenant (D10). A route calls no external service and every target must be in the tenant view, so a `tenant-admin` route reaches only runtimes the tenant could already request. Each write emits the admin audit record ("Validation owed").
+
+### Before the chain
+
+No check before the `PreRoute` chain refuses a requested name for naming no runtime. The tenant-view check at the post-chain point judges the final runtime, so an alias with no route behind it, an alias whose route a higher interceptor overrode with a name that is no runtime, and an alias asked for while `gateway.routes.enabled` is `false` answer as for an absent name.
+
+The create path applies the §11.1 per-runtime concurrency limit, the per-runtime and per-pool request rate limits, and the explicit environment's runtime selector to the requested name in `createAdmissionGates`, before the chain **[source]**. Each judges the wrong runtime once a route moves a session, and an alias would pass the first two, because no session counts against a name that is no runtime, and fail the third. The per-runtime and per-pool limits move to the post-chain point and judge the final runtime and pool. The selector check moves there under TS-1's environment rules, which the post-chain table already lists. The runtime-independent gates, the per-user and global limits among them, stay before the chain so that an over-limit create runs no interceptor.
+
+### Discovery
+
+`GET /v1/models` and `GET /v1/models/{model_id}` list a tenant's aliases beside its runtimes, on the OpenAI translators and on the Messages API, while `gateway.routes.enabled` is `true`. An alias is listed for a caller when every target with a positive weight is a runtime the list would show that caller, so a listed name never places the caller on a runtime outside their view. Its `id` and its display name are the alias. A route over a runtime adds no entry, because the runtime is listed already.
 
 ### Assignment
 
@@ -500,6 +519,7 @@ The operator guide page `docs/operator-guide/openfeature-integration.md` is repl
 - **One route per runtime.** Two concurrent tests on one runtime share a route with several targets, or use an interceptor. The first-match rule that kept tests mutually exclusive is gone.
 - **Reassignment on change.** Weight changes reassign some keys.
 - **Cold start on a new target.** The operator sets the new pool's `minWarm`, because routes do not size pools.
+- **Aliases are per tenant.** A deployer who offers the same alias to every tenant writes one route per tenant, or a `PreRoute` interceptor that maps the name (D12).
 - **The requested runtime is a hint.** A client that asks for `claude-worker` may run `claude-worker-v2`. The session response names the resolved runtime and the routing labels.
 - **A routed derive can change runtime.** A derive that names a routed runtime can run on another target, subject to derive's checks. A client that wants a specific runtime names a runtime no route matches.
 - **A relay for remote services.** A SaaS customer's externally hosted logic needs an in-cluster relay that the provider operates.
@@ -537,6 +557,8 @@ The following edits locate their targets by heading:
 | [§7.1 Normal Flow](../spec/07_session-lifecycle.md#71-normal-flow), step 3a | Describe the `PreRoute` chain, revision selection, the post-chain point, and the pod claim, in that order. |
 | [§7.3 Retry and Resume](../spec/07_session-lifecycle.md#73-retry-and-resume) | State that a retry or resume keeps the stored runtime, pool, and routing labels. |
 | [§8.2](../spec/08_recursive-delegation.md#82-delegation-mechanism) step 2b and [§8.3](../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) "Delegation Lease" | State that the child's chain honours runtime, pool, and routing changes. Replace `experimentContext` with `routing`. State the tenant scope rule for `contentPolicy.interceptorRef`. |
+| [§11.1](../spec/11_policy-and-controls.md#111-admission-and-fairness) | State that the per-runtime concurrency limit and the per-runtime and per-pool request rate limits judge the final runtime and pool after the `PreRoute` chain ("RT-4", "Before the chain"). |
+| [§9.1](../spec/09_mcp-integration.md#91-where-mcp-is-used), "Runtime Discovery", and [§15.1 REST API](../spec/15_external-api-surface.md#151-rest-api), `GET /v1/models` | State that the models list carries the caller's tenant aliases under the rule of "RT-4", "Discovery", and that a request's `model` may name an alias. |
 | [§10.3](../spec/10_gateway-internals.md#103-mtls-pki), NET-063 | State that every interceptor is in-cluster, and the dev-mode and service-mesh exceptions for plaintext. |
 | [§11.2.1 Billing Event Stream](../spec/11_policy-and-controls.md#1121-billing-event-stream) | Replace `experiment_id` and `variant_id` with `routing`. |
 | [§12.2](../spec/12_storage-architecture.md#122-storage-roles), [§12.4](../spec/12_storage-architecture.md#124-redis-ha-and-failure-modes), [§12.6](../spec/12_storage-architecture.md#126-interface-design), and [§12.8](../spec/12_storage-architecture.md#128-compliance-interfaces) | Remove `EvalResultStore`, the sticky cache keys and their failure row, and their erasure steps. Add the route store. |
@@ -575,9 +597,9 @@ The following edits locate their targets by heading:
 | Tier | Coverage |
 | :-- | :-- |
 | 0 | A static check fails if a feature-flag vendor SDK or `open-feature/go-sdk` enters the gateway's dependencies, or if `experimentContext`, `EvalResult`, or `evalRef` reappears in the schema or the code (RTR-1). |
-| 1 | Bucketing shares within tolerance over many keys, stability per key, appended-target movement, anonymous `key: user`, and `key: random` (RTR-4). Route admission rules. Immutable field enforcement on each new payload field, including `kind` and `runtime_options`, in the `PreRoute` and `PostRoute` payloads. `ModifiedBy` across several `MODIFY` responses. The tenant filter on every phase (RTR-9). The endpoint check (RTR-8). |
+| 1 | Alias admission: a name that is no runtime is accepted, a name outside the tenant view and a name with `/` are refused. The models list shows an alias only when every positive-weight target is visible to the caller (RTR-12). Bucketing shares within tolerance over many keys, stability per key, appended-target movement, anonymous `key: user`, and `key: random` (RTR-4). Route admission rules. Immutable field enforcement on each new payload field, including `kind` and `runtime_options`, in the `PreRoute` and `PostRoute` payloads. `ModifiedBy` across several `MODIFY` responses. The tenant filter on every phase (RTR-9). The endpoint check (RTR-8). |
 | 3 | The shared contract suite against the route interceptor and a stub external interceptor (RTR-5). The `session_start` frame with `routing`, and the proto round trip. The session context and the corrected payload on each phase (RTR-10). |
-| 4 | On the compose stack, through each creation kind: a route moves a session, an external interceptor at priority 150 changes the requested runtime before the route matches, one at priority 400 overrides the route, a delegated child honours a runtime change and inherits `routing`, and a derive that names a routed runtime is routed while one that omits `runtimeRef` stays on the source's runtime (RTR-2). Post-chain refusals with `ROUTE_ISOLATION_UNAVAILABLE` and with derive's execution-mode check, each naming the last modifier, and the drain gate on a routed pool (RTR-3). A route that moves a session onto a runtime or pool that fails one owning design's check is refused with that design's code, one case for each row of the post-chain table, and a check that reads a versioned field reads the chosen revision. A route that moves a session onto a runtime whose schema refuses its options is refused with `RUNTIME_OPTIONS_INVALID` naming the runtime, the revision, and the last modifier, on each creation kind, and a `PreRoute` or `PostRoute` `MODIFY` that changes `runtime_options` is refused with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. A delegated child that crosses environments keeps its parent's routing labels (D14). `routing` on the session response, the list filter, usage, and billing events, and refusal of a client-set `routing` (RTR-7). A resumed session under a `key: random` route keeps its runtime and labels (RTR-11). With `gateway.routes.enabled: false`, every other creation test passes unchanged (RTR-6). |
+| 4 | On the compose stack, through each creation kind: a route moves a session, an external interceptor at priority 150 changes the requested runtime before the route matches, one at priority 400 overrides the route, a delegated child honours a runtime change and inherits `routing`, and a derive that names a routed runtime is routed while one that omits `runtimeRef` stays on the source's runtime (RTR-2). Post-chain refusals with `ROUTE_ISOLATION_UNAVAILABLE` and with derive's execution-mode check, each naming the last modifier, and the drain gate on a routed pool (RTR-3). A route that moves a session onto a runtime or pool that fails one owning design's check is refused with that design's code, one case for each row of the post-chain table, and a check that reads a versioned field reads the chosen revision. A route that moves a session onto a runtime whose schema refuses its options is refused with `RUNTIME_OPTIONS_INVALID` naming the runtime, the revision, and the last modifier, on each creation kind, and a `PreRoute` or `PostRoute` `MODIFY` that changes `runtime_options` is refused with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. A delegated child that crosses environments keeps its parent's routing labels (D14). `routing` on the session response, the list filter, usage, and billing events, and refusal of a client-set `routing` (RTR-7). A resumed session under a `key: random` route keeps its runtime and labels (RTR-11). With `gateway.routes.enabled: false`, every other creation test passes unchanged (RTR-6). A Messages request and a Chat Completions request that name an alias run on a target, a session moved by an alias counts against its target's per-runtime concurrency limit, and an alias with its route deleted answers as an unknown model (RTR-12). |
 | 5 | On Kind: an in-cluster interceptor is reached over mTLS with the SPIFFE check, and a registration naming an outside host is refused (RTR-8). |
 | 7a | Concurrent creates across tenants with scoped interceptors stay isolated under `-race`, and the route store's cache stays consistent during weight updates. |
 | 8 | A `fail-closed` scoped interceptor that is killed rejects only its tenant's creates, and recovery restores them. |
@@ -649,3 +671,4 @@ This section records how the design reached its current form. No independent rev
 - Revision 9, dated 2026-11-09, applies the owner's decisions of that date on mirror fill causes and ref resolution, given in the owner's words "Adversarially review your recommendations and, if they pass, go with them". The egress row of the post-chain table states that the gateway's `gitClone` ref resolution runs after the post-chain checks on every creation path, and before the pod claim where the plan arrives with the create request, while at finalize a bad ref fails on the pod claimed at create, as `egress-and-git-design.md` revision 74 requires, and the row's citation of the git path refusal names "Credentials", where that refusal is stated, in place of "Git mirror". The design's own rules are unchanged.
 - Revision 10, dated 2026-11-09, records O6 as settled decision D16. A chart render with an interceptor namespace confirmed the plaintext dial, which `BUILD-GAPS.md` now carries as F-10.3.27.
 - Revision 11, dated 2026-11-09, applies decisions S6 and Rule 1 of the owner's settlement of O2 in `runtime-revisions-design.md`, given in the owner's words "Go with this", and changes these rules. The `PreRoute` payload gains `runtime_options`, which no interceptor may modify, and the `PostRoute` payload carries it as immutable too, so the validated options are the options that run. The post-chain table gains a `runtimeOptions` row for every creation kind, owned by `runtime-revisions-design.md`, in place of the derive-only mention in the `session-derive-design.md` row. "Specification changes" and the tier 1 and tier 4 tests follow.
+- Revision 12, dated 2026-11-10, records the owner's settlement of O9 of [`anthropic-messages-api-design.md`](anthropic-messages-api-design.md) as D17, given in the owner's words "go with the recommendation". A route's requested name may name no runtime, which makes the route an alias ("RT-4", **Aliases.**). "Before the chain" states that no check before the chain refuses such a name, and moves the per-runtime and per-pool admission limits and the explicit environment's selector check, which `createAdmissionGates` applies to the requested name today, to the post-chain point. "Discovery" lists a tenant's aliases in `GET /v1/models`. RTR-12, the §11.1 and models-list rows of "Specification changes", a limit, and tier 1 and tier 4 tests follow.
