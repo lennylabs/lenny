@@ -1,0 +1,42 @@
+2026-11-14T07:47:00Z === cleanup
+2026-11-14T07:47:02Z terminate i-009dc1f94dc2f2721
+2026-11-14T07:47:35Z bucket lenny-spike-aq-780138804904-1794640217 deleted
+2026-11-14T07:47:36Z instance profile deleted
+
+aws: [ERROR]: An error occurred (NoSuchEntity) when calling the DeleteRolePolicy operation: The role policy with name sikp-bucket cannot be found.
+
+aws: [ERROR]: An error occurred (DeleteConflict) when calling the DeleteRole operation: Cannot delete entity, must delete policies first.
+{
+    "Return": true,
+    "GroupId": "sg-00a28c4e699591e5f"
+}
+2026-11-14T07:47:39Z sg sg-00a28c4e699591e5f deleted
+== verification
+instances (non-terminated) tagged run=attrib-quota-2026-11-13:
+volumes tagged:
+security groups tagged:
+network interfaces tagged:
+tagging API (all services) run=attrib-quota-2026-11-13:
+arn:aws:ec2:us-west-2:780138804904:network-interface/eni-03c611cfb7b562fa5	arn:aws:ec2:us-west-2:780138804904:volume/vol-063764d1ec618b69a	arn:aws:ec2:us-west-2:780138804904:instance/i-009dc1f94dc2f2721	arn:aws:ec2:us-west-2:780138804904:volume/vol-062265c6d24bbe0e2
+bucket:
+
+iam role:
+{
+iam instance profile:
+
+forbidden instance state (untouched):
+running
+POLICYNAMES	aq-bucket
+inline policy deleted
+role deleted
+== verification by resource ID 2026-11-14T07:48:01Z
+instance i-009dc1f94dc2f2721: terminated
+vol-063764d1ec618b69a: InvalidVolume.NotFound
+vol-062265c6d24bbe0e2: InvalidVolume.NotFound
+eni-03c611cfb7b562fa5: InvalidNetworkInterfaceID.NotFound
+sg-00a28c4e699591e5f: InvalidGroup.NotFound
+bucket lenny-spike-aq-780138804904-1794640217: head-bucket exit 254
+iam role aq-node-role: get-role exit 254
+iam instance profile aq-node-profile: exit 254
+instances tagged project=lenny-spike not terminated: []
+forbidden instance i-080c5e8e1e25aec21: running

@@ -1,0 +1,1862 @@
+diff -ruN --exclude=test supervisor/Makefile /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/Makefile
+--- supervisor/Makefile	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/Makefile	2026-11-13 10:08:10
+@@ -16,7 +16,7 @@
+ OUT ?= bin
+ TEST_PREFIX ?= /nonexistent-supervisor-test-prefix
+ 
+-SRCS := supervisor.c wire.c procs.c sweep.c selftest.c signals.c util.c
++SRCS := supervisor.c wire.c procs.c sweep.c selftest.c signals.c util.c fsbroker.c fdin.c
+ FREESTANDING := start.c mem.c
+ HDRS := supervisor.h syscalls.h
+ 
+diff -ruN --exclude=test supervisor/fdin.c /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/fdin.c
+--- supervisor/fdin.c	1969-12-31 16:00:00
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/fdin.c	2026-11-13 10:08:10
+@@ -0,0 +1,152 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Inbound descriptors on CH-SUPERVISE. The adapter attaches descriptors
++ * to the first byte of a setup request line. On a stream socket one
++ * recvmsg can return the bytes of earlier lines together with the chunk
++ * that carries descriptors, and the kernel ends that read after the
++ * chunk. Each batch is therefore recorded with the stream offset of the
++ * last byte of the read that carried it, and belongs to the line that
++ * contains that byte. A line takes the batches recorded at or before its
++ * terminator; a later batch waits for its own line.
++ *
++ * The reader queues descriptors with close-on-exec set. Dispatch hands
++ * exactly the request's nfds to the setup program and closes the
++ * descriptors of every other line. The supervisor keeps only the cancel
++ * pipe's read end, to watch it, until the run ends.
++ */
++#include "supervisor.h"
++
++/* Test builds shrink the control buffer to reach MSG_CTRUNC. */
++#ifndef SV_FDIN_MAX_FDS
++#define SV_FDIN_MAX_FDS SV_FS_MAX
++#endif
++
++static int sv_q[SV_FS_MAX]; /* queued descriptors, in arrival order */
++static int sv_nq;
++static struct {
++	sv_u64 end; /* stream offset of the last byte of the read that carried the batch */
++	int n;
++	int bad;    /* descriptors were lost: truncated or over the queue bound */
++} sv_b[SV_FS_MAX];
++static int sv_nb;
++static sv_u64 sv_rx; /* stream bytes received */
++static int sv_sel_b, sv_sel_n, sv_sel_bad; /* the current line's batches */
++
++long sv_fdin_fill(struct sv_linebuf *lb, int fd)
++{
++	sv_size room = sizeof(lb->buf) - lb->len;
++	if (room == 0) {
++		lb->overflow = 1;
++		return -SV_EINVAL;
++	}
++	static char cbuf[sizeof(struct sv_cmsghdr) + SV_FDIN_MAX_FDS * sizeof(int) + 8] __attribute__((aligned(8)));
++	struct sv_iovec iov = {lb->buf + lb->len, room};
++	struct sv_msghdr m = {SV_NULL, 0, &iov, 1, cbuf, sizeof(cbuf), 0};
++	sv_ssize r = sv_recvmsg(fd, &m, SV_MSG_CMSG_CLOEXEC);
++	if (r <= 0)
++		return r;
++	int got = 0, bad = (m.flags & SV_MSG_CTRUNC) != 0;
++	sv_size off = 0;
++	while (m.controllen && off + sizeof(struct sv_cmsghdr) <= m.controllen) {
++		struct sv_cmsghdr *c = (struct sv_cmsghdr *)(cbuf + off);
++		if (c->len < sizeof(*c) || off + c->len > m.controllen)
++			break;
++		if (c->level == SV_SOL_SOCKET && c->type == SV_SCM_RIGHTS) {
++			int n = (int)((c->len - sizeof(*c)) / sizeof(int));
++			int *v = (int *)(cbuf + off + sizeof(*c));
++			for (int i = 0; i < n; i++) {
++				if (sv_nq < SV_FS_MAX) {
++					sv_q[sv_nq++] = v[i];
++					got++;
++				} else {
++					sv_close(v[i]);
++					bad = 1;
++				}
++			}
++		}
++		off += (c->len + 7) & ~(sv_size)7;
++	}
++	if (got || bad) {
++		/* More batches than descriptors the queue holds: the stream cannot be attributed. */
++		if (sv_nb == SV_FS_MAX)
++			return -SV_EINVAL;
++		sv_b[sv_nb].end = sv_rx + (sv_u64)r - 1;
++		sv_b[sv_nb].n = got;
++		sv_b[sv_nb].bad = bad;
++		sv_nb++;
++	}
++	sv_rx += (sv_u64)r;
++	lb->len += (sv_size)r;
++	return r;
++}
++
++void sv_fdin_select(const struct sv_linebuf *lb, sv_size n)
++{
++	sv_u64 line_end = sv_rx - lb->len + n; /* the terminator's stream offset */
++	sv_sel_b = sv_sel_n = sv_sel_bad = 0;
++	while (sv_sel_b < sv_nb && sv_b[sv_sel_b].end <= line_end) {
++		sv_sel_n += sv_b[sv_sel_b].n;
++		sv_sel_bad |= sv_b[sv_sel_b].bad;
++		sv_sel_b++;
++	}
++}
++
++int sv_fdin_count(void)
++{
++	return sv_sel_bad ? -1 : sv_sel_n;
++}
++
++/* sv_fdin_release removes the current line's batches from the queue. */
++static void sv_fdin_release(void)
++{
++	for (int i = sv_sel_n; i < sv_nq; i++)
++		sv_q[i - sv_sel_n] = sv_q[i];
++	sv_nq -= sv_sel_n;
++	for (int i = sv_sel_b; i < sv_nb; i++)
++		sv_b[i - sv_sel_b] = sv_b[i];
++	sv_nb -= sv_sel_b;
++	sv_sel_b = sv_sel_n = sv_sel_bad = 0;
++}
++
++void sv_fdin_take(int *out, int n)
++{
++	for (int i = 0; i < n && i < sv_sel_n; i++)
++		out[i] = sv_q[i];
++	sv_fdin_release();
++}
++
++void sv_fdin_drop(void)
++{
++	for (int i = 0; i < sv_sel_n; i++)
++		sv_close(sv_q[i]);
++	sv_fdin_release();
++}
++
++int sv_fdin_install(const int *fds, int n, int *errfd)
++{
++	int null = sv_openat(SV_AT_FDCWD, "/dev/null", SV_O_RDWR | SV_O_CLOEXEC, 0);
++	if (null < 0)
++		return null;
++	/*
++	 * Target i's source: /dev/null, the two log pipes, then passed index i
++	 * from 3 up. Passed index 2, the cancel pipe, has no target. Target n is
++	 * the spawn status pipe, close-on-exec. Every source is copied above
++	 * 0..n first, so placing one never overwrites another.
++	 */
++	int src[SV_FS_MAX + 1];
++	for (int i = 0; i <= n; i++) {
++		int from = i == n ? *errfd : i == 0 ? null : i < 3 ? fds[i - 1] : fds[i];
++		src[i] = sv_fcntl(from, SV_F_DUPFD_CLOEXEC, n + 1);
++		if (src[i] < 0)
++			return src[i];
++	}
++	/* The status pipe first: from here on it is n, which no placement touches. */
++	if (sv_dup3(src[n], n, SV_O_CLOEXEC) < 0)
++		return -SV_EBADF;
++	*errfd = n;
++	for (int i = 0; i < n; i++)
++		if (sv_dup3(src[i], i, 0) < 0)
++			return -SV_EBADF;
++	/* Everything above goes: the copies, the cancel pipe, the connection, the broker roots, and the rest. */
++	return sv_close_range((sv_u32)n + 1, ~0U);
++}
+diff -ruN --exclude=test supervisor/fsbroker.c /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/fsbroker.c
+--- supervisor/fsbroker.c	1969-12-31 16:00:00
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/fsbroker.c	2026-11-13 10:08:10
+@@ -0,0 +1,366 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * The fd broker: file operations the adapter asks for on CH-SUPERVISE, run
++ * as the slot UID beneath the broker root and confined by openat2. Each
++ * request names up to SV_FS_MAX paths; the reply carries one errno per
++ * path (0 for success) and, for open, mkfile, and inotify, one descriptor
++ * per success over SCM_RIGHTS, in path order. The reply holds integers
++ * only, so no byte the runtime wrote crosses the channel in the reply
++ * line; file content and directory entries reach the adapter only through
++ * the descriptors.
++ */
++#include "supervisor.h"
++
++#define SV_FS_RESOLVE (SV_RESOLVE_BENEATH | SV_RESOLVE_NO_XDEV | SV_RESOLVE_NO_SYMLINKS | SV_RESOLVE_NO_MAGICLINKS)
++#define SV_FS_REPLY (96 * 1024)
++#define SV_FS_NROOTS 4
++/* statat answers these integers per path, in this order. */
++#define SV_FS_STAT_N 11
++
++static struct {
++	const char *name;
++	int fd;
++} sv_fs_roots[SV_FS_NROOTS];
++static int sv_fs_nroots;
++static int sv_fs_root = -1; /* the root the current request names */
++static int sv_fs_inotify = -1;
++
++int sv_fs_init(const char *spec)
++{
++	static char names[SV_FS_NROOTS][33];
++	const char *eq = spec;
++	while (*eq && *eq != '=')
++		eq++;
++	sv_size n = (sv_size)(eq - spec);
++	if (!*eq || n == 0 || n > 32 || sv_fs_nroots >= SV_FS_NROOTS)
++		return -1;
++	sv_bytecopy(names[sv_fs_nroots], spec, n);
++	names[sv_fs_nroots][n] = 0;
++	int fd = sv_openat(SV_AT_FDCWD, eq + 1, SV_O_PATH | SV_O_DIRECTORY | SV_O_NOFOLLOW | SV_O_CLOEXEC, 0);
++	if (fd < 0)
++		return -1;
++	sv_fs_roots[sv_fs_nroots].name = names[sv_fs_nroots];
++	sv_fs_roots[sv_fs_nroots].fd = fd;
++	sv_fs_nroots++;
++	return 0;
++}
++
++static int sv_fs_select(const char *name)
++{
++	for (int i = 0; name && i < sv_fs_nroots; i++)
++		if (sv_streq(name, sv_fs_roots[i].name))
++			return sv_fs_roots[i].fd;
++	return -1;
++}
++
++static int sv_fs_open(const char *path, sv_u64 flags)
++{
++	struct sv_open_how how = {flags | SV_O_CLOEXEC, 0, SV_FS_RESOLVE};
++	return sv_openat2(sv_fs_root, path, &how);
++}
++
++int sv_fs_opendir(const char *root, const char *path)
++{
++	sv_fs_root = sv_fs_select(root);
++	if (sv_fs_root < 0)
++		return -SV_ENOENT;
++	return sv_fs_open(*path ? path : ".", SV_O_PATH | SV_O_DIRECTORY);
++}
++
++/*
++ * sv_fs_parent opens the directory that holds path's last component and
++ * points *base at that component, which may not be empty, ".", or "..".
++ */
++static int sv_fs_parent(const char *path, const char **base)
++{
++	static char dir[SV_MAX_ARG_BYTES + 1];
++	sv_size n = sv_strlen(path), cut = n;
++	while (cut > 0 && path[cut - 1] != '/')
++		cut--;
++	*base = path + cut;
++	if (!**base || sv_streq(*base, ".") || sv_streq(*base, ".."))
++		return -SV_EINVAL;
++	if (cut == 0) {
++		dir[0] = '.';
++		dir[1] = 0;
++	} else {
++		sv_bytecopy(dir, path, cut - 1);
++		dir[cut - 1] = 0;
++	}
++	return sv_fs_open(dir, SV_O_PATH | SV_O_DIRECTORY);
++}
++
++/*
++ * sv_fs_one runs op on path i. It returns a descriptor to pass (>= 0), or
++ * SV_FS_NOFD for a success with no descriptor, or a negated errno.
++ */
++#define SV_FS_NOFD (-1000000)
++static int sv_fs_one(const struct sv_request *r, int i, int *wd)
++{
++	const char *p = r->paths[i];
++	const char *base;
++	int fd, d, rc;
++	/* A mode with the set-user-ID or set-group-ID bit, or any bit above 07777, is refused. */
++	if ((r->fs_op == SV_FS_MKFILE || r->fs_op == SV_FS_MKDIR || r->fs_op == SV_FS_MKFIFO ||
++	     r->fs_op == SV_FS_CHMOD) && (r->nums[i] & ~(sv_u64)01777))
++		return -SV_EINVAL;
++	switch (r->fs_op) {
++	case SV_FS_OPEN:
++		fd = sv_fs_open(p, SV_O_RDONLY | SV_O_NOFOLLOW | SV_O_NONBLOCK | SV_O_NOCTTY);
++		/* A symlink, a socket, or a file its owner cannot read: a path-only descriptor. */
++		if (fd == -SV_ELOOP || fd == -SV_ENXIO || fd == -SV_EACCES)
++			fd = sv_fs_open(p, SV_O_PATH | SV_O_NOFOLLOW);
++		return fd;
++	case SV_FS_OPENPATH:
++		return sv_fs_open(p, SV_O_PATH | SV_O_NOFOLLOW);
++	case SV_FS_CHMOD:
++		fd = sv_fs_open(p, SV_O_RDONLY | SV_O_DIRECTORY | SV_O_NOFOLLOW);
++		if (fd < 0)
++			return fd;
++		rc = sv_fchmod(fd, (sv_u32)(r->nums[i] & 01777));
++		sv_close(fd);
++		return rc < 0 ? rc : SV_FS_NOFD;
++	case SV_FS_WATCH: {
++		fd = sv_fs_open(p, SV_O_PATH | SV_O_DIRECTORY | SV_O_NOFOLLOW);
++		if (fd < 0)
++			return fd;
++		/* inotify takes a path: the magic link of the pinned descriptor names exactly that inode. */
++		char link[32] = "/proc/self/fd/";
++		link[14 + sv_fmt_u64(link + 14, (sv_u64)fd)] = 0;
++		rc = sv_inotify_add_watch(sv_fs_inotify, link, SV_IN_TRACK_MASK | SV_IN_ONLYDIR);
++		sv_close(fd);
++		if (rc < 0)
++			return rc;
++		*wd = rc;
++		return SV_FS_NOFD;
++	}
++	default:
++		break;
++	}
++	d = sv_fs_parent(p, &base);
++	if (d < 0)
++		return d;
++	switch (r->fs_op) {
++	case SV_FS_MKFILE:
++		rc = sv_openat(d, base, SV_O_WRONLY | SV_O_CREAT | SV_O_EXCL | SV_O_NOFOLLOW | SV_O_CLOEXEC,
++			       (int)(r->nums[i] & 0777));
++		break;
++	case SV_FS_MKDIR:
++		rc = sv_mkdirat(d, base, (sv_u32)(r->nums[i] & 01777));
++		break;
++	case SV_FS_MKFIFO:
++		rc = sv_mknodat(d, base, SV_S_IFIFO | (sv_u32)(r->nums[i] & 0777));
++		break;
++	case SV_FS_SYMLINK:
++		rc = sv_symlinkat(r->targets[i], d, base);
++		break;
++	case SV_FS_LINK: {
++		const char *tbase;
++		int td = sv_fs_parent(r->targets[i], &tbase);
++		rc = td < 0 ? td : sv_linkat(td, tbase, d, base);
++		if (td >= 0)
++			sv_close(td);
++		break;
++	}
++	case SV_FS_UTIMENS: {
++		struct sv_timespec ts[2] = {{(sv_i64)r->nums[4 * i], (long)r->nums[4 * i + 1]},
++					    {(sv_i64)r->nums[4 * i + 2], (long)r->nums[4 * i + 3]}};
++		rc = sv_utimensat(d, base, ts, SV_AT_SYMLINK_NOFOLLOW);
++		break;
++	}
++	default:
++		rc = -SV_EINVAL;
++	}
++	sv_close(d);
++	if (rc < 0)
++		return rc;
++	return r->fs_op == SV_FS_MKFILE ? rc : SV_FS_NOFD;
++}
++
++/*
++ * sv_fs_statat answers the identity of path i as integers, with no
++ * descriptor: the parent is resolved beneath the root with openat2 and
++ * reused for consecutive paths in the same directory, the final component
++ * is read with statx and AT_SYMLINK_NOFOLLOW, and a final component on
++ * another mount than its parent is refused with EXDEV.
++ */
++static char sv_fs_pdir[SV_MAX_ARG_BYTES + 1];
++static int sv_fs_pfd = -1;
++static sv_u64 sv_fs_pmnt;
++static int sv_fs_pmnt_ok;
++
++static void sv_fs_pdrop(void)
++{
++	if (sv_fs_pfd >= 0)
++		sv_close(sv_fs_pfd);
++	sv_fs_pfd = -1;
++	sv_fs_pdir[0] = 0;
++}
++
++static int sv_fs_statat(const char *p, sv_u64 *out)
++{
++	sv_size n = sv_strlen(p), cut = n;
++	while (cut > 0 && p[cut - 1] != '/')
++		cut--;
++	const char *base = p + cut;
++	if (!*base || sv_streq(base, ".") || sv_streq(base, ".."))
++		return -SV_EINVAL;
++	sv_size dl = cut ? cut - 1 : 1;
++	const char *dsrc = cut ? p : ".";
++	int same = sv_fs_pfd >= 0 && sv_strlen(sv_fs_pdir) == dl;
++	for (sv_size k = 0; same && k < dl; k++)
++		if (sv_fs_pdir[k] != dsrc[k])
++			same = 0;
++	if (!same) {
++		sv_fs_pdrop();
++		sv_bytecopy(sv_fs_pdir, dsrc, dl);
++		sv_fs_pdir[dl] = 0;
++		int d = sv_fs_open(sv_fs_pdir, SV_O_PATH | SV_O_DIRECTORY);
++		if (d < 0) {
++			sv_fs_pdir[0] = 0;
++			return d;
++		}
++		sv_fs_pfd = d;
++		struct sv_statx ps;
++		sv_fs_pmnt_ok = sv_statx(d, "", SV_AT_EMPTY_PATH, SV_STATX_MNT_ID, &ps) == 0 &&
++				(ps.stx_mask & SV_STATX_MNT_ID);
++		sv_fs_pmnt = ps.stx_mnt_id;
++	}
++	struct sv_statx st;
++	int rc = sv_statx(sv_fs_pfd, base, SV_AT_SYMLINK_NOFOLLOW, SV_STATX_BASIC_STATS | SV_STATX_MNT_ID, &st);
++	if (rc < 0)
++		return rc;
++	if (sv_fs_pmnt_ok && (st.stx_mask & SV_STATX_MNT_ID) && st.stx_mnt_id != sv_fs_pmnt)
++		return -SV_EXDEV;
++	out[0] = st.stx_dev_major;
++	out[1] = st.stx_dev_minor;
++	out[2] = st.stx_ino;
++	out[3] = st.stx_mode;
++	out[4] = st.stx_nlink;
++	out[5] = st.stx_size;
++	out[6] = st.stx_blocks;
++	out[7] = (sv_u64)st.stx_mtime.tv_sec;
++	out[8] = st.stx_mtime.tv_nsec;
++	out[9] = (sv_u64)st.stx_ctime.tv_sec;
++	out[10] = st.stx_ctime.tv_nsec;
++	return 0;
++}
++
++static sv_size sv_fs_cat(char *out, sv_size n, const char *s)
++{
++	while (*s)
++		out[n++] = *s++;
++	return n;
++}
++
++static sv_size sv_fs_list(char *out, sv_size n, const char *name, const int *v, int count)
++{
++	n = sv_fs_cat(out, n, name);
++	for (int i = 0; i < count; i++) {
++		if (i)
++			out[n++] = ',';
++		n += sv_fmt_u64(out + n, (sv_u64)v[i]);
++	}
++	return sv_fs_cat(out, n, "]");
++}
++
++/* sv_fs_reply writes the fsdone line for the request's per-path results. */
++static sv_size sv_fs_reply(char *out, const struct sv_request *r, const int *errs, const int *wds, int nwd,
++			   const sv_u64 *sts)
++{
++	sv_size n = sv_fs_cat(out, 0, "{\"type\":\"fsdone\",\"gen\":");
++	n += sv_fmt_u64(out + n, r->gen);
++	n = sv_fs_cat(out, n, ",\"id\":");
++	n += sv_fmt_u64(out + n, r->id);
++	n = sv_fs_list(out, n, ",\"errs\":[", errs, r->npaths);
++	if (r->fs_op == SV_FS_WATCH)
++		n = sv_fs_list(out, n, ",\"wds\":[", wds, nwd);
++	if (r->fs_op == SV_FS_STATAT) {
++		n = sv_fs_cat(out, n, ",\"st\":[");
++		for (int i = 0; i < r->npaths * SV_FS_STAT_N; i++) {
++			if (i)
++				out[n++] = ',';
++			n += sv_fmt_u64(out + n, sts[i]);
++		}
++		n = sv_fs_cat(out, n, "]");
++	}
++	return sv_fs_cat(out, n, "}\n");
++}
++
++int sv_fs_handle(int conn, const struct sv_request *r)
++{
++	static char out[SV_FS_REPLY];
++	static int errs[SV_FS_MAX], wds[SV_FS_MAX], fds[SV_FS_MAX];
++	static char cbuf[sizeof(struct sv_cmsghdr) + SV_FS_MAX * sizeof(int) + 8];
++	static sv_u64 sts[SV_FS_MAX * SV_FS_STAT_N];
++	int nfd = 0, nwd = 0, keep = -1;
++	sv_fs_root = sv_fs_select(r->fs_root);
++	sv_u32 old = sv_umask(0); /* the request's modes are exact */
++	for (int i = 0; i < r->npaths; i++) {
++		int wd = 0, rc;
++		if (sv_fs_root < 0) {
++			rc = -SV_EINVAL;
++		} else if (r->fs_op == SV_FS_STATAT) {
++			sv_u64 *o = sts + (sv_size)i * SV_FS_STAT_N;
++			for (int k = 0; k < SV_FS_STAT_N; k++)
++				o[k] = 0;
++			rc = sv_fs_statat(r->paths[i], o);
++			if (rc == 0)
++				rc = SV_FS_NOFD;
++		} else if (r->fs_op == SV_FS_INOTIFY) {
++			if (sv_fs_inotify < 0)
++				sv_fs_inotify = sv_inotify_init1(SV_IN_NONBLOCK | SV_IN_CLOEXEC);
++			rc = keep = sv_fs_inotify;
++		} else if (r->fs_op == SV_FS_WATCH && sv_fs_inotify < 0) {
++			rc = -SV_EINVAL;
++		} else {
++			rc = sv_fs_one(r, i, &wd);
++		}
++		errs[i] = rc >= 0 || rc == SV_FS_NOFD ? 0 : -rc;
++		if (rc >= 0)
++			fds[nfd++] = rc;
++		if (r->fs_op == SV_FS_WATCH)
++			wds[nwd++] = wd;
++	}
++	sv_umask(old);
++	sv_fs_pdrop();
++	sv_size n = sv_fs_reply(out, r, errs, wds, nwd, sts);
++
++	sv_size clen = 0;
++	if (nfd) {
++		struct sv_cmsghdr *c = (struct sv_cmsghdr *)cbuf;
++		c->len = sizeof(*c) + (sv_size)nfd * sizeof(int);
++		c->level = SV_SOL_SOCKET;
++		c->type = SV_SCM_RIGHTS;
++		sv_bytecopy(cbuf + sizeof(*c), fds, (sv_size)nfd * sizeof(int));
++		clen = (c->len + 7) & ~(sv_size)7;
++	}
++	int w = sv_send_all(conn, out, n, clen ? cbuf : SV_NULL, clen);
++	/*
++	 * The kernel can refuse the descriptors and leave the connection
++	 * intact: ETOOMANYREFS when processes at the slot UID anywhere on the
++	 * node hold more descriptors in flight than RLIMIT_NOFILE. Nothing was
++	 * sent, so each path that had a descriptor is answered with that errno,
++	 * and the line goes alone. A file mkfile created is removed first, so a
++	 * retry does not meet EEXIST.
++	 */
++	if (nfd && w < 0 && w != -SV_EPIPE && w != -SV_EAGAIN && w != -SV_ECONNRESET) {
++		for (int i = 0; i < r->npaths; i++) {
++			if (errs[i] != 0)
++				continue;
++			errs[i] = -w;
++			const char *base;
++			int d = r->fs_op == SV_FS_MKFILE ? sv_fs_parent(r->paths[i], &base) : -1;
++			if (d >= 0) {
++				sv_unlinkat(d, base, 0);
++				sv_close(d);
++			}
++		}
++		n = sv_fs_reply(out, r, errs, wds, nwd, sts);
++		w = sv_send_all(conn, out, n, SV_NULL, 0);
++	}
++	for (int i = 0; i < nfd; i++)
++		if (fds[i] != keep)
++			sv_close(fds[i]);
++	return w < 0 ? -1 : 0;
++}
+diff -ruN --exclude=test supervisor/procs.c /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/procs.c
+--- supervisor/procs.c	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/procs.c	2026-11-13 10:08:10
+@@ -70,14 +70,26 @@
+ void sv_reap_all(struct sv_procs *p)
+ {
+ 	for (;;) {
++		/* Look at the next exited child without collecting it, so its zombie still holds its PID. */
++		struct sv_siginfo si;
++		sv_bytezero(&si, sizeof(si));
++		int r = sv_waitid(SV_P_ALL, 0, &si, SV_WEXITED | SV_WNOHANG | SV_WNOWAIT);
++		if (r < 0 || si.pid == 0) {
++			p->echild = (r == -SV_ECHILD);
++			return;
++		}
++		/* While the zombie holds the PID, no other group can take it as its ID. */
++		if (si.pid == p->group_pid) {
++			sv_kill(-si.pid, SV_SIGKILL);
++			p->group_pid = 0;
++		}
+ 		int st = 0;
+-		int r = sv_wait4(-1, &st, SV_WNOHANG);
+-		if (r > 0) {
+-			sv_reap_record(p, r, st);
+-			continue;
++		/* A child waitid reported that wait4 cannot collect: stop, rather than spin on it. */
++		if (sv_wait4(si.pid, &st, SV_WNOHANG) != si.pid) {
++			p->echild = 0;
++			return;
+ 		}
+-		p->echild = (r == -SV_ECHILD);
+-		return;
++		sv_reap_record(p, si.pid, st);
+ 	}
+ }
+ 
+@@ -371,11 +383,50 @@
+ 		/* The worker holds no CH-SUPERVISE descriptor from its first instruction on. */
+ 		if (conn_fd >= 0)
+ 			sv_close(conn_fd);
++		/* Nor any other descriptor the supervisor holds: the broker roots and inotify. */
++		if (sv_close_range(3, ~0U) < 0)
++			sv_exit(SV_WORKER_FAILED);
+ 		sv_exit(body(arg));
+ 	}
+ 	return pid;
+ }
+ 
++int sv_spawn_setup(int conn_fd, const struct sv_setup_spec *sp, int *status_fd)
++{
++	int p[2];
++	int r = sv_pipe2(p, SV_O_CLOEXEC | SV_O_NONBLOCK);
++	if (r < 0)
++		return r;
++	int pid = sv_fork();
++	if (pid != 0) {
++		sv_close(p[1]);
++		if (pid < 0)
++			sv_close(p[0]);
++		*status_fd = p[0];
++		return pid;
++	}
++	sv_close(conn_fd);
++	int errfd = p[1];
++	int e = sv_fchdir(sp->cwd_fd);
++	if (e >= 0)
++		e = sv_fdin_install(sp->fds, sp->nfds, &errfd);
++	if (e >= 0 && sp->fsize_bytes)
++		e = sv_set_rlimit(SV_RLIMIT_FSIZE, sp->fsize_bytes);
++	/* Survive execve: no core file, and no privilege gained from a set-ID file. */
++	if (e >= 0)
++		e = sv_set_rlimit(SV_RLIMIT_CORE, 0);
++	if (e >= 0)
++		e = sv_prctl(SV_PR_SET_NO_NEW_PRIVS, 1);
++	/* Inherited already; execve keeps it only for a program the slot UID cannot read. */
++	if (e >= 0)
++		e = sv_prctl(SV_PR_SET_DUMPABLE, 0);
++	if (e < 0) {
++		sv_write(errfd, &e, sizeof(e)); /* negative: the supervisor's step failed, not the execve */
++		sv_exit(SV_EXEC_FAILED_STATUS);
++	}
++	sv_exec_child(sp->argv, sp->env, errfd, 1);
++}
++
+ enum sv_error sv_sweep_result(int got_status, int status)
+ {
+ 	if (!got_status || SV_WIFSIGNALED(status))
+@@ -396,6 +447,15 @@
+ 	if (SV_WEXITSTATUS(status) == SV_WORKER_DEADLINE)
+ 		return SV_ERR_CLEANUP_TIMEOUT;
+ 	return SV_ERR_CLEANUP_FAILED;
++}
++
++enum sv_error sv_setup_result(enum sv_error stop, int got_status, int status)
++{
++	if (stop != SV_ERR_NONE)
++		return stop;
++	if (!got_status || SV_WIFSIGNALED(status) || SV_WEXITSTATUS(status) != 0)
++		return SV_ERR_SETUP_FAILED;
++	return SV_ERR_NONE;
+ }
+ 
+ int sv_cleanup_decide(int reaped, int status, sv_u64 now_ms, sv_u64 deadline_ms)
+diff -ruN --exclude=test supervisor/supervisor.c /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/supervisor.c
+--- supervisor/supervisor.c	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/supervisor.c	2026-11-13 10:08:10
+@@ -15,6 +15,11 @@
+  * spec: §4.7.10 (Runtime supervisor); §4.7.11 item 8 (Runtime
+  * supervisor); §28.5.3 (CH-SUPERVISE). In run mode the supervisor writes
+  * nothing to stdout or stderr, which the runtime inherits and can forge.
++ *
++ * A setup or cleanup request starts a run that the serve loop does not
++ * wait for: the loop keeps serving fs and ping, and answers the run with
++ * setupdone or cleaned when its status arrives. At most one run is
++ * outstanding (struct sv_run).
+  */
+ #include "supervisor.h"
+ 
+@@ -24,9 +29,29 @@
+ 	sv_u32 adapter_uid;
+ 	sv_u64 dial_timeout_ms;
+ 	struct sv_env env;
++	const char *fs_roots[4];
++	int nfs_roots;
+ 	char **argv;
+ };
+ 
++/*
++ * The outstanding setup or cleanup run. Its child is the one in the
++ * SV_CHILD_CLEANUP slot: a setup's child is the program itself, in its own
++ * session; a cleanup's is the cleanup worker. The supervisor signals that
++ * PID only while the slot holds no collected status, so the PID cannot
++ * have been reused.
++ */
++struct sv_run {
++	enum sv_req_type type; /* SV_REQ_SETUP or SV_REQ_CLEANUP; SV_REQ_NONE when none runs */
++	sv_u64 gen;
++	sv_u64 id;
++	sv_u64 deadline;       /* setup: timeoutMs; cleanup: the backstop beyond it */
++	sv_u64 killed_at;      /* when the supervisor sent SIGKILL, 0 before */
++	enum sv_error stop;    /* setup: why the supervisor stopped it, SV_ERR_NONE if it did not */
++	int cancel_fd;         /* setup: the supervisor's copy of the cancel pipe's read end, or -1 */
++	int spawn_fd;          /* setup: the spawn status pipe's read end, or -1 */
++};
++
+ /* The serve loop's state. Large buffers are static: the stack stays small. */
+ struct sv_server {
+ 	int conn;
+@@ -35,6 +60,7 @@
+ 	struct sv_run_args *args;
+ 	sv_u64 gen;          /* the generation of the latest launch, 0 before the first */
+ 	int launch_permitted; /* set at start and by an attested end; cleared by launch */
++	struct sv_run run;
+ };
+ 
+ static struct sv_linebuf sv_lb;
+@@ -73,6 +99,10 @@
+ 		} else if (sv_streq(f, "--dial-timeout")) {
+ 			if (sv_parse_duration_ms(v, &a->dial_timeout_ms))
+ 				return -1;
++		} else if (sv_streq(f, "--fs-root")) {
++			if (a->nfs_roots >= 4)
++				return -1;
++			a->fs_roots[a->nfs_roots++] = v;
+ 		} else if (sv_streq(f, "--env")) {
+ 			/* A later pair replaces an earlier one of the same name, PATH included. */
+ 			if (sv_env_set(&a->env, argv[i]))
+@@ -97,8 +127,8 @@
+ 
+ static void sv_send(struct sv_server *s, const char *buf, sv_size n)
+ {
+-	if (sv_write_all(s->conn, buf, n) < 0)
+-		sv_exit_closed(); /* a failed write is a closed connection (SIGPIPE row) */
++	if (sv_send_all(s->conn, buf, n, SV_NULL, 0) < 0)
++		sv_exit_closed(); /* a failed or stalled write is a closed connection (SIGPIPE row) */
+ }
+ 
+ static void sv_reply(struct sv_server *s, const struct sv_request *r, enum sv_error err)
+@@ -122,6 +152,100 @@
+ 		sv_exit_closed();
+ }
+ 
++/* ---- The setup or cleanup run ------------------------------------------ */
++
++/* A setup program's process group dies with it, killed by the reaper while its zombie holds the ID. */
++static void sv_run_start(struct sv_server *s, const struct sv_request *r, int pid, sv_u64 deadline_ms,
++			 int cancel_fd, int spawn_fd)
++{
++	s->procs.slot[SV_CHILD_CLEANUP].pid = pid;
++	s->procs.group_pid = r->type == SV_REQ_SETUP ? pid : 0;
++	s->run = (struct sv_run){r->type, r->gen, r->id, sv_now_ms() + deadline_ms, 0, SV_ERR_NONE, cancel_fd,
++				 spawn_fd};
++}
++
++/*
++ * sv_run_stop sends SIGKILL to the run's child and its process group, and
++ * records why. It stops a run once; the status is then collected as any
++ * other, and a status that does not arrive within SV_WAIT_AFTER_KILL_MS is
++ * a failure.
++ */
++static void sv_run_stop(struct sv_server *s, enum sv_error why)
++{
++	struct sv_run *run = &s->run;
++	struct sv_child_slot *c = &s->procs.slot[SV_CHILD_CLEANUP];
++	if (run->type == SV_REQ_NONE || run->killed_at)
++		return;
++	if (!c->reaped && c->pid > 0) {
++		sv_kill(-c->pid, SV_SIGKILL); /* a setup program's group; no group before its setsid */
++		sv_kill(c->pid, SV_SIGKILL);
++	}
++	run->killed_at = sv_now_ms();
++	run->stop = why;
++	if (run->cancel_fd >= 0)
++		sv_close(run->cancel_fd);
++	run->cancel_fd = -1;
++}
++
++/* sv_run_finish answers the run and clears it, so its state is gone before the reply is written. */
++static void sv_run_finish(struct sv_server *s, int got, int status)
++{
++	struct sv_run run = s->run;
++	char out[SV_MAX_REPLY];
++	sv_size n;
++	if (run.cancel_fd >= 0)
++		sv_close(run.cancel_fd);
++	sv_bytezero(&s->procs.slot[SV_CHILD_CLEANUP], sizeof(struct sv_child_slot));
++	s->procs.group_pid = 0;
++	s->run = (struct sv_run){SV_REQ_NONE, 0, 0, 0, 0, SV_ERR_NONE, -1, -1};
++	if (run.type == SV_REQ_SETUP) {
++		/*
++		 * An errno on the spawn pipe means the program never ran, so there is
++		 * no program status: a positive one is a failed execve, the request's
++		 * error; a negative one is a supervisor step before it.
++		 */
++		int e = 0;
++		enum sv_error err = sv_setup_result(run.stop, got, status);
++		if (sv_read(run.spawn_fd, &e, sizeof(e)) != (sv_ssize)sizeof(e))
++			e = 0;
++		sv_close(run.spawn_fd);
++		if (e)
++			got = 0;
++		if (e < 0)
++			err = SV_ERR_SETUP_SPAWN;
++		else if (e > 0)
++			err = SV_ERR_SETUP_FAILED;
++		n = sv_fmt_setupdone(out, run.gen, run.id, got, status, err, e > 0 ? SV_WHY_EXEC : SV_WHY_NONE, e);
++	} else {
++		n = sv_fmt_reply(out, run.type, run.gen, run.id, sv_cleanup_result(got, status));
++	}
++	sv_send(s, out, n);
++}
++
++/* sv_run_service answers a run whose status arrived and enforces its deadline. */
++static void sv_run_service(struct sv_server *s)
++{
++	struct sv_run *run = &s->run;
++	struct sv_child_slot *c = &s->procs.slot[SV_CHILD_CLEANUP];
++	if (run->type == SV_REQ_NONE)
++		return;
++	sv_u64 now = sv_now_ms();
++	if (c->reaped)
++		sv_run_finish(s, 1, c->status);
++	else if (run->killed_at && now - run->killed_at >= SV_WAIT_AFTER_KILL_MS)
++		sv_run_finish(s, 0, 0); /* the status did not reach the supervisor: a failure */
++	else if (!run->killed_at && now >= run->deadline)
++		sv_run_stop(s, SV_ERR_SETUP_TIMEOUT); /* a cleanup reports its killed worker as cleanup_failed */
++}
++
++/* sv_run_next is the time of the run's next deadline, 0 when none runs. */
++static sv_u64 sv_run_next(const struct sv_server *s)
++{
++	if (s->run.type == SV_REQ_NONE)
++		return 0;
++	return s->run.killed_at ? s->run.killed_at + SV_WAIT_AFTER_KILL_MS : s->run.deadline;
++}
++
+ /* ---- Requests ---------------------------------------------------------- */
+ 
+ static void sv_handle_launch(struct sv_server *s, struct sv_request *r)
+@@ -151,10 +275,17 @@
+ 	sv_reply(s, r, exec_errno ? SV_ERR_EXEC_FAILED : SV_ERR_NONE);
+ }
+ 
++/*
++ * An end stops a run first. When the end collects the run's status, the
++ * run's reply precedes ended; otherwise it follows within
++ * SV_WAIT_AFTER_KILL_MS.
++ */
+ static void sv_handle_end(struct sv_server *s, struct sv_request *r)
+ {
++	sv_run_stop(s, SV_ERR_SETUP_CANCELLED);
+ 	enum sv_error err = sv_end_pass(&s->waiter, r->grace_ms, SV_END_KILL_BOUND_MS);
+ 	sv_check_closed(s);
++	sv_run_service(s);
+ 	if (err == SV_ERR_NONE)
+ 		s->launch_permitted = 1;
+ 	sv_reply(s, r, err);
+@@ -231,19 +362,57 @@
+ 	return sv_cleanup_worker(c->req->commands, c->req->ncommands, env.vars, c->req->timeout_ms);
+ }
+ 
++/*
++ * The cleanup worker enforces timeoutMs itself; the serve loop holds the
++ * backstop beyond it. A cleanup clears the launch permission: a process it
++ * leaves behind, such as a daemon, survives until the next end, which the
++ * launch of the next generation then needs. A setup leaves the permission
++ * alone, so a fresh pod can run setup before its first launch.
++ */
+ static void sv_handle_cleanup(struct sv_server *s, struct sv_request *r)
+ {
+ 	struct sv_cleanup_ctx ctx = {r, &s->args->env};
++	s->launch_permitted = 0;
+ 	int pid = sv_spawn_worker(s->conn, sv_cleanup_body, &ctx);
+-	int status = 0, got = 0;
+-	if (pid > 0) {
+-		s->procs.slot[SV_CHILD_CLEANUP].pid = pid;
+-		int w = sv_wait_child(&s->waiter, SV_CHILD_CLEANUP,
+-				      r->timeout_ms + SV_CLEANUP_BACKSTOP_SLACK_MS, &status);
+-		sv_check_closed(s);
+-		got = (w == 0);
++	if (pid < 0)
++		sv_reply(s, r, SV_ERR_CLEANUP_FAILED);
++	else
++		sv_run_start(s, r, pid, r->timeout_ms + SV_CLEANUP_BACKSTOP_SLACK_MS, -1, -1);
++}
++
++/*
++ * The setup program runs as the run's child, so the serve loop enforces
++ * timeoutMs and the cancel pipe on it directly. The supervisor closes its
++ * copies of the passed descriptors once the child holds them, except the
++ * cancel pipe's read end (passed index 2), which only the supervisor holds
++ * and watches until the run ends.
++ */
++#define SV_CANCEL_INDEX 2
++static void sv_handle_setup(struct sv_server *s, struct sv_request *r)
++{
++	static int fds[SV_FS_MAX];
++	static char *const no_env[] = {SV_NULL};
++	int n = (int)r->nfds, spawn_fd = -1;
++	sv_fdin_take(fds, n);
++	int cwd = sv_fs_opendir("workspace", r->cwd);
++	if (cwd < 0) {
++		/* The request names no directory beneath the root: its error, not the supervisor's. */
++		char out[SV_MAX_REPLY];
++		for (int i = 0; i < n; i++)
++			sv_close(fds[i]);
++		sv_send(s, out, sv_fmt_setupdone(out, r->gen, r->id, 0, 0, SV_ERR_SETUP_FAILED, SV_WHY_CWD, -cwd));
++		return;
+ 	}
+-	sv_reply(s, r, sv_cleanup_result(got, status));
++	struct sv_setup_spec sp = {r->argv, r->env_empty ? no_env : s->args->env.vars, cwd, fds, n, r->fsize_bytes};
++	int pid = sv_spawn_setup(s->conn, &sp, &spawn_fd);
++	sv_close(cwd);
++	for (int i = 0; i < n; i++)
++		if (pid < 0 || i != SV_CANCEL_INDEX)
++			sv_close(fds[i]);
++	if (pid < 0)
++		sv_reply(s, r, SV_ERR_SETUP_SPAWN);
++	else
++		sv_run_start(s, r, pid, r->timeout_ms, fds[SV_CANCEL_INDEX], spawn_fd);
+ }
+ 
+ /*
+@@ -257,10 +426,24 @@
+ 
+ static void sv_dispatch(struct sv_server *s, struct sv_request *r)
+ {
++	/* Descriptors arrive only with a setup request, exactly as many as it names. */
++	int want = r->type == SV_REQ_SETUP ? (int)r->nfds : 0;
++	if (sv_fdin_count() != want) {
++		sv_fdin_drop();
++		sv_reply(s, r, SV_ERR_MALFORMED);
++		return;
++	}
+ 	if (!sv_gen_ok(s, r)) {
++		sv_fdin_drop();
+ 		sv_reply(s, r, SV_ERR_GEN_MISMATCH);
+ 		return;
+ 	}
++	/* While a run is outstanding, only fs, ping, and end are served. */
++	if (s->run.type != SV_REQ_NONE && r->type != SV_REQ_FS && r->type != SV_REQ_PING && r->type != SV_REQ_END) {
++		sv_fdin_drop();
++		sv_reply(s, r, SV_ERR_WORKER_BUSY);
++		return;
++	}
+ 	switch (r->type) {
+ 	case SV_REQ_LAUNCH:
+ 		sv_handle_launch(s, r);
+@@ -274,6 +457,15 @@
+ 	case SV_REQ_CLEANUP:
+ 		sv_handle_cleanup(s, r);
+ 		break;
++	case SV_REQ_SETUP:
++		sv_handle_setup(s, r);
++		break;
++	case SV_REQ_FS:
++		if (!s->args->nfs_roots)
++			sv_reply(s, r, SV_ERR_MALFORMED);
++		else if (sv_fs_handle(s->conn, r) < 0)
++			sv_exit_closed();
++		break;
+ 	default:
+ 		sv_reply(s, r, SV_ERR_NONE); /* pong */
+ 		break;
+@@ -291,11 +483,14 @@
+ 		if (n < 0)
+ 			sv_exit(SV_EXIT_PROTOCOL);
+ 		enum sv_parse_result pr = sv_parse_request(line, (sv_size)n, &sv_req);
++		sv_fdin_select(&sv_lb, (sv_size)n); /* the descriptors this line arrived with */
+ 		sv_line_consume(&sv_lb, (sv_size)n);
+ 		if (pr == SV_PARSE_UNREADABLE)
+ 			sv_exit(SV_EXIT_PROTOCOL);
+-		if (pr == SV_PARSE_MALFORMED)
++		if (pr == SV_PARSE_MALFORMED) {
++			sv_fdin_drop();
+ 			sv_reply(s, &sv_req, SV_ERR_MALFORMED);
++		}
+ 		else
+ 			sv_dispatch(s, &sv_req);
+ 	}
+@@ -304,21 +499,32 @@
+ /*
+  * The serve loop. The SIGCHLD flag is cleared before each reap loop, and
+  * the loop waits only in ppoll, whose mask is the one place the handled
+- * signals are unblocked. The adapter has at most one request outstanding,
+- * so requests are served in order.
++ * signals are unblocked, so a run's exit wakes it. Requests are served in
++ * the order they arrive, each reply written whole; a run's reply is
++ * written between two of them, at the top of the loop or at an end.
+  */
+ __attribute__((noreturn)) static void sv_serve(struct sv_server *s)
+ {
+ 	for (;;) {
+ 		if (sv_sigchld_flag)
+ 			sv_service_children(&s->waiter);
++		sv_run_service(s);
+ 		sv_drain_lines(s);
+-		struct sv_pollfd pfd = {s->conn, SV_POLLIN | SV_POLLRDHUP, 0};
+-		int r = sv_ppoll(&pfd, 1, SV_NULL, sv_wait_mask());
++		/*
++		 * The cancel entry asks for no event: POLLHUP, when the adapter closes
++		 * its write end, is reported anyway, and a byte cancels nothing. A
++		 * negative descriptor is ignored, so the entry is inert without a setup.
++		 */
++		struct sv_pollfd pfd[2] = {{s->conn, SV_POLLIN | SV_POLLRDHUP, 0}, {s->run.cancel_fd, 0, 0}};
++		sv_u64 next = sv_run_next(s);
++		struct sv_timespec ts = sv_ts_until(sv_now_ms(), next);
++		int r = sv_ppoll(pfd, 2, next ? &ts : SV_NULL, sv_wait_mask());
+ 		if (r <= 0)
+-			continue; /* a signal: the flags are read at the top of the loop */
+-		long n = sv_line_fill(&sv_lb, s->conn);
+-		if (n <= 0)
++			continue; /* a signal or the run's deadline: both are read at the top of the loop */
++		/* The adapter closing the cancel pipe's write end cancels the setup. */
++		if (pfd[1].revents)
++			sv_run_stop(s, SV_ERR_SETUP_CANCELLED);
++		if (pfd[0].revents && sv_fdin_fill(&sv_lb, s->conn) <= 0)
+ 			sv_exit_closed();
+ 	}
+ }
+@@ -398,12 +604,16 @@
+ 	s->args = &sv_args;
+ 	s->conn = -1;
+ 	s->launch_permitted = 1;
++	s->run.cancel_fd = s->run.spawn_fd = -1;
+ 	sv_procs_init(&s->procs);
+ 	s->waiter.procs = &s->procs;
+ 	s->waiter.conn_fd = -1;
+ 
+ 	struct sv_properties props;
+ 	sv_selftest(&props);
++	for (int i = 0; i < sv_args.nfs_roots; i++)
++		if (sv_fs_init(sv_args.fs_roots[i]) < 0)
++			return SV_EXIT_INTERNAL;
+ 
+ 	int fd = sv_dial(s, sv_args.socket, sv_args.dial_timeout_ms);
+ 	if (fd < 0)
+diff -ruN --exclude=test supervisor/supervisor.h /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/supervisor.h
+--- supervisor/supervisor.h	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/supervisor.h	2026-11-13 10:08:10
+@@ -62,6 +62,14 @@
+ #endif
+ /* The cleanup worker's backstop beyond timeoutMs. */
+ #define SV_CLEANUP_BACKSTOP_SLACK_MS 5000
++/*
++ * How long one reply write may wait for the adapter to read. A write that
++ * moves no byte for this long is a closed connection, so an adapter that
++ * stops reading cannot hold the serve loop away from a run's deadline.
++ */
++#define SV_SEND_TIMEOUT_MS 10000
++/* How many waits for room one reply write takes without a byte of progress. */
++#define SV_SEND_MAX_POLLS 64
+ /* How long a waiting step waits for a status after its backstop SIGKILL. */
+ #define SV_WAIT_AFTER_KILL_MS 5000
+ /* How long the self-test waits for a process state to settle. */
+@@ -107,6 +115,11 @@
+ 	SV_ERR_CLEANUP_TIMEOUT,  /* cleanup: the cleanupTimeoutSeconds deadline */
+ 	SV_ERR_MALFORMED,        /* any request: a member is missing, unknown, or out of range */
+ 	SV_ERR_GEN_MISMATCH,     /* any request: gen is not the generation the request needs */
++	SV_ERR_WORKER_BUSY,      /* launch, sweep, setup, cleanup: a setup or cleanup run is outstanding */
++	SV_ERR_SETUP_FAILED,     /* setup: the program exited non-zero, by a signal, or did not start */
++	SV_ERR_SETUP_TIMEOUT,    /* setup: the timeoutMs deadline */
++	SV_ERR_SETUP_CANCELLED,  /* setup: the cancel pipe, or an end, stopped the program */
++	SV_ERR_SETUP_SPAWN,      /* setup: the supervisor failed before the program's execve */
+ 	SV_ERR_COUNT
+ };
+ 
+@@ -130,6 +143,14 @@
+ struct sv_timespec sv_ts_until(sv_u64 now_ms, sv_u64 deadline_ms);
+ /* sv_write_all writes every byte, retrying short writes; 0 on success. */
+ int sv_write_all(int fd, const void *buf, sv_size n);
++/*
++ * sv_send_all writes every byte of buf to the socket fd, with control
++ * (SCM_RIGHTS) on the first byte. It fails with -EAGAIN when no byte has
++ * moved for SV_SEND_TIMEOUT_MS, with the kernel's errno when the call that
++ * carried the first byte failed, so that nothing was sent, and with
++ * -EPIPE when a later call failed. 0 on success.
++ */
++int sv_send_all(int fd, const void *buf, sv_size n, void *control, sv_size controllen);
+ /* sv_is_numeric reports whether a name is a non-empty run of digits. */
+ int sv_is_numeric(const char *s);
+ /* sv_path_join writes a/b into out (cap bytes); it returns 0 on success. */
+@@ -179,18 +200,52 @@
+ 	SV_REQ_SWEEP,
+ 	SV_REQ_CLEANUP,
+ 	SV_REQ_PING,
++	SV_REQ_FS,
++	SV_REQ_SETUP,
+ };
+ 
++/* fd broker operations (one fs request names one). */
++enum sv_fs_op {
++	SV_FS_NONE = 0,
++	SV_FS_OPEN,
++	SV_FS_OPENPATH,
++	SV_FS_MKFILE,
++	SV_FS_MKDIR,
++	SV_FS_SYMLINK,
++	SV_FS_LINK,
++	SV_FS_MKFIFO,
++	SV_FS_UTIMENS,
++	SV_FS_CHMOD,
++	SV_FS_INOTIFY,
++	SV_FS_WATCH,
++	SV_FS_STATAT,
++};
++/* Paths per fs request: the kernel's SCM_MAX_FD. */
++#define SV_FS_MAX 253
++
+ struct sv_request {
+ 	enum sv_req_type type;
+ 	sv_u64 gen;
+ 	sv_u64 id;
+ 	sv_u64 grace_ms;   /* end */
+-	sv_u64 timeout_ms; /* cleanup */
++	sv_u64 timeout_ms; /* cleanup, setup */
++	sv_u64 nfds;       /* setup: descriptors attached to the request line; index 2 is the cancel pipe */
++	sv_u64 fsize_bytes; /* setup: RLIMIT_FSIZE, 0 for none */
++	char **argv;       /* setup */
++	char *cwd;         /* setup: relative to the workspace broker root */
++	int env_empty;     /* setup: "empty" rather than "launch" */
+ 	int ncommands;     /* cleanup */
+ 	char **commands[SV_MAX_COMMANDS];
+ 	char *prev_provider; /* cleanup */
+ 	char *prev_lease_id; /* cleanup */
++	enum sv_fs_op fs_op; /* fs */
++	char *fs_root;       /* fs: broker root name */
++	char **paths;        /* fs */
++	int npaths;
++	char **targets;      /* fs: symlink, link */
++	int ntargets;
++	sv_u64 nums[SV_FS_MAX * 4]; /* fs: modes, or utimens times as sec,nsec,sec,nsec */
++	int nnums;
+ 	/* Storage the decoded strings and argument vectors point into. */
+ 	char arena[SV_MAX_LINE + 1];
+ 	char *argv_store[SV_MAX_ARGV_TOTAL + SV_MAX_COMMANDS];
+@@ -233,6 +288,18 @@
+ /* Reply formatting from fixed templates; each returns the byte count. */
+ sv_size sv_fmt_reply(char *out, enum sv_req_type t, sv_u64 gen, sv_u64 id, enum sv_error err);
+ sv_size sv_fmt_exited(char *out, sv_u64 gen, int wait_status);
++/* Why a setup failed before its program ran, when the request rather than the supervisor caused it. */
++enum sv_setup_why {
++	SV_WHY_NONE = 0,
++	SV_WHY_CWD,  /* cwd does not resolve to a directory beneath the workspace root */
++	SV_WHY_EXEC, /* execve of argv[0] failed */
++};
++/*
++ * setupdone carries the program's "exit" or "signal" when its status
++ * reached the supervisor, and "reason" with "errno" when why is set.
++ */
++sv_size sv_fmt_setupdone(char *out, sv_u64 gen, sv_u64 id, int got_status, int wait_status, enum sv_error err,
++			 enum sv_setup_why why, int err_no);
+ 
+ struct sv_properties {
+ 	int nondumpable;
+@@ -255,6 +322,7 @@
+ 	SV_CHILD_KINDS
+ };
+ 
++/* SV_CHILD_CLEANUP holds the one setup or cleanup run (spec: §4.7.10, Children). */
+ struct sv_child_slot {
+ 	int pid;      /* 0 when no child of this kind runs */
+ 	int reaped;   /* the reaper recorded its status */
+@@ -279,6 +347,7 @@
+ 	const char *proc_path;
+ 	const char *pids_current_path;
+ 	int self_pid;
++	int group_pid;      /* a child whose process group is killed when it exits, 0 for none */
+ 	/* The end's kill and count primitives; tests replace them. */
+ 	sv_kill_fn kill_all;
+ 	sv_count_fn count_others_fn;
+@@ -355,8 +424,9 @@
+ 
+ /*
+  * sv_spawn_worker forks a worker that closes conn_fd before anything
+- * else and exits with body(arg) (spec: §4.7.11 item 8, Protection from
+- * author code). It returns the worker's PID or a negated errno.
++ * else, then every descriptor from 3 up, and exits with body(arg) (spec:
++ * §4.7.11 item 8, Protection from author code). It returns the worker's
++ * PID or a negated errno.
+  */
+ typedef int (*sv_worker_body)(void *arg);
+ int sv_spawn_worker(int conn_fd, sv_worker_body body, void *arg);
+@@ -365,7 +435,34 @@
+ enum sv_error sv_sweep_result(int got_status, int status);
+ /* The reply error for a cleanup worker's outcome (spec: §4.7.10, Children). */
+ enum sv_error sv_cleanup_result(int got_status, int status);
++/*
++ * The reply error for a setup run: the supervisor's own stop (timeout or
++ * cancelled) when it stopped the program, else the program's status.
++ */
++enum sv_error sv_setup_result(enum sv_error stop, int got_status, int status);
+ 
++/* A setup program: what sv_spawn_setup gives the child before it executes argv. */
++struct sv_setup_spec {
++	char *const *argv;
++	char *const *env;
++	int cwd_fd;        /* the working directory, opened beneath the workspace broker root */
++	const int *fds;    /* the passed descriptors, in passed order */
++	int nfds;
++	sv_u64 fsize_bytes; /* RLIMIT_FSIZE, 0 for none */
++};
++/*
++ * sv_spawn_setup forks the setup program. The child closes conn_fd before
++ * anything else, changes to cwd_fd, places the descriptors and closes every
++ * other one, sets RLIMIT_FSIZE, RLIMIT_CORE 0, no_new_privs, and the
++ * non-dumpable mark, and executes argv in a new session as a cleanup
++ * command does. A failed execve writes its errno to the spawn status
++ * pipe, and a step before it writes the negated errno; *status_fd
++ * receives the pipe's non-blocking read end, which is empty when the
++ * program started. It returns the child's PID,
++ * which is its process group after setsid, or a negated errno.
++ */
++int sv_spawn_setup(int conn_fd, const struct sv_setup_spec *sp, int *status_fd);
++
+ /* ---- Cleanup worker (procs.c) ------------------------------------------ */
+ 
+ /*
+@@ -469,6 +566,36 @@
+ /* Test-build hook: when set, sv_now_ms returns its value. */
+ extern sv_u64 (*sv_now_hook)(void);
+ #endif
++
++/* ---- fd broker (fsbroker.c) -------------------------------------------- */
++
++/* sv_fs_init opens the broker root named by "NAME=PATH"; 0 on success. */
++int sv_fs_init(const char *spec);
++/* sv_fs_handle serves one fs request and writes its reply, with descriptors, to conn. */
++int sv_fs_handle(int conn, const struct sv_request *r);
++/* sv_fs_opendir opens path beneath the named broker root as an O_PATH directory, confined as fs requests are. */
++int sv_fs_opendir(const char *root, const char *path);
++
++/* ---- Inbound descriptors (fdin.c) -------------------------------------- */
++
++/* sv_fdin_fill reads once from fd like sv_line_fill, queueing any SCM_RIGHTS descriptors. */
++long sv_fdin_fill(struct sv_linebuf *lb, int fd);
++/* sv_fdin_select makes the line of length n at the start of lb the current line. */
++void sv_fdin_select(const struct sv_linebuf *lb, sv_size n);
++/* sv_fdin_count is the current line's descriptor count, -1 when some were lost. */
++int sv_fdin_count(void);
++/* sv_fdin_take moves the current line's n descriptors into out, in arrival order. */
++void sv_fdin_take(int *out, int n);
++/* sv_fdin_drop closes the current line's descriptors. */
++void sv_fdin_drop(void);
++/*
++ * sv_fdin_install gives a setup program its descriptor table, without
++ * close-on-exec: /dev/null at 0, fds[0] and fds[1] (the log pipes) at 1
++ * and 2, and fds[i] at i from 3 up. fds[2], the cancel pipe, is not
++ * installed. *errfd moves to n, close-on-exec. Every other descriptor is
++ * closed. 0 on success.
++ */
++int sv_fdin_install(const int *fds, int n, int *errfd);
+ 
+ /* ---- Entry (supervisor.c) ---------------------------------------------- */
+ 
+diff -ruN --exclude=test supervisor/syscalls.h /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/syscalls.h
+--- supervisor/syscalls.h	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/syscalls.h	2026-11-13 10:08:10
+@@ -30,6 +30,7 @@
+ #define SV_EPERM 1
+ #define SV_ENOENT 2
+ #define SV_ESRCH 3
++#define SV_EBADF 9
+ #define SV_EINTR 4
+ #define SV_EAGAIN 11
+ #define SV_EACCES 13
+@@ -38,6 +39,7 @@
+ #define SV_EISDIR 21
+ #define SV_EINVAL 22
+ #define SV_EPIPE 32
++#define SV_ECONNRESET 104
+ #define SV_ENOTEMPTY 39
+ #define SV_ELOOP 40
+ #define SV_EALREADY 114
+@@ -70,7 +72,62 @@
+ #define SV_AT_REMOVEDIR 0x200
+ #define SV_AT_EMPTY_PATH 0x1000
+ 
++/* fd broker: openat2, descriptor passing, and the restore calls. */
++#define SV_O_NONBLOCK 04000
++#define SV_O_NOCTTY 0400
++#define SV_O_PATH 010000000
++#define SV_RESOLVE_NO_XDEV 0x01
++#define SV_RESOLVE_NO_MAGICLINKS 0x02
++#define SV_RESOLVE_NO_SYMLINKS 0x04
++#define SV_RESOLVE_BENEATH 0x08
++#define SV_ENXIO 6
++#define SV_ENAMETOOLONG 36
++#define SV_S_IFIFO 0010000
++#define SV_SCM_RIGHTS 1
++#define SV_MSG_NOSIGNAL 0x4000
++#define SV_MSG_CTRUNC 0x8
++#define SV_MSG_CMSG_CLOEXEC 0x40000000
++/* The setup program's descriptors and file-size limit. */
++#define SV_F_DUPFD_CLOEXEC 1030
++#define SV_RLIMIT_FSIZE 1
++#define SV_RLIMIT_CORE 4
++#define SV_PR_SET_NO_NEW_PRIVS 38
++#define SV_MSG_DONTWAIT 0x40
++struct sv_rlimit {
++	sv_u64 cur;
++	sv_u64 max;
++};
++#define SV_IN_NONBLOCK 04000
++#define SV_IN_CLOEXEC 02000000
++#define SV_IN_ONLYDIR 0x01000000
++/* IC's tracker mask: MODIFY ATTRIB CLOSE_WRITE MOVED_FROM MOVED_TO CREATE DELETE DELETE_SELF MOVE_SELF. */
++#define SV_IN_TRACK_MASK 0x00000FCE
++struct sv_open_how {
++	sv_u64 flags;
++	sv_u64 mode;
++	sv_u64 resolve;
++};
++struct sv_iovec {
++	void *base;
++	sv_size len;
++};
++struct sv_msghdr {
++	void *name;
++	sv_u32 namelen;
++	struct sv_iovec *iov;
++	sv_size iovlen;
++	void *control;
++	sv_size controllen;
++	int flags;
++};
++struct sv_cmsghdr {
++	sv_size len;
++	int level;
++	int type;
++};
++
+ #define SV_POLLIN 0x0001
++#define SV_POLLOUT 0x0004
+ #define SV_POLLERR 0x0008
+ #define SV_POLLHUP 0x0010
+ #define SV_POLLNVAL 0x0020
+@@ -96,6 +153,18 @@
+ 
+ #define SV_CLOCK_MONOTONIC 1
+ #define SV_WNOHANG 1
++#define SV_WEXITED 4
++#define SV_WNOWAIT 0x01000000
++#define SV_P_ALL 0
++/* siginfo_t as waitid fills it: si_pid sits at byte 16 on both ABIs. */
++struct sv_siginfo {
++	int signo;
++	int errno_;
++	int code;
++	int pad;
++	int pid;
++	int rest[27];
++};
+ 
+ #define SV_SIG_BLOCK 0
+ #define SV_SIG_UNBLOCK 1
+@@ -122,6 +191,9 @@
+ #define SV_STATX_TYPE 0x0001U
+ #define SV_STATX_UID 0x0008U
+ #define SV_STATX_INO 0x0100U
++#define SV_STATX_BASIC_STATS 0x07ffU
++#define SV_STATX_MNT_ID 0x1000U
++#define SV_EXDEV 18
+ #define SV_S_IFMT 0170000
+ #define SV_S_IFDIR 0040000
+ #define SV_S_IFLNK 0120000
+@@ -185,7 +257,8 @@
+ 	sv_u64 stx_attributes_mask;
+ 	struct sv_statx_timestamp stx_atime, stx_btime, stx_ctime, stx_mtime;
+ 	sv_u32 stx_rdev_major, stx_rdev_minor, stx_dev_major, stx_dev_minor;
+-	sv_u64 spare2[14];
++	sv_u64 stx_mnt_id;
++	sv_u64 spare2[13];
+ };
+ 
+ struct sv_dirent64 {
+@@ -224,6 +297,7 @@
+ #define SV_NR_clone 220
+ #define SV_NR_execve 221
+ #define SV_NR_wait4 260
++#define SV_NR_waitid 95
+ #define SV_NR_kill 129
+ #define SV_NR_getpid 172
+ #define SV_NR_getppid 173
+@@ -244,6 +318,19 @@
+ #define SV_NR_semctl 191
+ #define SV_NR_pipe2 59
+ #define SV_NR_kill_pg SV_NR_kill
++#define SV_NR_sendmsg 211
++#define SV_NR_recvmsg 212
++#define SV_NR_dup3 24
++#define SV_NR_fcntl 25
++#define SV_NR_prlimit64 261
++#define SV_NR_mkdirat 34
++#define SV_NR_symlinkat 36
++#define SV_NR_linkat 37
++#define SV_NR_mknodat 33
++#define SV_NR_utimensat 88
++#define SV_NR_inotify_init1 26
++#define SV_NR_inotify_add_watch 27
++#define SV_NR_umask 166
+ #else
+ #define SV_NR_read 0
+ #define SV_NR_write 1
+@@ -260,6 +347,7 @@
+ #define SV_NR_clone 56
+ #define SV_NR_execve 59
+ #define SV_NR_wait4 61
++#define SV_NR_waitid 247
+ #define SV_NR_kill 62
+ #define SV_NR_getpid 39
+ #define SV_NR_getppid 110
+@@ -279,7 +367,22 @@
+ #define SV_NR_msgctl 71
+ #define SV_NR_semctl 66
+ #define SV_NR_pipe2 293
++#define SV_NR_sendmsg 46
++#define SV_NR_recvmsg 47
++#define SV_NR_dup3 292
++#define SV_NR_fcntl 72
++#define SV_NR_prlimit64 302
++#define SV_NR_mkdirat 258
++#define SV_NR_symlinkat 266
++#define SV_NR_linkat 265
++#define SV_NR_mknodat 259
++#define SV_NR_utimensat 280
++#define SV_NR_inotify_init1 294
++#define SV_NR_inotify_add_watch 254
++#define SV_NR_umask 95
+ #endif
++#define SV_NR_close_range 436
++#define SV_NR_openat2 437
+ 
+ static inline long sv_raw6(long n, long a, long b, long c, long d, long e, long f)
+ {
+@@ -432,6 +535,11 @@
+ 	return (int)SV_RETRY(SV_NR_wait4, sv_raw4(SV_NR_wait4, pid, status, options, 0));
+ }
+ 
++static inline int sv_waitid(int idtype, int id, struct sv_siginfo *si, int options)
++{
++	return (int)SV_RETRY(SV_NR_waitid, sv_raw5(SV_NR_waitid, idtype, id, si, options, 0));
++}
++
+ static inline int sv_kill(int pid, int sig)
+ {
+ 	return (int)SV_RETRY(SV_NR_kill, sv_raw2(SV_NR_kill, pid, sig));
+@@ -514,6 +622,84 @@
+ static inline int sv_pipe2(int fds[2], int flags)
+ {
+ 	return (int)sv_raw2(SV_NR_pipe2, fds, flags);
++}
++
++static inline int sv_openat2(int dirfd, const char *path, struct sv_open_how *how)
++{
++	return (int)SV_RETRY(SV_NR_openat2, sv_raw4(SV_NR_openat2, dirfd, path, how, sizeof(*how)));
++}
++
++static inline sv_ssize sv_sendmsg(int fd, const struct sv_msghdr *m, int flags)
++{
++	return SV_RETRY(SV_NR_sendmsg, sv_raw3(SV_NR_sendmsg, fd, m, flags));
++}
++
++static inline sv_ssize sv_recvmsg(int fd, struct sv_msghdr *m, int flags)
++{
++	return SV_RETRY(SV_NR_recvmsg, sv_raw3(SV_NR_recvmsg, fd, m, flags));
++}
++
++static inline int sv_dup3(int o, int n, int flags)
++{
++	return (int)sv_raw3(SV_NR_dup3, o, n, flags);
++}
++
++static inline int sv_fcntl(int fd, int cmd, long arg)
++{
++	return (int)sv_raw3(SV_NR_fcntl, fd, cmd, arg);
++}
++
++/* sv_close_range closes every descriptor from first to last, with no flag. */
++static inline int sv_close_range(sv_u32 first, sv_u32 last)
++{
++	return (int)sv_raw3(SV_NR_close_range, first, last, 0);
++}
++
++/* sv_set_rlimit sets both the soft and the hard limit, so the process cannot raise it. */
++static inline int sv_set_rlimit(int resource, sv_u64 value)
++{
++	struct sv_rlimit r = {value, value};
++	return (int)sv_raw4(SV_NR_prlimit64, 0, resource, &r, 0);
++}
++
++static inline int sv_mkdirat(int d, const char *p, sv_u32 mode)
++{
++	return (int)SV_RETRY(SV_NR_mkdirat, sv_raw3(SV_NR_mkdirat, d, p, mode));
++}
++
++static inline int sv_symlinkat(const char *target, int d, const char *p)
++{
++	return (int)SV_RETRY(SV_NR_symlinkat, sv_raw3(SV_NR_symlinkat, target, d, p));
++}
++
++static inline int sv_linkat(int od, const char *op, int nd, const char *np)
++{
++	return (int)SV_RETRY(SV_NR_linkat, sv_raw5(SV_NR_linkat, od, op, nd, np, 0));
++}
++
++static inline int sv_mknodat(int d, const char *p, sv_u32 mode)
++{
++	return (int)SV_RETRY(SV_NR_mknodat, sv_raw4(SV_NR_mknodat, d, p, mode, 0));
++}
++
++static inline int sv_utimensat(int d, const char *p, const struct sv_timespec ts[2], int flags)
++{
++	return (int)SV_RETRY(SV_NR_utimensat, sv_raw4(SV_NR_utimensat, d, p, ts, flags));
++}
++
++static inline int sv_inotify_init1(int flags)
++{
++	return (int)sv_raw1(SV_NR_inotify_init1, flags);
++}
++
++static inline int sv_inotify_add_watch(int fd, const char *p, sv_u32 mask)
++{
++	return (int)SV_RETRY(SV_NR_inotify_add_watch, sv_raw3(SV_NR_inotify_add_watch, fd, p, mask));
++}
++
++static inline sv_u32 sv_umask(sv_u32 m)
++{
++	return (sv_u32)sv_raw1(SV_NR_umask, m);
+ }
+ 
+ #endif
+diff -ruN --exclude=test supervisor/util.c /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/util.c
+--- supervisor/util.c	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/util.c	2026-11-13 10:08:10
+@@ -138,6 +138,46 @@
+ 	return ts;
+ }
+ 
++/*
++ * Non-blocking sends and ppoll bound the wait. SO_SNDTIMEO would be
++ * shorter, but gVisor accepts it on a Unix stream socket and does not
++ * enforce it.
++ */
++int sv_send_all(int fd, const void *buf, sv_size n, void *control, sv_size controllen)
++{
++	const char *p = buf;
++	int sent = 0, polls = 0;
++	sv_u64 deadline = sv_now_ms() + SV_SEND_TIMEOUT_MS; /* moves with each byte of progress */
++	while (n) {
++		struct sv_iovec iov = {(void *)p, n};
++		struct sv_msghdr m = {SV_NULL, 0, &iov, 1, control, controllen, 0};
++		sv_ssize r = sv_sendmsg(fd, &m, SV_MSG_NOSIGNAL | SV_MSG_DONTWAIT);
++		if (r == -SV_EAGAIN) {
++			/*
++			 * The handled signals stay blocked, so only room or the deadline ends
++			 * the wait. A socket that reports room and then refuses it again is
++			 * given SV_SEND_MAX_POLLS waits, so the two cannot disagree in a spin.
++			 */
++			sv_u64 now = sv_now_ms();
++			struct sv_pollfd pfd = {fd, SV_POLLOUT, 0};
++			struct sv_timespec ts = sv_ts_until(now, deadline);
++			if (now >= deadline || ++polls > SV_SEND_MAX_POLLS || sv_ppoll(&pfd, 1, &ts, SV_NULL) <= 0)
++				return -SV_EAGAIN;
++			continue;
++		}
++		if (r <= 0)
++			return sent || r == 0 ? -SV_EPIPE : (int)r;
++		sent = 1;
++		polls = 0;
++		deadline = sv_now_ms() + SV_SEND_TIMEOUT_MS;
++		p += r;
++		n -= (sv_size)r;
++		control = SV_NULL; /* the descriptors went with the first byte */
++		controllen = 0;
++	}
++	return 0;
++}
++
+ int sv_write_all(int fd, const void *buf, sv_size n)
+ {
+ 	const char *p = buf;
+diff -ruN --exclude=test supervisor/wire.c /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/wire.c
+--- supervisor/wire.c	2026-11-01 10:10:56
++++ /Users/joan/projects/lenny/designs/evidence/session-isolation-design/supervisor-prototype/wire.c	2026-11-13 10:08:10
+@@ -6,7 +6,9 @@
+  * spec: §28.5.3 (CH-SUPERVISE, Messages). Each message is one JSON object
+  * terminated by "\n" whose "type" member names it. Every request carries
+  * "gen" and "id"; "end" carries "graceMs"; "cleanup" carries "commands"
+- * (argument lists), "timeoutMs", "prevProvider", and "prevLeaseId". The
++ * (argument lists), "timeoutMs", "prevProvider", and "prevLeaseId";
++ * "setup" carries "argv", "cwd", "env", "timeoutMs", "fsizeBytes", and
++ * "nfds", with nfds descriptors attached. The
+  * parser rejects an unknown or duplicate key, a missing member, a value
+  * of the wrong type, and a value out of range. Replies are written from
+  * fixed templates with integer and enumerated fields only, so no byte a
+@@ -29,6 +31,11 @@
+ 	[SV_ERR_CLEANUP_TIMEOUT] = "cleanup_timeout",
+ 	[SV_ERR_MALFORMED] = "malformed_request",
+ 	[SV_ERR_GEN_MISMATCH] = "gen_mismatch",
++	[SV_ERR_WORKER_BUSY] = "worker_busy",
++	[SV_ERR_SETUP_FAILED] = "setup_failed",
++	[SV_ERR_SETUP_TIMEOUT] = "setup_timeout",
++	[SV_ERR_SETUP_CANCELLED] = "setup_cancelled",
++	[SV_ERR_SETUP_SPAWN] = "setup_spawn_failed",
+ };
+ 
+ const char *sv_error_name(enum sv_error e)
+@@ -51,6 +58,10 @@
+ 		return "cleaned";
+ 	case SV_REQ_PING:
+ 		return "pong";
++	case SV_REQ_FS:
++		return "fsdone";
++	case SV_REQ_SETUP:
++		return "setupdone";
+ 	default:
+ 		return "";
+ 	}
+@@ -267,6 +278,17 @@
+ 	return 0;
+ }
+ 
++/* sv_relative_path reports whether s names a directory without starting at the root. */
++static int sv_relative_path(const char *s)
++{
++	if (*s == '/')
++		return 0;
++	for (; *s; s++)
++		if (*s == '/')
++			return 1;
++	return 0;
++}
++
+ /* sv_argv decodes one non-empty array of strings whose first string is non-empty. */
+ static int sv_argv(struct sv_parser *p, char ***out)
+ {
+@@ -278,7 +300,9 @@
+ 		return -1;
+ 	for (;;) {
+ 		char *s;
+-		if (argc >= SV_MAX_ARGS || p->argv_total >= SV_MAX_ARGV_TOTAL)
++		/* Every array shares argv_store: this string and a terminator after it must fit. */
++		if (argc >= SV_MAX_ARGS || p->argv_total >= SV_MAX_ARGV_TOTAL ||
++		    p->argv_pos + argc + 2 > (int)(sizeof(p->req->argv_store) / sizeof(p->req->argv_store[0])))
+ 			return -1;
+ 		if (sv_string(p, &s, SV_MAX_ARG_BYTES))
+ 			return -1;
+@@ -333,13 +357,101 @@
+ 	SV_K_TIMEOUT,
+ 	SV_K_PREV_PROVIDER,
+ 	SV_K_PREV_LEASE,
++	SV_K_OP,
++	SV_K_PATHS,
++	SV_K_TARGETS,
++	SV_K_NUMS,
++	SV_K_ROOT,
++	SV_K_NFDS,
++	SV_K_ARGV,
++	SV_K_CWD,
++	SV_K_ENV,
++	SV_K_FSIZE,
+ 	SV_K_COUNT
+ };
+ 
+ static const char *const sv_key_names[SV_K_COUNT] = {
+ 	"type", "gen", "id", "graceMs", "commands", "timeoutMs", "prevProvider", "prevLeaseId",
++	"op", "paths", "targets", "nums", "root", "nfds",
++	"argv", "cwd", "env", "fsizeBytes",
+ };
+ 
++static enum sv_fs_op sv_fs_op_of(const char *s)
++{
++	static const char *const names[] = {"", "open", "openpath", "mkfile", "mkdir", "symlink", "link",
++					    "mkfifo", "utimens", "chmod", "inotify", "watch", "statat"};
++	for (int i = 1; i < (int)(sizeof(names) / sizeof(names[0])); i++)
++		if (sv_streq(s, names[i]))
++			return (enum sv_fs_op)i;
++	return SV_FS_NONE;
++}
++
++/* sv_fs_keys is the member set an fs request with op requires, and checks the array lengths. */
++static unsigned sv_fs_keys(const struct sv_request *r, unsigned base)
++{
++	unsigned k = base | (1u << SV_K_OP) | (1u << SV_K_PATHS) | (1u << SV_K_ROOT);
++	int want_nums = 0, want_targets = 0;
++	switch (r->fs_op) {
++	case SV_FS_MKFILE:
++	case SV_FS_MKDIR:
++	case SV_FS_MKFIFO:
++	case SV_FS_CHMOD:
++		want_nums = r->npaths;
++		break;
++	case SV_FS_UTIMENS:
++		want_nums = 4 * r->npaths;
++		break;
++	case SV_FS_SYMLINK:
++	case SV_FS_LINK:
++		want_targets = r->npaths;
++		break;
++	case SV_FS_NONE:
++		return 0;
++	default:
++		break;
++	}
++	if (r->npaths > SV_FS_MAX || r->nnums != want_nums || r->ntargets != want_targets)
++		return 0;
++	if (want_nums)
++		k |= 1u << SV_K_NUMS;
++	if (want_targets)
++		k |= 1u << SV_K_TARGETS;
++	return k;
++}
++
++/* sv_strings decodes a non-empty string array and counts it. */
++static int sv_strings(struct sv_parser *p, char ***out, int *n)
++{
++	if (sv_argv(p, out))
++		return -1;
++	for (*n = 0; (*out)[*n]; (*n)++)
++		;
++	return 0;
++}
++
++/* sv_uints decodes an array of integers into req->nums. */
++static int sv_uints(struct sv_parser *p)
++{
++	struct sv_request *r = p->req;
++	if (sv_expect(p, '['))
++		return -1;
++	r->nnums = 0;
++	if (sv_peek(p, ']')) {
++		p->i++;
++		return 0;
++	}
++	for (;;) {
++		if (r->nnums >= SV_FS_MAX * 4 || sv_uint(p, &r->nums[r->nnums]))
++			return -1;
++		r->nnums++;
++		if (sv_peek(p, ',')) {
++			p->i++;
++			continue;
++		}
++		return sv_expect(p, ']');
++	}
++}
++
+ /* The members each request type requires; no other member is accepted. */
+ static unsigned sv_required_keys(enum sv_req_type t)
+ {
+@@ -350,15 +462,20 @@
+ 	case SV_REQ_CLEANUP:
+ 		return base | (1u << SV_K_COMMANDS) | (1u << SV_K_TIMEOUT) |
+ 		       (1u << SV_K_PREV_PROVIDER) | (1u << SV_K_PREV_LEASE);
++	case SV_REQ_SETUP:
++		return base | (1u << SV_K_ARGV) | (1u << SV_K_CWD) | (1u << SV_K_ENV) | (1u << SV_K_TIMEOUT) |
++		       (1u << SV_K_FSIZE) | (1u << SV_K_NFDS);
+ 	case SV_REQ_LAUNCH:
+ 	case SV_REQ_SWEEP:
+ 	case SV_REQ_PING:
++	case SV_REQ_FS:
+ 		return base;
+ 	default:
+ 		return 0;
+ 	}
+ }
+ 
++
+ static enum sv_req_type sv_type_of(const char *s)
+ {
+ 	if (sv_streq(s, "launch"))
+@@ -371,6 +488,10 @@
+ 		return SV_REQ_CLEANUP;
+ 	if (sv_streq(s, "ping"))
+ 		return SV_REQ_PING;
++	if (sv_streq(s, "fs"))
++		return SV_REQ_FS;
++	if (sv_streq(s, "setup"))
++		return SV_REQ_SETUP;
+ 	return SV_REQ_NONE;
+ }
+ 
+@@ -406,6 +527,33 @@
+ 		return sv_string(p, &r->prev_provider, SV_MAX_ARG_BYTES);
+ 	case SV_K_PREV_LEASE:
+ 		return sv_string(p, &r->prev_lease_id, SV_MAX_ARG_BYTES);
++	case SV_K_OP:
++		if (sv_string(p, &s, 16))
++			return -1;
++		r->fs_op = sv_fs_op_of(s);
++		return r->fs_op == SV_FS_NONE ? -1 : 0;
++	case SV_K_PATHS:
++		return sv_strings(p, &r->paths, &r->npaths);
++	case SV_K_TARGETS:
++		return sv_strings(p, &r->targets, &r->ntargets);
++	case SV_K_ROOT:
++		return sv_string(p, &r->fs_root, 32);
++	case SV_K_NUMS:
++		return sv_uints(p);
++	case SV_K_NFDS:
++		/* The two log pipes and the cancel pipe at least; SCM_MAX_FD at most. */
++		return sv_uint(p, &r->nfds) || r->nfds < 3 || r->nfds > SV_FS_MAX ? -1 : 0;
++	case SV_K_ARGV:
++		return sv_argv(p, &r->argv);
++	case SV_K_CWD:
++		return sv_string(p, &r->cwd, SV_MAX_ARG_BYTES);
++	case SV_K_ENV:
++		if (sv_string(p, &s, 8))
++			return -1;
++		r->env_empty = sv_streq(s, "empty");
++		return r->env_empty || sv_streq(s, "launch") ? 0 : -1;
++	case SV_K_FSIZE:
++		return sv_uint(p, &r->fsize_bytes);
+ 	default:
+ 		return -1;
+ 	}
+@@ -418,9 +566,16 @@
+ 	int bad = 0;
+ 
+ 	req->type = SV_REQ_NONE;
+-	req->gen = req->id = req->grace_ms = req->timeout_ms = 0;
++	req->gen = req->id = req->grace_ms = req->timeout_ms = req->nfds = 0;
+ 	req->ncommands = 0;
+ 	req->prev_provider = req->prev_lease_id = SV_NULL;
++	req->fs_op = SV_FS_NONE;
++	req->fs_root = SV_NULL;
++	req->npaths = req->ntargets = req->nnums = 0;
++	req->fsize_bytes = 0;
++	req->argv = SV_NULL;
++	req->cwd = SV_NULL;
++	req->env_empty = 0;
+ 
+ 	if (len > SV_MAX_LINE || sv_expect(&p, '{'))
+ 		return SV_PARSE_UNREADABLE;
+@@ -460,7 +615,13 @@
+ 	/* Without type, gen, and id no reply can be attributed to a request. */
+ 	if ((seen & 7u) != 7u)
+ 		return SV_PARSE_UNREADABLE;
+-	if (bad || seen != sv_required_keys(req->type))
++	unsigned need = sv_required_keys(req->type);
++	if (req->type == SV_REQ_FS)
++		need = sv_fs_keys(req, need);
++	/* A relative program path with a slash would resolve against the workspace. */
++	if (req->type == SV_REQ_SETUP && req->argv && sv_relative_path(req->argv[0]))
++		bad = 1;
++	if (bad || seen != need)
+ 		return SV_PARSE_MALFORMED;
+ 	return SV_PARSE_OK;
+ }
+@@ -513,6 +674,34 @@
+ 	} else {
+ 		n = sv_cat(out, n, ",\"status\":");
+ 		n = sv_cat_u64(out, n, (sv_u64)SV_WEXITSTATUS(st));
++	}
++	n = sv_cat(out, n, "}\n");
++	return n;
++}
++
++sv_size sv_fmt_setupdone(char *out, sv_u64 gen, sv_u64 id, int got, int st, enum sv_error err,
++			 enum sv_setup_why why, int err_no)
++{
++	sv_size n = 0;
++	n = sv_cat(out, n, "{\"type\":\"setupdone\",\"gen\":");
++	n = sv_cat_u64(out, n, gen);
++	n = sv_cat(out, n, ",\"id\":");
++	n = sv_cat_u64(out, n, id);
++	if (got && SV_WIFSIGNALED(st)) {
++		n = sv_cat(out, n, ",\"signal\":");
++		n = sv_cat_u64(out, n, (sv_u64)SV_WTERMSIG(st));
++	} else if (got) {
++		n = sv_cat(out, n, ",\"exit\":");
++		n = sv_cat_u64(out, n, (sv_u64)SV_WEXITSTATUS(st));
++	}
++	if (err != SV_ERR_NONE) {
++		n = sv_cat(out, n, ",\"error\":\"");
++		n = sv_cat(out, n, sv_error_name(err));
++		n = sv_cat(out, n, "\"");
++	}
++	if (why != SV_WHY_NONE) {
++		n = sv_cat(out, n, why == SV_WHY_CWD ? ",\"reason\":\"cwd\",\"errno\":" : ",\"reason\":\"exec\",\"errno\":");
++		n = sv_cat_u64(out, n, (sv_u64)err_no);
+ 	}
+ 	n = sv_cat(out, n, "}\n");
+ 	return n;

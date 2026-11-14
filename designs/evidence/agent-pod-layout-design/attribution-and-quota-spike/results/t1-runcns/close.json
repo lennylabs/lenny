@@ -1,0 +1,1 @@
+{"close-slot0/v4":{"N":20,"DiagOK":20,"ProcOK":20,"DiagMismatch":20,"ProcMismatch":20,"DiagUIDs":{"0/st5":20},"ProcUIDs":{"0/st5":20},"DiagErrs":{},"ProcErrs":{},"DiagLat":{"max_us":5582.123,"n":20,"p50_us":33.962,"p99_us":4153.619},"ProcLat":{"max_us":11091.808,"n":20,"p50_us":7875.848,"p99_us":10582.38},"ProcRowsMax":955}}

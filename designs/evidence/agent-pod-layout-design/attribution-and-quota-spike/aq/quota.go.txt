@@ -1,0 +1,382 @@
+package main
+
+// Project quota probes: what an unprivileged process can read about its volume's
+// project quota (mount options, statfs, FS_IOC_FSGETXATTR, quotactl_fd), the
+// privileged assignment of a project ID and limit, escape attempts, and fills.
+
+import (
+	"bufio"
+	"encoding/binary"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
+)
+
+const (
+	fsIocFsgetxattr = 0x801c581f
+	fsIocFssetxattr = 0x401c5820
+	xflProjinherit  = 0x200
+	sysQuotactlFd   = 443
+	prjQuota        = 2
+	qXGetQuota      = 0x5803
+	qXSetQLim       = 0x5804
+	qXGetQStatV     = 0x5808
+	qGetQuota       = 0x800007
+)
+
+func qcmd(c, t int) uintptr { return uintptr(c<<8 | (t & 0xff)) }
+
+type fsxattr struct {
+	Xflags, Extsize, Nextents, Projid, Cowextsize uint32
+	Pad                                           [8]byte
+}
+
+func getx(fd int) (fsxattr, error) {
+	var x fsxattr
+	_, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), fsIocFsgetxattr, uintptr(unsafe.Pointer(&x)))
+	if e != 0 {
+		return x, e
+	}
+	return x, nil
+}
+
+func setx(fd int, x fsxattr) error {
+	_, _, e := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), fsIocFssetxattr, uintptr(unsafe.Pointer(&x)))
+	if e != 0 {
+		return e
+	}
+	return nil
+}
+
+func quotactlFd(fd int, cmd uintptr, id uint32, p unsafe.Pointer) error {
+	_, _, e := unix.Syscall6(sysQuotactlFd, uintptr(fd), cmd, uintptr(id), uintptr(p), 0, 0)
+	if e != 0 {
+		return e
+	}
+	return nil
+}
+
+type dq struct { // struct fs_disk_quota, 112 bytes
+	b [112]byte
+}
+
+func xgetquota(fd int, id uint32) (map[string]any, error) {
+	var d dq
+	if err := quotactlFd(fd, qcmd(qXGetQuota, prjQuota), id, unsafe.Pointer(&d.b[0])); err != nil {
+		return nil, err
+	}
+	le := binary.LittleEndian
+	return map[string]any{
+		"id":         le.Uint32(d.b[4:]),
+		"bhard_b":    le.Uint64(d.b[8:]) * 512,
+		"bsoft_b":    le.Uint64(d.b[16:]) * 512,
+		"bcount_b":   le.Uint64(d.b[40:]) * 512,
+		"icount":     le.Uint64(d.b[48:]),
+		"ihard":      le.Uint64(d.b[24:]),
+	}, nil
+}
+
+func xsetlim(fd int, id uint32, hard uint64) error {
+	var d dq
+	d.b[0] = 1 // FS_DQUOT_VERSION
+	d.b[1] = 2 // FS_PROJ_QUOTA
+	binary.LittleEndian.PutUint16(d.b[2:], 8|4) // BHARD|BSOFT
+	binary.LittleEndian.PutUint32(d.b[4:], id)
+	binary.LittleEndian.PutUint64(d.b[8:], hard/512)
+	binary.LittleEndian.PutUint64(d.b[16:], 0)
+	return quotactlFd(fd, qcmd(qXSetQLim, prjQuota), id, unsafe.Pointer(&d.b[0]))
+}
+
+func statv(fd int) (map[string]any, error) {
+	var b [160]byte
+	b[0] = 1
+	if err := quotactlFd(fd, qcmd(qXGetQStatV, prjQuota), 0, unsafe.Pointer(&b[0])); err != nil {
+		return nil, err
+	}
+	fl := binary.LittleEndian.Uint16(b[2:])
+	return map[string]any{"flags": fmt.Sprintf("0x%x", fl), "prj_acct": fl&0x10 != 0, "prj_enfd": fl&0x20 != 0,
+		"usr_acct": fl&0x1 != 0, "grp_acct": fl&0x4 != 0}, nil
+}
+
+func mountFor(path string) map[string]string {
+	p, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		p = path
+	}
+	f, err := os.Open("/proc/self/mountinfo")
+	if err != nil {
+		return map[string]string{"err": err.Error()}
+	}
+	defer f.Close()
+	best := map[string]string{}
+	bl := -1
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		fs := strings.Fields(sc.Text())
+		if len(fs) < 10 {
+			continue
+		}
+		mp := fs[4]
+		if (p == mp || strings.HasPrefix(p, strings.TrimSuffix(mp, "/")+"/") || mp == "/") && len(mp) > bl {
+			i := 6
+			for ; i < len(fs) && fs[i] != "-"; i++ {
+			}
+			if i+3 >= len(fs) {
+				continue
+			}
+			bl = len(mp)
+			best = map[string]string{"mountpoint": mp, "root": fs[3], "opts": fs[5], "fstype": fs[i+1], "source": fs[i+2], "super": fs[i+3]}
+		}
+	}
+	return best
+}
+
+func statfsMap(path string) map[string]any {
+	var s unix.Statfs_t
+	if err := unix.Statfs(path, &s); err != nil {
+		return map[string]any{"err": err.Error()}
+	}
+	bs := uint64(s.Bsize)
+	return map[string]any{"type": fmt.Sprintf("0x%x", s.Type), "bsize": s.Bsize, "size_b": s.Blocks * bs,
+		"used_b": (s.Blocks - s.Bfree) * bs, "avail_b": s.Bavail * bs, "files": s.Files, "ffree": s.Ffree}
+}
+
+func probe(path string) map[string]any {
+	out := map[string]any{"path": path, "uid": os.Getuid(), "statfs": statfsMap(path), "mount": mountFor(path)}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		out["open_err"] = err.Error()
+		return out
+	}
+	defer unix.Close(fd)
+	if x, err := getx(fd); err != nil {
+		out["fsgetxattr_err"] = err.Error()
+	} else {
+		out["projid"], out["projinherit"], out["xflags"] = x.Projid, x.Xflags&xflProjinherit != 0, fmt.Sprintf("0x%x", x.Xflags)
+		if q, err := xgetquota(fd, x.Projid); err != nil {
+			out["xgetquota_err"] = err.Error()
+		} else {
+			out["xgetquota"] = q
+		}
+		var gb [72]byte
+		if err := quotactlFd(fd, qcmd(qGetQuota, prjQuota), x.Projid, unsafe.Pointer(&gb[0])); err != nil {
+			out["getquota_err"] = err.Error()
+		} else {
+			out["getquota_curspace_b"] = binary.LittleEndian.Uint64(gb[16:])
+			out["getquota_bhard_b"] = binary.LittleEndian.Uint64(gb[0:]) * 1024
+		}
+	}
+	if s, err := statv(fd); err != nil {
+		out["qstatv_err"] = err.Error()
+	} else {
+		out["qstatv"] = s
+	}
+	return out
+}
+
+func pj(v any) { j, _ := json.Marshal(v); fmt.Println(string(j)) }
+
+func cmdProbe(args []string) {
+	for _, p := range args {
+		pj(probe(p))
+	}
+}
+
+// qset -path DIR -id N -hard BYTES [-limit-only]: privileged
+func cmdQset(args []string) {
+	fs := flag.NewFlagSet("qset", flag.ExitOnError)
+	path := fs.String("path", "", "")
+	id := fs.Uint("id", 0, "")
+	hard := fs.Uint64("hard", 0, "")
+	limitOnly := fs.Bool("limit-only", false, "set the limit on the dir's existing project")
+	noInherit := fs.Bool("no-inherit", false, "set the project ID only (regular files)")
+	fs.Parse(args)
+	fd, err := unix.Open(*path, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+	if err != nil {
+		pj(map[string]any{"open_err": err.Error()})
+		os.Exit(1)
+	}
+	defer unix.Close(fd)
+	out := map[string]any{"path": *path}
+	x, err := getx(fd)
+	if err != nil {
+		out["getx_err"] = err.Error()
+		pj(out)
+		os.Exit(1)
+	}
+	out["before_projid"], out["before_xflags"] = x.Projid, fmt.Sprintf("0x%x", x.Xflags)
+	pid := uint32(*id)
+	if *limitOnly {
+		pid = x.Projid
+	} else {
+		x.Projid = pid
+		if !*noInherit {
+			x.Xflags |= xflProjinherit
+		}
+		if err := setx(fd, x); err != nil {
+			out["setx_err"] = err.Error()
+		}
+	}
+	if err := xsetlim(fd, pid, *hard); err != nil {
+		out["setlim_err"] = err.Error()
+	}
+	x2, _ := getx(fd)
+	out["after_projid"], out["after_xflags"] = x2.Projid, fmt.Sprintf("0x%x", x2.Xflags)
+	if q, err := xgetquota(fd, pid); err == nil {
+		out["quota"] = q
+	} else {
+		out["getquota_err"] = err.Error()
+	}
+	pj(out)
+}
+
+// escape -path DIR: as the slot, try to move a subdirectory out of the project.
+func cmdEscape(args []string) {
+	fs := flag.NewFlagSet("escape", flag.ExitOnError)
+	path := fs.String("path", "", "")
+	mb := fs.Int("mb", 32, "")
+	fs.Parse(args)
+	out := map[string]any{"uid": os.Getuid()}
+	d := filepath.Join(*path, fmt.Sprintf("esc-%d", time.Now().UnixNano()))
+	if err := os.Mkdir(d, 0755); err != nil {
+		out["mkdir_err"] = err.Error()
+		pj(out)
+		return
+	}
+	fd, _ := unix.Open(d, unix.O_RDONLY, 0)
+	x, err := getx(fd)
+	out["sub_projid"], out["sub_xflags"], out["getx_err"] = x.Projid, fmt.Sprintf("0x%x", x.Xflags), errs(err)
+	y := x
+	y.Projid = 0
+	out["set_projid0"] = errs(setx(fd, y))
+	y = x
+	y.Xflags &^= xflProjinherit
+	out["clear_inherit"] = errs(setx(fd, y))
+	y = x
+	y.Projid = 777
+	out["set_projid777"] = errs(setx(fd, y))
+	x2, _ := getx(fd)
+	out["after_projid"], out["after_xflags"] = x2.Projid, fmt.Sprintf("0x%x", x2.Xflags)
+	unix.Close(fd)
+	// a file in the parent
+	f, err := os.Create(filepath.Join(d, "f"))
+	if err == nil {
+		x3, _ := getx(int(f.Fd()))
+		out["file_projid"] = x3.Projid
+		x3.Projid = 0
+		out["file_set_projid0"] = errs(setx(int(f.Fd()), x3))
+		buf := make([]byte, 1<<20)
+		var werr error
+		w := 0
+		for i := 0; i < *mb; i++ {
+			if _, werr = f.Write(buf); werr != nil {
+				break
+			}
+			w++
+		}
+		out["wrote_mb"], out["write_err"], out["fsync_err"] = w, errs(werr), errs(f.Sync())
+		x4, _ := getx(int(f.Fd()))
+		out["file_projid_after"] = x4.Projid
+		f.Close()
+	}
+	out["dir"] = d
+	pj(out)
+}
+
+// fill -path DIR -mb N [-fsync-each]: write 1 MiB chunks until an error.
+func cmdFill(args []string) {
+	fs := flag.NewFlagSet("fill", flag.ExitOnError)
+	path := fs.String("path", "", "")
+	mb := fs.Int("mb", 100, "")
+	fsyncEach := fs.Bool("fsync-each", false, "")
+	name := fs.String("name", "", "")
+	fs.Parse(args)
+	if *name == "" {
+		*name = fmt.Sprintf("fill-%d", time.Now().UnixNano())
+	}
+	p := filepath.Join(*path, *name)
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	out := map[string]any{"file": p, "uid": os.Getuid()}
+	if err != nil {
+		out["open_err"] = err.Error()
+		pj(out)
+		return
+	}
+	buf := make([]byte, 1<<20)
+	for i := range buf {
+		buf[i] = byte(i*7 + 1)
+	}
+	t0 := time.Now()
+	var acked int64
+	where := ""
+	var firstErr error
+	for i := 0; i < *mb; i++ {
+		n, err := f.Write(buf)
+		acked += int64(n)
+		if err != nil {
+			where, firstErr = "write", err
+			break
+		}
+		if *fsyncEach {
+			if err := f.Sync(); err != nil {
+				where, firstErr = "fsync", err
+				break
+			}
+		}
+	}
+	serr := f.Sync()
+	if firstErr == nil && serr != nil {
+		where, firstErr = "final_fsync", serr
+	}
+	cerr := f.Close()
+	if firstErr == nil && cerr != nil {
+		where, firstErr = "close", cerr
+	}
+	var st unix.Stat_t
+	unix.Stat(p, &st)
+	out["acked_b"], out["where"], out["err"], out["final_fsync_err"], out["close_err"] = acked, where, errs(firstErr), errs(serr), errs(cerr)
+	out["st_size"], out["st_blocks_b"], out["secs"] = st.Size, st.Blocks*512, time.Since(t0).Seconds()
+	if firstErr != nil {
+		if en, ok := firstErr.(*os.PathError); ok {
+			out["errno"] = fmt.Sprintf("%d", en.Err.(unix.Errno))
+		}
+	}
+	pj(out)
+}
+
+// hide -path DIR -mb N: write N MiB into a new directory, then chmod it 000.
+func cmdHide(args []string) {
+	fs := flag.NewFlagSet("hide", flag.ExitOnError)
+	path := fs.String("path", "", "")
+	mb := fs.Int("mb", 50, "")
+	fs.Parse(args)
+	d := filepath.Join(*path, "hidden")
+	os.Mkdir(d, 0700)
+	f, err := os.Create(filepath.Join(d, "blob"))
+	out := map[string]any{"dir": d}
+	if err == nil {
+		buf := make([]byte, 1<<20)
+		for i := range buf {
+			buf[i] = byte(i + 3)
+		}
+		for i := 0; i < *mb; i++ {
+			if _, err = f.Write(buf); err != nil {
+				break
+			}
+		}
+		out["write_err"] = errs(err)
+		out["fsync_err"] = errs(f.Sync())
+		f.Close()
+	}
+	out["chmod_err"] = errs(os.Chmod(d, 0))
+	_, lerr := os.ReadDir(d)
+	out["readdir_after_chmod"] = errs(lerr)
+	pj(out)
+}

@@ -1,0 +1,179 @@
+
+== 1. A: create session
+{
+ "sessionId": "sess_77e41b27ed"
+}
+
+== 2. A: send_message under the Tasks extension
+{
+ "resultType": "task",
+ "task": {
+  "taskId": "sess_77e41b27ed.msg_745de5b7",
+  "status": "working",
+  "ttlMs": 86400000,
+  "pollIntervalMs": 200
+ }
+}
+   retry with the same idempotency key through B returns the same task: True
+
+== 3. B: tasks/get reaches input_required with the pending elicitation
+{
+ "resultType": "complete",
+ "taskId": "sess_77e41b27ed.msg_745de5b7",
+ "ttlMs": 86400000,
+ "pollIntervalMs": 200,
+ "status": "input_required",
+ "inputRequests": {
+  "elic_7084c3": {
+   "method": "elicitation/create",
+   "params": {
+    "mode": "form",
+    "message": "Confirm the action?",
+    "requestedSchema": {
+     "type": "object",
+     "properties": {
+      "confirm": {
+       "type": "boolean"
+      }
+     },
+     "required": [
+      "confirm"
+     ]
+    }
+   }
+  }
+ }
+}
+
+== 4. B as bob: tasks/get on alice's task
+{
+ "jsonrpc": "2.0",
+ "id": 7,
+ "error": {
+  "code": -32602,
+  "message": "task not found",
+  "data": null
+ }
+}
+
+== 5. A: tasks/update answered it, then tasks/get is completed
+{
+ "resultType": "complete",
+ "taskId": "sess_77e41b27ed.msg_745de5b7",
+ "ttlMs": 86400000,
+ "pollIntervalMs": 200,
+ "status": "completed",
+ "result": {
+  "resultType": "complete",
+  "content": [
+   {
+    "type": "text",
+    "text": "Echo: please confirm deploy | answer={\"confirm\": true}"
+   }
+  ]
+ }
+}
+
+== 6. attach through A, drop, resume through B from the last seq
+{
+ "A": [
+  2,
+  3,
+  4,
+  5
+ ],
+ "B": [
+  6,
+  7,
+  8
+ ],
+ "gapFrames": []
+}
+
+== 7. B: A2A message:stream on the same context
+{
+ "events": [
+  "task",
+  "statusUpdate",
+  "artifactUpdate",
+  "artifactUpdate",
+  "artifactUpdate",
+  "artifactUpdate",
+  "statusUpdate"
+ ],
+ "artifactText": "Echo: status report",
+ "final": "TASK_STATE_COMPLETED"
+}
+
+== 7b. A: resume from seq 1 after the ring evicted it
+[
+ {
+  "jsonrpc": "2.0",
+  "method": "notifications/lenny/gap",
+  "params": {
+   "lastSeenSeq": 1,
+   "nextSeq": 10
+  }
+ },
+ {
+  "jsonrpc": "2.0",
+  "id": 12,
+  "result": {
+   "resultType": "complete",
+   "content": [
+    {
+     "type": "text",
+     "text": "lastSeq=11"
+    }
+   ],
+   "structuredContent": {
+    "lastSeq": 11
+   }
+  }
+ }
+]
+
+== 8. A: A2A message:stream on a new context stops at INPUT_REQUIRED
+{
+ "events": [
+  "task",
+  "statusUpdate",
+  "artifactUpdate",
+  "artifactUpdate",
+  "artifactUpdate",
+  "artifactUpdate",
+  "statusUpdate"
+ ],
+ "last": {
+  "statusUpdate": {
+   "taskId": "sess_5c9fa1d26f.msg_0637bba9",
+   "contextId": "sess_5c9fa1d26f",
+   "status": {
+    "state": "TASK_STATE_INPUT_REQUIRED",
+    "message": {
+     "role": "ROLE_AGENT",
+     "parts": [
+      {
+       "data": {
+        "elicitationId": "elic_caffd2",
+        "mode": "form",
+        "message": "Confirm the action?",
+        "requestedSchema": {
+         "type": "object",
+         "properties": {
+          "confirm": {
+           "type": "boolean"
+          }
+         },
+         "required": [
+          "confirm"
+         ]
+        }
+       }
+      }
+     ]
+    }
+   }
+  }
+ }
+}

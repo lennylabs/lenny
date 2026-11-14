@@ -1,0 +1,1 @@
+{"diag_err":1000,"dump_af10":{"err":"protocol not supported","ms":0.013,"rows":0},"dump_af2":{"err":"protocol not supported","ms":0.114,"rows":0},"held":1000,"par8_diag_total_ms":1.267,"par8_proc_total_ms":2.235,"proc_err":1000,"seq_diag":{"max_us":28.135,"n":1000,"p50_us":3.03,"p99_us":7.024},"seq_proc":{"max_us":50.153,"n":1000,"p50_us":3.802,"p99_us":10.484},"uids":{}}

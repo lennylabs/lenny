@@ -1,0 +1,57 @@
+=== t2 gate  2026-11-14T07:36:44Z
+pod q-gate-true uid 912433f5-80be-4bc6-927e-9c2542d37b09 rc=runc hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:36 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:36 ..
+kubelet-assigned: ws projid = 0 ----------------X /var/li | other projid = 0
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/912433f5-80be-4bc6-927e-9c2542d37b09/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":62679212032,"bsize":4096,"ffree":31451521,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1678188544},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+{"acked_b":104857600,"close_err":"","err":"","file":"/workspace/f100","final_fsync_err":"","secs":0.122473696,"st_blocks_b":104857600,"st_size":104857600,"uid":20000,"where":""}
+jq: error (at <stdin>:1101): Cannot iterate over null (null)
+kubelet stats summary for ws: 
+Lenny assigns its own project over the kubelet's (other volume)
+{"after_projid":53883,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/912433f5-80be-4bc6-927e-9c2542d37b09/volumes/kubernetes.io~empty-dir/other","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":53883,"ihard":0}}
+{"acked_b":125829120,"close_err":"","err":"","file":"/other/f120","final_fsync_err":"","secs":0.186580618,"st_blocks_b":125829120,"st_size":125829120,"uid":20000,"where":""}
+jq: error (at <stdin>:1101): Cannot iterate over null (null)
+kubelet stats after re-assignment: 
+host report proj 53883: /dev/nvme1n1 122880 0 262144 00 [--------] /data | du ws: 104857618 B
+/etc/projects:
+cat: /etc/projects: No such file or directory
+/etc/projid:
+cat: /etc/projid: No such file or directory
+/data/scripts/t2.sh: line 182: /etc/projects: No such file or directory
+after delete: /etc/projects 
+host report proj 0: /dev/nvme1n1 1164088 0 0 00 [--------] /data | du ws:  B
+pod q-gate-false uid 0f03ddf0-f4be-4993-aae8-bd74a120acf9 rc=runc hostUsers=false podshare=no
+host ws: root:root 777 projid: projid = 1048577 flags: --------P-------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:37 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:37 ..
+kubelet-assigned: ws projid = 1048577 --------P-------X /var/li | other projid = 1048578
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":1048577,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":62679224320,"bsize":4096,"ffree":31451506,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1678176256},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 1048577:  | du ws: 6 B
+{"acked_b":104857600,"close_err":"","err":"","file":"/workspace/f100","final_fsync_err":"","secs":0.145129167,"st_blocks_b":104857600,"st_size":104857600,"uid":20000,"where":""}
+kubelet stats summary for ws: {"name":"ws","usedBytes":104857600,"inodesUsed":2}
+{"name":"other","usedBytes":0,"inodesUsed":1}
+host report proj 1048577: /dev/nvme1n1 102400 9007199254740992 9007199254740992 00 [--------] /data | du ws: 104857618 B
+Lenny sets 256 MiB on the kubelet's project 1048577
+{"after_projid":1048577,"after_xflags":"0x80000200","before_projid":1048577,"before_xflags":"0x80000200","path":"/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":104857600,"bhard_b":268435456,"bsoft_b":0,"icount":2,"id":1048577,"ihard":0}}
+{"acked_b":163577856,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.272632628,"st_blocks_b":163577856,"st_size":163577856,"uid":20000,"where":"write"}
+host report proj 1048577: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435485 B
+after 30 s the kubelet left the limit as:
+host report proj 1048577: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435485 B
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":1048577,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":0,"bsize":4096,"ffree":31451530,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":268435456},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+Lenny assigns its own project over the kubelet's (other volume)
+{"after_projid":53201,"after_xflags":"0x80000200","before_projid":1048578,"before_xflags":"0x80000200","path":"/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":53201,"ihard":0}}
+{"acked_b":125829120,"close_err":"","err":"","file":"/other/f120","final_fsync_err":"","secs":0.193217321,"st_blocks_b":125829120,"st_size":125829120,"uid":20000,"where":""}
+kubelet stats after re-assignment: {"name":"other","usedBytes":0}
+host report proj 53201: /dev/nvme1n1 122880 0 262144 00 [--------] /data | du ws: 268435485 B
+/etc/projects:
+1048577:/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws
+1048578:/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other
+/etc/projid:
+volume1048577:1048577
+volume1048578:1048578
+after delete: /etc/projects 2
+host report proj 1048577:  | du ws:  B
+=== t2 gate done 2026-11-14T07:38:19Z

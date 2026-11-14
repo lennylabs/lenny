@@ -1,0 +1,420 @@
+=== t2 runc  2026-11-14T07:30:15Z
+pod q-runc-true uid f1abbb25-ea86-437f-b749-db36ca11da47 rc=runc hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:30 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:30 ..
+--- (a) detection before assignment, unprivileged slot
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061336064,"bsize":4096,"ffree":31451546,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296064512},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/other","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/other","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/other","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061336064,"bsize":4096,"ffree":31451546,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296064512},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+--- (a) adapter container
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/adapter/ws","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/adapter/ws","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061336064,"bsize":4096,"ffree":31451546,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296064512},"uid":10000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+--- (a) privileged agent
+{"getquota_bhard_b":0,"getquota_curspace_b":809795584,"mount":{"fstype":"xfs","mountpoint":"/var/lib/kubelet","opts":"rw,noatime","root":"/kubelet","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/var/lib/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","projid":0,"projinherit":false,"qstatv":{"flags":"0x30","grp_acct":false,"prj_acct":true,"prj_enfd":true,"usr_acct":false},"statfs":{"avail_b":63061336064,"bsize":4096,"ffree":31451546,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296064512},"uid":0,"xflags":"0x80000000","xgetquota":{"bcount_b":809795584,"bhard_b":0,"bsoft_b":0,"icount":5733,"id":0,"ihard":0}}
+--- (a) CAP_SYS_ADMIN-only agent under RuntimeDefault seccomp
+{"getquota_bhard_b":0,"getquota_curspace_b":809795584,"mount":{"fstype":"xfs","mountpoint":"/var/lib/kubelet","opts":"rw,noatime","root":"/kubelet","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/var/lib/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","projid":0,"projinherit":false,"qstatv":{"flags":"0x30","grp_acct":false,"prj_acct":true,"prj_enfd":true,"usr_acct":false},"statfs":{"avail_b":63061336064,"bsize":4096,"ffree":31451546,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296064512},"uid":0,"xflags":"0x80000000","xgetquota":{"bcount_b":809795584,"bhard_b":0,"bsoft_b":0,"icount":5733,"id":0,"ihard":0}}
+--- (b) assign project 50532, hard 256 MiB, from the privileged agent
+{"after_projid":50532,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":50532,"ihard":0}}
+--- (b) CAP_SYS_ADMIN-only agent: set limit on the same project
+{"after_projid":50532,"after_xflags":"0x80000200","before_projid":50532,"before_xflags":"0x80000200","path":"/var/lib/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":50532,"ihard":0}}
+host report proj 50532:  | du ws: 6 B
+--- (c) statfs etc. after assignment
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50532,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451546,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":0},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace/sub","projid":50532,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451545,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":0},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace/sub/f","projid":50532,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061299200,"bsize":4096,"ffree":31451544,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296101376},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/adapter/ws","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/adapter/ws","projid":50532,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268431360,"bsize":4096,"ffree":31451544,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":4096},"uid":10000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+--- write 40 MiB
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.072378149,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50532,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":226488320,"bsize":4096,"ffree":31451543,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":41947136},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 50532: /dev/nvme1n1 40964 0 262144 00 [--------] /data | du ws: 41943085 B
+--- (d) 50 MiB under a dir then chmod 000
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50532,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":174059520,"bsize":4096,"ffree":31451545,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":94375936},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 50532: /dev/nvme1n1 92164 0 262144 00 [--------] /data | du ws: 94371917 B
+host projid of hidden: projid = 50532
+--- escape attempts by the slot
+{"after_projid":777,"after_xflags":"0x80000200","clear_inherit":"","dir":"/workspace/esc-1794641418210616830","file_projid":777,"file_projid_after":0,"file_set_projid0":"","fsync_err":"","getx_err":"","set_projid0":"","set_projid777":"","sub_projid":50532,"sub_xflags":"0x80000200","uid":20000,"write_err":"","wrote_mb":32}
+host report proj 50532: /dev/nvme1n1 92164 0 262144 00 [--------] /data | du ws: 127926395 B
+host /var/lib/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws/esc-1794641418210616830: projid = 777; file: projid = 0
+--- (e) fill to the limit
+{"acked_b":173015040,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.63573747,"st_blocks_b":173015040,"st_size":173015040,"uid":20000,"where":"write"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/f1abbb25-ea86-437f-b749-db36ca11da47/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50532,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":1044480,"bsize":4096,"ffree":31451551,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":267390976},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 50532: /dev/nvme1n1 261124 0 262144 00 [--------] /data | du ws: 300941446 B
+--- (e) fsync-each fill on a full project
+{"acked_b":0,"close_err":"","err":"write /workspace/big2: no space left on device","errno":"28","file":"/workspace/big2","final_fsync_err":"","secs":0.000965503,"st_blocks_b":0,"st_size":0,"uid":20000,"where":"write"}
+pod still Running/ after 40 s (not evicted)
+--- (e) limit 2 GiB above the 1 GiB sizeLimit, fill 1100 MiB: kubelet eviction?
+host report proj 50532: /dev/nvme1n1 92164 0 2097152 00 [--------] /data | du ws: 127926395 B
+{"acked_b":1153433600,"close_err":"","err":"","file":"/workspace/over","final_fsync_err":"","secs":7.90509493,"st_blocks_b":1153433600,"st_size":1153433600,"uid":20000,"where":""}
+host report proj 50532: /dev/nvme1n1 1218564 0 2097152 00 [--------] /data | du ws: 1281360007 B
+pod phase Failed/Evicted after 31 s
+Evicted     Usage of EmptyDir volume "ws" exceeds the limit "1Gi". 
+Killing     Stopping container slot
+Killing     Stopping container adapter
+=== t2 runc done 2026-11-14T07:31:39Z
+=== t2 runcns  2026-11-14T07:31:39Z
+pod q-runc-false uid e0746124-c6eb-491b-93f0-fb503d700af4 rc=runc hostUsers=false podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:31 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:31 ..
+--- (a) detection before assignment, unprivileged slot
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061098496,"bsize":4096,"ffree":31451542,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296302080},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/other","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/other","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/other","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061098496,"bsize":4096,"ffree":31451542,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296302080},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+--- (a) adapter container
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/adapter/ws","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/adapter/ws","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061073920,"bsize":4096,"ffree":31451542,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296326656},"uid":10000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+--- (a) privileged agent
+{"getquota_bhard_b":0,"getquota_curspace_b":810213376,"mount":{"fstype":"xfs","mountpoint":"/var/lib/kubelet","opts":"rw,noatime","root":"/kubelet","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/var/lib/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","projid":0,"projinherit":false,"qstatv":{"flags":"0x30","grp_acct":false,"prj_acct":true,"prj_enfd":true,"usr_acct":false},"statfs":{"avail_b":63061073920,"bsize":4096,"ffree":31451542,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296326656},"uid":0,"xflags":"0x80000000","xgetquota":{"bcount_b":810213376,"bhard_b":0,"bsoft_b":0,"icount":5737,"id":0,"ihard":0}}
+--- (a) CAP_SYS_ADMIN-only agent under RuntimeDefault seccomp
+{"getquota_bhard_b":0,"getquota_curspace_b":810213376,"mount":{"fstype":"xfs","mountpoint":"/var/lib/kubelet","opts":"rw,noatime","root":"/kubelet","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/var/lib/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","projid":0,"projinherit":false,"qstatv":{"flags":"0x30","grp_acct":false,"prj_acct":true,"prj_enfd":true,"usr_acct":false},"statfs":{"avail_b":63061073920,"bsize":4096,"ffree":31451542,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296326656},"uid":0,"xflags":"0x80000000","xgetquota":{"bcount_b":810213376,"bhard_b":0,"bsoft_b":0,"icount":5737,"id":0,"ihard":0}}
+--- (b) assign project 50867, hard 256 MiB, from the privileged agent
+{"after_projid":50867,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":50867,"ihard":0}}
+--- (b) CAP_SYS_ADMIN-only agent: set limit on the same project
+{"after_projid":50867,"after_xflags":"0x80000200","before_projid":50867,"before_xflags":"0x80000200","path":"/var/lib/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":50867,"ihard":0}}
+host report proj 50867:  | du ws: 6 B
+--- (c) statfs etc. after assignment
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50867,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451542,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":0},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace/sub","projid":50867,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451541,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":0},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace/sub/f","projid":50867,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":63061037056,"bsize":4096,"ffree":31451540,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1296363520},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/adapter/ws","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/adapter/ws","projid":50867,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268431360,"bsize":4096,"ffree":31451540,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":4096},"uid":10000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+--- write 40 MiB
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.076370652,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50867,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":226488320,"bsize":4096,"ffree":31451539,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":41947136},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 50867: /dev/nvme1n1 40964 0 262144 00 [--------] /data | du ws: 41943085 B
+--- (d) 50 MiB under a dir then chmod 000
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50867,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":174059520,"bsize":4096,"ffree":31451537,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":94375936},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 50867: /dev/nvme1n1 92164 0 262144 00 [--------] /data | du ws: 94371917 B
+host projid of hidden: projid = 50867
+--- escape attempts by the slot
+{"after_projid":50867,"after_xflags":"0x80000200","clear_inherit":"invalid argument","dir":"/workspace/esc-1794641502021156949","file_projid":50867,"file_projid_after":50867,"file_set_projid0":"invalid argument","fsync_err":"","getx_err":"","set_projid0":"invalid argument","set_projid777":"invalid argument","sub_projid":50867,"sub_xflags":"0x80000200","uid":20000,"write_err":"","wrote_mb":32}
+host report proj 50867: /dev/nvme1n1 124932 0 262144 00 [--------] /data | du ws: 127926395 B
+host /var/lib/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws/esc-1794641502021156949: projid = 50867; file: projid = 50867
+--- (e) fill to the limit
+{"acked_b":139460608,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.414089098,"st_blocks_b":139460608,"st_size":139460608,"uid":20000,"where":"write"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/e0746124-c6eb-491b-93f0-fb503d700af4/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":50867,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":1044480,"bsize":4096,"ffree":31451534,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":267390976},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 50867: /dev/nvme1n1 261124 0 262144 00 [--------] /data | du ws: 267387014 B
+--- (e) fsync-each fill on a full project
+{"acked_b":0,"close_err":"","err":"write /workspace/big2: no space left on device","errno":"28","file":"/workspace/big2","final_fsync_err":"","secs":0.001050984,"st_blocks_b":0,"st_size":0,"uid":20000,"where":"write"}
+pod still Running/ after 40 s (not evicted)
+--- (e) limit 2 GiB above the 1 GiB sizeLimit, fill 1100 MiB: kubelet eviction?
+host report proj 50867: /dev/nvme1n1 124932 0 2097152 00 [--------] /data | du ws: 127926395 B
+{"acked_b":1153433600,"close_err":"","err":"","file":"/workspace/over","final_fsync_err":"","secs":7.904726889,"st_blocks_b":1153433600,"st_size":1153433600,"uid":20000,"where":""}
+host report proj 50867: /dev/nvme1n1 1251332 0 2097152 00 [--------] /data | du ws: 1281360007 B
+pod phase Failed/Evicted after 70 s
+Evicted     Usage of EmptyDir volume "ws" exceeds the limit "1Gi". 
+Killing     Stopping container slot
+Killing     Stopping container adapter
+=== t2 runcns done 2026-11-14T07:33:42Z
+=== t2 gvisor  2026-11-14T07:33:42Z
+pod q-gvisor uid 1399d86b-f579-4243-b256-ad51e58a1d85 rc=gvisor hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:33 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:33 ..
+--- mounts in the slot
+41 36 0:45 / /other rw - 9p none rw,trans=fd,rfdno=50,wfdno=50,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs
+45 36 0:51 / /workspace rw - 9p none rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs
+--- (a) before
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":63061028864,"bsize":4096,"ffree":31451525,"files":31457280,"size_b":64357400576,"type":"0x1021997","used_b":1296371712},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/other","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=50,wfdno=50,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/other","qstatv_err":"function not implemented","statfs":{"avail_b":63061028864,"bsize":4096,"ffree":31451525,"files":31457280,"size_b":64357400576,"type":"0x1021997","used_b":1296371712},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/adapter/ws","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=102,wfdno=102,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":63061028864,"bsize":4096,"ffree":31451525,"files":31457280,"size_b":64357400576,"type":"0x1021997","used_b":1296371712},"uid":10000}
+--- (b) assign 51916 256 MiB
+{"after_projid":51916,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/1399d86b-f579-4243-b256-ad51e58a1d85/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":51916,"ihard":0}}
+host report proj 51916:  | du ws: 6 B
+--- (c) after
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451525,"files":31457280,"size_b":268435456,"type":"0x1021997","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/workspace/sub","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451524,"files":31457280,"size_b":268435456,"type":"0x1021997","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/adapter/ws","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=102,wfdno=102,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451524,"files":31457280,"size_b":268435456,"type":"0x1021997","used_b":0},"uid":10000}
+--- write 40 MiB
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.053325748,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":201392128,"bsize":4096,"ffree":31451535,"files":31457280,"size_b":268435456,"type":"0x1021997","used_b":67043328},"uid":20000}
+host report proj 51916: /dev/nvme1n1 65472 0 262144 00 [--------] /data | du ws: 41943074 B
+--- (d) hidden
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":134348800,"bsize":4096,"ffree":31451533,"files":31457280,"size_b":268435456,"type":"0x1021997","used_b":134086656},"uid":20000}
+host report proj 51916: /dev/nvme1n1 130944 0 262144 00 [--------] /data | du ws: 94371906 B
+--- escape
+{"after_projid":0,"after_xflags":"0x0","clear_inherit":"inappropriate ioctl for device","dir":"/workspace/esc-1794641628222146482","file_projid":0,"file_projid_after":0,"file_set_projid0":"inappropriate ioctl for device","fsync_err":"","getx_err":"inappropriate ioctl for device","set_projid0":"inappropriate ioctl for device","set_projid777":"inappropriate ioctl for device","sub_projid":0,"sub_xflags":"0x0","uid":20000,"write_err":"","wrote_mb":16}
+host report proj 51916: /dev/nvme1n1 163648 0 262144 00 [--------] /data | du ws: 111149168 B
+--- (e) fill, no fsync per chunk
+{"acked_b":157286400,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.238314348,"st_blocks_b":157286400,"st_size":157286400,"uid":20000,"where":"write"}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=49,wfdno=49,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":0,"bsize":4096,"ffree":31451530,"files":31457280,"size_b":268435456,"type":"0x1021997","used_b":268435456},"uid":20000}
+host report proj 51916: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435579 B
+total 194560
+drwxrwxrwx. 5 root  root         84 Nov 14 07:33 .
+drwxr-xr-x. 4 root  root         29 Nov 14 07:33 ..
+-rw-r--r--. 1 20000 20000 157286400 Nov 14 07:33 big
+drwxr-xr-x. 2 20000 20000        15 Nov 14 07:33 esc-1794641628222146482
+-rw-r--r--. 1 20000 20000  41943040 Nov 14 07:33 f40
+d---------. 2 20000 20000        18 Nov 14 07:33 hidden
+drwxr-xr-x. 2 20000 20000         6 Nov 14 07:33 sub
+--- (e) fill with fsync each chunk
+host report proj 51916: /dev/nvme1n1 108544 0 262144 00 [--------] /data | du ws: 111149168 B
+{"acked_b":157286400,"close_err":"","err":"write /workspace/big2: no space left on device","errno":"28","file":"/workspace/big2","final_fsync_err":"","secs":0.413463646,"st_blocks_b":157286400,"st_size":157286400,"uid":20000,"where":"write"}
+host report proj 51916: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435580 B
+--- (e) read back the end of the file
+total 194562
+drwxrwxrwx 5 root  root         85 Nov 14 07:33 .
+drwxr-xr-x 1 root  root         60 Nov 14 07:33 ..
+-rw-r--r-- 1 20000 20000 157286400 Nov 14 07:33 big2
+drwxr-xr-x 2 20000 20000        15 Nov 14 07:33 esc-1794641628222146482
+-rw-r--r-- 1 20000 20000  41943040 Nov 14 07:33 f40
+d--------- 2 20000 20000        18 Nov 14 07:33 hidden
+drwxr-xr-x 2 20000 20000         6 Nov 14 07:33 sub
+ 01 08 0f 16 1d 24 2b 32 39 40 47 4e 55 5c 63 6a
+ 71 78 7f 86 8d 94 9b a2 a9 b0 b7 be c5 cc d3 da
+pod still Running/ after 30 s (not evicted)
+=== t2 gvisor done 2026-11-14T07:34:24Z
+=== t2 gvisorps  2026-11-14T07:34:24Z
+pod q-gvisorps uid deb154ad-724b-4ad2-9b64-425423e3cfdc rc=gvisor hostUsers=true podshare=yes
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root 96 Nov 14 07:34 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:34 ..
+-rw-r--r--. 1 root root  0 Nov 14 07:34 .gvisor.filestore.8ca5f23480ce0fb63e06923ed3fbb6b36103ef37a2053ce4ccbbf6baacdecd34
+--- mounts in the slot
+41 36 0:45 / /other rw - 9p none rw,trans=fd,rfdno=50,wfdno=50,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs
+46 36 0:50 / /workspace rw - tmpfs none rw
+--- (a) before
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036854771712,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"9p","mountpoint":"/other","opts":"rw","root":"/","source":"none","super":"rw,trans=fd,rfdno=50,wfdno=50,aname=/,dfltuid=4294967294,dfltgid=4294967294,dcache=1000,cache=remote_revalidating,disable_fifo_open,directfs"},"path":"/other","qstatv_err":"function not implemented","statfs":{"avail_b":63060795392,"bsize":4096,"ffree":31451527,"files":31457280,"size_b":64357400576,"type":"0x1021997","used_b":1296605184},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/adapter/ws","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036854771712,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":0},"uid":10000}
+--- (b) assign 51753 256 MiB
+{"after_projid":51753,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/deb154ad-724b-4ad2-9b64-425423e3cfdc/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":51753,"ihard":0}}
+host report proj 51753:  | du ws: 96 B
+--- (c) after
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036854771712,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace/sub","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036854771712,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/adapter/ws","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036854771712,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":0},"uid":10000}
+--- write 40 MiB
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.005156692,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036812828672,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":41943040},"uid":20000}
+host report proj 51753:  | du ws: 1073741920 B
+--- (d) hidden
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036760399872,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":94371840},"uid":20000}
+host report proj 51753:  | du ws: 1073741920 B
+--- escape
+{"after_projid":0,"after_xflags":"0x0","clear_inherit":"inappropriate ioctl for device","dir":"/workspace/esc-1794641670606127588","file_projid":0,"file_projid_after":0,"file_set_projid0":"inappropriate ioctl for device","fsync_err":"","getx_err":"inappropriate ioctl for device","set_projid0":"inappropriate ioctl for device","set_projid777":"inappropriate ioctl for device","sub_projid":0,"sub_xflags":"0x0","uid":20000,"write_err":"","wrote_mb":16}
+host report proj 51753:  | du ws: 1073741920 B
+--- (e) fill, no fsync per chunk
+{"acked_b":419430400,"close_err":"","err":"","file":"/workspace/big","final_fsync_err":"","secs":0.049908105,"st_blocks_b":419430400,"st_size":419430400,"uid":20000,"where":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036324192256,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":530579456},"uid":20000}
+host report proj 51753:  | du ws: 1073741920 B
+total 518144
+drwxrwxrwx. 2 root root         96 Nov 14 07:34 .
+drwxr-xr-x. 4 root root         29 Nov 14 07:34 ..
+-rw-r--r--. 1 root root 1073741824 Nov 14 07:34 .gvisor.filestore.8ca5f23480ce0fb63e06923ed3fbb6b36103ef37a2053ce4ccbbf6baacdecd34
+--- (e) fill with fsync each chunk
+host report proj 51753:  | du ws: 1073741920 B
+{"acked_b":419430400,"close_err":"","err":"","file":"/workspace/big2","final_fsync_err":"","secs":0.220980641,"st_blocks_b":419430400,"st_size":419430400,"uid":20000,"where":""}
+host report proj 51753:  | du ws: 1073741920 B
+--- (e) read back the end of the file
+total 450560
+drwxrwxrwt 5 root  root        140 Nov 14 07:34 .
+drwxr-xr-x 1 root  root         80 Nov 14 07:34 ..
+-rw-r--r-- 1 20000 20000 419430400 Nov 14 07:34 big2
+drwxr-xr-x 2 20000 20000        60 Nov 14 07:34 esc-1794641670606127588
+-rw-r--r-- 1 20000 20000  41943040 Nov 14 07:34 f40
+d--------- 2 20000 20000        60 Nov 14 07:34 hidden
+drwxr-xr-x 2 20000 20000        40 Nov 14 07:34 sub
+ 01 08 0f 16 1d 24 2b 32 39 40 47 4e 55 5c 63 6a
+ 71 78 7f 86 8d 94 9b a2 a9 b0 b7 be c5 cc d3 da
+pod still Running/ after 30 s (not evicted)
+=== t2 gvisorps done 2026-11-14T07:35:06Z
+=== t2 kata  2026-11-14T07:35:06Z
+pod q-kata uid 4d37317e-658e-4ed9-bc2d-579034d625f8 rc=kata hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:35 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:35 ..
+--- mounts in the slot
+137 129 0:44 / /workspace rw,nodev,relatime - virtiofs none rw
+139 129 0:45 / /other rw,nodev,relatime - virtiofs none rw
+--- (a) before
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":63060779008,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":64357400576,"type":"0x65735546","used_b":1296621568},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/other","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/other","qstatv_err":"function not implemented","statfs":{"avail_b":63060779008,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":64357400576,"type":"0x65735546","used_b":1296621568},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/adapter/ws","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":63060779008,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":64357400576,"type":"0x65735546","used_b":1296621568},"uid":10000}
+--- (b) assign 51487 256 MiB
+{"after_projid":51487,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/4d37317e-658e-4ed9-bc2d-579034d625f8/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":51487,"ihard":0}}
+host report proj 51487:  | du ws: 6 B
+--- (c) after
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace/sub","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451522,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/adapter/ws","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451522,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":0},"uid":10000}
+--- write 40 MiB
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.198609817,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":226492416,"bsize":4096,"ffree":31451521,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":41943040},"uid":20000}
+host report proj 51487: /dev/nvme1n1 40960 0 262144 00 [--------] /data | du ws: 41943074 B
+--- (d) hidden
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":174063616,"bsize":4096,"ffree":31451519,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":94371840},"uid":20000}
+host report proj 51487: /dev/nvme1n1 92160 0 262144 00 [--------] /data | du ws: 94371906 B
+--- escape
+{"after_projid":0,"after_xflags":"0x0","clear_inherit":"inappropriate ioctl for device","dir":"/workspace/esc-1794641715266162384","file_projid":0,"file_projid_after":0,"file_set_projid0":"inappropriate ioctl for device","fsync_err":"","getx_err":"inappropriate ioctl for device","set_projid0":"inappropriate ioctl for device","set_projid777":"inappropriate ioctl for device","sub_projid":0,"sub_xflags":"0x0","uid":20000,"write_err":"","wrote_mb":16}
+host report proj 51487: /dev/nvme1n1 108544 0 262144 00 [--------] /data | du ws: 111149168 B
+--- (e) fill, no fsync per chunk
+{"acked_b":157286400,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.760926048,"st_blocks_b":157286400,"st_size":157286400,"uid":20000,"where":"write"}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":0,"bsize":4096,"ffree":31451536,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":268435456},"uid":20000}
+host report proj 51487: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435579 B
+total 194560
+drwxrwxrwx. 5 root  root         84 Nov 14 07:35 .
+drwxr-xr-x. 4 root  root         29 Nov 14 07:35 ..
+-rw-r--r--. 1 20000 20000 157286400 Nov 14 07:35 big
+drwxr-xr-x. 2 20000 20000        15 Nov 14 07:35 esc-1794641715266162384
+-rw-r--r--. 1 20000 20000  41943040 Nov 14 07:35 f40
+d---------. 2 20000 20000        18 Nov 14 07:35 hidden
+drwxr-xr-x. 2 20000 20000         6 Nov 14 07:35 sub
+--- (e) fill with fsync each chunk
+host report proj 51487: /dev/nvme1n1 108544 0 262144 00 [--------] /data | du ws: 111149168 B
+{"acked_b":157286400,"close_err":"","err":"write /workspace/big2: no space left on device","errno":"28","file":"/workspace/big2","final_fsync_err":"","secs":0.53451119,"st_blocks_b":157286400,"st_size":157286400,"uid":20000,"where":"write"}
+host report proj 51487: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435580 B
+--- (e) read back the end of the file
+total 194560
+drwxrwxrwx 5 root  root         85 Nov 14 07:35 .
+drwxr-xr-x 1 root  root         58 Nov 14 07:35 ..
+-rw-r--r-- 1 20000 20000 157286400 Nov 14 07:35 big2
+drwxr-xr-x 2 20000 20000        15 Nov 14 07:35 esc-1794641715266162384
+-rw-r--r-- 1 20000 20000  41943040 Nov 14 07:35 f40
+d--------- 2 20000 20000        18 Nov 14 07:35 hidden
+drwxr-xr-x 2 20000 20000         6 Nov 14 07:35 sub
+ 01 08 0f 16 1d 24 2b 32 39 40 47 4e 55 5c 63 6a
+ 71 78 7f 86 8d 94 9b a2 a9 b0 b7 be c5 cc d3 da
+pod still Running/ after 30 s (not evicted)
+=== t2 kata done 2026-11-14T07:35:52Z
+=== t2 katablock  2026-11-14T07:35:52Z
+pod q-katablock uid 868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e rc=kata-block hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 4836
+drwxrwxrwx. 2 root root          22 Nov 14 07:35 .
+drwxr-xr-x. 4 root root          29 Nov 14 07:35 ..
+-rw-r--r--. 1 root root 64357400576 Nov 14 07:35 disk.img
+total 4836
+drwxrwxrwx. 2 root root          22 Nov 14 07:35 .
+drwxr-xr-x. 4 root root          29 Nov 14 07:35 ..
+-rw-r--r--. 1 root root 64357400576 Nov 14 07:35 disk.img
+/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws
+/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws/disk.img
+142 135 8:0 / /workspace rw,relatime - ext4 /dev/sda rw,discard
+{"getquota_err":"function not implemented","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/","source":"/dev/sda","super":"rw,discard"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"function not implemented","statfs":{"avail_b":64230543360,"bsize":4096,"ffree":399349,"files":399360,"size_b":64247345152,"type":"0xef53","used_b":24576},"uid":20000,"xflags":"0x0","xgetquota_err":"function not implemented"}
+{"file":"/workspace/f64","open_err":"open /workspace/f64: permission denied","uid":20000}
+total 6704
+   0 drwxrwxrwx. 2 root root          22 Nov 14 07:35 .
+   0 drwxr-xr-x. 4 root root          29 Nov 14 07:35 ..
+6704 -rw-r--r--. 1 root root 64357400576 Nov 14 07:35 disk.img
+64357400598	/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws
+{"after_projid":52997,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":134217728,"bsoft_b":0,"icount":1,"id":52997,"ihard":0}}
+host report proj 52997:  | du ws: 64357400598 B
+the image file existed before the assignment; new blocks of an existing file keep its old projid:
+/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws/disk.img projid = 0
+{"file":"/workspace/f300","open_err":"open /workspace/f300: permission denied","uid":20000}
+[    2.006182] sd 0:0:0:0: [sda] Attached SCSI disk
+[    2.031974] EXT4-fs (sda): mounted filesystem f213de0c-4cdc-4ed6-9d2b-ccc5cceff543 r/w without journal. Quota mode: disabled.
+[    2.031980] ext4 filesystem being mounted at /run/kata-containers/sandbox/storage/MDow supports timestamps until 2038-01-19 (0x7fffffff)
+[    2.051234] EXT4-fs (sdb): mounted filesystem da8a5e0a-9e75-45f3-b02b-52f707cf67d9 r/w without journal. Quota mode: disabled.
+[    2.051240] ext4 filesystem being mounted at /run/kata-containers/sandbox/storage/MDox supports timestamps until 2038-01-19 (0x7fffffff)
+/dev/sda /workspace ext4 rw,relatime,discard 0 0
+host report proj 52997:  | du ws: 64357400598 B
+pod still Running/ after 20 s (not evicted)
+=== t2 katablock done 2026-11-14T07:36:18Z
+=== t2 ext4  2026-11-14T07:36:18Z
+/dev/loop0 ext4   rw,relatime,seclabel,prjquota
+{"after_projid":54001,"after_xflags":"0x200","before_projid":0,"before_xflags":"0x0","path":"/ext4q/ws","quota":{"bcount_b":4096,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":54001,"ihard":0}}
+{"getquota_err":"operation not permitted","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/ws","source":"/dev/loop0","super":"rw,seclabel,prjquota"},"path":"/workspace","projid":54001,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268431360,"bsize":4096,"ffree":262131,"files":262144,"size_b":268435456,"type":"0xef53","used_b":4096},"uid":20000,"xflags":"0x200","xgetquota_err":"operation not permitted"}
+{"getquota_err":"operation not permitted","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/ws","source":"/dev/loop0","super":"rw,seclabel,prjquota"},"path":"/workspace/sub","projid":54001,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":268427264,"bsize":4096,"ffree":262130,"files":262144,"size_b":268435456,"type":"0xef53","used_b":8192},"uid":20000,"xflags":"0x200","xgetquota_err":"operation not permitted"}
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.078559045,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"getquota_err":"operation not permitted","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/ws","source":"/dev/loop0","super":"rw,seclabel,prjquota"},"path":"/workspace","projid":54001,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":226484224,"bsize":4096,"ffree":262129,"files":262144,"size_b":268435456,"type":"0xef53","used_b":41951232},"uid":20000,"xflags":"0x200","xgetquota_err":"operation not permitted"}
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"getquota_err":"operation not permitted","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/ws","source":"/dev/loop0","super":"rw,seclabel,prjquota"},"path":"/workspace","projid":54001,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":174051328,"bsize":4096,"ffree":262127,"files":262144,"size_b":268435456,"type":"0xef53","used_b":94384128},"uid":20000,"xflags":"0x200","xgetquota_err":"operation not permitted"}
+#54001    --   92172       0  262144              5     0     0       
+{"bcount_b":94384128,"bhard_b":268435456,"bsoft_b":0,"icount":5,"id":54001,"ihard":0}
+{"after_projid":777,"after_xflags":"0x200","clear_inherit":"","dir":"/workspace/esc-1794641779527608441","file_projid":777,"file_projid_after":0,"file_set_projid0":"","fsync_err":"","getx_err":"","set_projid0":"","set_projid777":"","sub_projid":54001,"sub_xflags":"0x200","uid":20000,"write_err":"","wrote_mb":32}
+{"bcount_b":94384128,"bhard_b":268435456,"bsoft_b":0,"icount":5,"id":54001,"ihard":0}
+/ext4q/ws/esc-1794641779527608441   777 --------------e----P-- /ext4q/ws/esc-1794641779527608441
+{"acked_b":174051328,"close_err":"","err":"write /workspace/big: disk quota exceeded","errno":"122","file":"/workspace/big","final_fsync_err":"","secs":0.631458955,"st_blocks_b":174051328,"st_size":174051328,"uid":20000,"where":"write"}
+{"bcount_b":268435456,"bhard_b":268435456,"bsoft_b":0,"icount":6,"id":54001,"ihard":0}
+=== t2 ext4 done 2026-11-14T07:36:21Z
+=== enabling LocalStorageCapacityIsolationFSQuotaMonitoring 2026-11-14T07:36:21Z
+ExecStart=/usr/local/bin/k3s server --container-runtime-endpoint unix:///run/containerd/containerd.sock --disable traefik,servicelb,metrics-server,local-storage --write-kubeconfig-mode 644 --kubelet-arg=feature-gates=LocalStorageCapacityIsolationFSQuotaMonitoring=true
+NAME                                         STATUS   ROLES           AGE   VERSION
+ip-172-31-43-83.us-west-2.compute.internal   Ready    control-plane   24m   v1.37.2+k3s1
+Nov 14 07:36:28 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:36:28.244104   65021 controller.go:667] quota admission added evaluator for: rolebindings.rbac.authorization.k8s.io
+Nov 14 07:36:28 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:36:28.246691   65021 controller.go:667] quota admission added evaluator for: addons.k3s.cattle.io
+Nov 14 07:36:28 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:36:28.340020   65021 controller.go:667] quota admission added evaluator for: deployments.apps
+Nov 14 07:36:28 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:36:28.397864   65021 resource_quota_controller.go:297] "Starting resource quota controller"
+Nov 14 07:36:28 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:36:28.397895   65021 resource_quota_monitor.go:309] "QuotaMonitor running"
+=== t2 gate  2026-11-14T07:36:44Z
+pod q-gate-true uid 912433f5-80be-4bc6-927e-9c2542d37b09 rc=runc hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:36 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:36 ..
+kubelet-assigned: ws projid = 0 ----------------X /var/li | other projid = 0
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime","root":"/kubelet/pods/912433f5-80be-4bc6-927e-9c2542d37b09/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"operation not permitted","statfs":{"avail_b":62679212032,"bsize":4096,"ffree":31451521,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1678188544},"uid":20000,"xflags":"0x80000000","xgetquota_err":"operation not permitted"}
+{"acked_b":104857600,"close_err":"","err":"","file":"/workspace/f100","final_fsync_err":"","secs":0.122473696,"st_blocks_b":104857600,"st_size":104857600,"uid":20000,"where":""}
+jq: error (at <stdin>:1101): Cannot iterate over null (null)
+kubelet stats summary for ws: 
+Lenny assigns its own project over the kubelet's (other volume)
+{"after_projid":53883,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/912433f5-80be-4bc6-927e-9c2542d37b09/volumes/kubernetes.io~empty-dir/other","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":53883,"ihard":0}}
+{"acked_b":125829120,"close_err":"","err":"","file":"/other/f120","final_fsync_err":"","secs":0.186580618,"st_blocks_b":125829120,"st_size":125829120,"uid":20000,"where":""}
+jq: error (at <stdin>:1101): Cannot iterate over null (null)
+kubelet stats after re-assignment: 
+host report proj 53883: /dev/nvme1n1 122880 0 262144 00 [--------] /data | du ws: 104857618 B
+/etc/projects:
+cat: /etc/projects: No such file or directory
+/etc/projid:
+cat: /etc/projid: No such file or directory
+/data/scripts/t2.sh: line 182: /etc/projects: No such file or directory
+after delete: /etc/projects 
+host report proj 0: /dev/nvme1n1 1164088 0 0 00 [--------] /data | du ws:  B
+pod q-gate-false uid 0f03ddf0-f4be-4993-aae8-bd74a120acf9 rc=runc hostUsers=false podshare=no
+host ws: root:root 777 projid: projid = 1048577 flags: --------P-------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:37 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:37 ..
+kubelet-assigned: ws projid = 1048577 --------P-------X /var/li | other projid = 1048578
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":1048577,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":62679224320,"bsize":4096,"ffree":31451506,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1678176256},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+host report proj 1048577:  | du ws: 6 B
+{"acked_b":104857600,"close_err":"","err":"","file":"/workspace/f100","final_fsync_err":"","secs":0.145129167,"st_blocks_b":104857600,"st_size":104857600,"uid":20000,"where":""}
+kubelet stats summary for ws: {"name":"ws","usedBytes":104857600,"inodesUsed":2}
+{"name":"other","usedBytes":0,"inodesUsed":1}
+host report proj 1048577: /dev/nvme1n1 102400 9007199254740992 9007199254740992 00 [--------] /data | du ws: 104857618 B
+Lenny sets 256 MiB on the kubelet's project 1048577
+{"after_projid":1048577,"after_xflags":"0x80000200","before_projid":1048577,"before_xflags":"0x80000200","path":"/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":104857600,"bhard_b":268435456,"bsoft_b":0,"icount":2,"id":1048577,"ihard":0}}
+{"acked_b":163577856,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.272632628,"st_blocks_b":163577856,"st_size":163577856,"uid":20000,"where":"write"}
+host report proj 1048577: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435485 B
+after 30 s the kubelet left the limit as:
+host report proj 1048577: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435485 B
+{"getquota_err":"operation not permitted","mount":{"fstype":"xfs","mountpoint":"/workspace","opts":"rw,noatime,idmapped","root":"/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/workspace","projid":1048577,"projinherit":true,"qstatv_err":"operation not permitted","statfs":{"avail_b":0,"bsize":4096,"ffree":31451530,"files":31457280,"size_b":268435456,"type":"0x58465342","used_b":268435456},"uid":20000,"xflags":"0x80000200","xgetquota_err":"operation not permitted"}
+Lenny assigns its own project over the kubelet's (other volume)
+{"after_projid":53201,"after_xflags":"0x80000200","before_projid":1048578,"before_xflags":"0x80000200","path":"/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":53201,"ihard":0}}
+{"acked_b":125829120,"close_err":"","err":"","file":"/other/f120","final_fsync_err":"","secs":0.193217321,"st_blocks_b":125829120,"st_size":125829120,"uid":20000,"where":""}
+kubelet stats after re-assignment: {"name":"other","usedBytes":0}
+host report proj 53201: /dev/nvme1n1 122880 0 262144 00 [--------] /data | du ws: 268435485 B
+/etc/projects:
+1048577:/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws
+1048578:/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other
+/etc/projid:
+volume1048577:1048577
+volume1048578:1048578
+after delete: /etc/projects 2
+host report proj 1048577:  | du ws:  B
+=== t2 gate done 2026-11-14T07:38:19Z
+=== t2 gateevict  2026-11-14T07:38:19Z
+pod q-gev uid 7f64ec92-ef09-40e9-9ce7-78476698a4fb rc=runc hostUsers=false podshare=no
+host ws: root:root 777 projid: xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws': No such file or directory
+xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other': No such file or directory
+projid = 1048580 flags: xfs_io: cannot find mount poin
+xfs_io: cannot find mount poin
+--------P-------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:38 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:38 ..
+{"acked_b":734003200,"close_err":"","err":"","file":"/workspace/over","final_fsync_err":"","secs":4.66822623,"st_blocks_b":734003200,"st_size":734003200,"uid":20000,"where":""}
+pod phase Failed/Evicted after 4 s
+Evicted     Usage of EmptyDir volume "ws" exceeds the limit "512Mi". 
+Killing     Stopping container slot
+Killing     Stopping container adapter
+=== t2 gateevict done 2026-11-14T07:38:28Z
+PLAN2-DONE

@@ -1,0 +1,73 @@
+=== t1 kata rc=kata hostUsers=true 2026-11-14T07:26:47Z
+pod/t1-kata created
+pod/t1-kata condition met
+--- ids
+netagent {"uid":10001,"gid":10001,"groups":[10001],"uid_map":"         0          0 4294967295\n"}
+adapter {"uid":10000,"gid":10000,"groups":[10000],"uid_map":"         0          0 4294967295\n"}
+slot0 {"uid":20000,"gid":20000,"groups":[20000],"uid_map":"         0          0 4294967295\n"}
+slot1 {"uid":20001,"gid":20001,"groups":[20001],"uid_map":"         0          0 4294967295\n"}
+slot2 {"uid":20002,"gid":20002,"groups":[20002],"uid_map":"         0          0 4294967295\n"}
+--- kernel
+Linux t1-kata 6.18.56 #1 SMP Fri Oct 16 18:41:32 UTC 2026 x86_64 GNU/Linux
+-r--r--r-- 1 root root 0 Nov 14 07:26 /proc/net/tcp
+-r--r--r-- 1 root root 0 Nov 14 07:26 /proc/net/tcp6
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                     
+   0: 0100007F:2328 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10001        0 1106 1 0000000000000000 100 0 0 10 0                      
+   1: 0100007F:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10001        0 1111 1 0000000000000000 100 0 0 10 0                      
+--- basic
+{"connect":{"max_us":1950.139,"n":1,"p50_us":1950.139,"p99_us":1950.139},"errs":[],"fail":0,"label":"basic-slot0","ok":1,"uid":20000}
+{"connect":{"max_us":385.695,"n":1,"p50_us":385.695,"p99_us":385.695},"errs":[],"fail":0,"label":"basic6-slot0","ok":1,"uid":20000}
+{"connect":{"max_us":546.339,"n":1,"p50_us":546.339,"p99_us":546.339},"errs":[],"fail":0,"label":"basic-slot1","ok":1,"uid":20001}
+{"connect":{"max_us":277.57,"n":1,"p50_us":277.57,"p99_us":277.57},"errs":[],"fail":0,"label":"basic6-slot1","ok":1,"uid":20001}
+{"connect":{"max_us":536.555,"n":1,"p50_us":536.555,"p99_us":536.555},"errs":[],"fail":0,"label":"basic-slot2","ok":1,"uid":20002}
+{"connect":{"max_us":505.041,"n":1,"p50_us":505.041,"p99_us":505.041},"errs":[],"fail":0,"label":"basic6-slot2","ok":1,"uid":20002}
+{"connect":{"max_us":628.276,"n":1,"p50_us":628.276,"p99_us":628.276},"errs":[],"fail":0,"label":"basic-adapter","ok":1,"uid":10000}
+{"connect":{"max_us":269.921,"n":1,"p50_us":269.921,"p99_us":269.921},"errs":[],"fail":0,"label":"basic6-adapter","ok":1,"uid":10000}
+{"basic-adapter/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"10000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":8.688,"n":1,"p50_us":8.688,"p99_us":8.688},"ProcLat":{"max_us":819.192,"n":1,"p50_us":819.192,"p99_us":819.192},"ProcRowsMax":6},"basic-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":171.682,"n":1,"p50_us":171.682,"p99_us":171.682},"ProcLat":{"max_us":779.39,"n":1,"p50_us":779.39,"p99_us":779.39},"ProcRowsMax":3},"basic-slot1/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":15.165,"n":1,"p50_us":15.165,"p99_us":15.165},"ProcLat":{"max_us":454.691,"n":1,"p50_us":454.691,"p99_us":454.691},"ProcRowsMax":4},"basic-slot2/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20002/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":8.862,"n":1,"p50_us":8.862,"p99_us":8.862},"ProcLat":{"max_us":539.444,"n":1,"p50_us":539.444,"p99_us":539.444},"ProcRowsMax":5},"basic6-adapter/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"10000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":9.207,"n":1,"p50_us":9.207,"p99_us":9.207},"ProcLat":{"max_us":190.981,"n":1,"p50_us":190.981,"p99_us":190.981},"ProcRowsMax":6},"basic6-slot0/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":16.418,"n":1,"p50_us":16.418,"p99_us":16.418},"ProcLat":{"max_us":595.681,"n":1,"p50_us":595.681,"p99_us":595.681},"ProcRowsMax":3},"basic6-slot1/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":11.084,"n":1,"p50_us":11.084,"p99_us":11.084},"ProcLat":{"max_us":225.604,"n":1,"p50_us":225.604,"p99_us":225.604},"ProcRowsMax":4},"basic6-slot2/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20002/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":8.668,"n":1,"p50_us":8.668,"p99_us":8.668},"ProcLat":{"max_us":187.979,"n":1,"p50_us":187.979,"p99_us":187.979},"ProcRowsMax":5}}
+"ok"
+--- many (3 x 334 concurrent, held)
+held 1002
+{"diag_err":1002,"dump_af10":{"err":"no such file or directory","ms":0.004,"rows":0},"dump_af2":{"err":"no such file or directory","ms":0.03,"rows":0},"held":1002,"par8_diag_total_ms":1.108,"par8_proc_total_ms":2231.986,"proc_err":0,"seq_diag":{"max_us":55.708,"n":1002,"p50_us":5.917,"p99_us":29.115},"seq_proc":{"max_us":6083.164,"n":1002,"p50_us":2287.194,"p99_us":4444.425},"uids":{"proc:20000":334,"proc:20001":334,"proc:20002":334}}
+--- ss in netagent (iproute2 sock_diag)
+    334 uid:20000
+    334 uid:20001
+    334 uid:20002
+ESTAB 0      0      127.0.0.1:59904 127.0.0.1:9000 timer:(keepalive,5sec,0) uid:20000 ino:1570 sk:0    
+ESTAB 0      0      127.0.0.1:59918 127.0.0.1:9000 timer:(keepalive,5sec,0) uid:20000 ino:1575 sk:0    
+--- host view of the pod netns (root, init userns)
+no host pid (sandboxed)
+{"connect":{"max_us":31317.283,"n":334,"p50_us":11213.649,"p99_us":27183.303},"errs":[],"fail":0,"label":"many-slot0","ok":334,"uid":20000}
+{"connect":{"max_us":42315.489,"n":334,"p50_us":11202.156,"p99_us":24806.84},"errs":[],"fail":0,"label":"many-slot1","ok":334,"uid":20001}
+{"connect":{"max_us":39490.401,"n":334,"p50_us":11397.965,"p99_us":24775.762},"errs":[],"fail":0,"label":"many-slot2","ok":334,"uid":20002}
+{"many-slot0/v4":{"N":334,"DiagOK":0,"ProcOK":334,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":334},"DiagErrs":{"no such file or directory":334},"ProcErrs":{},"DiagLat":{"max_us":79.519,"n":334,"p50_us":8.175,"p99_us":23.853},"ProcLat":{"max_us":1516527.812,"n":334,"p50_us":1972.624,"p99_us":992152.924},"ProcRowsMax":1078},"many-slot1/v4":{"N":334,"DiagOK":0,"ProcOK":334,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":334},"DiagErrs":{"no such file or directory":334},"ProcErrs":{},"DiagLat":{"max_us":19.417,"n":334,"p50_us":8.282,"p99_us":10.98},"ProcLat":{"max_us":1650033.258,"n":334,"p50_us":2028.274,"p99_us":994671.135},"ProcRowsMax":1643},"many-slot2/v4":{"N":334,"DiagOK":0,"ProcOK":334,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20002/st1":334},"DiagErrs":{"no such file or directory":334},"ProcErrs":{},"DiagLat":{"max_us":85.042,"n":334,"p50_us":8.468,"p99_us":30.25},"ProcLat":{"max_us":997580.815,"n":334,"p50_us":2060.203,"p99_us":813285.713},"ProcRowsMax":1647}}
+"ok"
+--- passing a socket over an abstract Unix socket, slot0 -> slot1
+{"passcli":"sent","uid":20000,"connected":false,"err":""}
+{"passsrv":"used","uid":20001,"connect_err":"","write_err":""}
+{"passcli":"sent","uid":20000,"connected":true,"err":""}
+{"passsrv":"used","uid":20001,"connect_err":"transport endpoint is already connected","write_err":""}
+--- forked child and a nested user namespace in slot0
+{"connect":{"max_us":688.807,"n":1,"p50_us":688.807,"p99_us":688.807},"errs":[],"fail":0,"label":"fork-slot0","ok":1,"uid":20000}
+uid=0(root) gid=0(root) groups=0(root)
+{"connect":{"max_us":1203.011,"n":1,"p50_us":1203.011,"p99_us":1203.011},"errs":[],"fail":0,"label":"unshareU-slot0","ok":1,"uid":0}
+unshare exit 0
+uid=20001 gid=65534(nobody) groups=65534(nobody)
+{"connect":{"max_us":629.071,"n":1,"p50_us":629.071,"p99_us":629.071},"errs":[],"fail":0,"label":"unshareMap-slot0","ok":1,"uid":20001}
+unshare map exit 0
+{"fork-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":71.142,"n":1,"p50_us":71.142,"p99_us":71.142},"ProcLat":{"max_us":1673.208,"n":1,"p50_us":1673.208,"p99_us":1673.208},"ProcRowsMax":4},"passC-into-slot1/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":20.51,"n":1,"p50_us":20.51,"p99_us":20.51},"ProcLat":{"max_us":1045.23,"n":1,"p50_us":1045.23,"p99_us":1045.23},"ProcRowsMax":3},"passU-into-slot1/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":30.892,"n":1,"p50_us":30.892,"p99_us":30.892},"ProcLat":{"max_us":1501.665,"n":1,"p50_us":1501.665,"p99_us":1501.665},"ProcRowsMax":1019},"unshareMap-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":10.977,"n":1,"p50_us":10.977,"p99_us":10.977},"ProcLat":{"max_us":1588.092,"n":1,"p50_us":1588.092,"p99_us":1588.092},"ProcRowsMax":6},"unshareU-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"no such file or directory":1},"ProcErrs":{},"DiagLat":{"max_us":16.415,"n":1,"p50_us":16.415,"p99_us":16.415},"ProcLat":{"max_us":694.149,"n":1,"p50_us":694.149,"p99_us":694.149},"ProcRowsMax":5}}
+"ok"
+--- close before lookup (lookup delayed 100 ms)
+"ok"
+{"connect":{"max_us":1150.86,"n":20,"p50_us":595.619,"p99_us":996.056},"errs":[],"fail":0,"label":"close-slot0","ok":20,"uid":20000}
+{"close-slot0/v4":{"N":20,"DiagOK":0,"ProcOK":20,"DiagMismatch":0,"ProcMismatch":20,"DiagUIDs":{},"ProcUIDs":{"0/st5":20},"DiagErrs":{"no such file or directory":20},"ProcErrs":{},"DiagLat":{"max_us":28.181,"n":20,"p50_us":6.47,"p99_us":9.853},"ProcLat":{"max_us":8661.528,"n":20,"p50_us":772.185,"p99_us":6779.216},"ProcRowsMax":27}}
+"ok"
+{"connect":{"max_us":1253.366,"n":20,"p50_us":649.785,"p99_us":1032.931},"errs":[],"fail":0,"label":"rst-slot0","ok":20,"uid":20000}
+{"rst-slot0/v4":{"N":20,"DiagOK":0,"ProcOK":0,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{},"DiagErrs":{"no such file or directory":20},"ProcErrs":{"not found":20},"DiagLat":{"max_us":25.974,"n":20,"p50_us":7.768,"p99_us":15.017},"ProcLat":{"max_us":9469.668,"n":20,"p50_us":1025.8,"p99_us":5589.807},"ProcRowsMax":1045}}
+"ok"
+"ok"
+--- many over v6 (1 x 1000)
+{"diag_err":1000,"dump_af10":{"err":"no such file or directory","ms":0.004,"rows":0},"dump_af2":{"err":"no such file or directory","ms":0.032,"rows":0},"held":1000,"par8_diag_total_ms":0.794,"par8_proc_total_ms":2610.094,"proc_err":0,"seq_diag":{"max_us":48.74,"n":1000,"p50_us":5.62,"p99_us":28.689},"seq_proc":{"max_us":7119.394,"n":1000,"p50_us":2779.354,"p99_us":4958.671},"uids":{"proc:20001":1000}}
+{"connect":{"max_us":14514.905,"n":1000,"p50_us":2386.525,"p99_us":14118.686},"errs":[],"fail":0,"label":"many6-slot1","ok":1000,"uid":20001}
+{"many6-slot1/v6":{"N":1000,"DiagOK":0,"ProcOK":1000,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1000},"DiagErrs":{"no such file or directory":1000},"ProcErrs":{},"DiagLat":{"max_us":183857.033,"n":1000,"p50_us":8.694,"p99_us":13.865},"ProcLat":{"max_us":1417486.68,"n":1000,"p50_us":2272.76,"p99_us":563179.029},"ProcRowsMax":1889}}
+pod "t1-kata" deleted from aq namespace
+=== t1 kata done 2026-11-14T07:28:30Z

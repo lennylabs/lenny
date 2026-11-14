@@ -1,0 +1,16 @@
+=== t2 gateevict  2026-11-14T07:38:19Z
+pod q-gev uid 7f64ec92-ef09-40e9-9ce7-78476698a4fb rc=runc hostUsers=false podshare=no
+host ws: root:root 777 projid: xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws': No such file or directory
+xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other': No such file or directory
+projid = 1048580 flags: xfs_io: cannot find mount poin
+xfs_io: cannot find mount poin
+--------P-------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:38 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:38 ..
+{"acked_b":734003200,"close_err":"","err":"","file":"/workspace/over","final_fsync_err":"","secs":4.66822623,"st_blocks_b":734003200,"st_size":734003200,"uid":20000,"where":""}
+pod phase Failed/Evicted after 4 s
+Evicted     Usage of EmptyDir volume "ws" exceeds the limit "512Mi". 
+Killing     Stopping container slot
+Killing     Stopping container adapter
+=== t2 gateevict done 2026-11-14T07:38:28Z

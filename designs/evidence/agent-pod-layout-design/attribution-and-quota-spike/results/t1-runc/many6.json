@@ -1,0 +1,1 @@
+{"many6-slot1/v6":{"N":1000,"DiagOK":1000,"ProcOK":1000,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{"20001/st1":1000},"ProcUIDs":{"20001/st1":1000},"DiagErrs":{},"ProcErrs":{},"DiagLat":{"max_us":462026.716,"n":1000,"p50_us":60920.041,"p99_us":373268.949},"ProcLat":{"max_us":524219.077,"n":1000,"p50_us":6056.123,"p99_us":406210.404},"ProcRowsMax":1987}}
