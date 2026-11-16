@@ -17,6 +17,7 @@ This directory holds the test evidence the design documents under `designs/` cit
 | `billing-resource-attribution-design.md` | No test ran for this design. |
 | `agent-pod-layout-design.md` | `agent-pod-layout-design/attribution-and-quota-spike/`, which `egress-and-git-design.md` and `session-isolation-design.md` also cite for slot attribution |
 | `rest-only-client-api-design.md` | `rest-only-client-api-design/`, the spike report and its proof of concept |
+| `connector-removal-design.md` | `connector-removal-design/`: the condensed tools-and-egress study, the summaries of the fidelity and remote-child studies, the tool-server spike's results with two summary tables of its logs, and the harness-egress spike's results |
 
 These files are records of throwaway test runs. They are not product code, and they carry no specification citation. Go source files carry a `.txt` suffix so that they do not join the repository's Go module. Private keys and downloaded third-party files are excluded, and each folder's `README.md` records the URLs and versions of the downloads.
 

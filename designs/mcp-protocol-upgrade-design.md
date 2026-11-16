@@ -1,12 +1,12 @@
 # MCP protocol upgrade
 
-Status: design for owner review, revision 8, 2026-11-15, with no independent review yet. Revision 8 applies the owner's answer of 2026-11-15 on tool progress ("2.1: ok", RP D11) to the sections that still govern Lenny: the connector client requests and forwards a connector's progress notifications ("MP-6"), and the reference bridge sends them to its harness ("MP-5"). Revision 7 applies O4, O5, and O11 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md) to the moving sections. Nothing here is built or staged. Every decision is settled: the owner settled O7 on 2026-11-13. The owner chose on 2026-11-13 to move every client protocol adapter, MCP included, out of Lenny into separate first-party repositories with optional Helm subcharts in front of the REST API (decision D6); [`rest-only-client-api-design.md`](rest-only-client-api-design.md) governs what leaves. Revision 6 applies that design's O8, which the owner settled on 2026-11-14 in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something": the banner below and a mark under each part state which sections still govern Lenny and which move to the MCP adapter project, and nothing is deleted or moved. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md), [`user-credential-delivery-design.md`](user-credential-delivery-design.md), [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md), [`runtime-protocol-design.md`](runtime-protocol-design.md) revision 9, and [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md) revision 5, all as implemented. Revision 3 applies the owner's decisions of 2026-11-12 and 2026-11-13 that reach this design: the adapter runs no MCP server and the runtime SDKs' reference MCP bridge serves MCP to harnesses (RP D1, RP-5), the adapter-local tools are retired (RP D5), `CH-RUNTIMEOPS` merges into `CH-MSGSOCK` (RP O7), integration levels give way to capabilities (RP D3), and `type: mcp` runtimes are removed (AR D1). "Decisions" lists what the owner has settled and what remains open. The design stages no specification edit; the changes go through `change-proposal` after review. Proposals carry the label MP-n, and requirements carry the label MPR-n. "Review history" at the end records the revisions.
+Status: design for owner review, revision 10, 2026-11-15, with no independent review yet. Revision 10 is the final consistency pass of the connector removal: the sections that still govern Lenny, the banner after this line, and the terms, requirements, specification changes, documentation, tests, and proposal split no longer name the connector client, connector link failures, or `tool_progress` as current, and "MP-6" is marked as no longer Lenny's. Revision 9 applies the owner's decision of 2026-11-15 to remove connectors, in the owner's words "Yes, let's drop connectors.", which [`connector-removal-design.md`](connector-removal-design.md) revision 1 designs: "MP-6" and its connector client are withdrawn, O3 is moot, and the connector statements of the other sections are withdrawn by a banner at each heading and kept as the record. Revision 8 applies the owner's answer of 2026-11-15 on tool progress ("2.1: ok", RP D11) to the sections that still govern Lenny: the connector client requests and forwards a connector's progress notifications ("MP-6"), and the reference bridge sends them to its harness ("MP-5"). Revision 7 applies O4, O5, and O11 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md) to the moving sections. Nothing here is built or staged. Every decision is settled: the owner settled O7 on 2026-11-13. The owner chose on 2026-11-13 to move every client protocol adapter, MCP included, out of Lenny into separate first-party repositories with optional Helm subcharts in front of the REST API (decision D6); [`rest-only-client-api-design.md`](rest-only-client-api-design.md) governs what leaves. Revision 6 applies that design's O8, which the owner settled on 2026-11-14 in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something": the banner below and a mark under each part state which sections still govern Lenny and which move to the MCP adapter project, and nothing is deleted or moved. It reads against [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md), [`user-credential-delivery-design.md`](user-credential-delivery-design.md), [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md), [`runtime-protocol-design.md`](runtime-protocol-design.md) revision 12, and [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md) revision 7, all as implemented. Revision 3 applies the owner's decisions of 2026-11-12 and 2026-11-13 that reach this design: the adapter runs no MCP server and the runtime SDKs' reference MCP bridge serves MCP to harnesses (RP D1, RP-5), the adapter-local tools are retired (RP D5), `CH-RUNTIMEOPS` merges into `CH-MSGSOCK` (RP O7), integration levels give way to capabilities (RP D3), and `type: mcp` runtimes are removed (AR D1). "Decisions" lists what the owner has settled and what remains open. The design stages no specification edit; the changes go through `change-proposal` after review. Proposals carry the label MP-n, and requirements carry the label MPR-n. "Review history" at the end records the revisions.
 
 > **Adapter project banner.** Under [`rest-only-client-api-design.md`](rest-only-client-api-design.md), Lenny serves a REST client API alone, and the MCP protocol mapping moves to the MCP adapter's repository, `lenny-adapter-mcp`. Only the sections marked as Lenny's still govern Lenny. The sections marked as moving belong to the MCP adapter project: they stay in this file unchanged until that repository takes them, govern the adapter rather than Lenny, and stage no edit to Lenny's specification. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved.
 >
-> - **Lenny's:** "MP-5", "MP-6", **Inside the pod.** of "MP-3", the bullets of "MP-7" other than the client SDK bullet, the part of "MP-8" that names the versions of the reference bridge and the connector client, decisions D3, D6, O1, and O3, requirements MPR-5 and MPR-6, and proposals 3 and 4. D1, D2, and O2 govern Lenny for the bridge, the connector client, and the management server.
+> - **Lenny's:** "MP-5", **Inside the pod.** of "MP-3", the bullets of "MP-7" other than the client SDK bullet, the part of "MP-8" that names the versions of the reference bridge, decisions D3, D6, and O1, requirements MPR-5 and MPR-6, and proposals 3 and 4. D1, D2, and O2 govern Lenny for the bridge and the management server. "MP-6" and O3, which governed the connector client, are withdrawn since revision 9 under [`connector-removal-design.md`](connector-removal-design.md).
 > - **Moving to the MCP adapter project:** "MP-1", "MP-2", "MP-3" apart from **Inside the pod.**, "MP-4", the compatibility window of "MP-8" for the gateway's `/mcp`, "MP-9", decisions D4, D5, and O4 to O7, requirements MPR-1 to MPR-4, and proposals 1 and 2. D1, D2, and O2 govern the adapter for its client-facing endpoint. Lenny's own playground and client SDKs speak REST under "RO-7" of that design, so the playground transport of "MP-9" and the client SDK bullet of "MP-7" govern neither.
-> - **Mixed:** a section without a mark, such as "High-level design", "Limits", "Specification changes", "Documentation", or "Tests", keeps its rows about the reference bridge, the connector client, and the management server in Lenny, and its rows about the gateway's `/mcp` endpoint, the attach stream, Tasks, and the playground move.
+> - **Mixed:** a section without a mark, such as "High-level design", "Limits", "Specification changes", "Documentation", or "Tests", keeps its rows about the reference bridge and the management server in Lenny, and its rows about the gateway's `/mcp` endpoint, the attach stream, Tasks, and the playground move.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -17,6 +17,8 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | **[design]** | What this design requires. Nothing implements it. |
 
 ## Problem
+
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 9 did not rewrite is withdrawn and kept as the record. The platform statements stand.
 
 "Terms", after "Scope", defines the vocabulary this document uses.
 
@@ -32,6 +34,8 @@ The pinned version is out of step with the rest of the specification and the tre
 This design moves every MCP surface Lenny runs to the two most recent MCP versions, `2026-07-28` and `2025-11-25`. It replaces the formats that Lenny defined for elicitation and Tasks with MCP's own, and it states a rule that keeps the version claim checked against its source.
 
 ## Scope
+
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
 
 **Added:**
 
@@ -78,39 +82,47 @@ This design moves every MCP surface Lenny runs to the two most recent MCP versio
 
 ### Terms from the platform
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 9 did not rewrite is withdrawn and kept as the record. The platform statements stand.
+
 | Term | Meaning |
 | :-- | :-- |
 | Gateway `/mcp` | The client-facing MCP endpoint of `lenny-gateway`, at `POST /mcp` and `POST /mcp/environments/{name}`, with a WebSocket variant at `/mcp/v1/ws` ([§15.2](../spec/15_external-api-surface.md#152-mcp-api)). |
 | Harness | An agent program a runtime process wraps, such as Claude Code or Codex, which reaches tools as an MCP client ([`runtime-protocol-design.md`, "Terms"](runtime-protocol-design.md#terms)). |
-| Tool frames | The `tool_call`, `tool_result`, `list_tools`, `tool_list`, and `tool_cancel` frames on `CH-MSGSOCK`, through which a runtime process or a bridge calls Lenny's platform tools and connector tools ("RP-3"). They carry no MCP, so they have no MCP version. |
+| Tool frames | The `tool_call`, `tool_result`, `list_tools`, `tool_list`, and `tool_cancel` frames on `CH-MSGSOCK`, through which a runtime process or a bridge calls Lenny's platform tools ("RP-3"). They carry no MCP, so they have no MCP version. |
 | Reference MCP bridge | The MCP server that the Go, Python, and TypeScript runtime SDKs ship, in process or as the static binary `lenny-mcp-bridge` that a harness launches over stdio. It serves one MCP server per tool server to the harness and turns each MCP request into tool frames ("RP-5"). It is the one MCP server Lenny ships that runs inside an agent pod. |
-| Tool server | A named set of tools a session may call: `platform` for Lenny's platform tools, and `connector:<id>` for each connector ("RP-3"). |
-| Connector client | The gateway's outbound MCP client that calls a registered connector's MCP server (§9.3). |
+| Tool server | A named set of tools a session may call. Since revision 9 the only one is `platform`, Lenny's platform tools ("RP-3"), because [`connector-removal-design.md`](connector-removal-design.md) removes connectors. |
+| Connector client | Withdrawn in revision 9. It was the gateway's outbound MCP client that called a registered connector's MCP server (§9.3), which [`connector-removal-design.md`](connector-removal-design.md) removes. |
 | Management MCP server | The MCP server of `lenny-ops` at `/mcp/management` (§25.12). |
 | Attach stream | The SSE response stream that `lenny/attach_session` opens when the request sends `Accept: text/event-stream`. Lenny resumes it by sequence number (§15.2, "Event-stream resume"). |
-| Combined missing-links response | The single refusal at session create that names every account link and connector link the user still needs. [`user-credential-delivery-design.md`](user-credential-delivery-design.md) and [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md#ca-4-link-check) agreed on it. |
+| Combined missing-links response | The single refusal at session create, `403 LINKS_REQUIRED`, that names every account link the user still needs in `details.userLinks` ([`user-credential-delivery-design.md`](user-credential-delivery-design.md)). It named connector links in `details.connectors` until [`connector-removal-design.md`](connector-removal-design.md) removed them. |
 
 ### Labels from other designs
+
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 9 did not rewrite is withdrawn and kept as the record. The platform statements stand.
 
 | Labels | Source | What they name |
 | :-- | :-- | :-- |
 | CA-2, CA-4, CA-5, and CAR-7 | [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md#ca-5-propagating-the-failure) | The connector client's pending OAuth `resource` parameter; the link check at session creation and the combined missing-links response; how a connector link failure reaches a running session; and the requirement that no authorization URL reaches a pod, a runtime, or a model. |
 | TS-7 | [`tenant-scoping-identity-design.md`, "Login routing (TS-7)"](tenant-scoping-identity-design.md#login-routing-ts-7) | The protected resource metadata and the `WWW-Authenticate` challenge on `/mcp`. |
-| RP D1, RP D3, RP D5, RP D11, RP O7, RP-2, RP-3, RP-5, and RPR-14 | [`runtime-protocol-design.md`](runtime-protocol-design.md#rp-5-reference-mcp-bridge) | The owner's decisions that tools travel as frames and the SDKs ship the bridge, that capabilities replace integration levels, that the adapter-local tools are retired, and that a pending call's progress reaches the runtime as `tool_progress` under the `toolProgress` capability; the merge of `CH-RUNTIMEOPS` into `CH-MSGSOCK`; the capability catalog; tool calls on frames; the reference MCP bridge; and the requirement that a runtime author can write a compatible bridge in another language. |
+| RP D1, RP D3, RP D5, RP D11, RP O7, RP-2, RP-3, RP-5, and RPR-14 | [`runtime-protocol-design.md`](runtime-protocol-design.md#rp-5-reference-mcp-bridge) | The owner's decisions that tools travel as frames and the SDKs ship the bridge, that capabilities replace integration levels, that the adapter-local tools are retired, and, until [`connector-removal-design.md`](connector-removal-design.md) withdrew it, that a pending call's progress reaches the runtime as `tool_progress`; the merge of `CH-RUNTIMEOPS` into `CH-MSGSOCK`; the capability catalog; tool calls on frames; the reference MCP bridge; and the requirement that a runtime author can write a compatible bridge in another language. |
 | SL-11 | [`session-lifecycle-design.md`, "SL-11"](session-lifecycle-design.md#sl-11-external-mappings) | The session states that the Tasks mapping of "MP-4" reads, and the A2A mapping that design keeps. |
 | AR D1 and AR-1 | [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md#ar-1-the-runtime-type) | The owner's removal of `type: mcp` runtimes and service mode, and what leaves with `type: mcp`: the dedicated endpoint `/mcp/runtimes/{name}` and the adapter's MCP client to a runtime. |
 
 ## High-level design
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 Every MCP server Lenny runs speaks `2026-07-28` and `2025-11-25` and refuses older versions. The gateway's `/mcp` endpoint decides per request which era a client uses. A `2026-07-28` client sends its version and capabilities on every request, so the gateway keeps no protocol state for it. A `2025-11-25` client opens with `initialize`, and the gateway issues an `Mcp-Session-Id` that names a small record of the negotiated version and the client's capabilities. Both paths reach the same tool handlers. Each version has its own serializer, so a result is written in the format of the version that the request negotiated.
 
-The formats that Lenny defined for itself are replaced with MCP's own. A tool error becomes an MCP tool error with Lenny's error envelope in `structuredContent`, and Lenny metadata moves under `_meta`. An elicitation from a running session reaches a `2025-11-25` client as an `elicitation/create` request, and a `2026-07-28` client as the input requests of a task. A session's progress reaches a `2026-07-28` client through the Tasks extension. When session create needs links the user has not made, a client that declared URL-mode support receives one URL-mode elicitation per missing link and retries the same call afterwards. Any other client receives the tool error that connector authorization defines.
+The formats that Lenny defined for itself are replaced with MCP's own. A tool error becomes an MCP tool error with Lenny's error envelope in `structuredContent`, and Lenny metadata moves under `_meta`. An elicitation from a running session reaches a `2025-11-25` client as an `elicitation/create` request, and a `2026-07-28` client as the input requests of a task. A session's progress reaches a `2026-07-28` client through the Tasks extension. When session create needs links the user has not made, a client that declared URL-mode support receives one URL-mode elicitation per missing link and retries the same call afterwards. Any other client receives the combined missing-links response as a tool error.
 
-Inside the pod, the adapter runs no MCP server: a runtime calls Lenny's tools with tool frames, which carry no MCP version ("RP-3"). The reference MCP bridge that the runtime SDKs ship serves MCP to a harness, and it serves the same two versions under O1. The connector client, which calls servers Lenny does not control, prefers `2026-07-28` and falls back to older versions that the server answers with (O3).
+Inside the pod, the adapter runs no MCP server: a runtime calls Lenny's tools with tool frames, which carry no MCP version ("RP-3"). The reference MCP bridge that the runtime SDKs ship serves MCP to a harness, and it serves the same two versions under O1. Lenny runs no outbound MCP client: a harness reaches an operator's MCP service over HTTP through `netagent` and negotiates its own version with it ([`connector-removal-design.md`, "CR-3 External services"](connector-removal-design.md#cr-3-external-services)).
 
 ## Decisions
 
-Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), D4, D5, and O4 to O7 move to the MCP adapter project, and D3, D6, O1, and O3 are Lenny's. D1, D2, and O2 apply to both: the adapter takes the half that governs its client-facing endpoint, and Lenny keeps the half that governs the reference bridge, the connector client, and the management server.
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 9 did not rewrite is withdrawn and kept as the record. The platform statements stand.
+
+Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), D4, D5, and O4 to O7 move to the MCP adapter project, and D3, D6, and O1 are Lenny's. D1, D2, and O2 apply to both: the adapter takes the half that governs its client-facing endpoint, and Lenny keeps the half that governs the reference bridge and the management server. O3 governed the connector client and is moot since revision 9.
 
 | # | Decision | Status |
 | :-- | :-- | :-- |
@@ -120,7 +132,7 @@ Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), 
 | D4 | The combined missing-links response uses the tool error `details` today. This design adds the URL-mode form for clients that declare support for it ("MP-3"). | **Settled** as review question Q6, in the owner's word "ok". |
 | O1 | The intra-pod MCP servers serve the same two versions as the gateway. A runtime whose MCP client offers only an older version cannot connect. | **Settled**, in the owner's word "yes". One policy covers every surface Lenny serves. The cost is in "Limits". Since the runtime protocol design removed the adapter's MCP servers (RP D1, 2026-11-11), the decision applies to the reference MCP bridge, the one MCP server Lenny ships inside the pod ("MP-5"). |
 | O2 | Whether the MCP layers use the official Go SDK (`github.com/modelcontextprotocol/go-sdk`, v1.7.0 or later), which serves both eras, or stay hand-written. | **Settled** as a spike, in the owner's words "try the SDK". The spike tests the gateway's needs (its auth middleware, Lenny's error envelope, the attach stream, and per-tenant routing), and its result decides one approach for every surface. "Validation owed" lists it. |
-| O3 | Which versions the outbound connector client accepts. Lenny does not control connector servers. | **Settled**, in the owner's word "ok". The client offers `2026-07-28`, falls back to `initialize` with `2025-11-25`, and accepts any version the server answers with from `2025-03-26` on. D1 governs what Lenny serves, and third-party servers keep their own versions. Revision 2 also applied O3 to the adapter's client to a `type: mcp` runtime, which [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md) removed on 2026-11-13 (AR D1). |
+| O3 | Which versions the outbound connector client accepts. Lenny does not control connector servers. | **Settled**, in the owner's word "ok". The client offers `2026-07-28`, falls back to `initialize` with `2025-11-25`, and accepts any version the server answers with from `2025-03-26` on. D1 governs what Lenny serves, and third-party servers keep their own versions. Revision 2 also applied O3 to the adapter's client to a `type: mcp` runtime, which [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md) removed on 2026-11-13 (AR D1). Revision 9: moot, because [`connector-removal-design.md`](connector-removal-design.md) removes the connector client. |
 | O4 | Whether the WebSocket transport at `/mcp/v1/ws` stays. MCP defines no WebSocket transport, and `2026-07-28` keeps no connection state that a socket would hold. | **Settled**, in the owner's words "retire websockets and use SSE in the playground". The web playground's chat pane was its only user ([§27](../spec/27_web-playground.md)), and §27 gave no reason for a WebSocket over Streamable HTTP. "MP-9" states the change. |
 | O5 | Whether the gateway offers the experimental core Tasks of `2025-11-25`, or offers Tasks on `2026-07-28` only. | **Settled**, in the owner's words "2026-07-28 only". The `2025-11-25` form is experimental, and its wire format differs from the extension's. |
 | O6 | The deprecation window for future adoptions. §15.2 says the oldest version enters a six-month window when a new one is adopted, which serves three versions during the window. | **Settled** as a window counted in releases, in the owner's answer "C". The release that adopts a new version keeps the oldest as deprecated, and the first release at least six months later removes it. "MP-8" states the rule. |
@@ -130,6 +142,8 @@ Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), 
 
 ## Requirements
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), MPR-1 to MPR-4 move to the MCP adapter project, and MPR-5 and MPR-6 are Lenny's.
 
 - MPR-1. Every MCP server Lenny runs serves `2026-07-28` and `2025-11-25`, and refuses every other version with the error that the requested era defines.
@@ -137,9 +151,11 @@ Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), 
 - MPR-3. Lenny emits elicitations and Tasks in MCP's formats, and only to clients that declared the matching capability.
 - MPR-4. The specification names each supported version with the URL and the date it was checked against the MCP site.
 - MPR-5. The reference MCP bridge serves `2026-07-28` and `2025-11-25` to a harness, in process and over stdio, and refuses every other version with the error that the requested era defines.
-- MPR-6. No authorization URL reaches a pod, a runtime, or a model through any form this design adds. This restates CAR-7 of connector authorization.
+- MPR-6. No authorization URL reaches a pod, a runtime, or a model through any form this design adds. It restated CAR-7 of connector authorization, which [`connector-removal-design.md`](connector-removal-design.md) withdraws with connectors, and it stands on its own.
 
 ## Current state
+
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
 
 All findings in this section are **[source]**.
 
@@ -206,6 +222,8 @@ Tests pin the current versions in `pkg/gateway/mcpfabric/mcp/version_internal_te
 
 ## MP-3 Elicitation
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 > **Mixed.** **Handshake era.**, **Stateless era.**, and **Combined missing-links response at session create.** move to the MCP adapter project under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md). **Inside the pod.** is Lenny's, because it governs the reference MCP bridge.
 
 **Handshake era.** An elicitation from a running session reaches a `2025-11-25` client as an `elicitation/create` request on the attach stream. A form elicitation carries `mode: "form"` and a `requestedSchema`; an approval request carries a schema with a single confirmation field. A URL-mode elicitation carries `mode: "url"`, `url`, and `elicitationId`, after the per-pool allowlist check that `elicitation.go` already makes. The gateway sends an elicitation only to a client that declared the matching mode under its `elicitation` capability, and it consumes the client's reply, which closes F-15.2.30. A client that declared no elicitation capability keeps using `lenny/respond_to_elicitation` and `lenny/dismiss_elicitation`. **[design]**
@@ -218,11 +236,11 @@ Tests pin the current versions in `pkg/gateway/mcpfabric/mcp/version_internal_te
 | :-- | :-- |
 | `2025-11-25`, declared URL-mode elicitation | `URLElicitationRequiredError` (`-32042`) with one URL-mode entry in `data.elicitations` per missing link. The client retries `lenny/create_session` once the user has completed them. |
 | `2026-07-28`, declared URL-mode elicitation | An input-required result with one URL-mode elicitation in `inputRequests` per missing link. The client retries `lenny/create_session` with `inputResponses`. No session exists until the retry passes the link check. |
-| Any other client | The tool error that "CA-4" of connector authorization defines, with every missing link in `details`. This is D4. |
+| Any other client | The combined missing-links response as a tool error, with every missing link in `details`. This is D4, which named the form that "CA-4" of connector authorization defined until [`connector-removal-design.md`](connector-removal-design.md) withdrew that section. |
 
 Each form reaches only the client that called create, which is the user's own client, so MPR-6 holds. **[design]**
 
-**Inside the pod.** "CA-5" rejected `-32042` on the intra-pod surface for two reasons: the URL would reach a client inside a pod with no browser, and the adapter spoke `2025-03-26`. The adapter now speaks no MCP: a connector link failure reaches the runtime as a `tool_result` with an `error` member ("RP-3"), and the reference bridge maps it to an MCP tool error for the harness. The first reason still applies under CAR-7, so the bridge never produces `-32042` or a URL-mode elicitation, and CA-5's custom error stands. **[design]**
+**Inside the pod.** The reference bridge never produces `-32042` or a URL-mode elicitation, so no authorization URL reaches a client inside a pod, which has no browser (MPR-6). The adapter speaks no MCP: a platform tool's failure reaches the runtime as a `tool_result` with an `error` member ("RP-3"), and the bridge maps it to an MCP tool error for the harness. Until revision 10 this paragraph rested the rule on "CA-5" of connector authorization, which rejected `-32042` for a connector link failure; [`connector-removal-design.md`](connector-removal-design.md) withdraws CA-5 with connectors. A harness that reaches an operator's MCP service through egress receives that service's own errors and elicitations directly ("CR-3" of that design). **[design]**
 
 ## MP-4 Tasks
 
@@ -253,6 +271,8 @@ README and the documentation say that Lenny implements "MCP Tasks". The claim st
 
 ## MP-5 Intra-pod servers
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 9 did not rewrite is withdrawn and kept as the record. The platform statements stand.
+
 > **Lenny's.** This section still governs Lenny under [`rest-only-client-api-design.md`](rest-only-client-api-design.md).
 
 The adapter runs no MCP server inside the pod ("RP-3"). The one MCP server Lenny ships there is the reference MCP bridge of "RP-5", which a harness reaches in process or as the stdio program `lenny-mcp-bridge`. This section states the MCP versions the bridge serves; the runtime protocol design owns everything else about it. **[design]**
@@ -261,7 +281,7 @@ The adapter runs no MCP server inside the pod ("RP-3"). The one MCP server Lenny
 
 **No MCP nonce.** Revision 2 moved the intra-pod nonce from `initialize` into the `_meta` of each request. That placement leaves. The bridge proves its slot on its tool connection to the adapter, with the runtime connection handshake and a `hello` with `role: "tools"` ("RP-1"), and a stdio bridge speaks MCP only to the harness that launched it, so no MCP message carries a nonce on either era. **[design]**
 
-**Methods.** The bridge implements `initialize` and `ping` on the handshake era, `server/discover` on the stateless era, `tools/list`, `tools/call`, `notifications/cancelled`, and the no-reply handling of notifications. It declares `tools: { "listChanged": true }` and never advertises `sampling` or `elicitation`. It sends `notifications/progress` to the harness for a `tool_progress` frame of a call whose `tools/call` carried a `progressToken`, with that token ("RP-5", RP D11). On the stateless era it sets `resultType` on every result, and on list results it sets the cache hints `ttlMs: 0` and `cacheScope: "private"` that "DA-5" states. A tool list change reaches a handshake-era harness as `notifications/tools/list_changed` and a stateless-era harness on its `subscriptions/listen` stream ("RP-5"). **[design]**
+**Methods.** The bridge implements `initialize` and `ping` on the handshake era, `server/discover` on the stateless era, `tools/list`, `tools/call`, `notifications/cancelled`, and the no-reply handling of notifications. It declares `tools: { "listChanged": true }` and never advertises `sampling` or `elicitation`. On the stateless era it sets `resultType` on every result, and on list results it sets the cache hints `ttlMs: 0` and `cacheScope: "private"` that "DA-5" states. A tool list change reaches a handshake-era harness as `notifications/tools/list_changed` and a stateless-era harness on its `subscriptions/listen` stream ("RP-5"). **[design]**
 
 **Results.** The bridge writes tool results and tool errors in the format of the negotiated version, under the rules of "MP-2": a failed call returns `isError: true` with the error envelope from the `tool_result` frame's `error` member in `structuredContent`. **[design]**
 
@@ -269,7 +289,9 @@ The adapter runs no MCP server inside the pod ("RP-3"). The one MCP server Lenny
 
 ## MP-6 Outbound clients
 
-> **Lenny's.** This section still governs Lenny under [`rest-only-client-api-design.md`](rest-only-client-api-design.md).
+> **Withdrawn in revision 9, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." Lenny ships no outbound MCP client: a harness in the agent pod is the MCP client of an operator's MCP service and reaches it over HTTP through `netagent`, so the harness, rather than Lenny, negotiates the MCP version, sends the `resource` parameter, and receives progress. The text below, including **Progress.**, is kept as the record of revision 8.
+
+> **Lenny's until revision 9.** This section governed Lenny under [`rest-only-client-api-design.md`](rest-only-client-api-design.md) until [`connector-removal-design.md`](connector-removal-design.md) withdrew it, and it governs neither Lenny nor the MCP adapter.
 
 Under O3, the connector client first sends a stateless-era request at `2026-07-28`. When the server answers with an error that marks it as handshake-era, the client sends `initialize` with `2025-11-25` and accepts any answered version from `2025-03-26` on. The client records the negotiated version and uses that version's format for the rest of its session with the server. The connector client sends the `resource` parameter in its OAuth requests, which "CA-2" of connector authorization already marks as pending. **[design]**
 
@@ -287,7 +309,9 @@ Under O3, the connector client first sends a stateless-era request at `2026-07-2
 
 ## MP-8 Version rule in the specification
 
-> **Mixed.** The rule that names each supported version with its URL and check date is Lenny's for the versions the reference bridge and the connector client serve and offer. The compatibility window for the gateway's `/mcp`, with its deprecation header, error, and metric, moves to the MCP adapter project under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md).
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
+> **Mixed.** The rule that names each supported version with its URL and check date is Lenny's for the versions the reference bridge serves. The compatibility window for the gateway's `/mcp`, with its deprecation header, error, and metric, moves to the MCP adapter project under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md).
 
 The §15.2 "Target MCP spec version" sentence is replaced with a statement of the supported versions, each with the URL of its specification page and the date it was last checked against the MCP versioning page. A version claim without that URL and date is a specification defect. The "Compatibility policy" paragraph states the window that O6 settles. Lenny serves the two most recent MCP versions. The release that adopts a new version keeps the oldest previously served version as deprecated, serves it as a third version, and sends the `X-Lenny-Mcp-Version-Deprecated` header on its connections. The first release dated at least six months after the adopting release removes it. Counting the window in releases means an operator who skips releases still installs the deprecating release's warning before the removal, or reads `lenny_mcp_deprecated_version_active_sessions` before upgrading. The header is sent only for a deprecated version, so the gateway stops sending it for the previous version, as it does today. The example under "Session-lifetime exception for deprecated versions" is updated to the new versions. **[design]**
 
@@ -306,6 +330,8 @@ The web playground's chat pane moves from the WebSocket at `/mcp/v1/ws` to Strea
 
 ## Limits
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 - **Older harness clients.** Under O1, a harness whose MCP client offers only `2025-06-18` or older cannot use the reference bridge. Claude Code offered `2025-11-25` in the connector spike, so it is unaffected **[source]**. Other harnesses are not surveyed ("Validation owed"). Such a harness's runtime can still call Lenny's tools with tool frames, or ship its own bridge (RPR-14).
 - **Older user clients.** An MCP client that speaks only `2025-06-18` or older cannot connect to the gateway.
 - **Tasks on the handshake era.** Under O5, a `2025-11-25` client has no Tasks and follows a session through the attach stream.
@@ -320,27 +346,33 @@ The web playground's chat pane moves from the WebSocket at `/mcp/v1/ws` to Strea
 
 ## Specification changes
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 | Section | Change |
 | :-- | :-- |
 | [§15.2](../spec/15_external-api-surface.md#152-mcp-api) | The supported versions with source and check date ("MP-8"). Era selection, sessions, headers, and `server/discover` ("MP-1"). The per-version elicitation forms and the combined missing-links response ("MP-3"). The Tasks extension ("MP-4"). The removal of `lenny/error` and of the WebSocket transport ("MP-9"). |
-| §15.7 "Reference MCP Bridge", the section the runtime protocol design adds | The MCP versions the bridge serves, its era selection, its version refusal, and its `notifications/progress` for a call that carried a `progressToken` ("MP-5"). §15.4.3's intra-pod MCP servers and nonce wire format leave under the runtime protocol design, so this design adds nothing there. |
+| §15.7 "Reference MCP Bridge", the section the runtime protocol design adds | The MCP versions the bridge serves, its era selection, and its version refusal ("MP-5"). §15.4.3's intra-pod MCP servers and nonce wire format leave under the runtime protocol design, so this design adds nothing there. |
 | §15.5 | The compatibility policy ("MP-8"). |
 | [§27](../spec/27_web-playground.md) | The chat stream on Streamable HTTP, the bearer in the `Authorization` header, and the removal of the WebSocket close codes and the `lenny.bearer.*` carrier ("MP-9"). |
 | [§8.8](../spec/08_recursive-delegation.md#88-taskrecord-and-taskresult-schema) | The MCP protocol mapping to the Tasks extension's statuses ("MP-4"). |
-| §9.2 and §9.3 | URL-mode elicitation in MCP's format, and the connector client's versions, `resource` parameter, and progress token with the forwarding of the connector's progress notifications ("MP-3" and "MP-6"). |
+| §9.2 | URL-mode elicitation in MCP's format ("MP-3"). §9.3 gains no row, because [`connector-removal-design.md`](connector-removal-design.md) replaces it with a successor pointer and withdraws "MP-6". |
 | §15.1 | The error catalog entries that change with "MP-1" and "MP-2". |
 | §25.12 | The management server's versions and `subscriptions/listen` ("MP-7"). |
 | §23 | Differentiator 6 names the Tasks extension. |
 
 ## Non-specification changes
 
-- Code: the gateway `/mcp`, the connector client, the management server, the client SDKs, and the reference bridge in the runtime SDKs, with the per-version serializers, the Redis session record, the reply consumer for `elicitation/create`, and the playground's chat pane in `pkg/gateway/mcpfabric/playground/ui/app.js`. The intra-pod servers of "Current state" are removed by the runtime protocol design rather than upgraded.
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
+- Code: the gateway `/mcp`, the management server, the client SDKs, and the reference bridge in the runtime SDKs, with the per-version serializers, the Redis session record, the reply consumer for `elicitation/create`, and the playground's chat pane in `pkg/gateway/mcpfabric/playground/ui/app.js`. The intra-pod servers of "Current state" are removed by the runtime protocol design rather than upgraded.
 - Chart: the Helm value `gateway.mcp.handshakeSessionIdleTimeoutSeconds` ("Documentation").
 - `README.md` and the documentation, as "Documentation" lists.
 - `BUILD-GAPS.md`: F-15.2.30, F-10.2.39 (cross-referenced to TS-7), 23.1-MED-001, and the stale §25.12 M9.
 - `TEST-GAPS.md`: T-META.10 is withdrawn, because batching is gone from every supported version. T-8.8.5 changes its expected vocabulary. T-15.2.7, T-15.2.8, T-15.5.7, and T-15.7.7 are restated against the new versions.
 
 ## Documentation
+
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
 
 Each proposal carries the documentation for its own surface, and the specification changes land first. Pages describe behaviour without section numbers.
 
@@ -349,30 +381,32 @@ Each proposal carries the documentation for its own surface, and the specificati
 | `docs/api/mcp.md` | The supported versions `2026-07-28` and `2025-11-25`, each with its specification URL and check date; era selection per request; the `Mcp-Session-Id` record of a handshake-era client and its idle expiry; the required `MCP-Protocol-Version` header and, on the stateless era, `Mcp-Method` and `Mcp-Name`; `server/discover`; the refusals: `UnsupportedProtocolVersionError` (`-32022`, HTTP 400) on the stateless era, HTTP 400 for a missing or mismatched `MCP-Protocol-Version` header, HTTP 400 or 404 for a missing or unknown `Mcp-Session-Id`, and HTTP 403 for an `Origin` the gateway does not accept; tool errors in `structuredContent`; `lenny/stability` under `_meta`; the tool name form "MP-2" settles; and the resumption of the attach stream on each era. | 1 |
 | `docs/api/mcp.md` and `docs/client-guide/` | Elicitation per era and mode, including the capability a client must declare to receive each form, and the three forms of the combined missing-links response with the retry that creates the session; the Tasks extension on `2026-07-28` with one task per sent message, its task ID, completion at the end of the message's turn, its statuses, `input_required` only during an elicitation or approval, `tasks/update`, and `tasks/cancel`; that a `2025-11-25` client has no Tasks and follows a session through the attach stream. | 2 |
 | `docs/tutorials/mcp-client-integration.md`, `docs/client-guide/`, and `docs/getting-started/` | Examples at `2026-07-28` and `2025-11-25`; that a client offering only `2025-06-18` or older cannot connect. | 1, 2 |
-| `docs/runtime-author-guide/` | The versions the reference MCP bridge serves and its version refusal; that a harness whose MCP client offers only `2025-06-18` or older cannot use the bridge, and that its runtime can call tools with frames or ship its own bridge; that the bridge never sends a URL-mode elicitation or `-32042`, and maps a connector failure to an MCP tool error; and that it sends `notifications/progress` for a call whose `tools/call` carried a `progressToken`. | 3 |
+| `docs/runtime-author-guide/` | The versions the reference MCP bridge serves and its version refusal; that a harness whose MCP client offers only `2025-06-18` or older cannot use the bridge, and that its runtime can call tools with frames or ship its own bridge; and that the bridge never sends a URL-mode elicitation or `-32042`, and maps a `tool_result` error to an MCP tool error. | 3 |
 | `docs/operator-guide/configuration.md` and the Helm values reference | `gateway.mcp.handshakeSessionIdleTimeoutSeconds`, the idle expiry of a handshake-era session record in Redis, default `3600`. | 1 |
 | `docs/operator-guide/upgrades.md` | The compatibility window of "MP-8", counted in releases, the `X-Lenny-Mcp-Version-Deprecated` header, `MCP_PROTOCOL_VERSION_RETIRED`, and `lenny_mcp_deprecated_version_active_sessions` as the check before an upgrade. | 1 |
 | `docs/operator-guide/` page for the management server | `lenny-ops` `/mcp/management` serves both versions, with `subscriptions/listen` on the stateless era. | 4 |
 | `docs/reference/state-machines.md` and the web playground page | The mapping from session states to the status of an open task, with no open task for an `idle`, `dormant`, or `awaiting_client_action` session; the playground's chat stream on Streamable HTTP, its bearer in the `Authorization` header, and the removal of `/mcp/v1/ws`, the `lenny.bearer.*` carrier, and close code `4401`. | 2 |
-| Connector pages under `docs/operator-guide/` | The versions the connector client offers and accepts, from `2025-03-26` on, the OAuth `resource` parameter, and that a connector's progress notifications reach a runtime that declares `toolProgress`. | 4 |
 | `README.md` | "MCP Tasks" names the Tasks extension once proposal 2 lands. | 2 |
 
 The owner confirmed the handshake-era idle expiry default of 3600 seconds on 2026-11-13 (D5).
 
 ## Tests
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 - Negotiation on `/mcp`: era selection, an unsupported version on each era, a missing or mismatched `MCP-Protocol-Version` header, an unknown `Mcp-Session-Id`, a session served by a second replica, `Origin` refusal, and `server/discover`.
 - Schema validation of `initialize`, `tools/list`, `tools/call` results and errors, the attach stream's frames, and `elicitation/create` against both vendored schemas, on tier 3 and on the deployed gateway on tier 5.
 - Elicitation: each mode on each era, the capability check, the reply consumer, and every row of the combined missing-links response, including the retry that creates the session.
 - Tasks: one task per sent message with distinct task IDs for two messages to one session, a create call with and without a first message, the status of an open task in each session state, `input_required` only while the turn holds an elicitation or approval, completion at the end of the message's turn with no open task on an `idle`, `dormant`, or `awaiting_client_action` session, `tasks/update` with an elicitation answer, `tasks/cancel`, and a client without the extension.
-- Reference bridge: both eras in process and over stdio, a request at an unsupported version on each era, `tools/list` cache hints on the stateless era, a `tool_result` error mapped to an MCP tool error, a `tool_progress` frame sent as `notifications/progress` with the harness's token and none for a call without one, and a list change notified on each era.
-- Connector client: a stateless-era server, a handshake-era server, and a server that answers `2025-03-26`; a call of a session with `toolProgress` that carries a progress token and forwards the server's progress notifications on each era, and a call of a session without it that carries none.
+- Reference bridge: both eras in process and over stdio, a request at an unsupported version on each era, `tools/list` cache hints on the stateless era, a `tool_result` error mapped to an MCP tool error, and a list change notified on each era.
 - Playground: the chat stream over Streamable HTTP, a refreshed bearer on the next request, a revoked bearer, the close-time cancel, and a request to `/mcp/v1/ws` that receives 404.
 
 ## Validation owed
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 - The `2025-11-25` tool name guidance (SEP-986), and whether it admits `/`.
-- Whether a `2026-07-28` POST response may be an SSE stream, which the attach stream and the connector client's progress forwarding ("MP-6") need.
+- Whether a `2026-07-28` POST response may be an SSE stream, which the attach stream needs.
 - The part of the `2026-07-28` `schema.ts` that was not read: `CacheableResult`, `ServerCapabilities`, and the Tasks types.
 - The Tasks extension's stability and its repository's current revision.
 - The spike under O2: whether the Go SDK v1.7.0 or later can host the gateway's auth middleware, Lenny's error envelope, the attach stream, and per-tenant routing. Check the release page for the current tag.
@@ -380,7 +414,9 @@ The owner confirmed the handshake-era idle expiry default of 3600 seconds on 202
 
 ## Instructions for reviewers of other designs
 
-- [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md): in "Why the raw 401 stops at the gateway" under "CA-5", rest the rejection of `-32042` on CAR-7 alone, since the adapter speaks no MCP and the reference bridge maps a `tool_result` error to an MCP tool error ("MP-3", "MP-5"). In "CA-4", name this design's per-version forms of the combined missing-links response for MCP clients.
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
+- [`connector-authorization-and-external-memory-design.md`](connector-authorization-and-external-memory-design.md): in "Why the raw 401 stops at the gateway" under "CA-5", rest the rejection of `-32042` on CAR-7 alone, since the adapter speaks no MCP and the reference bridge maps a `tool_result` error to an MCP tool error ("MP-3", "MP-5"). In "CA-4", name this design's per-version forms of the combined missing-links response for MCP clients. That design's revision 11 applied both items, and its revision 17 withdrew both sections under [`connector-removal-design.md`](connector-removal-design.md).
 - [`user-credential-delivery-design.md`](user-credential-delivery-design.md): in step 1 of "Flow", replace "MCP clients receive the same URL as a URL-mode elicitation" with a reference to "MP-3".
 - [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md): in "Discovery" and "Login routing (TS-7)", cite the `2026-07-28` authorization page in place of the `2025-06-18` one, and state the audience check that MCP requires of `/mcp`.
 
@@ -388,12 +424,14 @@ The owner confirmed the handshake-era idle expiry default of 3600 seconds on 202
 
 ## Proposal split and order
 
+> **Revision 9.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about the connector client, connector links, the combined response's connector list, and progress from connectors is withdrawn and kept as the record. The statements about the gateway, the reference bridge, the management server, and the client SDKs stand.
+
 Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), proposals 1 and 2 move to the MCP adapter project, and proposals 3 and 4 are Lenny's.
 
 1. **Versions and conformance**: "MP-8", "MP-1", and "MP-2", with the vendored schemas. Every later proposal depends on the per-version serializers.
-2. **Elicitation, Tasks, and playground**: "MP-3", "MP-4", and "MP-9". The playground moves once the Tasks extension exists. "MP-3"'s combined missing-links response lands with or after the link checks of connector authorization and user credential delivery.
+2. **Elicitation, Tasks, and playground**: "MP-3", "MP-4", and "MP-9". The playground moves once the Tasks extension exists. "MP-3"'s combined missing-links response lands with or after the link check of user credential delivery.
 3. **Bridge**: "MP-5", with or after the runtime protocol design's proposal that adds the reference bridge (RP-B), which supersedes revision 2's intra-pod part of "MP-5".
-4. **Outbound clients and management server**: "MP-6" and the rest of "MP-7".
+4. **Management server**: the rest of "MP-7". "MP-6" is withdrawn since revision 9 under [`connector-removal-design.md`](connector-removal-design.md).
 
 ## Sources
 
@@ -422,3 +460,13 @@ Under O8 of [`rest-only-client-api-design.md`](rest-only-client-api-design.md), 
   - "Labels from other designs" and "Documentation" are new. "Documentation" lists every setting, default, refusal, and runtime-facing rule this design introduces, under the owner's decision of 2026-11-13 that every design document all relevant details, and names the Helm value for the handshake-era idle expiry, `gateway.mcp.handshakeSessionIdleTimeoutSeconds`, with a default of 3600 seconds for owner review.
 - Revision 2, 2026-11-09: the owner settled O1, O2, O3, O5, and O6, and settled O4 as the retirement of the WebSocket transport. Revision 1 said the specification gave no reason for the WebSocket. §27 uses it for the playground's chat pane, which "MP-9" moves to Streamable HTTP.
 - Revision 1, 2026-11-09: first draft. Written after the owner settled Q6 of the design sync review and asked for a separate design that keeps the last two MCP versions.
+- Revision 9, 2026-11-15: applies the owner's decision of that day to remove connectors, in the owner's words "Yes, let's drop connectors.", with the owner's reasoning, "An operator could build connectors outside of Lenny and just use egress to talk to its own 'connector' service." [`connector-removal-design.md`](connector-removal-design.md) revision 1 designs the removal. This revision changes these rules.
+  - "MP-6" is withdrawn, with **Progress.**: Lenny ships no outbound MCP client, and a harness that reaches an operator's MCP service negotiates its own version, sends the `resource` parameter, and receives progress. The text stays as the record.
+  - O3, the connector client's versions, is moot. The **Connector client** term is withdrawn, and **Tool server** names `platform` alone.
+  - "Scope", "High-level design", "Requirements", "Current state", "MP-3 Elicitation", "MP-8", "Limits", "Specification changes", "Non-specification changes", "Documentation", "Tests", "Validation owed", "Instructions for reviewers of other designs", and "Proposal split and order" carry a banner that withdraws their connector statements. MPR-6 stands for every form this design adds.
+- Revision 10, 2026-11-15: the final consistency pass of the connector removal of 2026-11-15, under the owner's decision "Yes, let's drop connectors.", which [`connector-removal-design.md`](connector-removal-design.md) designs. It changes these rules.
+  - The banner after the status line no longer lists "MP-6", O3, or the connector client among Lenny's parts, and "Decisions" no longer counts O3 as Lenny's. "MP-6" carries a mark that it governed Lenny until revision 9 and now governs neither Lenny nor the MCP adapter, and its banner names this design's revision 9 as the revision that withdrew it.
+  - "MP-3" **Inside the pod.** rests the bridge's refusal of `-32042` and URL-mode elicitation on MPR-6, with a platform tool's failure mapped to an MCP tool error, and records that CA-5 is withdrawn. MPR-6 stands on its own, since CAR-7 is withdrawn.
+  - "MP-5" **Methods.** no longer sends `notifications/progress` for a `tool_progress` frame, because `tool_progress` leaves with connectors. The §15.7 row, the runtime-author documentation row, and the reference bridge tests follow.
+  - "High-level design" states that Lenny runs no outbound MCP client and that a harness negotiates its own version with an operator's MCP service through egress. The combined missing-links response, in "Terms", "High-level design", and "MP-3", names account links and no longer cites CA-4 as its definition, and the **Tool frames** term names platform tools alone.
+  - "MP-8" names the reference bridge's versions alone. The §9.2 and §9.3 row of "Specification changes" keeps the §9.2 elicitation change. The connector client leaves "Non-specification changes", "Documentation", "Tests", "Validation owed", and proposal 4, and proposal 2 lands after the link check of user credential delivery alone. The instruction to connector authorization records that its revision 11 applied both items and its revision 17 withdrew both sections.

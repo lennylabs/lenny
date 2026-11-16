@@ -1,6 +1,6 @@
 # Connector authorization and external memory
 
-Status: design for owner review, revision 16, 2026-11-15, with no independent review yet. Revision 16 applies the owner's answer of 2026-11-15 on tool progress ("2.1: ok"): a connector's progress notifications for a pending call reach a runtime that declares `toolProgress` as `tool_progress` frames, under [`runtime-protocol-design.md`](runtime-protocol-design.md) D11 ("CA-8"). Revision 15 applies the instructions of [`rest-only-client-api-design.md`](rest-only-client-api-design.md) to "CA-4" and "CA-5": the link check names the REST creation paths alone, the MCP client bullet moves to the MCP adapter, and connector prompts read R12's `inputPolicy` in place of `AdapterCapabilities.supportsElicitation`. Revision 14 applies the owner's decisions of 2026-11-13 that reach this design: the removal of non-agent runtimes under [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md), so the link check applies to every session, and the documentation statement of IC D13. Revision 13 applied the owner's decisions of 2026-11-12: the removal of the embedded deployment model and of pre-launched runtimes, and the settlement of [`runtime-protocol-design.md`](runtime-protocol-design.md) O3 (b), O4 (a), and O6 (e), which make the stdio bridge the reference bridge of RP-5, shipped with the runtime SDKs, and replace the late-tools notification with `availability_changed`. It reads against [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md) revision 5, [`runtime-protocol-design.md`](runtime-protocol-design.md), [`session-isolation-design.md`](session-isolation-design.md), [`agent-pod-layout-design.md`](agent-pod-layout-design.md), [`runtime-routing-design.md`](runtime-routing-design.md) revision 17, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 19, [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 8, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 35, [`user-git-identity-design.md`](user-git-identity-design.md) revision 40, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 39, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 31, and [`egress-and-git-design.md`](egress-and-git-design.md) revision 86, and [`rest-only-client-api-design.md`](rest-only-client-api-design.md) revision 4. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
+Status: design for owner review, revision 20, 2026-11-15, with no independent review yet. Revision 20 follows the owner's answer of 2026-11-15 to O11 of [`connector-removal-design.md`](connector-removal-design.md) revision 4, "go with (b)": the banner of "CA-5" points to the link prompt of [`user-credential-delivery-design.md`](user-credential-delivery-design.md) UC-8, whose rules come from "Connector prompts". Revision 19 is the final consistency pass of the connector removal: every part kept as the record carries a mark at its heading, the live banners name what stays of each section, CA-0's table names the account-link routes, and a memory service that serves every tenant verifies through the issuer-prefix method when the deployment turns the deployment key set off. Revision 18 follows the owner's answers of 2026-11-15 to the removal design's open decisions, which [`connector-removal-design.md`](connector-removal-design.md) revision 2 applies: the egress pattern is that design's "CR-3", and a memory service that serves every tenant verifies identity assertions against the deployment key set. Revision 17 records the owner's decision of 2026-11-15 to remove connectors, in the owner's words "Yes, let's drop connectors.", which [`connector-removal-design.md`](connector-removal-design.md) revision 1 designs: CA-1 to CA-9 and the other connector content are withdrawn and kept as the record, each marked at its heading, and CA-0 and CA-10 stay live, with the external memory pattern restated for the egress path. Revision 16 applies the owner's answer of 2026-11-15 on tool progress ("2.1: ok"): a connector's progress notifications for a pending call reach a runtime that declares `toolProgress` as `tool_progress` frames, under [`runtime-protocol-design.md`](runtime-protocol-design.md) D11 ("CA-8"). Revision 15 applies the instructions of [`rest-only-client-api-design.md`](rest-only-client-api-design.md) to "CA-4" and "CA-5": the link check names the REST creation paths alone, the MCP client bullet moves to the MCP adapter, and connector prompts read R12's `inputPolicy` in place of `AdapterCapabilities.supportsElicitation`. Revision 14 applies the owner's decisions of 2026-11-13 that reach this design: the removal of non-agent runtimes under [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md), so the link check applies to every session, and the documentation statement of IC D13. Revision 13 applied the owner's decisions of 2026-11-12: the removal of the embedded deployment model and of pre-launched runtimes, and the settlement of [`runtime-protocol-design.md`](runtime-protocol-design.md) O3 (b), O4 (a), and O6 (e), which make the stdio bridge the reference bridge of RP-5, shipped with the runtime SDKs, and replace the late-tools notification with `availability_changed`. It reads against [`agent-runtimes-only-design.md`](agent-runtimes-only-design.md) revision 7, [`runtime-protocol-design.md`](runtime-protocol-design.md), [`session-isolation-design.md`](session-isolation-design.md), [`agent-pod-layout-design.md`](agent-pod-layout-design.md), [`runtime-routing-design.md`](runtime-routing-design.md) revision 18, [`runtime-revisions-design.md`](runtime-revisions-design.md) revision 21, [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 10, [`user-credential-delivery-design.md`](user-credential-delivery-design.md) revision 37, [`user-git-identity-design.md`](user-git-identity-design.md) revision 43, [`tenant-scoping-identity-design.md`](tenant-scoping-identity-design.md) revision 40, [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md) revision 32, [`egress-and-git-design.md`](egress-and-git-design.md) revision 89, [`rest-only-client-api-design.md`](rest-only-client-api-design.md) revision 6, and [`connector-removal-design.md`](connector-removal-design.md) revision 4. The owner settled the decisions under "Owner decisions". Nothing here is built, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline, in which a proposal under `proposals/` stages the specification edits, a human approves it, and the edits land before the code that depends on them. The parts of the design carry the labels CA-0 to CA-10, and the proposals that land them carry CA-0 and CA-A to CA-I, under "Proposal split and order". Requirements carry the label CAR-n and security properties CP-n. "Review history" at the end records how the design reached this form.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -16,6 +16,8 @@ Each factual claim about behaviour carries one of these tags where the source ma
 
 ## Problem
 
+> **Revision 17.** [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15: "Yes, let's drop connectors." This design now keeps two live parts: CA-0, the shared OAuth link flow that account links use, and CA-10, the removal of built-in memory, whose external pattern reaches a memory service through egress. The problem statement, the scope, the terms, and the current state below are kept as the record of the connector design and are not edited further.
+
 Lenny carries a built-in memory feature: the `MemoryStore` role, one of the store interfaces of [§12.2 Storage Roles](../spec/12_storage-architecture.md#122-storage-roles), a Postgres and pgvector backend (pgvector is the Postgres extension for vector similarity search), the `lenny/memory_write` and `lenny/memory_query` platform tools, and `/v1/sessions/{id}/memory` routes. It makes Lenny responsible for retrieval quality, embeddings, capacity, retention, tenant isolation, and mandatory erasure of a data type unrelated to running agent sessions. Its default embedder, `HashingEmbedder`, measures token overlap, and dedicated memory products exist.
 
 Sessions still need a way to reach state that outlives a pod. MCP connectors are the generic mechanism for this, and a deployer can register any MCP memory server as one. "Terms from other designs and the platform" below defines connectors and the other platform terms this section uses. That route does not work today, and the reasons are general to every connector that requires per-user authorization:
@@ -30,6 +32,8 @@ Sessions still need a way to reach state that outlives a pod. MCP connectors are
 This design removes built-in memory and fixes the connector path so the external route is usable for any connector.
 
 ## Scope
+
+> **Record.** Kept since revision 17 as the record of the connector design, which [`connector-removal-design.md`](connector-removal-design.md) withdraws under the owner's decision of 2026-11-15: "Yes, let's drop connectors." The live scope is CA-0, the shared OAuth link flow that account links use, and CA-10, the removal of built-in memory, with the external memory pattern that reaches a memory service through egress.
 
 This design covers:
 
@@ -52,6 +56,8 @@ Out of scope:
 [`user-credential-delivery-design.md`](user-credential-delivery-design.md) owns account links and tokens delivered to pods, and [`user-git-identity-design.md`](user-git-identity-design.md) configures them for repository hosts. A connector token stays on the gateway path, and its use by the gateway remains the one way it is spent. "§9.3" means [§9.3 Connector Definition and OAuth/OIDC](../spec/09_mcp-integration.md#93-connector-definition-and-oauthoidc) throughout.
 
 ## Terms
+
+> **Record.** Kept since revision 17 as the record of the connector design, which [`connector-removal-design.md`](connector-removal-design.md) withdraws. This mark covers "Terms from other designs and the platform" and "Labels from other designs" as well. The entries for the shared OAuth link flow, the account-link attack, the subject, user erasure, built-in memory, the semantic cache, the Token Service, the account link, the impersonation bearer, and `netagent` and `lenny-egress` serve the live parts, CA-0, CA-10, and "External memory pattern", apart from their clauses about connectors. [`connector-removal-design.md`, "Terms"](connector-removal-design.md#terms) defines the identity assertion, the deployment key set, the credential binding, and the `userCredential` binding that "External memory pattern" uses.
 
 | Term | Meaning |
 | :-- | :-- |
@@ -136,6 +142,8 @@ This document cites proposals of other designs by label and links each citation 
 
 ## High-level design
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. CA-0 and CA-10 stay, and "External memory pattern" now states the egress pattern.
+
 Lenny sessions can call tools on external MCP servers that a deployer registers as connectors. Many such servers need each user's own authorization, and that path does not work today: a user who has not linked an account gets an unexplained failure, tokens are never refreshed, a session with no policy can reach every connector, and stock agent command-line tools cannot reach connectors at all. Lenny also carries a built-in memory store, which makes it responsible for a data product unrelated to running agent sessions.
 
 This design removes the built-in memory and makes connectors that need per-user authorization usable, so a deployer who wants memory registers an external memory server as a connector. A user links an account on a browser page, before or during a session, and the gateway keeps the token, refreshes it, and spends it only at the server it was linked for. Before a session starts, Lenny checks whether each permitted connector needs a link. It either refuses the session with a link to complete for each such connector, or starts the session and tells the agent's runtime when a connector needs authorization. The main limits are that connector traffic runs on the gateway, outside the pod egress controls, so a granted connector can carry a session's data out, and that a platform admin impersonating a user can spend that user's connector token.
@@ -173,6 +181,8 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 ## Owner decisions
 
+> **Partly superseded in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The decisions "Remove built-in memory" and "The shared OAuth flow lands first" stay. Every other row concerns connectors, and the table keeps it as the record.
+
 These are settled by the owner, and the rationale stays here so a later reader does not reopen them by accident.
 
 | Decision | Text or effect |
@@ -194,6 +204,8 @@ These are settled by the owner, and the rationale stays here so a later reader d
 
 ## Requirements
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. CAR-1 stays, met through egress ("External memory pattern"). CAR-2 to CAR-10 are withdrawn.
+
 Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` is another tenant.
 
 - CAR-1. A deployer can give sessions persistent memory by registering an MCP server, with no Lenny code for that server.
@@ -208,6 +220,8 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 - CAR-10. A token is spent only at the endpoint it was linked for.
 
 ## Threat model
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The threat model of [`connector-removal-design.md`](connector-removal-design.md#threat-model) covers operator services reached through egress.
 
 ### Security properties
 
@@ -232,6 +246,8 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 | Malicious MCP server | Answer the anonymous probe with 401 to force prompts, or with 200 to skip them. | It affects only its own connector. A 200 followed by a 401 reaches the tool-call path in "CA-5". |
 
 ## Current state
+
+> **Record.** Kept since revision 17 as the record of the connector code that [`connector-removal-design.md`](connector-removal-design.md) removes. Each row states what the tree held when this design read it.
 
 | Claim | Truth | Evidence |
 | :-- | :-- | :-- |
@@ -260,6 +276,8 @@ Alice and Bob are developers at `acme`, and Carol is its tenant admin. `globex` 
 
 ## CA-0: Shared OAuth link flow
 
+> **Live.** Since revision 17, 2026-11-15, CA-0 stays under [`connector-removal-design.md`](connector-removal-design.md), because account links under UC-2 use the shared flow. Today's §9.3 handlers, which it converts, leave with §9.3, so CA-0 lands the shared flow for UC-2 and closes the account-link defect wherever the §9.3 handlers remain until CR-A of the removal design lands.
+
 The account-link attack exists in today's code, and tying its fix to either feature would leave it open until that feature ships. The owner therefore decided that the shared flow is its own proposal and lands first. It takes the hardened sequence in [`user-credential-delivery-design.md`, "Flow"](user-credential-delivery-design.md#flow) in UC-2, moves it into `pkg/connectoroauth`, and converts today's §9.3 handlers to it, which closes the defect with no other feature.
 
 | Piece | Owner |
@@ -270,9 +288,11 @@ The account-link attack exists in today's code, and tying its fix to either feat
 | Callback validation: signature, single consumption, cookie nonce, and the `iss` issuer parameter of RFC 9207 where the provider returns it | Shared |
 | A hook that receives the validated code and verifier | Shared interface |
 | What the start page displays, the per-provider callback path, and any digest compared on return | Supplied by each caller |
-| Code exchange and token storage | Connectors: the gateway, into the connector credential row. UC-2: the Token Service, with identity binding, the UC-2 rule that ties the provider account to the Lenny user, and a confirmation page. |
+| Code exchange and token storage | UC-2: the Token Service, with identity binding, the UC-2 rule that ties the provider account to the Lenny user, and a confirmation page. Today's §9.3 handlers, until CR-A of the removal design deletes them: the gateway, into the connector credential row. |
 
 ## CA-1: Link flow
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. Account links under [UC-2](user-credential-delivery-design.md#uc-2-the-oauth2link-source-and-account-linking) replace connector links.
 
 ### Connector routes
 
@@ -299,6 +319,8 @@ An impersonation bearer is refused on every link route, as [`user-credential-del
 
 ## CA-2: Token lifecycle
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. UC-2 **Refresh** and the token trust record cover account-link tokens.
+
 **Refresh.** `bearerFor` refreshes when a token has fewer than 5 minutes left, and once more after a 401 from the server. Refresh-token rotation, in which a provider issues a new refresh token on each refresh and invalidates the old one, means one writer per credential, so the row carries `refresh_lease_holder` and `refresh_lease_until`, using the lease form in [`user-credential-delivery-design.md`, "Refresh"](user-credential-delivery-design.md#refresh): a 30-second lease set by a conditional update. Other replicas re-read the row for up to 5 seconds. The 5-minute refresh threshold, the lease length, and the 5-second wait are operator-tunable. Both designs use one lease form, so a later change to it considers account links and connector credentials together, as that section notes.
 
 - `invalid_grant` deletes the token, and the user is unlinked from then on.
@@ -310,6 +332,8 @@ An impersonation bearer is refused on every link route, as [`user-credential-del
 
 ## CA-3: Connector access and environment
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. Credential binding `scope` and `environments`, and the tenant's egress allow set, decide what a session reaches.
+
 **Default deny.** `AuthorizeConnector` returns `ErrConnectorNotPermitted` when no policy layer resolves, for every connector, which §8.3 evaluates as a candidate of type `connector`. An error resolving a policy fails closed. Carol grants the connector with a `DelegationPolicy` target of type `connector`, on the runtime or as the environment's default. This reverses the "conservative fall-through" comment in `connectorauthz.go`, which stays correct for other candidate types.
 
 **Environment on a child.** The row `buildChildSession` writes carries the parent's environment, or the target environment when the delegation crosses a sharing path under [decision 14](tenant-scoping-identity-design.md#cross-environment-sharing-decision-14). [`tenant-scoping-identity-design.md`, "TS-3: Session environment context and cross-environment sharing"](tenant-scoping-identity-design.md#ts-3-session-environment-context-and-cross-environment-sharing) already requires this under **Delegated child's environment**, and **Effects on existing features** in the same section states that connectors read that field. This design depends on that change and lands it itself if that design has not landed first.
@@ -317,6 +341,8 @@ An impersonation bearer is refused on every link route, as [`user-credential-del
 **Environment on a derived session.** A derived session carries its source's environment, as that design also requires under **Derive**. §7.1 **Connector state.** is rewritten: a connector link belongs to a user and an environment, so a derived session reuses it under those keys.
 
 ## CA-4: Link check
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. UC-3's check, with `403 LINKS_REQUIRED` and `details.userLinks`, remains. `details.connectors` and `deferConnectors` leave.
 
 ### Evaluation
 
@@ -368,6 +394,8 @@ The request accepts `deferConnectors: ["memory"]`, stored on the session row. A 
 
 ## CA-5: Propagating the failure
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. An operator service's 401 reaches the harness directly, and connector prompts and `initiator_type: connector` leave. For an account link that lapses during a session, the owner settled O11 of the removal design on 2026-11-15 as "go with (b)": the gateway raises a link prompt under [`user-credential-delivery-design.md`, "UC-8: Link prompts"](user-credential-delivery-design.md#uc-8-link-prompts), which takes the lifetime, budget, suppression, and `inputPolicy` rules of "Connector prompts" below and keys deduplication on the user.
+
 ### Why the raw 401 stops at the gateway
 
 The runtime reaches a connector through `tool_call` frames on its slot's connection to the adapter, directly or through the reference bridge that its harness runs as a stdio MCP server, after the handshake of [RP-1](runtime-protocol-design.md#rp-1-handshake). External authorization is a separate hop between the gateway and the external server, as §9.1 and §9.2 state. An HTTP 401 cannot cross for three reasons:
@@ -410,6 +438,8 @@ A session created with `inputPolicy: decline` ([R12](rest-only-client-api-design
 
 ## CA-6: Resume and restart
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour.
+
 These paths exist today **[source]**:
 
 | Path | Code | New runtime process | Client waiting | Behaviour **[design]** |
@@ -447,6 +477,8 @@ Today §4.7.8 also restarts a runtime below the Full integration level so that i
 **Confirmed.** The adapter re-resolves connectors on `Resume` before starting the runtime, so this rule takes effect on every restart with no adapter change **[source]**. Under RP-4 the resolved set reaches the runtime as `toolServers` on the new `session_start`. `TestSessionConnectors_spec_9_3_142` covers the resolve path, and a new test pins each row above.
 
 ## CA-7: Delegated children
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour.
 
 ### Identity
 
@@ -491,6 +523,8 @@ An LLM parent reads the typed error, and a programmatic orchestrator handles it 
 
 ## CA-8: Runtime capability and late tools
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. `deferredToolDiscovery`, `toolProgress`, and `tool_progress` leave. Capability inference and the capability snapshot of **Capability metadata.** leave as well, with `capabilityInferenceMode`, `toolCapabilityOverrides`, and `mcpAnnotationMapping`, under D10 of the removal design.
+
 `capabilities.deferredToolDiscovery` joins the capability catalog of [RP-2](runtime-protocol-design.md#rp-2-capabilities-and-their-dependencies), defaulting to `false`, and a runtime reports it in its handshake. `true` states both of these:
 
 - The runtime keeps a connector server after its listing returns an error.
@@ -520,6 +554,8 @@ No runtime needs this until one declares `deferredToolDiscovery: true`, so this 
 **Enforcement downstream.** A deployer who wants permissions enforced by the server uses OAuth scopes. `BuildAuthorizationURL` sends the connector's `auth.scopes` **[source]**, and a server that honours them refuses what the token does not allow. For example, a deployer registers `memory-ro` with `scopes: [memory.read]` alongside a read-write entry. Lenny does not verify that a server enforces scopes, and each entry needs its own link.
 
 ## CA-9: Stdio bridge
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The reference bridge of [RP-5](runtime-protocol-design.md#rp-5-reference-mcp-bridge) stays for the `platform` tool server alone, and a harness reaches an external MCP service over HTTP through `netagent` ("CR-3" of the removal design).
 
 Claude Code documents stdio, HTTP, Server-Sent Events (SSE), and WebSocket, and Codex documents stdio and HTTP, and neither states Unix socket support **[documented]**. A stock CLI therefore reaches the session's tool servers through a stdio process of its own.
 
@@ -588,6 +624,8 @@ No Codex result is recorded. The CLI was not logged in for model turns, and the 
 
 ## CA-10: Removing built-in memory
 
+> **Live.** Since revision 17, 2026-11-15, CA-10 stays under [`connector-removal-design.md`](connector-removal-design.md). A deployer reaches an external memory service through egress, as "External memory pattern" states.
+
 **Removed.** The inventory below comes from a search for the feature's own identifiers. It excludes unrelated `NewMemory` stores and Google Cloud Memorystore tests, which a broader search also matches.
 
 | Area | Items |
@@ -610,6 +648,39 @@ No Codex result is recorded. The CLI was not logged in for model turns, and the 
 **Data.** Nothing migrates, since there are no deployments.
 
 ## External memory pattern
+
+Revision 17 restates this pattern for the egress path, because [`connector-removal-design.md`](connector-removal-design.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). The pattern of revisions 1 to 16, which registered a memory server as a connector, follows under "Connector-based pattern, withdrawn" as the record.
+
+**Project knowledge.** Keep it in the repository, in files such as `CLAUDE.md` or `AGENTS.md`, and change it through pull requests. It is reviewed, it follows repository permissions, and it needs no Lenny mechanism. This is the first choice for coding workloads.
+
+**User-level memory [design].** A deployer runs a memory service outside Lenny, typically an MCP memory server, and sessions reach it through egress as "CR-3" of the removal design states:
+
+- The service's host is in the tenant's egress allow set. A service on a private network is reached through an outbound connector route of [`tenant-outbound-connector-design.md`](tenant-outbound-connector-design.md).
+- A credential binding on the host with `delivery: inject` tells the service who is calling. An `identityAssertion` binding ("CR-2" of the removal design) gives the service an identity assertion: a short Lenny-signed token that `netagent` attaches to requests to the service, naming the tenant, user, and session, which the agent never sees. The service scopes memory by the `tenant` and `user` claims. A memory service that serves every tenant verifies the assertion against the deployment key set that the removal design publishes and takes the tenant from the verified key, never from an unverified claim. When the deployment sets `tokenService.identityAssertion.deploymentKeySet.enabled: false`, `https://<lenny>/identity/.well-known/jwks.json` answers `404`, and such a service verifies through the issuer-prefix method of CR-2 **What a verifier checks.** instead: it accepts an `iss` of the form `https://<lenny>/identity/<tenant-id>` under the deployment's identity prefix, fetches that tenant's key set at `https://<lenny>/identity/<tenant-id>/jwks.json`, and takes the tenant from the issuer whose key set held the key. A `userCredential` binding ([UC-3](user-credential-delivery-design.md#uc-3-the-usercredential-binding)) gives it the user's own token from an account link instead, and the service scopes by the token's subject.
+- The runtime's own configuration names the service URL, through its `env`, a `runtimeOptions` property it declares, or a workspace file such as a project-scoped `.mcp.json`, and the wrapper writes it into the harness's MCP configuration with the HTTP transport.
+
+```yaml
+credentialBindings:
+  - name: memory-identity
+    hosts: [memory.acme.com]
+    secret: { kind: identityAssertion }     # lifetimeSeconds defaults to 300
+    delivery: inject                        # the only delivery an assertion takes
+    scope: always
+```
+
+The harness speaks MCP to `https://memory.acme.com/mcp` through `netagent`, which attaches the assertion. The memory server verifies it against `https://<lenny>/identity/acme/jwks.json`.
+
+**Erasure [design].** Deleting the memory data is a deployer obligation, which the operator guide states. The erasure receipt names, under `externalDataNotErased`, the hosts of the tenant's bindings that carried the user's identity, from `userCredential` links the erasure deletes and from `identityAssertion` bindings, so a receipt never implies the external data was removed.
+
+**Retention, residency, capacity, and retrieval quality.** These move to the deployer.
+
+**Code exposure.** A memory service is a channel from a session to an external store. Its traffic passes `netagent` and `lenny-egress`, so the bytes-out alert, `egressLockHosts`, and credential pinning apply, and `egress.tunnel` records each connection as `enforced` evidence. No Lenny interceptor sees the memory content. Memory returned to a model is untrusted input, and scanning it is the service's job. User-scoped memory can carry content from one repository into a session on another, and Lenny cannot partition memory by repository.
+
+**Impersonation.** UC-3 **Impersonation** refuses impersonated input to a tree holding a `userCredential` binding, and the removal design extends the refusal to `identityAssertion` bindings, so the accepted risk under "Limits" no longer applies to memory reached this way.
+
+### Connector-based pattern, withdrawn
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** Kept as the record of revisions 1 to 16.
 
 **Project knowledge.** Keep it in the repository, in files such as `CLAUDE.md` or `AGENTS.md`, and change it through pull requests. It is reviewed, it follows repository permissions, and it needs no Lenny mechanism. This is the first choice for coding workloads.
 
@@ -660,6 +731,8 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 
 ## Limits
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour.
+
 - A connector token is decrypted in the gateway (F-4.3.1). A compromised replica can use any connector token.
 - **Impersonation is an accepted risk, by owner decision.** `requireCreatingBearerAllowed` stops an impersonation bearer from creating a session, and `handleMessages` still accepts one **[source]**. The invoker spends the session owner's token with no impersonation check. A platform admin impersonating Alice can therefore message her session, and its agent can write to her external memory as her. The external service records Alice as the actor, the write outlasts the session, and no per-call audit event names the impersonator. The operator guide states this. [`user-credential-delivery-design.md`, "Limits under both deliveries"](user-credential-delivery-design.md#limits-under-both-deliveries) refused built-in memory writes for this reason, under **Impersonation**, and that protection does not carry over to connectors.
 - A pod with several slots, one whose pool sets `sessionPolicy.maxConcurrentSessionsPerPod` above one, gives each session its own slot container and runtime process ([`session-isolation-design.md`](session-isolation-design.md)), and the adapter knows each call's session from the connection that carries it ([RP-3](runtime-protocol-design.md#rp-3-tool-calls-on-frames)). Omission is therefore per session on every agent pod, and the earlier limit for a shared-process pod no longer exists. A connector call travels on a `tool_call` frame to the gateway rather than through `netagent`, so the egress design's slot attribution and its decision 60 do not change the link check or the call's session.
@@ -669,6 +742,8 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 - The capability snapshot does not notice a changed tool until a refresh, as "CA-8" states.
 
 ## Alternatives rejected
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The rows "Keep memory in the gateway behind a flag" and "Ship a reference memory server" stay live under CA-10.
 
 | Alternative | Reason |
 | :-- | :-- |
@@ -695,6 +770,8 @@ Bob's first session is refused the same way. He passes `deferConnectors: ["memor
 | A local HTTP listener in the adapter | It opens a TCP port, loses the `SO_PEERCRED` check, and changes every pod's listener surface. |
 
 ## Instructions for reviewers of other designs
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The removal design's sweep list replaces the connector items below. The items on CA-0 and CA-10 stay live.
 
 The owner instructed that this document edit no other design. These items are for a reviewer agent working on the named design, which applies them there. Other work is editing these designs on this branch, so locate each item by heading and quoted text, check that it still holds against the current text, and report any item that no longer fits rather than forcing it.
 
@@ -764,6 +841,8 @@ Revision 13 applied the items that [`runtime-protocol-design.md`](runtime-protoc
 
 ## Specification changes
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The memory removals stay live under CA-10: the memory parts of the §4, §8.2, §8.3, and §8.5, §9.1, §9.4, §12, §15.1 and §15.4, §16, §18, §22.4, §23, and §28.5.3 rows, including `externalDataNotErased` in §12.8. No row is CA-0's: its shared flow lands on the account-link routes of §15.1 with UC-2, and §9.3 becomes a successor pointer under CR-1 of the removal design. Every connector statement is withdrawn, and the removal design's "Specification changes" replaces it.
+
 Each lands through `change-proposal`.
 
 | Section | Change |
@@ -787,6 +866,8 @@ Each lands through `change-proposal`.
 
 ## Documentation
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The memory removal stays live: `docs/tutorials/agent-memory.md` describes the egress pattern of "External memory pattern", as the **External memory.** bullet states, and `docs/runtime-author-guide/platform-tools.md`, the runtime capabilities page, the operator guide, the glossary, and `docs/reference/metrics.md` lose the memory content. Every connector statement is withdrawn, and the removal design's "Changes to Lenny's documentation" replaces it.
+
 The pages that change are `docs/tutorials/agent-memory.md`, which becomes the external pattern; `docs/tutorials/using-connectors.md`, which gets the link flow; `docs/runtime-author-guide/platform-tools.md`, the runtime capabilities page that replaces `integration-levels.md` under [`runtime-protocol-design.md`](runtime-protocol-design.md), the operator guide, the glossary, and `docs/reference/metrics.md`, which lose the memory content; and `TESTING.md` §13.36. Together they state every setting, limit, failure mode, and runtime-facing rule this design introduces:
 
 - **Settings and defaults.** `deferConnectors` on session creation, derive, and `start_child_session`, inherited as a union down the tree; `capabilities.deferredToolDiscovery`, default `false`, read from the chosen revision; `details.retryAfterSeconds` on a delegation refusal, 30 seconds by default and operator-tunable; `maxElicitationWait`, 600 seconds by default and set per pool, which bounds a connector prompt; and a connector's `auth.scopes`, which the authorization URL sends.
@@ -796,6 +877,8 @@ The pages that change are `docs/tutorials/agent-memory.md`, which becomes the ex
 - **External memory.** The pattern of "External memory pattern", including the deployer's erasure obligation and `externalDataNotErased`.
 
 ## Tests
+
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The CA-0 cases of tier 9, a link URL sent to another subject, a missing cookie, and an impersonation bearer, each refused, stay live and run through the account-link routes of UC-2 once CR-A of the removal design deletes the §9.3 handlers. The tier 11 case for the removed memory metrics and alerts stays live. Every connector case is withdrawn, and the removal design's "Tests" replaces it.
 
 The tiers are the stages of the repository's test suite, which `lenny-test --tier` runs.
 
@@ -815,6 +898,8 @@ Each test carries its `// spec:` annotation once the specification lands.
 
 ## Validation owed
 
+> **Withdrawn in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The OIDC availability item stays live for CA-0. The other items are withdrawn.
+
 | Item | Blocks | How |
 | :-- | :-- | :-- |
 | Codex behaviour on a failed `tools/list` and `list_changed` | A `deferredToolDiscovery: true` claim for Codex. The path for `deferredToolDiscovery: false` needs no answer. | Run a current, logged-in Codex headless, through the bridge, against a stub that fails `tools/list` and then notifies. Claude Code 2.1.317 is measured under "CA-9". |
@@ -824,6 +909,8 @@ Each test carries its `// spec:` annotation once the specification lands.
 | MCP resource indicator requirement | "CA-2" | Read the MCP authorization page, and test a server that enforces audience. |
 
 ## Proposal split and order
+
+> **Revised in revision 17, 2026-11-15, under [`connector-removal-design.md`](connector-removal-design.md).** CA-0 and CA-G stay live. CA-A to CA-F, CA-H, and CA-I are withdrawn with the connectors they land. CA-G no longer waits on CA-A to CA-F: it depends on CR-A of the removal design, so that the documented egress pattern replaces built-in memory when memory goes. The table keeps the earlier order as the record.
 
 | Proposal | Content | Depends on |
 | :-- | :-- | :-- |
@@ -877,3 +964,20 @@ These notes were carried in the status line of earlier revisions.
   - The tier 3 contract test of `LINKS_REQUIRED` runs over REST alone; the MCP forms are the MCP adapter's to test.
   - The status line reads against `rest-only-client-api-design.md` revision 3.
 - Revision 16, dated 2026-11-15, applies the owner's answer of that day on tool progress, "2.1: ok", which [`runtime-protocol-design.md`](runtime-protocol-design.md) revision 9 records as D11 and [`mcp-protocol-upgrade-design.md`](mcp-protocol-upgrade-design.md) revision 8 applies to the connector client in "MP-6". "CA-8" gains **Progress of a connector call.**: `toolProgress` joins the catalog beside `deferredToolDiscovery`, the connector client asks for progress only for a session that declares it, and the gateway forwards each notification for a pending call to the adapter, which writes it as `tool_progress`, with no token or URL reaching the pod. "Labels from other designs" gains MP-6, and the §5.1 and §9.3 rows, the runtime-facing rules of "Documentation", and the tier 10 test follow. The status line's reads-against list names the current revision of each cited design.
+- Revision 17, dated 2026-11-15, records the owner's decision of that day to remove connectors, in the owner's words "Yes, let's drop connectors.", with the owner's reasoning, "An operator could build connectors outside of Lenny and just use egress to talk to its own 'connector' service." [`connector-removal-design.md`](connector-removal-design.md) revision 1 designs the removal and its replacements. This revision changes these rules.
+  - CA-1 to CA-9 are withdrawn. Each heading carries a banner naming what replaces it, and the text stays as the record. "High-level design", "Requirements" (CAR-2 to CAR-10), "Threat model", "Limits", "Alternatives rejected", and the connector parts of "Owner decisions", "Instructions for reviewers of other designs", "Specification changes", "Documentation", "Tests", and "Validation owed" are marked the same way.
+  - CA-0 and CA-10 stay live. CA-G, which lands CA-10, depends on CR-A of the removal design in place of CA-A to CA-F.
+  - "External memory pattern" is restated for the egress path: a memory service reached through `netagent`, with an `identityAssertion` or `userCredential` binding on its host, the runtime's configuration naming the URL, the deployer's erasure obligation with `externalDataNotErased` naming binding hosts, and the egress controls on its traffic. The connector-based pattern follows as the record.
+  - The status line's reads-against list adds `connector-removal-design.md` revision 1.
+- Revision 18, dated 2026-11-15, follows [`connector-removal-design.md`](connector-removal-design.md) revision 2, which applies the owner's answers of that day to its open decisions. The owner answered O2 to O7 "ok, keep this as described", asked "if every tenant has a different key, can a single operator service still work across all tenants?", and on external agents said "Connectors should be gone and external agents become a concern of the runtime that connects to them directly". This revision changes these rules.
+  - The removal design renumbered its parts, so the egress pattern that "External memory pattern" and the CA-9 banner cite is its "CR-3" in place of "CR-6".
+  - "External memory pattern" introduces the identity assertion as a short Lenny-signed token that `netagent` attaches to requests to the service, naming the tenant, user, and session, which the agent never sees, and states that a memory service serving every tenant verifies it against the deployment key set and takes the tenant from the verified key.
+  - The status line reads against `connector-removal-design.md` revision 2.
+- Revision 19, dated 2026-11-15, is the final consistency pass of the connector removal of 2026-11-15, under the owner's decision "Yes, let's drop connectors.", and applies the owner's answer "yes" of the same day to "Add a setting to turn off the deployment-wide key set, which lets anyone who reaches it list every tenant's identifier?", which [`connector-removal-design.md`](connector-removal-design.md) records as D9. This revision changes these rules.
+  - "External memory pattern" states that a memory service that serves every tenant verifies through the issuer-prefix method, fetching each tenant's key set at `https://<lenny>/identity/<tenant-id>/jwks.json`, when the deployment sets `tokenService.identityAssertion.deploymentKeySet.enabled: false` and the deployment key set answers `404`.
+  - The "CA-0" table names UC-2's code exchange first, and the connector credential row only for today's §9.3 handlers until CR-A of the removal design deletes them.
+  - "Scope", "Terms", and "Current state" carry a mark that keeps them as the record, and the "Terms" mark names the entries that serve the live parts and points to the removal design's "Terms" for the identity assertion and the bindings.
+  - Each banner names this design's revision 17 as the revision that withdrew its section, in place of a wording that read as a revision of the removal design.
+  - The banner of "CA-5" states O11 of the removal design as the open question of a link prompt. The banner of "CA-8" states that capability inference and the capability snapshot leave under D10 of the removal design, whose question the owner answered "yes" on 2026-11-15: "Remove `capabilityInferenceMode`, `toolCapabilityOverrides`, and `tenantRbacConfig.mcpAnnotationMappings`?"
+  - The banners of "Alternatives rejected", "Specification changes", "Documentation", and "Tests" name the memory rows and the CA-0 cases that stay live, and state that the removal design's sections replace the connector content.
+- Revision 20, dated 2026-11-15, follows [`connector-removal-design.md`](connector-removal-design.md) revision 4, which records the owner's answer of that day to its O11, "go with (b)", with one prompt per user. The banner of "CA-5" now states that the gateway raises a link prompt for an account link that lapses during a session, under [`user-credential-delivery-design.md`, "UC-8: Link prompts"](user-credential-delivery-design.md#uc-8-link-prompts), which takes the lifetime, budget, suppression, and `inputPolicy` rules of "Connector prompts" and keys deduplication on the user. The text under the banner stays as the record. No rule of this design changes. The status line reads against the removal design's revision 4, `user-credential-delivery-design.md` revision 37, `user-git-identity-design.md` revision 43, `egress-and-git-design.md` revision 89, and `rest-only-client-api-design.md` revision 6.
