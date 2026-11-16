@@ -21,6 +21,7 @@ This directory holds the test evidence the design documents under `designs/` cit
 | `placement-design.md` | `placement-design/`, the research of 2026-11-15 on clusters that span regions and on sandbox runtimes, which `session-isolation-design.md` also cites |
 | `service-account-credentials-design.md` | `service-account-credentials-design/`, the security review of 2026-11-15 of its revision 1. No test ran for this design. |
 | `pod-lifecycle-controller-design.md` | `pod-lifecycle-controller-design/`, the review of 2026-11-15 of upstream `kubernetes-sigs/agent-sandbox` against Lenny's pod lifecycle. No test ran for this design. |
+| No design yet (the specification's structure) | `spec-structure-design/spike/`, the spike of 2026-11-16 that maps the specification onto a tree organized by capability and writes the warm pools and pod lifecycle slice in full |
 
 These files are records of throwaway test runs. They are not product code, and they carry no specification citation. Go source files carry a `.txt` suffix so that they do not join the repository's Go module. Private keys and downloaded third-party files are excluded, and each folder's `README.md` records the URLs and versions of the downloads.
 

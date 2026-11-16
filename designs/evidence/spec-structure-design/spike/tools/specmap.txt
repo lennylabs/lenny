@@ -1,0 +1,555 @@
+RM:1 | README | Title of the current tree; the new root map replaces it.
+RM:7 | README | Hand-kept table of contents; the root map and the index pages replace it.
+01:1 | CTX | Purpose paragraph.
+01:9 | PRIN |
+02:1 | NONE |
+02:3 | PRIN |
+02:17 | PRIN |
+03:1 | ARCH:0.8,CTX:0.2 | Component diagram and request path → ARCH; actors and external systems → CTX.
+04:1 | NONE |
+04:3 | OUT-CODE:0.5,LOPS:0.2,OPSEV:0.3 | lenny-ops introduction → LOPS; the Go package list leaves to package documentation; the EventEmitter wiring list → OPSEV, whose event types EVTOPS defines.
+04:40 | GW:0.25,GWSCALE:0.3,DCFGTIER:0.1,OUT-TESTING:0.25,ARCH:0.1 | Role → ARCH; responsibilities, deployment, HPA metric roles, and maxSessionsPerReplica → GW; per-tier values → DCFGTIER; the capacity calibration methodology leaves to TESTING.md; the MCP and type: mcp endpoints leave (rest-only-client-api RO-11, agent-runtimes-only AR-1).
+04:99 | GW:0.3,GWSCALE:0.3,OUT-TESTING:0.3,OUT-REMOVED:0.1 | Subsystem partition, per-subsystem limits and breakers, extraction thresholds → GW internal parts and process settings; LLM Proxy subsystem → GWLLM; threshold calibration methodology leaves to TESTING.md; the MCP Fabric wording leaves with the MCP client API.
+04:149 | CHGWPOD:0.85,OUT-TESTING:0.15 | Request scope derivation → conventions of CHGWPOD; the tier-0 gate statement → TESTING.md.
+04:159 | SESS:0.5,GW:0.2,STORPG:0.2,TENISO:0.1 | Session record and generations → SESS model; columns → STORPG; the multi-tenancy statement → TENISO; the "manages" list → GW internal parts.
+04:198 | TOKSVC:0.6,TOKX:0.2,OUT-REMOVED:0.2 | Deployment, ServiceAccount, KMS access → TOKSVC; token endpoint role → TOKX; connector and LLM provider credential roles removed (connector-removal CR-1, llm-upstreams-and-cost-budgets LU-4).
+04:230 | NONE |
+04:232 | AUDIT:0.5,STORPG:0.5 | Stored record kinds → STORPG; audit egress → AUDIT.
+04:247 | CKPT:0.6,CKSTORE:0.4 | Atomicity rule → CKPT; manifest format → CKSTORE and STOROBJ (incremental-checkpoint IC-2 supersedes the manifest).
+04:253 | CKPT:0.85,RTPOPS:0.15 | Quiesce, timeout, and abort rules → CKPT; quiesce frames → RTPOPS.
+04:269 | CKPT:0.7,SLO:0.3 | Interval and scheduling rules → CKPT; checkpoint SLO targets → SLO.
+04:279 | CKPT:0.3,CKSTORE:0.4,STORPG:0.1,OBJ:0.2 | Eviction fallback behavior → CKPT; storage failure rules → CKSTORE; EvictionStateStore records → STORPG; object-store outage handling → OBJ.
+04:316 | ARTIFACT:0.7,OBJ:0.3 | What is stored and its retention → ARTIFACT; backend → OBJ.
+04:334 | NONE |
+04:338 | WPC:0.35,POOL:0.15,CLAIM:0.15,APOD:0.08,KUBE:0.1,K8S:0.05,WEBHOOK:0.02,OUT-REMOVED:0.1 | Role, responsibilities, leader election, scaling, failover, API rate limiting, cold-start fill, crash during scale-down → WPC; internal abstraction layer → WPC internal parts; resource kinds and API group → K8S and the kind pages; claim mechanism, occupancy projection, reserved hold, orphaned claim detection, fallback claim path and its preconditions, mirror reconciliation → CLAIM; onPoolExhausted, warm pool sizing, idle cost and scale-to-zero, disruption protection → POOL; finalizers and the host-schedulable label → APOD and KLABEL; claim admission webhook → WEBHOOK and KADMIT; etcd write pressure, tuning, and the tuning matrix → KUBE; ADR-007, dependency pinning, go/no-go, and fallback plan leave (pod-lifecycle-controller PLC-1, decision-records REC-1).
+04:537 | PSC:0.55,POOL:0.4,KPSET:0.05 | Reconcile from Postgres, leader election, admission-denial handling → PSC; scaling formula, demand inputs, schedules → POOL; the fields it writes → KPSET.
+04:606 | KPSET:0.2,KAPOD:0.2,KPCLAIM:0.2,KADMIT:0.15,WPC:0.08,PSC:0.07,GW:0.05,CLAIM:0.05 | Field-ownership table → the writer column of each kind page; SSA enforcement and conflict retry → WPC and PSC; gateway RBAC grants → GW; the claim status phase enumeration → KPCLAIM; the Postgres-authoritative-state webhook → KADMIT and WEBHOOK.
+04:657 | NONE |
+04:659 | CHGWPOD:0.4,ADAPTER:0.15,SEND:0.1,SLOTOPS:0.15,CLAIM:0.1,SCRUB:0.1 | RPC table → CHGWPOD operations; registry entries, the registry critical section → ADAPTER internal parts; bind attempt token, stamp-once rule, admission → SLOT and CLAIM; session seal → SEND; Shutdown teardown kinds → SCRUB.
+04:768 | CKPT:0.7,ADAPTER:0.3 | Mutual-exclusion rule → CKPT; its lock → ADAPTER.
+04:776 | CHPODGW |
+04:790 | RTP | Pointer section; the runtime protocol pages own the content.
+04:794 | ADMAN |
+04:838 | ADMAN |
+04:872 | RTP | Integration levels become declared capabilities (runtime-protocol RP-2).
+04:878 | OUT-REMOVED:0.8,RTPOPS:0.2 | Removed with LLM credential rotation (llm-upstreams-and-cost-budgets LU-4 names §4.7.8); any VCS rotation frame → RTPOPS.
+04:905 | ADAPTER:0.6,RTPHAND:0.4 | Adapter start order → ADAPTER; the runtime-visible handshake → RTPHAND.
+04:926 | SUPV:0.4,SCRUB:0.25,APOD:0.1,CHINTRA:0.1,OUT-REMOVED:0.15 | Sidecar-versus-embedded trade-offs leave (agent-pod-layout PL-2); runtime process lifetime, supervisor launch, end, sweep, and the runtime-exit table → SUPV; restart and keep dispositions → SCRUB; retirement outcomes → APOD; supervision frames → CHINTRA; health check → ADAPTER.
+04:1296 | SECMODEL:0.6,POD:0.2,SLOT:0.2 | Trust boundary → SECMODEL; per-container enforcement → POD; per-slot items → SLOT.
+04:1429 | ADMIT |
+04:1447 | INTCPT:0.45,INTCPTIF:0.4,ADMIT:0.1,PKI:0.05 | Phases, payloads, verdicts → INTCPTIF; where the chain runs and how verdicts apply, failPolicy → INTCPT (runtime-routing RT-2 supersedes part); the built-in chain order → ADMIT; interceptor mTLS → PKI.
+04:1564 | CPOOL |
+04:1572 | CPOOL:0.5,OUT-REMOVED:0.5 | VCS providers → CPOOL; LLM providers removed (LU-4).
+04:1588 | CPOOL:0.6,OUT-REMOVED:0.4 |
+04:1646 | CPOOL:0.5,TOKSVC:0.3,STORPG:0.2 | Secret topology rules → CPOOL; Token Service secret read path → TOKSVC; encrypted tables → STORPG.
+04:1754 | OUT-REMOVED:0.8,SCREATE:0.2 | Removed (LU-4); the configuration check at the post-chain point → SCREATE and LLMUP.
+04:1760 | CPOOL:0.5,OUT-REMOVED:0.5 |
+04:1784 | CDELIV:0.4,OUT-REMOVED:0.6 | LLM provider schemas removed; VCS forms → CDELIV.
+04:1841 | OUT-REMOVED | credentialPolicy removed (LU-4); the tenant's LLM upstream list replaces it → LLMUP.
+04:1866 | OUT-REMOVED:0.6,CDELIV:0.4 |
+04:1878 | CPOOL:0.4,OUT-REMOVED:0.6 |
+04:1920 | OUT-REMOVED | Fallback chains removed (LU-4).
+04:1965 | OUT-REMOVED | Proactive renewal removed (LU-4).
+04:1993 | LLMUP:0.45,GWLLM:0.35,OUT-REMOVED:0.2 | Replaced by the metering proxy (LU-3): routing and security rules → LLMUP; listener, process settings, metrics → GWLLM; lease-token injection removed.
+04:2080 | OUT-REMOVED | Removed (llm-response-cache-removal RC-1); provider prompt caching passthrough (RC-5) → LLMUP.
+04:2096 | OUT-REMOVED | Removed (LU-4).
+04:2138 | CPOOL:0.6,SECMODEL:0.4 |
+04:2162 | CPOOL:0.7,OUT-RUNBOOKS:0.3 | Revocation rules → CPOOL; operator procedure → docs/runbooks; LLM rows removed.
+04:2219 | CPOOL:0.5,SECMODEL:0.5 |
+04:2227 | CPOOL:0.6,TOKSVC:0.2,KMS:0.2 |
+04:2260 | KMS:0.3,TOKSVC:0.3,OUT-RUNBOOKS:0.4 | Rotation behavior → TOKSVC and KMS; the step-by-step procedure → docs/runbooks.
+04:2277 | EVTAUD:0.6,CPOOL:0.4 | Event schemas → EVTAUD; which action emits which event → CPOOL.
+05:1 | NONE |
+05:3 | RUNTIME:0.55,RTPHAND:0.1,POOL:0.1,KRUNTIME:0.05,OUT-REMOVED:0.2 | Runtime fields, labels, tenant customization → RUNTIME; capabilities.* → RTPHAND (runtime-protocol RP-2); preConnect and sdkWarmBlockingPaths → POOL; type: mcp and integrationLevel removed (agent-runtimes-only AR-1, AR-4).
+05:53 | RUNTIME:0.8,ADMRT:0.2 | Rules → RUNTIME; example and write operation → ADMRT.
+05:125 | RUNTIME |
+05:183 | RUNTIME |
+05:191 | RUNTIME |
+05:236 | RUNTIME:0.5,OUT-OPGUIDE:0.5 | One example stays under Flows; the rest move to the operator guide.
+05:266 | RUNTIME |
+05:272 | SETUP |
+05:284 | RUNTIME |
+05:290 | RUNTIME:0.7,CAPIDISC:0.3 |
+05:330 | OUT-REMOVED | Removed (agent-runtimes-only AR-1; connector-removal).
+05:349 | OUT-REFRT |
+05:353 | OUT-OPGUIDE:0.6,RUNTIME:0.4 |
+05:377 | POOL |
+05:395 | SCRUB:0.15,SCRUBPROC:0.2,SLOT:0.1,SLOTOPS:0.15,APOD:0.1,POOL:0.08,CLAIM:0.04,SUPV:0.05,TIMEOUT:0.02,OUT-REMOVED:0.11 | Pool dimensions, onPoolExhausted, pinned idle inventory → POOL; tenant pinning → CLAIM; maxClientIdleSeconds → TIMEOUT; T4 reuse prohibition, scrub model, deployer acknowledgements, client visibility of weak reuse → SCRUB; Lenny scrub procedure, supervised scrub, what the scrub reaches, Sweep, Kata variant, onScrubFailure → SCRUBPROC; slot and reclaim hold → SLOT; concurrent-session slot failure, assignment atomicity, rehydration, slot retry → SLOTOPS; recycle lifecycle, keep pod, retirement policy → APOD; runtime supervisor → SUPV; service mode and stateless runtimes removed (agent-runtimes-only AR-2).
+05:697 | POOL:0.7,OUT-REMOVED:0.3 | mode_factor formula → POOL; service-mode rows removed.
+05:732 | POOL:0.5,OUT-OPGUIDE:0.5 | Disallowed combinations → POOL; hot and cold pool strategy → operator guide.
+05:747 | POOL:0.6,CAPISES:0.1,PLACE:0.15,PSC:0.15 | PoolWarmingUp condition, bootstrap fill, WarmPoolBootstrapping alert → POOL; the 503 response → CAPISES; topology spread → PLACE; operator visibility → PSC metrics.
+05:795 | ISO:0.6,SECMODEL:0.25,WEBHOOK:0.15 | Profiles and acknowledgeNonceOnlyAuth → ISO; image supply chain → SECMODEL; RuntimeClass-aware admission → WEBHOOK and KADMIT.
+06:1 | NONE |
+06:3 | POOL:0.5,APOD:0.15,PSC:0.15,ADAPTER:0.1,SCRUB:0.1 | Pod-warm and SDK-warm states, demotion, demotion-rate breaker → POOL; breaker persistence across failover → PSC; adapter SIGTERM in sdk_connecting and its watchdog → ADAPTER and APOD; one-session-per-pod default and recycle opt-in → SCRUB; per-session credential lease removed (LU-4).
+06:78 | APOD:0.3,SESS:0.2,SUSP:0.15,RESUME:0.15,TIMEOUT:0.1,SLOT:0.05,CLAIM:0.05 | Pod states, crash during a session, host-node precondition → APOD; session sub-states drawn in the same machine (input_required, suspended, resuming, resume_pending) → SESS, SUSP, RESUME; timer behavior across states → TIMEOUT; pre-running slot cleanup and leaked slots → SLOT; reserved hold → CLAIM; proxy and direct mode rows removed.
+06:320 | SLO:0.4,POOL:0.2,OUT-TESTING:0.4 | Latency targets → SLO; what pre-warming removes from the hot path → POOL rationale; benchmark requirements → TESTING.md.
+06:379 | RTPFS:0.6,POD:0.3,DATACLASS:0.1 | Paths a runtime sees → RTPFS (agent-pod-layout PL-3 rewrites them); volumes and responsibility split → POD; data-at-rest protection → DATACLASS.
+07:1 | NONE |
+07:3 | SCREATE:0.45,MATER:0.1,UPLOAD:0.1,ARTIFACT:0.08,SDERIVE:0.08,SESS:0.07,SEND:0.12 | Creation steps, atomicity, reclaim on failed bind, isolation response → SCREATE; uploadToken → UPLOAD; materialization steps → MATER; artifact retention and transcript → ARTIFACT; derive semantics → SDERIVE; failureClass → SESS; seal-and-export, terminal pipeline, post-terminal window, terminal writes → SEND.
+07:133 | STREAM:0.2,SESS:0.15,IMSG:0.2,INBOX:0.2,MSG:0.1,RESUME:0.05,GWCOORD:0.05,CAPIMSG:0.05 | Client operations → CAPIMSG; streaming events, ordering and resume, reconnect, SSE back-pressure → STREAM; reattach symmetry and ReattachedChild → GWCOORD and DTREE; state machine and terminal writes → SESS; inter-session messaging, scope, hierarchy, rate limits, content policy, sibling patterns → IMSG; inbox, durable inbox, DLQ, receipts, drain on terminal → INBOX; routing paths and precedence → MSG (message-delivery MD-5 supersedes the seven paths).
+07:412 | RESUME:0.85,OUT-REMOVED:0.05,DTREE:0.05,STREAM:0.05 | Retry policy, generations, resume flow and driver, awaiting_client_action → RESUME; children → DTREE; last_seq → STREAM; credential leases on the replacement pod removed.
+07:494 | UPLOAD:0.8,CAPIFILE:0.2 |
+07:534 | SETUP |
+08:1 | NONE |
+08:3 | DLG |
+08:11 | DLG:0.6,LEASE:0.1,RTPTOOL:0.1,DTREE:0.1,OUT-REMOVED:0.1 | Flow, what the parent sees, virtual child interface → DLG; LeaseSlice and tracingContext injection → LEASE; tool surface → RTPTOOL; tree memory and subtree offloading → DTREE; type: mcp refusal removed.
+08:129 | NONE |
+08:131 | DPOL:0.85,ADMPOL:0.15 |
+08:246 | LEASE:0.6,BUDGET:0.15,DPOL:0.1,OUT-REMOVED:0.15 | Lease fields, treeVisibility, allowSelfRecursion, isolation monotonicity, tree-wide limits → LEASE; budget reservation model → BUDGET; delegation presets → DPOL; experimentContext (runtime-routing RT-1) and credential propagation (LU-4) removed.
+08:515 | DLG |
+08:523 | RTPTOOL:0.6,DLG:0.4 | Tool schemas → RTPTOOL; semantics → DLG.
+08:625 | LEASEXT | 
+08:652 | LEASEXT | 
+08:712 | LEASEXT | 
+08:748 | FILEX |
+08:807 | NONE |
+08:809 | DLG:0.4,STORPG:0.3,RTPTOOL:0.3 | Record semantics → DLG; columns → STORPG; the MCP column removed (RO-11).
+08:889 | RTPTOOL:0.7,DLG:0.3 |
+08:1005 | DLG |
+08:1018 | DTREE |
+09:1 | NONE |
+09:3 | IFMAP:0.5,OUT-ADAPTER:0.5 | Which protocol is used where → IFMAP; client-facing MCP → MCP adapter repository.
+09:14 | RTPTOOL |
+09:33 | CAPIDISC:0.6,OUT-ADAPTER:0.4 |
+09:42 | INPUT:0.7,RTPTOOL:0.15,OUT-ADAPTER:0.15 | Chain rules → INPUT; the runtime's elicitation tool → RTPTOOL; MCP elicitation forms → MCP adapter.
+09:113 | NONE |
+09:115 | OUT-REMOVED | Connectors removed (connector-removal CR-1); successor pointer → OPSVC.
+09:145 | LINK:0.4,OUT-REMOVED:0.6 | Shared OAuth link flow → LINK (connector-authorization CA-0); connector parts removed.
+09:167 | OUT-REMOVED:0.8,OUT-OPGUIDE:0.2 | Removed (connector-authorization CA-10); external memory pattern → operator guide.
+10:1 | NONE |
+10:3 | NONE |
+10:5 | GWCOORD:0.8,CHSTORE:0.2 | Coordination rules → GWCOORD; REG-COORDLEASE → CHSTORE.
+10:33 | GWCOORD:0.8,CHGWPOD:0.2 | Handoff protocol → GWCOORD; CH-FENCE messages → CHGWPOD.
+10:44 | GWCOORD:0.6,AVAIL:0.4 |
+10:54 | GWCOORD:0.7,SESS:0.3 | Detection → GWCOORD; the hold state as session behavior → SESS.
+10:65 | GWCOORD |
+10:76 | GWSCALE:0.7,DCFGTIER:0.3 | 
+10:112 | GWDRAIN:0.85,SEND:0.15 | Drain stages → GWDRAIN; terminal pipelines at process exit → SEND.
+10:182 | GWBARRIER:0.7,CHGWPOD:0.2,GW:0.1 |
+10:205 | AUTHN:0.65,BROWSER:0.1,TOKSVC:0.1,PLAY:0.15 | Claims, tenant_id extraction, verifier key set and rotation → AUTHN; signing topology and KMS failure → TOKSVC; playground auth paths and mint invariants → BROWSER, cookie handling in the process → PLAY.
+10:284 | AUTHZ:0.85,ADMIAM:0.15 |
+10:342 | PKI:0.7,CERTM:0.15,GW:0.05,REDIS:0.03,PG:0.02,OUT-TESTING:0.05 | CA, lifecycle, peer validation → PKI; cert-manager failure and CA rotation → CERTM; startup TLS probe and configuration validation → GW; Redis and PgBouncer TLS → REDIS and PG; integration test requirement → TESTING.md.
+10:417 | GW:0.6,AVAIL:0.4 |
+10:443 | COMPAT:0.35,UPGRADE:0.3,TOKSVC:0.1,OUT-RUNBOOKS:0.15,REV:0.1 | Expand-contract discipline and CRD versioning → COMPAT; migration tooling and CRD upgrade procedure → UPGRADE; script usage and GitOps note → docs; Token Service and KMS rotation → TOKSVC; adapter and agent binaries → REV.
+10:508 | REV:0.7,OUT-REMOVED:0.3 | Replaced by the runtime-level rollout (runtime-revisions RV-4).
+10:592 | ENV:0.75,AUTHZ:0.1,OUT-REMOVED:0.15 | Environments, tag selection, cross-environment delegation, noEnvironmentPolicy → ENV (tenant-scoping TS-1 supersedes); member roles → AUTHZ; mcpRuntimeFilters and connectorSelector removed.
+10:719 | OUT-REMOVED:0.9,ROUTE:0.1 | Removed (runtime-routing RT-1); runtime routes replace variant routing → ROUTE.
+11:1 | NONE |
+11:3 | ADMIT |
+11:21 | QUOTA:0.5,BUDGET:0.35,OUT-REMOVED:0.15 | Quota hierarchy, storage quota, counter crash recovery, overshoot formula → QUOTA; budget inheritance and delegation budget counters → BUDGET; proxy and direct mode rows removed.
+11:65 | BILLEV:0.55,EVTBILL:0.35,GW:0.05,AUDIT:0.05 | Event types, schema, null contract → EVTBILL; sinks, immutability, corrections and their authorization → BILLEV; metrics → GW; correction audit → AUDIT.
+11:204 | TIMEOUT |
+11:258 | AUTHN:0.7,PRINC:0.3 |
+11:280 | APICONV |
+11:295 | BREAKER:0.75,ADMPOL:0.15,EVTOPS:0.05,EVTAUD:0.05 |
+11:349 | AUDIT:0.5,SIEM:0.35,TSET:0.1,STORPG:0.05 | Integrity, hash chain, write-time tenant validation, platform-tenant residency, Postgres-only gap, superuser bypass → AUDIT; OCSF format, mapping, pinning, translation failure, dead-letter → SIEM; compliance profile gate and downgrade ratchet → TSET; columns → STORPG.
+11:499 | FORENSIC:0.6,OUT-RUNBOOKS:0.4 |
+12:1 | NONE |
+12:3 | ARCH |
+12:7 | ARCH:0.4,STORPG:0.4,OUT-REMOVED:0.2 | Role-to-backend map → ARCH; tables → STORPG; MemoryStore row removed (CA-10).
+12:28 | PG:0.6,TENISO:0.1,OUT-OPGUIDE:0.25,AVAIL:0.05 | Topology, pooler, RLS defenses, write classification, failover, encryption, backups → PG; R-01 to R-03 query rules → TENISO; IOPS and sizing guidance → operator guide.
+12:174 | REDIS:0.55,QUOTA:0.2,STORREDIS:0.15,OUT-OPGUIDE:0.1 | Topology, logical separation, scalability ceilings, cluster pre-plan → REDIS; key isolation and patterns → STORREDIS and TENISO; failure behavior per use and fail-open budgets → QUOTA; throughput quantification → operator guide.
+12:288 | OBJ:0.45,CKSTORE:0.3,ARTIFACT:0.1,QUOTA:0.05,DATACLASS:0.1 | Backend, HA, versioning, replication, TLS, pre-drain check → OBJ; encryption and the T4 per-tenant key → DATACLASS; checkpoint retention, eviction context, manifests, GC, tombstone sweep → CKSTORE (incremental-checkpoint IC-6 supersedes); storage quota → QUOTA.
+12:375 | EXT:0.6,OUT-CODE:0.4 | Scaling extension interfaces → EXT; shared type definitions and struct cross-reference → package documentation.
+12:466 | EXT:0.4,OUT-CODE:0.6 |
+12:520 | EXT:0.4,PG:0.3,OUT-CODE:0.3 |
+12:618 | EXT:0.5,OUT-CODE:0.5 |
+12:660 | OUT-CODE |
+12:671 | CHSTORE:0.4,EXT:0.2,OUT-CODE:0.2,EVT:0.2 | Pub/sub topics → CHSTORE; CloudEvents envelope → EVT.
+12:772 | EXT |
+12:780 | ERASE:0.28,PSEUDO:0.12,RESID:0.18,HOLD:0.15,TENANT:0.12,BACKUP:0.05,DATACLASS:0.05,ARTIFACT:0.02,OUT-REMOVED:0.03 | T4 ephemeral workspace isolation → DATACLASS; legal hold, checkpoint rotation, hold reconciler → HOLD; erasure, user-level invocation, erasure job, lifecycle fence, processing restriction, backends in scope, DeleteByUser order → ERASE; erasure_salt, pseudonymization, billing erasure, receipts → PSEUDO; tenant deletion, hold interaction, SLA → TENANT; backups in erasure scope and post-restore reconciler → ERASE and BACKUP; workspace deduplication → ARTIFACT; residency, admission control, KMS and backup residency, multi-region → RESID; MemoryStore preflight removed.
+12:1048 | DATACLASS:0.85,TSET:0.15 |
+13:1 | NONE |
+13:3 | POD:0.5,SECMODEL:0.2,SLOT:0.2,OUT-REMOVED:0.1 | Pod namespace isolation, container identity, supervisor volume → POD; per-slot credential scope → SLOT; fsGroup delivery and lenny-cred-readers removed (agent-pod-layout PL-5, LU-4).
+13:36 | NONE |
+13:38 | NETISO:0.6,KUBE:0.4 | Baseline → NETISO; CNI requirement → KUBE.
+13:57 | NETISO:0.8,OUT-REMOVED:0.2 | provider-direct, NET-006, NET-044 removed (LU-4, egress EG-2).
+13:193 | CKPT:0.6,CHEGRESS:0.4 | Presigned capability rules → CKPT; CH-OBJSTORE contract → CHEGRESS.
+13:248 | NETISO:0.2,GW:0.15,LOPS:0.15,TOKSVC:0.1,WPC:0.08,PSC:0.07,WEBHOOK:0.08,EGPROXY:0.05,AGDNS:0.05,PLAY:0.02,PG:0.05 | Default deny for lenny-system → NETISO; each component allow-list → that component's Deployment section; ingress from the ingress controller → GW.
+13:386 | LLMUP:0.6,GW:0.2,OUT-REMOVED:0.2 |
+13:486 | EGRESS:0.8,OUT-REMOVED:0.2 |
+13:516 | DNS:0.6,AGDNS:0.4 |
+13:604 | TOKX:0.6,AUTHN:0.05,CKPT:0.05,SECMODEL:0.05,OUT-REMOVED:0.25 | Token issuance and rotation, parameter mapping, claims, scope narrowing, impersonation, write-before-issue, revocation, rate limits, client authentication → TOKX; checkpoint object-store capabilities → CKPT; connector credentials removed (CR-1); LLM credential modes removed (LU-4); translator trust boundary removed (RO-11).
+13:746 | UPLOAD |
+13:764 | DPOL |
+14:1 | WSPLANIF:0.55,WSPLAN:0.25,EVTHOOK:0.1,LEASE:0.1 | Fields and constraints → WSPLANIF; source semantics, binding, defaults → WSPLAN; the callbackUrl webhook (delivery, signing, domain allowlist) → EVTHOOK; the delegation lease member → LEASE; credentialPolicy removed.
+14:294 | WSPLANIF:0.6,COMPAT:0.4 |
+15:1 | IFMAP:0.2,OUT-ADAPTER:0.6,OUT-REMOVED:0.2 | The REST and MCP split and ExternalAdapterRegistry leave (rest-only-client-api RO-1, RO-11); IFMAP states that the client contract is REST alone.
+15:178 | OUT-REMOVED | Adapter framework types removed (RO-11).
+15:540 | CAPIEVT:0.6,STREAM:0.2,OUT-REMOVED:0.2 | Kind registry → CAPIEVT; sub-state coverage → STREAM; dispatch filter, capability consistency, pluggability tiers, built-in adapter inventory, type: mcp endpoints, single-shot model, Open Responses conversations removed.
+15:694 | CAPI:0.15,CAPISES:0.35,CAPIFILE:0.15,CAPIDISC:0.1,CAPICRED:0.1,SESS:0.1,OUT-REMOVED:0.05 | Endpoint tables → the client-api page for each resource group; preconditions and visible states → CAPISES with rules → SESS; derive-failure audit rows → EVTAUD; evaluation hooks removed (RT-1).
+15:835 | SDERIVE:0.05,CAPISES:0.04,ADMIN:0.1,ADMRT:0.05,ADMTEN:0.05,ADMIAM:0.04,ADMCRED:0.04,ADMPOL:0.04,ADMBILL:0.02,ADMCOMP:0.03,APOOLS:0.03,DCFGSEED:0.02,OPSAPI:0.03,AUTHZ:0.05,APICONV:0.12,ERR:0.2,USAGE:0.03,OUT-REMOVED:0.06 | Mis-leveled heading covering most of the admin API. Replay → SDERIVE and CAPISES (session-derive SD-1; evalRef removed); admin endpoint table → admin-api pages by group; operational and bootstrap planes → ADMIN and DCFGSEED; operability endpoints → OPSAPI; scope taxonomy and OIDC claim extensions → AUTHZ; MCP extension contract → OPSMCP; CI contract → TESTING.md; correlation headers, envelopes, OpenAPI, rate-limit headers, dryRun, ETags, pagination → APICONV; error envelope, error catalog, validation format → ERR and each owner; connector and experiment dryRun and connector live test removed; usage response → USAGE.
+15:1403 | OUT-ADAPTER:0.85,OPSMCP:0.15 | Client MCP tools, versions, wire projection → MCP adapter repository; management MCP references → OPSMCP.
+15:1499 | OUT-ADAPTER:0.7,CAPI:0.3 | The REST half → CAPI compatibility; consistency obligations → adapter conformance (RO-6).
+15:1539 | CHGWPOD |
+15:1543 | RTP:0.6,CHAN:0.4 | Schema artifact list → CHAN wire-contract register; contracts it restates (SDK-warm demotion, bind attempt token, reclaim hold) → RTP with the rules in POOL and SLOT.
+15:1560 | RTPPART | 
+15:1586 | OUT-ADAPTER:0.8,RTPPART:0.2 | Protocol columns leave (RO-11); the MessagePart column → RTPMSG.
+15:1641 | RTPPART:0.6,INBOX:0.2,IMSG:0.2 | Envelope fields → RTPMSG; delivery_receipt and message_expired semantics → INBOX; threadId and inReplyTo → IMSG.
+15:1775 | CHGWPOD:0.5,RTPMSG:0.5 |
+15:1796 | RTP:0.5,RTPHAND:0.3,OUT-RTGUIDE:0.2 | Levels become declared capabilities (RP-2); comparison matrix → RTP; MCP integration guidance → runtime author guide.
+15:1893 | OUT-RTGUIDE |
+15:2096 | OUT-RTGUIDE |
+15:2126 | RTPCONF:0.8,OUT-TESTING:0.2 |
+15:2173 | COMPAT:0.6,CAPI:0.2,ADMIN:0.2 |
+15:2229 | OUT-CLIENT:0.7,CAPI:0.3 |
+15:2248 | RTPSDK:0.7,OUT-RTGUIDE:0.3 |
+16:1 | NONE |
+16:3 | GW:0.2,GWSCALE:0.1,GWCOORD:0.05,GWLLM:0.05,GWCLAIM:0.05,WPC:0.15,PSC:0.05,TOKSVC:0.03,ADAPTER:0.07,LOPSSVC:0.05,EGPROXY:0.02,EGAUTHZ:0.03,NETAGENT:0.03,PG:0.02,REDIS:0.02,OBJ:0.02,OUT-REMOVED:0.06 | Each metric row → the Metrics section of its emitting component, with a link to the requirement it measures; the generated metrics catalog replaces the table; experiment, connector, and LLM credential metrics removed.
+16:293 | OBSCONV |
+16:318 | SLO |
+16:329 | OBSCONV |
+16:381 | OBSCONV |
+16:411 | SLO:0.25,TIER:0.1,POOL:0.08,CLAIM:0.04,APOD:0.04,CKPT:0.05,AUDIT:0.05,BILLEV:0.03,GWCOORD:0.04,GW:0.06,CPOOL:0.03,PG:0.04,REDIS:0.03,OBJ:0.02,CERTM:0.02,WEBHOOK:0.03,LOPS:0.03,OUT-TESTING:0.03,OUT-REMOVED:0.03 | Each alert row → the capability whose requirement it detects a breach of, or the component for unit-health alerts; bundled and operator-driven split, SLO targets, burn-rate alerts → SLO; capacity tiers, Tier 4, workload profile, scale target → TIER; benchmark requirement → TESTING.md.
+16:659 | EVTOPS:0.7,OPSEV:0.3 |
+16:676 | EVTAUD:0.6,REMED:0.1,BACKUP:0.1,UPGRADE:0.05,DRIFT:0.05,DIAG:0.05,AUDIT:0.05 | Event schemas → EVTAUD; which operation emits each event → the owning capability.
+16:714 | LOPS:0.8,GWOPS:0.2 |
+16:738 | PROM:0.5,DCFG:0.5 |
+16:750 | SLO |
+17:1 | NONE |
+17:3 | ARCH:0.4,GW:0.1,TOKSVC:0.05,WPC:0.05,PSC:0.05,LOPS:0.1,BKJOB:0.05,PROM:0.1,POD:0.05,PG:0.05 | The table becomes the component map in ARCH; each row's replicas, PDB, rolling update, and ServiceAccount → its component page.
+17:23 | ARCH:0.1,KADMIT:0.25,WEBHOOK:0.25,PLACE:0.1,POD:0.05,NETISO:0.05,DCFG:0.1,PREFLT:0.05,INSTALL:0.05 | Namespace list → ARCH; Pod Security Standards → POD; admission manifests, rejection labels, feature-gated inventory, HA contract, downgrade enforcement, failure modes → WEBHOOK and KADMIT; node isolation → PLACE; ResourceQuota and LimitRange → INSTALL; preflight enumeration → PREFLT.
+17:115 | BACKUP:0.6,OUT-OPGUIDE:0.4 |
+17:147 | LOCALDEV |
+17:151 | LOCALDEV:0.7,CLIINST:0.3 |
+17:207 | LOCALDEV:0.5,OUT-CONTRIB:0.5 |
+17:229 | LOCALDEV |
+17:252 | LOCALDEV |
+17:272 | LOCALDEV |
+17:276 | LOCALDEV |
+17:280 | LOCALDEV |
+17:290 | OUT-TESTING |
+17:294 | OUT-RTGUIDE |
+17:388 | PRIN |
+17:397 | INSTALL:0.35,DCFG:0.15,DCFGSEED:0.25,UPGRADE:0.2,COMPAT:0.05 | Chart contents → DCFG; CRD upgrade procedure, validation hook, stale CRD recovery → UPGRADE; bootstrap seed → DCFGSEED (format) and INSTALL (behavior).
+17:523 | PREFLT:0.7,INSTALL:0.3 | Each check → PREFLT, linking the requirement it verifies.
+17:696 | DCFG |
+17:712 | INSTALL:0.5,CLIINST:0.5 |
+17:776 | OUT-RUNBOOKS:0.85,RUNBOOK:0.15 | Runbook bodies → docs/runbooks; machine-consumable format → RUNBOOK.
+17:899 | TIER |
+17:903 | CAT-SETTINGS | Hand-kept copy of defaults; each default moves to its setting's owner and the settings catalog lists it.
+17:965 | DCFGTIER:0.35,OUT-OPGUIDE:0.35,POOL:0.1,GWSCALE:0.1,PG:0.05,REDIS:0.05 | Per-tier values → DCFGTIER; formulas a controller computes → POOL and GW; KEDA and Prometheus Adapter paths, worked examples, first-week workflow, sizing guidance → operator guide.
+17:1311 | OUT-OPGUIDE |
+17:1317 | OUT-OPGUIDE |
+17:1328 | OUT-OPGUIDE |
+17:1348 | OUT-OPGUIDE |
+17:1359 | OUT-OPGUIDE |
+17:1371 | DCFGTIER |
+17:1381 | LOPS |
+17:1385 | INSTALL:0.6,DCFG:0.4 |
+17:1396 | DCFGANS |
+17:1404 | DCFGANS |
+17:1420 | DCFGANS |
+17:1442 | PG:0.35,REDIS:0.3,OBJ:0.35 |
+17:1480 | OBJ:0.7,CKSTORE:0.3 |
+17:1557 | PG:0.35,REDIS:0.3,OBJ:0.35 |
+17:1594 | LOCALDEV |
+17:1598 | PG:0.35,REDIS:0.3,OBJ:0.35 |
+18:* | OUT-BUILDPLAN |
+19:1 | OUT-ARCHIVE | Summary table of decisions; the designs and proposals are the decision records (decision-records-design), and each current rationale moves to its owner page's Rationale section.
+20:1 | OUT-ISSUE |
+21:1 | OUT-ROADMAP |
+22:1 | PRIN | Decisions left to deployers → PRIN.
+23:* | OUT-ABOUT |
+24:1 | CLI |
+24:20 | CLIINST |
+24:31 | CLIINST |
+24:38 | CLIINST |
+24:51 | CLIADM |
+24:60 | CLIADM |
+24:85 | CLIADM |
+24:101 | CLIADM |
+24:107 | CLIADM |
+24:115 | OUT-REMOVED | External adapters removed (RO-11).
+24:121 | CLIADM |
+24:128 | CLIADM |
+24:137 | CLIOPS |
+24:144 | CLIADM |
+24:152 | CLIOPS |
+24:174 | CLIADM |
+24:180 | CLIOPS |
+24:201 | CLI |
+24:213 | CLIADM |
+24:230 | CLISCAF |
+24:260 | CLIINST |
+24:274 | CLIINST |
+24:299 | CLIINST |
+25:1 | OPSAREA |
+25:7 | NONE |
+25:9 | ARCH:0.5,OPSAREA:0.5 |
+25:25 | OPSAREA |
+25:38 | OPSAREA:0.5,PRIN:0.5 |
+25:48 | PRIN:0.5,OPSAREA:0.5 |
+25:57 | AUTHN |
+25:61 | AUTHZ:0.6,TOKX:0.4 |
+25:118 | APICONV:0.5,AUDIT:0.5 |
+25:129 | NONE |
+25:131 | ARCH:0.6,LOPS:0.4 |
+25:175 | LOPS | Rationale for the gateway and lenny-ops boundary.
+25:190 | OPSAPI |
+25:194 | OPSAPI |
+25:204 | ERR:0.5,APICONV:0.5 |
+25:236 | APICONV |
+25:279 | APICONV |
+25:304 | ERR |
+25:333 | APICONV |
+25:348 | APICONV |
+25:357 | APICONV:0.5,OPSREM:0.5 |
+25:409 | GWOPS |
+25:413 | DIAG | | cap=DIAG;comp=GWOPS;if=OPSHEALTH
+25:443 | DIAG |
+25:455 | OPSHEALTH |
+25:549 | DIAG | | cap=DIAG;comp=GWOPS;if=OPSHEALTH
+25:574 | DIAG |
+25:625 | OPSLIFE | | cap=UPGRADE;comp=GWOPS;if=OPSLIFE
+25:644 | OPSEV | | cap=OPSEV;comp=GWOPS;if=EVTOPS
+25:690 | EVTOPS |
+25:722 | OPSEV | | cap=OPSEV;comp=GWOPS;if=OPSEVT
+25:754 | OPSEV |
+25:784 | NONE |
+25:786 | LOPS |
+25:790 | LOPS |
+25:794 | DCFG |
+25:810 | LOPSK8S | 
+25:1028 | LOPSK8S | 
+25:1032 | LOPS |
+25:1039 | LOPS |
+25:1067 | LOPSK8S | 
+25:1074 | LOPSK8S | 
+25:1127 | LOPSK8S | 
+25:1325 | LOPSK8S | 
+25:1338 | LOPS |
+25:1357 | BKJOB |
+25:1417 | LOPS:0.5,NETISO:0.5 |
+25:1422 | LOPS:0.5,INSTALL:0.5 |
+25:1432 | LOPS |
+25:1444 | PROM:0.6,LOPSAGG:0.4 |
+25:1448 | PROM |
+25:1459 | PROM |
+25:1463 | PROM |
+25:1474 | PREFLT |
+25:1485 | LOPSAGG |
+25:1497 | LOPS:0.5,PG:0.5 |
+25:1525 | LOPS |
+25:1529 | OUT-OPGUIDE |
+25:1539 | DCFGTIER |
+25:1547 | LOPS |
+25:1556 | OUT-OPGUIDE |
+25:1567 | LOPS |
+25:1571 | AUTHN:0.5,LOPS:0.5 |
+25:1587 | AUTHZ |  | cap=AUTHZ;comp=LOPSSVC;if=OPSME
+25:1599 | OPSME |
+25:1708 | OPSREM |  | cap=REMED;comp=LOPSSVC;if=OPSREM
+25:1721 | OPSREM |
+25:1796 | OPSREM |
+25:1880 | LOPSAGG |
+25:1931 | LOPSAGG |
+25:1950 | LOPSAGG |
+25:1963 | LOPSAGG |
+25:1974 | DIAG:0.5,LOPSAGG:0.5 |
+25:1988 | DIAG:0.5,LOPSAGG:0.5 |
+25:2005 | DIAG |
+25:2009 | LOPSAGG |
+25:2021 | OPSAPI |
+25:2031 | APICONV:0.5,LOPSSVC:0.5 | 
+25:2060 | LOPSSVC | 
+25:2092 | LOPSSVC | 
+25:2096 | OPSAPI |
+25:2105 | REMED |  | cap=REMED;comp=LOPSSVC;if=OPSREM
+25:2109 | REMED |
+25:2157 | OPSREM |
+25:2254 | REMED:0.5,LOPSSVC:0.5 | The exclusivity guarantee → REMED; the tier mechanism → LOPS.
+25:2322 | REMED |
+25:2339 | REMED |
+25:2382 | REMED |  | cap=REMED;comp=LOPSSVC;if=OPSREM
+25:2438 | REMED |
+25:2447 | LOPSSVC | 
+25:2465 | EVTOPS |
+25:2471 | STORPG |
+25:2506 | LOPS |
+25:2510 | LOPS |
+25:2543 | LOPS |
+25:2552 | OBSCONV:0.5,LOPS:0.5 |
+25:2576 | PKI:0.5,LOPS:0.5 |
+25:2590 | OPSEV |  | cap=OPSEV;comp=LOPSSVC;if=OPSEVT
+25:2707 | OPSEV:0.5,OPSEVT:0.5 |
+25:2719 | OPSEV:0.5,OPSEVT:0.5 |
+25:2729 | OPSEV:0.5,OPSEVT:0.5 |
+25:2743 | OPSEV:0.5,OPSEVT:0.5 |
+25:2757 | OPSEV |
+25:2777 | OPSEV |
+25:2800 | OPSEV |
+25:2852 | DIAG |  | cap=DIAG;comp=LOPSSVC;if=OPSHEALTH
+25:2983 | DIAG |
+25:3028 | NONE |
+25:3030 | RUNBOOK |
+25:3034 | RUNBOOK:0.5,OUT-CONTRIB:0.5 |
+25:3077 | OUT-RUNBOOKS | A heading inside an embedded example runbook, written at section level.
+25:3164 | RUNBOOK |
+25:3168 | RUNBOOK:0.5,OPSHEALTH:0.5 |
+25:3226 | DIAG:0.5,RUNBOOK:0.5 |
+25:3295 | RUNBOOK:0.5,OPSHEALTH:0.5 |
+25:3301 | RUNBOOK |
+25:3321 | UPGRADE |  | cap=UPGRADE;comp=LOPSSVC;if=OPSLIFE
+25:3343 | INSTALL |
+25:3347 | INSTALL:0.5,DCFG:0.5 |
+25:3373 | INSTALL |
+25:3400 | OPSLIFE |
+25:3404 | UPGRADE |
+25:3416 | UPGRADE |
+25:3420 | OPSLIFE |
+25:3448 | UPGRADE |
+25:3457 | UPGRADE |
+25:3469 | CERTM |
+25:3505 | LOPS:0.5,PROM:0.5 |
+25:3521 | UPGRADE |
+25:3534 | UPGRADE |
+25:3582 | UPGRADE |
+25:3596 | UPGRADE |
+25:3606 | UPGRADE:0.5,OPSLIFE:0.5 |
+25:3616 | STORPG |
+25:3689 | OPSAUD:0.5,AUDIT:0.5 |  | cap=AUDIT;comp=LOPSSVC;if=OPSAUD
+25:3735 | AUDIT |
+25:3745 | OPSAUD:0.5,LOPSSVC:0.5 | 
+25:3777 | ERASE:0.5,SIEM:0.5 |
+25:3794 | DRIFT |  | cap=DRIFT;comp=LOPSSVC;if=OPSAUD
+25:3807 | DRIFT |
+25:3815 | DRIFT |
+25:3866 | DRIFT |
+25:3880 | DRIFT |
+25:3915 | BACKUP |  | cap=BACKUP;comp=LOPSSVC;if=OPSLIFE
+25:4003 | BACKUP |
+25:4007 | BACKUP |
+25:4021 | BKJOB |
+25:4048 | BACKUP |
+25:4066 | OBJ:0.5,BKJOB:0.5 |
+25:4077 | BACKUP:0.5,OBJ:0.3,RESID:0.2 |
+25:4140 | OPSLIFE |
+25:4144 | BACKUP |
+25:4148 | BACKUP |
+25:4152 | BACKUP:0.5,DCFGTIER:0.5 |
+25:4168 | BACKUP |
+25:4176 | BACKUP |
+25:4191 | BACKUP |
+25:4200 | BACKUP |
+25:4236 | BACKUP |
+25:4269 | OUT-OPGUIDE:0.5,BACKUP:0.5 |
+25:4282 | BACKUP:0.5,SLO:0.5 |
+25:4294 | OUT-OPGUIDE |
+25:4387 | OPSMCP |
+25:4391 | OPSMCP |
+25:4400 | LOPS:0.5,OPSMCP:0.5 |
+25:4422 | OPSMCP |
+25:4426 | OPSMCP |
+25:4469 | OPSMCP |
+25:4519 | OPSMCP |
+25:4549 | OPSMCP |
+25:4569 | OPSMCP:0.5,AUTHZ:0.5 |
+25:4588 | OPSMCP |
+25:4614 | OPSMCP |
+25:4631 | OPSMCP |
+25:4682 | OPSMCP |
+25:4697 | OPSMCP |
+25:4703 | NONE |
+25:4705 | SLO |
+25:4711 | OBSCONV |
+25:4739 | DCFG:0.5,OBSCONV:0.5 |
+25:4761 | DCFGTIER:0.5,SLO:0.5 |
+25:4809 | SLO:0.5,DCFG:0.5 |
+25:4829 | GWOPS |
+25:4839 | SLO:0.5,OUT-OPGUIDE:0.5 |
+25:4853 | OBSCONV |
+25:4857 | PROM |
+25:4868 | LOPS:0.5,GW:0.5 |
+25:4878 | EVTAUD |
+25:4882 | SLO |
+25:4891 | CLIOPS |
+25:4895 | CLI |
+25:4904 | CLIOPS |
+25:4912 | CLIOPS |
+25:4920 | CLIOPS |
+25:4928 | CLIOPS |
+25:4936 | CLIOPS |
+25:4946 | CLIOPS |
+25:4955 | CLIOPS |
+25:4965 | CLIOPS |
+25:4976 | CLIOPS |
+25:4985 | CLIOPS |
+25:5002 | CLIOPS |
+25:5015 | CLIOPS |
+25:5026 | AVAIL |
+25:5043 | OUT-RUNBOOKS |
+25:5049 | OUT-RUNBOOKS |
+25:5056 | OUT-RUNBOOKS |
+25:5098 | OUT-RUNBOOKS |
+25:5114 | AVAIL | Rationale for human-only total-outage recovery.
+25:5122 | NONE |
+25:5124 | ARCH:0.5,LOCALDEV:0.5 |
+25:5144 | ARCH |
+25:5174 | ARCH:0.5,OPSAREA:0.5 |
+25:5187 | WKOPS |
+25:5191 | WKOPS |
+25:5195 | WKOPS |
+25:5214 | WKOPS |
+25:5218 | WKOPS |
+25:5253 | WKOPS |
+25:5257 | WKOPS |
+25:5282 | WKOPS |
+25:5305 | WKOPS |
+25:5326 | WKOPS |
+26:1 | OUT-REFRT |
+26:14 | OUT-REFRT |
+26:36 | OUT-REFRT:0.7,OUT-REMOVED:0.3 | Runtime categories leave the specification (owner feedback; egress design "Runtime categories in §26.2").
+26:132 | OUT-REFRT |
+26:238 | OUT-REFRT |
+26:260 | OUT-REFRT |
+26:282 | OUT-REFRT |
+26:304 | OUT-REFRT |
+26:361 | OUT-REFRT |
+26:391 | OUT-REFRT |
+26:421 | OUT-REFRT |
+26:450 | OUT-REFRT |
+26:480 | OUT-CONTRIB |
+27:1 | PLAY |
+27:9 | PLAY |
+27:25 | PLAY:0.8,DCFG:0.2 |
+27:55 | BROWSER:0.6,PLAY:0.4 | 
+27:72 | BROWSER:0.4,PLAY:0.2,OUT-REMOVED:0.4 | Cookie session and token mint rules → BROWSER; process-side handling → PLAY; the MCP bearer and WebSocket wording leave (RO-12).
+27:175 | PLAY |
+27:187 | PLAY:0.5,OUT-REMOVED:0.5 |
+27:199 | PLAY:0.7,SEND:0.3 |
+27:211 | PLAY |
+27:236 | PLAY |
+27:251 | PLAY:0.6,SECMODEL:0.4 |
+27:263 | OUT-BUILDPLAN |
+28:1 | CHAN |
+28:10 | NAMING |
+28:66 | CHAN |
+28:88 | CHAN |
+28:103 | CHAN:0.5,CAT-CHANNELS:0.5 |
+28:110 | CAT-CHANNELS |
+28:132 | CAT-CHANNELS |
+28:142 | NAMING |
+28:160 | CHAN:0.5,OUT-BUILDPLAN:0.5 | ABSENT rows are build gaps → BUILD-GAPS.md; the register format → CHAN.
+28:175 | CHAN |
+28:204 | CHGWPOD |
+28:434 | CHPODGW |
+28:523 | RTPMSG:0.33,RTPPART:0.17,RTPOPS:0.15,RTPTOOL:0.12,CHINTRA:0.13,OUT-REMOVED:0.1 | CH-MSGSOCK card and frames, MessagePart → RTPMSG; CH-RUNTIMEOPS → RTPOPS; CH-MCP-PLATFORM and adapter-local tools → RTPTOOL; CH-SUPERVISE → CHINTRA; CH-MCP-CONNECTOR removed (CR-1).
+28:1475 | CHREPLICA |
+28:1530 | CHEGRESS:0.6,OUT-REMOVED:0.4 | CH-OBJSTORE → CHEGRESS; CH-LLMPROXY replaced by the metering proxy routes (LU-3).
+28:1710 | CHCTRL |
+28:1808 | CHSTORE |
+28:1927 | CHAN |
+28:2029 | CHAN:0.5,COMPAT:0.5 |
+28:2062 | CAT-CHANNELS:0.6,AVAIL:0.4 | Per-channel rows restate each card's Degradation block; generate them (CAT-CHANNELS); cross-channel principles → AVAIL.
+29:1 | WALK |
+29:27 | WALK |
+29:112 | WKSTART |
+29:404 | WKMSG |
+29:662 | WKSTOP |
+29:849 | WKCKPT |
+29:1078 | WKRESUME |
+29:1238 | WKDRAIN |
+29:1343 | WKHANDOFF |
+29:1439 | WKEVICT |
+29:1513 | WKCOTEN |

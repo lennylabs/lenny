@@ -1,0 +1,969 @@
+designs/agent-pod-layout-design.md	15	2	572	572	## Problem
+designs/agent-pod-layout-design.md	31	2	373	655	## Scope
+designs/agent-pod-layout-design.md	77	2	654	2094	## Terms
+designs/agent-pod-layout-design.md	152	2	921	921	## High-level design
+designs/agent-pod-layout-design.md	199	2	3053	3053	## Decisions
+designs/agent-pod-layout-design.md	237	2	3007	3007	## Open decisions
+designs/agent-pod-layout-design.md	350	2	1361	1361	## Requirements
+designs/agent-pod-layout-design.md	380	2	0	796	## Current state
+designs/agent-pod-layout-design.md	420	2	852	852	## PL-1 Pod blueprint
+designs/agent-pod-layout-design.md	443	2	668	668	## PL-2 Removal of the embedded deployment model
+designs/agent-pod-layout-design.md	473	2	2809	2809	## PL-3 Runtime-visible filesystem layout
+designs/agent-pod-layout-design.md	550	2	209	209	## PL-4 Removals and the output-file rule
+designs/agent-pod-layout-design.md	565	2	3250	3250	## PL-5 Volumes, size limits, and eviction
+designs/agent-pod-layout-design.md	637	2	416	416	## PL-6 Runtime-facing environment and the runtime-author contract
+designs/agent-pod-layout-design.md	657	2	221	221	## PL-7 What the layout gains
+designs/agent-pod-layout-design.md	666	2	471	471	## PL-8 Removal of pre-launched runtimes
+designs/agent-pod-layout-design.md	686	2	579	579	## PL-9 Pool settings and renames
+designs/agent-pod-layout-design.md	722	2	3621	3621	## PL-10 Project quotas
+designs/agent-pod-layout-design.md	824	2	385	385	## Worked example
+designs/agent-pod-layout-design.md	836	2	701	701	## Limits
+designs/agent-pod-layout-design.md	851	2	728	728	## Alternatives rejected
+designs/agent-pod-layout-design.md	874	2	1066	1066	## Validation owed
+designs/agent-pod-layout-design.md	896	2	2129	2129	## Specification changes
+designs/agent-pod-layout-design.md	949	2	842	2005	## Non-specification changes
+designs/agent-pod-layout-design.md	982	2	1689	1689	## Tests
+designs/agent-pod-layout-design.md	999	2	2166	2166	## Instructions for reviewers of other designs
+designs/agent-pod-layout-design.md	1036	2	375	375	## Proposal split and order
+designs/agent-pod-layout-design.md	1049	2	53	53	## Sources
+designs/agent-pod-layout-design.md	1053	2	255	5057	## Review history
+designs/agent-runtimes-only-design.md	14	2	562	562	## Problem
+designs/agent-runtimes-only-design.md	36	2	535	535	## Scope
+designs/agent-runtimes-only-design.md	70	2	269	1305	## Terms
+designs/agent-runtimes-only-design.md	124	2	453	453	## High-level design
+designs/agent-runtimes-only-design.md	138	2	1920	1920	## Decisions
+designs/agent-runtimes-only-design.md	231	2	25	25	## Open decisions
+designs/agent-runtimes-only-design.md	235	2	336	336	## Requirements
+designs/agent-runtimes-only-design.md	252	2	50	2847	## Current state: inventory
+designs/agent-runtimes-only-design.md	370	2	188	188	## AR-1 The runtime type
+designs/agent-runtimes-only-design.md	388	2	273	273	## AR-2 Service mode
+designs/agent-runtimes-only-design.md	406	2	351	351	## AR-3 Runtime protocol frames
+designs/agent-runtimes-only-design.md	416	2	301	301	## AR-4 Admission of removed fields
+designs/agent-runtimes-only-design.md	426	2	414	414	## AR-5 What simplifies in the other designs
+designs/agent-runtimes-only-design.md	441	2	246	246	## AR-6 What users of the removed modes do instead
+designs/agent-runtimes-only-design.md	448	2	82	82	## Limits
+designs/agent-runtimes-only-design.md	454	2	98	98	## Alternatives rejected
+designs/agent-runtimes-only-design.md	460	2	83	83	## Validation owed
+designs/agent-runtimes-only-design.md	467	2	884	884	## Specification changes
+designs/agent-runtimes-only-design.md	506	2	137	668	## Non-specification changes
+designs/agent-runtimes-only-design.md	530	2	453	453	## Tests
+designs/agent-runtimes-only-design.md	546	2	1477	1477	## Instructions for reviewers of other designs
+designs/agent-runtimes-only-design.md	575	2	249	249	## Proposal split and order
+designs/agent-runtimes-only-design.md	586	2	35	35	## Sources
+designs/agent-runtimes-only-design.md	590	2	109	1220	## Review history
+designs/anthropic-messages-api-design.md	19	2	368	368	## Problem
+designs/anthropic-messages-api-design.md	35	2	566	566	## Scope
+designs/anthropic-messages-api-design.md	77	2	497	1602	## Terms
+designs/anthropic-messages-api-design.md	138	2	1093	1093	## High-level design
+designs/anthropic-messages-api-design.md	196	2	1359	1359	## Decisions
+designs/anthropic-messages-api-design.md	248	2	418	418	## Requirements
+designs/anthropic-messages-api-design.md	268	2	0	1387	## Current state
+designs/anthropic-messages-api-design.md	316	2	216	216	## AM-1 Endpoint and registration
+designs/anthropic-messages-api-design.md	334	2	521	521	## AM-2 Authentication and headers
+designs/anthropic-messages-api-design.md	354	2	40	1208	## AM-3 Request mapping
+designs/anthropic-messages-api-design.md	420	2	38	790	## AM-4 Conversation input
+designs/anthropic-messages-api-design.md	482	2	40	1874	## AM-5 Continuity
+designs/anthropic-messages-api-design.md	551	2	40	877	## AM-6 Responses and streaming
+designs/anthropic-messages-api-design.md	596	2	579	579	## AM-7 Client tools
+designs/anthropic-messages-api-design.md	621	2	564	564	## AM-8 Errors
+designs/anthropic-messages-api-design.md	673	2	352	352	## AM-9 Models and refused endpoints
+designs/anthropic-messages-api-design.md	685	2	451	451	## AM-10 Tenancy, billing, routing, and other designs
+designs/anthropic-messages-api-design.md	701	2	375	375	## Worked example
+designs/anthropic-messages-api-design.md	710	2	489	489	## Limits
+designs/anthropic-messages-api-design.md	725	2	360	360	## Alternatives rejected
+designs/anthropic-messages-api-design.md	738	2	393	393	## Specification changes
+designs/anthropic-messages-api-design.md	757	2	447	447	## Non-specification changes
+designs/anthropic-messages-api-design.md	775	2	317	317	## Defects found while verifying
+designs/anthropic-messages-api-design.md	786	2	548	548	## Tests
+designs/anthropic-messages-api-design.md	800	2	163	163	## Validation owed
+designs/anthropic-messages-api-design.md	811	2	360	360	## Instructions for reviewers of other designs
+designs/anthropic-messages-api-design.md	824	2	206	206	## Proposal split and order
+designs/anthropic-messages-api-design.md	836	2	217	217	## Sources
+designs/anthropic-messages-api-design.md	856	2	51	2140	## Review history
+designs/billing-resource-attribution-design.md	5	2	251	251	## Problem
+designs/billing-resource-attribution-design.md	15	2	540	540	## Scope
+designs/billing-resource-attribution-design.md	36	2	890	3622	## Terms
+designs/billing-resource-attribution-design.md	137	2	793	793	## High-level design
+designs/billing-resource-attribution-design.md	173	2	1240	1365	## Current state
+designs/billing-resource-attribution-design.md	214	2	0	6609	## Design
+designs/billing-resource-attribution-design.md	442	2	788	788	## Specification sections affected
+designs/billing-resource-attribution-design.md	464	2	395	395	## Proposals
+designs/billing-resource-attribution-design.md	480	2	1257	1257	## Tests
+designs/billing-resource-attribution-design.md	495	2	461	461	## Documentation
+designs/billing-resource-attribution-design.md	512	2	90	90	## Validation owed
+designs/billing-resource-attribution-design.md	517	2	641	641	## Residual risks
+designs/billing-resource-attribution-design.md	537	2	475	475	## Open decisions
+designs/billing-resource-attribution-design.md	560	2	371	371	## Instructions for reviewers of other designs
+designs/billing-resource-attribution-design.md	569	2	296	296	## Defects found while verifying
+designs/billing-resource-attribution-design.md	581	2	1996	1996	## Decisions
+designs/billing-resource-attribution-design.md	611	2	0	3295	## Review history
+designs/client-tools-design.md	16	2	274	274	## Problem
+designs/client-tools-design.md	30	2	441	441	## Scope
+designs/client-tools-design.md	67	2	449	1655	## Terms
+designs/client-tools-design.md	130	2	951	951	## High-level design
+designs/client-tools-design.md	187	2	1942	1942	## Decisions
+designs/client-tools-design.md	248	2	377	377	## Requirements
+designs/client-tools-design.md	263	2	0	1798	## Current state
+designs/client-tools-design.md	336	2	0	729	## CT-1 Protocol members
+designs/client-tools-design.md	404	2	358	358	## CT-2 Capability
+designs/client-tools-design.md	427	2	559	559	## CT-3 Admission
+designs/client-tools-design.md	442	2	644	644	## CT-4 Response validation
+designs/client-tools-design.md	482	2	0	1290	## CT-5 Pending calls and the hold rule
+designs/client-tools-design.md	530	2	86	1132	## CT-6 Surface mapping
+designs/client-tools-design.md	574	2	989	989	## CT-7 Continuation
+designs/client-tools-design.md	596	2	560	560	## CT-8 Security
+designs/client-tools-design.md	612	2	83	83	## CT-9 Delegation
+designs/client-tools-design.md	616	2	195	195	## CT-10 Runtime SDKs and conformance
+designs/client-tools-design.md	622	2	290	290	## Worked example
+designs/client-tools-design.md	632	2	363	363	## Limits
+designs/client-tools-design.md	646	2	263	263	## Alternatives rejected
+designs/client-tools-design.md	655	2	624	624	## Specification changes
+designs/client-tools-design.md	676	2	547	547	## Non-specification changes
+designs/client-tools-design.md	697	2	511	511	## Defects found while verifying
+designs/client-tools-design.md	712	2	681	681	## Tests
+designs/client-tools-design.md	726	2	254	254	## Validation owed
+designs/client-tools-design.md	739	2	603	603	## Instructions for reviewers of other designs
+designs/client-tools-design.md	752	2	157	157	## Proposal split and order
+designs/client-tools-design.md	761	2	130	130	## Sources
+designs/client-tools-design.md	772	2	6	2088	## Review history
+designs/connector-authorization-and-external-memory-design.md	17	2	338	338	## Problem
+designs/connector-authorization-and-external-memory-design.md	34	2	255	255	## Scope
+designs/connector-authorization-and-external-memory-design.md	58	2	911	2893	## Terms
+designs/connector-authorization-and-external-memory-design.md	143	2	829	829	## High-level design
+designs/connector-authorization-and-external-memory-design.md	182	2	585	585	## Owner decisions
+designs/connector-authorization-and-external-memory-design.md	205	2	265	265	## Requirements
+designs/connector-authorization-and-external-memory-design.md	222	2	51	471	## Threat model
+designs/connector-authorization-and-external-memory-design.md	248	2	627	627	## Current state
+designs/connector-authorization-and-external-memory-design.md	277	2	351	351	## CA-0: Shared OAuth link flow
+designs/connector-authorization-and-external-memory-design.md	293	2	47	352	## CA-1: Link flow
+designs/connector-authorization-and-external-memory-design.md	320	2	287	287	## CA-2: Token lifecycle
+designs/connector-authorization-and-external-memory-design.md	333	2	235	235	## CA-3: Connector access and environment
+designs/connector-authorization-and-external-memory-design.md	343	2	52	1121	## CA-4: Link check
+designs/connector-authorization-and-external-memory-design.md	395	2	108	931	## CA-5: Propagating the failure
+designs/connector-authorization-and-external-memory-design.md	439	2	749	749	## CA-6: Resume and restart
+designs/connector-authorization-and-external-memory-design.md	479	2	40	834	## CA-7: Delegated children
+designs/connector-authorization-and-external-memory-design.md	524	2	756	756	## CA-8: Runtime capability and late tools
+designs/connector-authorization-and-external-memory-design.md	556	2	261	1380	## CA-9: Stdio bridge
+designs/connector-authorization-and-external-memory-design.md	625	2	268	268	## CA-10: Removing built-in memory
+designs/connector-authorization-and-external-memory-design.md	650	2	587	1157	## External memory pattern
+designs/connector-authorization-and-external-memory-design.md	732	2	385	385	## Limits
+designs/connector-authorization-and-external-memory-design.md	744	2	580	580	## Alternatives rejected
+designs/connector-authorization-and-external-memory-design.md	772	2	123	1082	## Instructions for reviewers of other designs
+designs/connector-authorization-and-external-memory-design.md	842	2	563	563	## Specification changes
+designs/connector-authorization-and-external-memory-design.md	867	2	479	479	## Documentation
+designs/connector-authorization-and-external-memory-design.md	879	2	582	582	## Tests
+designs/connector-authorization-and-external-memory-design.md	899	2	259	259	## Validation owed
+designs/connector-authorization-and-external-memory-design.md	911	2	377	377	## Proposal split and order
+designs/connector-authorization-and-external-memory-design.md	930	2	34	34	## Sources
+designs/connector-authorization-and-external-memory-design.md	936	2	19	2524	## Review history
+designs/connector-removal-design.md	16	2	438	438	## Problem
+designs/connector-removal-design.md	36	2	533	533	## Scope
+designs/connector-removal-design.md	76	2	437	1514	## Terms
+designs/connector-removal-design.md	133	2	663	663	## High-level design
+designs/connector-removal-design.md	168	2	2109	2109	## Owner decisions
+designs/connector-removal-design.md	199	2	24	24	## Open decisions
+designs/connector-removal-design.md	203	2	381	381	## Requirements
+designs/connector-removal-design.md	218	2	22	1057	## Threat model
+designs/connector-removal-design.md	251	2	265	265	## Current state
+designs/connector-removal-design.md	261	2	562	562	## CR-1 Removal
+designs/connector-removal-design.md	291	2	2117	2117	## CR-2 Identity assertion
+designs/connector-removal-design.md	401	2	1247	1247	## CR-3 External services
+designs/connector-removal-design.md	421	2	529	529	## CR-4 Egress halt at suspension
+designs/connector-removal-design.md	443	2	277	277	## What replaces each connector guarantee
+designs/connector-removal-design.md	461	2	368	368	## Limits
+designs/connector-removal-design.md	475	2	585	585	## Alternatives rejected
+designs/connector-removal-design.md	491	2	824	824	## Specification changes
+designs/connector-removal-design.md	522	2	334	334	## Non-specification changes
+designs/connector-removal-design.md	541	2	861	861	## Changes to Lenny's documentation
+designs/connector-removal-design.md	556	2	351	351	## Changes requested of other designs
+designs/connector-removal-design.md	570	2	821	821	## Tests
+designs/connector-removal-design.md	585	2	297	297	## Validation owed
+designs/connector-removal-design.md	596	2	127	127	## Proposal split and order
+designs/connector-removal-design.md	605	2	247	247	## Sources
+designs/connector-removal-design.md	620	2	0	1723	## Review history
+designs/decision-records-design.md	12	2	228	290	## Terms
+designs/decision-records-design.md	29	2	348	348	## Problem
+designs/decision-records-design.md	54	2	151	151	## Scope
+designs/decision-records-design.md	74	2	111	111	## High-level design
+designs/decision-records-design.md	78	2	83	83	## Decisions
+designs/decision-records-design.md	84	2	166	166	## Requirements
+designs/decision-records-design.md	94	2	738	738	## Current state
+designs/decision-records-design.md	112	2	295	295	## REC-1 Removal
+designs/decision-records-design.md	124	2	839	839	## Specification changes
+designs/decision-records-design.md	147	2	349	349	## Non-specification changes
+designs/decision-records-design.md	166	2	638	638	## Documentation
+designs/decision-records-design.md	187	2	119	119	## Tests
+designs/decision-records-design.md	197	2	87	87	## Validation owed
+designs/decision-records-design.md	204	2	74	74	## Instructions for other designs
+designs/decision-records-design.md	210	2	88	88	## Proposal split and order
+designs/decision-records-design.md	217	2	0	109	## Review history
+designs/delegation-availability-design.md	13	2	333	333	## Problem
+designs/delegation-availability-design.md	29	2	513	513	## Scope
+designs/delegation-availability-design.md	64	2	617	2368	## Terms
+designs/delegation-availability-design.md	134	2	807	807	## High-level design
+designs/delegation-availability-design.md	175	2	1651	1651	## Decisions
+designs/delegation-availability-design.md	222	2	433	433	## Requirements
+designs/delegation-availability-design.md	237	2	1285	1285	## Current state
+designs/delegation-availability-design.md	276	2	897	897	## DA-1 Levels
+designs/delegation-availability-design.md	301	2	944	944	## DA-2 Resolution
+designs/delegation-availability-design.md	346	2	305	305	## DA-3 Refusal
+designs/delegation-availability-design.md	359	2	804	804	## DA-4 Tool list
+designs/delegation-availability-design.md	384	2	544	544	## DA-5 Running sessions
+designs/delegation-availability-design.md	400	2	300	300	## DA-6 Per-hop narrowing
+designs/delegation-availability-design.md	410	2	546	546	## DA-7 Other platform tools
+designs/delegation-availability-design.md	432	2	541	541	## Limits
+designs/delegation-availability-design.md	444	2	864	864	## Alternatives rejected
+designs/delegation-availability-design.md	460	2	725	725	## Specification changes
+designs/delegation-availability-design.md	483	2	369	369	## Non-specification changes
+designs/delegation-availability-design.md	500	2	446	446	## Documentation
+designs/delegation-availability-design.md	511	2	672	672	## Tests
+designs/delegation-availability-design.md	527	2	237	237	## Validation owed
+designs/delegation-availability-design.md	537	2	324	324	## Defects found while verifying
+designs/delegation-availability-design.md	550	2	481	481	## Instructions for reviewers of other designs
+designs/delegation-availability-design.md	563	2	186	186	## Proposal split and order
+designs/delegation-availability-design.md	571	2	125	125	## Sources
+designs/delegation-availability-design.md	580	2	63	2406	## Review history
+designs/egress-and-git-design.md	18	2	222	222	## Requirements
+designs/egress-and-git-design.md	33	2	109	109	## Scope
+designs/egress-and-git-design.md	37	2	3743	7193	## Terms
+designs/egress-and-git-design.md	227	2	869	869	## High-level design
+designs/egress-and-git-design.md	254	2	423	423	## Security properties
+designs/egress-and-git-design.md	268	2	309	17517	## Architecture
+designs/egress-and-git-design.md	591	2	46	13790	## Git
+designs/egress-and-git-design.md	840	2	89	7236	## Credential delivery to runtimes
+designs/egress-and-git-design.md	993	2	477	477	## Interfaces
+designs/egress-and-git-design.md	1006	2	0	4005	## Configuration by scope
+designs/egress-and-git-design.md	1131	2	1194	3086	## Effective policy
+designs/egress-and-git-design.md	1232	2	1538	1538	## Injected configuration
+designs/egress-and-git-design.md	1287	2	0	807	## Runtime SDKs
+designs/egress-and-git-design.md	1352	2	591	591	## Pod models
+designs/egress-and-git-design.md	1364	2	1450	1450	## Network policy and placement
+designs/egress-and-git-design.md	1389	2	1579	5061	## Defaults, replacement, and augmentation
+designs/egress-and-git-design.md	1548	2	331	331	## TLS interception
+designs/egress-and-git-design.md	1557	2	2188	2188	## Residual risks and limits
+designs/egress-and-git-design.md	1594	2	1369	1369	## Specification sections affected
+designs/egress-and-git-design.md	1642	2	1388	1388	## Relationship to proposal 0111 and open findings
+designs/egress-and-git-design.md	1685	2	1713	1713	## Reserved for other designs
+designs/egress-and-git-design.md	1730	2	2611	2611	## Proposal split
+designs/egress-and-git-design.md	1817	2	143	3752	## Documentation
+designs/egress-and-git-design.md	1946	2	80	8303	## Tests
+designs/egress-and-git-design.md	2210	2	1368	1368	## Validation still owed
+designs/egress-and-git-design.md	2252	2	1082	1082	## Instructions for reviewers of other designs
+designs/egress-and-git-design.md	2272	2	5623	5623	## Decisions
+designs/egress-and-git-design.md	2431	2	0	15345	## Review history
+designs/egress-and-git-design.md	2986	2	2963	2963	## Validation record
+designs/forensics-evidence-preservation-design.md	5	2	504	504	## Problem
+designs/forensics-evidence-preservation-design.md	23	2	112	112	## Scope
+designs/forensics-evidence-preservation-design.md	29	2	1149	5310	## Terms
+designs/forensics-evidence-preservation-design.md	178	2	691	691	## High-level design
+designs/forensics-evidence-preservation-design.md	202	2	234	234	## Requirements
+designs/forensics-evidence-preservation-design.md	213	2	242	242	## Security properties
+designs/forensics-evidence-preservation-design.md	225	2	645	645	## Architecture
+designs/forensics-evidence-preservation-design.md	263	2	0	3311	## FE-1: Quarantine
+designs/forensics-evidence-preservation-design.md	373	2	0	860	## FE-2: Mirror store hold
+designs/forensics-evidence-preservation-design.md	402	2	0	2344	## FE-3: Platform-only holds and a security retention class
+designs/forensics-evidence-preservation-design.md	478	2	0	1082	## FE-4: Reconciler
+designs/forensics-evidence-preservation-design.md	519	2	0	1487	## FE-5: Capture runbook and abuse workflow
+designs/forensics-evidence-preservation-design.md	568	2	0	5521	## FE-6: Agent activity streams
+designs/forensics-evidence-preservation-design.md	735	2	1114	1114	## Configuration by scope
+designs/forensics-evidence-preservation-design.md	777	2	0	1164	## Scenarios
+designs/forensics-evidence-preservation-design.md	826	2	897	897	## Residual risks
+designs/forensics-evidence-preservation-design.md	847	2	137	137	## Defects found while verifying
+designs/forensics-evidence-preservation-design.md	859	2	640	640	## Specification sections affected
+designs/forensics-evidence-preservation-design.md	887	2	1003	1003	## Proposals and dependencies
+designs/forensics-evidence-preservation-design.md	929	2	356	356	## Changes requested of egress-and-git-design.md
+designs/forensics-evidence-preservation-design.md	944	2	305	305	## Changes requested of other designs
+designs/forensics-evidence-preservation-design.md	954	2	651	651	## Documentation
+designs/forensics-evidence-preservation-design.md	978	2	33	2335	## Tests
+designs/forensics-evidence-preservation-design.md	1097	2	255	255	## Open decisions
+designs/forensics-evidence-preservation-design.md	1112	2	2209	2209	## Decisions
+designs/forensics-evidence-preservation-design.md	1149	2	522	522	## Validation owed
+designs/forensics-evidence-preservation-design.md	1165	2	436	436	## Sources
+designs/forensics-evidence-preservation-design.md	1218	2	0	2342	## Review history
+designs/github-credential-addon-design.md	18	2	165	165	## Scope
+designs/github-credential-addon-design.md	28	2	205	2900	## Terms
+designs/github-credential-addon-design.md	118	2	605	605	## High-level design
+designs/github-credential-addon-design.md	142	2	0	574	## GH-1: The `github` and `github-enterprise` kinds
+designs/github-credential-addon-design.md	188	2	0	1958	## GH-2: Pull request authoring on GitHub
+designs/github-credential-addon-design.md	253	2	0	2182	## GH-3: The `github-deny` preset
+designs/github-credential-addon-design.md	360	2	72	72	## Configuration by scope
+designs/github-credential-addon-design.md	368	2	0	1669	## Worked examples
+designs/github-credential-addon-design.md	422	2	92	92	## Dependencies
+designs/github-credential-addon-design.md	430	2	363	363	## Documentation
+designs/github-credential-addon-design.md	440	2	0	328	## Tests
+designs/github-credential-addon-design.md	468	2	1402	1402	## Validation owed
+designs/github-credential-addon-design.md	491	2	231	231	## Residual risks
+designs/github-credential-addon-design.md	498	2	847	847	## Decisions
+designs/github-credential-addon-design.md	511	2	232	232	## Sources
+designs/github-credential-addon-design.md	520	2	0	624	## Review history
+designs/github-credential-addon-design.md	534	2	47	1495	## Capture history
+designs/gitlab-credential-addon-design.md	21	2	134	134	## Scope
+designs/gitlab-credential-addon-design.md	29	2	619	2444	## Terms
+designs/gitlab-credential-addon-design.md	100	2	509	509	## High-level design
+designs/gitlab-credential-addon-design.md	123	2	0	301	## GL-1: The `gitlab` kind
+designs/gitlab-credential-addon-design.md	166	2	0	1403	## GL-2: User-authored merge requests
+designs/gitlab-credential-addon-design.md	220	2	0	790	## GL-3: The `gitlab-deny` preset
+designs/gitlab-credential-addon-design.md	265	2	62	62	## Configuration by scope
+designs/gitlab-credential-addon-design.md	272	2	0	455	## Worked examples
+designs/gitlab-credential-addon-design.md	291	2	96	96	## Dependencies
+designs/gitlab-credential-addon-design.md	299	2	320	320	## Documentation
+designs/gitlab-credential-addon-design.md	309	2	13	100	## Tests
+designs/gitlab-credential-addon-design.md	326	2	325	325	## Validation owed
+designs/gitlab-credential-addon-design.md	339	2	132	132	## Residual risks
+designs/gitlab-credential-addon-design.md	345	2	248	248	## Decisions
+designs/gitlab-credential-addon-design.md	352	2	44	44	## Sources
+designs/gitlab-credential-addon-design.md	358	2	0	457	## Review history
+designs/incremental-checkpoint-design.md	7	2	418	418	## Problem
+designs/incremental-checkpoint-design.md	18	2	178	178	## Scope
+designs/incremental-checkpoint-design.md	24	2	2675	6656	## Terms
+designs/incremental-checkpoint-design.md	176	2	1402	1402	## High-level design
+designs/incremental-checkpoint-design.md	217	2	1363	1363	## Owner's direction
+designs/incremental-checkpoint-design.md	247	2	517	517	## Requirements
+designs/incremental-checkpoint-design.md	264	2	1573	1573	## Security properties
+designs/incremental-checkpoint-design.md	278	2	356	356	## Current state
+designs/incremental-checkpoint-design.md	289	2	386	386	## Starting points
+designs/incremental-checkpoint-design.md	303	2	22	8722	## IC-1: Capture in passes
+designs/incremental-checkpoint-design.md	492	2	0	738	## IC-2: Storage format
+designs/incremental-checkpoint-design.md	528	2	719	1800	## IC-3: Checkpoint stream
+designs/incremental-checkpoint-design.md	559	2	0	3542	## IC-4: Catalog, reference closure, and quota
+designs/incremental-checkpoint-design.md	653	2	0	1733	## IC-5: Restore, derive, download, and seal
+designs/incremental-checkpoint-design.md	690	2	953	953	## IC-6: Retention, garbage collection, erasure, and legal hold
+designs/incremental-checkpoint-design.md	701	2	1506	1506	## IC-7: Size limits and drain budgets
+designs/incremental-checkpoint-design.md	713	2	48	1562	## IC-8: Checkpoint policy, interval, and change tracker
+designs/incremental-checkpoint-design.md	768	2	415	415	## IC-9: Removal of the embedded `SIGSTOP` checkpoint path
+designs/incremental-checkpoint-design.md	780	2	437	437	## Measurements
+designs/incremental-checkpoint-design.md	802	2	1327	1327	## Session isolation spikes
+designs/incremental-checkpoint-design.md	850	2	132	5692	## Benchmarks
+designs/incremental-checkpoint-design.md	1136	2	102	3360	## Re-validation through the broker
+designs/incremental-checkpoint-design.md	1248	2	88	2129	## Levers
+designs/incremental-checkpoint-design.md	1301	2	219	219	## Node-level snapshots
+designs/incremental-checkpoint-design.md	1314	2	702	702	## Relationship to other designs
+designs/incremental-checkpoint-design.md	1329	2	241	241	## Changes requested of other designs
+designs/incremental-checkpoint-design.md	1339	2	452	452	## Costs
+designs/incremental-checkpoint-design.md	1347	2	572	572	## Defects found while verifying
+designs/incremental-checkpoint-design.md	1369	2	2210	2210	## Specification sections affected
+designs/incremental-checkpoint-design.md	1403	2	731	731	## Stored formats and wire contracts this forces
+designs/incremental-checkpoint-design.md	1428	2	30	2124	## Changes to Lenny's documentation
+designs/incremental-checkpoint-design.md	1477	2	0	4180	## Tests
+designs/incremental-checkpoint-design.md	1626	2	3080	3080	## Decisions
+designs/incremental-checkpoint-design.md	1654	2	474	474	## Not verified
+designs/incremental-checkpoint-design.md	1673	2	143	6941	## Review history
+designs/llm-response-cache-removal-design.md	14	2	370	370	## Problem
+designs/llm-response-cache-removal-design.md	31	2	309	309	## Scope
+designs/llm-response-cache-removal-design.md	60	2	514	851	## Terms
+designs/llm-response-cache-removal-design.md	94	2	405	405	## High-level design
+designs/llm-response-cache-removal-design.md	108	2	573	573	## Decisions
+designs/llm-response-cache-removal-design.md	130	2	200	200	## Requirements
+designs/llm-response-cache-removal-design.md	139	2	0	2155	## Current state
+designs/llm-response-cache-removal-design.md	228	2	341	341	## RC-1 Specification removal
+designs/llm-response-cache-removal-design.md	240	2	259	259	## RC-2 Code removal
+designs/llm-response-cache-removal-design.md	256	2	204	204	## RC-3 Data and configuration
+designs/llm-response-cache-removal-design.md	262	2	72	72	## RC-4 Records
+designs/llm-response-cache-removal-design.md	269	2	593	593	## RC-5 Provider prompt caching passthrough
+designs/llm-response-cache-removal-design.md	290	2	164	164	## What replaces the cache's guarantees
+designs/llm-response-cache-removal-design.md	301	2	159	159	## Security effects
+designs/llm-response-cache-removal-design.md	310	2	61	61	## Billing effects
+designs/llm-response-cache-removal-design.md	315	2	106	106	## Limits
+designs/llm-response-cache-removal-design.md	321	2	122	122	## Alternatives rejected
+designs/llm-response-cache-removal-design.md	328	2	302	302	## Specification changes
+designs/llm-response-cache-removal-design.md	349	2	287	287	## Non-specification changes
+designs/llm-response-cache-removal-design.md	369	2	302	302	## Tests
+designs/llm-response-cache-removal-design.md	381	2	238	238	## Validation owed
+designs/llm-response-cache-removal-design.md	392	2	218	218	## Instructions for reviewers of other designs
+designs/llm-response-cache-removal-design.md	400	2	104	104	## Proposal split and order
+designs/llm-response-cache-removal-design.md	409	2	229	229	## Sources
+designs/llm-response-cache-removal-design.md	420	2	34	922	## Review history
+designs/llm-upstreams-and-cost-budgets-design.md	14	2	340	340	## Problem
+designs/llm-upstreams-and-cost-budgets-design.md	31	2	722	722	## Scope
+designs/llm-upstreams-and-cost-budgets-design.md	73	2	1028	2017	## Terms
+designs/llm-upstreams-and-cost-budgets-design.md	151	2	1140	1140	## High-level design
+designs/llm-upstreams-and-cost-budgets-design.md	207	2	1680	1680	## Decisions
+designs/llm-upstreams-and-cost-budgets-design.md	234	2	527	527	## Requirements
+designs/llm-upstreams-and-cost-budgets-design.md	254	2	0	1559	## Current state
+designs/llm-upstreams-and-cost-budgets-design.md	309	2	0	694	## LU-1 LLM upstreams
+designs/llm-upstreams-and-cost-budgets-design.md	360	2	422	422	## LU-2 Assignment and resolution
+designs/llm-upstreams-and-cost-budgets-design.md	376	2	0	1114	## LU-3 The metering proxy
+designs/llm-upstreams-and-cost-budgets-design.md	447	2	557	557	## LU-4 Removal
+designs/llm-upstreams-and-cost-budgets-design.md	473	2	0	695	## LU-5 Rate cards
+designs/llm-upstreams-and-cost-budgets-design.md	523	2	0	1842	## LU-6 Credit budgets
+designs/llm-upstreams-and-cost-budgets-design.md	611	2	0	386	## LU-7 Usage records and billing events
+designs/llm-upstreams-and-cost-budgets-design.md	641	2	463	463	## LU-8 Security
+designs/llm-upstreams-and-cost-budgets-design.md	657	2	345	345	## LU-9 Cache isolation
+designs/llm-upstreams-and-cost-budgets-design.md	670	2	319	319	## LU-10 Calls outside the proxy
+designs/llm-upstreams-and-cost-budgets-design.md	682	2	32	936	## LU-11 Forwarded attribution
+designs/llm-upstreams-and-cost-budgets-design.md	743	2	456	456	## Limits
+designs/llm-upstreams-and-cost-budgets-design.md	761	2	815	815	## Alternatives rejected
+designs/llm-upstreams-and-cost-budgets-design.md	788	2	1755	1755	## Specification changes
+designs/llm-upstreams-and-cost-budgets-design.md	837	2	912	912	## Non-specification changes
+designs/llm-upstreams-and-cost-budgets-design.md	862	2	1192	1192	## Tests
+designs/llm-upstreams-and-cost-budgets-design.md	879	2	710	710	## Validation owed
+designs/llm-upstreams-and-cost-budgets-design.md	901	2	1056	1056	## Instructions for reviewers of other designs
+designs/llm-upstreams-and-cost-budgets-design.md	931	2	330	330	## Proposal split and order
+designs/llm-upstreams-and-cost-budgets-design.md	941	2	396	396	## Sources
+designs/llm-upstreams-and-cost-budgets-design.md	962	2	4	1376	## Review history
+designs/mcp-protocol-upgrade-design.md	19	2	337	337	## Problem
+designs/mcp-protocol-upgrade-design.md	36	2	382	382	## Scope
+designs/mcp-protocol-upgrade-design.md	68	2	371	1015	## Terms
+designs/mcp-protocol-upgrade-design.md	111	2	340	340	## High-level design
+designs/mcp-protocol-upgrade-design.md	121	2	942	942	## Decisions
+designs/mcp-protocol-upgrade-design.md	143	2	232	232	## Requirements
+designs/mcp-protocol-upgrade-design.md	156	2	550	550	## Current state
+designs/mcp-protocol-upgrade-design.md	185	2	516	516	## MP-1 Gateway versions and negotiation
+designs/mcp-protocol-upgrade-design.md	209	2	247	247	## MP-2 Wire conformance
+designs/mcp-protocol-upgrade-design.md	223	2	500	500	## MP-3 Elicitation
+designs/mcp-protocol-upgrade-design.md	245	2	714	714	## MP-4 Tasks
+designs/mcp-protocol-upgrade-design.md	272	2	426	426	## MP-5 Intra-pod servers
+designs/mcp-protocol-upgrade-design.md	290	2	331	331	## MP-6 Outbound clients
+designs/mcp-protocol-upgrade-design.md	300	2	217	217	## MP-7 Management server, SDKs, schemas, and tests
+designs/mcp-protocol-upgrade-design.md	310	2	279	279	## MP-8 Version rule in the specification
+designs/mcp-protocol-upgrade-design.md	318	2	278	278	## MP-9 Web playground transport
+designs/mcp-protocol-upgrade-design.md	331	2	181	181	## Limits
+designs/mcp-protocol-upgrade-design.md	340	2	98	98	## Alternatives rejected
+designs/mcp-protocol-upgrade-design.md	347	2	272	272	## Specification changes
+designs/mcp-protocol-upgrade-design.md	363	2	171	171	## Non-specification changes
+designs/mcp-protocol-upgrade-design.md	373	2	547	547	## Documentation
+designs/mcp-protocol-upgrade-design.md	393	2	299	299	## Tests
+designs/mcp-protocol-upgrade-design.md	404	2	171	171	## Validation owed
+designs/mcp-protocol-upgrade-design.md	415	2	228	228	## Instructions for reviewers of other designs
+designs/mcp-protocol-upgrade-design.md	425	2	172	172	## Proposal split and order
+designs/mcp-protocol-upgrade-design.md	436	2	51	51	## Sources
+designs/mcp-protocol-upgrade-design.md	446	2	0	1516	## Review history
+designs/message-delivery-design.md	16	2	503	503	## Problem
+designs/message-delivery-design.md	34	2	1156	1156	## Scope
+designs/message-delivery-design.md	95	2	1734	4018	## Terms
+designs/message-delivery-design.md	219	2	1868	1868	## High-level design
+designs/message-delivery-design.md	319	2	6778	6778	## Decisions
+designs/message-delivery-design.md	466	2	2199	2199	## Requirements
+designs/message-delivery-design.md	528	2	0	2167	## Current state
+designs/message-delivery-design.md	609	2	476	476	## MD-1 Delivery intents
+designs/message-delivery-design.md	631	2	306	306	## MD-2 Runtime declaration
+designs/message-delivery-design.md	651	2	1142	1142	## MD-3 Inbox states and custody
+designs/message-delivery-design.md	683	2	621	621	## MD-4 Turn accounting
+designs/message-delivery-design.md	710	2	729	729	## MD-5 Delivery paths
+designs/message-delivery-design.md	733	2	273	273	## MD-6 Executor, lock, and waiting
+designs/message-delivery-design.md	745	2	431	431	## MD-7 REST
+designs/message-delivery-design.md	766	2	985	985	## MD-8 Provider surfaces
+designs/message-delivery-design.md	790	2	1124	1124	## MD-9 Inter-session messages, system messages, and delegation
+designs/message-delivery-design.md	812	2	421	421	## MD-10 Client tools
+designs/message-delivery-design.md	824	2	37	1218	## MD-11 Retraction
+designs/message-delivery-design.md	894	2	623	623	## MD-12 Runtime SDKs
+designs/message-delivery-design.md	912	2	575	575	## MD-13 Reference runtimes
+designs/message-delivery-design.md	938	2	538	538	## MD-14 Future use cases and the extension rule
+designs/message-delivery-design.md	964	2	51	1706	## MD-15 Activity
+designs/message-delivery-design.md	1071	2	490	490	## MD-16 Output streaming
+designs/message-delivery-design.md	1102	2	210	210	## MD-17 Reasoning
+designs/message-delivery-design.md	1111	2	7007	7007	## MD-18 Files
+designs/message-delivery-design.md	1220	2	917	917	## MD-19 Harness approvals
+designs/message-delivery-design.md	1246	2	196	196	## MD-20 Turn and usage events
+designs/message-delivery-design.md	1261	2	870	870	## MD-21 Surfaces and AG-UI
+designs/message-delivery-design.md	1294	2	2270	2270	## MD-22 Parents and children
+designs/message-delivery-design.md	1365	2	599	599	## MD-23 Tool and frame names
+designs/message-delivery-design.md	1396	2	1390	1390	## MD-24 Runtime frames and leniency
+designs/message-delivery-design.md	1438	2	406	406	## MD-25 Watching a child's stream
+designs/message-delivery-design.md	1452	2	798	798	## MD-26 Files from a child
+designs/message-delivery-design.md	1476	2	990	990	## Worked example
+designs/message-delivery-design.md	1505	2	1569	1569	## Limits
+designs/message-delivery-design.md	1543	2	1819	1819	## Alternatives rejected
+designs/message-delivery-design.md	1588	2	3569	3569	## Specification changes
+designs/message-delivery-design.md	1646	2	1833	1833	## Non-specification changes
+designs/message-delivery-design.md	1689	2	514	514	## Documentation
+designs/message-delivery-design.md	1703	2	842	842	## Defects found while verifying
+designs/message-delivery-design.md	1731	2	3809	3809	## Tests
+designs/message-delivery-design.md	1745	2	367	367	## Validation owed
+designs/message-delivery-design.md	1764	2	2476	2476	## Instructions for reviewers of other designs
+designs/message-delivery-design.md	1815	2	355	355	## Proposal split and order
+designs/message-delivery-design.md	1825	2	283	283	## Sources
+designs/message-delivery-design.md	1850	2	196	7999	## Review history
+designs/placement-design.md	15	2	334	334	## Problem
+designs/placement-design.md	29	2	252	252	## Scope
+designs/placement-design.md	52	2	505	1582	## Terms
+designs/placement-design.md	122	2	692	692	## High-level design
+designs/placement-design.md	148	2	1543	1543	## Decisions
+designs/placement-design.md	181	2	1076	1076	## Open decisions
+designs/placement-design.md	255	2	393	393	## Requirements
+designs/placement-design.md	274	2	345	345	## Security properties
+designs/placement-design.md	289	2	0	1344	## Current state
+designs/placement-design.md	352	2	0	1451	## PM-1 Node classes and presets
+designs/placement-design.md	459	2	0	766	## PM-2 Node tenancy
+designs/placement-design.md	495	2	0	1044	## PM-3 Placement offerings and per-pool `nodePlacement`
+designs/placement-design.md	573	2	0	1159	## PM-4 Placement requirements
+designs/placement-design.md	635	2	0	878	## PM-5 Rendering
+designs/placement-design.md	686	2	0	1535	## PM-6 Enforcement
+designs/placement-design.md	760	2	641	641	## PM-7 Region placement
+designs/placement-design.md	777	2	0	1154	## PM-8 System components
+designs/placement-design.md	826	2	331	331	## PM-9 Namespaces
+designs/placement-design.md	843	2	265	265	## Removals
+designs/placement-design.md	859	2	249	249	## Worked example
+designs/placement-design.md	869	2	165	165	## Limits
+designs/placement-design.md	880	2	202	202	## Alternatives rejected
+designs/placement-design.md	891	2	849	849	## Specification changes
+designs/placement-design.md	915	2	363	363	## Non-specification changes
+designs/placement-design.md	927	2	607	607	## Documentation
+designs/placement-design.md	944	2	665	665	## Tests
+designs/placement-design.md	959	2	234	234	## Validation owed
+designs/placement-design.md	970	2	977	977	## Instructions for reviewers of other designs
+designs/placement-design.md	987	2	198	198	## Proposal split and order
+designs/placement-design.md	1000	2	161	161	## Sources
+designs/placement-design.md	1006	2	1736	1736	## Review history
+designs/pod-lifecycle-controller-design.md	14	2	536	536	## Problem
+designs/pod-lifecycle-controller-design.md	33	2	469	469	## Scope
+designs/pod-lifecycle-controller-design.md	62	2	880	1415	## Terms
+designs/pod-lifecycle-controller-design.md	113	2	600	600	## High-level design
+designs/pod-lifecycle-controller-design.md	132	2	1030	1030	## Decisions
+designs/pod-lifecycle-controller-design.md	151	2	18	18	## Open decisions
+designs/pod-lifecycle-controller-design.md	155	2	999	999	## Requirements
+designs/pod-lifecycle-controller-design.md	178	2	0	3384	## Current state
+designs/pod-lifecycle-controller-design.md	336	2	467	467	## PLC-1 The specification describes Lenny's controllers
+designs/pod-lifecycle-controller-design.md	358	2	3551	3551	## PLC-2 Kind and field names
+designs/pod-lifecycle-controller-design.md	478	2	466	466	## PLC-3 Resource kinds
+designs/pod-lifecycle-controller-design.md	508	2	914	914	## PLC-4 Spec and code mismatches
+designs/pod-lifecycle-controller-design.md	522	2	168	168	## PLC-5 Go type names
+designs/pod-lifecycle-controller-design.md	541	2	23	23	## PLC-6 Withdrawn
+designs/pod-lifecycle-controller-design.md	545	2	879	879	## PLC-7 Pool and runtime names
+designs/pod-lifecycle-controller-design.md	567	2	110	110	## Limits
+designs/pod-lifecycle-controller-design.md	574	2	818	818	## Alternatives rejected
+designs/pod-lifecycle-controller-design.md	597	2	992	992	## Validation owed
+designs/pod-lifecycle-controller-design.md	616	2	1419	1419	## Specification changes
+designs/pod-lifecycle-controller-design.md	654	2	0	805	## Non-specification changes
+designs/pod-lifecycle-controller-design.md	687	2	1065	1065	## Documentation
+designs/pod-lifecycle-controller-design.md	720	2	1488	1488	## Tests
+designs/pod-lifecycle-controller-design.md	735	2	1502	1502	## Instructions for other designs
+designs/pod-lifecycle-controller-design.md	778	2	509	509	## Proposal split and order
+designs/pod-lifecycle-controller-design.md	789	2	323	323	## Sources
+designs/pod-lifecycle-controller-design.md	803	2	0	1445	## Review history
+designs/rest-only-client-api-design.md	15	2	454	454	## Problem
+designs/rest-only-client-api-design.md	32	2	631	631	## Scope
+designs/rest-only-client-api-design.md	73	2	758	1637	## Terms
+designs/rest-only-client-api-design.md	145	2	704	704	## High-level design
+designs/rest-only-client-api-design.md	178	2	1742	1742	## Decisions
+designs/rest-only-client-api-design.md	202	2	58	58	## Open decisions
+designs/rest-only-client-api-design.md	206	2	440	440	## Requirements
+designs/rest-only-client-api-design.md	224	2	467	467	## External protocol versions
+designs/rest-only-client-api-design.md	242	2	40	2296	## Current state: inventory
+designs/rest-only-client-api-design.md	335	2	372	372	## RO-1 The client contract
+designs/rest-only-client-api-design.md	347	2	3227	3227	## RO-2 REST additions
+designs/rest-only-client-api-design.md	442	2	599	599	## RO-3 The adapter model
+designs/rest-only-client-api-design.md	469	2	2638	2638	## RO-4 Authorization of adapter requests
+designs/rest-only-client-api-design.md	558	2	621	621	## RO-5 Packaging, versioning, and deployment
+designs/rest-only-client-api-design.md	586	2	582	582	## RO-6 Conformance
+designs/rest-only-client-api-design.md	609	2	384	384	## RO-7 Lenny's own clients
+designs/rest-only-client-api-design.md	630	2	634	634	## RO-8 The MCP adapter
+designs/rest-only-client-api-design.md	663	2	590	590	## RO-9 The A2A adapter
+designs/rest-only-client-api-design.md	675	2	982	982	## RO-10 The provider adapters
+designs/rest-only-client-api-design.md	718	2	256	256	## RO-11 What leaves Lenny
+designs/rest-only-client-api-design.md	729	2	208	208	## RO-12 What simplifies
+designs/rest-only-client-api-design.md	740	2	428	428	## Limits
+designs/rest-only-client-api-design.md	757	2	450	450	## Alternatives rejected
+designs/rest-only-client-api-design.md	772	2	290	290	## Validation owed
+designs/rest-only-client-api-design.md	785	2	970	970	## Specification changes
+designs/rest-only-client-api-design.md	820	2	173	622	## Non-specification changes
+designs/rest-only-client-api-design.md	843	2	854	854	## Tests
+designs/rest-only-client-api-design.md	860	2	1043	1043	## Instructions for reviewers of other designs
+designs/rest-only-client-api-design.md	880	2	260	260	## Proposal split and order
+designs/rest-only-client-api-design.md	893	2	158	158	## Sources
+designs/rest-only-client-api-design.md	909	2	159	1413	## Review history
+designs/runtime-protocol-design.md	15	2	427	427	## Problem
+designs/runtime-protocol-design.md	36	2	545	545	## Scope
+designs/runtime-protocol-design.md	73	2	562	2193	## Terms
+designs/runtime-protocol-design.md	146	2	772	772	## High-level design
+designs/runtime-protocol-design.md	173	2	1286	1286	## Decisions
+designs/runtime-protocol-design.md	194	2	3272	3272	## Open decisions
+designs/runtime-protocol-design.md	327	2	765	765	## Requirements
+designs/runtime-protocol-design.md	355	2	0	1377	## Current state
+designs/runtime-protocol-design.md	403	2	1174	1174	## RP-1 Handshake
+designs/runtime-protocol-design.md	477	2	1383	1383	## RP-2 Capabilities and their dependencies
+designs/runtime-protocol-design.md	521	2	1626	1626	## RP-3 Tool calls on frames
+designs/runtime-protocol-design.md	578	2	659	659	## RP-4 Availability
+designs/runtime-protocol-design.md	618	2	443	443	## RP-5 Reference MCP bridge
+designs/runtime-protocol-design.md	641	2	463	463	## RP-6 What the adapter enforces
+designs/runtime-protocol-design.md	659	2	271	271	## RP-7 Versioning
+designs/runtime-protocol-design.md	670	2	300	300	## RP-8 Conformance by capability
+designs/runtime-protocol-design.md	680	2	478	478	## Worked example
+designs/runtime-protocol-design.md	694	2	294	294	## Limits
+designs/runtime-protocol-design.md	705	2	364	364	## Alternatives rejected
+designs/runtime-protocol-design.md	719	2	1629	1629	## Specification changes
+designs/runtime-protocol-design.md	769	2	400	972	## Non-specification changes
+designs/runtime-protocol-design.md	800	2	593	593	## Tests
+designs/runtime-protocol-design.md	812	2	118	118	## Validation owed
+designs/runtime-protocol-design.md	821	2	1092	1092	## Instructions for reviewers of other designs
+designs/runtime-protocol-design.md	849	2	223	223	## Proposal split and order
+designs/runtime-protocol-design.md	857	2	65	65	## Sources
+designs/runtime-protocol-design.md	866	2	244	3046	## Review history
+designs/runtime-revisions-design.md	13	2	216	216	## Problem
+designs/runtime-revisions-design.md	25	2	567	567	## Scope
+designs/runtime-revisions-design.md	73	2	676	1990	## Terms
+designs/runtime-revisions-design.md	144	2	833	833	## High-level design
+designs/runtime-revisions-design.md	198	2	2285	2285	## Decisions
+designs/runtime-revisions-design.md	271	2	431	431	## Requirements
+designs/runtime-revisions-design.md	292	2	1089	1089	## Current state
+designs/runtime-revisions-design.md	327	2	0	3787	## RV-1 Revisions
+designs/runtime-revisions-design.md	461	2	711	1083	## RV-2 Selection
+designs/runtime-revisions-design.md	497	2	1632	1632	## RV-3 Pods
+designs/runtime-revisions-design.md	511	2	645	645	## RV-4 Rollout
+designs/runtime-revisions-design.md	533	2	690	690	## RV-5 Derived runtimes
+designs/runtime-revisions-design.md	544	2	378	378	## RV-6 Sessions over time
+designs/runtime-revisions-design.md	552	2	0	681	## RV-7 Session options
+designs/runtime-revisions-design.md	588	2	206	1087	## Worked example: an upgrade on AWS
+designs/runtime-revisions-design.md	658	2	499	499	## Limits
+designs/runtime-revisions-design.md	675	2	514	514	## Alternatives rejected
+designs/runtime-revisions-design.md	693	2	1202	1202	## Specification changes
+designs/runtime-revisions-design.md	724	2	648	648	## Non-specification changes
+designs/runtime-revisions-design.md	753	2	360	360	## Documentation
+designs/runtime-revisions-design.md	766	2	1589	1589	## Tests
+designs/runtime-revisions-design.md	785	2	604	604	## Validation owed
+designs/runtime-revisions-design.md	804	2	865	865	## Instructions for reviewers of other designs
+designs/runtime-revisions-design.md	833	2	188	188	## Proposal split and order
+designs/runtime-revisions-design.md	845	2	22	3642	## Review history
+designs/runtime-routing-design.md	15	2	280	280	## Problem
+designs/runtime-routing-design.md	30	2	457	457	## Scope
+designs/runtime-routing-design.md	71	2	543	2114	## Terms
+designs/runtime-routing-design.md	144	2	794	794	## High-level design
+designs/runtime-routing-design.md	200	2	654	654	## Decisions
+designs/runtime-routing-design.md	245	2	341	341	## Requirements
+designs/runtime-routing-design.md	262	2	1177	1177	## Current state
+designs/runtime-routing-design.md	323	2	261	261	## RT-1 Removal
+designs/runtime-routing-design.md	335	2	0	2051	## RT-2 The interceptor contract
+designs/runtime-routing-design.md	416	2	361	361	## RT-3 Routing labels
+designs/runtime-routing-design.md	443	2	0	1189	## RT-4 Runtime routes
+designs/runtime-routing-design.md	507	2	191	191	## RT-5 In-cluster interceptors
+designs/runtime-routing-design.md	515	2	272	272	## RT-6 Tenant-scoped interceptors
+designs/runtime-routing-design.md	526	2	661	661	## RT-7 Documentation
+designs/runtime-routing-design.md	552	2	306	306	## Limits
+designs/runtime-routing-design.md	565	2	328	328	## Alternatives rejected
+designs/runtime-routing-design.md	582	2	638	638	## Specification changes
+designs/runtime-routing-design.md	611	2	328	328	## Non-specification changes
+designs/runtime-routing-design.md	632	2	736	736	## Tests
+designs/runtime-routing-design.md	648	2	344	344	## Validation owed
+designs/runtime-routing-design.md	663	2	701	701	## Instructions for reviewers of other designs
+designs/runtime-routing-design.md	687	2	136	136	## Proposal split and order
+designs/runtime-routing-design.md	696	2	16	2073	## Review history
+designs/security-oversight-design.md	5	2	331	331	## Problem
+designs/security-oversight-design.md	17	2	87	87	## Scope
+designs/security-oversight-design.md	23	2	808	4240	## Terms
+designs/security-oversight-design.md	132	2	752	752	## High-level design
+designs/security-oversight-design.md	162	2	316	316	## Requirements
+designs/security-oversight-design.md	177	2	574	574	## Security properties
+designs/security-oversight-design.md	195	2	0	2395	## SO-1: security roles
+designs/security-oversight-design.md	290	2	0	4265	## SO-2: tenant security record and posture
+designs/security-oversight-design.md	418	2	0	1801	## SO-3: per-tenant SIEM destination
+designs/security-oversight-design.md	520	2	0	1268	## SO-4: operator access transparency
+designs/security-oversight-design.md	577	2	0	1281	## SO-5: delegated approvers
+designs/security-oversight-design.md	640	2	0	510	## SO-6: F-25.6.9, certificate windows and the remedy
+designs/security-oversight-design.md	674	2	0	439	## SO-7: F-25.4.40, `lenny-ops` rights
+designs/security-oversight-design.md	700	2	1060	1060	## Configuration by scope
+designs/security-oversight-design.md	743	2	714	714	## Worked scenarios
+designs/security-oversight-design.md	765	2	438	438	## Interactions with `egress-and-git-design.md`
+designs/security-oversight-design.md	786	2	147	147	## Changes requested of egress-and-git-design.md
+designs/security-oversight-design.md	796	2	959	959	## Residual risks
+designs/security-oversight-design.md	819	2	197	197	## Defects found while verifying
+designs/security-oversight-design.md	831	2	456	456	## Specification sections affected
+designs/security-oversight-design.md	851	2	920	920	## Proposals and dependencies
+designs/security-oversight-design.md	897	2	38	631	## Documentation
+designs/security-oversight-design.md	934	2	37	2060	## Tests
+designs/security-oversight-design.md	1062	2	337	337	## Evidence
+designs/security-oversight-design.md	1077	2	3120	3120	## Decisions
+designs/security-oversight-design.md	1117	2	0	3212	## Review history
+designs/service-account-credentials-design.md	14	2	374	374	## Problem
+designs/service-account-credentials-design.md	33	2	353	353	## Scope
+designs/service-account-credentials-design.md	59	2	494	1556	## Terms
+designs/service-account-credentials-design.md	118	2	514	1190	## High-level design
+designs/service-account-credentials-design.md	164	2	353	353	## Requirements
+designs/service-account-credentials-design.md	182	2	1284	1284	## SA-1 Principal-owned credentials
+designs/service-account-credentials-design.md	242	2	1687	1687	## SA-2 The `clientCredentials` source
+designs/service-account-credentials-design.md	320	2	2929	2929	## SA-3 The `issuerExchange` source
+designs/service-account-credentials-design.md	440	2	1103	1103	## SA-4 Provider calls, caching, and failure
+designs/service-account-credentials-design.md	470	2	688	688	## SA-5 Delivery
+designs/service-account-credentials-design.md	491	2	693	693	## SA-6 Subject namespaces
+designs/service-account-credentials-design.md	515	2	392	684	## Configuration by scope
+designs/service-account-credentials-design.md	559	2	48	1595	## Threat model
+designs/service-account-credentials-design.md	607	2	256	256	## Current state
+designs/service-account-credentials-design.md	621	2	887	887	## Owner decisions
+designs/service-account-credentials-design.md	640	2	1	1	## Open decisions
+designs/service-account-credentials-design.md	644	2	731	731	## Documentation changes
+designs/service-account-credentials-design.md	660	2	400	400	## Specification changes
+designs/service-account-credentials-design.md	676	2	303	303	## Non-specification changes
+designs/service-account-credentials-design.md	691	2	293	293	## Changes to other designs
+designs/service-account-credentials-design.md	704	2	898	898	## Tests
+designs/service-account-credentials-design.md	722	2	261	261	## Validation owed
+designs/service-account-credentials-design.md	735	2	601	601	## Alternatives rejected
+designs/service-account-credentials-design.md	754	2	235	235	## Proposal split and order
+designs/service-account-credentials-design.md	765	2	358	358	## Sources
+designs/service-account-credentials-design.md	790	2	0	541	## Revision history
+designs/session-derive-design.md	5	2	180	180	## Problem
+designs/session-derive-design.md	16	2	171	171	## Owner's choice
+designs/session-derive-design.md	22	2	75	75	## Scope
+designs/session-derive-design.md	28	2	615	4064	## Terms
+designs/session-derive-design.md	130	2	838	838	## High-level design
+designs/session-derive-design.md	161	2	100	100	## Requirements
+designs/session-derive-design.md	170	2	306	306	## Security properties
+designs/session-derive-design.md	177	2	422	422	## Current state
+designs/session-derive-design.md	193	2	0	4817	## SD-1: One route
+designs/session-derive-design.md	338	2	198	198	## What an exact start does not cover
+designs/session-derive-design.md	350	2	256	256	## Costs
+designs/session-derive-design.md	362	2	127	127	## Defects found while verifying
+designs/session-derive-design.md	371	2	370	370	## Specification sections affected
+designs/session-derive-design.md	380	2	220	220	## Stored formats and wire contracts this forces
+designs/session-derive-design.md	394	2	203	203	## Proposals and dependencies
+designs/session-derive-design.md	402	2	488	488	## Documentation
+designs/session-derive-design.md	416	2	0	1500	## Tests
+designs/session-derive-design.md	460	2	824	824	## Decisions
+designs/session-derive-design.md	475	2	57	3707	## Review history
+designs/session-isolation-design.md	15	2	322	322	## Problem
+designs/session-isolation-design.md	29	2	341	341	## Scope
+designs/session-isolation-design.md	56	2	1012	2125	## Terms
+designs/session-isolation-design.md	130	2	601	601	## High-level design
+designs/session-isolation-design.md	168	2	2363	2363	## Decisions
+designs/session-isolation-design.md	208	2	966	966	## Open decisions
+designs/session-isolation-design.md	252	2	1368	1368	## Requirements
+designs/session-isolation-design.md	296	2	0	953	## Current state
+designs/session-isolation-design.md	333	2	879	879	## SI-1 Pod layout
+designs/session-isolation-design.md	361	2	930	930	## SI-2 Slot identity and socket names
+designs/session-isolation-design.md	391	2	1271	2463	## SI-3 Runtime processes, slot release, and setup commands
+designs/session-isolation-design.md	495	2	641	641	## SI-4 Slot liveness and the slot count
+designs/session-isolation-design.md	522	2	1988	2441	## SI-5 The supervisor file-descriptor broker
+designs/session-isolation-design.md	598	2	731	731	## SI-6 Checkpoint, restore, export, and cleanup
+designs/session-isolation-design.md	620	2	600	600	## SI-7 Credentials, manifests, and other shared files
+designs/session-isolation-design.md	632	2	690	690	## SI-8 Shared repository stores
+designs/session-isolation-design.md	655	2	550	550	## SI-9 CPU and memory
+designs/session-isolation-design.md	685	2	921	921	## SI-10 What stays shared
+designs/session-isolation-design.md	702	2	820	820	## SI-11 User namespaces and Landlock
+designs/session-isolation-design.md	718	2	394	394	## SI-12 Cost
+designs/session-isolation-design.md	734	2	442	442	## Worked example
+designs/session-isolation-design.md	746	2	527	527	## Limits
+designs/session-isolation-design.md	762	2	645	645	## Alternatives rejected
+designs/session-isolation-design.md	786	2	1130	4840	## Validation record
+designs/session-isolation-design.md	964	2	591	591	## Validation owed
+designs/session-isolation-design.md	987	2	1007	1007	## Specification changes
+designs/session-isolation-design.md	1011	2	240	1099	## Non-specification changes
+designs/session-isolation-design.md	1053	2	585	585	## Tests
+designs/session-isolation-design.md	1064	2	1411	1411	## Instructions for reviewers of other designs
+designs/session-isolation-design.md	1085	2	194	194	## Proposal split and order
+designs/session-isolation-design.md	1097	2	147	147	## Sources
+designs/session-isolation-design.md	1116	2	341	3739	## Review history
+designs/session-lifecycle-design.md	15	2	399	399	## Problem
+designs/session-lifecycle-design.md	31	2	457	457	## Scope
+designs/session-lifecycle-design.md	68	2	613	2038	## Terms
+designs/session-lifecycle-design.md	139	2	799	799	## High-level design
+designs/session-lifecycle-design.md	189	2	2777	2777	## Decisions
+designs/session-lifecycle-design.md	267	2	1013	1013	## Requirements
+designs/session-lifecycle-design.md	300	2	0	975	## Current state
+designs/session-lifecycle-design.md	335	2	399	399	## SL-1 States
+designs/session-lifecycle-design.md	359	2	858	858	## SL-2 Transitions
+designs/session-lifecycle-design.md	396	2	2027	2027	## SL-3 Suspension and the open turn
+designs/session-lifecycle-design.md	450	2	832	832	## SL-4 Tree suspension
+designs/session-lifecycle-design.md	474	2	470	470	## SL-5 Messages to a waiting or paused session
+designs/session-lifecycle-design.md	496	2	815	815	## SL-6 Idle pods and dormancy
+designs/session-lifecycle-design.md	528	2	488	488	## SL-7 Closing a session
+designs/session-lifecycle-design.md	560	2	548	548	## SL-8 Parents, children, and their states
+designs/session-lifecycle-design.md	591	2	448	448	## SL-9 When a parent ends
+designs/session-lifecycle-design.md	616	2	419	419	## SL-10 Admission, caps, and timers
+designs/session-lifecycle-design.md	637	2	429	429	## SL-11 External mappings
+designs/session-lifecycle-design.md	659	2	286	286	## SL-12 Recovery of child events
+designs/session-lifecycle-design.md	676	2	299	299	## Worked example
+designs/session-lifecycle-design.md	688	2	488	488	## Limits
+designs/session-lifecycle-design.md	704	2	480	480	## Alternatives rejected
+designs/session-lifecycle-design.md	721	2	2007	2007	## Specification changes
+designs/session-lifecycle-design.md	760	2	346	346	## Non-specification changes
+designs/session-lifecycle-design.md	773	2	557	557	## Documentation
+designs/session-lifecycle-design.md	785	2	884	884	## Tests
+designs/session-lifecycle-design.md	800	2	118	118	## Validation owed
+designs/session-lifecycle-design.md	808	2	482	482	## Instructions for reviewers of other designs
+designs/session-lifecycle-design.md	823	2	277	277	## Proposal split and order
+designs/session-lifecycle-design.md	830	2	33	33	## Sources
+designs/session-lifecycle-design.md	834	2	129	3452	## Review history
+designs/tenant-derived-runtimes-design.md	5	2	171	171	## Problem
+designs/tenant-derived-runtimes-design.md	13	2	99	99	## Scope
+designs/tenant-derived-runtimes-design.md	23	2	1783	6028	## Terms
+designs/tenant-derived-runtimes-design.md	154	2	1161	1161	## High-level design
+designs/tenant-derived-runtimes-design.md	192	2	301	301	## Owner's choice
+designs/tenant-derived-runtimes-design.md	200	2	391	391	## Requirements
+designs/tenant-derived-runtimes-design.md	213	2	604	604	## Security properties
+designs/tenant-derived-runtimes-design.md	230	2	515	934	## Current state
+designs/tenant-derived-runtimes-design.md	270	2	375	375	## Costs of the capability
+designs/tenant-derived-runtimes-design.md	282	2	660	660	## DR-1 to DR-3: Prerequisites
+designs/tenant-derived-runtimes-design.md	294	2	0	2361	## DR-4: Tenant runtime records
+designs/tenant-derived-runtimes-design.md	389	2	523	523	## Who turns it on
+designs/tenant-derived-runtimes-design.md	433	2	1652	2956	## Fields
+designs/tenant-derived-runtimes-design.md	513	2	0	2460	## DR-5: Owned pools
+designs/tenant-derived-runtimes-design.md	592	2	2503	2503	## DR-6: Base changes
+designs/tenant-derived-runtimes-design.md	653	2	0	13295	## DR-9: Default git clones
+designs/tenant-derived-runtimes-design.md	925	2	882	882	## DR-12: Repository folders and the working directory
+designs/tenant-derived-runtimes-design.md	941	2	0	2119	## DR-10: Capacity reservation
+designs/tenant-derived-runtimes-design.md	1010	2	0	938	## DR-8: Interactions
+designs/tenant-derived-runtimes-design.md	1043	2	583	583	## DR-7: Security oversight and records
+designs/tenant-derived-runtimes-design.md	1062	2	974	974	## Configuration by scope
+designs/tenant-derived-runtimes-design.md	1096	2	1133	1133	## Scenarios
+designs/tenant-derived-runtimes-design.md	1128	2	1696	1696	## Residual risks
+designs/tenant-derived-runtimes-design.md	1162	2	1696	1696	## Defects found while verifying
+designs/tenant-derived-runtimes-design.md	1190	2	1746	1746	## Changes requested of other design documents
+designs/tenant-derived-runtimes-design.md	1257	2	1129	1129	## Specification sections affected
+designs/tenant-derived-runtimes-design.md	1291	2	1015	1015	## Proposals and dependencies
+designs/tenant-derived-runtimes-design.md	1327	2	1022	1022	## Documentation
+designs/tenant-derived-runtimes-design.md	1354	2	20	5132	## Tests
+designs/tenant-derived-runtimes-design.md	1478	2	6428	6428	## Decisions
+designs/tenant-derived-runtimes-design.md	1552	2	25	12542	## Review history
+designs/tenant-outbound-connector-design.md	11	2	81	81	## Problem
+designs/tenant-outbound-connector-design.md	15	2	199	199	## Scope
+designs/tenant-outbound-connector-design.md	26	2	885	3693	## Terms
+designs/tenant-outbound-connector-design.md	120	2	690	690	## High-level design
+designs/tenant-outbound-connector-design.md	153	2	315	315	## Requirements
+designs/tenant-outbound-connector-design.md	165	2	496	1273	## Security properties
+designs/tenant-outbound-connector-design.md	191	2	0	1591	## Build versus adopt
+designs/tenant-outbound-connector-design.md	236	2	0	8139	## Design
+designs/tenant-outbound-connector-design.md	512	2	620	620	## Configuration by scope
+designs/tenant-outbound-connector-design.md	539	2	1564	1564	## Scenarios
+designs/tenant-outbound-connector-design.md	583	2	661	661	## Residual risks
+designs/tenant-outbound-connector-design.md	603	2	392	392	## Specification sections affected
+designs/tenant-outbound-connector-design.md	622	2	287	665	## Proposals
+designs/tenant-outbound-connector-design.md	660	2	635	635	## Changes requested of egress-and-git-design.md
+designs/tenant-outbound-connector-design.md	677	2	575	575	## Documentation
+designs/tenant-outbound-connector-design.md	704	2	36	1572	## Tests
+designs/tenant-outbound-connector-design.md	808	2	467	467	## Spikes owed
+designs/tenant-outbound-connector-design.md	824	2	1216	1216	## Settled decisions
+designs/tenant-outbound-connector-design.md	849	2	7	7	## Open decisions
+designs/tenant-outbound-connector-design.md	853	2	37	37	## Evidence for the need
+designs/tenant-outbound-connector-design.md	859	2	32	500	## Validation record
+designs/tenant-outbound-connector-design.md	881	2	21	1830	## Review history
+designs/tenant-scoping-identity-design.md	5	2	164	164	## Problem
+designs/tenant-scoping-identity-design.md	14	2	54	54	## Scope
+designs/tenant-scoping-identity-design.md	18	2	1368	5104	## Terms
+designs/tenant-scoping-identity-design.md	148	2	773	773	## High-level design
+designs/tenant-scoping-identity-design.md	184	2	185	185	## Requirements
+designs/tenant-scoping-identity-design.md	195	2	566	566	## Security properties
+designs/tenant-scoping-identity-design.md	210	2	416	416	## Current state
+designs/tenant-scoping-identity-design.md	229	2	0	5192	## TS-1: Environment scoping
+designs/tenant-scoping-identity-design.md	409	2	833	3404	## TS-3: Session environment context and cross-environment sharing
+designs/tenant-scoping-identity-design.md	532	2	0	13418	## Identity model (TS-2, TS-4, and TS-6 to TS-9)
+designs/tenant-scoping-identity-design.md	931	2	1149	1149	## Configuration by scope
+designs/tenant-scoping-identity-design.md	974	2	1831	1831	## Scenarios
+designs/tenant-scoping-identity-design.md	1029	2	2189	2189	## Residual risks
+designs/tenant-scoping-identity-design.md	1073	2	1135	1135	## Defects found while verifying
+designs/tenant-scoping-identity-design.md	1118	2	290	290	## Changes requested of egress-and-git-design.md
+designs/tenant-scoping-identity-design.md	1128	2	824	824	## Specification sections affected
+designs/tenant-scoping-identity-design.md	1168	2	1202	1202	## Proposals and dependencies
+designs/tenant-scoping-identity-design.md	1215	2	589	589	## Documentation
+designs/tenant-scoping-identity-design.md	1237	2	20	4612	## Tests
+designs/tenant-scoping-identity-design.md	1396	2	218	218	## Validation owed
+designs/tenant-scoping-identity-design.md	1401	2	2742	2742	## Decisions
+designs/tenant-scoping-identity-design.md	1449	2	102	102	## Evidence for the need
+designs/tenant-scoping-identity-design.md	1455	2	44	6897	## Review history
+designs/tenant-security-settings-design.md	13	2	252	252	## Problem
+designs/tenant-security-settings-design.md	29	2	479	479	## Scope
+designs/tenant-security-settings-design.md	68	2	385	1221	## Terms
+designs/tenant-security-settings-design.md	120	2	536	536	## High-level design
+designs/tenant-security-settings-design.md	158	2	500	500	## Decisions
+designs/tenant-security-settings-design.md	174	2	1658	1658	## Open decisions
+designs/tenant-security-settings-design.md	299	2	411	411	## Requirements
+designs/tenant-security-settings-design.md	319	2	160	160	## Security properties
+designs/tenant-security-settings-design.md	330	2	0	432	## Current state
+designs/tenant-security-settings-design.md	356	2	147	2388	## Inventory
+designs/tenant-security-settings-design.md	448	2	0	598	## TSS-1 Settings model
+designs/tenant-security-settings-design.md	509	2	0	488	## TSS-2 Templates
+designs/tenant-security-settings-design.md	551	2	813	813	## TSS-3 Admin API
+designs/tenant-security-settings-design.md	622	2	739	739	## TSS-4 Tenant key
+designs/tenant-security-settings-design.md	661	2	235	235	## TSS-5 Deadlines and retention
+designs/tenant-security-settings-design.md	671	2	336	336	## TSS-6 Placement settings
+designs/tenant-security-settings-design.md	686	2	592	592	## TSS-7 Changing a setting on a live tenant
+designs/tenant-security-settings-design.md	708	2	278	1029	## TSS-8 Data classes
+designs/tenant-security-settings-design.md	746	2	260	260	## TSS-9 Removal of `workspaceTier`
+designs/tenant-security-settings-design.md	759	2	266	266	## Worked example
+designs/tenant-security-settings-design.md	769	2	172	172	## Limits
+designs/tenant-security-settings-design.md	779	2	144	144	## Alternatives rejected
+designs/tenant-security-settings-design.md	788	2	979	979	## Specification changes
+designs/tenant-security-settings-design.md	825	2	271	271	## Non-specification changes
+designs/tenant-security-settings-design.md	847	2	427	427	## Documentation
+designs/tenant-security-settings-design.md	863	2	504	504	## Tests
+designs/tenant-security-settings-design.md	879	2	171	171	## Validation owed
+designs/tenant-security-settings-design.md	888	2	577	577	## Instructions for reviewers of other designs
+designs/tenant-security-settings-design.md	905	2	182	182	## Proposal split and order
+designs/tenant-security-settings-design.md	915	2	115	115	## Sources
+designs/tenant-security-settings-design.md	922	2	6	1151	## Review history
+designs/user-credential-delivery-design.md	20	2	256	256	## Problem
+designs/user-credential-delivery-design.md	32	2	198	198	## Scope
+designs/user-credential-delivery-design.md	38	2	972	3821	## Terms
+designs/user-credential-delivery-design.md	146	2	1166	1166	## High-level design
+designs/user-credential-delivery-design.md	179	2	287	287	## Requirements
+designs/user-credential-delivery-design.md	195	2	0	1958	## Threat model
+designs/user-credential-delivery-design.md	232	2	758	758	## Current state
+designs/user-credential-delivery-design.md	262	2	0	3781	## UC-1: Credential types and the `registered` source
+designs/user-credential-delivery-design.md	370	2	71	4385	## UC-2: The `oauth2Link` source and account linking
+designs/user-credential-delivery-design.md	547	2	326	2721	## UC-3: The `userCredential` binding
+designs/user-credential-delivery-design.md	620	2	377	4583	## UC-4: Request rules and presets
+designs/user-credential-delivery-design.md	788	2	0	1202	## UC-5: `delivery: file`
+designs/user-credential-delivery-design.md	831	2	104	741	## UC-7: Add-ons
+designs/user-credential-delivery-design.md	879	2	183	1451	## UC-8: Link prompts
+designs/user-credential-delivery-design.md	930	2	521	521	## Configuration by scope
+designs/user-credential-delivery-design.md	961	2	0	879	## Worked examples
+designs/user-credential-delivery-design.md	1002	2	0	971	## Changes requested of other designs
+designs/user-credential-delivery-design.md	1036	2	476	476	## Dependencies
+designs/user-credential-delivery-design.md	1052	2	547	547	## Specification sections affected
+designs/user-credential-delivery-design.md	1068	2	473	473	## Defects found while verifying
+designs/user-credential-delivery-design.md	1079	2	785	785	## Documentation
+designs/user-credential-delivery-design.md	1100	2	12	2010	## Tests
+designs/user-credential-delivery-design.md	1196	2	392	392	## Validation owed
+designs/user-credential-delivery-design.md	1209	2	1022	1022	## Residual risks
+designs/user-credential-delivery-design.md	1239	2	3634	3634	## Decisions
+designs/user-credential-delivery-design.md	1287	2	78	78	## Sources
+designs/user-credential-delivery-design.md	1293	2	220	220	## Decision history
+designs/user-credential-delivery-design.md	1306	2	39	8090	## Review history
+designs/user-git-identity-design.md	20	2	225	225	## Problem
+designs/user-git-identity-design.md	31	2	188	188	## Scope
+designs/user-git-identity-design.md	37	2	2107	5070	## Terms
+designs/user-git-identity-design.md	173	2	982	982	## High-level design
+designs/user-git-identity-design.md	204	2	529	529	## Personas and requirements
+designs/user-git-identity-design.md	217	2	0	1538	## Threat model
+designs/user-git-identity-design.md	248	2	242	242	## Current state
+designs/user-git-identity-design.md	261	2	390	1058	## UG-1: VCS link kinds
+designs/user-git-identity-design.md	293	2	0	4339	## UG-2: Repository authorization
+designs/user-git-identity-design.md	436	2	0	6498	## UG-3: Pull request authoring
+designs/user-git-identity-design.md	628	2	486	486	## UG-4: Independent approval check
+designs/user-git-identity-design.md	652	2	451	451	## Configuration by scope
+designs/user-git-identity-design.md	676	2	0	399	## Worked examples
+designs/user-git-identity-design.md	702	2	576	576	## Dependencies
+designs/user-git-identity-design.md	725	2	214	214	## Specification sections affected
+designs/user-git-identity-design.md	737	2	417	417	## Documentation
+designs/user-git-identity-design.md	752	2	17	851	## Tests
+designs/user-git-identity-design.md	821	2	342	342	## Validation owed
+designs/user-git-identity-design.md	831	2	1098	1098	## Residual risks
+designs/user-git-identity-design.md	855	2	3701	3701	## Decisions
+designs/user-git-identity-design.md	912	2	63	63	## Sources
+designs/user-git-identity-design.md	920	2	1014	1014	## Changes requested of egress-and-git-design.md
+designs/user-git-identity-design.md	956	2	39	5994	## Review history
+designs/workspace-materialization-design.md	14	2	393	393	## Problem
+designs/workspace-materialization-design.md	28	2	368	368	## Scope
+designs/workspace-materialization-design.md	53	2	1018	2452	## Terms
+designs/workspace-materialization-design.md	134	2	788	788	## High-level design
+designs/workspace-materialization-design.md	173	2	2153	2153	## Decisions
+designs/workspace-materialization-design.md	207	2	0	631	## Current state
+designs/workspace-materialization-design.md	229	2	630	630	## WM-1 What moves and what stays
+designs/workspace-materialization-design.md	259	2	628	628	## WM-2 The helper and how it is staged
+designs/workspace-materialization-design.md	284	2	1481	1481	## WM-3 The protocol
+designs/workspace-materialization-design.md	358	2	1262	1262	## WM-4 The plan the adapter builds
+designs/workspace-materialization-design.md	395	2	741	741	## WM-5 Result validation and what a forged result can do
+designs/workspace-materialization-design.md	443	2	395	395	## WM-6 Limits while streaming, and the platform backstops
+designs/workspace-materialization-design.md	466	2	524	524	## WM-7 Ordering and collisions
+designs/workspace-materialization-design.md	488	2	637	637	## WM-8 Atomicity under the fixed layout
+designs/workspace-materialization-design.md	503	2	993	993	## WM-9 Archive extraction leaves the gateway
+designs/workspace-materialization-design.md	529	2	1101	1101	## WM-10 Git
+designs/workspace-materialization-design.md	559	2	1026	1026	## WM-11 The worker, broker requests, and checkpoints
+designs/workspace-materialization-design.md	596	2	295	295	## WM-12 Mid-session uploads and child-file imports
+designs/workspace-materialization-design.md	604	2	281	281	## WM-13 Resume and derive
+designs/workspace-materialization-design.md	616	2	504	504	## WM-14 Memory sizing
+designs/workspace-materialization-design.md	632	2	2093	2093	## WM-15 Warm-up checkout and reflink rebuild
+designs/workspace-materialization-design.md	690	2	229	229	## WM-16 Reflink clones of staged uploads
+designs/workspace-materialization-design.md	698	2	479	479	## Worked example
+designs/workspace-materialization-design.md	711	2	1085	1085	## Open decisions
+designs/workspace-materialization-design.md	776	2	1263	1263	## Requirements
+designs/workspace-materialization-design.md	809	2	422	422	## Security properties
+designs/workspace-materialization-design.md	821	2	380	380	## Limits
+designs/workspace-materialization-design.md	836	2	684	684	## Alternatives rejected
+designs/workspace-materialization-design.md	859	2	1339	1339	## Specification changes
+designs/workspace-materialization-design.md	892	2	352	352	## Non-specification changes
+designs/workspace-materialization-design.md	906	2	690	690	## Documentation
+designs/workspace-materialization-design.md	920	2	847	847	## Tests
+designs/workspace-materialization-design.md	937	2	1672	1672	## Validation record
+designs/workspace-materialization-design.md	1025	2	577	577	## Validation owed
+designs/workspace-materialization-design.md	1045	2	1351	1351	## Instructions for reviewers of other designs
+designs/workspace-materialization-design.md	1081	2	384	384	## Proposal split and order
+designs/workspace-materialization-design.md	1097	2	146	146	## Sources
+designs/workspace-materialization-design.md	1111	2	178	2663	## Review history

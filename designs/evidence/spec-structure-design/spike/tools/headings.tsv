@@ -1,0 +1,696 @@
+spec/01_executive-summary.md	1	2	129	338	## 1. Executive Summary
+spec/01_executive-summary.md	9	3	209	209	### Core Design Principles
+spec/02_goals-and-non-goals.md	1	2	0	350	## 2. Goals and Non-Goals
+spec/02_goals-and-non-goals.md	3	3	219	219	### Goals
+spec/02_goals-and-non-goals.md	17	3	131	131	### Non-Goals
+spec/03_high-level-architecture.md	1	2	349	349	## 3. High-Level Architecture
+spec/04_system-components.md	1	2	0	58278	## 4. System Components
+spec/04_system-components.md	3	3	452	452	### 4.0 Agent Operability Additions
+spec/04_system-components.md	40	3	891	2514	### 4.1 Edge Gateway Replicas
+spec/04_system-components.md	99	4	1286	1286	#### Gateway Internal Subsystems
+spec/04_system-components.md	149	4	337	337	#### Request Message Scope
+spec/04_system-components.md	159	3	1164	1164	### 4.2 Session Manager
+spec/04_system-components.md	198	3	499	499	### 4.3 Token Service
+spec/04_system-components.md	230	3	0	4551	### 4.4 Event / Checkpoint Store
+spec/04_system-components.md	232	4	146	146	#### 4.4.1 Stored Records and Audit Egress
+spec/04_system-components.md	247	4	592	592	#### 4.4.2 Checkpoint Atomicity and Partial Manifests
+spec/04_system-components.md	253	4	1452	1452	#### 4.4.3 Checkpoint Quiescence, Timeout, and Abort Handling
+spec/04_system-components.md	269	4	740	740	#### 4.4.4 Checkpoint SLOs and Scheduling
+spec/04_system-components.md	279	4	1621	1621	#### 4.4.5 Checkpoint Storage Failure and Eviction Fallback
+spec/04_system-components.md	316	3	328	328	### 4.5 Artifact Store
+spec/04_system-components.md	334	3	11	13586	### 4.6 Pod Lifecycle Controllers
+spec/04_system-components.md	338	4	9255	9255	#### 4.6.1 Warm Pool Controller (Pod Lifecycle)
+spec/04_system-components.md	537	4	1693	1693	#### 4.6.2 PoolScalingController (Pool Configuration)
+spec/04_system-components.md	606	4	2627	2627	#### 4.6.3 CRD Field Ownership and Write Boundaries
+spec/04_system-components.md	657	3	0	15107	### 4.7 Runtime Adapter
+spec/04_system-components.md	659	4	4947	4947	#### 4.7.1 Role and Gateway RPC Contract
+spec/04_system-components.md	768	4	308	308	#### 4.7.2 Checkpoint and Interrupt Mutual Exclusion
+spec/04_system-components.md	776	4	158	158	#### 4.7.3 Adapter Events on CH-ADAPTEREVENTS
+spec/04_system-components.md	790	4	57	57	#### 4.7.4 Adapter ↔ Runtime Protocol (Intra-Pod)
+spec/04_system-components.md	794	4	234	234	#### 4.7.5 Adapter Manifest
+spec/04_system-components.md	838	4	873	873	#### 4.7.6 Adapter Manifest Field Reference
+spec/04_system-components.md	872	4	77	77	#### 4.7.7 Runtime Integration Levels (agent-type only)
+spec/04_system-components.md	878	4	908	908	#### 4.7.8 Credential Rotation by Integration Level
+spec/04_system-components.md	905	4	276	276	#### 4.7.9 Startup Sequence for `type: agent` Runtimes
+spec/04_system-components.md	926	4	4768	4768	#### 4.7.10 Deployment Model
+spec/04_system-components.md	1296	4	2501	2501	#### 4.7.11 Adapter-Agent Security Boundary
+spec/04_system-components.md	1429	3	100	4060	### 4.8 Gateway Policy Engine
+spec/04_system-components.md	1447	4	3960	3960	#### `RequestInterceptor` Extension Point
+spec/04_system-components.md	1564	3	132	16017	### 4.9 Credential Leasing Service
+spec/04_system-components.md	1572	4	156	156	#### Credential Provider
+spec/04_system-components.md	1588	4	824	824	#### Credential Pool
+spec/04_system-components.md	1646	4	2448	2448	#### Credential Storage Topology
+spec/04_system-components.md	1754	4	245	245	#### Pre-Claim Credential Availability Check
+spec/04_system-components.md	1760	4	120	120	#### Credential Lease
+spec/04_system-components.md	1784	4	914	914	#### `materializedConfig` Schema by Provider
+spec/04_system-components.md	1841	4	249	249	#### Credential Policy
+spec/04_system-components.md	1866	4	274	274	#### Three Credential Modes
+spec/04_system-components.md	1878	4	1086	1086	#### Pre-Authorized Credential Flow
+spec/04_system-components.md	1920	4	477	477	#### Fallback Flow
+spec/04_system-components.md	1965	4	1214	1214	#### Proactive Lease Renewal
+spec/04_system-components.md	1993	4	3175	3175	#### LLM Reverse Proxy
+spec/04_system-components.md	2080	4	475	475	#### Semantic Caching
+spec/04_system-components.md	2096	4	749	749	#### `CredentialRouter` Interface
+spec/04_system-components.md	2138	4	301	301	#### Credential Governance Boundaries
+spec/04_system-components.md	2162	4	1159	1159	#### Emergency Credential Revocation
+spec/04_system-components.md	2219	4	224	224	#### Security Boundaries
+spec/04_system-components.md	2227	4	769	769	#### Credential Lifecycle and Secret Management
+spec/04_system-components.md	2260	4	418	418	#### 4.9.1 KMS Key Rotation Procedure
+spec/04_system-components.md	2277	4	608	608	#### 4.9.2 Credential Audit Events
+spec/05_runtime-registry-and-pool-model.md	1	2	0	18184	## 5. Runtime Registry and Pool Model
+spec/05_runtime-registry-and-pool-model.md	3	3	905	3934	### 5.1 Runtime
+spec/05_runtime-registry-and-pool-model.md	53	4	524	524	#### Standalone Runtime
+spec/05_runtime-registry-and-pool-model.md	125	4	212	212	#### Derived Runtime
+spec/05_runtime-registry-and-pool-model.md	183	4	90	90	#### Inheritance Rules
+spec/05_runtime-registry-and-pool-model.md	191	4	869	869	#### Normative Merge Algorithm
+spec/05_runtime-registry-and-pool-model.md	236	4	170	170	#### Worked Examples
+spec/05_runtime-registry-and-pool-model.md	266	4	177	177	#### Derived Runtime Instantiation
+spec/05_runtime-registry-and-pool-model.md	272	4	43	43	#### Setup Commands and Policy
+spec/05_runtime-registry-and-pool-model.md	284	4	43	43	#### `agentInterface` Field
+spec/05_runtime-registry-and-pool-model.md	290	4	455	455	#### `publishedMetadata` Field
+spec/05_runtime-registry-and-pool-model.md	330	4	263	263	#### Capability Inference from MCP `ToolAnnotations`
+spec/05_runtime-registry-and-pool-model.md	349	4	88	88	#### First-Party Reference Runtimes
+spec/05_runtime-registry-and-pool-model.md	353	4	95	95	#### Minimal Configuration
+spec/05_runtime-registry-and-pool-model.md	377	3	106	13519	### 5.2 Pool Configuration and Execution Modes
+spec/05_runtime-registry-and-pool-model.md	395	4	11900	11900	#### Execution Modes
+spec/05_runtime-registry-and-pool-model.md	697	4	952	952	#### Execution Mode Scaling Implications
+spec/05_runtime-registry-and-pool-model.md	732	4	114	114	#### Pool Taxonomy
+spec/05_runtime-registry-and-pool-model.md	747	4	447	447	#### Bootstrap Behavior — Pool Warming at First Deployment
+spec/05_runtime-registry-and-pool-model.md	795	3	731	731	### 5.3 Isolation Profiles
+spec/06_warm-pod-model.md	1	2	0	12393	## 6. Warm Pod Model
+spec/06_warm-pod-model.md	3	3	2896	2896	### 6.1 What a Pre-Warmed Pod Looks Like
+spec/06_warm-pod-model.md	78	3	7353	7353	### 6.2 Pod State Machine
+spec/06_warm-pod-model.md	320	3	1096	1096	### 6.3 Startup Latency Analysis
+spec/06_warm-pod-model.md	379	3	1048	1048	### 6.4 Pod Filesystem Layout
+spec/07_session-lifecycle.md	1	2	0	17676	## 7. Session Lifecycle
+spec/07_session-lifecycle.md	3	3	4541	4541	### 7.1 Normal Flow
+spec/07_session-lifecycle.md	133	3	8999	8999	### 7.2 Interactive Session Model
+spec/07_session-lifecycle.md	412	3	2546	2546	### 7.3 Retry and Resume
+spec/07_session-lifecycle.md	494	3	1130	1130	### 7.4 Upload Safety
+spec/07_session-lifecycle.md	534	3	460	460	### 7.5 Setup Commands
+spec/08_recursive-delegation.md	1	2	0	21764	## 8. Recursive Delegation
+spec/08_recursive-delegation.md	3	3	115	115	### 8.1 Design Philosophy
+spec/08_recursive-delegation.md	11	3	2137	2137	### 8.2 Delegation Mechanism
+spec/08_recursive-delegation.md	129	3	0	10731	### 8.3 Delegation Policy and Lease
+spec/08_recursive-delegation.md	131	4	3727	3727	#### `DelegationPolicy` as First-Class Resource
+spec/08_recursive-delegation.md	246	4	7004	7004	#### Delegation Lease
+spec/08_recursive-delegation.md	515	3	74	74	### 8.4 Approval Modes
+spec/08_recursive-delegation.md	523	3	656	656	### 8.5 Delegation Tools
+spec/08_recursive-delegation.md	625	3	662	2405	### 8.6 Lease Extension
+spec/08_recursive-delegation.md	652	4	359	359	#### Configuration Layering
+spec/08_recursive-delegation.md	712	4	1384	1384	#### Lease Extension Approval Modes
+spec/08_recursive-delegation.md	748	3	795	795	### 8.7 File Export Model
+spec/08_recursive-delegation.md	807	3	0	2386	### 8.8 TaskRecord and TaskResult Schema
+spec/08_recursive-delegation.md	809	4	1364	1364	#### TaskRecord
+spec/08_recursive-delegation.md	889	4	1022	1022	#### TaskResult
+spec/08_recursive-delegation.md	1005	3	48	48	### 8.9 Task Tree
+spec/08_recursive-delegation.md	1018	3	2417	2417	### 8.10 Delegation Tree Recovery
+spec/09_mcp-integration.md	1	2	0	3847	## 9. MCP Integration
+spec/09_mcp-integration.md	3	3	137	406	### 9.1 Where MCP Is Used
+spec/09_mcp-integration.md	14	4	186	186	#### Platform MCP Server Tools
+spec/09_mcp-integration.md	33	4	83	83	#### Runtime Discovery
+spec/09_mcp-integration.md	42	3	2062	2062	### 9.2 Elicitation Chain
+spec/09_mcp-integration.md	113	3	0	508	### 9.3 Connector Definition and OAuth/OIDC
+spec/09_mcp-integration.md	115	4	189	189	#### `ConnectorDefinition` as First-Class Resource
+spec/09_mcp-integration.md	145	4	319	319	#### OAuth/OIDC Flow
+spec/09_mcp-integration.md	167	3	871	871	### 9.4 Memory Store
+spec/10_gateway-internals.md	1	2	0	32576	## 10. Gateway Internals
+spec/10_gateway-internals.md	3	3	0	12846	### 10.1 Horizontal Scaling
+spec/10_gateway-internals.md	5	4	911	911	#### 10.1.1 Stateless Replicas and Per-Session Coordination
+spec/10_gateway-internals.md	33	4	1107	1107	#### 10.1.2 Coordinator Handoff Protocol
+spec/10_gateway-internals.md	44	4	390	390	#### 10.1.3 Dual-Store Unavailability
+spec/10_gateway-internals.md	54	4	933	933	#### 10.1.4 Coordinator-Loss Detection and Hold State
+spec/10_gateway-internals.md	65	4	304	304	#### 10.1.5 Stale Replica Behavior
+spec/10_gateway-internals.md	76	4	1021	1021	#### 10.1.6 Autoscaling Metrics and HPA Policy
+spec/10_gateway-internals.md	112	4	6561	6561	#### 10.1.7 preStop Hook Drain
+spec/10_gateway-internals.md	182	4	1619	1619	#### 10.1.8 Rolling Updates and the CheckpointBarrier Protocol
+spec/10_gateway-internals.md	205	3	3416	4942	### 10.2 Authentication
+spec/10_gateway-internals.md	284	4	1526	1526	#### Authorization and RBAC
+spec/10_gateway-internals.md	342	3	3031	3031	### 10.3 mTLS PKI
+spec/10_gateway-internals.md	417	3	640	640	### 10.4 Gateway Reliability
+spec/10_gateway-internals.md	443	3	1482	2570	### 10.5 Upgrade and Rollback Strategy
+spec/10_gateway-internals.md	508	4	1088	1088	#### `RuntimeUpgrade` State Machine
+spec/10_gateway-internals.md	592	3	1126	1126	### 10.6 Environment Resource and RBAC Model
+spec/10_gateway-internals.md	719	3	7421	7421	### 10.7 Experiment Primitives
+spec/11_policy-and-controls.md	1	2	0	17074	## 11. Policy and Controls
+spec/11_policy-and-controls.md	3	3	580	580	### 11.1 Admission and Fairness
+spec/11_policy-and-controls.md	21	3	2952	6355	### 11.2 Budgets and Quotas
+spec/11_policy-and-controls.md	65	4	3403	3403	#### 11.2.1 Billing Event Stream
+spec/11_policy-and-controls.md	204	3	920	920	### 11.3 Timeouts and Cancellation
+spec/11_policy-and-controls.md	258	3	621	621	### 11.4 User Invalidation
+spec/11_policy-and-controls.md	280	3	197	197	### 11.5 Idempotency
+spec/11_policy-and-controls.md	295	3	2125	2125	### 11.6 Circuit Breakers
+spec/11_policy-and-controls.md	349	3	5875	5875	### 11.7 Audit Logging
+spec/11_policy-and-controls.md	499	3	401	401	### 11.8 Security Incident Response
+spec/12_storage-architecture.md	1	2	0	40245	## 12. Storage Architecture
+spec/12_storage-architecture.md	3	3	96	96	### 12.1 Design Principle
+spec/12_storage-architecture.md	7	3	530	530	### 12.2 Storage Roles
+spec/12_storage-architecture.md	28	3	5528	5528	### 12.3 Postgres HA Requirements
+spec/12_storage-architecture.md	174	3	5704	5704	### 12.4 Redis HA and Failure Modes
+spec/12_storage-architecture.md	288	3	5861	5861	### 12.5 Artifact Store
+spec/12_storage-architecture.md	375	3	718	5899	### 12.6 Interface Design
+spec/12_storage-architecture.md	466	4	892	892	#### PodRegistry
+spec/12_storage-architecture.md	520	4	1242	1242	#### StoreRouter
+spec/12_storage-architecture.md	618	4	721	721	#### ClusterRegistry
+spec/12_storage-architecture.md	660	4	51	51	#### CredentialGenerator
+spec/12_storage-architecture.md	671	4	2275	2275	#### EventBus
+spec/12_storage-architecture.md	772	3	41	41	### 12.7 Extensibility
+spec/12_storage-architecture.md	780	3	15691	15691	### 12.8 Compliance Interfaces
+spec/12_storage-architecture.md	1048	3	895	895	### 12.9 Data Classification
+spec/13_security-model.md	1	2	0	17967	## 13. Security Model
+spec/13_security-model.md	3	3	2170	2170	### 13.1 Pod Security
+spec/13_security-model.md	36	3	0	10077	### 13.2 Network Isolation
+spec/13_security-model.md	38	4	141	141	#### 13.2.1 CNI Requirement and Default-Deny Baseline
+spec/13_security-model.md	57	4	1040	1040	#### 13.2.2 Agent Pod Allow-List Policies
+spec/13_security-model.md	193	4	1139	1139	#### 13.2.3 Checkpoint Capability Model
+spec/13_security-model.md	248	4	4007	4007	#### 13.2.4 `lenny-system` Namespace NetworkPolicies
+spec/13_security-model.md	386	4	1708	1708	#### 13.2.5 Gateway Egress to Upstream LLM Providers
+spec/13_security-model.md	486	4	1113	1113	#### 13.2.6 Per-Pool Egress Relaxation and `egressProfile`
+spec/13_security-model.md	516	4	929	929	#### 13.2.7 DNS Exfiltration Mitigation and the Dedicated CoreDNS Instance
+spec/13_security-model.md	604	3	5001	5001	### 13.3 Credential Flow
+spec/13_security-model.md	746	3	260	260	### 13.4 Upload Security
+spec/13_security-model.md	764	3	459	459	### 13.5 Delegation Chain Content Security
+spec/14_workspace-plan-schema.md	1	2	3831	5616	## 14. Workspace Plan Schema
+spec/14_workspace-plan-schema.md	294	3	1785	1785	### 14.1 WorkspacePlan Schema Versioning
+spec/15_external-api-surface.md	1	2	1493	41647	## 15. External API Surface
+spec/15_external-api-surface.md	178	4	2396	2396	#### Shared Adapter Types
+spec/15_external-api-surface.md	540	4	2004	2004	#### SessionEvent Kind Registry
+spec/15_external-api-surface.md	694	3	2828	19115	### 15.1 REST API
+spec/15_external-api-surface.md	835	4	16287	16287	#### Session Replay Semantics
+spec/15_external-api-surface.md	1403	3	2185	3402	### 15.2 MCP API
+spec/15_external-api-surface.md	1499	4	1217	1217	#### 15.2.1 REST/MCP Consistency Contract
+spec/15_external-api-surface.md	1539	3	53	53	### 15.3 Internal Control API (Custom Protocol)
+spec/15_external-api-surface.md	1543	3	535	9403	### 15.4 Runtime Adapter Specification
+spec/15_external-api-surface.md	1560	4	364	364	#### 15.4.1 Message Format and Binary I/O Requirements
+spec/15_external-api-surface.md	1586	4	1576	1576	#### Translation Fidelity Matrix
+spec/15_external-api-surface.md	1641	4	1907	1907	#### `MessageEnvelope` — Unified Message Format
+spec/15_external-api-surface.md	1775	4	212	212	#### 15.4.2 RPC Lifecycle State Machine
+spec/15_external-api-surface.md	1796	4	2057	2057	#### 15.4.3 Runtime Integration Levels
+spec/15_external-api-surface.md	1893	4	920	920	#### 15.4.4 Sample Echo Runtime
+spec/15_external-api-surface.md	2096	4	460	460	#### 15.4.5 Runtime Author Roadmap
+spec/15_external-api-surface.md	2126	4	1372	1372	#### 15.4.6 Conformance Test Suite
+spec/15_external-api-surface.md	2173	3	1184	1184	### 15.5 API Versioning and Stability
+spec/15_external-api-surface.md	2229	3	264	264	### 15.6 Client SDKs
+spec/15_external-api-surface.md	2248	3	2333	2333	### 15.7 Runtime Author SDKs
+spec/16_observability.md	1	2	0	33072	## 16. Observability
+spec/16_observability.md	3	3	11765	11765	### 16.1 Metrics
+spec/16_observability.md	293	3	826	826	### 16.1.1 Attribute Naming
+spec/16_observability.md	318	3	38	38	### 16.2 Key Latency Breakpoints
+spec/16_observability.md	329	3	583	583	### 16.3 Distributed Tracing
+spec/16_observability.md	381	3	747	747	### 16.4 Logging
+spec/16_observability.md	411	3	13452	13452	### 16.5 Alerting Rules and SLOs
+spec/16_observability.md	659	3	491	491	### 16.6 Operational Events Catalog
+spec/16_observability.md	676	3	4422	4422	### 16.7 Section 25 Audit Events
+spec/16_observability.md	714	3	333	333	### 16.8 Section 25 Metrics
+spec/16_observability.md	738	3	217	217	### 16.9 Prometheus Scrape Targets and CRDs
+spec/16_observability.md	750	3	198	198	### 16.10 OpenSLO Export
+spec/17_deployment-topology.md	1	2	0	34735	## 17. Deployment Topology
+spec/17_deployment-topology.md	3	3	876	876	### 17.1 Kubernetes Resources
+spec/17_deployment-topology.md	23	3	4784	4784	### 17.2 Namespace Layout
+spec/17_deployment-topology.md	115	3	445	445	### 17.3 Disaster Recovery
+spec/17_deployment-topology.md	147	3	76	3519	### 17.4 Local Development Mode (`lenny-dev`)
+spec/17_deployment-topology.md	151	4	1685	1685	#### Embedded Mode: `lenny up` — Single-binary embedded stack
+spec/17_deployment-topology.md	207	4	174	174	#### Source Mode: `make run` — Zero-dependency developer mode
+spec/17_deployment-topology.md	229	4	177	177	#### Compose Mode: `docker compose up` — Full local stack
+spec/17_deployment-topology.md	252	4	215	215	#### Credential-testing profile
+spec/17_deployment-topology.md	272	4	41	41	#### Observability in dev mode
+spec/17_deployment-topology.md	276	4	98	98	#### Zero-credential mode
+spec/17_deployment-topology.md	280	4	217	217	#### Dev mode guard rails
+spec/17_deployment-topology.md	290	4	52	52	#### Smoke test
+spec/17_deployment-topology.md	294	4	784	784	#### Plugging in a custom runtime
+spec/17_deployment-topology.md	388	3	30	30	### 17.5 Cloud Portability
+spec/17_deployment-topology.md	397	3	2698	8246	### 17.6 Packaging and Installation
+spec/17_deployment-topology.md	523	4	4537	4537	#### Checks performed
+spec/17_deployment-topology.md	696	4	236	236	#### Helm `values.schema.json`
+spec/17_deployment-topology.md	712	4	775	775	#### Interactive installer (`lenny-ctl install`)
+spec/17_deployment-topology.md	776	3	5351	5351	### 17.7 Operational Runbooks
+spec/17_deployment-topology.md	899	3	79	79	### 17.8 Capacity Planning and Defaults
+spec/17_deployment-topology.md	903	3	871	871	### 17.8.1 Operational Defaults — Quick Reference
+spec/17_deployment-topology.md	965	3	7140	7140	### 17.8.2 Capacity Tier Reference
+spec/17_deployment-topology.md	1311	3	68	626	### 17.8.3 Tier Promotion Guide
+spec/17_deployment-topology.md	1317	4	157	157	#### Step 1 — Run Phase 13.5 Load Tests
+spec/17_deployment-topology.md	1328	4	190	190	#### Step 2 — Go/No-Go Decision
+spec/17_deployment-topology.md	1348	4	114	114	#### Step 3 — Apply Tier 3 Helm Values
+spec/17_deployment-topology.md	1359	4	97	97	#### Step 4 — Post-Promotion Validation
+spec/17_deployment-topology.md	1371	3	120	120	### 17.8.4 Tier Preset Files
+spec/17_deployment-topology.md	1381	3	88	88	### 17.8.5 Mandatory `lenny-ops` Deployment
+spec/17_deployment-topology.md	1385	3	164	164	### 17.8.6 Image Registry and Air-Gap
+spec/17_deployment-topology.md	1396	3	140	2396	### 17.9 Deployment Answer Files
+spec/17_deployment-topology.md	1404	4	404	404	#### 17.9.1 Composition Dimensions
+spec/17_deployment-topology.md	1420	4	335	335	#### 17.9.2 Answer File Catalog
+spec/17_deployment-topology.md	1442	4	458	458	#### 17.9.3 Cloud-Managed Backends
+spec/17_deployment-topology.md	1480	4	349	349	#### 17.9.4 Cloud Object Storage Lifecycle Requirements
+spec/17_deployment-topology.md	1557	4	195	195	#### 17.9.5 Self-Managed Backends
+spec/17_deployment-topology.md	1594	4	107	107	#### 17.9.6 Embedded Backends (Embedded Mode)
+spec/17_deployment-topology.md	1598	4	408	408	#### 17.9.7 Backend-Invariant Requirements
+spec/18_build-sequence.md	1	2	122	10502	## 18. Build Sequence
+spec/18_build-sequence.md	9	3	397	397	### 18.1 Phasing Intent
+spec/18_build-sequence.md	26	3	533	533	### 18.2 Phase Map
+spec/18_build-sequence.md	70	3	192	192	### 18.3 Phase 0 — Bootstrap the infrastructure repo
+spec/18_build-sequence.md	87	3	114	114	### 18.4 Phase 1 — Core types and wire contracts
+spec/18_build-sequence.md	100	3	169	169	### 18.5 Phase 1.5 — Database migration framework
+spec/18_build-sequence.md	117	3	378	378	### 18.6 Phase 2 — Adapter protocol, `make run`, ImageResolver, startup benchmark
+spec/18_build-sequence.md	145	3	199	199	### 18.7 Phase 2.5 — Observability foundation, shared rule packages
+spec/18_build-sequence.md	161	3	80	80	### 18.8 Phase 2.8 — `streaming-echo` runtime
+spec/18_build-sequence.md	173	3	378	378	### 18.9 Phase 3 — Pool scaling, delegation policy, runtime upgrade, mTLS
+spec/18_build-sequence.md	195	3	389	389	### 18.10 Phase 3.5 — Admission policies, `lenny-ops` first deploy
+spec/18_build-sequence.md	219	3	582	582	### 18.11 Phase 4 — Session manager, REST
+spec/18_build-sequence.md	247	3	239	239	### 18.12 Phase 4.5 — Admin API foundation, authentication, bootstrap
+spec/18_build-sequence.md	267	3	175	175	### 18.13 Phase 5 — ExternalAdapterRegistry, MCP/Completions/Open Responses
+spec/18_build-sequence.md	284	3	63	63	### 18.14 Phase 5.4 — etcd encryption at rest
+spec/18_build-sequence.md	295	3	244	244	### 18.15 Phase 5.5 — Basic credential leasing, Token Service
+spec/18_build-sequence.md	312	3	52	52	### 18.16 Phase 5.6 — Targeted security design review (credential)
+spec/18_build-sequence.md	323	3	113	113	### 18.17 Phase 5.75 — Minimum viable policy enforcement
+spec/18_build-sequence.md	335	3	176	176	### 18.18 Phase 5.8 — LLM Proxy, `lenny-direct-mode-isolation` admission webhook
+spec/18_build-sequence.md	352	3	163	163	### 18.19 Phase 6 — Interactive sessions, SDKs
+spec/18_build-sequence.md	369	3	33	33	### 18.20 Phase 6.5 — Incremental load test (streaming)
+spec/18_build-sequence.md	380	3	352	352	### 18.21 Phase 7 — Policy engine (quotas, budgets, audit hooks)
+spec/18_build-sequence.md	399	3	267	267	### 18.22 Phase 8 — Checkpoint/resume, drain-readiness webhook
+spec/18_build-sequence.md	418	3	447	447	### 18.23 Phase 9 — Delegation, `delegation-echo`
+spec/18_build-sequence.md	445	3	35	35	### 18.24 Phase 9.5 — Incremental load test (delegation)
+spec/18_build-sequence.md	456	3	222	222	### 18.25 Phase 10 — MCP fabric (virtual child interfaces, elicitation chain)
+spec/18_build-sequence.md	475	3	106	106	### 18.26 Phase 11 — Advanced credentials, multi-provider translators, revocation
+spec/18_build-sequence.md	491	3	32	32	### 18.27 Phase 11.5 — Incremental load test (credential lifecycle)
+spec/18_build-sequence.md	502	3	152	152	### 18.28 Phase 12a — Token Service hardening (KMS envelope, OAuth)
+spec/18_build-sequence.md	517	3	53	53	### 18.29 Phase 12b — `type: mcp` runtime support
+spec/18_build-sequence.md	528	3	134	134	### 18.30 Phase 12c — `sessionPolicy` presets and service mode
+spec/18_build-sequence.md	541	3	1605	1605	### 18.31 Phase 13 — Full observability, audit, `lenny-backup`, compliance webhooks
+spec/18_build-sequence.md	629	3	216	216	### 18.32 Phase 13.5 — Pre-hardening full-system load baseline
+spec/18_build-sequence.md	647	3	431	431	### 18.33 Phase 14 — Comprehensive security hardening
+spec/18_build-sequence.md	683	3	46	46	### 18.34 Phase 14.5 — Post-hardening SLO re-validation
+spec/18_build-sequence.md	694	3	117	117	### 18.35 Phase 15 — Environment resource, RBAC, cross-environment delegation
+spec/18_build-sequence.md	708	3	130	130	### 18.36 Phase 16 — Experiments, PoolScalingController integration
+spec/18_build-sequence.md	722	3	36	36	### 18.37 Phase 16.5 — Experiment load test SLO re-validation
+spec/18_build-sequence.md	733	3	744	744	### 18.38 Phase 17a — Documentation, governance, community launch
+spec/18_build-sequence.md	784	3	130	130	### 18.39 Phase 17b — Memory, semantic caching, eval hooks
+spec/18_build-sequence.md	798	3	456	456	### 18.40 Hard Prerequisite Chain
+spec/19_resolved-decisions.md	1	2	688	688	## 19. Resolved Decisions
+spec/20_open-questions.md	1	2	11	11	## 20. Open Questions
+spec/21_planned-post-v1.md	1	2	1955	1955	## 21. Planned / Post-V1
+spec/22_explicit-non-decisions.md	1	2	373	373	## 22. Explicit Non-Decisions
+spec/23_competitive-landscape.md	1	2	553	3873	## 23. Competitive Landscape
+spec/23_competitive-landscape.md	19	4	509	509	#### Feature Comparison Matrix
+spec/23_competitive-landscape.md	43	4	728	728	#### 2026 Open-Source Entrants Matrix
+spec/23_competitive-landscape.md	68	3	645	1419	### 23.1 Why Lenny?
+spec/23_competitive-landscape.md	88	4	774	774	#### Additional Platform Capabilities
+spec/23_competitive-landscape.md	117	3	664	664	### 23.2 Community Adoption Strategy
+spec/24_lenny-ctl-command-reference.md	1	2	417	6401	## 24. `lenny-ctl` Command Reference
+spec/24_lenny-ctl-command-reference.md	20	3	252	252	### 24.0 Packaging and Installation
+spec/24_lenny-ctl-command-reference.md	31	3	59	59	### 24.1 Bootstrap
+spec/24_lenny-ctl-command-reference.md	38	3	452	452	### 24.2 Preflight
+spec/24_lenny-ctl-command-reference.md	51	3	124	124	### 24.3 Runtime Management
+spec/24_lenny-ctl-command-reference.md	60	3	597	597	### 24.4 Pool Management
+spec/24_lenny-ctl-command-reference.md	85	3	381	381	### 24.5 Credential Management
+spec/24_lenny-ctl-command-reference.md	101	3	36	36	### 24.6 Quota Operations
+spec/24_lenny-ctl-command-reference.md	107	3	108	108	### 24.7 Circuit Breakers
+spec/24_lenny-ctl-command-reference.md	115	3	91	91	### 24.8 External Adapter Management
+spec/24_lenny-ctl-command-reference.md	121	3	239	239	### 24.9 User and Token Management
+spec/24_lenny-ctl-command-reference.md	128	3	241	241	### 24.10 Tenant Management
+spec/24_lenny-ctl-command-reference.md	137	3	76	76	### 24.11 Session Investigation
+spec/24_lenny-ctl-command-reference.md	144	3	134	134	### 24.12 Erasure Job Management
+spec/24_lenny-ctl-command-reference.md	152	3	346	346	### 24.13 Migration Management
+spec/24_lenny-ctl-command-reference.md	174	3	86	86	### 24.14 Policy Management
+spec/24_lenny-ctl-command-reference.md	180	3	365	365	### 24.15 Agent-Operability Commands
+spec/24_lenny-ctl-command-reference.md	201	3	187	187	### 24.16 Server Discovery and Routing
+spec/24_lenny-ctl-command-reference.md	213	3	351	351	### 24.17 Session Operations
+spec/24_lenny-ctl-command-reference.md	230	3	899	899	### 24.18 Runtime Scaffolding
+spec/24_lenny-ctl-command-reference.md	260	3	218	684	### 24.19 Local Stack
+spec/24_lenny-ctl-command-reference.md	274	4	466	466	#### 24.19.1 Image Management
+spec/24_lenny-ctl-command-reference.md	299	3	276	276	### 24.20 Installation Wizard
+spec/25_agent-operability.md	1	1	60	53309	# 25. Agent Operability
+spec/25_agent-operability.md	7	2	0	1721	## 25.1 Design Philosophy and Agent Model
+spec/25_agent-operability.md	9	3	229	229	### Component Model
+spec/25_agent-operability.md	25	3	129	129	### The Operational Loop
+spec/25_agent-operability.md	38	3	242	242	### The Bootstrap Problem and External Agent Model
+spec/25_agent-operability.md	48	3	234	234	### Design Constraints
+spec/25_agent-operability.md	57	3	58	782	### Authentication for Agent Callers
+spec/25_agent-operability.md	61	4	724	724	#### Scoped Tokens
+spec/25_agent-operability.md	118	3	105	105	### Agent Identity and Correlation
+spec/25_agent-operability.md	129	2	0	2122	## 25.2 Architecture Overview
+spec/25_agent-operability.md	131	3	222	222	### The Split
+spec/25_agent-operability.md	175	3	197	197	### Why This Boundary
+spec/25_agent-operability.md	190	3	29	1703	### API Conventions
+spec/25_agent-operability.md	194	4	106	106	#### Terminology
+spec/25_agent-operability.md	204	4	367	367	#### Canonical Degradation Envelope
+spec/25_agent-operability.md	236	4	249	249	#### Pagination
+spec/25_agent-operability.md	279	4	175	175	#### Dry-Run / Confirm Pattern
+spec/25_agent-operability.md	304	4	206	206	#### Error Response Envelope
+spec/25_agent-operability.md	333	4	93	93	#### Filter Parameter Naming
+spec/25_agent-operability.md	348	4	60	60	#### Operation Correlation
+spec/25_agent-operability.md	357	4	418	418	#### Canonical Progress Envelope
+spec/25_agent-operability.md	409	2	40	3172	## 25.3 Gateway-Side Ops Endpoints
+spec/25_agent-operability.md	413	3	39	922	### Platform Health API
+spec/25_agent-operability.md	417	4	44	44	#### Endpoints
+spec/25_agent-operability.md	425	4	21	21	#### Go Interface
+spec/25_agent-operability.md	435	4	103	103	#### Data Sources
+spec/25_agent-operability.md	443	4	188	188	#### Health Derivation Rules
+spec/25_agent-operability.md	455	4	388	388	#### `suggestedAction` / `suggestedActions` Contract
+spec/25_agent-operability.md	524	4	29	29	#### Caching
+spec/25_agent-operability.md	528	4	47	47	#### Degradation
+spec/25_agent-operability.md	532	4	6	6	#### Storage
+spec/25_agent-operability.md	536	4	33	33	#### Metrics
+spec/25_agent-operability.md	543	4	24	24	#### Error Codes
+spec/25_agent-operability.md	549	3	14	793	### Capacity Recommendations
+spec/25_agent-operability.md	553	4	19	19	#### Endpoint
+spec/25_agent-operability.md	559	4	46	46	#### Go Interface
+spec/25_agent-operability.md	574	4	532	532	#### Rules Engine
+spec/25_agent-operability.md	604	4	116	116	#### Degradation
+spec/25_agent-operability.md	608	4	7	7	#### Storage
+spec/25_agent-operability.md	612	4	21	21	#### Metrics
+spec/25_agent-operability.md	618	4	38	38	#### Error Codes
+spec/25_agent-operability.md	625	3	7	97	### Version and Config Introspection
+spec/25_agent-operability.md	629	4	89	89	#### Endpoints
+spec/25_agent-operability.md	640	4	1	1	#### Storage
+spec/25_agent-operability.md	644	3	384	735	### Event Emission
+spec/25_agent-operability.md	690	4	314	314	#### Event Types
+spec/25_agent-operability.md	715	4	37	37	#### Metrics
+spec/25_agent-operability.md	722	3	38	585	### Gateway Event Buffer
+spec/25_agent-operability.md	726	4	28	28	#### Endpoint
+spec/25_agent-operability.md	732	4	80	80	#### Go Interface
+spec/25_agent-operability.md	754	4	375	375	#### Behavior
+spec/25_agent-operability.md	766	4	14	14	#### Degradation
+spec/25_agent-operability.md	770	4	5	5	#### Storage
+spec/25_agent-operability.md	774	4	45	45	#### Metrics
+spec/25_agent-operability.md	784	2	0	17263	## 25.4 The `lenny-ops` Service
+spec/25_agent-operability.md	786	3	66	66	### Purpose
+spec/25_agent-operability.md	790	3	33	1466	### Deployment
+spec/25_agent-operability.md	794	4	149	149	#### Helm Values Hierarchy
+spec/25_agent-operability.md	810	4	1284	1284	#### `lenny-ops` Helm Values
+spec/25_agent-operability.md	1028	3	30	3521	### Kubernetes Resources
+spec/25_agent-operability.md	1032	4	56	56	#### Deployment: `lenny-ops`
+spec/25_agent-operability.md	1039	4	137	137	#### Probes
+spec/25_agent-operability.md	1067	4	71	71	#### Services
+spec/25_agent-operability.md	1074	4	218	218	#### ServiceAccount and RBAC
+spec/25_agent-operability.md	1127	4	2113	2113	#### NetworkPolicy
+spec/25_agent-operability.md	1325	4	78	78	#### PodDisruptionBudget
+spec/25_agent-operability.md	1338	4	115	115	#### Leader Election
+spec/25_agent-operability.md	1357	4	508	508	#### Backup Job NetworkPolicy
+spec/25_agent-operability.md	1417	4	100	100	#### CNI / Service Mesh Compatibility
+spec/25_agent-operability.md	1422	4	95	95	#### Air-Gapped Deployments
+spec/25_agent-operability.md	1432	3	215	215	### Dependencies
+spec/25_agent-operability.md	1444	3	36	843	### Prometheus Requirement
+spec/25_agent-operability.md	1448	4	288	288	#### Why required at Tier 2/3
+spec/25_agent-operability.md	1459	4	70	70	#### Why optional at Tier 1
+spec/25_agent-operability.md	1463	4	94	94	#### BYO model
+spec/25_agent-operability.md	1474	4	148	148	#### Preflight validation
+spec/25_agent-operability.md	1485	4	207	207	#### Operational consequences summary
+spec/25_agent-operability.md	1497	3	448	448	### Storage Routing
+spec/25_agent-operability.md	1525	3	42	532	### Multi-Replica Lenny-Ops Scaling
+spec/25_agent-operability.md	1529	4	139	139	#### When to Scale
+spec/25_agent-operability.md	1539	4	66	66	#### Recommended Scale by Tier
+spec/25_agent-operability.md	1547	4	189	189	#### Trade-Offs
+spec/25_agent-operability.md	1556	4	96	96	#### Operator Decision Checklist
+spec/25_agent-operability.md	1567	3	86	86	### Startup and Readiness
+spec/25_agent-operability.md	1571	3	387	387	### Authentication
+spec/25_agent-operability.md	1587	3	49	684	### Caller Identity and Capability Discovery
+spec/25_agent-operability.md	1591	4	76	76	#### Endpoints
+spec/25_agent-operability.md	1599	4	343	343	#### `GET /v1/admin/me` Response
+spec/25_agent-operability.md	1682	4	35	35	#### Authorization
+spec/25_agent-operability.md	1686	4	105	105	#### Degradation
+spec/25_agent-operability.md	1692	4	23	23	#### Metrics
+spec/25_agent-operability.md	1698	4	30	30	#### Error Codes
+spec/25_agent-operability.md	1704	4	23	23	#### Audit Events
+spec/25_agent-operability.md	1708	3	61	1068	### Operations Inventory
+spec/25_agent-operability.md	1712	4	84	84	#### Endpoints
+spec/25_agent-operability.md	1721	4	107	107	#### Operation Kinds
+spec/25_agent-operability.md	1736	4	138	138	#### Response
+spec/25_agent-operability.md	1796	4	81	81	#### Canonical `operationId` Format
+spec/25_agent-operability.md	1808	4	142	142	#### Filters
+spec/25_agent-operability.md	1821	4	93	93	#### Status Values
+spec/25_agent-operability.md	1830	4	34	34	#### Event Subscription
+spec/25_agent-operability.md	1834	4	35	35	#### Implementation
+spec/25_agent-operability.md	1838	4	82	82	#### Degradation
+spec/25_agent-operability.md	1854	4	101	101	#### Authorization
+spec/25_agent-operability.md	1862	4	47	47	#### Metrics
+spec/25_agent-operability.md	1869	4	45	45	#### Error Codes
+spec/25_agent-operability.md	1876	4	18	18	#### Audit Events
+spec/25_agent-operability.md	1880	3	368	368	### Calling the Gateway
+spec/25_agent-operability.md	1931	3	95	1235	### Metrics Source and Cross-Replica Aggregation
+spec/25_agent-operability.md	1950	4	124	124	#### "Prometheus Unreachable" Definition
+spec/25_agent-operability.md	1963	4	205	205	#### Fallback Caching
+spec/25_agent-operability.md	1974	4	235	235	#### Health Aggregation
+spec/25_agent-operability.md	1988	4	331	331	#### Recommendations Aggregation
+spec/25_agent-operability.md	2005	4	55	55	#### Pool Bottleneck Analysis (Diagnostics)
+spec/25_agent-operability.md	2009	4	190	190	#### OIDC Token Lifecycle (GatewayClient)
+spec/25_agent-operability.md	2021	3	90	90	### Rate Limiting
+spec/25_agent-operability.md	2031	3	274	832	### Idempotency
+spec/25_agent-operability.md	2060	4	418	418	#### Behavior during Postgres outage
+spec/25_agent-operability.md	2092	4	43	43	#### Retention
+spec/25_agent-operability.md	2096	4	97	97	#### Error Codes
+spec/25_agent-operability.md	2105	3	53	3190	### Remediation Coordination
+spec/25_agent-operability.md	2109	4	165	165	#### Consistency Model
+spec/25_agent-operability.md	2119	4	107	107	#### Endpoints
+spec/25_agent-operability.md	2130	4	267	267	#### Authorization
+spec/25_agent-operability.md	2157	4	116	116	#### Lock Struct
+spec/25_agent-operability.md	2186	4	860	860	#### Storage Tiers
+spec/25_agent-operability.md	2254	4	835	835	#### Tier Transitions and Split-Brain Prevention
+spec/25_agent-operability.md	2313	4	102	102	#### Clock Source
+spec/25_agent-operability.md	2322	4	111	111	#### Stealing
+spec/25_agent-operability.md	2339	4	259	259	#### Holding a Lock Across Long Remediations
+spec/25_agent-operability.md	2350	4	85	85	#### Multi-Replica Behavior
+spec/25_agent-operability.md	2358	4	132	132	#### Error Codes
+spec/25_agent-operability.md	2368	4	76	76	#### Metrics
+spec/25_agent-operability.md	2378	4	22	22	#### Audit Events
+spec/25_agent-operability.md	2382	3	55	1111	### Escalation
+spec/25_agent-operability.md	2386	4	41	41	#### Endpoints
+spec/25_agent-operability.md	2394	4	153	153	#### Behavior
+spec/25_agent-operability.md	2416	4	201	201	#### Storage Tiers (Create Path)
+spec/25_agent-operability.md	2438	4	122	122	#### Emission Exactly-Once
+spec/25_agent-operability.md	2447	4	159	159	#### Reconciliation
+spec/25_agent-operability.md	2457	4	103	103	#### Storage Tiers (Query Path)
+spec/25_agent-operability.md	2465	4	102	102	#### Event Emission
+spec/25_agent-operability.md	2471	4	133	133	#### Storage
+spec/25_agent-operability.md	2499	4	42	42	#### Error Codes
+spec/25_agent-operability.md	2506	3	64	535	### Self-Monitoring
+spec/25_agent-operability.md	2510	4	414	414	#### Self-Health Checks
+spec/25_agent-operability.md	2543	4	57	57	#### Metrics
+spec/25_agent-operability.md	2552	3	131	131	### Structured Logging
+spec/25_agent-operability.md	2576	3	455	455	### TLS
+spec/25_agent-operability.md	2590	2	184	3336	## 25.5 Operational Event Stream
+spec/25_agent-operability.md	2598	3	184	184	### Endpoints
+spec/25_agent-operability.md	2613	3	207	207	### Go Interface
+spec/25_agent-operability.md	2634	3	464	614	### Storage
+spec/25_agent-operability.md	2691	4	150	150	#### Delivery Tracking Retention
+spec/25_agent-operability.md	2707	3	157	157	### Cursor Model
+spec/25_agent-operability.md	2719	3	260	260	### SSE Delivery
+spec/25_agent-operability.md	2729	3	176	176	### Polling Delivery
+spec/25_agent-operability.md	2743	3	168	938	### Webhook Delivery
+spec/25_agent-operability.md	2757	4	218	218	#### Webhook Secret Lifecycle
+spec/25_agent-operability.md	2777	4	207	207	#### SSRF and DNS Rebinding Protections
+spec/25_agent-operability.md	2789	4	213	213	#### Subscription Cache and Invalidation
+spec/25_agent-operability.md	2800	4	132	132	#### Tenant Isolation
+spec/25_agent-operability.md	2810	3	436	436	### Degradation
+spec/25_agent-operability.md	2825	3	74	74	### Metrics
+spec/25_agent-operability.md	2835	3	102	102	### Error Codes
+spec/25_agent-operability.md	2846	3	4	4	### Audit Events
+spec/25_agent-operability.md	2852	2	25	1325	## 25.6 Diagnostic Endpoints
+spec/25_agent-operability.md	2856	3	48	48	### Endpoints
+spec/25_agent-operability.md	2865	3	31	31	### Go Interface
+spec/25_agent-operability.md	2878	3	174	174	### Response Types
+spec/25_agent-operability.md	2925	3	410	410	### Data Sources
+spec/25_agent-operability.md	2950	3	156	156	### Degradation
+spec/25_agent-operability.md	2964	3	20	20	### Metrics
+spec/25_agent-operability.md	2970	3	63	63	### Error Codes
+spec/25_agent-operability.md	2979	3	4	4	### Audit Events
+spec/25_agent-operability.md	2983	3	394	394	### Auto-remediation (`fix=true` mode)
+spec/25_agent-operability.md	3028	2	0	1549	## 25.7 Operational Runbooks
+spec/25_agent-operability.md	3030	3	81	81	### Rationale
+spec/25_agent-operability.md	3034	3	311	311	### Runbook Authoring Guidelines
+spec/25_agent-operability.md	3077	3	412	412	### Step 1: Check pool status
+spec/25_agent-operability.md	3164	3	19	745	### Runbook Discovery
+spec/25_agent-operability.md	3168	4	298	298	#### Path A: Index API with Rich Filtering
+spec/25_agent-operability.md	3226	4	257	257	#### Path B: Health API Links to Runbooks
+spec/25_agent-operability.md	3295	4	96	96	#### Path C: Fetch the Full List
+spec/25_agent-operability.md	3301	4	75	75	#### Discovery Flow Summary
+spec/25_agent-operability.md	3321	2	10	3596	## 25.8 Platform Lifecycle Management
+spec/25_agent-operability.md	3325	3	136	136	### Endpoints
+spec/25_agent-operability.md	3343	3	30	305	### Image Registry Configuration
+spec/25_agent-operability.md	3347	4	92	92	#### Helm Values
+spec/25_agent-operability.md	3373	4	143	143	#### Image Resolution
+spec/25_agent-operability.md	3400	4	40	40	#### Runtime API
+spec/25_agent-operability.md	3404	3	87	87	### Version Aggregation
+spec/25_agent-operability.md	3416	3	53	594	### Upgrade Check
+spec/25_agent-operability.md	3420	4	127	127	#### Release Channel Response
+spec/25_agent-operability.md	3448	4	224	224	#### Release Channel Service Details
+spec/25_agent-operability.md	3457	4	190	190	#### Air-Gapped Support
+spec/25_agent-operability.md	3469	3	300	300	### Cert-Manager Integration
+spec/25_agent-operability.md	3505	3	255	255	### Bootstrapping Lenny-Ops Monitoring
+spec/25_agent-operability.md	3521	3	146	1317	### Upgrade State Machine
+spec/25_agent-operability.md	3534	4	709	709	#### Phase Details
+spec/25_agent-operability.md	3582	4	205	205	#### Rollback
+spec/25_agent-operability.md	3596	4	257	257	#### Pausing and Resuming
+spec/25_agent-operability.md	3606	3	139	139	### Config Diff and Config Apply
+spec/25_agent-operability.md	3616	3	118	118	### Postgres Schema
+spec/25_agent-operability.md	3648	3	61	61	### Degradation
+spec/25_agent-operability.md	3652	3	63	63	### Metrics
+spec/25_agent-operability.md	3661	3	43	43	### Alerting Rules
+spec/25_agent-operability.md	3669	3	153	153	### Error Codes
+spec/25_agent-operability.md	3683	3	15	15	### Audit Events
+spec/25_agent-operability.md	3689	2	117	1996	## 25.9 Audit Log Query API
+spec/25_agent-operability.md	3695	3	430	430	### Endpoints
+spec/25_agent-operability.md	3706	3	623	623	### Implementation
+spec/25_agent-operability.md	3735	3	139	139	### Diagnostics Audit Rate Limiting
+spec/25_agent-operability.md	3745	3	137	137	### Query Limits and Scatter-Gather
+spec/25_agent-operability.md	3752	3	62	62	### Degradation
+spec/25_agent-operability.md	3758	3	79	79	### Metrics
+spec/25_agent-operability.md	3768	3	73	73	### Error Codes
+spec/25_agent-operability.md	3777	3	311	311	### Downstream SIEM Scope Boundary (GDPR Erasure)
+spec/25_agent-operability.md	3788	3	25	25	### Audit Events
+spec/25_agent-operability.md	3794	2	12	1483	## 25.10 Configuration Drift Detection
+spec/25_agent-operability.md	3798	3	107	107	### Endpoints
+spec/25_agent-operability.md	3807	3	69	1034	### Drift Detection Logic
+spec/25_agent-operability.md	3815	4	833	833	#### Snapshot Validation
+spec/25_agent-operability.md	3862	4	47	47	#### Running-State Caching
+spec/25_agent-operability.md	3866	4	85	85	#### Comparison Scope
+spec/25_agent-operability.md	3880	3	78	78	### Reconciliation
+spec/25_agent-operability.md	3886	3	136	136	### Degradation
+spec/25_agent-operability.md	3894	3	32	32	### Metrics
+spec/25_agent-operability.md	3901	3	62	62	### Error Codes
+spec/25_agent-operability.md	3909	3	22	22	### Audit Events
+spec/25_agent-operability.md	3915	2	105	7098	## 25.11 Backup and Restore API
+spec/25_agent-operability.md	3919	3	428	428	### Endpoints
+spec/25_agent-operability.md	3941	3	93	93	### Go Interface
+spec/25_agent-operability.md	3964	3	131	131	### Response Types
+spec/25_agent-operability.md	4003	3	23	2915	### Backup Execution
+spec/25_agent-operability.md	4007	4	191	191	#### Creation Sequence (Insert-Before-Job)
+spec/25_agent-operability.md	4021	4	525	525	#### Job Pod Specification
+spec/25_agent-operability.md	4048	4	185	185	#### Sensitive Content Policy
+spec/25_agent-operability.md	4066	4	78	78	#### MinIO Bucket Policy
+spec/25_agent-operability.md	4077	4	1865	1865	#### ArtifactStore Backup (MinIO workspace bucket replication)
+spec/25_agent-operability.md	4140	4	48	48	#### Backup Progress
+spec/25_agent-operability.md	4144	3	45	45	### Scheduled Backups
+spec/25_agent-operability.md	4148	3	40	220	### Retention Enforcement
+spec/25_agent-operability.md	4152	4	180	180	#### Tier-Based Retention Defaults
+spec/25_agent-operability.md	4168	3	53	53	### Backup Verification
+spec/25_agent-operability.md	4176	3	644	1455	### Restore Execution
+spec/25_agent-operability.md	4191	4	162	162	#### Pre-Restore Backup Lifecycle
+spec/25_agent-operability.md	4200	4	503	503	#### Restore Failure and Recovery
+spec/25_agent-operability.md	4236	4	146	146	#### Safety Check
+spec/25_agent-operability.md	4269	3	157	399	### Restore Workflow (Day-2 Operations)
+spec/25_agent-operability.md	4282	4	183	183	#### RTO/RPO Targets by Tier
+spec/25_agent-operability.md	4294	4	59	59	#### Test Restore
+spec/25_agent-operability.md	4298	3	176	176	### Storage
+spec/25_agent-operability.md	4338	3	73	73	### Degradation
+spec/25_agent-operability.md	4342	3	77	77	### Metrics
+spec/25_agent-operability.md	4353	3	94	94	### Alerting Rules
+spec/25_agent-operability.md	4362	3	608	608	### Error Codes
+spec/25_agent-operability.md	4381	3	226	226	### Audit Events
+spec/25_agent-operability.md	4387	2	48	3247	## 25.12 MCP Management Server
+spec/25_agent-operability.md	4391	3	117	117	### Scope
+spec/25_agent-operability.md	4400	3	126	126	### Architecture
+spec/25_agent-operability.md	4422	3	16	1288	### Tool Inventory
+spec/25_agent-operability.md	4426	4	463	463	#### Observation Tools (read-only)
+spec/25_agent-operability.md	4469	4	809	809	#### Action Tools (mutating)
+spec/25_agent-operability.md	4519	3	82	82	### Tool Schema Example
+spec/25_agent-operability.md	4549	3	183	183	### OpenAPI Schema Discovery
+spec/25_agent-operability.md	4569	3	422	422	### Security Model
+spec/25_agent-operability.md	4588	3	212	212	### Dry-Run Result Mapping
+spec/25_agent-operability.md	4614	3	307	307	### Capability Negotiation
+spec/25_agent-operability.md	4631	3	229	229	### Tool Schema Details
+spec/25_agent-operability.md	4682	3	178	178	### Headers and Correlation
+spec/25_agent-operability.md	4697	3	55	55	### SSE Event Subscription via MCP
+spec/25_agent-operability.md	4703	2	0	1705	## 25.13 Bundled Alerting Rules
+spec/25_agent-operability.md	4705	3	141	141	### Rationale
+spec/25_agent-operability.md	4711	3	188	188	### Single Source of Truth
+spec/25_agent-operability.md	4739	3	168	168	### Helm Rendering
+spec/25_agent-operability.md	4761	3	220	220	### Tier-Aware Defaults
+spec/25_agent-operability.md	4809	3	203	203	### Operator Customization Model
+spec/25_agent-operability.md	4829	3	188	188	### Gateway In-Process Tracker (Fallback Behavior)
+spec/25_agent-operability.md	4839	3	130	130	### Alertmanager Routing
+spec/25_agent-operability.md	4853	3	35	35	### Storage
+spec/25_agent-operability.md	4857	3	209	209	### Evaluation Cost
+spec/25_agent-operability.md	4868	3	75	75	### Metrics
+spec/25_agent-operability.md	4878	3	29	29	### Audit Events
+spec/25_agent-operability.md	4882	3	119	119	### Failure Mode Implications
+spec/25_agent-operability.md	4891	2	18	1136	## 25.14 `lenny-ctl` Extensions
+spec/25_agent-operability.md	4895	3	69	69	### Routing
+spec/25_agent-operability.md	4904	3	53	53	### Runbook Commands
+spec/25_agent-operability.md	4912	3	50	50	### Remediation Lock Commands
+spec/25_agent-operability.md	4920	3	49	49	### Escalation Commands
+spec/25_agent-operability.md	4928	3	57	57	### Log Commands
+spec/25_agent-operability.md	4936	3	86	86	### Identity and Operations Commands
+spec/25_agent-operability.md	4946	3	61	61	### Diagnose Commands
+spec/25_agent-operability.md	4955	3	83	83	### Event Commands
+spec/25_agent-operability.md	4965	3	141	141	### Audit Commands
+spec/25_agent-operability.md	4976	3	70	70	### Drift Commands
+spec/25_agent-operability.md	4985	3	189	189	### Backup and Restore Commands
+spec/25_agent-operability.md	5002	3	110	110	### Upgrade Commands
+spec/25_agent-operability.md	5015	3	100	100	### MCP-Management Commands
+spec/25_agent-operability.md	5026	2	693	1577	## 25.15 Failure Mode Analysis
+spec/25_agent-operability.md	5043	3	71	884	### Total-Outage Recovery Runbook
+spec/25_agent-operability.md	5049	4	133	133	#### Triage (first 5 minutes)
+spec/25_agent-operability.md	5056	4	512	512	#### Recovery Paths
+spec/25_agent-operability.md	5098	4	64	64	#### Decision Tree
+spec/25_agent-operability.md	5114	4	104	104	#### Why human-only
+spec/25_agent-operability.md	5122	2	0	333	## 25.16 Deployment Topology Summary
+spec/25_agent-operability.md	5124	3	82	82	### Minimal (single-node / dev)
+spec/25_agent-operability.md	5144	3	155	155	### Production
+spec/25_agent-operability.md	5174	3	96	96	### External DevOps Agent
+spec/25_agent-operability.md	5187	2	26	590	## 25.17 End-to-End Operational Example
+spec/25_agent-operability.md	5191	3	29	29	### Scenario
+spec/25_agent-operability.md	5195	3	72	72	### Step 1: Observe — Event Arrives
+spec/25_agent-operability.md	5214	3	21	21	### Step 2: Detect — Agent Evaluates
+spec/25_agent-operability.md	5218	3	122	122	### Step 3: Diagnose — Fetch Context
+spec/25_agent-operability.md	5253	3	36	36	### Step 4: Decide — Agent Chooses Action
+spec/25_agent-operability.md	5257	3	52	52	### Step 5: Act — Acquire Lock and Remediate
+spec/25_agent-operability.md	5282	3	79	79	### Step 6: Verify — Confirm Recovery
+spec/25_agent-operability.md	5305	3	85	85	### Failure Path: Escalation
+spec/25_agent-operability.md	5326	3	68	68	### Multi-Cluster Note
+spec/26_reference-runtime-catalog.md	1	2	427	4060	## 26. Reference Runtime Catalog
+spec/26_reference-runtime-catalog.md	14	3	290	290	### 26.1 Catalog Overview
+spec/26_reference-runtime-catalog.md	36	3	1001	1001	### 26.2 Shared Patterns for Coding-Agent Runtimes
+spec/26_reference-runtime-catalog.md	132	3	708	708	### 26.3 `claude-code`
+spec/26_reference-runtime-catalog.md	238	3	92	92	### 26.4 `gemini-cli`
+spec/26_reference-runtime-catalog.md	260	3	104	104	### 26.5 `codex`
+spec/26_reference-runtime-catalog.md	282	3	151	151	### 26.6 `cursor-cli`
+spec/26_reference-runtime-catalog.md	304	3	343	343	### 26.7 `chat`
+spec/26_reference-runtime-catalog.md	361	3	240	240	### 26.8 `langgraph`
+spec/26_reference-runtime-catalog.md	391	3	149	149	### 26.9 `mastra`
+spec/26_reference-runtime-catalog.md	421	3	243	243	### 26.10 `openai-assistants`
+spec/26_reference-runtime-catalog.md	450	3	246	246	### 26.11 `crewai`
+spec/26_reference-runtime-catalog.md	480	3	66	66	### 26.12 Adding a new reference runtime
+spec/27_web-playground.md	1	2	49	6891	## 27. Web Playground
+spec/27_web-playground.md	9	3	104	104	### 27.1 Purpose and non-goals
+spec/27_web-playground.md	25	3	856	856	### 27.2 Placement and gating
+spec/27_web-playground.md	55	3	978	4194	### 27.3 Authentication
+spec/27_web-playground.md	72	4	3216	3216	#### 27.3.1 OIDC cookie-to-MCP-bearer exchange
+spec/27_web-playground.md	175	3	226	226	### 27.4 UI surface
+spec/27_web-playground.md	187	3	202	202	### 27.5 Protocol
+spec/27_web-playground.md	199	3	466	466	### 27.6 Session lifecycle and cleanup
+spec/27_web-playground.md	211	3	129	129	### 27.7 Asset serving and CSP
+spec/27_web-playground.md	236	3	273	273	### 27.8 Metrics
+spec/27_web-playground.md	251	3	327	327	### 27.9 Security considerations
+spec/27_web-playground.md	263	3	65	65	### 27.10 Roll-forward notes
+spec/28_communication-channels.md	1	2	89	27712	## 28. Communication Channels
+spec/28_communication-channels.md	10	3	697	697	### 28.1 Naming law
+spec/28_communication-channels.md	66	3	304	304	### 28.2 Taxonomy and axes
+spec/28_communication-channels.md	88	3	181	1108	### 28.3 Registers
+spec/28_communication-channels.md	103	4	76	76	#### Link register
+spec/28_communication-channels.md	110	4	439	439	#### Channel register
+spec/28_communication-channels.md	132	4	280	280	#### Register-entry register
+spec/28_communication-channels.md	142	4	132	132	#### Naming table
+spec/28_communication-channels.md	160	3	147	147	### 28.4 Claim register
+spec/28_communication-channels.md	175	3	365	19238	### 28.5 Contract cards
+spec/28_communication-channels.md	204	4	2064	2064	#### 28.5.1 Gateway-to-pod
+spec/28_communication-channels.md	434	4	765	765	#### 28.5.2 Pod-to-gateway
+spec/28_communication-channels.md	523	4	12056	12056	#### 28.5.3 Intra-pod
+spec/28_communication-channels.md	1475	4	358	358	#### 28.5.4 Inter-replica
+spec/28_communication-channels.md	1530	4	1758	1758	#### 28.5.5 Pod-egress
+spec/28_communication-channels.md	1710	4	855	855	#### 28.5.6 Control-plane
+spec/28_communication-channels.md	1808	4	1017	1017	#### 28.5.7 Gateway-to-store
+spec/28_communication-channels.md	1927	3	1179	1179	### 28.6 Exclusivity and concurrency model
+spec/28_communication-channels.md	2029	3	862	862	### 28.7 Wire-contract artifact register
+spec/28_communication-channels.md	2062	3	4088	4088	### 28.8 Failure and degradation matrix
+spec/29_communication-scenarios.md	1	2	300	16927	## 29. Communication Scenarios
+spec/29_communication-scenarios.md	27	3	1227	1227	### 29.1 Participants and trace notation
+spec/29_communication-scenarios.md	112	3	2476	2476	### 29.2 Session start
+spec/29_communication-scenarios.md	404	3	4005	4005	### 29.3 Interactive message send
+spec/29_communication-scenarios.md	662	3	1601	1601	### 29.4 Interrupt, terminate, and delete
+spec/29_communication-scenarios.md	849	3	2002	2002	### 29.5 Checkpoint capture
+spec/29_communication-scenarios.md	1078	3	1364	1364	### 29.6 Restore and resume
+spec/29_communication-scenarios.md	1238	3	1001	1001	### 29.7 Gateway drain
+spec/29_communication-scenarios.md	1343	3	956	956	### 29.8 Coordinator handoff and crash takeover
+spec/29_communication-scenarios.md	1439	3	692	692	### 29.9 Agent pod eviction
+spec/29_communication-scenarios.md	1513	3	1303	1303	### 29.10 Co-tenancy on a concurrent-session pod
+spec/README.md	1	1	3	1515	# Lenny Technical Design
+spec/README.md	7	2	1512	1512	## Table of Contents
