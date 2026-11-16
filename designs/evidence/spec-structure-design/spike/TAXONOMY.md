@@ -190,6 +190,20 @@ Version 1's parts list mixed the seams with mechanisms that run in every replica
 
 [proposed/MAP.md](proposed/MAP.md) carries this layout in its gateway rows.
 
+## Open items from the migration spike
+
+The migration spike ([../spike-migration/FINDINGS-spec.md](../spike-migration/FINDINGS-spec.md), [../spike-migration/FINDINGS-code.md](../spike-migration/FINDINGS-code.md)) found these gaps in version 2. Each records what the spike did:
+
+1. Anchors for definition blocks: `<kind>-<slug>`, such as `setting-maxidleseconds`, and `<resource>-<verb>` for operations.
+2. Term anchors: unique across the specification, with qualified names where terms clash.
+3. Pages linked before they are written: `status: placeholder` and `status: partial` front matter.
+4. A register several parts of one binary write: owned by the component page of the binary.
+5. Admission refusals that have a message and no code: new codes owned by the capability.
+6. A component's RBAC grants within a larger component's: unresolved.
+7. Review comments in pages (`src`, `judgment`, and `unresolved`): conventions added, and the gates refuse them in a landed page.
+8. Operation identifiers such as `kubernetes#podclaim.create` read like Go selectors, and a package rename rewrote six of them. The format is open.
+9. The gateway's API surface (handlers, middleware, and the external API) and its domain stores and infrastructure packages have no page type or folder in the component tree.
+
 ## Owner decisions
 
 Recorded from the owner's review of 2026-11-16.

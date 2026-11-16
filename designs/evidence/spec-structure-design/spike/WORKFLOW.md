@@ -46,7 +46,20 @@ Option C, accepted by the owner: each area's new pages are written at the target
 
 The code's 18,348 `// spec: §` annotations are not rewritten mechanically, because a current section's content spreads over several pages and placing a citation needs an understanding of the code. A frozen copy of the current specification keeps the old citations resolving. New and touched code cites identifiers, and a per-area count of old citations has to reach zero before an area's milestone exits, so re-annotation happens while an agent already has that code loaded.
 
-A throwaway spike is migrating one area's specification and then the gateway pod claimer's code, to measure what this costs in practice. Its results will update this section.
+A throwaway spike migrated one area's specification and then the gateway pod claimer's code ([../spike-migration/README.md](../spike-migration/README.md)). It supports option C and changes the order of work inside it:
+
+- Most specification effort went to reconciling the designs with each other and with the current text. One area of 11 pages surfaced 13 contradictions, 5 of which needed the owner. Scaled to the tree, that is about 25 areas, each one long agent session plus 30 to 40 judgment rows for the owner.
+- In code, re-citing and changing a package in place cost less than rewriting it from the pages would have. 57 citations mapped directly, 70 disappeared under the annotation rule, 41 needed reading, and the tests held edge cases the pages do not state.
+- The blockers sit across packages: the kind renames touch 463 Go files, and two removals in the claimer wait on readers in other packages.
+- Registers keyed by path or section number, such as `tests/spec-map.json` and the tier-0 inventories, caused most of the friction when the package moved.
+
+The work inside option C therefore runs in this order:
+
+1. Land the structure: conventions, the registry, the reference tool, the gates, and the annotation rule.
+2. Do the kind renames of the pod lifecycle design once, tree-wide, with Go-aware tooling.
+3. Replace `tests/spec-map.json` and the path-keyed tier-0 inventories with coverage derived from annotations.
+4. Decide the gateway's package layout, including names under `pkg/gateway`, and give the API surface and the domain stores a home in TAXONOMY.
+5. Migrate area by area: the pages first, then the code steps of each design touching the area, removing what has no outside dependents and filing issues for the rest. Split `sessionserver` along the seams as its own change.
 
 ## Citations in code
 
