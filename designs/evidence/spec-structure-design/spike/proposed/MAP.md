@@ -2,6 +2,8 @@
 
 Status: spike output, 2026-11-16. This file lists every page of the proposed tree under `proposed/`, with its type, its code, a one-line summary, and an estimate of its size. Paths are relative to `proposed/`. The "Written by" column records which half of the spike owns the page: "slice" pages are written in full by the vertical slice, "map" pages are named and summarized here only, and "proposed to slice" pages are catalogs this map adds to the slice's catalog list.
 
+Rows marked "seams v2" in the "Written by" column were edited by hand after generation, to apply "Gateway seams" in [TAXONOMY.md](../TAXONOMY.md) version 2; their estimates are judgment, and `ASSIGNMENT.md` still splits §4.1 "Gateway Internal Subsystems" the way version 1 did.
+
 The size estimate is the words of the current specification sections assigned to the page, weighted by the share given in `ASSIGNMENT.md`, plus half the words of the design sections assigned to it. Designs carry evidence tags, current-state notes, and rationale that a page does not keep, so half is the working ratio. Index, catalog, and conventions pages have no estimate. `ASSIGNMENT.md` lists the pages estimated over 6,000 words and the split each one takes.
 
 ## Page counts
@@ -10,13 +12,13 @@ The size estimate is the words of the current specification sections assigned to
 | :-- | --: |
 | overview | 15 |
 | capability | 103 |
-| component | 35 |
-| interface | 60 |
+| component | 38 |
+| interface | 61 |
 | cross-cutting | 10 |
 | catalog | 13 |
 | conventions | 2 |
 | index | 36 |
-| Total | 274 |
+| Total | 278 |
 
 Index pages are counted once under "index" and not under the type of their folder. The overview count includes the walkthrough pages.
 
@@ -260,14 +262,17 @@ Lenny's own processes come first, then the agent pod and its containers, then th
 | `components/external/postgres.md` | component | PG | Postgres and its pooler: topology, HA, connection pooling, write classification, failover behavior, encryption, and backups. | 5,700 | map |
 | `components/external/prometheus.md` | component | PROM | Prometheus: when it is required, scrape targets, rule rendering, evaluation cost, and the bring-your-own model. | 1,000 | map |
 | `components/external/redis.md` | component | REDIS | Redis: topology, logical separation, failure modes per use, scalability ceilings, and TLS. | 4,500 | map |
-| `components/gateway/index.md` | index | GW | The gateway as a unit: responsibilities, the subsystem list, replicas, disruption budget, probes, ServiceAccount, RBAC, NetworkPolicy, process settings, and metrics. The slice wrote a stub that lists subsystems. |  | slice |
+| `components/gateway/index.md` | index | GW | The gateway as a unit: the seam model (isolation guarantees every seam has and the rule that a seam reaches the core only through its seam interface), the seam, core, and replica page lists, replicas, disruption budget, probes, ServiceAccount, RBAC, NetworkPolicy, process settings, and metrics. The slice wrote a stub with an earlier list. |  | slice; seams v2 |
 | `components/gateway/checkpoint-barrier.md` | component | GWBARRIER | The checkpoint barrier the gateway fans out to pods during a rolling update. | 1,100 | map |
 | `components/gateway/drain.md` | component | GWDRAIN | The preStop drain of a gateway replica: its stages, deadlines, and terminal pipelines at process exit. | 5,900 | map |
-| `components/gateway/metering-proxy.md` | component | GWLLM | The gateway's metering proxy listener for LLM upstream calls: routes, limits, process settings, and metrics. | 1,900 | map |
+| `components/gateway/metering-proxy.md` | component | GWLLM | The metering proxy seam (§4.1 LLM Proxy): its listener for LLM upstream calls, routes, limits, concurrency and breaker settings, metrics, and extraction thresholds. | 1,900 | map; seams v2 |
 | `components/gateway/ops-endpoints.md` | component | GWOPS | The gateway-side operability parts: the health service, capacity recommendations, the event buffer, and the in-process alert tracker. | 600 | map |
 | `components/gateway/pod-claimer.md` | component | GWCLAIM | The gateway's pod claimer: candidate selection, claim creation, and the Postgres fallback path. | 600 | slice |
-| `components/gateway/scaling-and-capacity.md` | component | GWSCALE | Gateway autoscaling: HPA and KEDA metric roles, the per-replica session budget, the minimum-replica formula, and subsystem extraction thresholds. | 3,300 | map |
+| `components/gateway/platform-tools.md` | component | GWTOOLS | The platform tools seam (§4.1 MCP Fabric): platform tool calls from pods, delegation orchestration, and the elicitation chain, with its concurrency and breaker settings, metrics, and extraction thresholds. | 700 | seams v2 |
+| `components/gateway/scaling-and-capacity.md` | component | GWSCALE | Gateway autoscaling: HPA and KEDA metric roles, the per-replica session budget, the minimum-replica formula, and the process-wide GC pressure signal. Each seam's extraction thresholds are on the seam's page. | 2,900 | map; seams v2 |
 | `components/gateway/session-coordination.md` | component | GWCOORD | How gateway replicas coordinate a session: the coordination lease, handoff, hold state, stale replicas, and behavior when both stores fail. | 4,400 | map |
+| `components/gateway/stream-proxy.md` | component | GWSTREAM | The stream proxy seam: session attachment, event relay, and reconnection for SSE readers, with its concurrency and breaker settings, metrics, and extraction thresholds. | 600 | seams v2 |
+| `components/gateway/upload-handler.md` | component | GWUPLOAD | The upload handler seam: upload proxying, validation, and staging, with its concurrency and breaker settings, metrics, and extraction thresholds. | 500 | seams v2 |
 | `components/git-mirror.md` | component | GITMIR | The git mirror (lenny-git-mirror): storage, fetch scheduling, holds, deployment, and metrics. | 2,000 | map |
 | `components/lenny-ops/index.md` | index | LOPS | The lenny-ops Deployment: purpose, Helm values, Kubernetes resources, RBAC, NetworkPolicy, leader election, startup, self-monitoring, and TLS. |  | map |
 | `components/lenny-ops/backup-jobs.md` | component | BKJOB | The lenny-backup Jobs that lenny-ops creates: pod specification, ServiceAccount, NetworkPolicy, and bucket policy. | 1,100 | map |
@@ -329,6 +334,7 @@ Each interface is either one page or a folder whose index states the conventions
 | `interfaces/events/operational-events.md` | interface | EVTOPS | The operational event types and their data schemas. | 900 | map |
 | `interfaces/events/session-webhooks.md` | interface | EVTHOOK | The session callback webhooks and their signing. | 400 | map |
 | `interfaces/extension-points.md` | interface | EXT | The Go extension points a deployer can replace: storage backends, the pool manager, and the cluster registry. | 2,100 | map |
+| `interfaces/gateway-seams.md` | interface | GWSEAM | The boundary between each gateway seam and the session core: the operations each side calls, so that extracting a seam puts a transport under an existing interface. New content; the current specification defines the seams' isolation and not their boundary. | 1,000 | seams v2 |
 | `interfaces/interceptor-protocol.md` | interface | INTCPTIF | The protocol between the gateway and a request interceptor: phases, payloads, verdicts, and authentication. | 2,100 | map |
 | `interfaces/kubernetes/index.md` | index | K8S | Lenny's Kubernetes API conventions: the API group and version, the shipped CRDs and their schema version, field ownership, validation, and how an admission refusal reaches a client. |  | slice |
 | `interfaces/kubernetes/admission.md` | interface | KADMIT | The writes Lenny's admission webhooks and policies refuse, with the refusal each returns. | 1,600 | map |

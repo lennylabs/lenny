@@ -1,6 +1,6 @@
 # Spec structure spike: information types and placement rules
 
-Status: version 1, 2026-11-16. Version 0 was written before the spike to give it rules to test. Version 1 applies what the vertical slice ([FINDINGS-slice.md](FINDINGS-slice.md)) and the whole-tree map ([FINDINGS-map.md](FINDINGS-map.md)) showed. "Changes from version 0" at the end lists each change with the finding behind it. The pages under `proposed/` were written against version 0, so they differ from version 1 where the list says so.
+Status: version 2, 2026-11-16. Version 0 was written before the spike to give it rules to test. Version 1 applies what the vertical slice ([FINDINGS-slice.md](FINDINGS-slice.md)) and the whole-tree map ([FINDINGS-map.md](FINDINGS-map.md)) showed. Version 2 applies the owner's review of version 1: it records the owner's decisions, adds the rules for references and moves, and replaces the gateway's parts list with its seams. "Changes from version 0" and "Changes from version 1" at the end list each change. The pages under `proposed/` were written against version 0, so they differ from the current version where those lists say so. How changes, programs, and issues sit around the specification is in [WORKFLOW.md](WORKFLOW.md).
 
 The proposed specification tree lives under `proposed/` in this folder. It sits outside `spec/` because the spike is a review artifact, and nothing here changes the current specification.
 
@@ -98,10 +98,10 @@ Metrics carry `emitter:`, events carry `emitter:`, and settings carry `read-by:`
 
 | Content | Destination |
 | :-- | :-- |
-| The phased build sequence, phase gates, and absent-behavior claims | `BUILD-PLAN.md` and `BUILD-GAPS.md` |
-| Decision history and alternatives | The archived design or proposal |
-| Roadmap and post-v1 items | `ROADMAP.md` |
-| Open questions | Issues |
+| The phased build sequence, phase gates, and milestones | A program under `changes/programs/` ([WORKFLOW.md](WORKFLOW.md)) |
+| Absent-behavior claims and open questions | An issue under `issues/<CODE>/` ([WORKFLOW.md](WORKFLOW.md)) |
+| Decision history and alternatives | The archived change under `changes/archive/`, or the legacy proposal |
+| Roadmap and post-v1 items | The program's milestones, and `docs/about/status.md` generated from them |
 | Comparison with other products and community strategy | `docs/about/` |
 | Benchmarks, calibration methods, and the tests that verify a requirement | `TESTING.md`; a requirement may name its test tiers |
 | Sizing, tuning, and worked examples | `docs/operator-guide/` |
@@ -117,7 +117,22 @@ Metrics carry `emitter:`, events carry `emitter:`, and settings carry `read-by:`
 - Requirements are numbered per page and carry a title: `**POOL-R5. Pool and pod-set labels are required and immutable.**` Numbers are never reused, and a retired requirement keeps its number with a successor pointer.
 - Each requirement and each owned term carries an explicit anchor equal to its lower-cased identifier or term slug (`#pool-r5`, `#reserved-hold`).
 - Interface operations carry identifiers of the form `<interface folder>#<resource>.<verb>`: `admin-api#pools.create`, `kubernetes#podclaim.create`.
-- Code cites requirements or operations: `// spec: POOL-R5`, `// spec: admin-api#pools.create`. An identifier survives any move of its page. A heading anchor that moves goes through the redirect map.
+- Code cites requirements or operations: `// spec: POOL-R5`, `// spec: admin-api#pools.create`. An identifier survives any move of its page.
+
+## References and moves
+
+The tree will be reorganized after it lands. These rules make a move a mechanical step.
+
+- **Every link targets an identifier.** A link into the specification ends at a page (by its path, which the registry ties to the page's code) or at an identifier anchor: a requirement (`#pool-r5`), an owned term (`#reserved-hold`), an operation (`#pools-create`), or a definition block (`#setting-maxidleseconds`). A gate refuses a link to a heading anchor on another page. Template headings such as "Requirements" are never link targets.
+- **The path is derived data.** Links stay ordinary relative Markdown links, so GitHub, editors, and agents follow them without a resolver: `[POOL-R5](../runtimes-and-pools/warm-pools.md#pool-r5)`. A reference tool builds the registry of identifier to file from front matter and anchors, and rewrites the path of every link whose fragment or target is a registered identifier. Moving a page is `git mv` followed by one run of the tool. Nothing is hand-maintained beyond the front matter.
+- **Code carries no paths.** `// spec:` annotations, test names, issue front matter, and change edits cite identifiers only, so a page move changes no code.
+- **Moving one requirement.** A requirement that moves to another page takes that page's next number. The old identifier is retired with a successor pointer, and the move is recorded in the registry. The tool and the existing `specshift` identifier pass rewrite every citation from that record, code included.
+- **Merging and renaming pages.** A merged page keeps one code, and the other code stays in the registry as an alias, so it resolves indefinitely. A page's code does not change when its title or path does.
+- **Domain.** The tool rewrites the tracked tree except the archives (`changes/archive/`, `proposals/`, and the frozen gap records). Those keep the paths they were written with, and their identifiers still resolve through the registry's lookup command.
+- **The published site.** The documentation site gets a redirect for each moved page, generated from the registry's history of moves, so external URLs keep working.
+- **Gates.** Every link into the specification resolves. Every fragment is a registered identifier. No code is registered twice, and no identifier is retired without a successor or an explicit "removed" record.
+
+The tool is a new pass of `scripts/specshift`, which already has an anchor pass that rewrites retired anchors from a move map and fails closed on a site the map does not cover. The new pass is driven by the generated registry instead of a hand-written register.
 
 ## Gloss rule
 
@@ -155,12 +170,36 @@ Every content page then has **Terms** (owned terms with definitions; borrowed te
 - Each folder has an `index.md` that stays under about 1,500 words.
 - A content page stays under about 6,000 words. A capability that carries a sizing formula or a sub-procedure longer than about 1,000 words moves it to a sub-page.
 
-## Open decisions for the owner
+## Gateway seams
 
-1. **Capability areas.** The map uses thirteen areas: runtimes and pools, sessions, messaging, workspaces and files, delegation, tenancy and access, credentials, network and egress, policy and controls, billing and usage, observability and operations, security and compliance, and deployment and lifecycle ([FINDINGS-map.md](FINDINGS-map.md), "Changes to the starting lists").
-2. **The gateway's internal parts.** The gateway is one component folder. Its sub-pages need a list that matches the designs, because the four subsystems of §4.1 no longer do. The map proposes session coordination, drain, the checkpoint barrier, scaling and capacity, the pod claimer, the metering proxy, and the ops endpoints.
-3. **Metric ownership.** The two halves disagreed: the slice found that owning metrics by emitter scatters one capability's metrics, and the map found that the current duplication follows the emitter. Version 1 resolves it by meaning, with the emitter recorded in each block and the component's list generated.
-4. **Reference runtimes leave the specification.** The map sends §26 to the reference runtime repositories and the runtime author guide.
+The gateway is one binary partitioned into seams. A seam is a part of the gateway that can be extracted into its own service when its load outgrows the shared process. "Gateway Internal Subsystems" in §4.1 defines the seams today. Each one has its own concurrency limits and queue depth, its own in-process circuit breaker, its own metrics, and extraction thresholds that say when to split it out. The designs keep every seam and change what some of them carry:
+
+| Seam (§4.1 name) | After the designs | Design |
+| :-- | :-- | :-- |
+| Stream Proxy | Session attachment, event relay, and reconnection for SSE readers of the REST client API. | `rest-only-client-api-design.md` |
+| Upload Handler | Upload proxying, validation, and staging. Archive extraction moves into the pod's `lenny-materialize`, and the handler's extraction pool leaves. | `workspace-materialization-design.md` |
+| MCP Fabric | Platform tool calls from pods, delegation orchestration, and the elicitation chain. The client-facing MCP endpoint leaves, so the seam needs a new name; "platform tools" is the proposal. | `rest-only-client-api-design.md`, `delegation-availability-design.md` |
+| LLM Proxy | The metering proxy: the budget-enforcing pass-through for LLM upstream calls, on its own listener. | `llm-upstreams-and-cost-budgets-design.md` |
+
+Version 1's parts list mixed the seams with mechanisms that run in every replica, such as drain and session coordination. Version 2 separates the two:
+
+- The gateway folder's index page owns the seam model: the isolation guarantees every seam has, the rule that a seam reaches another seam's state only through its seam interface, and the gateway's deployment as a unit.
+- Each seam is a component page in the gateway folder. It owns the seam's responsibilities, its concurrency and breaker settings, its metrics, its extraction thresholds, and its failure mode when it is not extracted. The calibration method for the thresholds goes to `TESTING.md`.
+- The work that is not a seam is the session core: session coordination, the pod claimer, and the checkpoint barrier. Each is a component page in the gateway folder, and the index lists them as the core. Drain, scaling and capacity, and the ops endpoints apply to the whole replica, and the index lists them under the replica.
+- Each seam's boundary with the core is an interface page, `interfaces/gateway-seams.md`. It lists the operations each seam calls on the core (session lookup, the coordination lease, the caller's authorization context) and those the core calls on the seam. Extracting a seam then means putting a transport under an interface that already exists. The current specification defines the isolation guarantees and not the boundary operations, so this page is new content. A gate can check that a seam's Go package imports only its seam interface from the core.
+
+[proposed/MAP.md](proposed/MAP.md) carries this layout in its gateway rows.
+
+## Owner decisions
+
+Recorded from the owner's review of 2026-11-16.
+
+1. **Capability areas.** Accepted as the starting point: runtimes and pools, sessions, messaging, workspaces and files, delegation, tenancy and access, credentials, network and egress, policy and controls, billing and usage, observability and operations, security and compliance, and deployment and lifecycle. Areas will move later, so moves have to be cheap ("References and moves").
+2. **The gateway's internal parts.** The owner asked whether the gateway keeps the seams that §4.1 introduced for performance and capacity. It does; "Gateway seams" above replaces version 1's list.
+3. **Metric ownership.** Accepted: by meaning, with the emitter recorded in each block and the component's list generated.
+4. **Reference runtimes leave the specification.** Accepted. §26 goes to the reference runtime repositories and the runtime author guide.
+
+The open decisions about changes, programs, and issues are at the end of [WORKFLOW.md](WORKFLOW.md).
 
 ## Changes from version 0
 
@@ -186,3 +225,12 @@ Every content page then has **Terms** (owned terms with definitions; borrowed te
 | State-machine and channel catalogs | Map proposal 16 |
 | Shared API conventions cross-cutting | Map 6 |
 | Sub-page rule for formulas and sub-procedures | Slice open question 7 |
+
+## Changes from version 1
+
+| Change | Reason |
+| :-- | :-- |
+| "References and moves": links target identifiers, paths are derived and rewritten by a tool, code carries no paths, and moved requirements are recorded | Owner decision 1 |
+| "Gateway seams": seams as component pages, the session core, and the seam interface page | Owner decision 2 |
+| "Owner decisions" replaces "Open decisions for the owner" | Owner review of 2026-11-16 |
+| Build sequence, gap records, and roadmap rows of "Destinations outside the specification" point at programs, issues, and the status page | [WORKFLOW.md](WORKFLOW.md) |

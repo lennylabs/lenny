@@ -9,20 +9,22 @@ Status: 2026-11-16. This spike tests a reorganization of the technical specifica
    - The map assigned every heading of the current specification, every design, and every page under `docs/reference/` to a proposed tree of 274 pages, and wrote the root map and the folder indexes. Results: [proposed/MAP.md](proposed/MAP.md), [proposed/ASSIGNMENT.md](proposed/ASSIGNMENT.md), [proposed/README.md](proposed/README.md), and [FINDINGS-map.md](FINDINGS-map.md).
    - The slice wrote one part of the system in full, warm pools and the pod lifecycle, as it would read in the new specification: three capability pages, four component pages, seven interface pages, and the generated catalogs for those pages. Results: the pages under `proposed/` named in [FINDINGS-slice.md](FINDINGS-slice.md), which also holds the findings.
 3. The two halves were reconciled (twelve link targets retargeted to the map's pages), and [TAXONOMY.md](TAXONOMY.md) became version 1.
+4. The owner reviewed version 1 on 2026-11-16. [TAXONOMY.md](TAXONOMY.md) version 2 records the decisions, adds the rules for references and moves, and replaces the gateway's parts list with its seams, which [proposed/MAP.md](proposed/MAP.md) carries in four new pages. [WORKFLOW.md](WORKFLOW.md) recommends how changes, programs, issues, and the roadmap sit around the specification.
 
 The slice's pages follow version 0. Version 1 changes some of what they would look like, and its last table lists each change.
 
 ## Suggested reading order
 
-1. [TAXONOMY.md](TAXONOMY.md): the rules, and the open decisions for the owner at its end.
-2. [proposed/README.md](proposed/README.md) and [proposed/capabilities/index.md](proposed/capabilities/index.md): the root map and the areas.
-3. One slice page of each type:
+1. [TAXONOMY.md](TAXONOMY.md): the rules, and the owner's decisions at its end.
+2. [WORKFLOW.md](WORKFLOW.md): changes, programs, and issues, with open decisions for the owner at its end.
+3. [proposed/README.md](proposed/README.md) and [proposed/capabilities/index.md](proposed/capabilities/index.md): the root map and the areas.
+4. One slice page of each type:
    - capability: [proposed/capabilities/runtimes-and-pools/pod-claims.md](proposed/capabilities/runtimes-and-pools/pod-claims.md)
    - component: [proposed/components/warm-pool-controller.md](proposed/components/warm-pool-controller.md)
    - interface: [proposed/interfaces/kubernetes/podclaim.md](proposed/interfaces/kubernetes/podclaim.md) and [proposed/interfaces/admin-api/pools.md](proposed/interfaces/admin-api/pools.md)
    - catalog: [proposed/catalogs/settings.md](proposed/catalogs/settings.md)
-4. [FINDINGS-slice.md](FINDINGS-slice.md) and [FINDINGS-map.md](FINDINGS-map.md).
-5. [proposed/MAP.md](proposed/MAP.md) and [proposed/ASSIGNMENT.md](proposed/ASSIGNMENT.md) as reference.
+5. [FINDINGS-slice.md](FINDINGS-slice.md) and [FINDINGS-map.md](FINDINGS-map.md).
+6. [proposed/MAP.md](proposed/MAP.md) and [proposed/ASSIGNMENT.md](proposed/ASSIGNMENT.md) as reference.
 
 ## Limits
 

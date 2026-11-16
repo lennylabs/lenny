@@ -272,3 +272,7 @@ OWNPOOL|capability|capabilities/runtimes-and-pools/owned-pools-and-reservations.
 BROWSER|capability|capabilities/tenancy-and-access/browser-sessions.md|States the cookie session a browser holds for the web playground and the token mint rules behind it.|mine
 PSEUDO|capability|capabilities/security-and-compliance/pseudonymization-and-receipts.md|States the pseudonymization of retained records at erasure, the erasure salt, billing erasure policy, and erasure receipts.|mine
 SCRUBPROC|capability|capabilities/sessions/scrub-procedure.md|States the scrub procedure step by step, the supervised scrub sequence, what the scrub reaches, the sweep, and the Kata variant.|mine
+GWTOOLS|component|components/gateway/platform-tools.md|The platform tools seam (§4.1 MCP Fabric): platform tool calls from pods, delegation orchestration, and the elicitation chain.|seams-v2
+GWSTREAM|component|components/gateway/stream-proxy.md|The stream proxy seam: session attachment, event relay, and reconnection for SSE readers.|seams-v2
+GWUPLOAD|component|components/gateway/upload-handler.md|The upload handler seam: upload proxying, validation, and staging.|seams-v2
+GWSEAM|interface|interfaces/gateway-seams.md|The boundary between each gateway seam and the session core.|seams-v2
