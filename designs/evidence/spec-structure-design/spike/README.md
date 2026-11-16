@@ -16,7 +16,7 @@ The slice's pages follow version 0. Version 1 changes some of what they would lo
 ## Suggested reading order
 
 1. [TAXONOMY.md](TAXONOMY.md): the rules, and the owner's decisions at its end.
-2. [WORKFLOW.md](WORKFLOW.md): changes, programs, and issues, with open decisions for the owner at its end.
+2. [WORKFLOW.md](WORKFLOW.md): what replaces the current records and why, and the owner's decisions; then the drafts it links, [draft-records/changes/README.md](draft-records/changes/README.md), [draft-records/issues/README.md](draft-records/issues/README.md), and [draft-rules/spec-annotations.md](draft-rules/spec-annotations.md).
 3. [proposed/README.md](proposed/README.md) and [proposed/capabilities/index.md](proposed/capabilities/index.md): the root map and the areas.
 4. One slice page of each type:
    - capability: [proposed/capabilities/runtimes-and-pools/pod-claims.md](proposed/capabilities/runtimes-and-pools/pod-claims.md)
