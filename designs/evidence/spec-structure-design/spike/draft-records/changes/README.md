@@ -139,7 +139,7 @@ The helpers are skills and workflows that any of these activities can use, in an
 
 ## Gates
 
-These checks run on every commit and cost no model tokens:
+These checks run on every commit and cost no model tokens. `changes/` is outside their domain, as `proposals/` is today: a change records proposed and historical states, so its text is not held to the rules for current truth. The change that creates this folder adds it to the exclusion list in `scripts/specshift/scope/scope.go` and to the residual registers.
 
 - Links and identifiers resolve, and no link targets a heading on another page.
 - Every definition block is defined once, and every gloss follows the gloss rule.

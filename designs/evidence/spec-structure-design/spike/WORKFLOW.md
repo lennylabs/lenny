@@ -97,3 +97,4 @@ Recorded from the owner's reviews of 2026-11-16.
 9. **Scope of v1.** Every design and every open gap.
 10. **Process and helpers.** The workflow is described as activities, and the helpers are listed for the owner to use as needed. Helpers are as generic as their purpose allows, and adversarial review uses general-purpose reviewers with short charters.
 11. **Citations in code.** New code cites the specification far less than the current code, under a project rule.
+12. **Gate domain.** `changes/` is outside the domain of the tier-0 gates, as `proposals/` is. `designs/` stays inside it until it retires.
