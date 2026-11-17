@@ -1,0 +1,20 @@
+### BASELINE (no NetworkPolicy), rerun with exit codes
+validator VIP=10.96.150.24 validator podIP=10.244.0.11 proxied-dns VIP=10.96.212.202
+[proxy Service -> CONNECT example.com] rc=0 0.10s :: 200 
+[second CoreDNS (getent kubernetes.default)] rc=0 0.00s :: 10.96.0.1         kubernetes.default.svc.cluster.local  kubernetes.default.svc.cluster.local kubernetes.default 
+[default CoreDNS 10.96.0.10 (nslookup)] rc=0 0.01s :: Server:		10.96.0.10 Address:	10.96.0.10:53  Name:	kubernetes.default.svc.cluster.local Address: 10.96.0.1 
+[validator Service VIP direct] rc=0 0.00s :: 200 
+[validator pod IP direct] rc=0 0.01s :: 200 
+[API server 10.96.0.1:443] rc=0 0.01s :: 200 
+[internet IP 1.1.1.1:443 direct] rc=0 0.10s :: 301 
+[node IP 172.18.0.2:10250 kubelet] rc=0 0.01s :: 401 
+### WITH agent-egress NetworkPolicy
+validator VIP=10.96.150.24 validator podIP=10.244.0.11 proxied-dns VIP=10.96.212.202
+[proxy Service -> CONNECT example.com] rc=0 0.09s :: 200 
+[second CoreDNS (getent kubernetes.default)] rc=0 0.01s :: 10.96.0.1         kubernetes.default.svc.cluster.local  kubernetes.default.svc.cluster.local kubernetes.default 
+[default CoreDNS 10.96.0.10 (nslookup)] rc=1 2.01s :: ;; connection timed out; no servers could be reached 
+[validator Service VIP direct] rc=28 4.01s :: curl: (28) Connection timed out after 4002 milliseconds 000 
+[validator pod IP direct] rc=28 4.01s :: curl: (28) Connection timed out after 4004 milliseconds 000 
+[API server 10.96.0.1:443] rc=0 0.01s :: 200 
+[internet IP 1.1.1.1:443 direct] rc=28 4.01s :: curl: (28) Connection timed out after 4002 milliseconds 000 
+[node IP 172.18.0.2:10250 kubelet] rc=0 0.02s :: 401 

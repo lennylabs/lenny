@@ -1,0 +1,122 @@
+git ls-remote: priv main=5f8022063d0211fd38a97368f38fca32173a191e priv v1 peeled=5f8022063d0211fd38a97368f38fca32173a191e pub main=5c276f130ba1e33d591100ba2f304e6ef2f9f6e9
+=== path=direct protocol=v2 then v0
+direct  valid full token, private, main      {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":8,"err":""}
+direct  valid read-only token, private       {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":10,"err":""}
+direct  token as x-access-token user         {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":8,"err":""}
+direct  valid token, annotated tag           {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":9,"err":""}
+direct  valid token, absent ref              {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v2","host_status":200,"requests":1,"ms":8,"err":"ref absent"}
+direct  invalid token, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":30,"err":"host 401"}
+direct  no credential, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":4,"err":"host 401"}
+direct  token without repository scope       {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":403,"requests":2,"ms":13,"err":"host 403"}
+direct  other user's token, private          {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":2,"ms":15,"err":"host 404"}
+direct  valid token, absent repo             {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":2,"ms":14,"err":"host 404"}
+direct  no credential, absent repo           {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":6,"err":"host 401"}
+direct  no credential, public                {"class":"ok","code":"","reason":"","sha":"5c276f130b","proto":"v2","host_status":200,"requests":1,"ms":4,"err":""}
+direct  invalid token, public                {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":29,"err":"host 401"}
+direct  without .git, valid token            {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":7,"err":""}
+=== path=direct protocol=-v0
+direct  valid full token, private, main      {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+direct  valid read-only token, private       {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":10,"err":""}
+direct  token as x-access-token user         {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":8,"err":""}
+direct  valid token, annotated tag           {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+direct  valid token, absent ref              {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":1,"ms":12,"err":"ref absent"}
+direct  invalid token, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":14,"err":"host 401"}
+direct  no credential, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":4,"err":"host 401"}
+direct  token without repository scope       {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":403,"requests":1,"ms":6,"err":"host 403"}
+direct  other user's token, private          {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":1,"ms":8,"err":"host 404"}
+direct  valid token, absent repo             {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":1,"ms":7,"err":"host 404"}
+direct  no credential, absent repo           {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":6,"err":"host 401"}
+direct  no credential, public                {"class":"ok","code":"","reason":"","sha":"5c276f130b","proto":"v0","host_status":200,"requests":1,"ms":3,"err":""}
+direct  invalid token, public                {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":14,"err":"host 401"}
+direct  without .git, valid token            {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":8,"err":""}
+=== path=raw protocol=v2 then v0
+raw     valid full token, private, main      {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":17,"err":""}
+raw     valid read-only token, private       {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":9,"err":""}
+raw     token as x-access-token user         {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":10,"err":""}
+raw     valid token, annotated tag           {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":10,"err":""}
+raw     valid token, absent ref              {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v2","host_status":200,"requests":1,"ms":9,"err":"ref absent"}
+raw     invalid token, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":29,"err":"host 401"}
+raw     no credential, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":5,"err":"host 401"}
+raw     token without repository scope       {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":403,"requests":2,"ms":15,"err":"host 403"}
+raw     other user's token, private          {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":2,"ms":14,"err":"host 404"}
+raw     valid token, absent repo             {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":2,"ms":13,"err":"host 404"}
+raw     no credential, absent repo           {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":5,"err":"host 401"}
+raw     no credential, public                {"class":"ok","code":"","reason":"","sha":"5c276f130b","proto":"v2","host_status":200,"requests":1,"ms":5,"err":""}
+raw     invalid token, public                {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":29,"err":"host 401"}
+raw     without .git, valid token            {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":10,"err":""}
+=== path=raw protocol=-v0
+raw     valid full token, private, main      {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+raw     valid read-only token, private       {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+raw     token as x-access-token user         {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":10,"err":""}
+raw     valid token, annotated tag           {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+raw     valid token, absent ref              {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":1,"ms":8,"err":"ref absent"}
+raw     invalid token, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":15,"err":"host 401"}
+raw     no credential, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":3,"err":"host 401"}
+raw     token without repository scope       {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":403,"requests":1,"ms":8,"err":"host 403"}
+raw     other user's token, private          {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":1,"ms":8,"err":"host 404"}
+raw     valid token, absent repo             {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":1,"ms":9,"err":"host 404"}
+raw     no credential, absent repo           {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":3,"err":"host 401"}
+raw     no credential, public                {"class":"ok","code":"","reason":"","sha":"5c276f130b","proto":"v0","host_status":200,"requests":1,"ms":4,"err":""}
+raw     invalid token, public                {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":16,"err":"host 401"}
+raw     without .git, valid token            {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+--- dfp resolves the name inside Envoy, which is on the private network here
+=== path=dfp protocol=v2 then v0
+dfp     valid full token, private, main      {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":11,"err":""}
+dfp     valid read-only token, private       {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":11,"err":""}
+dfp     token as x-access-token user         {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":9,"err":""}
+dfp     valid token, annotated tag           {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":9,"err":""}
+dfp     valid token, absent ref              {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v2","host_status":200,"requests":1,"ms":9,"err":"ref absent"}
+dfp     invalid token, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":29,"err":"host 401"}
+dfp     no credential, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":5,"err":"host 401"}
+dfp     token without repository scope       {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":403,"requests":2,"ms":15,"err":"host 403"}
+dfp     other user's token, private          {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":2,"ms":16,"err":"host 404"}
+dfp     valid token, absent repo             {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":2,"ms":14,"err":"host 404"}
+dfp     no credential, absent repo           {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":5,"err":"host 401"}
+dfp     no credential, public                {"class":"ok","code":"","reason":"","sha":"5c276f130b","proto":"v2","host_status":200,"requests":1,"ms":4,"err":""}
+dfp     invalid token, public                {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":31,"err":"host 401"}
+dfp     without .git, valid token            {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v2","host_status":200,"requests":1,"ms":9,"err":""}
+=== path=dfp protocol=-v0
+dfp     valid full token, private, main      {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":11,"err":""}
+dfp     valid read-only token, private       {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+dfp     token as x-access-token user         {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":9,"err":""}
+dfp     valid token, annotated tag           {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":8,"err":""}
+dfp     valid token, absent ref              {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":1,"ms":9,"err":"ref absent"}
+dfp     invalid token, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":15,"err":"host 401"}
+dfp     no credential, private               {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":3,"err":"host 401"}
+dfp     token without repository scope       {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":403,"requests":1,"ms":8,"err":"host 403"}
+dfp     other user's token, private          {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":1,"ms":9,"err":"host 404"}
+dfp     valid token, absent repo             {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"host_404_unmapped","sha":"","proto":"v0","host_status":404,"requests":1,"ms":8,"err":"host 404"}
+dfp     no credential, absent repo           {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":3,"err":"host 401"}
+dfp     no credential, public                {"class":"ok","code":"","reason":"","sha":"5c276f130b","proto":"v0","host_status":200,"requests":1,"ms":4,"err":""}
+dfp     invalid token, public                {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":1,"ms":15,"err":"host 401"}
+dfp     without .git, valid token            {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":1,"ms":10,"err":""}
+=== egress refusals carry the classification, and the host credential is never tried
+CONNECT 403 {"class":"policy_denied","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"egress_denied","host_status":0,"err":"CONNECT 403"}
+CONNECT 407 {"class":"policy_denied","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"egress_denied","host_status":0,"err":"CONNECT 407"}
+decision down {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","host_status":0,"err":"Post \"https://gitea.internal.oa.test/alice/priv.git/git-upload-pack\": Service Unavailable","ms":254}
+host stopped, raw route {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","host_status":0,"err":"egress path: Post \"https://gitea.internal.oa.test/alice/priv.git/git-upload-pack\": context canceled","ms":1503}
+=== a repository that forces v0: a front that strips Git-Protocol, then one that answers v2 with an error
+--- v0only
+valid token main   {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","sha":"","proto":"v2","host_status":200,"requests":1,"ms":12,"err":"short read"}
+valid token absent {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","sha":"","proto":"v2","host_status":200,"requests":1,"ms":11,"err":"short read"}
+invalid token      {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":30,"err":"host 401"}
+--- fail-v2:400
+valid token main   {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":2,"ms":11,"err":""}
+valid token absent {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":2,"ms":10,"err":"ref absent"}
+invalid token      {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":16,"err":"host 401"}
+--- fail-v2:403
+valid token main   {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":2,"ms":10,"err":""}
+valid token absent {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":2,"ms":9,"err":"ref absent"}
+invalid token      {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":16,"err":"host 401"}
+--- fail-v2:404
+valid token main   {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":2,"ms":9,"err":""}
+valid token absent {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":2,"ms":10,"err":"ref absent"}
+invalid token      {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":16,"err":"host 401"}
+--- fail-v2:415
+valid token main   {"class":"ok","code":"","reason":"","sha":"5f8022063d","proto":"v0","host_status":200,"requests":2,"ms":9,"err":""}
+valid token absent {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"ref_not_found","sha":"","proto":"v0","host_status":200,"requests":2,"ms":9,"err":"ref absent"}
+invalid token      {"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","reason":"auth_failed","sha":"","proto":"v0","host_status":401,"requests":2,"ms":16,"err":"host 401"}
+--- fail-v2:500
+valid token main   {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","sha":"","proto":"v2","host_status":500,"requests":1,"ms":2,"err":"host 500"}
+valid token absent {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","sha":"","proto":"v2","host_status":500,"requests":1,"ms":2,"err":"host 500"}
+invalid token      {"class":"transient","code":"GIT_CLONE_REF_RESOLVE_TRANSIENT","reason":"network_error","sha":"","proto":"v2","host_status":500,"requests":1,"ms":1,"err":"host 500"}

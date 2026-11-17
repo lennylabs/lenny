@@ -1,0 +1,17 @@
+### TEST e-go-remote  23:25:23
+### docker run --network spikefed-net -e GCE_METADATA_HOST=metadata.gcp.test:8080 -e API_URL=http://api.gcp.test/api/whoami spikefed-go:t go run ./cmd/gcemeta
+metadata.OnGCE(): true
+metadata.ProjectID: proj-a
+metadata.Email: tenant-a@proj-a.iam.gserviceaccount.com
+creds project: proj-a
+token: gce-md-at-1793604324
+api -> {"ok": true, "saw": "Bearer gce-md-at-1793604324"}
+token: gce-md-at-1793604324
+api -> {"ok": true, "saw": "Bearer gce-md-at-1793604324"}
+### exit 0
+### server log:
+{"ts": "07:25:24", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/project/project-id", "headers": {"Host": "metadata.gcp.test:8080", "User-Agent": "gcloud-golang/0.1", "Metadata-Flavor": "Google"}}
+{"ts": "07:25:24", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/email", "headers": {"Host": "metadata.gcp.test:8080", "User-Agent": "gcloud-golang/0.1", "Metadata-Flavor": "Google"}}
+{"ts": "07:25:24", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"Host": "metadata.gcp.test:8080", "User-Agent": "gcloud-golang/0.1", "Metadata-Flavor": "Google"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:24", "port": 80, "peer": "172.20.0.6", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"Host": "api.gcp.test", "User-Agent": "Go-http-client/1.1", "Authorization": "Bearer gce-md-at-1793604324"}, "authorization": "Bearer gce-md-at-1793604324"}
+{"ts": "07:25:24", "port": 80, "peer": "172.20.0.6", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"Host": "api.gcp.test", "User-Agent": "Go-http-client/1.1", "Authorization": "Bearer gce-md-at-1793604324"}, "authorization": "Bearer gce-md-at-1793604324"}

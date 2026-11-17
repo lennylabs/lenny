@@ -1,0 +1,8 @@
+curl 200
+  -> local DNS queries for example.com during curl request: 0
+python 200
+  -> local DNS queries for example.com during python request: 0
+node 200
+  -> local DNS queries for example.com during node request: 0
+go-client https://example.com: 200 OK in 112.30525
+  -> local DNS queries for example.com during go request: 0

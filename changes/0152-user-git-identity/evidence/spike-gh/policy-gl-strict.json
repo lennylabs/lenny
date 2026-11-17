@@ -1,0 +1,93 @@
+{
+ "gitlab": {
+  "restPrefix": "/api/v4",
+  "graphqlPath": "/api/graphql",
+  "maxBody": 262144,
+  "encodedProjectSegments": true,
+  "lexStrict": true,
+  "maxDepth": 32,
+  "rest": [
+   {
+    "method": "GET",
+    "path": "/user"
+   },
+   {
+    "method": "GET",
+    "path": "/users",
+    "query": [
+     "per_page",
+     "username",
+     "page"
+    ]
+   },
+   {
+    "method": "GET",
+    "path": "/projects/{project}",
+    "query": [
+     "license",
+     "with_custom_attributes",
+     "statistics"
+    ]
+   },
+   {
+    "method": "GET",
+    "path": "/projects/{project}/milestones",
+    "query": [
+     "include_parent_milestones",
+     "per_page",
+     "title",
+     "page"
+    ]
+   },
+   {
+    "method": "GET",
+    "path": "/projects/{project}/merge_requests",
+    "query": [
+     "page",
+     "per_page",
+     "state",
+     "labels",
+     "author_username",
+     "reviewer_username",
+     "assignee_username",
+     "search",
+     "source_branch",
+     "target_branch"
+    ]
+   },
+   {
+    "method": "GET",
+    "path": "/projects/{project}/merge_requests/{n}"
+   },
+   {
+    "method": "GET",
+    "path": "/projects/{project}/merge_requests/{n}/discussions",
+    "query": [
+     "page",
+     "per_page",
+     "sort"
+    ]
+   },
+   {
+    "method": "POST",
+    "path": "/projects/{project}/merge_requests"
+   }
+  ],
+  "graphqlQueries": [
+   "currentUser",
+   "project"
+  ],
+  "graphqlMutations": [],
+  "headers": [
+   "Accept",
+   "Accept-Encoding",
+   "Private-Token",
+   "User-Agent",
+   "Content-Type",
+   "Content-Length"
+  ],
+  "bodyDenyRegex": [
+   "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/[a-z_]+"
+  ]
+ }
+}

@@ -1,0 +1,42 @@
+### A. CONNECT cost, 200 tenants, 24000 tunnels
+evidence off (no ALS, writer dropping) rate=2000: SUMMARY attempts=24000 map[200:24000] 200-latency p50=500µs p90=900µs p99=5.1ms max=52.9ms ticks=24000 broken=0 elapsed=12.4s
+   [dec 18.34% 42.7MiB ;envoy 55.35% 56.42MiB ;pg 0.03% 22.5MiB ;minio 0.05% 85.23MiB ;]
+evidence on, flush 30 s rate=2000: SUMMARY attempts=24000 map[200:24000] 200-latency p50=600µs p90=900µs p99=4.2ms max=51ms ticks=24000 broken=0 elapsed=12.4s
+   [dec 23.00% 93.45MiB ;envoy 57.14% 55.71MiB ;pg 0.02% 25.04MiB ;minio 0.00% 88.81MiB ;]
+   records=72000 batches=200 bytes=2043339 buffered=0 putFail=0 dropped=0 refused=0 tunnelEnds=24000 alsEntries=48000 walOK=0 walFail=0
+   objects=200 records=72000 avg records per object=360
+   sequences=400 records=72000 gaps=0 missing=0 duplicates=0
+   objects=200 records=72000 digest mismatches=0 anchors that do not recompute=0 in 59ms
+### B. Durable before allow: every tenant regulated, group commit every 10 ms to Postgres
+durable rate=500: SUMMARY attempts=6000 map[200:6000] 200-latency p50=9.4ms p90=14.2ms p99=19.9ms max=54ms ticks=6000 broken=0 elapsed=12.4s
+   [dec 15.16% 48.79MiB ;envoy 31.38% 31.21MiB ;pg 4.68% 27.65MiB ;minio 0.00% 186.9MiB ;]
+   refused=0 tunnelEnds=0 alsEntries=0 walOK=6000 walFail=0
+   committed rows=6000
+durable rate=2000: SUMMARY attempts=24000 map[200:24000] 200-latency p50=9.8ms p90=14.5ms p99=35.2ms max=85ms ticks=24000 broken=0 elapsed=12.4s
+   [dec 18.13% 57.51MiB ;envoy 53.29% 60.3MiB ;pg 3.73% 28.89MiB ;minio 0.00% 193.2MiB ;]
+   refused=0 tunnelEnds=0 alsEntries=0 walOK=24000 walFail=0
+   committed rows=24000
+### C. Postgres frozen: regulated CONNECTs must refuse, and every allowed CONNECT must have a committed row
+   client: SUMMARY attempts=4000 map[200:3022 503:978] 200-latency p50=10.7ms p90=15.8ms p99=61.9ms max=217.2ms ticks=3022 broken=0
+   refused=978 tunnelEnds=0 alsEntries=0 walOK=3022 walFail=978
+   committed rows=3025
+### D. Decision service killed under load
+   durable: client: SUMMARY attempts=4000 map[200:1982 503:2018] 200-latency p50=9.6ms p90=14.5ms p99=32.2ms max=60.1ms ticks=1982
+   committed rows=1982
+   async: client: SUMMARY attempts=4000 map[200:2482 503:1518] 200-latency p50=800µs p90=1.5ms p99=12.4ms max=23.5ms ticks=2482 
+   records that reached the store=6454
+### E. Object store frozen with a small buffer: records lost become visible gaps
+   client: SUMMARY attempts=15000 map[200:15000] 200-latency p50=800µs p90=1.4ms p99=3.8ms max=25.9ms ticks=15000 broken=
+   records=31934 batches=461 bytes=1085550 buffered=0 putFail=60 dropped=13109 refused=0 tunnelEnds=15043 alsEntries=30043 walOK=0 walFail=0
+   sequences=41 records=31934 gaps=40 missing=13109 duplicates=0
+### F. Access log stream: Envoy killed with tunnels open, then a graceful drain
+   before kill: tunnelEnds=0 alsEntries=1000
+   after kill: tunnelEnds=0 alsEntries=1000
+   drained: before: tunnelEnds=0 alsEntries=2000 after: tunnelEnds=32 alsEntries=2032
+### G. Tamper detection and abuse query
+   clean: objects=40 records=4032 digest mismatches=0 anchors that do not recompute=0 in 17ms
+   flipped a byte in t2/evidence/2026110222/dec1.mvzuqcrl-f91c4e6f477b-1793659814775250719.gz
+     DIGEST MISMATCH t2/evidence/2026110222/dec1.mvzuqcrl-f91c4e6f477b-1793659814775250719.gz
+   objects=40 records=4032 digest mismatches=1 anchors that do not recompute=0 in 14ms
+   deleted manifest row 812 tenant t4
+   objects=39 records=4021 digest mismatches=1 anchors that do not recompute=1 in 13ms

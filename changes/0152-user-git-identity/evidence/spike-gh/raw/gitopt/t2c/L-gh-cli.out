@@ -1,0 +1,17 @@
+### cross-maintainer rc=1
+$ gh pr checkout 14 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+main
+### cross-maintainer-remote-v rc=0
+$ git remote -v
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+### cross-maintainer-pull rc=0
+$ git pull 2>&1 | tail -2
+Already up to date.
+### cross-maintainer-push rc=0
+$ git commit -q --allow-empty -m m; git push origin HEAD:refs/heads/feature-m-$$ 2>&1 | tail -1; git push 2>&1 | tail -2
+ * [new branch]      HEAD -> feature-m-72
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+script-rc=0

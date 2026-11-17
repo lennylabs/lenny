@@ -1,0 +1,26 @@
+[url "http://"]
+    insteadOf = https://
+[http]
+    proxy = http://127.0.0.1:3129
+[credential]
+    helper =
+[http]
+    followRedirects = initial
+[transfer]
+    fsckObjects = true
+[user]
+    name = alice
+    email = alice@acme.com
+[safe]
+    directory = *
+[protocol "file"]
+    allow = never
+[url "http://ghes.example.test/"]
+    insteadOf = git@ghes.example.test:
+    insteadOf = ssh://git@ghes.example.test/
+[url "http://github.com/"]
+    insteadOf = git@github.com:
+    insteadOf = ssh://git@github.com/
+[url "http://gitlab.example.test/"]
+    insteadOf = git@gitlab.example.test:
+    insteadOf = ssh://git@gitlab.example.test/

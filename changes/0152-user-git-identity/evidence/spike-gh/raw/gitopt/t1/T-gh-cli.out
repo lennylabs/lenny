@@ -1,0 +1,78 @@
+git version 2.49.1
+	libcurl.so.4 => /usr/lib/libcurl.so.4 (0xffff9002a000)
+	libssl.so.3 => /usr/lib/libssl.so.3 (0xffff8fd70000)
+### ls-remote rc=0
+$ git ls-remote https://ghes.example.test/acme/widgets.git | head -2
+81562c39c21f35be45d05c9f6f2597a2d79e4df3	HEAD
+81562c39c21f35be45d05c9f6f2597a2d79e4df3	refs/heads/feature
+### clone rc=0
+$ git clone -q https://ghes.example.test/acme/widgets.git c && git -C c log --oneline | wc -l
+6
+### remote-v rc=0
+$ git -C c remote -v
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+### push rc=0
+$ git -C c push -q origin HEAD 2>&1
+
+### fetch rc=0
+$ git -C c fetch origin 2>&1 && git -C c rev-parse --abbrev-ref origin/lenny/Tghcli-1793730806
+origin/lenny/Tghcli-1793730806
+### shallow rc=0
+$ git clone -q --depth 1 https://ghes.example.test/acme/widgets.git s && git -C s log --oneline | wc -l
+1
+### partial rc=0
+$ git clone -q --filter=blob:none --no-checkout https://ghes.example.test/acme/widgets.git p && git -C p cat-file --batch-check --batch-all-objects 2>/dev/null | grep -c blob; git -C p checkout -q main && test -s p/blob && echo checked-out
+0
+checked-out
+### push-main-refused rc=1
+$ git -C c push -q origin HEAD:refs/heads/main 2>&1
+error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+### normal-no-prompt rc=0
+$ GIT_ASKPASS=/tmp/askpass.sh git ls-remote https://ghes.example.test/acme/widgets.git | wc -l; printf 'askpass calls: '; cat /tmp/askpass.log 2>/dev/null | wc -l
+64
+askpass calls: 0
+### prompt-401-covered rc=0
+$ GIT_ASKPASS=/tmp/askpass.sh git ls-remote https://ghes.example.test/acme/needauth.git 2>&1 | tail -1; printf 'askpass calls: '; cat /tmp/askpass.log 2>/dev/null | wc -l
+fatal: Authentication failed for 'https://ghes.example.test/acme/needauth.git/'
+askpass calls: 2
+### prompt-401-unbound rc=0
+$ GIT_ASKPASS=/tmp/askpass.sh git ls-remote https://other.example.test/pub/needauth.git 2>&1 | tail -1; printf 'askpass calls: '; cat /tmp/askpass.log 2>/dev/null | wc -l
+fatal: unable to access 'https://other.example.test/pub/needauth.git/': SSL certificate problem: unable to get local issuer certificate
+askpass calls: 0
+### redirect-in-scope rc=0
+$ git ls-remote https://ghes.example.test/acme/moved.git 2>&1 | wc -l; git ls-remote https://ghes.example.test/acme/moved.git >/dev/null 2>&1
+65
+### redirect-out-of-scope rc=128
+$ git ls-remote https://ghes.example.test/acme/evilredir.git 2>&1
+fatal: unable to access 'https://ghes.example.test/acme/evilredir.git/': The requested URL returned error: 403
+### clone-outside rc=128
+$ git clone -q https://ghes.example.test/acme/secret.git x 2>&1
+fatal: unable to access 'https://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### push-64mib-default rc=0
+$ git -C b push -q origin HEAD 2>&1
+
+### push-64mib-chunked-h1 rc=0
+$ git -c http.version=HTTP/1.1 -C b push -q origin HEAD 2>&1
+
+### lfs-push rc=1
+$ git clone -q https://ghes.example.test/acme/lfsrepo.git l && cd l && git lfs install --local >/dev/null && git lfs track '*.bin' >/dev/null && head -c 3000000 /dev/urandom > o.bin && git add .gitattributes o.bin && git commit -qm lfs && git checkout -q -b lenny/Tghcli-1793730806-lfs && git push -q origin HEAD 2>&1
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://ghes.example.test/acme/lfsrepo.git/info/lfs.locksverify true
+LFS: Put "https://lfs-store.example.test/lfs-objects/df1b6c6cd66a6525207437b386af709065cdcd200f83bbec1417cf25ccb168a8": tls: failed to verify certificate: x509: certificate signed by unknown authority
+error: failed to push some refs to 'https://ghes.example.test/acme/lfsrepo.git'
+### lfs-fetch rc=0
+$ git clone -q -b lenny/Tghcli-1793730806-lfs https://ghes.example.test/acme/lfsrepo.git l2 2>&1 && ls -la l2/o.bin | cut -c20-60 && git -C l2 lfs ls-files | cut -c1-60; test "$(head -c 7 l2/o.bin)" != version
+fatal: Remote branch lenny/Tghcli-1793730806-lfs not found in upstream origin
+head: cannot open 'l2/o.bin' for reading: No such file or directory
+### submodules rc=1
+$ git clone -q --recurse-submodules https://ghes.example.test/acme/super.git u 2>&1; r=$?; for s in abs rel other; do printf '%s ' $s; git -C u/$s rev-parse --show-toplevel 2>/dev/null | grep -c /$s$; done; exit $r
+fatal: unable to access 'https://other.example.test/pub/lib.git/': SSL certificate problem: unable to get local issuer certificate
+fatal: clone of 'https://other.example.test/pub/lib.git' into submodule path '/tmp/tmp.pWUdo6xkG2/u/other' failed
+Failed to clone 'other' a second time, aborting
+abs 1
+rel 1
+other 0
+script-rc=0

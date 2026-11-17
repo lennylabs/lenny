@@ -1,0 +1,12 @@
+writes 12 gaps s [112, 129, 125, 105, 101, 107, 127, 104, 113, 127, 107]
+ConfigMap PUT returned to file changed, no subPath, writes 100-130 s apart so none is overtaken:
+ samples=60 min=0.6 median=37.9 p90=67.2 max=80.8 s
+  p1 [29.4, 3.0, 30.6, 33.2, 76.8, 47.1, 25.9, 34.1, 9.8, 38.8, 63.5, 23.2]
+  p2 [38.4, 16.0, 36.6, 53.2, 23.7, 8.1, 41.0, 46.2, 18.6, 52.8, 62.6, 34.1]
+  p3 [6.3, 38.1, 61.6, 18.2, 49.7, 21.1, 80.8, 27.1, 78.7, 46.0, 56.6, 26.2]
+  p4 [53.3, 4.0, 28.7, 60.2, 27.7, 63.1, 28.8, 80.2, 55.6, 20.9, 44.5, 20.1]
+  p5 [40.4, 9.0, 37.7, 67.2, 46.9, 26.1, 6.8, 40.1, 0.6, 47.9, 75.6, 56.2]
+subPath control: 1 change lines (the first read only)
+c1 controller write to delivery, s: [34.9, 9.5, 29.9, 8.5, 6.7, 9.7, 17.6, 76.7]
+c2 controller write to delivery, s: [34.9, 1.5, 0.9, 13.7, 17.5, 75.6, 49.6]
+c3 controller write to delivery, s: [34.9, 56.5, 71.8, 52.5, 42.8, 60.6, 38.7, 46.6]

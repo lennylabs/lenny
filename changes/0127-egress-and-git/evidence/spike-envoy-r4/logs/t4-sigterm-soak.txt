@@ -1,0 +1,36 @@
+start wallclock 09:12:06.254
+probe t=   1.0s 09:12:07.256 -> 200 +data (1ms)
+probe t=   2.0s 09:12:08.256 -> 200 +data (3ms)
+probe t=   3.0s 09:12:09.255 -> 200 +data (1.006s)
+probe t=   4.0s 09:12:10.261 -> 200 +data (4ms)
+probe t=   5.0s 09:12:11.256 -> 200 +data (3ms)
+probe t=   6.0s 09:12:12.255 -> 200 +data (1.002s)
+probe t=   7.0s 09:12:13.258 -> 200 +data (1.007s)
+probe t=   8.0s 09:12:14.265 -> 200 then EOF (54ms)
+t=  10.0s open=0 ticks=1512 (+1512) ended=map[EOF (clean close):200]
+probe t=   9.0s 09:12:15.255 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.003s)
+probe t=  12.0s 09:12:18.259 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.006s)
+probe t=  15.0s 09:12:21.265 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+t=  20.0s open=0 ticks=1512 (+0) ended=map[EOF (clean close):200]
+probe t=  18.0s 09:12:24.265 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.003s)
+probe t=  21.0s 09:12:27.269 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+probe t=  24.0s 09:12:30.270 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3s)
+t=  30.0s open=0 ticks=1512 (+0) ended=map[EOF (clean close):200]
+probe t=  27.0s 09:12:33.270 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+probe t=  30.0s 09:12:36.271 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+probe t=  33.0s 09:12:39.272 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.004s)
+probe t=  36.0s 09:12:42.276 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+t=  40.0s open=0 ticks=1512 (+0) ended=map[EOF (clean close):200]
+probe t=  39.0s 09:12:45.278 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.009s)
+probe t=  42.0s 09:12:48.287 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.009s)
+probe t=  45.0s 09:12:51.295 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+t=  50.0s open=0 ticks=1512 (+0) ended=map[EOF (clean close):200]
+probe t=  48.0s 09:12:54.296 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.001s)
+probe t=  51.0s 09:12:57.298 -> dial error: dial tcp 198.19.0.10:3128: connect: no route to host (1.121s)
+probe t=  52.2s 09:12:58.420 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.002s)
+probe t=  55.2s 09:13:01.422 -> dial error: dial tcp 198.19.0.10:3128: connect: no route to host (70ms)
+probe t=  56.0s 09:13:02.257 -> dial error: dial tcp 198.19.0.10:3128: i/o timeout (3.002s)
+probe t=  59.0s 09:13:05.259 -> dial error: dial tcp 198.19.0.10:3128: connect: no route to host (73ms)
+t=  60.0s open=0 ticks=1512 (+0) ended=map[EOF (clean close):200]
+SUMMARY n=200 codes=map[200:200] end_reasons=map[EOF (clean close):200] ticks_total=1512 ticks_per_tunnel=[7..9] connect_lat p50=0s p99=20ms lifetime min=6.08s p50=7.07s max=8.07s elapsed=60.0s
+ENDS (tunnels closed by the peer) rel. to start: first=8.06s p50=8.07s last=8.08s; wallclock first=09:12:14.319 last=09:12:14.331

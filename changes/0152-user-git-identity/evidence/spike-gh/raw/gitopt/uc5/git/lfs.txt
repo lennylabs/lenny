@@ -1,0 +1,114 @@
+=== wire rows
+batch acme/lfsgl upload                                    http=200  clientSees: leak=[] {"objects":[{"actions":{"upload":{"expires_in":7200,"header":{"Content-Type":"application/octet-stream"},"href":"https://gitlab.example.test/acme/lfsgl.git/gitlab-lfs/objects/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb/5"}},"authenticated":true,"oid":"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785a []
+PUT matching transfer                                      http=200  clientSees: leak=[]  ['X-Reflect: xxxxxxxxxxxxxxxxxxx']
+batch acme/lfsgl download                                  http=200  clientSees: leak=[] {"objects":[{"actions":{"download":{"expires_in":7200,"header":{"Content-Type":"application/octet-stream"},"href":"https://gitlab.example.test/acme/lfsgl.git/gitlab-lfs/objects/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"}},"authenticated":true,"oid":"ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785a []
+GET matching transfer                                      http=200  clientSees: leak=[]  ['X-Reflect: xxxxxxxxxxxxxxxxxxx']
+GET matching transfer, client Authorization replaced       http=200  clientSees: leak=[]  ['X-Reflect: xxxxxxxxxxxxxxxxxxx']
+GET other oid, no batch: no credential                     http=401  clientSees: leak=[]  []
+GET other oid, client Authorization dropped                http=401  clientSees: leak=[]  []
+PUT where only GET was held                                http=401  clientSees: leak=[]  []
+POST to a transfer path                                    http=403  clientSees: leak=[]  []
+same oid on another covered repository                     http=401  clientSees: leak=[]  []
+transfer outside the readable set                          http=403  clientSees: leak=[]  []
+transfer with upper-case oid                               http=403  clientSees: leak=[]  []
+transfer with no .git                                      http=403  clientSees: leak=[]  []
+transfer with trailing slash                               http=403  clientSees: leak=[]  []
+transfer on a host that declares no such path              http=403  clientSees: leak=[]  []
+batch acme/lfsexp download                                 http=200  clientSees: leak=[] {"objects":[{"actions":{"download":{"expires_in":1,"header":{"Content-Type":"application/octet-stream"},"href":"https://gitlab.example.test/acme/lfsexp.git/gitlab-lfs/objects/2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6"}},"authenticated":true,"oid":"2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25 []
+expired action, expires_in 1, after 2.2 s                  http=401  clientSees: leak=[]  []
+batch acme/lfsexp download                                 http=200  clientSees: leak=[] {"objects":[{"actions":{"download":{"expires_in":1,"header":{"Content-Type":"application/octet-stream"},"href":"https://gitlab.example.test/acme/lfsexp.git/gitlab-lfs/objects/18ac3e7343f016890c510e93f935261169d9e3f565436429830faf0934f4f8e4"}},"authenticated":true,"oid":"18ac3e7343f016890c510e93f935261169d9e3f565436429830faf0934f []
+unexpired action, immediately                              http=404  clientSees: leak=[]  ['X-Reflect: xxxxxxxxxxxxxxxxxxxx']
+batch acme/lfsevil download                                http=200  clientSees: leak=[] {"objects":[{"actions":{"download":{"expires_in":7200,"header":{"Content-Type":"application/octet-stream"},"href":"https://gitlab.example.test/acme/lfsgl.git/gitlab-lfs/objects/3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88ca046dea"}},"authenticated":true,"oid":"3f79bb7b435b05321651daefd374cdc681dc06faa65e374e38337b88c []
+action naming another repository: not held                 http=401  clientSees: leak=[]  []
+batch acme/lfsother download                               http=200  clientSees: leak=[] {"objects":[{"actions":{"download":{"expires_in":7200,"header":{"Content-Type":"application/octet-stream"},"href":"https://lfs-store.example.test/lfs-auth/252f10c83610ebca1a059c0bae8255eba2f95be4d1d7bcfa89d7248a82d9f111"}},"authenticated":true,"oid":"252f10c83610ebca1a059c0bae8255eba2f95be4d1d7bcfa89d7248a82d9f111","size":5}],"t []
+batch acme/lfsvar download                                 http=200  clientSees: leak=['ACTION-PRIVATE'] {"objects":[{"_links":{"download":{"expires_in":7200,"header":{"Private-Token":"ACTION-PRIVATE-TOKEN","X-Other":"kept"},"href":"https://gitlab.example.test/acme/lfsvar.git/gitlab-lfs/objects/252f10c83610ebca1a059c0bae8255eba2f95be4d1d7bcfa89d7248a82d9f111"}},"authenticated":true,"oid":"252f10c83610ebca1a059c0bae8255eba2f95b
+_links with a lower-case authorization: held               http=404  clientSees: leak=[]  ['X-Reflect: xxxxxxxxxxxxxxxxxxxx']
+exp=fwd got=fwd http=200 batch acme/lfsgl upload Authorization=Basic b2F1dGgyOk1JTlQtVy1hY21lX2xm | 
+exp=fwd got=fwd http=200 PUT matching transfer | 
+exp=fwd got=fwd http=200 batch acme/lfsgl download Authorization=Basic b2F1dGgyOk1JTlQtUi1hY21lX2xm | 
+exp=fwd got=fwd http=200 GET matching transfer | 
+exp=fwd got=fwd http=200 GET matching transfer, client Authorization replaced | 
+exp=fwd401 got=fwd http=401 GET other oid, no batch: no credential | 
+exp=fwd401 got=fwd http=401 GET other oid, client Authorization dropped | 
+exp=fwd401 got=fwd http=401 PUT where only GET was held | 
+exp=ref got=ref http=403 POST to a transfer path | an LFS transfer is GET or PUT
+exp=fwd401 got=fwd http=401 same oid on another covered repository | 
+exp=ref got=ref http=403 transfer outside the readable set | repository acme/secret is outside the session's readable set
+exp=ref got=ref http=403 transfer with upper-case oid | path "/acme/lfsgl.git/gitlab-lfs/objects/CA978112CA1BBDCAFAC231B39A23DC4DA786EFF8147C4E72B98
+exp=ref got=ref http=403 transfer with no .git | path "/acme/lfsgl/gitlab-lfs/objects/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b980778
+exp=ref got=ref http=403 transfer with trailing slash | path "/acme/lfsgl.git/gitlab-lfs/objects/ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b98
+exp=ref got=ref http=403 transfer on a host that declares no such path | path "/acme/widgets.git/gitlab-lfs/objects/ca978112ca1bbdcafac231b39a23dc4da7
+exp=fwd got=fwd http=200 batch acme/lfsexp download Authorization=Basic b2F1dGgyOk1JTlQtUi1hY21lX2xm | 
+exp=fwd401 got=fwd http=401 expired action, expires_in 1, after 2.2 s | 
+exp=fwd got=fwd http=200 batch acme/lfsexp download Authorization=Basic b2F1dGgyOk1JTlQtUi1hY21lX2xm | 
+exp=fwd404or200 got=fwd http=404 unexpired action, immediately | 
+exp=fwd got=fwd http=200 batch acme/lfsevil download Authorization=Basic b2F1dGgyOk1JTlQtUi1hY21lX2xm | 
+exp=fwd401 got=fwd http=401 action naming another repository: not held | 
+exp=fwd got=fwd http=200 batch acme/lfsother download Authorization=Basic b2F1dGgyOk1JTlQtUi1hY21lX2xm | 
+exp=fwd got=fwd http=200 batch acme/lfsvar download Authorization=Basic b2F1dGgyOk1JTlQtUi1hY21lX2xm | 
+exp=fwd401exp got=fwd http=404 _links with a lower-case authorization: held | 
+TOTALS [(('fwd', 'fwd'), 10), (('fwd401', 'fwd'), 6), (('fwd401exp', 'fwd'), 1), (('fwd404or200', 'fwd'), 1), (('ref', 'ref'), 6)]
+--- what netagent logged, what the stub saw
+   1 netagent lfs-action-authorization dropped download gitlab.example.test
+   1 netagent lfs-action-authorization dropped download lfs-store.example.test
+   4 netagent lfs-action-authorization held download gitlab.example.test
+   1 netagent lfs-action-authorization held upload gitlab.example.test
+   6 netagent lfs-download allowed mint
+   1 netagent lfs-transfer refused an LFS transfer is GET or PUT
+   4 netagent lfs-transfer-get allowed lfs-action
+   5 netagent lfs-transfer-get allowed lfs-none
+   1 netagent lfs-transfer-get refused repository acme/secret is outside the session's readable set
+   1 netagent lfs-transfer-put allowed lfs-action
+   1 netagent lfs-transfer-put allowed lfs-none
+   1 netagent lfs-upload allowed mint
+   5 stub gitlab.example.test GET glTransfer - 401
+   3 stub gitlab.example.test GET glTransfer Basic Z2l0bGFiLWxmczpMRlNUT0tFTi1hY21lX2xmc2 200
+   1 stub gitlab.example.test GET glTransfer Basic Z2l0bGFiLWxmczpMRlNUT0tFTi1hY21lX2xmc3 200
+   2 stub gitlab.example.test GET object - 
+   2 stub gitlab.example.test GET object - 404
+   1 stub gitlab.example.test PUT glTransfer - 401
+   1 stub gitlab.example.test PUT glTransfer Basic Z2l0bGFiLWxmczpMRlNUT0tFTi1hY21lX2xmc2 200
+   1 stub gitlab.example.test PUT object - 
+=== git-lfs gl-form
+### gl-form-clone rc=0
+
+### gl-form-lfs-push rc=0
+Uploading LFS objects: 100% (1/1), 2.0 KB | 0 B/s, done.
+leak=0
+### gl-form-lfs-smudge rc=0
+same
+leak=0
+   1 netagent lfs-action-authorization held download gitlab.example.test
+   1 netagent lfs-action-authorization held upload gitlab.example.test
+   1 netagent lfs-download allowed mint
+   1 netagent lfs-locks allowed mint
+   1 netagent lfs-transfer-get allowed lfs-action
+   1 netagent lfs-transfer-put allowed lfs-action
+   1 netagent lfs-upload allowed mint
+   1 stub gitlab.example.test GET glTransfer Basic Z2l0bGFiLWxmczpMRlNUT0tFTi1hY21lX2xmc2 200
+   1 stub gitlab.example.test GET object - 
+   1 stub gitlab.example.test PUT glTransfer Basic Z2l0bGFiLWxmczpMRlNUT0tFTi1hY21lX2xmc2 200
+   1 stub gitlab.example.test PUT object - 
+=== git-lfs gl-other-host
+### gl-other-host-clone rc=0
+
+### gl-other-host-lfs-push rc=124
+
+### gl-other-host-lfs-smudge rc=0
+cmp: b/a.bin: No such file or directory
+leak=0
+   1 netagent lfs-action-authorization dropped upload lfs-store.example.test
+   1 netagent lfs-locks allowed mint
+   1 netagent lfs-upload allowed mint
+108621 stub lfs-store.example.test PUT authObject - 401
+=== git-lfs gl-links
+### gl-links-clone rc=0
+
+### gl-links-lfs-push rc=124
+
+### gl-links-lfs-smudge rc=0
+cmp: b/a.bin: No such file or directory
+leak=0
+   8 netagent lfs-action-authorization held upload gitlab.example.test
+   1 netagent lfs-locks allowed mint
+   8 netagent lfs-upload allowed mint

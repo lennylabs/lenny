@@ -1,0 +1,19 @@
+### compacted hour: address + port + target + time
+scan hour=2026110300 par=1 prefilter=true: manifest read 541ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=1 wall=17.1s cpu=16.5s throughput=842506 records/s
+  hit: tenant=t1777 decision=planted0decision0identifier000001 authority= (join by decision id in 70ms)
+scan hour=2026110300 par=4 prefilter=true: manifest read 418ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=1 wall=5.7s cpu=16.2s throughput=2530610 records/s
+  hit: tenant=t1777 decision=planted0decision0identifier000001 authority= (join by decision id in 39ms)
+scan hour=2026110300 par=8 prefilter=true: manifest read 409ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=1 wall=5.3s cpu=16.2s throughput=2709895 records/s
+  hit: tenant=t1777 decision=planted0decision0identifier000001 authority= (join by decision id in 39ms)
+### compacted hour: port only
+scan hour=2026110300 par=4 prefilter=true: manifest read 501ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=233 wall=5.6s cpu=16.1s throughput=2586886 records/s
+
+### a second hour, uncompacted (one object per tenant-stream-minute)
+gen: hour=2026110301 tenants=2500 rate=2000 records=21600314 raw=14827.5 MiB compressed=1195.7 MiB (8.1%) mean record=720 bytes objects=300000 manifest rows=300000 in 196s
+scan hour=2026110301 par=1 prefilter=true: manifest read 296ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=1 wall=79.0s cpu=53.0s throughput=182299 records/s
+  hit: tenant=t1777 decision=planted0decision0identifier000001 authority= (join by decision id in 70ms)
+scan hour=2026110301 par=4 prefilter=true: manifest read 314ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=1 wall=25.8s cpu=44.2s throughput=557895 records/s
+  hit: tenant=t1777 decision=planted0decision0identifier000001 authority= (join by decision id in 62ms)
+scan hour=2026110301 par=8 prefilter=true: manifest read 223ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=233 hits=1 wall=18.5s cpu=43.5s throughput=777691 records/s
+  hit: tenant=t1777 decision=planted0decision0identifier000001 authority= (join by decision id in 54ms)
+scan hour=2026110301 par=4 prefilter=false: manifest read 227ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=14400277 hits=1 wall=42.7s cpu=106.2s throughput=337065 records/s

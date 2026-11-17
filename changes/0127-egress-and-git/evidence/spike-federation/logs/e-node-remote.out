@@ -1,0 +1,16 @@
+### TEST e-node-remote  23:25:23
+### docker run --network spikefed-net -e GCE_METADATA_HOST=metadata.gcp.test:8080 -e API_URL=http://api.gcp.test/api/whoami -w /napp spikefed-node:t node gce.js
+client: Compute
+projectId: proj-a
+email: tenant-a@proj-a.iam.gserviceaccount.com
+call1 -> {"ok":true,"saw":"Bearer gce-md-at-1793604323"}
+call2 -> {"ok":true,"saw":"Bearer gce-md-at-1793604323"}
+### exit 0
+### server log:
+{"ts": "07:25:23", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "metadata.gcp.test:8080"}}
+{"ts": "07:25:23", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/project/project-id", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "metadata.gcp.test:8080"}}
+{"ts": "07:25:23", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/email", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "metadata.gcp.test:8080"}}
+{"ts": "07:25:23", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "metadata.gcp.test:8080"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:23", "port": 80, "peer": "172.20.0.6", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"authorization": "Bearer gce-md-at-1793604323", "user-agent": "google-api-nodejs-client/11.3.2", "x-goog-api-client": "gl-node/24.22.2", "Host": "api.gcp.test"}, "authorization": "Bearer gce-md-at-1793604323"}
+{"ts": "07:25:23", "port": 8080, "peer": "172.20.0.6", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "metadata.gcp.test:8080"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:23", "port": 80, "peer": "172.20.0.6", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"authorization": "Bearer gce-md-at-1793604323", "user-agent": "google-api-nodejs-client/11.3.2", "x-goog-api-client": "gl-node/24.22.2", "Host": "api.gcp.test"}, "authorization": "Bearer gce-md-at-1793604323"}

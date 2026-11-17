@@ -1,0 +1,1231 @@
+# User credential delivery
+
+Status: `Draft`, revision 42, 2026-11-16. Programs: [v1](../programs/v1.md).
+
+Each factual claim about behaviour carries one of these tags where the source matters:
+
+| Tag | Meaning |
+| :-- | :-- |
+| **[measured]** | A hands-on result from a validation round of [`0127-egress-and-git`](../0127-egress-and-git/change.md), or from the spike of 2026-11-03 recorded in [`0129-github-credential-addon`](../0129-github-credential-addon/change.md), whose origin was a stub. |
+| **[captured]** | Seen at the stub or at the prototype `netagent` in the capture recorded in [`0129-github-credential-addon`](../0129-github-credential-addon/change.md). It shows nothing about what a provider would do. |
+| **[pending]** | Waits on a measurement or decision named beside it. |
+| **[live]** | Read from a provider's host, anonymously, with no write. |
+| **[documented]** | Stated on a vendor page cited in the add-on that relies on it, read and not tested. |
+| **[source]** | Read in the Lenny tree or the specification. |
+| **[design]** | What this design requires. Nothing implements it. |
+| **[stub cannot show]** | A question a stub run cannot answer, because the answer depends on the provider's own implementation. |
+
+**Evidence sources.** A *stub* is a test HTTP server running stock git that stands in for a provider and records what reaches it. It shows what `netagent` forwards and nothing about what a provider would do with it. A *spike* is a hands-on test, against a stub or a live provider, recorded in the design that ran it. *The capture* is the recording of `gh` traffic through a prototype `netagent` to a stub, which [`0129-github-credential-addon`, "Capture history"](../0129-github-credential-addon/review-history.md#capture-history) records. *The corpus* is the set of GraphQL documents the spikes ran the rule evaluator against, and each citation gives the count it used. *The allowlist* is the provider filter of `0152-user-git-identity` revision 3, which forwarded only listed `gh` operations, headers, and input keys. UC-4's request rules replaced it.
+
+## Problem
+
+The owner's direction: "a generic mechanism for tenants to deliver user tokens to a pod. Not tied to GH or anything else. This would require opting in, and it wouldn't have the same security guarantees as token injection, but the mechanism needs to exist because we can't possibly handle all injection scenarios out there." And: "Ideally, I would want user token injection to also be generic and configurable."
+
+Lenny has no such mechanism today.
+
+- [§4.9 Pre-Authorized Credential Flow](../../spec/04_system-components.md#pre-authorized-credential-flow) stores a user's own credential for a closed set of providers and delivers it only to the LLM reverse proxy.
+- The credential bindings of [`0127-egress-and-git`](../0127-egress-and-git/change.md) are tenant credentials. A binding has no notion of whose token it holds.
+- [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 3 had a GitHub and GitLab filter in `netagent`, the egress proxy that runs in each agent pod. The filter was an allowlist: it forwarded only the `gh` operations, headers, and input keys it listed. The owner's conditions for keeping a GitHub-specific injection were that it survive `gh` updates and work for all `gh` commands. Both were measured false for the allowlist, and the owner chose to replace it (see "Decision history" in `decisions.md` near the end).
+
+Some cases cannot use injection, in which `netagent` adds the token to a request in flight, at all. A tool signs requests with the token, pins certificates, or speaks a protocol `netagent` does not terminate, and an arbitrary SaaS tool needs its token as a file. Those cases have a known cost, and this design opts into that cost openly.
+
+## Scope
+
+This design covers tenant-defined user credential types, whose rows a person or a service account owns, a `registered` source a tenant backend writes to, an `oauth2Link` source that links a person's account at any OAuth2 provider, the link flow and the stored links, a `userCredential` binding delivered under `delivery: inject` or `delivery: file`, request rules held as data, the preset format, the add-on model through which a provider family adapts all of these, and the link prompt that asks a user to link again when her link stops working during a session.
+
+Out of scope: a tenant-run token endpoint, which is reserved as a later value of the source field. [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) owns principal-owned credentials for service accounts, the `clientCredentials` source, and the `issuerExchange` source, and this document carries the hooks it names. [`0152-user-git-identity`](../0152-user-git-identity/change.md) owns the VCS layer: repository authorization, pull request authoring, and the VCS pool rules that apply to these bindings. [`0129-github-credential-addon`](../0129-github-credential-addon/change.md) and [`0130-gitlab-credential-addon`](../0130-gitlab-credential-addon/change.md) own the GitHub and GitLab kinds, templates, and presets. [`0127-egress-and-git`](../0127-egress-and-git/change.md) owns the `inject` and `file` delivery mechanisms, the pod credential API, and the git path. [`0142-security-oversight`](../0142-security-oversight/change.md) owns guardrails, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) owns environments and user lifecycle, [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) owns evidence handling, and [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md) owns private hosts.
+
+This document defines no provider behaviour of its own. Its examples and evidence name the provider or client they were measured against.
+
+## Terms
+
+| Term | Meaning |
+| :-- | :-- |
+| User credential type | A tenant object naming a kind of per-principal token, its source, the principal types that may own its rows (`principalTypes`), and the hosts where it works. The identifiers keep the stem `userCredential` for a service account's rows too ([`0143-service-account-credentials`](../0143-service-account-credentials/change.md), SD3). |
+| Principal | The identity a session runs as, which the session row records as its user identifier and its `caller_type`: a person (`human`) or a service account (`service`). A delegated child carries its root's principal. |
+| Source | Where a type's tokens come from: `registered`, `oauth2Link`, `clientCredentials`, or `issuerExchange`. The last two are defined in [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) (SA-2 and SA-3). The value `endpoint` is reserved. |
+| Type hosts | For `registered`, the hosts the type declares. For `oauth2Link`, the provider's `apiHosts`. Every host rule here evaluates against these. |
+| Token trust record | The one record of everything that decides where a stored token can go and who can read it. See "Token trust record". |
+| `userCredential` binding | A credential binding whose `secret` names a type, so each session receives its own principal's token. |
+| Request rules | Data on a binding with `delivery: inject` that refuses requests before the token is attached. |
+| Preset | A named, versioned set of request rules and request forms, shipped as data, with paths per API flavour. |
+| Narrowing template | Data on a link provider describing how to derive a per-session token from the stored one. |
+| Delivery | A binding's `delivery` field. Under `delivery: inject`, `netagent` attaches the token to requests and the runtime holds only a placeholder. Under `delivery: file`, `netagent` writes the token to a file the runtime reads. |
+| Delivery ceiling | The highest delivery a stored token may take, set by the `delivery` field on a `registered` type or on a link provider and held in the token trust record. Its values, in increasing order, are `identifier`, which keeps the linked account's identity and discards the token; `none`, which keeps the token in the Token Service for a release check and delivers it nowhere; `inject`; and `file`. `identifier` and `none` exist on link providers alone. |
+| Pod credential API | The gRPC API on which `netagent`, and the git mirror, ask the Token Service for a binding's token. A response carries the token with the binding's hosts, attach template, `cacheUntil`, `handling`, and resolved request rules. [`0127-egress-and-git`, "Interfaces"](../0127-egress-and-git/change.md#interfaces) defines it as I8. |
+| Egress decision API | The API on which a proxy, the git endpoint, the git mirror, the Token Service, or at level 1 the gateway asks `lenny-egress-authz` whether a connection is allowed. [`0127-egress-and-git`, "Interfaces"](../0127-egress-and-git/change.md#interfaces) defines it as I3. |
+| Link provider | A tenant object naming a provider kind and the tenant's OAuth2 client for it. A tenant can have several of one kind. |
+| Link | One Lenny user's stored authorization under one link provider, keyed on tenant, user, and link provider name. |
+| Parent token | The access token and refresh token a link holds. The refresh token never leaves the Token Service. |
+| Kind | A link provider's `kind`, which selects the add-on that defines its configuration block and its behaviour. `oauth2` is built in. |
+| Kind block | The configuration block on a link provider keyed by its kind, whose schema the kind's add-on registers. |
+| Add-on | A compiled-in package that registers one or more kinds and implements extension points. See UC-7. |
+| Extension point | A named interface this design calls at a defined moment, which an add-on implements to supply provider behaviour. See UC-7. |
+| `user_act_required` | The one state of a stored token that needs a new user act. It is derived from a trust record mismatch, and stored when a provider refuses a refresh. |
+| Request layout | What an add-on registers for a host's API: the API flavour, `apiBase`, `restPrefix` (the path prefix of the REST API), the GraphQL paths, the uploads path, and the default preset. See UC-7, "Extension points". |
+| Release check and verdict | An add-on's check that the Token Service runs before each release and each mint for a session the add-on governs, such as the VCS layer's check that the user can still reach a repository. Its result is a verdict: `allowed`, `refused`, or `unavailable`. "A check" in this document means this check. See UC-7. |
+| Allow-list mode | `requestRules.default: deny`, under which a write passes only when an allow rule admits it. See "Allow-list mode" under UC-4. |
+| `retireOnRelease` | The claim field `PodClaim.status.retireOnRelease` ([`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md#plc-3-resource-kinds) names the claim kind `PodClaim`). The gateway sets it to `true` in the status patch that first records the claim as `bound`, for a session that names a `userCredential` binding, holds an `identityAssertion` binding under D11 of [`0124-connector-removal`](../0124-connector-removal/decisions.md#owner-decisions), or declares a repository under a VCS pool with `userAuthorization: required`, and nothing clears it. Every release path then retires the pod rather than returning it to its pool, and the pod credential API releases nothing without the mark. See UC-3, "The `retireOnRelease` mark", and decision 44. |
+| Link prompt | The URL-mode elicitation the gateway raises when a user's link stops working during her sessions, one per user and link provider, carrying Lenny's own link URL. See UC-8. |
+| Labels | Parts of the design carry the label UC-n. |
+
+The API field is `linkProviders` and the table is `link_providers`, and both name the same object. An API flavour names a request layout that an add-on registers, and it selects a preset's paths and a template's API base. No new link, channel, or register enters §28. The Token Service calls sit on `schemas/lenny-tokenservice.proto`, which [§28.7 Wire-contract artifact register](../../spec/28_communication-channels.md#287-wire-contract-artifact-register) records as a surface the channel register holds no entry for, and the fields this design adds to the pod credential API are additions to an interface the [egress design](../0127-egress-and-git/change.md) defines. Identifiers here use `userCredential` and `user_credential`, which share no stem with a channel identifier.
+
+### Terms from other designs and the platform
+
+This design builds on mechanisms other designs and the specification define. The table gives each one the meaning this document relies on.
+
+| Term | Meaning |
+| :-- | :-- |
+| Gateway replica | One instance of Lenny's API gateway. One replica coordinates each session under a lease. |
+| Token Service | The Lenny service that stores user and provider credentials, mints short-lived tokens from them, and answers the pod credential API ([§4.3](../../spec/04_system-components.md#43-token-service)). Under this design it is the only component that decrypts a stored user token. |
+| `netagent` | A container that the egress design adds to every agent pod that uses the local egress endpoint, where it acts as the pod's egress proxy. It holds the pod's service account tokens for egress, terminates TLS for the hosts it must inspect, attaches credentials, runs the git path, and applies request rules. |
+| `lenny-egress` | The central egress proxy, built on Envoy, through which agent traffic leaves the cluster. |
+| Decision service | `lenny-egress-authz`, which decides whether each connection is allowed, from the session's effective policy, and returns the route to use. It runs one of the mint checks. |
+| Mint checks | The independent checks on every mint and release of a token: the Token Service's own check of the pod, its bindings, and its writable set, and the scope decision the Token Service asks of the decision service. A token goes out only when both agree. [`0127-egress-and-git`, "Terms"](../0127-egress-and-git/change.md#terms) defines them. |
+| Git mirror | `lenny-git-mirror`, which serves git fetches from per-tenant stores. |
+| `pkg/binding` | The package the Token Service, the decision service, and the mirror use to resolve a pod to its session, user, tenant, and bindings. |
+| Credential binding | An egress-design object that gives sessions a secret for named hosts. Its fields include `secret`, which names what is delivered, `hosts`, `delivery`, `scope`, and `requestRules`. Its other `delivery` values, `federation` and `metadata`, deliver cloud credentials. `federation` does not apply to this design, and `metadata` applies only to a type of the `awsWebIdentity` profile under [`0143-service-account-credentials`, "SA-5 Delivery"](../0143-service-account-credentials/change.md#sa-5-delivery). |
+| Binding `scope` | When a binding attaches to a session: `always`, to every session of the tenant; `onRequest`, to a session whose plan names it; or `poolAttach`, to a session on a pool whose add-on attaches it. |
+| `attach` template | The header a credential is attached as, with `{{secret}}` standing for the value, such as `Authorization: Bearer {{secret}}`. |
+| `cacheUntil` and `handling` | Fields of a pod credential API response. `cacheUntil` bounds how long `netagent` holds the credential before asking again. `handling` lists named steps, each with an optional minimum version, that `netagent` must implement to use the credential, such as `reauth-on-401`, a single retry after a 401, or a minimum rule evaluator version. An image that does not implement a listed step refuses the credential. |
+| Effective policy | The hosts and bindings a session may use, which the decision service computes from pool, tenant, and session settings. |
+| Route and route target | A tenant setting that sends traffic for matching hosts to a target: `direct`, a tenant's upstream proxy, a registered private endpoint, or an outbound connector. Egress routes carry API traffic. Git routes carry git traffic, to a git endpoint, the mirror, or `direct`. A tenant keeps one list of each, and one more of each per environment (`environmentPolicies[E]`). Where no route matches, the platform default applies. |
+| Mint and mint path | A mint is a call in which the Token Service obtains a short-lived token from a provider, such as a GitHub App installation token or a narrowed token derived from a link. The mint path is the route those calls take, with bounds on time, response size, and redirects. For a public host on a `direct` route, the Token Service dials the host directly under a NetworkPolicy rule. For a host on another route, and for every link provider endpoint whatever its route, it goes through `lenny-egress` on its own identity, with the tenant asserted and under a decision ([`0127-egress-and-git`, "Credentials"](../0127-egress-and-git/change.md#credentials)). |
+| Covered host | A git host that a VCS pool or a git route of the tenant names, or an alias host of that provider. `netagent` terminates TLS for it and runs git through itself, under the git configuration the owner settled as "git path T" ([`0127-egress-and-git`, "Git on covered hosts"](../0127-egress-and-git/change.md#git-on-covered-hosts-netagent)). |
+| Pin (`credentialPinned`) | A setting on a host set or a binding, from [EG-12](../0127-egress-and-git/steps.md#steps), under which `netagent` terminates TLS for the host and refuses a request when the host has no binding, so an agent cannot use a credential of its own there. A VCS pool with `userAuthorization: required` pins its hosts. |
+| Base destinations | The platform's own destinations, which every agent pod may reach whatever its egress policy. |
+| `egressProfile` | A pool setting: `restricted`, `proxied`, or `internet`. Under `internet`, the pod also has raw sockets that bypass `netagent` and `lenny-egress`. |
+| Level 1 and level 2 | Ways a deployer can replace `lenny-egress` with its own proxy. A level 2 proxy calls the decision service for each connection. A level 1 proxy enforces a host list that Lenny publishes and makes no call per connection. |
+| Gates | Per-tenant grants a platform admin gives, one per risk class, before a tenant can opt in to a delivery that places a credential within the agent's reach. `agentReadableDelivery` covers tenant credentials, and `userCredentialDelivery` covers this design's `delivery: file`. |
+| `suspendedBy` | A field on every opt-in object. A guardrail, a withdrawn gate, a pin, or a VCS pool sets it, and every component then treats the object as absent. |
+| Evidence streams | Append-only records the egress design defines, including `egress.decision` for each connection decision, `egress.local` for refusals `netagent` makes itself, and `credential.mint` for each token release or mint. A refusal returned to the agent carries a decision identifier that finds its record. |
+| Response scrub | `netagent` removing a bound secret, in each rendered form, from responses on bound hosts, so a host that echoes the token does not hand it to the agent. The pool recycle scrub of §5.2, which cleans a pod between sessions, is a different mechanism. |
+| Projection | Under `delivery: file`, an extra file format `netagent` renders from the value, such as `.netrc`. |
+| Claim, bind, and tenant pin | A claim reserves a warm pod for a session, and bind attaches the session and its bindings to that pod. The tenant pin is the `lenny.dev/tenant-id` label that ties a pod to one tenant. |
+| Slot, slot container, and slot release | An agent pod runs one slot container per slot, each under its own UID, beside the adapter and `netagent` ([`0145-session-isolation`](../0145-session-isolation/change.md)). `sessionPolicy.maxConcurrentSessionsPerPod` sets the slot count. At each slot release the supervisor ends every process of the slot and sweeps its volumes, and the adapter checks that they are empty. A runtime process launches at bind and serves one session. |
+| Slot attribution and attribution status | `netagent` maps each loopback connection to the slot whose UID owns the connecting socket, and applies that slot's session's bindings and allow set to it ([`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants)). Where neither of its readers answers, a pod with several slots keeps the union scope over its sessions. Whether a reader answers is a property of the pool's runtime class: `netagent` reports at start whether either reader answered, and the controller records the result in the pool's status. The attribution status is that record, which the gateway reads at the post-chain point. A `netagent` whose reader stops answering on a running pod refuses the connection rather than falling back to the union scope. |
+| Provisional binding | The pod binding the egress design writes first when a session is resumed onto a replacement pod, so its clone and setup commands run before the session is `running` again. It grants read tokens and the secrets of bindings with `delivery: inject`, and withholds write tokens and the other deliveries until the session is `running`. |
+| `mint-scoped` | A provider capability level of the egress design: the provider can mint a token limited to named repositories. |
+| VCS pool | A pool that names repository prefixes and a provider credential. Under the VCS layer, `userAuthorization: required` makes each repository need the user's own access at the provider, `prAuthoring: user` has pull requests authored as the user, and `allowRuntimeHeldCredentials` admits a binding with `delivery: file` on the pool's covered hosts. |
+| Repository entries | The repositories a session declares, each with a state. `granted` marks one the session may write. |
+| App token, project token, and child token | Tokens of the GitHub and GitLab add-ons. An App token comes from the tenant's GitHub App installation, and a project token is a GitLab project access token. Both act as a bot account. A child token is a narrowed token the GitHub add-on derives from a user's link for one session's repositories, and it is unrelated to a delegated child session. |
+| Impersonation bearer | A token a `platform-admin` obtains through `/v1/admin/impersonation` to act as a user ([§13.3](../../spec/13_security-model.md#133-credential-flow), **Platform-admin impersonation**). |
+| Delegation | A session can start child sessions, which form a delegation tree under a root session. A delegation lease records what a child receives from its parent. |
+| Guardrail and posture | A guardrail is a setting a `security-admin` writes in the tenant security record ([SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)) that limits what a tenant admin can configure. A change that weakens one takes effect after a delay. Posture is that record's read-only report of a tenant's security-relevant settings. |
+| Setup command | A command a runtime or the workspace configuration runs in the session's pod before or beside the agent. |
+| `PreRoute` chain, revision, and post-chain point | [`0141-runtime-routing`](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) runs the `PreRoute` interceptors as one chain on every session creation path, and an interceptor or a runtime route can change the runtime and pool. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md#rv-2-selection) then picks a revision of the final runtime, an immutable copy of its versioned fields. The post-chain point ([RT-2](../0141-runtime-routing/change.md#post-chain-point)) follows, and every check that depends on the runtime, the revision, or the pool runs there, on the final runtime and pool, before the pod claim. |
+| Combined missing-links response | The single `403 LINKS_REQUIRED` at session creation that reports, under `details.userLinks`, every account link the user lacks. "CA-4" of [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) defined it with a second list, `details.connectors`, for connector links. [`0124-connector-removal`, "CR-1 Removal"](../0124-connector-removal/change.md#cr-1-removal) removes connectors, connector links, and `details.connectors`, and withdraws CA-4, so this design's check at the post-chain point owns the response, which keeps its code. §9.3 becomes a successor pointer. |
+| Identity assertion and `identityAssertion` binding | An identity assertion is a short Lenny-signed token that `netagent` attaches to requests to a service, naming the tenant, user, and session, which the agent never sees. An `identityAssertion` binding is a credential binding of the egress design whose `secret` has that kind, under `delivery: inject` alone ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings); [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion)). It lets a service act as the user, so the impersonation check of UC-3 covers it, and UC-3's refusal of pods that can serve someone else applies to it under `422 IDENTITY_ASSERTION_UNSUPPORTED_POD` (D11 of the removal design). |
+
+### Labels from other designs
+
+Proposals, properties, and requirements in other designs carry a label whose prefix names the design. This document cites them by label and links each citation to its definition. The table names what each cited label stands for.
+
+| Labels | Design | What they name |
+| :-- | :-- | :-- |
+| EG-1, EG-2, EG-3, EG-4, EG-7, EG-9, and EG-12 | [`0127-egress-and-git`, "Steps"](../0127-egress-and-git/steps.md#steps) | Proposals of the egress design: EG-1 git prerequisites, EG-2 the pod network agent and proxied egress, EG-3 the pod git path, EG-4 credential delivery, EG-7 level 1 replacement, EG-9 egress policy objects with the single write path for tenant opt-ins, and EG-12 exfiltration controls. |
+| P2, P3, and P4 | [`0127-egress-and-git`, "Security properties"](../0127-egress-and-git/change.md#security-properties) | Egress security properties: P2 keeps long-lived credentials out of pods, P3 keeps egress and VCS credentials unreadable by the agent, and P4 keeps one tenant's data and credentials away from another tenant's pods. |
+| CA-0, CA-2, CA-4, and CA-5 | [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) | [CA-0](../0123-connector-authorization-and-external-memory/change.md#ca-0-shared-oauth-link-flow) the shared OAuth link flow, which UC-2's link flow uses and which lands first. [CA-2](../0123-connector-authorization-and-external-memory/change.md#ca-2-token-lifecycle) connector token refresh, [CA-4](../0123-connector-authorization-and-external-memory/change.md#ca-4-link-check) the connector link check, and [CA-5](../0123-connector-authorization-and-external-memory/change.md#ca-5-propagating-the-failure) connector prompts are withdrawn by the removal of connectors, and this document names them only in records, in pointers to their withdrawal, and as the origin of UC-8's prompt rules. |
+| CR-1, CR-2, CR-A, O6, O10, O11, D11, and D12 | [`0124-connector-removal`](../0124-connector-removal/change.md) | [CR-1](../0124-connector-removal/change.md#cr-1-removal) the removal of connectors, connector links, `details.connectors`, `deferConnectors`, and the connector interceptor phases, with §9.3 left as a successor pointer; [CR-2](../0124-connector-removal/change.md#cr-2-identity-assertion) the identity assertion; CR-A the proposal that lands CR-1. O6 extends this design's impersonation check to trees holding an `identityAssertion` binding. O10 proposed lifting the refusals of a `userCredential` binding on recycled and used pods under `delivery: inject`, and the owner withdrew it on 2026-11-15, so decision 41 stands. O11 settles the link prompt that UC-8 specifies. D11 extends UC-3's refusal of pods that can serve someone else to `identityAssertion` bindings, and D12 settles three choices of UC-8. |
+| RT-2 | [`0141-runtime-routing`](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) | The interceptor contract: the single `PreRoute` chain and the post-chain point. |
+| RO-4, R4, R12, O8, and S2 | [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | [RO-4](../0138-rest-only-client-api/change.md#ro-4-authorization-of-adapter-requests) the authorization of adapter requests; [R4 and R12](../0138-rest-only-client-api/change.md#ro-2-rest-additions) the pending elicitations list and the input policy at creation; with its capability tags, `credential-use` among them, the impersonation mint's refusals, and the code `OPERATION_NOT_PERMITTED_FOR_RESOURCE`; O8, the owner's decision that adapter-facing text is flagged and kept rather than deleted; and S2, the owner's decision of 2026-11-15 that a `poolAttach` binding attaches through any adapter. |
+| B6 and MD-22 | [`0135-message-delivery`](../0135-message-delivery/change.md) | B6, under which a harness's questions are elicitations and a URL-mode elicitation is human-required, and [MD-22](../0135-message-delivery/change.md#md-22-parents-and-children), under which a human-required elicitation goes to the root's client past every parent. |
+| SA-1 to SA-6, SAP-n, SD3, and O1 to O7 | [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) | SA-1 principal-owned credentials, SA-2 the `clientCredentials` source, SA-3 the `issuerExchange` source, SA-4 their provider calls and failure states, SA-5 their deliveries, and SA-6 the subject namespaces that keep a service account's Lenny subject, under `~svc~`, apart from every person's; that design's security properties; SD3, which keeps the `userCredential` identifiers for both principal types; and O1 to O7, which the owner settled on 2026-11-15. |
+| MP-3 | [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-3-elicitation) | Elicitation, including the per-version MCP forms of the combined missing-links response. |
+| UG-1, UG-2, UG-3, and UG-4 | [`0152-user-git-identity`](../0152-user-git-identity/change.md) | Proposals of the VCS layer: UG-1 VCS link kinds, UG-2 repository authorization, UG-3 pull request authoring, and UG-4 the independent approval check. |
+| UP-n and UR-n | [`0152-user-git-identity`](../0152-user-git-identity/change.md) | The VCS layer's security properties (UP) and requirements (UR). |
+| SO-2, SP2, and SP11 | [`0142-security-oversight`](../0142-security-oversight/change.md) | SO-2 is the tenant security record, which holds a tenant's guardrails and delays any change that weakens one. SP2 and SP11 are security properties of that design. |
+| TS-1, TS-4, TS-6, and TS-7 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) | TS-1 environment scoping, TS-4 user lifecycle and invalidation, TS-6 identity source records and browser login, and TS-7 login routing. |
+| FE-6 | [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md#fe-6-agent-activity-streams) | Agent activity streams. |
+| SI-3, SI-7, and SI O9 | [`0145-session-isolation`](../0145-session-isolation/change.md) | [SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) the per-slot release; [SI-7](../0145-session-isolation/change.md#si-7-credentials-manifests-and-other-shared-files) the per-slot run volume the adapter writes, the webhook rules on slot volumes, and the modes of shared volumes; [SI O9](../0145-session-isolation/decisions.md#open-decisions) per-slot egress attribution in `netagent`, which the egress design answers. |
+| EG decision 60 and slot attribution | [`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants) and ["Decisions"](../0127-egress-and-git/decisions.md#decisions) | `netagent` maps each loopback connection to its slot by the connecting socket's owner UID, through `sock_diag` or `/proc/net/tcp`. Decision 60, settled by the owner on 2026-11-13 as option (a), applies each slot's own session inputs to that slot's connections: readable and writable sets, environment, `egress.allowedHosts`, `egressLockHosts`, and credential bindings. Where neither reader answers, the pod keeps the union scope over its sessions. |
+| PL-3 | [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) | The runtime-visible paths, including `/run/lenny`. |
+| TSS-8 | [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#tss-8-data-classes) | The data classes Public, Internal, Confidential, and Secret. |
+| OC-1 and OC-2 | [`0148-tenant-outbound-connector`, "Proposals"](../0148-tenant-outbound-connector/steps.md#steps) | The outbound connector's gateway, agent, and identity (OC-1), and its hosts and policy (OC-2), which reach a private host. |
+| S15 | [`0129-github-credential-addon`, "Validation owed"](../0129-github-credential-addon/steps.md#validation-owed) | A GitHub spike run against a provider-issued token. |
+| C6, C8, C9, C10, and OR-3 | [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md), "[Security properties](../0148-tenant-outbound-connector/change.md#security-properties)" for C-n and "[Requirements](../0148-tenant-outbound-connector/change.md#requirements)" for OR-3 | Properties and a requirement of the outbound connector: C6 keeps traffic TLS end to end, C8 stops a connector host shadowing a platform-reserved host, C9 treats content from a customer network as hostile, C10 fails closed when a connector fails, and OR-3 requires every private destination feature to work on a connector route. |
+
+## High-level design
+
+Some tools an agent runs need to act as the person who started the session, with that person's own token for a service such as Jira, GitHub, or an internal API. This design lets a tenant give that token to the person's sessions and to no one else's. A service account, an automated identity with no person behind it, owns credentials the same way, and [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) adds two sources for it. The token comes from one of two places. The tenant's own systems can write it to Lenny, or the person can sign in to the service once, on a browser page Lenny shows before any session needs the token. Lenny keeps the token encrypted in its Token Service, and a session receives it only when the session belongs to that person. A tenant configuration change cannot send a stored token to a new destination, because each token is sealed to the configuration it was stored under, and any change makes the token unusable until the person acts again.
+
+A session uses the token in one of two ways. In the default way, the agent never sees the token: `netagent`, a proxy in the agent's pod, adds the token to the agent's requests on their way to the service, and it can refuse requests the tenant's rules forbid, such as approving or merging a pull request. In the other way, `netagent` writes the token to a file the agent can read, for tools that cannot work through the proxy. Once the agent has read the token, Lenny no longer controls where it goes, so this way needs a grant from the platform operator and an opt-in from the tenant. Behaviour particular to one provider, such as GitHub's per-session child tokens or the `gitlab-deny` preset, lives in add-ons that plug into this mechanism.
+
+The rest of this section states each part in the design's terms, which "Terms" above defines: where a token comes from, how a session receives it, which limits apply on the way to the host, and how an add-on adapts the mechanism to a provider family.
+
+**Types and sources (UC-1, UC-2).** A tenant defines a user credential type, which names a source and the hosts where its tokens work. Under the `registered` source, a tenant backend or the user writes a token for a named user through the credentials API, and a backend writes one for a named service account the same way. Under the `oauth2Link` source, the user links an account at a link provider through a browser flow that Lenny starts before any session needs the token. The flow is bound to the user's browser login and to a cookie, and the link provider's `identityBinding` decides how the provider account is tied to the Lenny user. An optional narrowing template derives a per-session token from the stored one. The Token Service stores each token envelope-encrypted under a per-tenant key that only it can decrypt, refreshes linked tokens on demand under a row lease, and never releases a refresh token. Each stored token is sealed with the digest of its token trust record, which holds everything that decides where the token can go: endpoints, hosts, routes, CAs, the `attach` template, the narrowing template, the kind block, and the delivery ceiling. Any change to that record makes the token unusable until the user acts again or the record reverts, so a configuration edit cannot redirect a stored token.
+
+**Delivery (UC-3, UC-5).** A `userCredential` binding names a type and a delivery. `netagent` asks the Token Service for the binding over the pod credential API, and the Token Service releases only the token of the principal on the session row, and only when that session's caller is a person or a service account whose principal type the token's row records. Under `delivery: inject`, `netagent` holds the token and attaches it to requests to the type's hosts, and the runtime holds only a placeholder. Under `delivery: file`, `netagent` writes the token to a file the runtime reads. `delivery: file` needs a platform grant, a tenant opt-in on the binding, and a delivery ceiling of `file` in the token's record, and "What `file` does not promise" states what it leaves unprotected. Both deliveries are refused on pods that can serve a later session and, unless the pool's attribution status records per-slot attribution, on pods that serve several sessions at once, a delegated child receives a binding only when its delegation lease names it, and an impersonation bearer cannot give input to an affected session.
+
+**Request rules and presets (UC-4).** Under `delivery: inject`, a binding can carry request rules held as data: REST path rules, GraphQL mutation rules, and body patterns. Under `requestRules.default: allow`, the default, a request passes unless a rule denies it. Under `requestRules.default: deny`, allow-list mode, a write also needs a rule that allows it. A preset is a named, versioned rule set that an add-on ships. `netagent` checks each request in a canonical form and forwards bytes it generated from the checked request, so a parser difference at the host cannot carry a refused operation past the rules.
+
+**Exposure and leak scanning (UC-5, UC-6).** Under `delivery: file`, durable exposure rows tell the tenant which token generations a runtime held, so its backend can revoke them at the provider. Optional leak scanning redacts the value from the traffic the gateway carries.
+
+**Add-ons (UC-7).** A link provider carries a `kind` and a configuration block keyed by that kind. An add-on registers the kind, the block's schema, and its implementation of named extension points: the link kind itself, template variables, a release check, a request layout and default preset, a host policy, and an attach. The `oauth2` kind is built in. The [VCS layer](../0152-user-git-identity/change.md) and the GitHub and GitLab add-ons are the add-ons that exist today. An add-on can refuse what this design admits, and it cannot admit what this design refuses.
+
+**Link prompts (UC-8).** When the Token Service moves a link to `user_act_required` during a session, for example because the user revoked Lenny's access at the provider and a refresh fails, the gateway raises one URL-mode elicitation for that user and link provider on the event stream of each affected root session. It carries Lenny's own link URL, and the user's relink resolves it everywhere and restores the token to the running sessions.
+
+```
+ Tenant backend, or the user ──(write a token)──────> Gateway ──┐
+ Browser ──(link flow, UC-2)────────────────────────> Gateway ──┤
+                                                                ▼
+             Token Service: types, link providers, token trust records, sealed tokens, add-on checks
+                                                                ▲
+                                                                │ pod credential API: token, hosts, rules
+ Pod: runtime <──(file, under delivery: file)────── netagent ───┘
+      runtime ──(placeholder, under delivery: inject)──> netagent ──(token attached, rules applied)──> lenny-egress ──> type hosts
+```
+
+Two limits frame the result. A token the runtime holds under `delivery: file` leaves every Lenny control once it is read. Request rules default to a deny list, so an operation a preset does not yet name passes until the preset is updated, unless the binding uses allow-list mode. "Residual risks" states both.
+
+## Requirements
+
+Alice is a developer at `acme`. Carol is `acme`'s tenant admin, Dave is its `security-admin`, and Bob is another developer. Erin is a developer at `initech`, and `globex` is another tenant.
+
+- UCR-1. A tenant can deliver a per-user token for any service to that user's sessions, with no Lenny code for that service.
+- UCR-2. A tenant's backend can write a token for a named user. A user can write her own when the type permits it.
+- UCR-3. A tenant can link users to any OAuth2 provider that identifies its user, and the refresh token stays in the Token Service and goes only where its token trust record says.
+- UCR-4. `delivery: inject` is generic for any host the type declares and any `attach` template, and needs no agent-readable gate.
+- UCR-5. `delivery: file` exists behind a platform grant and a tenant opt-in per binding, with its limits stated plainly.
+- UCR-6. Request rules are data. A provider's change or a client release needs no `netagent` build.
+- UCR-7. A session receives only its own user's token, on a pod where no other session can use it: a pod that serves one session at a time, has served no earlier session, and does not recycle.
+- UCR-8. A tenant can define a type on any host, GitHub included.
+- UCR-9. Every delivery is audited.
+- UCR-10. When a user's link stops working during her sessions, she is asked to link again once, on her sessions' event streams, and her relink restores the token to those sessions with no runtime action.
+- UCR-11. A tenant can deliver a token that a service account owns to that service account's sessions and to no other session ([`0143-service-account-credentials`](../0143-service-account-credentials/change.md), SAR-1).
+
+## Threat model
+
+### Security properties
+
+- UCP-1. A session receives only the token of the principal on its session row, and only when that row's `caller_type` is `human` or `service` and equals the principal type that the token's row records and seals. A delegated child's row copies its root's principal and value. An empty value and `agent` receive nothing. No client or pod input names another principal. The Token Service holds this from its own read through `pkg/binding`. Revision 39 widened this from `human` alone, under the owner's answer of 2026-11-15 that [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) records as D1 and states as SAP-1.
+- UCP-2. A `userCredential` binding is refused on a pod that can serve a later session or that has served one, and on a pod that can serve another session at the same time unless its pool's attribution status records per-slot attribution (decision 41). The binding validator and the gateway hold this at create. At bind, the gateway sets `retireOnRelease` on the session's pod claim in the status patch that first records the claim as `bound` (decision 44), and every release path then retires the pod, even when a later edit makes the pool recycle pods. The pod credential API releases nothing unless the claim carries the mark. UC-3, "Limits under both deliveries", states the rule, and CRP-6 of [`0124-connector-removal`](../0124-connector-removal/change.md#security-properties) states the same for an `identityAssertion` binding.
+- UCP-3. An impersonation bearer cannot give session input to a session in a delegation tree where any session holds a `userCredential` binding or an `identityAssertion` binding, or declares a repository under a VCS pool with `userAuthorization: required`, and cannot write a user's credential. The check sits at the session input layer, so every adapter inherits it.
+- UCP-4. `delivery: file` needs the `userCredentialDelivery` grant, a tenant opt-in on the binding, and a delivery ceiling of `file` in the token's trust record. The single write path of [EG-9](../0127-egress-and-git/steps.md#steps), the Token Service, and `netagent` hold this.
+- UCP-5. A refresh token never leaves the Token Service. A stored token of either source goes only to the names and route targets in its token trust record. **On any change to that record the stored token is unusable and is sent nowhere until a new user act or a revert to the identical record.** Below a delivery ceiling of `file`, this protects stored tokens against reading through configuration. It does not protect a future grant, a name the customer operates, or a token under a delivery ceiling of `file`, which a tenant admin can read by changing a binding to `delivery: file` and adding a setup command. "What the record does not protect" states these limits.
+- UCP-6. Under `delivery: inject`, no process in a slot container or the adapter container can read the token, and `requestRules` apply. `netagent` attaches it only to the type's hosts. **Under `delivery: file`, none of this is true.** Under `delivery: inject`, an agent can still ask a host to mint a new credential through an operation the token permits and the preset does not name, and it then holds what the host returns.
+- UCP-7. One tenant's type, token, preset choice, or OAuth2 client never reaches another tenant. A client secret is a write-only value stored under the tenant, never a reference a tenant can point elsewhere, and no client is shared across tenants. The Token Service re-checks the tenant at read time.
+- UCP-8. A delegated child receives a `userCredential` binding only when the delegation lease names it. A pool's attach does not bypass this.
+- UCP-9. Every release of a token on the pod credential API produces a `credential.mint` record, and the first delivery to a session produces an audit event.
+- UCP-10. When Lenny stops a credential (revocation, expiry, user disable, quarantine, or session end), the pod credential API releases no more, and `netagent` removes the file or flushes the token within the bounds under "Stopping a credential". **Lenny makes no claim about copies of a token the agent was able to read, or about a credential the agent had a host mint.**
+
+- UCP-11. A link's provider account is one the tenant's identity source ties to the Lenny user, unless the link provider records `identityBinding: unverified`. The link flow holds this, and so does the re-evaluation under "Identity binding".
+- UCP-12. A link prompt carries only the gateway's own link URL, under provenance that only the gateway writes. Only the user answers or dismisses it, through her own session input, and only her own browser login completes the link that resolves it.
+
+### Threats
+
+| Attacker | Can | Cannot | Why |
+| :-- | :-- | :-- | :-- |
+| Prompt-injected agent, `file` delivery | Read the token. Send it to any host the effective policy allows. Use it for everything it permits, from anywhere, until the provider expires or revokes it. Copy it into the workspace, a transcript, an LLM request, or an export. | Read another user's token, or obtain a refresh token. | UCP-1 and UCP-5. "What `file` does not promise" is the full statement. |
+| Prompt-injected agent, `inject` delivery | Do what the token permits through the type's hosts, except what `requestRules` refuse. A new provider operation the preset does not yet name passes. Ask a host to mint a credential through an operation the token permits and the preset does not name, and hold what comes back. | Read the token, except through a reflection the response scrub misses, or send it to another host. | UCP-6, and the [egress design](../0127-egress-and-git/change.md)'s `inject` rules. |
+| Compromised `netagent` | Read the token under either delivery, ignore `requestRules`, and use the token for its life. On a pod with several slots whose pool records per-slot attribution, read the tokens of the sessions running beside it on the pod (decision 41). | Obtain a later session's token, or a refresh token. | The pod credential API answers for the pod's own binding. |
+| Tenant admin or backend holding `manage_user_credentials` | **Plant:** write a token under Alice's name, so that Alice's agent acts with an account Alice does not own, or exfiltrates to an account the writer controls. Settled under decision 4. Write the same for a service account through its route, under [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) SA-1. | Read back a token already stored. Write across tenants. | Writes are one-way and audited, and Alice can list and delete them. `registeredBy` limits who writes, and she can edit that type field too. |
+| Tenant admin controlling configuration | **Obtain a future token.** She edits a record, and Alice's next session asks Alice to relink. If Alice proceeds past the page the link flow shows before its redirect (UC-2, "Flow", step 3), Alice grants a new token to a host Carol runs. She can also re-point an automated backend, whose next write sends a value to a host she added. Make every stored token unusable by editing a record. **Read tokens on a name she also operates,** through its DNS, CA, or network, which the record cannot see. | **Read a token stored before an edit, below a delivery ceiling of `file`,** under either source, through an endpoint, host, route, CA, `attach`, template, client, `kind`, `source`, or delivery change, or by deleting and recreating a type. | UCP-5. The future grant has no per-field fix, because she configures the tenant. That page and the sealed client secret ("What the record does not protect") reduce it, and the enforcing control is `tokenTrust.allowedRecords`. Decision 4 records the owner's settlement. |
+| Compromised gateway replica | See a `registered` value and a `clientSecret` in transit on a write. Plant a token in any tenant through the write route the gateway passes to the Token Service, and set the row's `written_by` itself, so Alice's `GET` shows her as the writer (UC-1, "Who can write"). Forge the session rows and bindings that `pkg/binding` reads, so it can use any stored token at its record's hosts through a pod it drives, and read any value whose delivery ceiling is `file`, including through leak scanning (UC-6). **Restore a deleted row** after `DELETE`, `revoke`, or erasure from a copied ciphertext, or restore an earlier encrypted value, because the per-tenant key remains and no counter is sealed with the value (UC-1, "Token trust record", **Digest**). Rewrite a row's unsealed fields: its `state`, including `revoking` back to `active` (UC-2, "Stored links"), and exposure acknowledgements (UC-5, "Exposure records"). Write link provider rows directly, which bypasses the guardrail `tokenTrust.allowedRecords` that [EG-9](../0127-egress-and-git/steps.md#steps)'s write path enforces, and so obtain a future grant. Read LLM credentials in today's `credentials` table, which is a defect recorded under "Current state". | Point a stored token at another destination, move an encrypted value to another row, role, or environment, or move a cached value to another cache key, because identity, role, and record digest are sealed with the value, so an edit fails to decrypt. Rewrite a sealed field. Decrypt a stored row itself, or obtain a refresh token. | UC-1, **Storage**. The key separation holds on a cloud KMS. Under the local KMS provider, one master key is mounted in the gateway, the Token Service, and `lenny-ops`, the operations service. |
+| Tenant admin able to change a runtime or `workspaceDefaults` | Run a setup command in Alice's session that reads a token under `delivery: file`, since setup commands run in the slot container under the slot's UID, which can read it. Under `delivery: inject`, have a setup command use the token, including a host's mint operation, as UCP-6 states for an agent. | Read a token under `delivery: inject` directly that way. | This is inherent in `delivery: file`. `lockEgressToHosts` (UC-5) narrows where the value can go. |
+| A user registering a token that is not hers | Have her agent act under another account. | Be stopped by Lenny on `registered`, which cannot tell whose token it holds. | Residual stated. `oauth2Link` with an identity binding addresses it. |
+| Tenant registering a hostile OAuth2 endpoint | Answer token calls as it likes, for its own users. | Reach a private address, name another tenant's secret, or shadow a reserved host. | The registration check, the write-only client secret, and the mint path's bounds, under UC-2, "Link providers". |
+| Attacker who tricks Bob into completing a link flow | Send Bob an authorization URL or a start URL. | Bind Bob's GitHub account to the attacker's Lenny user, or the attacker's account to Bob's Lenny user. | The start page requires a browser login matching the flow's subject, and the callback checks a cookie bound to that login. |
+| Another tenant's session | Nothing here. | Read any of this. | The egress design's tenant isolation property [P4](../0127-egress-and-git/change.md#security-properties), UCP-7, and the pod refusal. |
+| An operator impersonating Alice | Read what impersonation allows, and terminate or interrupt the session. | Give an affected session input through any adapter, including a session in a tree whose `identityAssertion` binding would let an operator service act as Alice, or write or rotate her credential. | UCP-3. |
+| Prompt-injected agent or operator service imitating a link prompt | Raise its own elicitation, as a runtime question under B6, with a URL of its choosing. | Make its elicitation carry `initiator_type: platform`, or emit a URL-mode elicitation outside the pool's `urlModeElicitation` domain allowlist. | The gateway writes provenance on every elicitation, and an agent's URL-mode elicitation carries `initiator_type: agent` (UCP-12, UC-8). |
+| A crafted request on a host with rules | Spell an existing operation differently, such as an escape or a suffix. | Have a spelling reach the host that the rule did not check. | "What every rule set forces". The matcher is **[measured]** on the stub, which proves forwarding only, with 0 denied actions reaching with the credential. |
+
+## Current state
+
+Each row was checked against the named source. An identifier of the form F-n.n.n is a finding filed in `BUILD-GAPS.md` at the repository root.
+
+| Claim | Status | Source |
+| :-- | :-- | :-- |
+| `POST /v1/credentials` acts only for the authenticated caller | True. `caller` reads tenant and subject from the principal, and every handler uses them. | `pkg/gateway/credentials/credentialserver/credentialserver.go` |
+| It refuses an impersonation bearer | False. That package has no `callercheck`, filed as F-13.3.26. | `credentialserver.go` |
+| It accepts a closed provider set | True. `provider.IsValid()` rejects anything outside `credential.AllProviders()` with `VALIDATION_ERROR`, and §4.9 says the same. The `provider` column itself is `TEXT`, validated in application code. | `credentialserver.go`, `pkg/credential/credential.go`, migration 0036 |
+| Three built-in providers register and never deliver | True. `credential.UserProxyDialect` has no dialect for `aws_bedrock`, `github`, or `vault_transit`, and `Materializer.Available` then reports them unavailable. Filed as F-4.9.46. | `pkg/credential/lease.go`, `usercreds.go` |
+| A secret has a size limit | Only the 1 MiB request reader. `secret` is a JSON string. | `credentialserver.go` |
+| A credential has an expiry | False. The table has status and timestamps and no expiry. | Migrations 0036, 0059, and 0073 |
+| The wire format matches §4.9 | False. §4.9 names the body field `credential` and the identifier `credential_ref`. The code uses `secret` and `ref`. Filed as F-4.9.47, and no proposal here changes the names. | §4.9, `credentialserver.go` |
+| Rotation reaches a running session | For the LLM proxy only. `RotateUser` re-caches the secret gateway-side. §4.9 also describes `RotateCredentials`. | `usercreds.go`, §4.9 |
+| `DELETE` leaves running sessions alone | True for the LLM path, by statement: "Active session leases are unaffected". | §4.9 and [§15.1 REST API](../../spec/15_external-api-surface.md#151-rest-api) |
+| Ownership is the only rotate check | True. `ownedBy` compares `UserID` with the caller. | `credentialserver.go` |
+| An impersonation bearer is refused on create, derive, replay, and create-and-start | True, through `requireCreatingBearerAllowed`. [`0144-session-derive`](../0144-session-derive/change.md) merges replay into derive, so this design names no replay route. | `pkg/gateway/sessionserver/user_gate.go` |
+| Other session input refuses an impersonation bearer | False. `manageSessionRoute` covers messages, resume, finalize, start, uploads, memory writes, and tool and elicitation answers with permission and ownership only. `lenny/send_message`, `lenny/memory_write`, and the `/v1/responses` and `/v1/chat/completions` translators reach `executor.Executor.Send` or the memory store on their own paths. Filed as F-13.3.26. | `pkg/gateway/sessionserver/route_table.go`, `pkg/gateway/mcpfabric/mcptools/send_delivery.go`, `pkg/gateway/environment/translator/open_responses.go` |
+| A session row records the caller type | False. `Principal` carries `CallerType`, and the session store does not. | `pkg/gateway/middleware/auth/auth.go`, `sessionstore` |
+| Gateway replicas decrypt user-scoped credentials | True, against §4.3's "This is the only component with KMS decrypt permissions for downstream OAuth tokens" and §4.9's "Token Service stores it". `credentialpg.New(w.pgPool, w.kmsProvider)` runs in the gateway. F-4.3.1 already holds this as its deferred cleanup. | `cmd/lenny-gateway/credentialsurface.go`, §4.3 |
+| A pool's provider separates GitHub Enterprise Server (GHES) from GitHub | False. `ProviderGitHub` is the one value, and §14 embeds it in `vcs.github.read`. The host separates them, as [`0152-user-git-identity`, "Request rules on VCS hosts"](../0152-user-git-identity/change.md#request-rules-on-vcs-hosts), states. | `pkg/credential/credential.go`, §14 |
+| Pool recycling is read from the current pool at release | True. `poolRecyclePolicy` reads the pool in the pool recycle scrub's reporter seams. `lenny.dev/runtime-process` is stamped on a pod and immutable, and [SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) removes it with `recycle.runtimeProcess`. | `pkg/gateway/session/recycle/scrubreporter_seams.go`, `pkg/admission/webhook/label_immutability.go` |
+| Credential Secrets sit in one shared namespace, and tenant isolation holds where references enter a pool | True, for pools. Link providers have no such rule. | §4.9 **Secret references.** |
+| A connector's `clientSecretRef` is resolved with no tenant check | True, and the route is `platform-admin` alone, so this is no tenant escalation. The gateway has no `get` on Secrets but the named admin token Secret, so a confidential connector's resolution fails (F-9.3.19). Both are recorded under "Defects found while verifying" below. | `pkg/gateway/connectors/connectorsecret/connectorsecret.go`, `pkg/gateway/externalapi/admin/routes.go`, `charts/lenny/templates/credentials-namespace.yaml` |
+| A delegated child inherits named bindings | True under the egress design's "Effective policy", which UC-3 narrows for this kind. | [`0127-egress-and-git`](../0127-egress-and-git/change.md) |
+| A session's `env` is checked against a blocklist | True. The default holds exact names and `*_SECRET_*`, `*_SECRET`, `*_KEY`, `*_TOKEN`, and `*_PASSWORD`, and an operator can extend it. Other names pass. | [§14](../../spec/14_workspace-plan-schema.md), `pkg/gateway/provisioning/envblock/envblock.go` |
+| `inlineFile` content is inspected for secrets | False. | §14 |
+| Events are durable | False. §25.5 says `Emit()` skips the Redis write when Redis is unreachable. | [§25.5](../../spec/25_agent-operability.md) |
+| Gateway interceptor phases exist for agent output, tool results, exports, messages, delegation, connectors, and proxy-mode LLM traffic | True, with `PreLLMRequest` in proxy mode only. | [§4.8 Gateway Policy Engine](../../spec/04_system-components.md#48-gateway-policy-engine) |
+
+## Detailed design
+
+### UC-1: Credential types and the `registered` source
+
+#### Types
+
+A tenant defines types through the single write path for tenant opt-ins, which the egress design's proposal [EG-9](../0127-egress-and-git/steps.md#steps) (egress policy objects) adds and which applies the tenant's guardrails and writes an audit event. A type is a tenant object, and environment scoping ([TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping)) can limit it to named environments.
+
+```yaml
+userCredentialTypes:
+  - name: jira
+    source: registered           # registered | oauth2Link | clientCredentials | issuerExchange. `endpoint` is reserved.
+    principalTypes: [human]      # who may own rows: default [human]; per-source values in SA-1
+    hosts: [acme.atlassian.net]  # required for registered: exact canonical hosts
+    delivery: inject             # the delivery ceiling: inject | file. Default inject.
+    attach: "Authorization: Bearer {{secret}}"   # in the record, and format metadata under file
+    registeredBy: [self, service]
+    maxBytes: 16384
+    requireExpiresAt: false
+    maxLifetimeSeconds: 2592000  # optional
+    environments: [web]          # optional, TS-1
+```
+
+A type's name matches `^[a-z][a-z0-9-]{0,62}$`, and it cannot equal a built-in provider name, so a type and a provider never collide. An unknown `source` value reads as absent to every component, which keeps `endpoint` additive and lets `clientCredentials` and `issuerExchange` arrive without a format change. `principalTypes` lists the principal types that may own the type's rows. Its allowed values and default depend on the source, as [`0143-service-account-credentials`, "SA-1 Principal-owned credentials"](../0143-service-account-credentials/change.md#sa-1-principal-owned-credentials) states: `[human]` by default on `registered`, which a tenant widens to `[service]` or `[human, service]` to admit service accounts, `[human]` fixed on `oauth2Link`, `[service]` fixed on `clientCredentials`, and `[service]` fixed on `issuerExchange`. Every existing type therefore stays human-only until a tenant opts it in. It is in the token trust record. Each type receives an immutable `typeId` at creation, and rows key on it. Deleting a type deletes its rows, and a recreated type under the same name has a new `typeId` and inherits nothing.
+
+**Hosts sit on the type.** Every host rule in this design and in its add-ons evaluates type hosts rather than a binding's `hosts`: the one-binding rule (UC-3, "One binding per host"), and an add-on's host policy (UC-7), pin, preset, and repository rules. Type hosts are exact and canonical, and a binding's `hosts` must be a subset of them. A `registered` type can lie about its hosts, by declaring `docs.acme.com` and holding a GitHub token, and Lenny cannot tell. That is a residual, and the controls that enforce rather than check are `lockEgressToHosts` under `delivery: file`, which limits the session's egress to the binding's hosts (UC-5), and a pin on the host the token works on. [EG-12](../0127-egress-and-git/steps.md#steps) lands after these proposals, and until it does the second control is absent.
+
+#### Token trust record
+
+Every decision about where a stored token can go and who can read it sits in one record. This replaces the separate per-field rules of the earlier revisions, each of which a review round found another way around.
+
+| Field | `registered` type | Link provider |
+| :-- | :-- | :-- |
+| Identity | `typeId` and `source` | `name`, `kind`, and `clientId` |
+| Endpoints | None | Authorization, token, revocation, and user info endpoints, whether the kind fixes them or its block sets them |
+| Hosts | The type's `hosts` | `apiHosts` |
+| Route and trust | The route value and the CA digest for each host | The same, for each endpoint host and API host |
+| `attach` | On the type | Fixed by the kind, or set in its block |
+| Narrowing | None | Template identity: a shipped template's name and contract version, or a tenant template's digest, covering all of it |
+| Delivery ceiling | `delivery` on the type | `delivery` on the provider |
+| Kind block | None | Every field of the block, except the fields the kind's add-on exempts, each with a stated reason |
+
+- **Route value.** A tenant's routes send a host's traffic to a target, in separate lists for egress traffic and git traffic, at the tenant level and per environment, as "Terms" states. The route value records, for a host, two ordered lists per scope, one for the tenant and one for each `environmentPolicies[E]`, in the order routes apply: one of egress routes, and one of git routes to a git endpoint, where a git route to `direct` or the mirror adds no entry, and the decision service's git list omits them too. Each entry names its matching pattern and target: kind, identifier, and the resolved target fields Lenny stores, including a registered address. Where no tenant route matches, the value names the platform default. A link has no environment, so one value has to cover them all. Each route ends at a target that can present a certificate under a CA in the record, so both lists count. A git route to the mirror does not count: `netagent` terminates the host and sends the mirror its own service account token, so no user token goes there. An egress group does not count, because its Envoy tunnels bytes with no decryption, and an upstream it chains to is a route target, which does. A periodic re-resolution of a tenant-registered public endpoint suspends it on a bad answer and writes nothing here, so it flips no digest, and an edit to the address does change it. **The cost is that a scoped route, a move between environments, a reorder, or a change to the platform default on a token's host makes tokens unusable for every environment, and for the last, across tenants.** [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) points here. A link provider endpoint or a VCS pool's mint host reachable only through an `environmentPolicies[E]` route is refused at write, because every Token Service call uses the tenant lists.
+- **Digest.** The Token Service records the digest of the canonical record, which carries a format version, with each stored token, at write or at link, and keeps the record's content in `token_trust_records`. Each envelope is sealed with AEAD additional data under an injective, length-prefixed encoding: tenant, role (`access`, `refresh`, `clientSecret`, or `registered`), the principal and its principal type where there is one, `typeId` or provider name, environment, the digest, and the fields written with the value (`expires_at`, `written_by`, `generation`, `token_id`, `encoding`, and `provider_user_id`). An edited digest, a moved ciphertext, or a swapped role then fails to decrypt, and stored content that does not hash to the sealed digest is refused.
+- **Comparison and use.** The Token Service computes the current digest and compares it at each release on the pod credential API, at each `leakScan` release, mint, refresh, narrowing, code exchange, user info, check, and revocation call. **Each call then derives its URL and expected route from the record content it compared. A call that carries a user token or a client secret names that route in a header on its CONNECT, and the decision service refuses the connection when the route it would choose differs.** Three calls carry one: a link provider call by the Token Service, an API request by `netagent` after a `userCredential` release, and a git request from a session on a VCS pool with `allowRuntimeHeldCredentials`, where the runtime holds a user's git token. A mint of an App token or a project token carries no user token, sits outside this record, and keeps the egress decision it has today, on the path the fetch takes, with no route assertion. A request's class, git path or API, tries in this order, in both the assertion and the decision: its own list for the session's environment, its own list for the tenant, the other list for the environment, the other list for the tenant, then the platform default. Every Token Service call uses the tenant lists. The assertion names the list it matched, `egress`, `git`, or `default`, and carries a digest of the target fields, so an address edit is seen. A host with a git route alone and a host with an egress route alone therefore both work **[design]**. The record holds a CA digest, and each call reads the CA from the host's endpoint or outbound host record and refuses one whose digest differs. On the pod credential API, `netagent` receives the expected route and CA and asserts the same. A route edit that reaches the decision service first therefore stops a held token rather than redirecting it. An assertion is compared at CONNECT, so `netagent` keys its upstream pool on the list and the route digest, and a route write closes pooled upstream connections to the hosts it changes **[design]**. In the run, idle pooled connections carried git past an edit, with 0 new CONNECTs, on a stand-in with no per-client-CONNECT decision **[measured]**. A level 2 proxy must pass the route header to its call on the egress decision API, as the egress design's level 2 contract states. A proxy that drops it gets no comparison, and the level 2 conformance test exists to catch that. A Token Service connection is reused only within one tenant, route, and CA, an asserted call never reuses an unasserted connection, a first release closes any unasserted upstream connection `netagent` holds to that host, and a call carrying a token or secret follows no redirect.
+- **Mismatch.** The stored token is unusable and is sent nowhere, neither to an old endpoint nor to a new one, for both sources. Any difference counts, including a removed host or a lowered ceiling, because a direction per field is what this record replaces.
+- **State.** A row has one state for this, `user_act_required`. It is derived from a mismatch, and it is stored when a provider refuses a refresh (UC-2). The new user act is a relink for a link, and a new write under `registeredBy` for a `registered` row.
+- **Revert.** A record identical to the recorded one makes the token usable again, because nothing was sent in between. A row stays until a new act replaces it, its owner deletes it, or erasure runs. An operator who changes a record because it was compromised, such as after a CA leak or an endpoint takeover, also revokes at the provider or deletes the rows, because replaying the record would restore them.
+- **Deleting a provider.** Deletion puts the provider in a `deleting` state, which keeps it, its record, and its client secret until its links have drained through the durable record under "Lifecycle and revocation at the provider" or `linkProviderDrainSeconds` ends, 86,400 by default. Meanwhile it takes no new link and releases nothing, and a recreate under that name is refused. The ordinary comparison applies to each attempt, so a later route or CA change stops it. At the bound, or after a mismatch, each remaining row ends with an audit event and a user notification saying that its grant was not revoked. A deletion after a mismatch revokes nothing. Every `revoking` row, from a user's delete or §11.4, takes the same bound and notice, and a provider that a guardrail has marked `suspendedBy` still declares its endpoints for revocation.
+- **Outside the record.** A shipped template's overridable fields that the template exempts stay out, and a change to one is audited and reported in posture. The GitHub add-on exempts `permissions`, because it limits what a child can do at the host within what the App holds. A rotated `clientSecret` value changes no field here. A row's `state` and exposure acknowledgements are mutable, and a replica can rewrite them, as the threat table states.
+- **No CA on the binding.** A `userCredential` binding carries no CA and no `attach` of its own. The CA comes from the host's endpoint or outbound host record, which the record covers.
+
+The record of a `clientCredentials` or `issuerExchange` type holds the same fields as a `registered` type's, with `principalTypes`, its token or exchange endpoints, and its request parameters, under [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) SA-2 and SA-3. A `registered` type's record holds `principalTypes` too.
+
+The guardrail `tokenTrust.allowedRecords` lists the records a `security-admin` has approved, each as its digest and content, because a person cannot review a hash, under the delay that the tenant security record ([SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)) puts on every change that weakens a guardrail. When it is set, [EG-9](../0127-egress-and-git/steps.md#steps)'s write path recomputes the digest of each provider and type a write touches, including a route or CA write, and refuses or suspends what is not listed. Posture lists each current record and whether it is on that list.
+
+#### What the record does not protect
+
+**Stored tokens are protected against reading through configuration. Future grants are protected only by the page the link flow shows before its redirect and by the guardrail `tokenTrust.allowedRecords`.** A tenant admin who controls configuration can still trick a user into granting a new token to a host she runs, or re-point an automated backend so its next write goes to a host she added. No per-field rule closes that, because she configures the tenant.
+
+**On a name or CA the customer operates, whoever controls that DNS, CA, or network can read tokens, and the record cannot see it.** The record binds a name, and the target Lenny stores for it. A repointed `jira.acme.com` with a fresh certificate, or a new leaf under a private CA already in the record behind an unchanged outbound host, changes no field. GitHub Enterprise Server, self-managed GitLab, and internal trackers are the main users of link providers.
+
+Two measures reduce the future-grant route:
+
+- After a record change, the relink shows a page before the redirect, naming every endpoint host and stating that they changed. A first link shows the same hosts. The page gives little signal when a route or CA changed, because the names are the same, or under a new provider name, which shows as a first link.
+- The client secret is sealed with the provider's record digest, so any record change leaves it unusable until a write re-supplies it, and a revert restores it. The stored client secret therefore does not reach her host, and a code she receives there cannot be redeemed with it. A tenant admin who holds the client secret in another way keeps that route.
+
+The enforcing control for a tenant that needs this separation is `tokenTrust.allowedRecords`, which holds only when `security-admin` and `tenant-admin` are different people. Decision 4 records the owner's settlement of this limit.
+
+#### The known-provider restriction
+
+This design **replaces** the §4.9 restriction with a `type` path. `POST /v1/credentials` takes a `type` field, which must name a type the tenant defines with `source: registered`. The `provider` path and its closed enum leave under OD-10 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions), because Lenny stores no user LLM key and a downstream LLM gateway holds per-user keys, so no LLM provider is among the types.
+
+Accepting free strings, so any string names a type, would let a typo store a secret silently.
+
+A body naming `provider` is refused with `VALIDATION_ERROR` once UC-1 lands, which also closes the existing defect of `provider` values with no delivery path (`aws_bedrock`, `github`, and `vault_transit`), whose registration can never deliver **[source]**. A tenant-defined type on a GitHub host is a different thing, and it is allowed, subject to the host policy of [`0152-user-git-identity`](../0152-user-git-identity/change.md).
+
+#### Who can write
+
+`POST /v1/credentials` acts only for the authenticated user **[source]**. A tenant backend needs a route that names the user, and one that names a service account, which [`0143-service-account-credentials`, "SA-1 Principal-owned credentials"](../0143-service-account-credentials/change.md#sa-1-principal-owned-credentials) defines as `PUT /v1/admin/service-accounts/{subject}/credentials/{type}` with its listing, deletion, revocation, retry, and key routes, under the same permission and checks. That route names the service account's canonical subject and forms its Lenny subject by prefixing `~svc~`, under that design's SA-6, so it can name no person.
+
+```
+PUT /v1/admin/users/{userId}/credentials/{type}
+{"secret": "...", "encoding": "text", "expiresAt": "2026-11-04T00:00:00Z", "environment": "", "tokenId": "opaque-writer-id"}
+```
+
+- **Authorization.** A new permission, `manage_user_credentials`. It sits inside `TenantAdminPermissions()`, because §10.2 limits a custom role to that ceiling, so `tenant-admin` holds it, and a custom role such as `credential-writer` can hold it alone. A backend authenticates through §10.2's client credentials path under that role. This is a new role and permission rather than a scope, because `/v1/admin` routes authorize by permission, and §25.1 scopes bound tools rather than admin routes. Decision 4 records the cost that a tenant admin can write a token under any user's name. A `platform-admin` holds no special path here: the route acts within the caller's own tenant, so an operator cannot place a token in a customer's user, and the "all tenants" reach §10.2 gives that role does not extend to it.
+- **Type check.** `registeredBy` must include `service`, and `principalTypes` must include the principal type of the route: `human` on this route, and `service` on the service account route. `POST /v1/credentials` needs `self`, and it admits only a caller whose `caller_type` is `human`, so a service account never writes or rotates its own row with its own bearer. The service account route also refuses every changing call (`PUT`, `DELETE`, `revoke`, `retry`, `keys`, and `activate`) whose caller's Lenny subject equals the row's, with `403 USER_CREDENTIAL_SELF_WRITE`, so a service account holding `manage_user_credentials` or `tenant-admin` cannot write its own rows through an admin route either. A type with `registeredBy: [service]` lets a tenant refuse user-supplied tokens.
+- **Owner check.** The row's owner is the named principal: the user on this route, and the service account on the service account route. `ownedBy` extends for the route above: a caller with the permission may act on rows of its own tenant, and the existing routes still need the caller to be the owner. A rotation through `PUT /v1/credentials/{credentialRef}` by the owner remains possible where `registeredBy` includes `self`, under the same `caller_type: human` check. The row records `written_by`, the subject and caller type of its last writer, and Alice's `GET /v1/credentials` returns that value, so she can see a token she did not supply. A service caller's `GET /v1/credentials` lists its own rows the same way.
+- **Named user.** The subject is accepted as given, the same choice the user lifecycle upsert of [TS-4](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4) makes, because a user may not have a row yet. These subjects are refused: one with an invalidation level or a GDPR Article 18 restriction, one with a completed erasure job, one holding a security role ([SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture), on the reasoning of property [SP2](../0142-security-oversight/change.md#security-properties) in [`0142-security-oversight`](../0142-security-oversight/change.md), which keeps a tenant admin from invalidating, disabling, or erasing a security role holder), and, on this route, one in the `~svc~` or `~agt~` namespace of [`0143-service-account-credentials`, "SA-6 Subject namespaces"](../0143-service-account-credentials/change.md#sa-6-subject-namespaces), or one that a service list an add-on keeps names, such as a VCS pool's `serviceIdentities`, because a service account's row is written through the service account route. That route refuses the same invalidated, erased, and security role subjects. A service account's Lenny subject never equals a person's, so a row it writes is never released to a person's sessions.
+- **Impersonation.** An impersonation bearer is refused on this route and on every `/v1/credentials` write, through `callercheck`. Otherwise `written_by` would record Alice for an operator's write, and rotation would reach her running agent.
+- **Bytes.** The value is opaque. `encoding` is `text` or `base64`, for binary tokens and files. The limit is `maxBytes`, at most 64 KiB at the platform ceiling, because `netagent` holds the value in memory and the pod credential API carries it. The current handler's 1 MiB reader stays as the outer bound.
+- **Expiry.** `expiresAt` is optional, and required when the type sets `requireExpiresAt`. `maxLifetimeSeconds` bounds it. The pod credential API releases nothing past it, and `netagent` removes the file at that time from the `expiresAt` it holds. The Token Service clamps `cacheUntil` to it.
+- **Storage.** A new table in the Token Service's store, with row-level security, holds type rows keyed on tenant, principal type, principal, `typeId`, and environment, with `expires_at`, `written_by`, `encoding`, `token_id`, `generation`, `state`, and `trust_digest`. It is envelope-encrypted under a per-tenant KMS key that only the Token Service's identity can decrypt, as §4.3 reserves, with the additional data under "Token trust record". `pkg/kms/envelope`'s `Cipher.Seal` and `Open` bind the KEK alias alone today, so they gain that input, and `Reseal` rewraps the DEK, so re-encryption is unaffected. This shares a Postgres role with the gateway, so a replica can edit rows, and the sealed form is what makes an edit fail. The gateway passes a write through to the Token Service over mTLS and sees the value in transit, as it does today. `GET /v1/credentials`, `ownedBy`, and `revoke` read a type row's metadata through the same Token Service API. The existing `credentials` table stays for LLM credentials, unchanged, because its rows are decrypted in the gateway. §4.9.1 re-encryption gains this table with the Token Service as its runner, because `pkg/kms/rekey` runs in the gateway today, and §12.8's `TokenStore` deletion gains it too. Erasure of a writer pseudonymizes `written_by` on other users' rows, and the job re-seals each through the Token Service, because `written_by` is in the additional data. Under `kms.provider: local` the chart mounts one master key in the gateway, the Token Service, and `lenny-ops`, so this separation holds on a cloud KMS alone.
+- **Audit.** `credential.registered`, `credential.rotated`, and the others of §4.9.2 carry `type` and `written_by`, and the secret stays out of every log, as §4.9 already requires of these routes.
+
+#### Rotation and removal
+
+Rotation uses the existing `PUT /v1/credentials/{credentialRef}` and the new admin route. A type row takes a new propagation path:
+
+1. The store commits the new material and increments `generation`.
+2. The gateway pushes a binding change for each session of that user holding a binding of that type, as it does for a binding definition edit.
+3. `netagent` flushes, asks the pod credential API, and receives the new value. Under `delivery: file` it swaps the directory atomically, with `binding.json`'s version counter incremented, as the egress design describes.
+
+`netagent` learns of binding changes through a push on its binding subscription to the decision service. A lost push costs at most 30 seconds, after which `netagent` re-reads the binding, and `cacheUntil`, 300 seconds for this kind, is the backstop if the subscription itself is lost. Tools that re-read the file pick up the new value, and a tool that read it once keeps the old value. The egress design tested re-reading for the tools it names **[measured]**.
+
+`POST .../revoke` and `DELETE` both stop use on a type row, which the API documentation states. §4.9 today lets `DELETE` leave running leases alone, a rule of the LLM path that leaves with the `provider` path, and one that is unsafe for a token a tenant is trying to remove.
+
+A token never enters a shared cache keyed without its owner. The Token Service's cache key for a user credential or a release check verdict always includes the row or `link_ref` and its `generation`, and it never uses the egress mint cache. Each cached value is sealed with the full cache key and the record digest as additional data, through the same input on `pkg/tokenservice/cache`'s `Cipher`, so a replica copying an entry to another key produces a value that fails to open.
+
+### UC-2: The `oauth2Link` source and account linking
+
+This source links a Lenny user to an account at a link provider and keeps the resulting tokens in the Token Service. It owns the link flow, the stored links, refresh, and revocation at the provider, for every kind. An add-on's link kind supplies what differs by provider, under UC-7. Links are keyed on the link provider's name from the start, so an added kind reworks no stored key or route.
+
+#### Reuse of §9.3
+
+The design reuses the `pkg/connectoroauth` library (PKCE, signed state, the Redis state store, code exchange, and the refresh call), and its link flow uses the shared OAuth link flow that [CA-0](../0123-connector-authorization-and-external-memory/change.md#ca-0-shared-oauth-link-flow) moves into that package. A link is a new record owned by the Token Service.
+
+[`0124-connector-removal`, "CR-1 Removal"](../0124-connector-removal/change.md#cr-1-removal) removes the §9.3 connector record, connector links, and the connector tool path, and leaves §9.3 as a successor pointer that names account links among the places its parts went. CA-0 and the library stay for account links, and the library is renamed when CR-A lands, because its name names the removed mechanism. Decision 29 records why links did not reuse the §9.3 record while it existed: `ConnectorDefinition` required an MCP server, which a link provider is not; §4.3 scoped connector tokens by environment, while a link records a fact about a person at a provider; and the connector store was decrypted in the gateway (F-4.3.1), while the VCS layer's property [UP-1](../0152-user-git-identity/change.md#security-properties) keeps parent tokens away from the gateway. With connectors removed, linking before a session, refresh under a lease, and the hardened callback are UC-2's own, under "Flow" and "Refresh", and CA-0 closes the account-link attack (F-9.3.18) in the shared flow.
+
+#### Link providers
+
+A link provider is a tenant object, written through [EG-9](../0127-egress-and-git/steps.md#steps)'s single write path, with an optional [TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) `environments` list. Its generic fields sit at the top level, and the kind block holds what its kind defines. A type names a link provider through `source: oauth2Link`.
+
+```yaml
+userCredentialTypes:
+  - name: salesforce
+    source: oauth2Link
+    linkProvider: salesforce-acme
+linkProviders:
+  - name: salesforce-acme
+    kind: oauth2                   # selects the add-on that defines the block below
+    delivery: inject               # the delivery ceiling: identifier | none | inject | file
+    clientId: "..."
+    clientSecret: "..."            # write-only
+    scopes: [api, refresh_token]
+    identityBinding: unverified
+    allowedAccounts: []
+    narrowing: null                # optional template
+    oauth2:                        # the kind block of the built-in oauth2 kind
+      authorizationEndpoint: https://login.salesforce.com/services/oauth2/authorize
+      tokenEndpoint: https://login.salesforce.com/services/oauth2/token
+      revocationEndpoint: https://login.salesforce.com/services/oauth2/revoke   # optional
+      userInfoEndpoint: https://login.salesforce.com/services/oauth2/userinfo   # required
+      idField: user_id
+      loginField: preferred_username
+      apiHosts: [acme.my.salesforce.com]
+      attach: "Authorization: Bearer {{secret}}"
+```
+
+| Field | Meaning |
+| :-- | :-- |
+| `name` | The key, unique per tenant. Links and routes name it. |
+| `kind` | The kind, which selects the add-on and the schema of the kind block. A write naming a kind no add-on registers is refused. |
+| `delivery` | The delivery ceiling, in the token trust record: `identifier`, which keeps the identity and discards the token; `none`, which keeps the token for a check; `inject`; or `file`. The pages show it. |
+| `clientId`, `clientSecret` | The tenant's own OAuth2 client. See **Client secret** below. |
+| `scopes` | The OAuth2 scopes the flow requests. A kind can fix or default them. |
+| `identityBinding` | `directory`, `claim`, `verifiedEmail`, or `unverified`. No default: a link provider write must set it. A kind states which values it supports. See "Identity binding". |
+| `allowedAccounts` | The accounts, organizations, or groups a linked account must belong to, checked by the kind. Empty means any account the OAuth2 client admits. |
+| `narrowing` | A narrowing template, optional unless the kind requires one. See "Narrowing templates". |
+| The kind block | The fields the kind defines, keyed by the kind's name. For `oauth2`: the endpoints, `idField`, `loginField`, `apiHosts`, and `attach`. |
+
+- **Client secret.** `clientSecret` is a write-only value. The Token Service stores it envelope-encrypted under the tenant's Token-Service-only key, in a row keyed on tenant and provider name, with the provider's record digest sealed as additional data. No route returns it, and the Token Service sends it only when that digest matches, under "What the record does not protect". At read time the Token Service compares the row's tenant with the provider's and the caller's, and it refuses a mismatch. No field names a Secret, so a tenant cannot point at another tenant's.
+- **Key.** A link is keyed on tenant, user, and link provider name. Each `oauth2Link` type names its own provider, and an add-on that reads a link names the provider it reads, as the VCS layer's `userAuthorization.linkProvider` does.
+- **Delivery ceiling.** `identifier` keeps the identity and discards the token, which the VCS layer's independent approval check ([UG-4](../0152-user-git-identity/change.md#ug-4-independent-approval-check)) uses, `none` keeps the token in the Token Service for a check, `inject` allows `netagent` memory, and `file` allows the agent's reach. The pages show it, and it is in the record, so a link a person made for a check does not become a delivery source when an admin adds a type.
+- **Refresh token.** It never leaves the Token Service (UCP-5). `netagent` receives an access token, or a narrowed one, on the pod credential API.
+- **Hosts.** The hosts a type of this source reaches under `delivery: inject` are the provider's `apiHosts`. A binding cannot name another host, and the Token Service re-checks that on the pod credential API. An add-on's host policy can refuse an `oauth2` provider whose endpoints or API hosts sit on hosts it governs, as the VCS layer does, so that kind cannot stand in for an add-on's kind. `apiHosts` on a `kind: oauth2` provider can otherwise misstate where a token works, as a `registered` type's hosts can.
+- **Rotation assumption.** The Token Service treats every provider as rotating refresh tokens, which is the single-use rule under "Refresh". A refresh response with no new refresh token keeps the old one. A provider that issues no refresh token gives a link that ends at its access token's expiry and moves to `user_act_required`. A response with no `expires_in` is stored as non-expiring and reported in posture, with `cacheUntil` still applying. A kind can refuse that case at link, as the GitHub kind does.
+- **Revocation.** Provider revocation runs when the kind knows a revocation endpoint and the record matches, through the durable record under "Lifecycle and revocation at the provider", and **Deleting a provider** covers deletion. Otherwise Lenny deletes its copy, and the provider's token runs to its own expiry. The tenant admin's write response states this.
+- **Identity.** Every kind names a user info source and an identifier field, which the `oauth2` block's `userInfoEndpoint` and `idField` supply, so the confirmation page always names an account, and the unique index on tenant, provider, and `provider_user_id` applies. A kind can widen that index, as the VCS layer does across the providers on one host. A provider with no such endpoint cannot be linked, and a tenant uses `registered` for it. `identityBinding` takes the values under "Identity binding". On `oauth2`, `allowedAccounts` applies through a named claim in that response.
+- **Callback.** The flow's callback is per provider, `GET /v1/user-links/callback/{provider}`, and the `state` names the provider. Where a provider returns `iss` (RFC 9207), the Token Service checks it, so a code from one provider cannot be exchanged at another's token endpoint.
+- **Endpoints are hostile input.** A kind with fixed endpoint paths fixes them, and `kind: oauth2` cannot. Each endpoint must be HTTPS and pass the [egress design](../0127-egress-and-git/change.md)'s check for a tenant-registered public service: resolved at registration, refused on the exclusion list, a registered `ipBlock`, or the cluster's addresses, and re-resolved periodically. The authorization URL also passes the §9.2 domain check. A private provider follows [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md): the host is an outbound host, and the calls go through the mint path to it.
+- **Route.** The Token Service reaches every link provider endpoint through `lenny-egress` with the tenant asserted, under the mint path's bounds on time, response size, and redirects. The egress design's direct dial for a public host excepts these endpoints, so the decision service sees each call and re-resolution applies. At level 1 the egress design states the equivalent.
+
+A link provider's client belongs to its tenant. An operator's App shared across tenants is out of scope: the only write path is the tenant's own, so each tenant admin would hold a client other tenants' users rely on, and the record's sealed secret would need a platform-only path. Decision 39 records this.
+
+#### Stored links
+
+**`user_links`** (`TokenStore`, the Secret data class under §12.9 as [TSS-8](../0150-tenant-security-settings/change.md#tss-8-data-classes) names it, row-level security, tenant guard, and §4.9.1 re-encryption):
+
+| Column | Meaning |
+| :-- | :-- |
+| `tenant_id`, `user_id`, `link_provider` | The primary key. |
+| `link_ref` | A random identifier, regenerated on each link, used in evidence. It carries no meaning outside this row. |
+| `provider_user_id`, `provider_login`, `provider_is_admin` | From the provider's user endpoint, read through the kind. `provider_is_admin` is set when the kind can tell. Bounded in length and limited to the provider's login syntax, because a registered host is hostile input. Unique on tenant, link provider, and `provider_user_id`, and a kind can widen that, as the VCS layer does across a host's providers. |
+| `trust_digest` | The digest of the provider's token trust record at link time, sealed as additional data on each envelope with tenant, role, user, provider name, and the fields written with the value, under the encoding UC-1 states. A mismatch makes the row unusable and sends it nowhere. |
+| `access_token_ct`, `refresh_token_ct`, `scopes` | Envelope-encrypted tokens. |
+| `access_expires_at`, `refresh_expires_at`, `generation` | Expiry, and a counter that changes on refresh and relink. |
+| `state` | `active`, `user_act_required`, `suspended`, or `revoking`. A mismatch reports `user_act_required` with no write. |
+| `refresh_lease_holder`, `refresh_lease_until` | The refresh lease. |
+| `verified_at`, `last_used_at`, `created_at` | Times. |
+
+A user with accounts at two providers holds two rows, and Lenny draws no connection between them. A user who wants a different account on one provider relinks, which revokes the old grant first.
+
+Two Lenny users cannot link one provider account within a tenant. The unique index refuses the second with `409 LINK_ACCOUNT_IN_USE`, naming neither user, and the tenant admin can remove the first. A shared account makes `credential.mint` attribution false and gives one person a way around two-person review. The same account in two tenants is permitted, since the tenants are unrelated.
+
+#### Identity binding
+
+Nothing else proves that a linked account belongs to the Lenny user. Alice can link a second or machine account and have her agent act under it. Where an add-on reads the link for a decision, such as the VCS layer's repository check and its review rules, that decision then concerns the wrong account. The unique index stops two Lenny users sharing an account and says nothing about one user holding two. A link provider therefore states how a link is tied to a person.
+
+| `identityBinding` | How the link flow decides | Cost |
+| :-- | :-- | :-- |
+| `directory` | A tenant's sync worker or admin writes the expected `provider_user_id` for a user through `PUT /v1/admin/users/{userId}/provider-identities/{provider}`, under `manage_user_lifecycle`. The link commits only when the provider's numeric identifier matches. | The tenant runs a mapping. The directory must hold provider accounts. |
+| `claim` | The link provider names an OIDC claim, such as `github_login`. The start page reads it from the browser login in step 3, and the provider's login must match. The deployment identity broker's claim contract, or a customer identity source's claim mapping under [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6), gains that mapping. | A broker mapper or a source's claim, and login renames need the mapping to follow. After the first match, the numeric identifier is the key. |
+| `verifiedEmail` | The provider's verified email must equal the `email` claim of the browser login. The kind names where it reads verified email addresses, and a kind that cannot read one does not offer this value. | It needs an authoritative IdP email, and the OAuth2 client may need a permission to read addresses. A provider whose administrator can change a user's email weakens it. |
+| `unverified` | No check. | UCP-11 does not hold against the user, and neither do the properties an add-on rests on it, such as the VCS layer's account-binding property [UP-9](../0152-user-git-identity/change.md#security-properties) and its authorship requirement [UR-4](../0152-user-git-identity/change.md#personas-and-requirements). It still stops a prompt-injected agent, which needs no identity claim, and posture reports the value. |
+
+Each binding re-evaluates when its input changes: when a directory row or claim source changes, the link moves to `user_act_required`, at the next periodic check an add-on runs, such as the VCS layer's sweep, and otherwise at the link's next release **[design]**. Lenny reads the claim at the start page alone and does not store it. `Principal` gains nothing **[source]**.
+
+Binding covers the account Lenny uses. It does not cover what the person does at the provider under another account, which the provider's own sign-on and managed-user settings address.
+
+#### Flow
+
+The user experience follows Coder's: a named provider instance, self-hosted URLs, and an authorization step before the workspace exists.
+
+The flow's mechanics are the shared OAuth link flow of [CA-0](../0123-connector-authorization-and-external-memory/change.md#ca-0-shared-oauth-link-flow): the one-time flow identifier, the OIDC login and subject check on the start page, the cookie nonce, PKCE and the signed `state`, and callback validation. CA-0 lands before UC-2. The steps below state what UC-2 supplies to that flow and what it does with the result.
+
+1. Alice calls `POST /v1/sessions` with a plan that needs a link she does not have: a binding whose type uses the link provider, or an add-on's requirement, such as the VCS layer's repository check. The check runs at the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), on the final runtime and pool and before the pod claim, because a `PreRoute` interceptor or a runtime route can change the runtime, and with it the bindings an add-on attaches and the default clones a plan declares. The gateway answers with the combined missing-links response: a `403` with the code `LINKS_REQUIRED`, whose `details.userLinks` lists each missing link with the link provider's name and its `linkUrl`. The response carries no `details.connectors`, because connector links left Lenny with connectors ([`0124-connector-removal`, "CR-1 Removal"](../0124-connector-removal/change.md#cr-1-removal)). An MCP client receives the form that [MP-3](../0134-mcp-protocol-upgrade/change.md#mp-3-elicitation) states for its protocol version: once MP-3 lands, one URL-mode elicitation per missing link for a client that declares URL mode, and the tool error with the same `details` for every other client. (The MCP sentence moves to the MCP adapter under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), stays here unchanged until that adapter's repository takes it, and stages no edit to Lenny's specification. Lenny answers the MCP adapter's creation with the REST response above, from which the adapter builds its forms.) She can also call `POST /v1/user-links` with `{"provider": "salesforce-acme"}` from the playground or `lenny-ctl`.
+2. `linkUrl` is a Lenny URL for a CA-0 flow that names the subject who requested it.
+3. The browser opens it. CA-0's start page logs Alice in at the tenant's identity source (`auth.oidc.issuerUrl` by default, and a customer's issuer under the identity source records ([TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6)) and login routing ([TS-7](../0149-tenant-scoping-identity/change.md#login-routing-ts-7)) of [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md)) through that design's "Browser login", whose shared resolver supplies the tenant and subject, and refuses the flow when they differ from the flow's. **Before any redirect**, the page UC-2 supplies names every endpoint host and the delivery ceiling, and after a token trust record change it states that they changed, naming the old and new hosts. The flow records the current digest, and step 6 refuses if it has moved.
+4. CA-0 sets its `__Host-` cookie, `HttpOnly`, `Secure`, and `SameSite=Lax`, and redirects to the provider with PKCE and the signed `state`. A `SameSite=Lax` cookie is sent on the provider's top-level redirect back.
+5. The provider redirects to `GET /v1/user-links/callback/{provider}`, the per-provider path UC-2 supplies. A path whose provider differs from the flow's is refused before any token request, and CA-0's callback validation then runs, including the `iss` check of RFC 9207 where the provider returns it. A missing or mismatched cookie aborts the flow.
+6. The gateway passes the code and verifier to the Token Service over mTLS and never sees a token. The Token Service compares the digest, exchanges them through the mint path, reads the provider's user endpoint, applies `identityBinding`, and applies `allowedAccounts` through the kind's check. A refused binding answers `403 LINK_IDENTITY_MISMATCH`, and the token is revoked at the provider at once.
+7. The browser shows a confirmation page naming the provider login, the Lenny user, the endpoint hosts, and the delivery ceiling. Alice confirms, and the row commits with its `trust_digest`. An audit event, `user_link.created`, carries the tenant, user, provider name, `link_ref`, and provider login, and it is delivered to Alice as a notification.
+
+`DELETE /v1/user-links/{provider}` lets Alice remove her link, and a tenant admin holding `manage_user_links` can remove anyone's. Neither route returns a token. Impersonation bearers are refused on every link route, using the same check as session create. Each kind's add-on states its endpoints, token lifetimes, and client registration.
+
+#### Refresh
+
+A provider can invalidate the old access token and refresh token when a refresh token is used, and the GitHub and GitLab add-ons record that both do **[documented]**. Refresh therefore has one writer per link, and it is a state change rather than a cache fill.
+
+- **Trigger.** A check or mint that finds fewer than 15 minutes on the parent, or a 401 from the host with the parent, requests a refresh. Refresh is on demand, so an idle link costs nothing. A refresh token that lapses at the provider moves the link to `user_act_required`.
+- **Lease.** A conditional update sets `refresh_lease_holder` and `refresh_lease_until` (30 seconds) when the lease is free. Session-level advisory locks are unavailable through the §12 transaction-mode pooler, and a transaction open across a provider call would hold a connection, so the lease is a row rather than a lock. Other replicas wait up to 5 seconds by re-reading the row, and otherwise answer `unavailable`. [CA-2](../0123-connector-authorization-and-external-memory/change.md#ca-2-token-lifecycle) had adopted the same lease form for connector credentials, and the removal of connectors withdraws it, so the form serves account links alone.
+- **Commit.** The holder calls the provider with a 10-second bound and writes the new tokens and the incremented `generation` before anything else. A store failure after the provider's answer is retried from memory for the lease's remainder.
+- **A lost response.** A timeout or a crash between the provider's rotation and the commit loses both tokens. A retry of the old refresh token that the provider refuses moves the link to `user_act_required`. Neither provider's page describes an idempotent refresh, so this cost cannot be designed out. Decision 32 records it, and a metric and alert report the relink rate.
+- **Sessions.** Under a narrowing template a session holds a derived token, and the parent never reaches a pod, so rotating the parent cannot break a tool mid-request unless the derived token dies with its parent. If it does, `netagent` sees a 401, flushes, and asks the pod credential API once under the `reauth-on-401` handling. A 401 means the host did not act, so one retry of a buffered request is safe, including a mutation. A streamed write's 401 goes back to the client. The Token Service also caps `cacheUntil` so a derived token is re-requested before the parent's scheduled refresh. With no template, `netagent` holds the parent access token, which `cacheUntil` also caps.
+- **`user_act_required`** refuses new sessions with the combined missing-links response, `LINKS_REQUIRED`, which lists the link under `details.userLinks`, and stops releases to running sessions, as a refused release check verdict does: a binding change flushes the token `netagent` holds, and the reason is `user_act_required`.
+
+#### Hostile hosts
+
+A link provider's host is tenant-registered input, as [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md#security-properties) states in its property C9, which treats content from a customer network as content from a hostile upstream.
+
+- A kind with fixed endpoint paths takes a host and no OAuth URL. The authorization redirect targets HTTPS only, and the §9.2 URL domain check applies.
+- Every Token Service call to a link provider endpoint goes through `lenny-egress`, with the tenant asserted, its CA, and the mint path's bounds on time, response size, and redirects. The egress design's direct dial excepts these endpoints. An add-on declares its kind's token and revocation endpoints among the mint endpoints.
+- The outbound connector's property C8 holds: a registered host cannot shadow a platform-reserved one, so a tenant cannot register a public provider's host behind its own network.
+- The provider login and identifier are syntax-limited before they are stored or shown, and a hostile host that answers `allowed` to everything harms only that tenant.
+- Caches of derived tokens, any verdict cache an add-on keeps, and refresh leases all key on tenant and `link_ref`, following the egress design's mint cache rule.
+
+#### Lifecycle and revocation at the provider
+
+| Event | Stops use | Revokes at the provider |
+| :-- | :-- | :-- |
+| User deletes the link | At once, by binding change | Yes |
+| Relink | Yes | Yes, before the new flow commits |
+| `soft_disable`, `hard_disable`, or `full_revoke` ([§11.4](../../spec/11_policy-and-controls.md#114-user-invalidation), [TS-4](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4)) | At once. A new step in §11.4 sets `state = revoking` and pushes binding changes for the user's sessions. | Yes. Reinstate restores no link, and the user relinks. |
+| [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) erasure, or `DeleteByTenant` | The Article 18 restriction and the drain stop use | Yes, then the row is deleted |
+| App or application removed by the user at the provider | At the next check, as a 401 that refresh cannot cure | Already done |
+| Link provider deleted | At once for its links. The provider enters `deleting`, keeping it and its record until links drain or `linkProviderDrainSeconds` ends, and a recreate under that name is refused. | Yes, for each link, through the durable record below, under the ordinary comparison. At the bound, or after a mismatch, each remaining row ends with an audit event and a user notification saying its grant was not revoked. |
+| A token trust record changes, by any field | At once, by digest comparison at the pod credential API and at each provider call. | **No.** Lenny sends the stored tokens to neither the old nor the new endpoint, and the audit event and the user's notification say so. A revert to the identical record restores use. |
+
+Each "Yes" above applies when the row's digest matches, because a mismatched token is sent nowhere. Revocation runs through a durable record retried with backoff, following the egress design's pending-revocation record for GitLab project tokens, because a host can be unreachable. Erasure has a limit: the row is in the Secret data class ([TSS-8](../0150-tenant-security-settings/change.md#tss-8-data-classes)), and the erasure job must finish within the tenant's `erasure.userDeadlineHours` ([TSS-1](../0150-tenant-security-settings/change.md#tss-1-settings-model), 1 to 72 hours, default 72), which replaces §12.9's fixed deadlines. The job retries for up to 30 minutes, then destroys the ciphertext regardless, and the erasure receipt records `provider_revocation_failed`. Lenny then holds no copy, and the access token lapses by its own expiry at the host. The tenant admin is told, so the user can revoke the authorization at the provider.
+
+#### Narrowing templates
+
+A narrowing template derives a per-session token from the stored one. It is data, so `netagent` and the Token Service hold no provider code for it.
+
+| Field | Meaning |
+| :-- | :-- |
+| `name` | The template's name. A shipped template's name and contract version, or a tenant template's digest, enter the token trust record. |
+| `followsEntryState` | Whether the template narrows, on each mint, to the set an add-on's template variable supplies, such as the session's repositories in state `granted`, and follows changes to that set's state. |
+| `request` | The method, the URL, the client authentication, and the JSON body of the call that derives a token, rendered from template variables. |
+| Overridable fields | The fields a tenant may override on a shipped template, which the template names, such as the GitHub template's `permissions`. |
+| `response` | Where the derived token and its expiry sit in the response. |
+| `revoke` | The call that revokes a derived token. |
+
+[`0129-github-credential-addon`](../0129-github-credential-addon/change.md) shows `github-scoped` in full.
+
+- Add-ons ship templates. The GitHub add-on ships `github-scoped`, and the GitLab add-on ships `gitlab-fine-grained`.
+- **A kind can restrict its link providers to shipped templates**, with the tenant override limited to the fields each template names, and can require one when the delivery ceiling is `inject` or `file`. The VCS kinds do both, under [`0152-user-git-identity`](../0152-user-git-identity/change.md). A template is optional on a link provider with `kind: oauth2`, where a tenant can define its own.
+- **`followsEntryState` is honoured only on a platform-shipped template.** It says the template narrows, on each mint, to the set an add-on's template variable supplies, which for the VCS layer is the session's entries in state `granted`, as [`0142-security-oversight`](../0142-security-oversight/change.md)'s repository rule requires. Only `github-scoped` sets it today. Any other template is treated as outside the egress design's `mint-scoped` capability class, for tokens limited to named repositories, for property [SP11](../0142-security-oversight/change.md#security-properties) in [`0142-security-oversight`](../0142-security-oversight/change.md), under which a repository marked for approval receives no write token until its approval exists.
+- The built-in variables are `{{parentToken}}`, `{{clientId}}`, `{{permissions}}`, and `{{token}}` for a revocation. `{{apiBase}}` comes from the request layout an add-on registers for the host, and an add-on's template variables add the rest. `{{parentToken}}` is the access token alone, and no variable reaches a refresh token. The set of variables is fixed by this design and the registered add-ons, and a template cannot reference another tenant's data.
+- A tenant's override of a shipped template is audited and reported in posture, and the add-on that ships the template states what an override can widen. A tenant's own template on a link provider with `kind: oauth2` is in the record whole, because it can render `{{permissions}}` as a scope.
+- A template's URL must stay on origins in the record, because it carries the parent token.
+- A template failure refuses the mint, and a response equal to the parent token is a failure. It never falls back to the parent.
+
+**With no template, on a link provider with `kind: oauth2`, the delivered access token has the user's full reach on that provider.** Under `delivery: file` an agent holds all of it. Under `delivery: inject`, `netagent` holds all of it, and request rules are the only limit Lenny applies. A binding write response and the posture read state this.
+
+### UC-3: The `userCredential` binding
+
+The owner's core record:
+
+```yaml
+secret: { kind: userCredential, type: jira }
+hosts: [acme.atlassian.net]
+delivery: file        # or inject
+```
+
+The binding is the same record under both deliveries.
+
+| Field | Meaning |
+| :-- | :-- |
+| `secret` | `kind: userCredential` and a `type`. The [egress design](../0127-egress-and-git/change.md)'s `secret` becomes a typed union. |
+| `hosts` | A subset of the type's hosts. Under `delivery: inject`, `netagent` attaches to these alone. Under `delivery: file`, a write-time check only, as "What `file` does not promise" states. |
+| `delivery` | `inject` or `file`, at or below the record's ceiling. `federation` does not apply, `metadata` applies only to an `awsWebIdentity` type behind the `userCredentialMetadataDelivery` grant under [`0143-service-account-credentials`, "SA-5 Delivery"](../0143-service-account-credentials/change.md#sa-5-delivery), and environment variables are never offered. |
+| `attach` | Absent. It comes from the type or link provider, in the token trust record, so an edit cannot move the token into a header a host logs. A write of a binding with `delivery: inject` on a `registered` type with no `attach` is refused. Under `delivery: file`, `binding.json` (UC-5, "Mechanics") carries it as format metadata, which the `netrc` projection reads. |
+| `required` | Whether a session with no resolvable token is refused. Default `true`. |
+| `scope` | `onRequest`, which attaches the binding to a session whose plan names it, or `poolAttach`, which only an add-on's attach extension point (UC-7) sets, as a VCS pool with `prAuthoring: user` does ([`0152-user-git-identity`, "The attach rule"](../0152-user-git-identity/change.md#the-attach-rule)). `always` is refused, because it attaches the binding to every session of the tenant, and `netagent` caches an `always` binding's value per tenant pin rather than per session. |
+| `requestRules` | Under `delivery: inject` only. See UC-4. A write setting it with `delivery: file` is refused with an error that says why. |
+| `lockEgressToHosts` | Under `delivery: file` only, and optional. See "What `file` does not promise". |
+| `leakScan` | Under `delivery: file` only, and optional. See "Leak scanning". |
+
+#### Limits under both deliveries
+
+**Only the session's own principal's token.** The Token Service reads the session row's principal and `caller_type` through `pkg/binding`, and it looks up the type's row for that principal and principal type. Nothing in the request names a principal. The session's environment selects the row when the type has rows per environment, then the no-environment row. An environment row that is mismatched or suspended stops the lookup, so a session does not silently use a different token. `caller_type` is a new field on the session row, set at create from the principal, because only `Principal` carries it today **[source]**. A delegated child's row copies its parent's value, because §8.2 mints no token for a child. An empty value and `agent` match no row, and a row matches only a session whose `caller_type` equals the principal type sealed with it (UCP-1).
+
+**Pods that can serve someone else are refused.** A session naming such a binding is refused with `422 USER_CREDENTIAL_UNSUPPORTED_POD` on these pods:
+
+| Pod | Why |
+| :-- | :-- |
+| `sessionPolicy.maxConcurrentSessionsPerPod > 1` | A file is not readable by another slot: the `delivery: file` directory sits on a per-slot volume that only `netagent` writes and only the session's slot mounts ([egress design, "Credential delivery to runtimes"](../0127-egress-and-git/change.md#credential-delivery-to-runtimes)). Under the egress design's decision 60, `netagent` applies each slot's own credential bindings and `egressLockHosts` to that slot's connections, attributed by owner UID. Where neither attribution reader answers, which gVisor and Kata have not been shown to avoid (V10), the pod keeps the union scope: `netagent` would attach one session's token under `delivery: inject` to requests from every slot, and a token under `delivery: file` leaves through the union of every slot's allow set, where `lockEgressToHosts` cannot apply to one slot. Decision 41, settled on 2026-11-13, lifts the row on a pool whose attribution status records per-slot attribution, and keeps it on a fallback pool, whose status records the union scope or no result yet. On a pool that attributes, the served-pod row below still applies. Which runtime classes attribute is measured by a spike the owner asked for (V10). |
+| `recycle.enabled: true` | Each slot release ends every process of the slot, sweeps every file and IPC object the slot UID owns in the slot's volumes, and checks that the volumes are empty, and no runtime process is launched at release ([SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands)). The kept runtime process of earlier revisions, which kept answering on `netagent`'s loopback port under the next user, left with `recycle.runtimeProcess: keep`. What a release does not reach is state outside the slot's volumes: `netagent`'s caches, which the egress design keys on binding generation and session and flushes at each binding change and at the session's slot release, pod-wide state, and kernel state. A token the agent copied out of the file into one of those places survives the release. Under `delivery: inject` the agent holds no copy, and the row applies all the same: `netagent`, the adapter, the pod's network and IPC namespaces, and the sandbox kernel persist across slot releases, so a session whose agent compromises one of them keeps the foothold for the pod's later sessions and reaches their tokens. A fresh pod for each such session bounds that compromise to the session that made it. Decision 41, settled on 2026-11-13, keeps the row for both deliveries. |
+| A pod that has served a session | The same reason. It catches a pool whose `recycle.enabled` was edited back to `false` with used pods in it. On a pool with several slots, this design counts a pod one of whose slots has served a session and been released as a used pod, so the refusal holds there. That reading is a choice of revision 31 that awaits the owner's confirmation (decision 41). |
+
+At create, the gateway runs this refusal at the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), on the final pool, so a session that a `PreRoute` interceptor or a runtime route moves onto such a pool is refused. These read pool policy at bind. On a pool with `sessionPolicy.maxConcurrentSessionsPerPod > 1`, the post-chain point admits the session when the pool's attribution status records per-slot attribution and refuses it otherwise (decision 41). It reads that status, which the egress design records ("Slot attribution and fetch grants", **Per-slot scopes (decision 60)**): `netagent` reports at start whether either reader answered, the controller records the result in the pool's status, a pool with no recorded status counts as the union scope, a new pod whose `netagent` finds no reader on a pool recorded as attributing fails its readiness and is replaced, and a `netagent` whose reader stops answering on a running pod refuses the connection rather than falling back to the union scope. At bind, for a session naming such a binding, holding an `identityAssertion` binding, or declaring a repository under a VCS pool with `userAuthorization: required`, the gateway sets `retireOnRelease` on the claim, as "The `retireOnRelease` mark" below states. **The pod credential API refuses a release unless the claim carries the mark**, so a binding that a mid-session edit turns into a `userCredential` binding delivers nothing until a new session. Each release path honours the mark whatever the pool now says, because `poolRecyclePolicy` reads the current pool **[source]**: `podsession.Binder.Release`, `Server.ReleaseSuspendedPod`, `PodExecutor.Release`, and the scrub reporter's seams. A marked pod is never recycled and never given another slot after the marked session's slot is released.
+
+**The `retireOnRelease` mark (decision 44).** The mark is the field `PodClaim.status.retireOnRelease` on the pod's claim, the gateway-owned object that records its occupancy claim on one agent pod ([`0137-pod-lifecycle-controller`, "PLC-3 Resource kinds"](../0137-pod-lifecycle-controller/change.md#plc-3-resource-kinds)). Three triggers set it, and the designs that name the mark point here for the union:
+
+- a session that names a `userCredential` binding (this section);
+- a session that holds an `identityAssertion` binding ([`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion), **Pods (D11).**);
+- a session that declares a repository under a VCS pool with `userAuthorization: required` ([`0152-user-git-identity`, "UG-2"](../0152-user-git-identity/change.md#ug-2-repository-authorization)).
+
+For such a session the gateway writes `retireOnRelease: true` in the same status patch that first records the claim as `bound`. That patch is the claim's fencing write: a claim is created with its spec alone, and the gateway's first status patch, guarded by the claim's `resourceVersion`, records `bound` ([§4.6.1](../../spec/04_system-components.md#461-warm-pool-controller-pod-lifecycle), **Pod claim mechanism (per-pod occupancy claim):**). Writing the mark in that patch means that no reader sees the claim `bound` without the mark it needs. Nothing clears the field: no release, no hold, and no pool edit writes it back to `false`, so it holds until the claim is deleted with the pod's occupancy. A session that takes a slot on a pod whose claim another session's bind already recorded as `bound`, which only a pool with several slots whose status records per-slot attribution admits, reaches the claim after that patch. For such a session the gateway sets `retireOnRelease: true` with a status patch guarded by the claim's `resourceVersion` before the session's bind completes, and the bind fails if the patch fails. The patch only ever sets the field, and the pod credential API still releases nothing for a claim without it (decision 44).
+
+A warm pod is one whose infrastructure is ready, with no runtime process running. Every runtime process launches at bind, after materialization and setup, so no process of the slot runs before `netagent` receives the binding, and the first process that can read the file is a setup command or the runtime of this session.
+
+**Identity assertions.** The same refusal applies to a session that would hold an `identityAssertion` binding, under any `scope`, on the same pods and on the same ground: the assertion lets an operator service act as the user, and a component that an earlier session on the pod compromised could take a later session's assertions. It answers `422 IDENTITY_ASSERTION_UNSUPPORTED_POD`, runs at the same check points, writes the same mark, and applies the same pod test to a child. The owner decided this on 2026-11-15, in the words "yes to refusal", and [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Pods (D11).** states it.
+
+**Impersonation.** `requireCreatingBearerAllowed` already refuses create, derive, and create-and-start **[source]**. For a session in a delegation tree where any session, read by `root_session_id`, holds a `userCredential` binding or declares a repository under a VCS pool with `userAuthorization: required`, one check, built on `callercheck`, refuses an impersonation bearer with `403 FORBIDDEN` and the reason `impersonation_user_credential`. The same check refuses it, with the reason `impersonation_identity_assertion`, for a session in a tree where any session holds an `identityAssertion` binding of the egress design, because the assertion lets an operator service act as the user ([`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion), O6). The tree matters because a child with no lease entry can pass a message on to its parent under a principal with no JTI, which the check does not see. The check reads the tree at input time, so input to a tree before it becomes affected passes:
+
+- **Messages, at the session input layer.** The tree has no single delivery service. `executor.Executor.Send` is the shared call, from `sessionserver`'s `restDelivery`, `mcptools`' `send_delivery.go`, and the `translator` package's `/v1/responses` and `/v1/chat/completions` handlers, and held messages enter through `sessioninbox.Inbox.Enqueue` and its DLQ. A wrapper on each reads the principal from the context, so every adapter inherits the check. `deliverBuffered` runs with no principal and passes, because what it drains passed at enqueue.
+- **Other input, at the route.** `resume`, `finalize`, `start`, `upload`, `upload-archive`, `upload-to-session`, tool-use and elicitation answers, and an `inReplyTo` reply, which `inputwait.Registry.Resolve` takes before any `Send`, do not pass `Send`, so `manageSessionRoute` and the MCP session tools apply the check, by default-deny. Exempt routes are `DELETE`, `terminate`, `interrupt`, and reads.
+
+A test enumerates every mounted mux (`httpsurface.go`, the MCP tools, and each registered `ExternalProtocolAdapter` prefix), and it fails when a route or tool declares no status. Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-4-authorization-of-adapter-requests), the MCP tools, the translator handlers, and the adapter prefixes leave the gateway, so the check and its test cover the REST session input routes alone, through which every protocol adapter reaches a session, and the impersonation mint refuses an `adapter-only` token and every narrowed request ("RO-4").
+
+**Requests through a protocol adapter.** Under [`0138-rest-only-client-api`, "RO-4"](../0138-rest-only-client-api/change.md#ro-4-authorization-of-adapter-requests), a request field that makes a session use a user's credentials carries the `credential-use` capability tag, and a narrowed request, one that reaches the client API through a protocol adapter's registration, may set such a field only when its registration lists `credential-use`; otherwise the request is refused with `403 OPERATION_NOT_PERMITTED_FOR_RESOURCE`. In this design a session asks for a user's credentials through a `userCredential` binding that its plan names with `scope: onRequest`, so the tag sits on the plan's binding entries whose `secret` has `kind: userCredential`, and `credential-use` covers those entries alone. A `poolAttach` binding attaches through any adapter, with no `credential-use` and no post-chain check: the operator configured its VCS pool to act as the user, and a narrowed request is authenticated as that user whatever adapter carries it. The owner settled this on 2026-11-15 (that design's S2). `pool` carries the `isolation-select` tag of the same rule.
+
+**Service and agent sessions.** A session whose `caller_type` is `service` receives the token of its own service account's row when the type's `principalTypes` lists `service` and such a row exists, under [`0143-service-account-credentials`, "SA-1 Principal-owned credentials"](../0143-service-account-credentials/change.md#sa-1-principal-owned-credentials). Decision 43 records this. A session with no usable row, including an `agent` caller, a principal type the type does not list, and a service session on an `oauth2Link` type, has no token. When the binding's own `required` field is `true`, a session naming the binding is refused with `USER_CREDENTIAL_NOT_FOUND`, whose `details.reason` names `no_row`, `principal_type`, `trust_changed`, `provider_refused`, or `type_suspended`, the last for an `issuerExchange` type whose token trust record a `security-admin` has not approved. When it is `false`, the session starts: under `delivery: file` no directory exists, and under `delivery: inject` requests go out unauthenticated and the host answers 401. A human with no usable token gets the same outcomes, with `403 LINKS_REQUIRED` and the link's entry in `details.userLinks` in place of the not-found code on an `oauth2Link` type, and `details.reason: trust_changed` on a mismatch. The writer's caller type does not change which session reads a row, because `registeredBy` governs writing and the session row governs reading.
+
+**Delegation.** A delegated child carries its parent's user (§8.2 **Child identity.**) and, under the egress design, a child in its parent's environment inherits named bindings. A `userCredential` binding is the exception. A child receives one only when the delegation lease names it, in a new `userCredentialBindings` list in the lease, which a parent can only narrow, and a pool's `poolAttach` does not bypass that. The LLM credential propagation of `credentialPropagation` is gone with LLM credential pools, and a child resolves its own LLM upstream list ([`0133-llm-upstreams-and-cost-budgets`, "LU-2 Assignment and resolution"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-2-assignment-and-resolution)). A child's pod must pass the pod test, and a pool it cannot pass refuses the delegation. A detached orphan keeps what it was granted until `cascadeTimeoutSeconds`. Under [`0149-tenant-scoping-identity` decision 14](../0149-tenant-scoping-identity/decisions.md#decisions), a child reached through a sharing path runs in the target environment, and a binding crosses only when the lease names it and the target can see it.
+
+**One binding per host.** A session holds at most one `userCredential` binding per type host, under any delivery, at most one binding of any secret kind with `delivery: inject` per host, apart from an `identityAssertion` binding beside one other `inject` binding whose `attach` header differs (O5 of the removal design), and no binding with `delivery: file` beside one with `delivery: inject` on a host. The egress design carries this rule, evaluated on type hosts.
+
+**Audit.** Each release on the pod credential API writes a `credential.mint` record with `tokenSource`, the opaque `credentialRef` or `linkRef`, the binding, its delivery, hosts, and expiry. `tokenSource` is `app`, `userRegistered`, `serviceRegistered`, `userOauth2`, `userChild`, `clientCredentials`, or `issuerExchange` on a release, where `serviceRegistered` marks a service account's `registered` row and the sources of [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) name the others, with `principalType` beside it, and `userCheck` on a check's use of the parent, which delivers nothing, and [`0152-user-git-identity`](../0152-user-git-identity/change.md) uses the same values. An OAuth2 token or child records a token hash, which joins to a provider's log. A `registered` value records its `generation` and a per-tenant keyed hash, because a value of unknown entropy under a plain hash would correlate across tenants and permit offline guessing. The record carries no user identifier, so §12.8's statement for that stream holds, and the join lives in rows that erasure deletes. The first delivery to a session also writes a `user_credential.delivered` audit event to the tenant's §11.7 chain, naming the session, binding, type, and delivery. That chain is sized for low rates, so later refreshes appear in `credential.mint` alone.
+
+**Provisional state.** On a resume rebuild, the pod holds a provisional binding until the session returns to `running`. A `userCredential` binding is unavailable in that state, as bindings with `delivery: file` and write tokens are under the egress design.
+
+#### Stopping a credential
+
+| Event | Pod credential API | `netagent` | Under `delivery: file`, copies | At the provider |
+| :-- | :-- | :-- | :-- | :-- |
+| Session end | Refused, as the binding is gone | Flushes, and removes the file | Remain wherever the agent put them | Unchanged |
+| `revoke` or `DELETE` | Refused | Binding change: one round trip, or 30 s when a push is lost | Remain | `oauth2Link`: revoked when an endpoint exists. `registered`: Lenny cannot. |
+| `expiresAt` passes | Refused | Removed at that time | Remain, and the provider decides | Provider's rule |
+| User disabled or erased ([TS-4](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4), §12.8, [§11.4](../../spec/11_policy-and-controls.md#114-user-invalidation)) | Refused | Binding change, and §11.4 ends sessions at `full_revoke` | Remain | As `revoke` |
+| A token trust record changes | Refused, as the digest differs | Binding change | Remain | Unchanged, and Lenny sends nothing there |
+| `quarantined` | Refused, from each instance's own read | Not relied on. See [`0128-forensics-evidence-preservation`, "Delivered user tokens"](../0128-forensics-evidence-preservation/change.md#delivered-user-tokens). | Remain, and the volume is preserved | Unchanged unless an investigator revokes |
+| `userCredentialDelivery` withdrawn, a guardrail in the tenant security record ([SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)), or a pin added on a type host | Refused, through `suspendedBy` | Removes the file | Remain | Unchanged |
+
+### UC-4: Request rules and presets
+
+Under owner decision D1, recorded as decision 1, the provider-specific allowlist is replaced by one generic binding with optional rules held as data. `netagent` carries no provider code for this. A generic HTTP and GraphQL rule evaluator reads whatever rules the pod credential API returns.
+
+**Request rules apply only under `delivery: inject`. They cannot apply to a token the runtime holds, because the runtime sends it to the host itself.**
+
+```yaml
+requestRules:
+  preset: {name: github-deny, version: 8}   # or `none`. `version` pins it.
+  default: allow          # allow | deny
+  rest:
+    - {action: deny, methods: [POST], path: "/repos/*/*/pulls/*/reviews"}
+  graphql:
+    paths: [/graphql]
+    denyMutations: [addComment]   # or allowMutations under default: deny
+  bodyPatterns:
+    - {action: deny, pattern: '(?i)^\s*/(lgtm|approve)\b'}
+```
+
+| Rule | Semantics |
+| :-- | :-- |
+| `default` | What a request matching no rule does. `allow` by default. `deny` selects allow-list mode, which "Allow-list mode" states. |
+| `reads` | Under `default: deny` alone: `allow`, the default, admits reads that no rule denies, and `listed` makes a read need an allow rule too. A binding write that sets `reads` with `default: allow` is refused. |
+| `rest` | Method and path patterns on the canonical path, below any preset prefix. `*` matches one segment, a trailing `**` matches zero or more, and `{encoded}` declares an encoded segment. A rule that names no method applies to every method but `GET`, `HEAD`, and `OPTIONS`. Matching is case-insensitive, so a deny rule catches more spellings rather than fewer. |
+| `graphql` | The endpoint paths, and top-level mutation names to deny or allow. |
+| `bodyPatterns` | RE2 patterns, applied per line to every string value in a JSON body, form value, and query value of a write, and to every string and block string literal in a parsed GraphQL mutation: arguments at any depth, variable defaults, directive arguments, list values, and object values **[measured]**. `denyBodyKeys`, a preset property under "Request forms belong to a preset", applies to the same mutations and to REST writes. |
+| Tenant additions | A tenant's rules apply on top of the preset. Deny wins. A binding that sets rules and no `preset` key keeps the default preset its host's add-on supplies ("Presets"), and only `preset: none` in the binding's `requestRules` clears it. |
+
+#### What every rule set forces
+
+When a binding has any rule, these apply to its requests. Rows are **[measured]** by the spike's prototype, on a stub that proves forwarding only, except as marked. 3,033 of 3,045 predicted rows matched across the flavours, and the 12 others were harness errors. Path, GraphQL path, and family matching are case-insensitive.
+
+- **Canonical path.** Any `%` outside a declared `{encoded}` segment is refused, on every method. A backslash, `;`, dot segments, and control bytes are refused. Empty segments and trailing slashes are dropped. `netagent` forwards the canonical path, so a host never decodes what a rule did not. A deny rule on `DELETE /rest/api/*/issue/*` therefore also catches `iss%75e`, by refusing it.
+- **Final segment.** For a deny rule and a refusal, the final segment is also compared with anything after its first `.` removed, and a dotted deny pattern also compares at each dot. The stem only widens a refusal: a suffixed path never matches an admit, whether an allow rule, a listed GraphQL path, or the uploads path. A path no rule denies keeps its suffix when forwarded. `merge.foo`, `merge.json.foo`, `merge.json.json`, `merge.JSON`, `reviews.x`, and GitLab `approve.foo` were refused, `POST .../issues.json` and `GET .../labels.json` were forwarded with the suffix, and a dot in a repository name is no final segment, so `POST /repos/acme/widgets.js/issues` passed. A generic Rails router sent `merge.foo` to the handler, and Grape answered 404. GitHub's stack is unknown. The direction rule held: `POST /graphql.json`, `.foo`, and `.json.foo`, and `/api/uploads/.../assets.json`, were refused with the exact paths passing, and under `default: deny` an allow rule refused `.json` and `.foo` on `GET` and `POST`. A deny on `/files/report.tar` refused `report.tar.gz` and `REPORT.TAR.GZ` and passed `x.report.tar` **[measured]**.
+- **Encoded segments.** In a declared `{encoded}` segment, the value is decoded once, must contain no `%` and no dot segment, and must contain no word on that pattern's `refuseDecoded` list. The encoded form is forwarded as given. `glab`'s `acme%2Fwidgets`, nested groups, and lower-case `%2f` pass, and labels, contents, branches, and tags with escapes pass under the presets' declared segments, and `acme%2Fwidgets%2Fmerge_requests%2F7%2Fapprove` is refused on its route word.
+- **The GraphQL and API families, under a preset.** A path in `/graphql*` or `/api/*` is refused unless it is the resolved flavour's GraphQL path or uploads path, or lies under a non-root `restPrefix`, and so is a path whose first segment below the `restPrefix` begins with `graphql`. Under a root prefix `/api/*` has no prefix exception. `/graphql/foo`, `/graphql-tools`, `/graphql2`, `/api/foo`, `/api/graphqlx`, and `/api/v3/graphql` were refused on each flavour. `/repos/acme/graphql-tools/...`, `/repos/acme/graphql`, `/repos/graphql/graphql-js`, `/users/graphql`, and `/search/graphql` reach on `GET`.
+- **`POST .../graphql`, and suffixed GraphQL paths.** A `POST` whose final segment, or its stem, is `graphql` is refused unless it is the flavour's listed path, because a host's own routing of such a path is unknown. `POST .../widgets/graphql`, `.../graphql.json`, `.../GraphQL`, and `POST /repos/acme/graphql` were refused, and `PATCH /repos/acme/graphql`, `PUT` and `GET .../widgets/graphql`, and `POST /repos/acme/graphql/issues` passed **[measured]**. A suffixed spelling of a listed GraphQL path is also refused on any method **[design]**, because `PUT /graphql.json` with a denied mutation reached the stub on a generic rule set under the `POST`-only form **[measured]**, and a host could take a mutation in the query of `GET /graphql.json`. `PATCH` and `DELETE` on a repository named `graphql`, a label with that name, and `PUT .../contents/graphql` stay admitted. In GitHub's OpenAPI description, 1.1.4, no path contains `graphql`, and of its 197 `POST` routes 5 end in a parameter, so the one route this can refuse is `POST /orgs/{org}/artifacts/metadata/deployment-record/cluster/graphql`, for a cluster with that name. That check covers GitHub alone. On GitLab, `POST .../repository/files/graphql.json` at a repository root is refused, which is a known false refusal.
+- **Writes outside a non-root prefix.** Under a preset whose prefix is not root, any write outside `restPrefix`, `graphqlPaths`, and the uploads path is refused, so a GitLab under a relative URL root has its writes refused rather than unchecked. On GHES, a write to `/repos/.../merge`, `/x`, and a relative root was refused, and `GET /x` passed, and GitLab was the same. On GitLab, `rest` patterns are rooted at `projects/*` below `/api/v4/`, and the unencoded `POST /api/v4/projects/acme/widgets/merge_requests/7/approve` still reached the stub, and Grape answered 404.
+- **Method overrides, upgrades, and routing overrides.** `X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`, `_method` in a query or a form, `X-Original-URL`, `X-Rewrite-URL`, `X-Forwarded-Path`, and `X-Forwarded-Prefix` are refused, including with an empty value, on preset hosts and a generic rule set. `Upgrade`, `HTTP2-Settings`, `Sec-WebSocket-Key`, and `CONNECT` inside the tunnel are refused on the preset hosts tried. `X-Forwarded-Uri`, `X-Envoy-Original-Path`, and `X-Original-Method` are refused too, and the list is extendable as data. The [egress design](../0127-egress-and-git/change.md) refuses the routing override list on every terminated host, with or without rules **[measured]**. `_method` inside a multipart body streams on a generic rule set, which is a stated limit, because parsing it would buffer every attachment. A preset's `writeForm` refuses a multipart write.
+- **GraphQL, on a path a rule lists.** It is `POST` alone, and it must parse. **Unparseable GraphQL is refused, and the printed document is forwarded.** The client's document never reaches the host. A bare CR document passed an earlier filter and reads as `addPullRequestReview` under graphql-ruby's default lexer **[captured]**, and which parser a provider runs is unknown. A lexical rule also refuses control characters, U+0085, U+2028, U+2029, and U+FEFF. One operation per document. A mutation's root selections must be fields, whose names are checked with aliases ignored. A subscription is refused. **A `query` document that defines or spreads a fragment on `Mutation`, or names a denied mutation field at any selection, is refused,** including an inline `... on Mutation`, and none of the 166 corpus documents was refused by this rule. A query is otherwise not checked further. The 166 corpus documents all pass the bounds, and the 159 from the earlier run were idempotent under printing.
+- **Envelope and JSON, where a body is inspected.** The envelope is an object, `query` is a string, and `variables` is an object, null, or absent, so a top-level array or scalar and string-encoded variables are refused. Decoding is at the token level at every depth. A duplicate key, a case-variant top-level key, invalid UTF-8, a lone surrogate, nesting past the bound, and data after the object are refused. `netagent` re-encodes the decoded tree, with number text preserved.
+- **Bounds.** The defaults are 512 KiB per body, 64 KiB per document, 4,096 tokens, selection depth 32 with fragment spreads followed and a cycle refused, value depth 32 counting the leaf, JSON depth 32, 16 root fields per mutation, a 30 s body read, 4 concurrent checks per pod counting inspected requests, with 429 and `Retry-After` past that, and a 100 ms check budget, with 503 past that. They are data, within platform ceilings. The size and depth bounds each passed at their limit and were refused one past it, and body read, concurrency, the check budget, and head read ran on github.com, with no one-past row. The largest corpus values are 698 tokens, selection depth 14, 1 mutation root field, value depth 2, and 7,180 document bytes. The head read deadline is the egress design's listener default, since no host is known before a head is read. Check cost and the rest of the evidence are under "Bounds and cost".
+- **Buffering.** Only a request needing inspection is buffered: a listed GraphQL path, a write under `bodyPatterns` or `denyBodyKeys`, and a form write, because `_method` in a form cannot be refused otherwise. Other writes stream, unre-encoded, so a Jira attachment passes. On GitLab a REST JSON write is re-encoded, and a GitHub REST write streams unchanged. A `reauth-on-401` retry applies only to a buffered body. A streamed write's 401 goes back to the client, and `netagent` flushes the token, so the client's own retry gets a fresh one.
+
+#### Allow-list mode
+
+A binding whose `requestRules` sets `default: deny` is in allow-list mode. A request passes only when an allow rule admits it, except a read under `reads: allow`, and every deny rule, body pattern, and preset still applies. Deny mode stays the default, under decision 1, and shipped presets are deny lists. Allow-list mode is a tenant's choice for its own binding.
+
+```yaml
+requestRules:
+  default: deny
+  reads: allow                  # allow | listed
+  rest:
+    - {action: allow, methods: [POST], path: "/rest/api/3/issue"}
+    - {action: allow, methods: [POST], path: "/rest/api/3/issue/*/comment"}
+```
+
+This binding lets an agent read anything the token reads, create a Jira issue, and comment on one, and refuses every other write.
+
+- **Reads.** A read is a `GET`, `HEAD`, or `OPTIONS` request, or a GraphQL `query` operation on a listed GraphQL path. Under `reads: allow`, the default, a read passes unless a deny rule names it, so a client's discovery and status calls keep working. Under `reads: listed`, a REST read needs an allow rule. GraphQL queries are admitted under either value, within the bounds, as decision 37 states, and a tenant that wants no GraphQL reads lists no GraphQL path, which refuses every request to that endpoint. Decision 40 records the choice of default.
+- **Writes.** Every other method needs an allow rule. A listed GraphQL path and a preset's uploads path are not admits on their own in this mode: a mutation needs its root field in `allowMutations`, and an upload needs an allow rule on the uploads path. A mutation with several root fields passes only when every root field is allowed and none is denied.
+- **Deny on top.** A deny rule, a `denyMutations` name, a `bodyPatterns` match, and a `denyBodyKeys` key each refuse a request an allow rule admits. Deny wins, as it does in deny mode.
+- **Presets.** A preset carries no `default`, so the binding's `default` decides. The default preset on a host still resolves under allow-list mode, and its deny rules and request forms apply on top of the tenant's allow rules. `preset: none` clears it, as in deny mode.
+- **Guardrails.** An allow list never satisfies `requestRules.requiredPresets`. The required preset resolves with the allow list, and deny wins, because whether an allow list is narrower than a deny preset is a statement about a host's whole API, which no write-time check can decide.
+- **Matching.** "What every rule set forces" applies unchanged. A suffixed path never matches an allow rule, so under `default: deny` an allow rule refused `.json` and `.foo` spellings on `GET` and `POST` **[measured]**. The family rule, the canonical path, and the method override refusals hold.
+- **Refusals.** A request refused because no allow rule admits it records the reason `not_listed` in `egress.local`, beside the decision identifier and the operation name, so a tenant can tell a client using an operation it has not listed from an operation a rule denies **[design]**. Posture reports each binding in allow-list mode.
+
+**The trade.** Allow-list mode reverses what deny mode accepts. A provider operation added later, including one with approval or merge power, is refused until the tenant lists it. A client release that starts using an operation the tenant has not listed fails until the tenant lists it, and the tenant maintains the list. Revision 3 of [`0152-user-git-identity`](../0152-user-git-identity/change.md) measured that cost for a shipped allowlist on `gh`, as [`0129-github-credential-addon`, "Capture history"](../0129-github-credential-addon/review-history.md#capture-history) records.
+
+#### Request forms belong to a preset
+
+These are preset properties, so a generic rule set does not inherit a preset's forms. Each add-on states its presets' values.
+
+| Property | Meaning | A rule set with no preset |
+| :-- | :-- | :-- |
+| `writeForm` | Query strings and body types admitted on a write | Any |
+| `encodedSegments` | Segments where `%` is admitted | Those a rule declares |
+| `refuseFamilies` | Whether the GraphQL and API family rule applies | No |
+| `denyBodyKeys` | JSON keys refused on a write, at any depth | None |
+| `undecodableBody` | What a write `bodyPatterns` cannot decode does | Passes, with a metric |
+
+#### Headers
+
+**The forwarded-header allowlist is replaced by stripping credential headers only.** `Time-Zone`, sent by `gh` on any image with `/etc/localtime`, made the allowlist refuse every GraphQL request **[measured]**, and a client release can add a header at any time. `netagent` overwrites the `attach` header and removes `Authorization`, `Private-Token`, `Job-Token`, `Deploy-Token`, `X-Api-Key`, `Cookie`, `Proxy-Authorization`, and the host's per-host credential list from the egress design's shipped list. `Sudo`, the GitLab header through which an administrator's token acts as another user, was stripped in the capture under `gitlab-deny` **[measured]**, and [GL-3](../0130-gitlab-credential-addon/change.md#gl-3-the-gitlab-deny-preset) of the GitLab add-on does not name it. "Changes requested of other designs" asks that design to state it. Every other header is forwarded. **A forwarded header can carry meaning at a host this design knows nothing about, and that is a residual.**
+
+#### Canonical forwarding
+
+This rule applies to inspected requests, on any binding with rules: a listed GraphQL path, and a write under `bodyPatterns` or `denyBodyKeys`. Other writes stream, under **Buffering**. The first filter parsed the client's bytes and forwarded those same bytes. A parser difference then becomes a bypass, and one was found. This document passed the filter and reached the stub with the injected token, on both protocols **[captured]**:
+
+```
+# x\rquery{viewer(a:"""\nmutation{addPullRequestReview(...){clientMutationId}} #"""){login}}
+```
+
+gqlparser, graphql-go, graphql-js 17.0.2, and graphql-ruby's C parser read one query. graphql-ruby 2.6.14's default lexer ends a comment only at LF and reads one mutation, `addPullRequestReview` **[captured]**, because its reading of the bare CR differs. Which parser GitHub runs is **[stub cannot show]**. The corpus also shows other disagreements, including a NUL and a BOM between definitions. A design that has to know the host's parser is the failure here, because that parser is unknown and can change.
+
+**The rule: on an inspected request, the host receives bytes that `netagent` generated from the checked structure. No byte of the client's document, JSON envelope, or JSON body reaches the host's parser.**
+
+- **Document.** `query` is `netagent`'s own printing of the parsed tree, which removes comments and odd whitespace. `netagent` parses the printed text again and requires the same operation kind and root field names. If that fails, it refuses the request. Printed documents read the same under gqlparser and graphql-ruby on all 24 corpus documents **[captured]**, and the 159 documents of the later corpus were all idempotent under printing, with 0 differences under graphql-js and definitions reordered in 6 **[measured]**. `gh` kept the same exit codes and operations with the printer on, on GHES **[captured]**, and the attack table passed with it on **[captured]**.
+- **Lexical rule.** It stays beside the printer, because it refuses a suspicious document with a clear message rather than transforming it, and it is cheap. Either one closes the bare CR **[captured]**.
+- **Envelope.** It must be an object, with `query` a string and `variables` an object or null. `netagent` writes a new JSON object holding them. It drops `operationName`, which the one-operation rule makes redundant. `Content-Type` and `Content-Length` are its own.
+- **Variables and REST bodies.** The input-key check described here is gone with the allowlist, and the duplicate-key rule stays, because `bodyPatterns` read those values. The prototype copied `variables` verbatim, and that left the open defect: `{"i":{"pullRequestId":"P","state":"CLOSED"},"i":{"pullRequestId":"P"}}` passed the `updatePullRequest` input check and reached the stub, because the filter read the last value **[captured]**. A first-wins origin would close the pull request. Ruby's standard JSON reads the last value **[captured]**, and GitHub's reader is **[stub cannot show]**. The effect stops at a listed mutation's fields, so it never reached approval or merge. The JSON rule now refuses a duplicate key at every depth, and `netagent` re-encodes the decoded tree, so the host sees one value whatever it would have chosen **[measured]**: `{ "a" : 1e2 , "b" : "A\/x" }` reached the stub as `{"a":1e2,"b":"A/x"}`, with number text preserved.
+- **URL and query string.** `netagent` forwards the canonical path, so a host never decodes what a rule did not. Any escape outside a declared encoded segment is refused on every method, empty segments and trailing slashes are dropped, the final segment is also compared with anything after its first `.` removed for a refusal, and under a preset an unmatched `/api/*` or `/graphql*` path is refused **[measured]**. "What every rule set forces" states the rule. A preset's write form can admit no query string. On `GET` and `HEAD`, a query string is rebuilt from parsed pairs.
+- **Framing.** `netagent` writes its own HTTP/1.1 or HTTP/2 upstream.
+
+Canonical forwarding costs 1.9 µs on `pr create`, 44 µs on the largest `gh` document, and 14 ms on the token document, a 256 KiB document made of GraphQL tokens **[captured]**. Printing also caused the out-of-memory kill of the prototype's printer that "Bounds and cost" records, so those bounds apply before printing.
+
+**Check cost under the final preset [measured],** at 2 CPUs and 200 iterations, so noisier than the table under "Bounds and cost": `pr create`, 353 B, 19.6 µs and 11 KB; the `largest` case, 2,388 B, 120 µs and 106 KB; a 65 KB PR body, 600 µs and 584 KB; 258 KB of `<`, 2.7 ms and 1.7 MB; 4,096 tokens, 1.09 ms and 1.4 MB; a 512 KiB body, 3.65 ms and 5.2 MB; 40,000 JSON nodes in variables, 10.5 ms and 7.5 MB; and REST `GET`, 2.1 µs. An earlier run gave a 24% to 49% rise over the allowlist on `gh` documents, and paired end-to-end, a p50 difference from an unfiltered host of 0.50 ms at 209 B, 1.48 ms at 2,388 B, and 2.45 ms at 65,784 B, with `memory.peak` at 41.7 MB under a 15,000 token limit. `memory.peak` under the final bounds has not run. A separate result stands: 65,536 `<` characters print to more than 256 KiB, and 512 KiB admits them.
+
+#### Bounds and cost
+
+Every one of these came from a defect or a measurement in the capture. The size and depth bounds each passed at their limit and were refused one past it on GHES, github.com, and GitLab, and the fragment chain ran 15 plus 15 against 20 plus 20. Body read, concurrency, the check budget, and head read ran on github.com, with no one-past row **[measured]**. They are data defaults on any binding with rules, within platform ceilings.
+
+| Bound | Value | Why |
+| :-- | :-- | :-- |
+| Body, inspected requests | 512 KiB | `gh` JSON-encodes with HTML escaping, so `<` costs 6 bytes. The prototype's 256 KiB bound refused 44,000 `<` (264,352 bytes), 65,536 `<` (393,568 bytes), and 65,536 emoji (262,496 bytes) **[captured]**. 65,536 characters is GitHub's body limit as recalled. Spike [S15](../0129-github-credential-addon/steps.md#validation-owed) of the GitHub add-on found that GitHub accepted a 4 MiB body and did not establish the pull request body limit, so that figure remains unverified. 512 KiB admits the worst `gh` encoding of 65,536 characters. |
+| Document, within the body | 64 KiB | The largest `gh` body in the capture is 2,388 bytes **[captured]**. A PR body travels in variables, so this bound does not limit it. |
+| Tokens | 4,096 | The largest of 166 corpus documents has 698 by the parser's lexer **[measured]**. The prototype had no token limit, and a 256 KiB document of tokens cost 36 ms and 40 MB. |
+| GraphQL selection depth | 32, with fragment spreads followed and a cycle refused | The deepest corpus document has 14 levels **[measured]**. An 80 KB document nested 40,000 levels killed the prototype's printer at a 256 MiB limit, which stops egress for the whole pod **[captured]**. |
+| GraphQL value depth | 32, counting the leaf | The deepest corpus document has 2 **[measured]**. |
+| JSON depth | 32 | The same defect class, through `variables`. 33 and 40,000 were refused **[measured]**. |
+| Root fields per mutation | 16 | The corpus has 1, and `gh`'s project batch sends one per project change. A query has no root bound, and 200 passed **[measured]**. |
+| Head read, on `netagent`'s listeners rather than per rule set | 10 s, with a bare LF refused at once with 400 | A request with bare LF line endings got no answer, and the prototype held the connection for 20 s with no deadline **[captured]**. A partial head got 400 at 10.0 s **[measured]**. A bare LF head also waited 10.0 s, because the prototype does not implement "at once", so that part is **[design]**. |
+| Body read | 30 s | A body at 2 KB/s got 408 **[measured]**. |
+| Concurrent checks per pod | 4 inspected requests, then 429 with `Retry-After` | Holds buffered bytes to 2 MiB. With 6 slow bodies, 4 got 200 and 2 got 429 **[measured]**. |
+| Check time | 100 ms budget, refused with 503 past it | The parser cannot be preempted, so the bounds above are what limit it, and this catches a defect. It was never reached at 100 ms, and the worst case benchmarked is 10.5 ms **[measured]**. |
+
+**Against `netagent`'s memory.** The egress design's example request is 64 Mi. Measured `memory.peak` was 15.5 MiB after `pr create`, 17.9 after the largest `gh` document, and 18.9 after a 258 KB body **[captured]**, cumulative in that order on one process. The 256 KiB token document took it to 74.9 MiB **[captured]**, past that request, which is the case the token and document bounds remove. With a linear extrapolation from the measured 5.5 ms and 1.7 MB at 258 KB, a 512 KiB body costs about 11 ms and 3.4 MB, about double that with printing and re-encoding, and four at once stay under 30 MiB of transient allocation. Scaling the measured costs by token count puts a document at the token bound near 1 ms and under 2 MB. These figures are estimates **[design]**, and S9 measures them. The chart sets `GOMEMLIMIT` on `netagent`, so the collector works before the limit.
+
+| Document | Check alone | End to end, paired, on 1 CPU |
+| :-- | :-- | :-- |
+| `pr create`, 353 B | 11 µs, 6.8 KB | Below noise |
+| Largest `gh`, 2,388 B | 88 µs, 78 KB | 0.06 ms |
+| 65,784 B, a full PR body | 606 µs, 559 KB | 0.94 ms |
+| 258,185 B of escapes | 5.5 ms, 1.7 MB | 4.2 ms |
+| 260,023 B of tokens (now refused) | 36 ms, 40 MB | 17 ms |
+
+All of these are **[captured]** on a laptop under other load, so small differences are not resolved. The binary grew from 10.87 MB to 11.41 MB.
+
+**What the user sees past a bound.** `gh` exits non-zero with `HTTP 413: refused by request rules: body of N bytes is over the 524288 byte bound` and nothing is written. The message format is **[captured]**, under the allowlist's earlier wording. An ordinary body stays far under it. Past the host's own limit the host's error applies.
+
+#### Presets
+
+Presets ship as data with the add-on that defines them, as the egress design's provider templates do. A preset has a name, a version, the API flavours whose request layouts give its paths, the properties above, and rules. Rules reach `netagent` resolved, on the pod credential API, so a preset update reaches a pod at its next `cacheUntil` with no image change. `handling` names the rule evaluator's minimum version, so an image older than a rule's format refuses the credential.
+
+```yaml
+- name: example-deny
+  version: 1
+  flavours: [example]                  # request layouts an add-on registers
+  repoRoots: [/projects/*]             # optional roots that rules name as {repo}
+  writeForm: {query: false, bodies: [json]}
+  rest:
+    - {action: deny, methods: [POST], path: "{repo}/approve"}
+```
+
+A binding names a preset in `requestRules.preset`, or an add-on's request layout point supplies a default for a host, as the [VCS layer](../0152-user-git-identity/change.md) does on a VCS pool's API host. Where neither applies, no preset applies. A named preset's `flavours` list and the host select its flavour through the add-on that ships it, and no field can select another.
+
+**Keeping presets current.** Each add-on runs a CI job that diffs its provider's published API descriptions on a schedule and raises a preset change for review when a new name matches one of its preset's families of operations, such as review or merge. The window in which a new operation passes is the schedule, the review, and the time to the next `cacheUntil`.
+
+#### Who can change a preset
+
+Under the owner's decision D1, recorded as decision 1, a tenant can change it.
+
+| Action | Who | Conditions |
+| :-- | :-- | :-- |
+| Set rules, or clear a preset with `preset: none` | `tenant-admin`, through [EG-9](../0127-egress-and-git/steps.md#steps)'s write path | An audit event names the old and new rules. Posture reports each binding's preset and any cleared preset. |
+| Require a preset | `security-admin`, through a new [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) guardrail `requestRules.requiredPresets`, by host pattern with a minimum version | [EG-9](../0127-egress-and-git/steps.md#steps)'s check evaluates the resolved form, at a binding write and at a VCS pool write. A binding breaking it is refused, or `suspendedBy` when the guardrail arrives later, so a pin to an old version does not satisfy it. The pod credential API refuses a resolved rule set lacking a required preset recorded on the binding. Relaxing it is a weakening under [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)'s delay. |
+| Ship or update a preset | The platform, in the chart | A binding that sets `version` stays there, above any guardrail minimum, and others follow the latest. |
+
+### UC-5: `delivery: file`
+
+#### Gate
+
+A new per-tenant platform-admin grant, `userCredentialDelivery`, is its own risk class under the [egress design](../0127-egress-and-git/change.md)'s **Gates** paragraph, separate from `agentReadableDelivery`, the grant for agent-readable tenant credentials. That class holds tenant credentials, and this one holds a principal's: a person's, or a service account's under [`0143-service-account-credentials`](../0143-service-account-credentials/change.md), whose O2 recommends admitting `delivery: file` for its sources under this grant. Granting one grants nothing in the other. A tenant admin then opts in per binding by writing `delivery: file`, and the token's record must carry a delivery ceiling of `file`, on the type or the provider. `security-admin` can forbid it through [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)'s `credentialDelivery.forbid`, in which the value `file` covers every binding with `delivery: file`, of any secret kind, and the value `userCredential.file` covers `userCredential` bindings alone.
+
+#### Mechanics
+
+This reuses the egress design's `file` mechanics.
+
+- `/run/netagent/credentials/<name>/value` holds the raw value with no trailing newline, and `binding.json` holds the name, hosts, `attach`, `expiresAt`, and a version counter. `LENNY_CREDENTIALS_DIR` names the directory.
+- `netagent` swaps the directory atomically, and the mode is 0444. The directory sits on the slot's memory-backed credentials volume, `slot-<n>-netcred` ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction) names it), that only `netagent` writes and only the session's slot container mounts, read-only, at `/run/netagent/credentials`, as the egress design's ["Credential delivery to runtimes"](../0127-egress-and-git/change.md#credential-delivery-to-runtimes) states. No other slot of the pod mounts it. The session's binding list, `/run/netagent/credentials/bindings.json`, which names each of the session's bindings with its hosts, delivery, placeholder, and file path, sits on the same volume. The pod-wide network descriptor `/run/netagent/network.json` holds the endpoints, the CA bundle path, the `NO_PROXY` list, the launch variables, and a pointer to that list, and names no session's bindings, so no slot reads the binding names or hosts of another slot's session ([egress design, "Injected configuration"](../0127-egress-and-git/change.md#injected-configuration)). The slot's `/run/lenny` run volume, which the adapter writes, holds the adapter manifest of [PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) and never a value of this design, because the adapter never receives one. The LLM credentials file it held under direct delivery mode leaves with that mode ([`0133-llm-upstreams-and-cost-budgets`, "LU-4 Removal"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-4-removal)).
+- `projections` work as defined: `netrc`, from an `attach` Basic template as metadata, and a deployer's file templates.
+- `netagent` gets the value on the pod credential API under the current binding check: pod token, peer address, binding state, session user, and pod model, with the decision service's scope decision as the second of the mint checks.
+- `netagent` refreshes at `cacheUntil`, 300 seconds for this kind.
+
+Environment variables stay never offered. That design's reasons hold: `/proc/<pid>/environ`, child inheritance, diagnostic reports, and no rotation.
+
+#### What `file` does not promise
+
+| What it does not promise | What can be done | Status |
+| :-- | :-- | :-- |
+| **The token can leave through any allowed host.** An agent reads a file and sends it anywhere the policy allows, and an opaque tunnel hides that. | `lockEgressToHosts: true` limits the session's effective allow set, and every descendant's, recorded on its session row as `egressLockHosts`, to the binding's hosts and the base destinations, at the cost of everything else that session wanted to reach. It is refused on a pool with `egressProfile: internet`, whose raw sockets bypass it, including at delegation, and a binding with `delivery: file` on such a pool is reported in posture. On a pool with `maxConcurrentSessionsPerPod > 1` it is admitted where the pool's attribution status records per-slot attribution, because `netagent` then applies it to the session's slot alone under the egress design's decision 60, and refused, including at delegation, on a fallback pool, where the pod keeps the union scope, as the binding itself is (decision 41). **It covers egress alone:** a message to a child and a workspace export leave through gateway channels, which `leakScan` alone reads. Bytes-out alerts under [EG-12](../0127-egress-and-git/steps.md#steps) detect volume and not a 40-byte token. | **[design]** |
+| **`hosts` is enforceable only as a check against the allow set at write time.** `netagent` attaches nothing, so it never decides where the value goes. | The write rejects a host outside the type's hosts or the tenant's effective allow set, and `binding.json` carries the rest as a statement of intent. `lockEgressToHosts` is the enforcing form. | **[design]** |
+| **Removing the file does not invalidate copies.** | Prefer a short `expiresAt`, a narrowing template, and `oauth2Link` with revocation. Rotation after exposure is the tenant's action. | **[design]** |
+| **Lenny cannot revoke a `registered` token at the provider.** It knows nothing about the provider. | See "Exposure records". The tenant's backend is the party that can. | **[design]** |
+| **The agent can do whatever the token permits.** Rules do not apply. | Choose a token whose own scope fits. The type's documentation states this. | Stated |
+| **The token can reach transcripts, LLM traffic, workspace exports, checkpoints, and forensic evidence.** Anything the agent prints or stores carries it. | "Leak scanning" below narrows it. Nothing removes it. A session holding a binding with `delivery: file` is marked `agentHeldCredential`, which posture reports, and which a tenant can use to shorten that session's retention. | **[design]** |
+
+#### Exposure records
+
+§25.5's events are best effort **[source]**, so they cannot carry this. Each generation of a value released under `delivery: file`, of either source, writes a durable exposure row in the Token Service's store, with the `credentialRef` or `linkRef`, `generation`, the writer's `tokenId` when there is one, the type, and the session. The row is opened at release, and it becomes actionable at the session's end or at the next rotation. A §25.5 `user_credential.exposure_ended` event notifies the tenant, and `GET /v1/admin/user-credential-exposures` lists rows not yet acknowledged, so a missed event is recoverable. `POST .../{id}/ack` closes one. An alert fires on rows left open past a tenant-set age. A backend can also register one short-lived token per session, from its handling of session events. Erasure pseudonymizes an open row and keeps it until it is acknowledged, because a person's departure does not end a live token.
+
+#### Leak scanning (UC-6)
+
+This is optional, per binding (`leakScan: on`), and absent under `delivery: inject`, whose value the pod does not hold.
+
+- One gateway replica coordinates each session under a lease, which the specification's register REG-COORDLEASE holds. The Token Service gives that replica the session's current value over mTLS, checked against the session's coordinator record, the record digest, and a delivery ceiling of `file`, with an audit event per release. It is held in memory for the session. **A replica can acquire any session's lease through REG-COORDLEASE, so that check does not bound its reach:** a compromised replica can obtain the value of any `leakScan` session in the deployment, across tenants. That is the cost of the option.
+- A new built-in interceptor scans `PostAgentOutput`, `PreToolResult`, `PreExportMaterialization`, `PreMessageDelivery`, `PreDelegation`, and `PreLLMRequest`, which runs on every metered call under the LLM upstreams design, for the value and its base64 and URL-encoded forms, and it redacts and raises an event.
+- The collector and adapter of the agent activity streams ([FE-6](../0128-forensics-evidence-preservation/change.md#fe-6-agent-activity-streams)) do not receive these values, because the collector is a node-level process shared across tenants. Its structural and entropy layers apply as stated there.
+
+Its limits are stated: a call outside the LLM proxy, an opaque tunnel, a re-encoded or split value, and checkpoints are not scanned. A checkpoint can hold a copy, which is why §12.9 applies and why `agentHeldCredential` exists.
+
+### UC-7: Add-ons
+
+An add-on adapts this mechanism to a provider family without changing it. It is a package compiled into the components that run its code, the Token Service, the gateway, and `netagent` where it needs code there, registered under one or more kind names, and shipped with its data: templates, presets, and request layouts. No add-on loads at run time. The `oauth2` kind is built into this design and serves any OAuth2 provider that needs no code of its own. [`0152-user-git-identity`](../0152-user-git-identity/change.md) defines the VCS layer that the GitHub and GitLab add-ons share, [`0129-github-credential-addon`](../0129-github-credential-addon/change.md) defines the `github` and `github-enterprise` kinds, and [`0130-gitlab-credential-addon`](../0130-gitlab-credential-addon/change.md) defines the `gitlab` kind.
+
+#### Kind blocks
+
+A link provider's `kind` selects an add-on, and its configuration block, keyed by the kind's name, holds the fields that kind defines:
+
+```yaml
+linkProviders:
+  - name: github-acme
+    kind: github
+    delivery: inject
+    clientId: "..."
+    clientSecret: "..."
+    identityBinding: directory
+    allowedAccounts: [acme]
+    narrowing: {name: github-scoped, permissions: {pull_requests: write, contents: read}}
+    github:                        # schema registered by the GitHub add-on
+      host: github.com
+```
+
+- The add-on registers the block's schema. [EG-9](../0127-egress-and-git/steps.md#steps)'s write path validates the block against it, and refuses a block keyed by any other kind and a kind no add-on registers.
+- The whole block is in the token trust record, except the fields the add-on exempts, each with a stated reason. A field an add-on adds later is in the record unless the add-on exempts it.
+- A kind fixes what its block does not set. `oauth2` takes its endpoints, `apiHosts`, and `attach` from its block. A kind with fixed endpoints derives them from its block, such as from a host.
+- A shipped narrowing template names its overridable fields, and the override sits in the link provider's `narrowing`. Those fields are in the record unless the template exempts them.
+- Types, bindings, and presets carry no kind block today. An add-on that needs one there adds it through this design's write path, under the same rules.
+
+#### Extension points
+
+Each extension point is a named interface this design calls at a fixed moment. An add-on implements the points it needs, and a point with no implementation takes the default below.
+
+| Point | Called | What an add-on supplies | Default |
+| :-- | :-- | :-- | :-- |
+| Link kind | Link flow, refresh, user info, revocation | Endpoints, `apiHosts`, `attach`, the account fields of the user info response, the `allowedAccounts` check, the verified email source, token response rules such as refusing a non-expiring token, and the `identityBinding` values it supports | `oauth2` reads all of these from its block |
+| Template variables | Narrowing, at each mint | Variables a shipped template can render, such as a session's repository set and target, and whether that set follows entry state | The built-in variables alone |
+| Release check | Token Service, before its cache lookup on each release on the pod credential API and each mint for a session the add-on governs | A verdict, `allowed`, `refused`, or `unavailable`, with a reason | No check |
+| Request layout and default preset | Rule resolution at the pod credential API, and binding, pool, and preset writes | For a host: the API flavour, `apiBase`, `restPrefix`, the GraphQL paths, the uploads path, and the default preset | No preset unless the binding names one |
+| Host policy | Binding write, bind, and the pod credential API | Refusal or suspension of bindings whose type hosts include a host the add-on governs, refusal of an `oauth2` provider on such a host, and hosts to pin | None |
+| Attach | Session bind | Bindings to attach to a session that did not name them, with `scope: poolAttach`, and the bindings each replaces | None |
+
+These rules hold for every add-on:
+
+- **An add-on narrows and never widens.** A release check and a host policy can refuse what this design admits, and nothing an add-on supplies admits what this design refuses. An attached binding passes every check a named binding passes.
+- **Points fail closed.** A release check that errors gives `unavailable`, and a host policy that errors refuses the write or suspends the binding.
+- **Data travels on the pod credential API.** Templates, presets, and request layouts reach `netagent` resolved, so an add-on's data update needs no image.
+- **Testing is split.** This design tests each point against a test kind with no provider, and each add-on tests its own implementation against its provider.
+
+### UC-8: Link prompts
+
+When a user's account link stops working while her sessions run, the gateway asks her to link again. It raises one link prompt, an ordinary session elicitation in URL mode, on the event stream of each root session the lapse affects, and her relink resolves it everywhere **[design]**. The owner settled this on 2026-11-15 as option (b) of O11 of [`0124-connector-removal`](../0124-connector-removal/decisions.md#owner-decisions), in the words "go with (b)", and preferred one prompt per user over one per session tree. The rules of "Connector prompts" under CA-5 of [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md#connector-prompts), which the removal of connectors withdrew, are the origin of the lifetime, budget, suppression, and `inputPolicy` rules below. This part restates them for account links, and it keys deduplication on the user where CA-5 keyed it on the session tree. Three choices this part made are settled by the owner's answer of 2026-11-15, "2-4: ok", which the removal design records as D12: the `WatchLinkStates` call with the `user_link_prompts` table, the trigger on a release refused with the reason `user_act_required`, and the expiry of a prompt shown on several sessions at the smallest `maxElicitationWait` among their pools.
+
+#### Triggers
+
+The gateway raises a link prompt for a user and a link provider on these events:
+
+- **The link moves to `user_act_required`.** The Token Service writes that state when a provider refuses a refresh, when a link whose provider issues no refresh token reaches its access token's expiry, and when an identity binding re-evaluation fails (UC-2). On the write, the Token Service emits a link state event naming the tenant, the user, the link provider, and the new state, on `WatchLinkStates`, a server-streaming call on `schemas/lenny-tokenservice.proto` that each gateway replica opens to the Token Service.
+- **A release is refused for the link's state.** When `netagent` asks the pod credential API for such a binding and the Token Service refuses it with the reason `user_act_required`, which a token trust record mismatch also reports, the Token Service emits the same event.
+- **A session starts with an unusable link.** A session whose plan names a binding with `required: false` on a link that is missing or reports `user_act_required` starts, and the gateway raises the prompt at the post-chain point. A binding with `required: true` refuses creation with `403 LINKS_REQUIRED` and raises no prompt, because the response already carries the link under `details.userLinks`.
+
+On a link state event, the gateway lists the user's sessions in a non-terminal state that hold a `userCredential` binding whose type uses that link provider, including a `poolAttach` binding an add-on attached, and raises the prompt for their root sessions. A user with no such session receives no prompt.
+
+The trigger is always the Token Service's record of the link. `netagent` does not read a host's 401 as a lapse, so a 401 that a refresh cures raises nothing. A service that holds its own OAuth grant for the user, with no `userCredential` binding on its host, raises no link prompt either: its lapse is the service's to report, through an MCP elicitation that the runtime forwards as a question under B6 of [`0135-message-delivery`](../0135-message-delivery/decisions.md#decisions). An add-on's own read of a link, such as the VCS layer's repository check, raises no prompt of its own. A session whose `caller_type` is not `human` has no link and never receives a prompt, and a provider refusal of a `clientCredentials` or `issuerExchange` row raises none either: the tenant learns of it through the audit event `user_credential.provider_refused`, a notification, and an alert ([`0143-service-account-credentials`, "SA-4 Provider calls, caching, and failure"](../0143-service-account-credentials/change.md#sa-4-provider-calls-caching-and-failure)).
+
+#### The prompt
+
+- **Form.** A URL-mode elicitation with `humanRequired: true`, as every URL-mode elicitation is under [`0135-message-delivery`, "MD-22 Parents and children"](../0135-message-delivery/change.md#md-22-parents-and-children). No runtime waits on it, and no `request` frame or `lenny/request_elicitation` call stands behind it.
+- **URL.** The `linkUrl` of UC-2's "Flow", step 2: a Lenny URL on the gateway's external origin for a CA-0 flow that names the user as its subject. The gateway builds it itself. A URL from a service, a runtime, or a host never becomes a link prompt's URL.
+- **Message.** Text the gateway writes, naming the link provider and the type hosts whose requests fail until the user links again, such as "Your link `salesforce-acme` needs renewing. Requests from your sessions to `acme.my.salesforce.com` fail until you link again."
+- **Provenance.** Under §9.2's provenance table, `initiator_type: platform`, `purpose: account_link`, `link_provider` with the provider's name, and `expected_domain` with the host of the provider's authorization endpoint, to which the start page redirects after the browser login. `origin_pod`, `origin_runtime`, and `delegation_depth` are absent, because no pod raised it. The value `platform` takes the place of `connector`, which [`0124-connector-removal`, "CR-1 Removal"](../0124-connector-removal/change.md#cr-1-removal) removes, and a client shows it with the trust indicator §9.2 reserves for elicitations the gateway raises. A runtime cannot set `initiator_type`, because the gateway writes provenance on every elicitation.
+- **Where it appears.** On the event stream of each affected root session and in that root's pending elicitations list, R4 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-2-rest-additions). A binding held by a child puts the prompt on its root's stream, because a human-required elicitation goes to the root's client and no parent sees or answers it.
+
+#### One prompt per user and link provider
+
+At most one link prompt is pending per tenant, user, and link provider, across all of that user's sessions, under one `elicitation_id`. The gateway records it in the `user_link_prompts` table, keyed on those three, through a conditional insert, so concurrent triggers on several replicas raise one prompt. A trigger that finds a pending prompt adds the affected roots to it, and the gateway emits the same elicitation on each added root's stream.
+
+A response or a dismissal from any root the prompt lists resolves it on every root. The §9.2 check of session, user, and elicitation identifier accepts any root the row lists. A client's `accept` means only that the user will open the link, as in MCP's URL mode, and leaves the prompt pending until the callback resolves it.
+
+#### Lifetime
+
+- **Expiry.** The prompt is non-blocking and expires at `maxElicitationWait`, the smallest value among the pools of the sessions it is shown on when it is raised, 600 seconds by default. §9.2's expiry of an elicitation whose session leaves its pod does not apply, because no runtime waits on it. A root that ends drops it from its list, and the prompt ends when no listed root remains.
+- **Raising again.** After an expiry or a dismissal, the next trigger raises a new prompt with a new identifier. A trigger within `maxElicitationWait` of the previous prompt's start raises nothing, so a link that stays lapsed produces at most one prompt per `maxElicitationWait` for a user and link provider.
+- **Budget.** It does not count against `maxElicitationsPerSession`, because no agent produces it and the deduplication bounds it.
+- **Depth.** §9.2's deep elicitation suppression, `elicitationDepthPolicy`, and its depth-based restrictions do not suppress it. Those rules govern elicitations that sessions in a tree raise, and the gateway raises this one on the root.
+- **`inputPolicy: decline`.** R12 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-2-rest-additions) answers an agent's elicitation `decline` at once, and it does not answer a link prompt. The prompt stays pending in the session's elicitation list until it expires or the callback resolves it, so a client that cannot show it sees nothing, and the user relinks through `POST /v1/user-links`, the playground, or `lenny-ctl`.
+
+#### Completion
+
+The UC-2 callback that commits the user's link for the provider, whether it started from the prompt or from any other route, resolves every pending prompt for that user and provider with the outcome `completed`, and the gateway emits the resolution on each listed root's stream. The commit writes a new `generation`, and the Token Service pushes a binding change to the user's sessions bound to that provider, as every link state change does (UC-2, "Refresh"). `netagent` flushes, its next request to a type host asks the pod credential API, and the Token Service releases the new token, so the agent's next call works with no runtime action. A request that failed during the lapse is the runtime's to retry.
+
+#### Impersonation
+
+A delegation tree in which any session holds a `userCredential` binding refuses an impersonation bearer's session input, elicitation answers included (UC-3, **Impersonation.**), and every tree that receives a link prompt holds such a binding. An operator impersonating the user therefore cannot answer or dismiss the prompt. The link routes refuse impersonation bearers too, and CA-0's start page requires the user's own browser login, so an impersonator cannot complete the link either.
+
+#### Audit and metrics
+
+- **Audit.** `user_link.prompt_raised` names the tenant, the user, the link provider, the `elicitation_id`, the trigger, and the roots it is shown on. `user_link.prompt_resolved` names the same prompt and its outcome: `completed`, `dismissed`, or `expired`. Both go to the tenant's §11.7 chain, and the deduplication bounds their rate.
+- **Metrics.** `lenny_user_link_prompts_raised_total` by `trigger` (`state_change`, `release_refused`, or `session_create`), and `lenny_user_link_prompts_resolved_total` by `outcome`.
+
+### Configuration by scope
+
+| Setting | Scope | Who sets it | Default |
+| :-- | :-- | :-- | :-- |
+| `userCredentialDelivery` grant | Per tenant | `platform-admin` | Absent |
+| `userCredentialTypes` | Tenant, with optional [TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) `environments` | `tenant-admin` | None |
+| `hosts`, `attach`, and the delivery ceiling, on a `registered` type | Type | `tenant-admin`, and a change makes its rows unusable | None, none, and `inject`. A write must set `hosts`, and a binding with `delivery: inject` needs `attach`. |
+| `linkProviderDrainSeconds` | Deployment | Platform (Helm) | 86,400 |
+| `registeredBy`, `maxBytes`, `requireExpiresAt`, `maxLifetimeSeconds` | Type | `tenant-admin` | `[self, service]`, 16 KiB, `false`, unset |
+| `principalTypes` | Type, in the token trust record | `tenant-admin` | `[human]` on `registered`, which a tenant may set to `[service]` or `[human, service]`, and `[human]` fixed on `oauth2Link`. The other sources' values are in [`0143-service-account-credentials`, "Configuration by scope"](../0143-service-account-credentials/change.md#configuration-by-scope). |
+| `maxBytes` ceiling | Deployment | Platform (Helm) | 64 KiB |
+| `linkProviders`, with optional [TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) environments | Tenant | `tenant-admin` | None. A write must set `kind`, `clientId`, `clientSecret`, `identityBinding`, and the kind block. |
+| `delivery` on a link provider | Link provider | `tenant-admin`, and a change makes its links unusable | `none` |
+| The `oauth2` kind block: endpoints, `idField`, `loginField`, `apiHosts`, and `attach` | Link provider | `tenant-admin` | None. A write must set `userInfoEndpoint`, `idField`, `apiHosts`, and `attach`. |
+| Another kind's block | Link provider | `tenant-admin`, under the schema the kind's add-on registers | As that add-on states |
+| `allowedAccounts` | Link provider | `tenant-admin` | Empty |
+| `tokenTrust.allowedRecords` | Tenant security record | `security-admin`, under [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)'s delay | Absent |
+| `identityBinding` | Link provider | `tenant-admin`, and [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) can forbid `unverified` | None. A write must set it. |
+| `narrowing`, and a shipped template's overridable fields | Link provider | `tenant-admin`, within what the kind admits | None on `kind: oauth2`. A kind can require one. |
+| `delivery`, `required`, `lockEgressToHosts`, `leakScan` | Binding | `tenant-admin` | `inject`, `true`, `false`, off |
+| `requestRules` | Binding, under `delivery: inject` only | `tenant-admin`, and [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) can require a preset | An add-on's default preset for the host at the pod credential API, unless `preset: none`, and otherwise none |
+| Presets | Deployment | Platform (chart) | Shipped |
+| Rule bounds, and the routing override header list | Helm, with data within ceilings | Platform | As under UC-4 |
+| `userCredentialBindings` | Delegation lease | Client, within the parent's | Empty |
+| `manage_user_credentials` | Role | `tenant-admin` | Held by `tenant-admin` |
+| `credentialDelivery.forbid: userCredential.file` | Tenant security record | `security-admin` | Absent |
+| `requestRules.requiredPresets`, with a minimum version | Tenant security record | `security-admin` | Absent |
+| Link prompt expiry, read from `maxElicitationWait` | Pool, the smallest among the pools of the sessions a prompt is shown on | Platform, under §9.2 | 600 s. Link prompts have no setting of their own. |
+
+Every non-spec default is operator-tunable and documented as such. Each add-on states its own settings.
+
+## Worked examples
+
+### A Jira token as a file
+
+The platform admin grants `acme` `userCredentialDelivery`. Carol defines type `jira`, `source: registered`, `hosts: [acme.atlassian.net]`, a delivery ceiling of `file` (`delivery: file` on the type), `registeredBy: [service]`, with `requireExpiresAt: true`, and a binding with the owner's record and `delivery: file`.
+
+1. `acme`'s backend, under a `credential-writer` role, calls `PUT /v1/admin/users/alice@acme.com/credentials/jira`, with a token that expires tonight and a `tokenId`. An audit event names the writer. **[design]**
+2. Alice creates a session naming the binding, on a warm pool with `maxConcurrentSessionsPerPod: 1` and no recycling. The gateway checks the pod and that the caller is not an impersonator, and it writes `retireOnRelease` on the claim. **[design]**
+3. `netagent` asks the pod credential API. The Token Service reads Alice from the session row, checks the claim's mark, reads the row, compares its trust digest, checks expiry, asks `lenny-egress-authz` for the scope decision, and answers. `credential.mint` and `user_credential.delivered` are written, and an exposure row opens. **[design]**
+4. `netagent` writes `/run/netagent/credentials/jira/value` and `binding.json`. The runtime reads it with its own client. **[design]**, on mechanics **[measured]** in the egress rounds.
+5. The backend rotates at noon. The binding change reaches `netagent`, the file swaps, and the morning generation's exposure row becomes actionable. **[design]**
+6. An injected agent sends the token to an allowed host it should not have. Lenny does not see this. If the binding sets `lockEgressToHosts: true`, the CONNECT is refused. At session end, `acme`'s backend receives `user_credential.exposure_ended`, or lists the open rows, and it revokes each generation at Atlassian by its `tokenId`. **[design]**
+
+### The same token under `delivery: inject`
+
+Carol changes the binding's `delivery` to `inject` and lowers the type's delivery ceiling to `inject`, so the backend writes again, and the type's `attach` is `Authorization: Bearer {{secret}}`. No grant is needed. The agent never reads the token, the tool sends a placeholder, and `netagent` terminates TLS for `acme.atlassian.net`, as the [egress design](../0127-egress-and-git/change.md) describes. Carol adds `requestRules` with `default: allow` and a deny rule for `DELETE /rest/api/*/issue/*`, and `netagent` refuses that one with a decision identifier. With no preset, a Jira attachment upload still streams, and a write with a query string still passes. **[design]**
+
+### A generic OAuth2 link
+
+Initech defines `salesforce` on a link provider with `kind: oauth2` and `delivery: inject`. A session naming the binding with no link gets `403 LINKS_REQUIRED` with the link provider and its `linkUrl` under `details.userLinks`, and the UC-2 flow runs, with a confirmation page naming Erin's Salesforce login and the delivery. No template exists, so `netagent` holds Erin's access token with her full reach, as the write response said. The Token Service refreshes under a row lease. An admin at `initech` edits `tokenEndpoint`, and the sealed `clientSecret` is unusable until a write re-supplies it. Every link's digest now differs, and nothing is sent to either endpoint. Erin's next session offers a relink, and the page before the redirect names every endpoint host and says they changed. Erasure deletes the row and calls `revocationEndpoint` when the record matches. **[design]**
+
+### A lapsed link
+
+Erin runs two sessions that name the `salesforce` binding, one from the playground and one from a client created with `inputPolicy: decline`. She removes Lenny's application at Salesforce. The next refresh is refused, and the Token Service moves her link to `user_act_required`, emits the link state event, and pushes a binding change, so `netagent` flushes the token in both pods and the agents' next requests to `initech.my.salesforce.com` go out without it. The gateway raises one link prompt with `initiator_type: platform`, `purpose: account_link`, and `link_provider: salesforce-acme` and shows it on both sessions' streams and pending lists. The playground shows it, and Erin opens the link, logs in, and confirms. The callback commits the link, the prompt resolves on both sessions with `completed`, and each agent's next request receives the new token. The second client never showed the prompt, and its session works again all the same. **[design]**
+
+### Refusals
+
+- An operator calls `POST /v1/sessions` under an impersonation bearer for Alice: refused, as today.
+- An operator uses `lenny/send_message`, `POST /v1/responses`, `upload`, or `start` on Alice's session under an impersonation bearer: refused with `impersonation_user_credential`.
+- An operator calls `PUT /v1/credentials/{ref}` under that bearer: refused.
+- `acme` writes a link provider, and no field exists to name `globex`'s client secret.
+- A session on a pool with `recycle.enabled: true` names the binding: refused with `USER_CREDENTIAL_UNSUPPORTED_POD`.
+- A session on the same pool holds an `identityAssertion` binding: refused with `IDENTITY_ASSERTION_UNSUPPORTED_POD`.
+- An operator sends a message under an impersonation bearer to a session whose tree holds an `identityAssertion` binding: refused with `impersonation_identity_assertion`.
+- A service caller with no row of the type names a binding whose `required` field is `true`: refused with `USER_CREDENTIAL_NOT_FOUND` and `details.reason: no_row`. An `agent` caller: refused with `principal_type`.
+- A human session names a binding of a type whose `principalTypes` is `[service]`: refused with `USER_CREDENTIAL_NOT_FOUND` and `principal_type`, and it never receives a service account's token.
+- Alice's agent delegates to a child with no `userCredentialBindings`: the child has no file, and its requests carry no token.
+- Carol deletes type `jira` and recreates it with another host: the new type has a new `typeId`, and it holds no rows.
+- Carol raises a type's ceiling to `file`: stored rows are unusable until a new write.
+- Carol writes a link provider with `kind: github` and a `gitlab:` block: refused at write, because the block does not match the kind.
+
+## Changes requested of other designs
+
+### `0127-egress-and-git`
+
+This list is for maintainers of the egress design. It names the mechanisms that design now carries for this one, and "Terms" defines those this document relies on elsewhere. Applied in its revision 51, as hook rows under "Reserved for other designs" or in the text they govern: the typed `secret` union with `userCredential`, unknown kinds read as absent, the `userCredentialDelivery` gate, its exceptions to the egress security properties [P2](../0127-egress-and-git/change.md#security-properties) and [P3](../0127-egress-and-git/change.md#security-properties), which keep long-lived credentials out of pods and egress credentials away from the agent, the request inspection stage with `requestRules` and replacement, `handling`, `cacheUntil`, the one-binding rule on type hosts across deliveries, `scope: poolAttach`, the decision service honouring a link provider's endpoints on the mint path, the delegated child exception, `lockEgressToHosts` in the session formulas and on descendants, `caller_type` from `pkg/binding`, a VCS pool as a source of pins, `suspendedBy` naming a gate, a pin, or a VCS pool, a refusal of differing flavours on one host, an expected route and CA on the pod credential API with the route asserted on the CONNECT and in the level 2 contract, a `handling` value and a mint refusal for a session that `allowRuntimeHeldCredentials` applies to, and no CA or `attach` on a `userCredential` binding. Its git path text now states git path T, the git configuration the owner settled, in which git's `http.proxy` points at `netagent`, including what happens to a held token on covered hosts and on other hosts.
+
+Applied in its revision 75: the `delivery: file` directory on a per-slot volume mounted into `netagent` and the session's slot container alone, and slot attribution by owner UID under "Slot attribution and fetch grants", which answers SI O9. The owner settled its decision 60 as option (a) on 2026-11-13.
+
+Applied in its revision 76, in place of the per-pod attribution report that revision 28 of this document asked for: `netagent` reports at start whether either reader answered, the controller records the result in the pool's status, and the post-chain point reads it there ("Slot attribution and fetch grants", **Per-slot scopes (decision 60)**, and "Effective policy", **Where the pool checks run**). A cached credential of one slot's session serves no connection of another slot, and a slot release flushes that session's cache entries and closes its tunnels. The per-slot credentials volume carries the name `slot-<n>-netcred`, which [PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction) owns.
+
+Applied in its revision 77, answering the request of revision 29 of this document: a new pod whose `netagent` finds no reader at start on a pool whose status records per-slot attribution fails its readiness and is replaced, with the pool's status unchanged, so no session admitted at the post-chain point runs under the union scope, and a pool with no recorded status counts as the union scope, as "Pods that can serve someone else are refused" assumes ("Slot attribution and fetch grants", **Per-slot scopes (decision 60)**). The same revision moves each session's binding list from the pod-wide network descriptor to `/run/netagent/credentials/bindings.json` on the slot's own credentials volume, which "Mechanics" under `delivery: file` states.
+
+Applied in its revision 87, at the request of [`0124-connector-removal`](../0124-connector-removal/change.md#changes-requested-of-other-designs) rather than of this document: the `identityAssertion` secret kind under `delivery: inject` alone, with its exception to one `inject` binding per host, which "One binding per host" under UC-3 follows, and its refusal on a fallback pool with `422 IDENTITY_ASSERTION_UNSUPPORTED_POD`. Its revision 90 adds, under D11 of the removal design, the same code's refusal on recycled pods and on pods that have served a session, which UC-3 **Identity assertions.** points to.
+
+### The VCS layer and its add-ons
+
+[`0152-user-git-identity`](../0152-user-git-identity/change.md) configures this mechanism for VCS hosts, and its revision 28 moved the link flow, the stored links, and the canonical forwarding and bounds evidence here. [`0129-github-credential-addon`](../0129-github-credential-addon/change.md) and [`0130-gitlab-credential-addon`](../0130-gitlab-credential-addon/change.md) hold the kinds, templates, presets, and request layouts that this document's earlier revisions held.
+
+Open request: [GL-3](../0130-gitlab-credential-addon/change.md#gl-3-the-gitlab-deny-preset) states whether `gitlab-deny` strips the `Sudo` header, which "Headers" under UC-4 reports was stripped in the capture.
+
+### Others
+
+| Design | What it says now |
+| :-- | :-- |
+| [`0142-security-oversight`](../0142-security-oversight/change.md) | The `userCredential.file` value of `credentialDelivery.forbid`, `requestRules.requiredPresets` with a minimum version, `tokenTrust.allowedRecords`, `allowRuntimeHeldCredentials`, oversight of the grant and of preset changes, `followsEntryState` on shipped templates, and posture fields. |
+| [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) | Delivered tokens in evidence, `quarantined` stopping release on the pod credential API, the limits of rotation, and volumes holding a file. |
+| [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) | Types and link providers scoped by environment, delegation, `poolAttach`, and user lifecycle. |
+| [`0145-session-isolation`](../0145-session-isolation/change.md) and [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) | The per-slot release of SI-3, which decision 41 read. Applied: [PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction) names the per-slot `netagent` credentials volume `slot-<n>-netcred`, memory-backed, read-write in `netagent` and read-only in slot container `n` alone (PLR-22), and the webhook rules of [SI-7](../0145-session-isolation/change.md#si-7-credentials-manifests-and-other-shared-files) admit only `netagent` and `runtime-<n>` to it. |
+| [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) | `user_links` in the Secret class (TSS-8, I50). |
+| [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | Applied in its revision 6: R4's provenance names the link prompt of UC-8, one entry per root it is shown on, resolved on all of them, and R12 leaves a link prompt pending under `inputPolicy: decline`. |
+| [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) | Applied in its revision 20: the banner of CA-5 points to UC-8, whose rules come from CA-5's "Connector prompts". |
+| [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) | Owns principal-owned credentials for service accounts, the `clientCredentials` and `issuerExchange` sources, their provider calls, their deliveries, and the subject namespaces. This document's revision 39 applies the changes its revision 1 asks here: UCP-1, `principalTypes`, the source union, the write rules, **Service and agent sessions.**, the audit values, and decisions 14 and 43. Revision 40 applies the changes its revision 2 asks: the `[human]` default, the fixed `[service]` on `issuerExchange`, the namespaced service account route, the self-write refusal, and `type_suspended`. |
+| [`0152-user-git-identity`](../0152-user-git-identity/change.md) and [`0124-connector-removal`](../0124-connector-removal/change.md) | Their `retireOnRelease` terms gloss decision 44 and link to UC-3, "The `retireOnRelease` mark". Applied in their revisions 46 and 8. |
+| [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) | The `PodClaim` kind of PLC-3 carries `status.retireOnRelease`, written by the gateway as decision 44 states. Its rename rule, under which every other field keeps its name, already covers the field. |
+| [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md) | An OAuth2 link to a private host. Its requirement OR-3 covers the Token Service's calls to a link provider, which follow C6, C8, C9, and C10, with no design change. |
+
+## Specification sections affected
+
+- [§4.2 Session Manager](../../spec/04_system-components.md#42-session-manager): `caller_type` on the session row, copied to a child, read as the principal type of a principal-owned row.
+- [§4.3 Token Service](../../spec/04_system-components.md#43-token-service): a user credential category with its table and key, the token trust record, and "Pods never hold downstream OAuth tokens" gains the stated exceptions, and the user link category with its table, and `WatchLinkStates`, on which the Token Service reports each link's move to `user_act_required` and each release refused for it (UC-8).
+- [§4.9 Pre-Authorized Credential Flow](../../spec/04_system-components.md#pre-authorized-credential-flow): `principalTypes`, the release rule for `human` and `service` principals, the service account routes that [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) stages, the `type` field, the providers with no delivery refused, the admin write route, the impersonation refusal, and the different `DELETE` semantics on a type row.
+- [§4.8 Gateway Policy Engine](../../spec/04_system-components.md#48-gateway-policy-engine): the built-in scan interceptor.
+- [§5.2 Pool Configuration and Execution Modes](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), which [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) O7 renames "Pool Configuration" through the anchor-redirect map: the refused pods, stated against `maxConcurrentSessionsPerPod`, `recycle.enabled`, and a pod that has served a session, the per-slot release as the ground of the reused-pod rows, and `retireOnRelease`. The pool's attribution status enters the item only when the owner settles decision 41 as recommended.
+- [§4.6.1 Warm Pool Controller (Pod Lifecycle)](../../spec/04_system-components.md#461-warm-pool-controller-pod-lifecycle), **Pod claim mechanism (per-pod occupancy claim):**, and [§4.6.3 CRD Field Ownership and Write Boundaries](../../spec/04_system-components.md#463-crd-field-ownership-and-write-boundaries), the claim's `status.*` row: `status.retireOnRelease`, which the gateway writes as `true` in the status patch that first records `bound` for a session holding one of the three triggers, and which nothing clears (decision 44).
+- [§8.3 Delegation Policy and Lease](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease): `userCredentialBindings`.
+- [§9.3 Connector Definition and OAuth/OIDC](../../spec/09_mcp-integration.md#93-connector-definition-and-oauthoidc): none of its own. [`0124-connector-removal`, "CR-1 Removal"](../0124-connector-removal/change.md#cr-1-removal) replaces the section's body with a successor pointer that names account links among the places its parts went, and the browser binding on the callback lands with CA-0's shared flow on the account-link routes of §15.1. The VCS layer's refusal of a connector on a link provider's hosts leaves with connectors.
+- [§9.2 Elicitation Chain](../../spec/09_mcp-integration.md#92-elicitation-chain): the link prompt (UC-8), with `initiator_type: platform`, `purpose: account_link`, and `link_provider` in the provenance table, which the removal design's CR-1 leaves with `agent` alone; one prompt per user and link provider across sessions under one identifier; its expiry at `maxElicitationWait` and its raising again; its exemption from `maxElicitationsPerSession`, deep elicitation suppression, `elicitationDepthPolicy`, and the depth-based restrictions; its URL on the gateway's external origin; and its resolution at the link callback.
+- [§10.2 Authentication](../../spec/10_gateway-internals.md#102-authentication): `manage_user_credentials`, `manage_user_links` and the link rows of the permission matrix, the session input check, and the provider identity claim in the broker contract and a customer source's claim mapping.
+- [§11.4 User Invalidation](../../spec/11_policy-and-controls.md#114-user-invalidation): stopping a user's credentials at each level, and revoking the user's links at the provider.
+- [§12.8 Compliance Interfaces](../../spec/12_storage-architecture.md#128-compliance-interfaces) and [§12.9 Data Classification](../../spec/12_storage-architecture.md#129-data-classification): the new columns, the exposure rows, `agentHeldCredential`, `TokenStore` deletion with provider revocation under the 30-minute limit, and `user_links` in the Secret class.
+- [§13.3 Credential Flow](../../spec/13_security-model.md#133-credential-flow): "Pod never receives" gains the stated exception, and session input routes refuse an impersonation bearer on affected sessions, which include trees holding an `identityAssertion` binding, with the reason `impersonation_identity_assertion` that the removal design's CR-B adds to §15.1.
+- [§15.1 REST API](../../spec/15_external-api-surface.md#151-rest-api): the credential and link routes, the error code `LINKS_REQUIRED` for the combined missing-links response with `details.userLinks` and no `details.connectors`, which the removal design's CR-1 removes, and the wire names §4.9 and the code disagree on; the link prompt in the pending elicitations list and on the event stream with its provenance, its listing under `inputPolicy: decline`, and a response or dismissal from any root it is shown on (UC-8). [§16.1](../../spec/16_observability.md#161-metrics), [§16.5](../../spec/16_observability.md#165-alerting-rules-and-slos), and [§16.7](../../spec/16_observability.md#167-section-25-audit-events): metrics, alerts, and events, including `lenny_user_link_prompts_raised_total`, `lenny_user_link_prompts_resolved_total`, `user_link.prompt_raised`, and `user_link.prompt_resolved`.
+
+## Defects found while verifying
+
+These exist today and are recorded here because this document edits nothing else. [`0152-user-git-identity`](../0152-user-git-identity/change.md) recorded them before revision 28. Each is filed in `BUILD-GAPS.md` under the identifier its entry names.
+
+- **Account linking in §9.3 (F-9.3.18).** `handleAuthorizeConnector` returns an authorization URL and state to any authenticated caller, and `handleConnectorOAuthCallback` carries no bearer and no cookie. An attacker sends the URL to a victim, who approves, and the victim's token lands under the attacker's tenant, connector, and user. The specification's "bound to the initiating session ID and connector ID" also differs from the code, which binds tenant, user, environment, and session. Severity is High wherever a confidential connector is registered, and a public connector is exposed as well, because the gateway supplies the PKCE verifier itself. [CA-0](../0123-connector-authorization-and-external-memory/change.md#ca-0-shared-oauth-link-flow) closes it: the shared OAuth link flow lands first and converts today's §9.3 handlers, and UC-2 uses the same flow. CR-A of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) then removes the §9.3 handlers with connectors.
+- **Refresh absent (F-9.3.20).** `connectoroauth.RefreshAccessToken` has no caller, and `Invoker.bearerFor` returns an expired token, so a GitHub or GitLab connector stops working at its expiry. Proposal CA-B, which was to close it under [CA-2](../0123-connector-authorization-and-external-memory/change.md#ca-2-token-lifecycle), is withdrawn with connectors, and CR-A deletes the invoker, which resolves the finding as obsolete under that design's "CR-1 Removal", **Records.** UC-2's refresh has its own caller, under "Refresh".
+- **User-scoped credentials decrypted in the gateway (F-4.3.1, its deferred cleanup).** `credentialpg.New(w.pgPool, w.kmsProvider)` runs in `cmd/lenny-gateway/credentialsurface.go`, against §4.3's reservation of KMS decrypt for the Token Service and §4.9's "Token Service stores it" **[source]**.
+- **Inert registration (F-4.9.46).** `POST /v1/credentials` stores `provider: github`, `aws_bedrock`, or `vault_transit`, which can never be delivered.
+- **Session input under impersonation (F-13.3.26).** `handleMessages`, `handleResume`, `lenny/send_message`, and the `/v1/responses` and `/v1/chat/completions` translators admit an impersonation bearer, and §13.3 limits only mints. This matters beyond this design.
+- **Connector client secret resolution (F-9.3.19).** A connector's `clientSecretRef` is `namespace/name`, and `connectorsecret.KubeResolver` resolves it with no tenant check **[source]**. Every `/v1/admin/connectors` route uses `requireAdmin`, which admits only `platform-admin` (`pkg/gateway/externalapi/admin/routes.go` and `tenants.go`), and the outbound connector design's tenant-admin routes are a different resource, so this is no tenant-to-tenant escalation in today's tree. **The defect is that the resolver cannot read there.** The chart gives the gateway's service account `create`, `update`, `delete`, and `deletecollection` on Secrets in the credentials namespace (`lenny-gateway-credential-writer`), and `get` on one named admin token Secret in its release namespace (`lenny-gateway-admin-token`). The resolver uses an uncached client, so under the chart's defaults a `Get` on §9.3's own example, `lenny-system/github-client-secret`, is forbidden, and a confidential connector's token exchange fails at the callback. This comes from reading the chart and has not run. CR-A of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) deletes `connectorsecret` with the connector admin routes, which resolves the finding as obsolete. A link provider's client secret is a write-only value under the tenant (decision 17) and never a Secret reference, so the defect has no counterpart here.
+
+## Documentation
+
+- An operator page on the grant, stating every row of "What `file` does not promise" in those words, for the platform admin deciding on it.
+- An operator page on link providers, covering client registration for each kind, the callback URL, and the delivery ceiling.
+- A tenant admin page on types, hosts, sources, bindings, request rules, and presets, stating that rules apply under `delivery: inject` alone, that no template means full reach, and that any change to a token trust record makes stored tokens unusable.
+- A backend integration page: the write route, the service account route, the role, `principalTypes`, expiry, rotation, and exposure records, with the pages [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) lists under "Documentation changes".
+- A runtime author section on the file layout, and on what a refusal looks like.
+- A preset reference generated from the data, and doc tests pinning error codes to their pages.
+- An add-on author page on kind blocks, the extension points, and the test kind.
+- A client guide section on link prompts: the elicitation event with `initiator_type: platform`, `purpose: account_link`, and `link_provider`; showing the provider name and the full URL and opening it in the user's browser; that `accept` means only that the user will open the link, so the client keeps the prompt shown until the resolution event arrives; that one prompt appears on several sessions and resolves on all of them; that it expires at `maxElicitationWait` and can return; that it stays in the pending list under `inputPolicy: decline`; and that `POST /v1/user-links` and `lenny-ctl` relink without it.
+- An operator page on link prompts: the triggers, which read the Token Service's link state and never a host's 401; one prompt per user and link provider; the expiry and the rule for raising again; the exemption from the elicitation budget and the depth rules; the audit events and metrics; and that a service holding its own OAuth grant raises no link prompt.
+
+Each page states the following in full, so that no rule of this design is left to the specification alone:
+
+- **Settings and defaults.** Every row of "Configuration by scope", with its scope, who sets it, and its default, including the deployment values `linkProviderDrainSeconds` (86,400) and the `maxBytes` ceiling (64 KiB), the type defaults (`registeredBy: [self, service]`, `principalTypes` per source, `maxBytes` 16 KiB, `requireExpiresAt: false`), and the binding defaults (`delivery: inject`, `required: true`, `lockEgressToHosts: false`, `leakScan` off).
+- **Limits.** The request bounds of "Bounds and cost" with their values: 512 KiB inspected body, 64 KiB document, 4,096 tokens, depth 32 for selections, values, and JSON, 16 root fields per mutation, a 10 s head read with a bare LF refused at once, a 30 s body read, 4 concurrent checks per pod with 429 past them, and a 100 ms check budget with 503 past it. The refresh interval of a value with `delivery: file` (`cacheUntil`, 300 s), the binding change round trip (30 s when a push is lost), and the one-binding-per-host rule.
+- **Pod retirement.** A claim whose `status.retireOnRelease` is `true` retires its pod at the release, on every release path and whatever the pool says. The gateway sets it in the patch that first records the claim as `bound` for a session that names a `userCredential` binding, holds an `identityAssertion` binding, or declares a repository under a VCS pool with `userAuthorization: required`, and it never clears (decision 44).
+- **Pod requirements.** A session naming a `userCredential` binding needs a pool with `egressProfile` other than `internet` when it sets `lockEgressToHosts`, a pod that has served no session, no `recycle.enabled: true`, and either `sessionPolicy.maxConcurrentSessionsPerPod` of 1 or a pool whose attribution status records per-slot attribution (decision 41). This design adds no node requirement.
+- **Failure modes.** Each refusal with its code and where it fires: `422 USER_CREDENTIAL_UNSUPPORTED_POD` at the post-chain point, on the final pool's policy and, on a pool with several slots, its attribution status, and at bind, on a pod that has served a session, under either delivery; `USER_CREDENTIAL_NOT_FOUND` with its `details.reason` values `no_row`, `principal_type`, `trust_changed`, and `provider_refused`, `403 LINKS_REQUIRED` with `details.userLinks` and no other list, `details.reason: trust_changed`, `403 FORBIDDEN` with the reason `impersonation_user_credential`, and with the reason `impersonation_identity_assertion` for a tree holding an `identityAssertion` binding, `409 LINK_ACCOUNT_IN_USE`, `403 LINK_IDENTITY_MISMATCH`, the `not_listed` rule refusal, the request bound refusals (413, 429, 503, and 400 for a bare LF), and the rows of "Stopping a credential".
+- **Link prompts.** The triggers, the provenance values, the URL, the deduplication per user and link provider, the expiry at `maxElicitationWait` (600 s by default) with at most one prompt per that interval, and the resolution at the link callback (UC-8).
+- **Runtime-facing rules.** Under `delivery: file`, the directory `/run/netagent/credentials/<name>/` named by `LENNY_CREDENTIALS_DIR`, holding `value` with no trailing newline and `binding.json` with the name, hosts, `attach`, `expiresAt`, and a version counter, mode 0444 and read-only; the atomic swap at each refresh, so a runtime re-reads the file rather than caching it; the projections; no environment variable ever carries a value; and a slot sees only its own session's directory. Under `delivery: inject`, the runtime sends a placeholder and `netagent` attaches the value.
+
+## Tests
+
+Every test carries a `// spec:` annotation once the specification sections land.
+
+### Tier 0: static
+
+Preset and template data pass schema checks. A lint refuses a type row's secret, and any `user_links` access, outside the Token Service. A test fails when a route on any mounted mux, an MCP session tool, or a registered adapter prefix declares no impersonation status.
+
+### Tier 1: unit
+
+- Types: name rules, reserved names, an unknown source read as absent, exact canonical hosts, and a new `typeId` on recreate.
+- The token trust record: each field changes the digest, including `attach`, a route under any `environmentPolicies` entry, a move between scopes, a reorder, and a resolved address, while a mirror route, an egress group, a shipped template's `permissions`, a re-resolution, and a rotated secret value do not. A revert restores use. An edited digest, a moved ciphertext, a swapped role, a moved environment, an encoding collision, a rewritten sealed field, a copied cache entry, and content not hashing to the sealed digest each fail.
+- Registration: each permission, owner, type, size, encoding, and expiry path, and each refused subject, including a security principal, a subject in the `~svc~` or `~agt~` namespace on the person route, a person's `principalTypes` mismatch on the service account route, and an erased subject. `POST /v1/credentials` from a service caller refused, and every changing call on the service account route refused for the service account itself with `USER_CREDENTIAL_SELF_WRITE`. A new `registered` type admits no service account until `principalTypes` lists `service`.
+- The release rule: a `human` session against a `service` row with the same identifier string reads nothing, and the reverse, and `agent` and an empty `caller_type` read nothing.
+- Rule evaluation: each rule kind and default, tenant additions over a preset, path patterns, and each preset property per flavour.
+- Everything under "What every rule set forces", on the spike's attack rows and new rows: `%` escapes in each position, trailing slashes, format suffixes, `/graphq%6C`, `/graphql/x`, `/api/v5/...`, GraphQL literals carrying `\n/merge` in arguments at any depth, variable defaults, and directive arguments, string-encoded `variables`, REST twins under both root forms, routing override headers, and `/repos/acme/graphql-tools` passing. `/graphql.json` and an uploads path with a suffix matching no admit, `merge.foo`, `merge.json.foo`, a dotted deny pattern at each dot, a `POST` to `/repos/a/b/graphql`, any method on a suffixed listed path such as `/graphql.json`, with `PATCH` and `DELETE` on `/repos/acme/graphql`, a label named `graphql`, and `PUT .../contents/graphql` passing, a `query` with a `Mutation` fragment or a denied field, `/api/v3/repos/...` under a root flavour, and a wrong family's denied mutation names and REST writes refused. `gh secret set --env` and `gh variable set --env` pass, and `gh release upload` passes on GHES.
+- A generic rule on a Jira stand-in: a multipart write and a write with a query string pass.
+- Template rendering, with a URL off the recorded origins refused and a failure never falling back to the parent.
+- Header stripping, with `Time-Zone` forwarded and `Cookie` removed.
+- Allow-list mode: a read passing under `reads: allow` and refused under `reads: listed`, a GraphQL query passing under both, a write and a mutation refused with no allow rule and the reason `not_listed`, a multi-root mutation refused when one root is unlisted, a deny rule, body pattern, `denyBodyKeys` key, and preset each refusing an allowed request, an unlisted GraphQL path refused, an upload refused with no allow rule, `reads` refused with `default: allow`, and `requiredPresets` unmet by an allow list alone.
+- Kind blocks: a block validated against its registered schema, a block keyed by another kind refused, an unregistered kind refused, and each block field changing the digest unless exempted.
+- Canonical forwarding: the printed document re-parses to the same operation and fields, the variables re-encode to one value per key, and the corpus documents read the same under gqlparser and graphql-ruby after printing.
+- Each bound, at its limit and one past it, including the 40,000-level document and a bare-LF head.
+- A cache key always includes the row or `link_ref` and generation.
+- Link prompts: the provenance built for a prompt (`initiator_type: platform`, `purpose: account_link`, `link_provider`, `expected_domain`, and no `origin_pod`), the URL on the gateway's external origin, and the expiry taken as the smallest `maxElicitationWait` among the listed sessions' pools.
+
+### Tier 2: component
+
+The tests run pod model validators against envtest, including, at the post-chain point on `maxConcurrentSessionsPerPod: 2`, an admission when the pool's attribution status records per-slot attribution and a refusal when it records the union scope or is absent, with `lockEgressToHosts` following the binding in each case, a refusal on a recycling pool, and a refusal on a used pod, the pod builder rendering the `delivery: file` volume into `netagent` and the session's slot container alone, `retireOnRelease` honoured after a pool edit in both directions on each release path (`podsession.Binder.Release`, `Server.ReleaseSuspendedPod`, `PodExecutor.Release`, and the scrub reporter's seams), `PodClaim.status.retireOnRelease` written in the same status patch that first records `bound` for each of the three triggers, absent for a session that holds none, and never cleared by a release, a reserved hold, or a pool edit (decision 44), the pod credential API refusing a release with no mark, and suspension when a pin or guardrail arrives.
+
+### Tier 3: contract
+
+The pod credential API with `handling`, the expected route and CA, resolved rules, and a `file` value, including an old `netagent` stand-in refusing an unknown handling. The Token Service link API. Each extension point against a test kind, including a point that errors.
+
+### Tier 4: integration
+
+- A backend write through to a file, with rotation, revocation, expiry, and deletion each reaching the pod.
+- An impersonation bearer on every mounted route, on `lenny/send_message`, `/v1/responses`, an `inReplyTo` reply, a message held for an unbound session, a child whose parent is affected, and `/v1/credentials` writes, and on a tree whose only ground is an `identityAssertion` binding, refused with `impersonation_identity_assertion`.
+- The combined missing-links response answering `LINKS_REQUIRED` with one missing account link and with two, with `details.userLinks` and no `details.connectors`, and a `PreRoute` interceptor or runtime route that moves a session onto a pool that can serve another session, refused at the post-chain point with no pod claimed.
+- A service session with its own row receiving its token, a service session with no row, another service account's session, and an `agent` session, each under each value of the binding's `required` field, and a human with no token.
+- Delegation with and without the lease naming the binding, including under `poolAttach`.
+- An OAuth2 provider stand-in: link, refresh race, revocation, a hostile redirect, an oversized response, no refresh token, and no `expires_in`.
+- Each `identityBinding` value, with a second account refused and a directory change moving a link to `user_act_required`.
+- The link flow against a fake provider, with a mismatched browser login, a missing cookie, a replayed state, a second user on one account, and a refused `allowedAccounts`.
+- Refresh: a race across replicas produces one provider call, a lost response moves to `user_act_required`, and a store failure after the response recovers.
+- Provider revocation for each row of the lifecycle table, including a host unreachable during erasure, with the destroyed ciphertext and the receipt.
+- A change to each trust record field, for both sources, including a route and a CA on an unchanged host: the token is unusable at the pod credential API and at each mint, and a stand-in on each endpoint receives no old token. A route edit after a comparison: the decision service refuses the asserted route. An App or project token mint on the same host succeeds with no assertion and no refusal. **The Initech topology, a git route alone to a registered private endpoint, and the connector topology, an egress route alone with the git route `direct`, each work** for an API request, a git request from a session that `allowRuntimeHeldCredentials` applies to, and a link provider call, each naming the list it matched. A host with both lists gives each class its own route, and a cached decision for one list does not answer the other. A route edit stops a pooled upstream connection. A provider in `deleting` drains, refuses a recreate, stops on a later route or CA, and ends each row at the bound with an audit event and a notification.
+- The page before the redirect, and a sealed `clientSecret` unusable after a record change and restored by a revert.
+- `tokenTrust.allowedRecords` refusing or suspending an unlisted record.
+- Exposure rows across rotation, and a missed event recovered through the read route.
+- Audit and `credential.mint` for each delivery, with no secret in any record.
+- Link prompts (UC-8), against the OAuth2 provider stand-in:
+  - the stand-in refuses a refresh, the link moves to `user_act_required`, and one prompt appears on the stream of the user's session that holds a binding on the provider, with none on her session without one and none for another user;
+  - two sessions of one user, on two replicas, each with a binding on the provider, receive one prompt with one `elicitation_id`, and a dismissal from one session resolves it on both;
+  - a prompt expires at `maxElicitationWait`, a trigger within that interval raises nothing, and a later trigger raises a new prompt with a new identifier;
+  - the link callback resolves the prompt on every listed root with `completed`, and the session's next request through `netagent` carries the new token;
+  - a session created with `inputPolicy: decline` lists the prompt in its pending elicitations and is not answered `decline`;
+  - a session with a binding marked `required: false` and no link starts and receives the prompt, and one marked `required: true` is refused with `LINKS_REQUIRED` and no prompt;
+  - a 401 from a host where the session holds no `userCredential` binding, standing for a service that holds its own OAuth grant, raises no prompt, and neither does a 401 that a refresh cures.
+
+### Tier 5: end to end on Kind
+
+The tier covers each refused pod, including a pod with two slots on a fallback pool and a pod with two slots one of whose slots was released after a session, a session admitted on a pod with two slots on a pool whose attribution status records per-slot attribution, a runtime reading a file across a swap, and `delivery: inject` with rules through a client binary. It also covers the per-slot scopes that decision 41 relies on, for tenant bindings of the egress design: a process in the second slot of a pod with two slots finding no `delivery: file` directory of a tenant binding that the egress design delivered to the first slot's session, the same pod attaching a `delivery: inject` token to the first slot's requests and not to the second slot's, and `egressLockHosts` on the first slot's session leaving the second slot's allow set unchanged.
+
+### Tier 6: end to end on cloud
+
+The tier runs a hosted OAuth2 provider and a provider-issued token through both deliveries.
+
+### Tier 7: load
+
+The tests measure rule evaluation at the concurrency bound with bodies at their bounds, and a burst of rotations reaching pods.
+
+### Tier 8: chaos
+
+The tests cover Token Service loss with a file present, a lost binding push, a `netagent` restart, and Redis down at session end with the exposure row surviving.
+
+### Tier 9: security
+
+- **`acme` attempts to reach `globex`'s client secret** by every field and by a row with a forged tenant, and the read-time check refuses it. A template, an endpoint, a route, a CA, a delivery flip, and a recreated type each try to send a stored token elsewhere.
+- A gateway identity cannot decrypt a type row on a cloud KMS.
+- The attack table and bypass table under deny mode, and fuzzing of the rule evaluator.
+- A cross-tenant probe on every object, and a token from another user.
+- A leak scan with each encoded form, with the misses recorded.
+- A hostile link provider host: redirects, oversized bodies, hostile logins, and an SSRF target at registration.
+- Account-link attacks in both directions.
+- On a pod with two slots, a process in the second slot that connects to `netagent` with the first slot's session's host and placeholder receives no token, and a forged or unknown owner UID is refused with an `egress.local` record.
+- An impersonation bearer cannot answer or dismiss a link prompt, and a runtime's URL-mode question carries `initiator_type: agent` whatever its content.
+
+### Tier 10: conformance
+
+The runtime battery gains reading a rotated file.
+
+### Tier 11: documentation
+
+The tier checks error codes, alert runbooks, and the preset reference.
+
+## Residual risks
+
+- **Concurrent sessions on an attributing pod.** Under decision 41, a pool with several slots whose attribution status records per-slot attribution admits a `userCredential` binding, so a session whose agent compromises `netagent`, the adapter, or the sandbox kernel reaches the tokens of the sessions running beside it on the pod. The operator's `placement.allowSharedPod: false` keeps a tenant's sessions off such pods, and a pool with `maxConcurrentSessionsPerPod: 1` has no neighbouring session.
+- **`delivery: file` is what it says.** Everything under "What `file` does not promise" stands after every mitigation. The opt-in exists because the alternative for those cases is no mechanism at all, as the owner stated.
+- **`delivery: file` beside a runtime edit.** A tenant admin able to change a runtime or setup commands can read a token under `delivery: file` in a user's session.
+- **Future grants.** A tenant admin who controls configuration can obtain a token a user grants after her edit, past the page, or a value an automated backend writes after it. Only `tokenTrust.allowedRecords` enforces against this, and it holds only when `security-admin` is a different person.
+- **Names the customer operates.** Whoever controls the DNS, CA, or network of such a name can read tokens sent to it, and the record cannot see that.
+- **A compromised replica.** It can forge session rows and bindings, so it can use any stored token at its record's hosts and read any value whose delivery ceiling is `file`, and it can plant a token in any tenant, or write a provider row with no guardrail check for a future grant. It can resurrect a row after `DELETE`, `revoke`, or erasure from a copied ciphertext, and rewrite `state` and exposure acknowledgements. It cannot redirect a stored token. A role for the Token Service's tables alone, on a second DSN, would narrow this, and the design does not need it for the destination rule.
+- **Input before a tree is affected.** An impersonation bearer's input to a tree passes when no session in it is yet affected, and a later child that becomes affected, such as one declaring a repository under a VCS pool with `userAuthorization: required`, inherits what that input did.
+- **`_method` in a multipart body** passes on a generic rule set.
+- **A token with a delivery ceiling of `file`, and a setup command.** A tenant admin flipping a binding's `delivery` within a delivery ceiling of `file` can read a stored token with a setup command, which the settled position accepts.
+- **A token that mints a credential.** Under `delivery: inject`, an agent can use an operation the token permits and the preset does not name to obtain a new credential, which the scrub and Lenny's revocation do not reach.
+- **Full reach without a template.** With no narrowing template, a delivered token holds the user's whole reach on that provider.
+- **`delivery: inject` with the request rules' `default: allow`.** A new operation with approval or merge power passes until the preset is updated. The window is the schedule, the review, and `cacheUntil`.
+- **Compromised `netagent`.** It holds the token under either delivery and ignores rules. It holds no refresh token.
+- **A token Lenny cannot attribute.** A `registered` token proves nothing about whose it is. A backend or tenant admin holding the permission can place a token under a user's name.
+- **Hosts can lie.** A `registered` type's `hosts`, and a `kind: oauth2` provider's `apiHosts`, are statements Lenny cannot check. A type declaring an innocent host and holding a GitHub token passes an add-on's host policy, pin, preset, and approval checks ([SP11](../0142-security-oversight/change.md#security-properties) in [`0142-security-oversight`](../0142-security-oversight/change.md)) on the label. `lockEgressToHosts` and `credentialPinned` on the host the token works on are the enforcing controls, and the second waits on the egress design's exfiltration controls ([EG-12](../0127-egress-and-git/steps.md#steps)).
+- **A forwarded header** can carry meaning at a host this design knows nothing about.
+- **Leak scanning** lets a compromised replica obtain the value of any `leakScan` session across tenants, and it misses encoded and split values, calls outside the LLM proxy, opaque tunnels, and checkpoints.
+- **Key separation.** Under `kms.provider: local`, one master key is mounted in the gateway and the Token Service, so a compromised replica can decrypt type rows there.
+- **A `registered` token removed from Lenny** stays valid at the provider until the tenant acts on its exposure rows. A record change leaves old OAuth2 tokens valid at the provider until they expire, because sending them anywhere is what the rule forbids.
+- **Allow-list mode and client upgrades.** Under `default: deny`, a client release that uses an operation the tenant has not listed fails until the tenant lists it, and under `reads: allow` an allow list does not limit what the token reads.
+- **Presets are a deny list.** They fail open on what they do not name, and this was the owner's accepted cost for new operations. A REST twin missed today is a defect in the data.
+- **A cleared preset.** A tenant admin can clear a preset, audited and in posture, unless a `security-admin` requires it.
+- **Parsers.** The rule under "Canonical forwarding" closes differences in how the client's bytes are read. It rests on gqlparser's printer emitting text the host reads as printed, which the corpus shows under graphql-ruby and graphql-js **[measured]** and nothing shows on a live host.
+- **A link provider with `identityBinding: unverified`.** UCP-11 does not hold for its links, and a user can act under another account of their own.
+- **A lost refresh response** forces the user to relink.
+- **A service account's credential and its Lenny bearer.** Whoever holds a service account's Lenny bearer starts sessions as that service account and uses its tokens through them, and a backend holding `manage_user_credentials` can write any service account's row ([`0143-service-account-credentials`](../0143-service-account-credentials/change.md), "Threats").
+- **Requests during a lapse.** Between a link's move to `user_act_required` and the user's relink, every request to the type's hosts goes out without the token and fails at the host. A user who does not see or act on the link prompt leaves the session in that state, and a client created with `inputPolicy: decline` does not show the prompt.
+
+## Sources
+
+Vendor pages are listed in the add-on designs that rely on them, and the capture and history data are recorded in [`0129-github-credential-addon`](../0129-github-credential-addon/change.md). Coder's external authentication page, which UC-2's user experience follows, is listed in [`0152-user-git-identity`](../0152-user-git-identity/change.md).
+
+The evidence for this document's **[measured]** rows is under `evidence/user-git-identity-design/`, in `spike-gh/RESULTS.md` and `spike-gh/raw/`, and that folder's `README.md` lists what was left out. Citations in this document resolve under `evidence/user-git-identity-design/spike-gh/`: `raw/gitopt/...` as written, `t4/table.txt` at `raw/gitopt/t4/table.txt`, `deny-ghcom.txt` at `raw/gitopt/attack/deny-ghcom.txt`, and `source-headers.txt` at `raw/gitopt/review/source-headers.txt`.

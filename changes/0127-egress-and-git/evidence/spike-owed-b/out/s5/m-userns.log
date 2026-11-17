@@ -1,0 +1,292 @@
+== 1. Parent state under the setpriv start
+  Uid=65532 65532 65532 65532 Gid=65532 65532 65532 65532 Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Bnd=00000000000000c1 Amb=00000000000000c1 NNP=1
+  uid_map: 0 1272840192 65536
+  subreaper as read on another thread: 1
+  [after spawning goroutines on new threads] 19 threads; distinct credential states:
+    19 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+    parent reads the 0440 Secret: ALLOWED
+== 2. Stores: mkdir, then mode, then ACL, then owner, because a later ACL or chmod needs ownership or CAP_FOWNER
+  setxattr ACL on /data/a: ok
+  chmod after chown /data/a, as a non-owner: operation not permitted
+  chmod after chown /data/b, as a non-owner: operation not permitted
+    drwxrwxrwx  4     0     0 4096 Nov  3 00:34 /data
+    drwxrws---+ 2 60000 62001 4096 Nov  3 00:34 /data/a
+    drwxrwsr-x  2 60000 62002 4096 Nov  3 00:34 /data/b
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/a
+    # owner: 60000
+    # group: 62001
+    # flags: -s-
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    /dev/vda1      ext4 954976684 76311940 830080912   9% /data
+    /dev/vda1 on /data type ext4 (rw,relatime,idmapped,discard)
+    parent re-sets the ACL after it no longer owns the store: refused (access ACL: operation not permitted)
+== 3. Launch variants: capability state in the child, and its boundaries
+  -- naive exec.Cmd with Credential
+    child Uid=61001 61001 61001 61001 Gid=62001 62001 62001 62001 Groups=[] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Bnd=00000000000000c1 Amb=00000000000000c1 NNP=1
+    write own store: ALLOWED
+    write another store: refused (open /data/b/evil: permission denied)
+    list another store: ALLOWED
+    read the Secret: refused (open /secret/key: permission denied)
+    write root filesystem: refused (open /evil: read-only file system)
+    signal the parent: refused (operation not permitted)
+    setuid(0) raw: ALLOWED
+    setuid to a sibling fetch UID, raw: ALLOWED
+    chown own file to 0: refused (chown /data/a/child-61004: no such file or directory)
+    exit: <nil>
+  [parent after this variant] 19 threads; distinct credential states:
+    19 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+  -- setpriv
+    child Uid=61002 61002 61002 61002 Gid=62001 62001 62001 62001 Groups=[] Inh=0000000000000000 Prm=0000000000000000 Eff=0000000000000000 Bnd=00000000000000c1 Amb=0000000000000000 NNP=1
+    write own store: ALLOWED
+    write another store: refused (open /data/b/evil: permission denied)
+    list another store: ALLOWED
+    read the Secret: refused (open /secret/key: permission denied)
+    write root filesystem: refused (open /evil: read-only file system)
+    signal the parent: refused (operation not permitted)
+    setuid(0) raw: refused (operation not permitted)
+    setuid to a sibling fetch UID, raw: refused (operation not permitted)
+    chown own file to 0: refused (chown /data/a/child-61002: operation not permitted)
+    exit: <nil>
+  [parent after this variant] 19 threads; distinct credential states:
+    19 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+  -- locked thread cleared, then exec.Cmd with Credential
+    child Uid=61003 61003 61003 61003 Gid=62001 62001 62001 62001 Groups=[] Inh=0000000000000000 Prm=0000000000000000 Eff=0000000000000000 Bnd=00000000000000c1 Amb=0000000000000000 NNP=1
+    write own store: ALLOWED
+    write another store: refused (open /data/b/evil: permission denied)
+    list another store: ALLOWED
+    read the Secret: refused (open /secret/key: permission denied)
+    write root filesystem: refused (open /evil: read-only file system)
+    signal the parent: refused (operation not permitted)
+    setuid(0) raw: refused (operation not permitted)
+    setuid to a sibling fetch UID, raw: refused (operation not permitted)
+    chown own file to 0: refused (chown /data/a/child-61003: operation not permitted)
+    exit: <nil>
+  [parent after this variant] 18 threads; distinct credential states:
+    18 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+  -- re-exec shim on one locked thread
+    child Uid=61004 61004 61004 61004 Gid=62001 62001 62001 62001 Groups=[] Inh=0000000000000000 Prm=0000000000000000 Eff=0000000000000000 Bnd=00000000000000c1 Amb=0000000000000000 NNP=1
+    write own store: ALLOWED
+    write another store: refused (open /data/b/evil: permission denied)
+    list another store: ALLOWED
+    read the Secret: refused (open /secret/key: permission denied)
+    write root filesystem: refused (open /evil: read-only file system)
+    signal the parent: refused (operation not permitted)
+    setuid(0) raw: refused (operation not permitted)
+    setuid to a sibling fetch UID, raw: ALLOWED
+    chown own file to 0: refused (chown /data/a/child-61004: operation not permitted)
+    exit: <nil>
+  [parent after this variant] 18 threads; distinct credential states:
+    18 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+== 4. wait4(-1) against os/exec, because a subreaper must reap orphans
+  wait4(-1) took pid 70 (cmd pid 70), err <nil>
+  exec.Cmd.Wait then returns: waitid: no child processes
+== 5. A real fetch: git under a fetch UID, with one store group, into the store
+    warning: unable to access '/root/.config/git/ignore': Permission denied
+    warning: unable to access '/root/.config/git/attributes': Permission denied
+    warning: unable to access '/root/.config/git/attributes': Permission denied
+    warning: unable to access '/root/.config/git/ignore': Permission denied
+    2
+init-ok
+drwxrws---+ 7 61001 62001 4096 Nov  3 00:34 /data/a/repo.git
+drwxrws---+ 4 61001 62001 4096 Nov  3 00:34 /data/a/repo.git/objects
+  init under 61001: <nil>
+fetched-rc=0
+2
+  fetch by the UID that created the repository (61001): <nil>
+    killhelper uid=61001: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 3ms
+  sweep confirmed from /proc: nothing under 61001 after 3ms
+  sweep of the first fetch UID: confirmed=true
+== 6. Hostile fetch: planted symlinks, setuid, world-writable, a planted ACL, an unreadable directory, and detached descendants
+total 32
+-rw-rwx---+ 1 61002 62001    2 Nov  3 00:34 aclplant
+-rw-rw----+ 1 61001 62001    1 Nov  3 00:34 child-61001
+drwxrws---+ 3 61002 62001 4096 Nov  3 00:34 d
+lrwxrwxrwx  1 61002 62001    7 Nov  3 00:34 link-otherstore -> /data/b
+lrwxrwxrwx  1 61002 62001   11 Nov  3 00:34 link-secret -> /secret/key
+drwx--S---+ 2 61002 62001 4096 Nov  3 00:34 private
+drwxrws---+ 7 61001 62001 4096 Nov  3 00:34 repo.git
+-rwxr-sr-x+ 1 61002 62001    2 Nov  3 00:34 sgid
+-rwsr-xr-x+ 1 61002 62001    2 Nov  3 00:34 suid
+drwxrwsrwx+ 2 61002 62001 4096 Nov  3 00:34 ww
+  hostile fetch exit: <nil>
+  under 61002 after the fetch exited: 8 processes
+    142 S (sleeping) ppid=1 sleep
+    144 S (sleeping) ppid=1 sleep
+    145 S (sleeping) ppid=1 sleep
+    146 S (sleeping) ppid=1 sh
+    171 S (sleeping) ppid=146 sleep
+    173 S (sleeping) ppid=146 sleep
+== 7. Sweep, with a pool that returns the UID only after a confirmed sweep and the re-chown
+  -- first a sweep that does not reap, to see whether zombies count as remaining
+    killhelper: gave up after 1000 calls
+  sweep helper exit: exit status 3, after 6.332s
+  sweep NOT confirmed: 8 remain under 61002, 8 of them zombies
+  confirmed without reaping: false; states left: map[142:Z (zombie) ppid=1 sleep 144:Z (zombie) ppid=1 sleep 145:Z (zombie) ppid=1 sleep 146:Z (zombie) ppid=1 sh 171:Z (zombie) ppid=1 sleep 173:Z (zombie) ppid=1 sleep 175:Z (zombie) ppid=1 sleep 176:Z (zombie) ppid=1 sleep]
+  pool: 61002 -> out of pool (unconfirmed sweep)
+  -- then a sweep that reaps orphans by pid
+    killhelper uid=61002: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 4ms
+  sweep confirmed from /proc: nothing under 61002 after 4ms
+  confirmed with reaping: true
+  parent alive after kill(-1) under fetch UID: <nil>
+== 8. Re-chown through directory file descriptors with lchown, on a locked thread that holds the store group
+  -- control: the walk without the store group on this thread
+  open /data/a with no store group: permission denied
+  chowned=55 symlinks-seen=3 errors=[/data/a/suid: lchown: operation not permitted /data/a/sgid: lchown: operation not permitted /data/a/private: open: permission denied]
+  concurrent Secret reads on other threads during the walk: ok=1 failed=0
+  [parent after the walk] 16 threads; distinct credential states:
+    16 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+    total 32
+    -rw-rwx---+ 1 60000 62001    2 Nov  3 00:34 aclplant
+    -rw-rw----+ 1 60000 62001    1 Nov  3 00:34 child-61001
+    drwxrws---+ 3 60000 62001 4096 Nov  3 00:34 d
+    lrwxrwxrwx  1 60000 62001    7 Nov  3 00:34 link-otherstore -> /data/b
+    lrwxrwxrwx  1 60000 62001   11 Nov  3 00:34 link-secret -> /secret/key
+    drwx--S---+ 2 60000 62001 4096 Nov  3 00:34 private
+    drwxrws---+ 7 60000 62001 4096 Nov  3 00:34 repo.git
+    -rwxr-sr-x+ 1 61002 62001    2 Nov  3 00:34 sgid
+    -rwsr-xr-x+ 1 61002 62001    2 Nov  3 00:34 suid
+    drwxrwsrwx+ 2 60000 62001 4096 Nov  3 00:34 ww
+    -r--r----- 1 0 65534 9 Nov  3 00:34 /secret/key
+    drwxrwsr-x 2 60000 62002 4096 Nov  3 00:34 /data/b
+    total 0
+  -- a fetch UID keeps any setuid or setgid file the walk refused, because chown of such a file also changes its mode, which needs ownership or CAP_FOWNER
+find: '/data/a/private': Permission denied
+strip-rc=1
+  strip helper under the fetch UID: <nil>
+  second walk: chowned=57 errors=[/data/a/private: open: permission denied]
+    -rwxr-xr-x+ 1 60000 62001 2 Nov  3 00:34 /data/a/sgid
+    -rwxr-xr-x+ 1 60000 62001 2 Nov  3 00:34 /data/a/suid
+    killhelper uid=61002: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 7ms
+  sweep confirmed from /proc: nothing under 61002 after 7ms
+  sweep once more, because the strip helper ran under the UID: true
+  pool: 61002 -> free
+== 9. Reuse: a second fetch under another UID, then the swept UID again. Git's ownership check applies.
+fatal: detected dubious ownership in repository at '/data/a/repo.git'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /data/a/repo.git
+fetched-rc=128
+2
+  fetch by a different fetch UID with no safe.directory: <nil>
+fetched-rc=0
+2
+  fetch by a different fetch UID with safe.directory=*: <nil>
+fetched-rc=0
+2
+  fetch by the reused UID 61002 with safe.directory=*: <nil>
+    killhelper uid=61002: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 3ms
+  sweep confirmed from /proc: nothing under 61002 after 3ms
+    killhelper uid=61003: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 4ms
+  sweep confirmed from /proc: nothing under 61003 after 4ms
+  re-chown: chowned=57 errors=[/data/a/private: open: permission denied]
+== 10. Reader: a per-store reader group through the ACL. Reader UID 64001, group 63001 only.
+uid=64001 gid=63001 groups=63001
+  list the store root: ALLOWED
+  read a ref: ALLOWED
+  read a pack or object: ALLOWED
+  git ls-remote, no safe.directory: refused (fatal: detected dubious ownership in repository at '/data/a/repo.git')
+  git ls-remote, safe.directory=* on the command line: refused (fatal: detected dubious ownership in repository at '/data/a/repo.git')
+  git upload-pack --advertise-refs, safe.directory=* on the command line: ALLOWED
+  git ls-remote, safe.directory=* in a global config: ALLOWED
+  git clone through upload-pack, global config: ALLOWED
+  create a file in the store: refused (sh: 1: cannot create /data/a/repo.git/evil: Permission denied)
+  create an object directory: refused (mkdir: cannot create directory '/data/a/repo.git/objects/zz': Permission denied)
+  overwrite HEAD: refused (sh: 1: cannot create /data/a/repo.git/HEAD: Permission denied)
+  delete HEAD: refused (rm: cannot remove '/data/a/repo.git/HEAD': Permission denied)
+  rename a ref dir: refused (mv: cannot move '/data/a/repo.git/refs' to '/data/a/repo.git/refs2': Permission denied)
+  chmod HEAD: refused (chmod: changing permissions of '/data/a/repo.git/HEAD': Operation not permitted)
+  set an ACL: refused (setfacl: /data/a/repo.git/HEAD: Operation not permitted)
+  git push through receive-pack: refused (error: remote unpack failed: unable to create temporary object directory)
+  read another store: ALLOWED
+  read the Secret: refused (cat: /secret/key: Permission denied)
+-- planted before the re-chown, by the hostile fetch:
+  write a file whose ACL the fetch planted: ALLOWED
+  write a 0666 file in a 0777 directory the fetch planted: refused (sh: 1: cannot create /data/a/ww/f: Permission denied)
+  create in that 0777 directory: refused (sh: 1: cannot create /data/a/ww/new: Permission denied)
+  reader exit: <nil>
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/a/repo.git/HEAD
+    # owner: 60000
+    # group: 62001
+    user::rw-
+    group::rwx	#effective:rw-
+    group:63001:r-x	#effective:r--
+    mask::rw-
+    other::---
+    # file: data/a/repo.git/objects
+    # owner: 60000
+    # group: 62001
+    # flags: -s-
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    -r--r-----+ 1 60000 62001 2090 Nov  3 00:34 /data/a/repo.git/objects/27/858d52a046e6258a1f281563131325caf6dc59
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/a/repo.git/objects/27/858d52a046e6258a1f281563131325caf6dc59
+    # owner: 60000
+    # group: 62001
+    user::r--
+    group::rwx	#effective:r--
+    group:63001:r-x	#effective:r--
+    mask::r--
+    other::---
+== 11. A public store: upload-pack with no group reads through the world bits, and writes nothing
+10
+drwxrwsr-x  7 61004 62002 4096 Nov  3 00:34 /data/b/repo.git
+drwxrwsr-x 11 61004 62002 4096 Nov  3 00:34 /data/b/repo.git/objects
+  public init: <nil>
+    killhelper uid=61004: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 4ms
+  sweep confirmed from /proc: nothing under 61004 after 5ms
+  re-chown public store: chowned=44 errors=[]
+uid=64002 gid=64999 groups=64999
+  read public HEAD: ALLOWED
+  git ls-remote, global config: ALLOWED
+  git clone, global config: ALLOWED
+  write public store: refused (sh: 1: cannot create /data/b/repo.git/evil: Permission denied)
+  public reader exit: <nil>
+== 12. A world-writable directory planted in a public store survives the owner-only re-chown
+drwxrwsrwx 2 61004 62002 4096 Nov  3 00:34 /data/b/ww
+  plant under fetch UID, store group: <nil>
+    killhelper uid=61004: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 4ms
+  sweep confirmed from /proc: nothing under 61004 after 4ms
+  re-chown: chowned=46 errors=[]
+  -- a public-store reader with no group:
+64002
+drwxrwsrwx 2 60000 62002 4096 Nov  3 00:34 /data/b/ww
+  write the planted file: ALLOWED
+  create in the planted directory: ALLOWED
+    exit <nil>
+  -- a fetch for another store (group 62001):
+61003
+drwxrwsrwx 2 60000 62002 4096 Nov  3 00:34 /data/b/ww
+  write the planted file: ALLOWED
+  create in the planted directory: refused (sh: 1: cannot create /data/b/ww/new: Permission denied)
+    exit <nil>
+    killhelper uid=61003: ESRCH after 1 kill(-1) calls
+  sweep helper exit: <nil>, after 2ms
+  sweep confirmed from /proc: nothing under 61003 after 2ms
+== end

@@ -1,0 +1,247 @@
+CapEff:	00000000000000c1
+CapBnd:	00000000000000c1
+protected_hardlinks=1 protected_fifos=1 protected_regular=2
+/dev/vda1 /data ext4 rw,relatime,discard 0 0
+### public store used as a neighbour
+    rechown /data/pub: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+### A. A compromised fetch, no helper: the walk alone
+    rechown /data/a: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+    hard link to the Secret: rc=1
+    hard link to a public store's file (mode 0664, not ours): rc=1
+    hard link to this store's HEAD (owner's file, group-writable): rc=0
+    hard link to a file of its own: rc=0
+    mknod character device: rc=1
+    mknod block device: rc=1
+    mkfifo: rc=0
+    FIFO at packed-refs: rc=0
+    user xattr: rc=0
+    trusted xattr: rc=1
+    file capability on the setuid file: rc=1
+    chattr +i: rc=1
+rechown /data/a: chowned=71 symlinks-not-followed=5 errors=3 in 1ms [/data/a/suid lchown: operation not permitted /data/a/locked open: permission denied /data/a/sgid lchown: operation not permitted]
+/data/a:
+-rw-rw----+ 1 60000 62001    0 Nov  3 05:33 -rf
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 acldir
+-rw-rwx---+ 1 60000 62001    2 Nov  3 05:33 aclplant
+drwxrws---+ 3 60000 62001 4096 Nov  3 05:33 d
+prw-rw----+ 1 60000 62001    0 Nov  3 05:33 fifo
+-rw-rw----+ 2 60000 62001    2 Nov  3 05:33 hl-own
+-rw-rw----+ 2 60000 62001   23 Nov  3 05:33 hl-samestore
+lrwxrwxrwx  1 60000 62001    9 Nov  3 05:33 link-loop -> link-loop
+lrwxrwxrwx  1 60000 62001    9 Nov  3 05:33 link-otherstore -> /data/pub
+lrwxrwxrwx  1 60000 62001   11 Nov  3 05:33 link-secret -> /secret/key
+d-----S---+ 2 60000 62001 4096 Nov  3 05:33 locked
+-rw-rw----+ 1 60000 62001    0 Nov  3 05:33 name with spaces
+-rw-rw----+ 1 60000 62001    0 Nov  3 05:33 new
+line
+-rw-rw----+ 2 60000 62001    2 Nov  3 05:33 own-file
+drwxrws---+ 7 60000 62001 4096 Nov  3 05:33 repo.git
+-rwxr-sr-x+ 1 61001 62001    2 Nov  3 05:33 sgid
+drwxrwsrwt+ 2 60000 62001 4096 Nov  3 05:33 sticky-dir
+-rwxr-xr-t+ 1 60000 62001    2 Nov  3 05:33 sticky-file
+-rwsr-xr-x+ 1 61001 62001    2 Nov  3 05:33 suid
+drwxrwsrwx+ 2 60000 62001 4096 Nov  3 05:33 ww
+-rw-rw----+ 1 60000 62001    2 Nov  3 05:33 xattr-file
+/data/a/acldir:
+/data/a/d:
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 sub
+/data/a/d/sub:
+lrwxrwxrwx  1 60000 62001 7 Nov  3 05:33 dirlink -> /secret
+-rw-rw----+ 1 60000 62001 2 Nov  3 05:33 pack
+ls: cannot open directory '/data/a/locked': Permission denied
+/data/a/repo.git:
+-rw-rw----+  1 60000 62001   77 Nov  3 05:33 FETCH_HEAD
+-rw-rw----+  2 60000 62001   23 Nov  3 05:33 HEAD
+drwxrws---+  2 60000 62001 4096 Nov  3 05:33 branches
+-rw-rw----+  1 60000 62001  126 Nov  3 05:33 config
+-rw-rw----+  1 60000 62001   73 Nov  3 05:33 description
+drwxrws---+  2 60000 62001 4096 Nov  3 05:33 hooks
+drwxrws---+  2 60000 62001 4096 Nov  3 05:33 info
+drwxrws---+ 12 60000 62001 4096 Nov  3 05:33 objects
+prw-rw----+  1 60000 62001    0 Nov  3 05:33 packed-refs
+drwxrws---+  4 60000 62001 4096 Nov  3 05:33 refs
+/data/a/repo.git/branches:
+/data/a/repo.git/hooks:
+/data/a/repo.git/info:
+-rw-rw----+ 1 60000 62001 240 Nov  3 05:33 exclude
+/data/a/repo.git/objects:
+  -- a later reader under its group
+    write a planted 0666 file: refused rc=2 (sh: 1: cannot create /data/a/ww/f: Permission denied)
+    create in a planted 0777 directory: refused rc=2 (sh: 1: cannot create /data/a/ww/new: Permission denied)
+    write the file with a planted ACL: ALLOWED
+    create in the directory with a planted ACL: refused rc=2 (sh: 1: cannot create /data/a/acldir/new: Permission denied)
+    read through link-secret: refused rc=1 (cat: /data/a/link-secret: Permission denied)
+    git ls-remote (a FIFO at packed-refs hangs it): refused rc=124 ()
+    git clone: refused rc=124 ()
+    run the planted setuid file: ALLOWED
+  -- a later fetch under another UID in the same store
+    remove a file in a planted sticky directory: refused rc=1 (rm: cannot remove '/data/a/sticky-dir/owned-by-f1': Operation not permitted)
+    git fetch (a FIFO at packed-refs hangs it): refused rc=124 ()
+  -- a fetch for another store, with another group
+    write a planted 0666 file: refused rc=2 (sh: 1: cannot create /data/a/ww/f: Permission denied)
+### B. The same plants, then the sweep, the helper under the fetch UID, and the walk
+    rechown /data/b: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+    hard link to the Secret: rc=1
+    hard link to a public store's file (mode 0664, not ours): rc=1
+    hard link to this store's HEAD (owner's file, group-writable): rc=0
+    hard link to a file of its own: rc=0
+    mknod character device: rc=1
+    mknod block device: rc=1
+    mkfifo: rc=0
+    FIFO at packed-refs: rc=0
+    user xattr: rc=0
+    trusted xattr: rc=1
+    file capability on the setuid file: rc=1
+    chattr +i: rc=1
+normalize uid=61001 /data/b: dirs=24 files=43 modes-changed=10 symlinks-removed=5 special-files-removed=2 hard-links-seen=4 acl-xattrs-removed=26 other-xattrs-removed=1 not-owned=47 not-owned-with-a-wrong-mode=14 errors=0 in 1ms []
+rechown /data/b: chowned=67 symlinks-not-followed=0 errors=0 in 0s []
+/data/b:
+-rw-rw----+ 1 60000 62001    0 Nov  3 05:33 -rf
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 acldir
+-rw-rw----+ 1 60000 62001    2 Nov  3 05:33 aclplant
+drwxrws---+ 3 60000 62001 4096 Nov  3 05:33 d
+-rw-rw----+ 2 60000 62001    2 Nov  3 05:33 hl-own
+-rw-rw----+ 2 60000 62001   23 Nov  3 05:33 hl-samestore
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 locked
+-rw-rw----+ 1 60000 62001    0 Nov  3 05:33 name with spaces
+-rw-rw----+ 1 60000 62001    0 Nov  3 05:33 new
+line
+-rw-rw----+ 2 60000 62001    2 Nov  3 05:33 own-file
+drwxrws---+ 7 60000 62001 4096 Nov  3 05:33 repo.git
+-rw-rw----+ 1 60000 62001    2 Nov  3 05:33 sgid
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 sticky-dir
+-rw-rw----+ 1 60000 62001    2 Nov  3 05:33 sticky-file
+-rw-rw----+ 1 60000 62001    2 Nov  3 05:33 suid
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 ww
+-rw-rw----+ 1 60000 62001    2 Nov  3 05:33 xattr-file
+/data/b/acldir:
+/data/b/d:
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 sub
+/data/b/d/sub:
+-rw-rw----+ 1 60000 62001 2 Nov  3 05:33 pack
+/data/b/locked:
+-rw-rw----+ 1 60000 62001 2 Nov  3 05:33 f
+/data/b/repo.git:
+-rw-rw----+  1 60000 62001   77 Nov  3 05:33 FETCH_HEAD
+-rw-rw----+  2 60000 62001   23 Nov  3 05:33 HEAD
+drwxrws---+  2 60000 62001 4096 Nov  3 05:33 branches
+-rw-rw----+  1 60000 62001  126 Nov  3 05:33 config
+-rw-rw----+  1 60000 62001   73 Nov  3 05:33 description
+drwxrws---+  2 60000 62001 4096 Nov  3 05:33 hooks
+drwxrws---+  2 60000 62001 4096 Nov  3 05:33 info
+drwxrws---+ 12 60000 62001 4096 Nov  3 05:33 objects
+drwxrws---+  4 60000 62001 4096 Nov  3 05:33 refs
+/data/b/repo.git/branches:
+/data/b/repo.git/hooks:
+/data/b/repo.git/info:
+-rw-rw----+ 1 60000 62001 240 Nov  3 05:33 exclude
+/data/b/repo.git/objects:
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 1c
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 44
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 50
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 76
+drwxrws---+ 2 60000 62001 4096 Nov  3 05:33 79
+  -- a later reader under its group
+    write a planted 0666 file: refused rc=2 (sh: 1: cannot create /data/b/ww/f: Permission denied)
+    create in a planted 0777 directory: refused rc=2 (sh: 1: cannot create /data/b/ww/new: Permission denied)
+    write the file with a planted ACL: refused rc=2 (sh: 1: cannot create /data/b/aclplant: Permission denied)
+    create in the directory with a planted ACL: refused rc=2 (sh: 1: cannot create /data/b/acldir/new: Permission denied)
+    read through link-secret: refused rc=1 (cat: /data/b/link-secret: No such file or directory)
+    git ls-remote (a FIFO at packed-refs hangs it): ALLOWED
+    git clone: ALLOWED
+    run the planted setuid file: refused rc=1 ()
+  -- a later fetch under another UID in the same store
+    remove a file in a planted sticky directory: ALLOWED
+    git fetch (a FIFO at packed-refs hangs it): ALLOWED
+  -- a fetch for another store, with another group
+    write a planted 0666 file: refused rc=2 (sh: 1: cannot create /data/b/ww/f: Permission denied)
+  -- honest work after normalization
+fetch rc=0
+clone rc=0
+2
+# file: data/b/d # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx group:63001:r-x mask::rwx other::--- default:user::rwx default:group::rwx default:group:63001:r-x default:mask::rwx default:other::--- 
+-r--r-----+ 1 60000 62001 97 Nov  3 05:33 /data/b/repo.git/objects/1c/912140b99d53a73b0de4861e22ee625bb946d2
+# file: data/b/repo.git/objects/1c/912140b99d53a73b0de4861e22ee625bb946d2 # owner: 60000 # group: 62001 user::r-- group::rwx	#effective:r-- group:63001:r-x	#effective:r-- mask::r-- other::--- 
+### C. A helper that removes setuid and setgid only (the earlier spike's find command): what stays
+    rechown /data/c: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+    hard link to the Secret: rc=1
+    hard link to a public store's file (mode 0664, not ours): rc=1
+    hard link to this store's HEAD (owner's file, group-writable): rc=0
+    hard link to a file of its own: rc=0
+    mknod character device: rc=1
+    mknod block device: rc=1
+    mkfifo: rc=0
+    FIFO at packed-refs: rc=0
+    user xattr: rc=0
+    trusted xattr: rc=1
+    file capability on the setuid file: rc=1
+    chattr +i: rc=1
+find: '/data/c/locked': Permission denied
+strip rc=1
+rechown /data/c: chowned=73 symlinks-not-followed=5 errors=1 in 0s [/data/c/locked open: permission denied]
+    write the file with a planted ACL: ALLOWED
+    git ls-remote (a FIFO at packed-refs hangs it): refused rc=124 ()
+    git clone: refused rc=124 ()
+    git fetch (a FIFO at packed-refs hangs it): refused rc=124 ()
+### D. Order: a descendant left running replants unless the sweep precedes the helper
+    rechown /data/d: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+normalize uid=61001 /data/d: dirs=18 files=29 modes-changed=1 symlinks-removed=0 special-files-removed=0 hard-links-seen=0 acl-xattrs-removed=1 other-xattrs-rem
+  helper before the sweep: replant mode now 4755 61001
+normalize uid=61001 /data/d: dirs=18 files=29 modes-changed=1 symlinks-removed=0 special-files-removed=0 hard-links-seen=0 acl-xattrs-removed=1 other-xattrs-rem
+  sweep, then helper: replant mode now 660 61001
+rechown /data/d: chowned=47 symlinks-not-followed=0 errors=0 in 1ms []
+### E. A planted config and hook: content rather than modes
+    rechown /data/e: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+planted
+normalize uid=61001 /data/e: dirs=19 files=30 modes-changed=3 symlinks-removed=0 special-files-removed=0 hard-links-seen=0 acl-xattrs-remove
+rechown /data/e: chowned=49 symlinks-not-followed=0 errors=0 in 0s []
+reader upload-pack rc=0
+fetch rc=0
+  executed by later runs: 
+	fsmonitor = "touch /tmp/fsm-ran-$(id -u); false";	sshCommand = touch /tmp/ssh-ran-$(id -u);	hooksPath = /data/e/hooks;	packObjectsHook = "touch /tmp/pack-hook-ran-$(id -u); exec git";
+### F. Helper cost on a large store: 100,000 files and 1,000 directories, all owned by the fetch UID, then all owned by the parent
+normalize uid=61001 /data/big: dirs=1000 files=100000 modes-changed=0 symlinks-removed=0 special-files-removed=0 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=0 not-owned=0 not-owned-with-a-wrong-mode=0 errors=0 in 319ms []
+rechown /data/big: chowned=101000 symlinks-not-followed=0 errors=0 in 106ms []
+normalize uid=61001 /data/big: dirs=1000 files=100000 modes-changed=0 symlinks-removed=0 special-files-removed=0 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=0 not-owned=101000 not-owned-with-a-wrong-mode=0 errors=0 in 70ms []
+normalize uid=61001 /data/big: dirs=1000 files=100000 modes-changed=0 symlinks-removed=0 special-files-removed=0 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=0 not-owned=101000 not-owned-with-a-wrong-mode=0 errors=0 in 67ms []
+rm: cannot remove '/data/big': Permission denied
+### G. A public store: no ACL, mode 2775, files 0664
+    rechown /data/pa: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+rechown /data/pa: chowned=51 symlinks-not-followed=1 errors=1 in 0s [/data/pa/suid lchown: operation not permitted]
+--- no helper
+  reader with no group:
+    write a planted 0666 file: ALLOWED
+    create in a planted 0777 directory: ALLOWED
+    git ls-remote: refused rc=124 ()
+  a fetch for another store:
+    write a planted 0666 file: ALLOWED
+    create in a planted 0777 directory: refused rc=2 (sh: 1: cannot create /data/pa/ww/new: Permission denied)
+    rechown /data/pb: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+normalize uid=61001 /data/pb: dirs=19 files=31 modes-changed=4 symlinks-removed=1 special-files-removed=1 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=0 not-owned=46 not-owned-with-a-wrong-mode=15 errors=0 in 0s []
+rechown /data/pb: chowned=50 symlinks-not-followed=0 errors=0 in 0s []
+--- helper, mode 2775 and 0664, no reader ACL
+  reader with no group:
+    write a planted 0666 file: refused rc=2 (sh: 1: cannot create /data/pb/w0666: Permission denied)
+    create in a planted 0777 directory: refused rc=2 (sh: 1: cannot create /data/pb/ww/new: Permission denied)
+    git ls-remote: ALLOWED
+  a fetch for another store:
+    write a planted 0666 file: refused rc=2 (sh: 1: cannot create /data/pb/w0666: Permission denied)
+    create in a planted 0777 directory: refused rc=2 (sh: 1: cannot create /data/pb/ww/new: Permission denied)
+### H. A hard link to the store's own HEAD: removing any name with more than one link can remove the real one
+    rechown /data/hremove1: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=remove run=1 hard-links-seen=8 HEAD present: no ls-remote: fatal: '/data/hremove1/repo.git' does not appear to be a git repositor
+    rechown /data/hremove2: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=remove run=2 hard-links-seen=8 HEAD present: no ls-remote: fatal: '/data/hremove2/repo.git' does not appear to be a git repositor
+    rechown /data/hremove3: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=remove run=3 hard-links-seen=8 HEAD present: no ls-remote: fatal: '/data/hremove3/repo.git' does not appear to be a git repositor
+    rechown /data/hremove4: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=remove run=4 hard-links-seen=8 HEAD present: no ls-remote: fatal: '/data/hremove4/repo.git' does not appear to be a git repositor
+    rechown /data/hkeep1: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=keep run=1 hard-links-seen=9 HEAD present: yes ls-remote: 44468d616be92824d9f1b38f76df0203e1ba268e	HEAD
+    rechown /data/hkeep2: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=keep run=2 hard-links-seen=9 HEAD present: yes ls-remote: 44468d616be92824d9f1b38f76df0203e1ba268e	HEAD
+    rechown /data/hkeep3: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=keep run=3 hard-links-seen=9 HEAD present: yes ls-remote: 44468d616be92824d9f1b38f76df0203e1ba268e	HEAD
+    rechown /data/hkeep4: chowned=46 symlinks-not-followed=0 errors=0 in 0s []
+  policy=keep run=4 hard-links-seen=9 HEAD present: yes ls-remote: 44468d616be92824d9f1b38f76df0203e1ba268e	HEAD
+### end

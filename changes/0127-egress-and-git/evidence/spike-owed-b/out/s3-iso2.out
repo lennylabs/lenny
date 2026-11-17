@@ -1,0 +1,24 @@
+time=2026-11-03T01:06:23.752966541Z msg="Restored endpoint" ipv6="" identity=44465 endpointID=190 ciliumEndpointName=age
+time=2026-11-03T01:06:31.728261545Z msg="Removed endpoint" ipv6="" identity=44465 endpointID=190 ciliumEndpointName=agen
+time=2026-11-03T01:06:38.75436484Z msg="Create endpoint request" module=agent.controlplane.endpoint-api addressing="&{IP
+time=2026-11-03T01:06:38.754583798Z msg="New endpoint" k8sPodName=agents/b0 containerInterface="" ciliumEndpointName=age
+time=2026-11-03T01:06:38.754671382Z msg="Resolving identity labels (blocking)" k8sPodName=agents/b0 containerInterface="
+time=2026-11-03T01:06:38.754718757Z msg="Identity of endpoint changed" k8sPodName=agents/b0 containerInterface="" cilium
+time=2026-11-03T01:06:38.75475409Z msg="Waiting for endpoint to be generated" k8sPodName=agents/b0 containerInterface=""
+time=2026-11-03T01:06:38.795839715Z msg="Reloaded endpoint BPF program" k8sPodName=agents/b0 containerInterface="" ciliu
+time=2026-11-03T01:06:38.796040382Z msg="Successful endpoint creation" k8sPodName=agents/b0 containerInterface="" cilium
+time=2026-11-03T01:09:28.29283596Z msg="Resolving identity labels (non-blocking)" k8sPodName=agents/b0 containerInterfac
+time=2026-11-03T01:09:49.86973947Z msg="Identity of endpoint changed" k8sPodName=agents/b0 containerInterface="" ciliumE
+time=2026-11-03T01:09:49.930002595Z msg="Reloaded endpoint BPF program" k8sPodName=agents/b0 containerInterface="" ciliu
+b0 stamp end 2026-11-03T01:09:28.273736+00:00
+200
+  identity-allocation-mode: crd
+  identity-change-grace-period: 0s
+  identity-gc-interval: 15m0s
+  identity-heartbeat-timeout: 30m0s
+  identity-management-mode: agent
+583:time=2026-11-03T01:06:20.148870762Z level=error msg="Forcefully terminating sockets connected to deleted service backends not supported by underlying kernel" module=agent.controlplane.loadbalancer
+630:time=2026-11-03T01:06:20.371432179Z level=info msg="Endpoints restored" module=agent.controlplane.endpoint-restore restored=41 failed=0
+774:time=2026-11-03T01:06:21.55916118Z level=info msg="Waited before sending request" subsys=klog delay=1.000540792s reason="client-side throttling, not priority and fairness" verb=GET URL="https://17
+940:time=2026-11-03T01:06:24.935497834Z level=info msg="Finished regenerating restored endpoints" module=agent.controlplane.endpoint-restore regenerated=41 failed=0 total=41
+1075:time=2026-11-03T01:06:33.328642129Z level=info msg="Waited before sending request" subsys=klog delay=1.006688709s reason="client-side throttling, not priority and fairness" verb=DELETE URL=https:

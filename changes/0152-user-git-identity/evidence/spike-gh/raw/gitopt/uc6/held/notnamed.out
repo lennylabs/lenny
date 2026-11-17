@@ -1,0 +1,77 @@
+### notnamed-clone-none rc=0
+$ (git  clone -q https://ghes.example.test/acme/widgets.git c-none 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-clone-helper rc=0
+$ (git -c credential.helper=store clone -q https://ghes.example.test/acme/widgets.git c-helper 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-clone-url rc=0
+$ (git  clone -q https://x:USER-FILE-OLD-HELD@ghes.example.test/acme/widgets.git c-url 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-clone-header rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer USER-FILE-OLD-HELD' clone -q https://ghes.example.test/acme/widgets.git c-header 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-clone-other rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer OTHER-TOKEN-x9' clone -q https://ghes.example.test/acme/widgets.git c-other 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-push-none rc=0
+$ (git  push -q origin HEAD:refs/heads/lenny/f-notnamed-1793741581 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-push-helper rc=0
+$ (git -c credential.helper=store push -q origin HEAD:refs/heads/lenny/f-notnamed-1793741581 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-push-url rc=0
+$ (git  push -q https://x:USER-FILE-OLD-HELD@ghes.example.test/acme/widgets.git HEAD:refs/heads/lenny/f-notnamed-1793741581 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-push-header rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer USER-FILE-OLD-HELD' push -q origin HEAD:refs/heads/lenny/f-notnamed-1793741581 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-push-other rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer OTHER-TOKEN-x9' push -q origin HEAD:refs/heads/lenny/f-notnamed-1793741581 2>&1; echo git-exit=$?) | tail -2 | cut -c1-130
+git-exit=0
+### notnamed-push-gh-helper rc=0
+$ GH_ENTERPRISE_TOKEN=OTHER-TOKEN-x9 GH_HOST=ghes.example.test git -c credential.helper= -c 'credential.helper=!/g/gh auth git-credential' push -q origin HEAD:refs/heads/lenny/f-notnamed-1793741581 2>&1 | tail -1
+
+### notnamed-push-main rc=0
+$ git push -q origin HEAD:refs/heads/main 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### notnamed-push-main-other rc=0
+$ git -c 'http.extraHeader=Authorization: Bearer OTHER-TOKEN-x9' push -q origin HEAD:refs/heads/main 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### notnamed-push-mixed rc=0
+$ git push -q origin HEAD:refs/heads/lenny/m-notnamed-1793741581 HEAD:refs/heads/main 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### notnamed-push-delete rc=0
+$ git push -q origin :refs/heads/feature 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### notnamed-push-option rc=0
+$ git push -q -o ci.skip origin HEAD:refs/heads/lenny/o-notnamed-1793741581 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### notnamed-push-outside rc=0
+$ git push -q https://ghes.example.test/acme/secret.git HEAD:refs/heads/lenny/x 2>&1 | tail -1
+fatal: unable to access 'https://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### notnamed-push-readonly rc=0
+$ git push -q https://ghes.example.test/acme/lib.git HEAD:refs/heads/lenny/x 2>&1 | tail -1
+fatal: unable to access 'https://ghes.example.test/acme/lib.git/': The requested URL returned error: 403
+### notnamed-read-outside rc=0
+$ git ls-remote https://ghes.example.test/acme/secret.git 2>&1 | tail -1
+fatal: unable to access 'https://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### notnamed-reflect rc=0
+$ curl -sS -m 10 -D /tmp/hd -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Authorization: Bearer OTHER-TOKEN-x9' 'https://ghes.example.test/acme/reflect.git/info/refs?service=git-upload-pack'; cut -c1-60 /tmp/b; grep -i x-reflect /tmp/hd | cut -c1-60
+http=200token seen: xxxxxxxxxxxxxxxxxxx
+x-reflect: xxxxxxxxxxxxxxxxxxx
+### notnamed-redirect-in-scope rc=0
+$ git ls-remote https://ghes.example.test/acme/moved.git 2>&1 | tail -1 | cut -c1-60
+fa22f6fe028b49d7437ca982e96b97b06c0896b7	refs/pull/7/head
+### notnamed-redirect-out-of-scope rc=0
+$ git ls-remote https://ghes.example.test/acme/evilredir.git 2>&1 | tail -1 | cut -c1-100
+fatal: unable to access 'https://ghes.example.test/acme/evilredir.git/': The requested URL returned 
+### notnamed-github-push rc=0
+$ git push -q https://github.com/acme/widgets.git HEAD:refs/heads/lenny/gh-notnamed-1793741581 2>&1 | tail -1
+
+### notnamed-github-push-main rc=0
+$ git push -q https://github.com/acme/widgets.git HEAD:refs/heads/main 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### notnamed-lfs-store-host rc=0
+$ git clone -q https://ghes.example.test/acme/lfsrepo.git l 2>&1 | tail -1; cd l && git lfs install --local >/dev/null 2>&1; git lfs track '*.bin' >/dev/null; head -c 1024 /dev/urandom > a.bin; git add .gitattributes a.bin; git commit -qm lfs; git push -q origin HEAD:refs/heads/lenny/lfs-notnamed-1793741581 2>&1 | tail -1; cd ..; rm -rf l2; git clone -q -b lenny/lfs-notnamed-1793741581 https://ghes.example.test/acme/lfsrepo.git l2 2>&1 | tail -1; cmp l/a.bin l2/a.bin && echo same
+  $ git config lfs.https://ghes.example.test/acme/lfsrepo.git/info/lfs.locksverify true
+same

@@ -1,0 +1,134 @@
+### authority, hop-by-hop, WebSocket
+T1 terminated, Host equals bound host, placeholder sent: HTTP/1.1 200 OK | X-Echo-Authorization: xxxxxxxxxxxxxxxxxxxxxxx
+T2 terminated, CONNECT authority in upper case: HTTP/1.1 200 OK | X-Echo-Authorization: xxxxxxxxxxxxxxxxxxxxxxx
+T3 terminated, Host attacker.example inside the api connection: HTTP/1.1 200 OK | X-Echo-Authorization: Bearer lenny-injected
+T4 terminated, Host api.example.test:8443 (port differs): HTTP/1.1 200 OK | X-Echo-Authorization:
+T5 terminated, absolute-form bound target, Host disagrees: HTTP/1.1 400 Bad Request | 
+T6 terminated, absolute-form attacker target, Host says bound: HTTP/1.1 400 Bad Request | 
+T7 terminated, two Host headers: HTTP/1.1 400 Bad Request | 
+T8 terminated, Host names another bound host (ghes): HTTP/1.1 200 OK | X-Echo-Authorization: xxxxxxxxxxxxxxxxxxxx
+T9 pinned, Host differs: HTTP/1.1 403 Forbidden | 
+T10 pinned, same host: HTTP/1.1 200 OK | X-Echo-Authorization: xxxxxxxxxxxxxxxxxxxxxx
+P1 plain upgrade, absolute-form: HTTP/1.1 200 OK | "Authorization": [    "xxxxxxxxxxxxxxxxxxxxxxx"   ],   "User
+P1b hop-by-hop at upstream: Proxy-Connection present=False X-Hop present=False X-Keep present=True proto=HTTP/2.0
+P2 plain, absolute-form, Host disagrees: HTTP/1.1 400 Bad Request | 
+P3 plain, absolute-form attacker target, Host says bound: HTTP/1.1 400 Bad Request | 
+P4 plain, origin-form on the proxy port: HTTP/1.1 400 Bad Request | 
+P5 plain to a VCS-covered bound host, info/refs: HTTP/1.1 403 Forbidden | 
+P6 plain to an unbound host, attaches nothing: HTTP/1.1 200 OK | X-Echo-Authorization: Bearer lenny-injected
+V1 terminated VCS host, git-upload-pack refused: HTTP/1.1 403 Forbidden | 
+V2 terminated VCS host, REST path allowed: HTTP/1.1 200 OK | 
+W1 WebSocket, reflected in a text frame
+ ws status: HTTP/1.1 101 Switching Protocols extensions-offered: False
+  frame op=0x81 b'hello auth=xxxxxxxxxxxxxxxxxxxxxxx'
+  frame op=0x81 b'echo:ping-from-client'
+W2 WebSocket, reflected split across fragments
+ ws status: HTTP/1.1 101 Switching Protocols extensions-offered: False
+  frame op=0x81 b'hello auth=xxxxxxxxxxxxxxxxxxxxxxx'
+  frame op=0x81 b'xxxxxxxxxxxxxxxxxxxxxxx'
+  frame op=0x81 b'echo:ping-from-client'
+W3 WebSocket on a pinned host
+ ws status: HTTP/1.1 403 Forbidden extensions-offered: False
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=attacker.example proto=HTTP/2.0 uri=/echo Authorization=['Bearer lenny-injected'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test:8443 proto=HTTP/2.0 uri=/echo Authorization=None Proxy-Connection=None X-Hop=None
+  upstream saw host=ghes.example.test proto=HTTP/2.0 uri=/echo Authorization=['token GH-REAL-55aa01'] Proxy-Connection=None X-Hop=None
+  upstream saw host=pinned.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer PIN-REAL-aa1107'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=other.example.test proto=HTTP/1.1 uri=/echo Authorization=['Bearer lenny-injected'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/1.1 uri=/ws Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/1.1 uri=/ws?frag=1 Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+
+### HTTP/2: :authority differs on the same connection
+h2 Host attacker.example: 2 200
+h2 bound: 2 200
+  upstream saw host=api.example.test proto=HTTP/1.1 uri=/ws?frag=1 Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=attacker.example proto=HTTP/2.0 uri=/echo Authorization=['Bearer lenny-injected'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+
+### placeholder in a query or a body is never replaced
+  upstream saw host=api.example.test proto=HTTP/1.1 uri=/ws?frag=1 Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=attacker.example proto=HTTP/2.0 uri=/echo Authorization=['Bearer lenny-injected'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+  upstream saw host=api.example.test proto=HTTP/2.0 uri=/echo?api_key=lenny-injected Authorization=['Bearer ACME-REAL-9f2c71'] Proxy-Connection=None X-Hop=None
+
+### scrub table: curl --compressed (advertises deflate, gzip, br, zstd); counts of secret-bearing lines the client saw
+enc=none rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=2 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=gzip rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=2 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=auto rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=2 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=deflate rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=2 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=split rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=2 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=zstd-auto rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=2 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=zstd rc=0 status=[HTTP/2 502 ] lines-with-secret=0 masked-lines=0 x-echo=[]
+enc=b64 rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=1 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=hex rc=0 status=[HTTP/2 200 ] lines-with-secret=0 masked-lines=1 x-echo=[x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxx]
+enc=b64 decoded-body-lines-with-secret=1 (stated residual)
+enc=hex decoded-body-lines-with-secret=1 (stated residual)
+
+### without the Accept-Encoding rewrite and the refusal of other encodings (-lax-encoding), which the design does not state
+enc=zstd-auto rc=0 lines-with-secret=1 (header masked: 1)
+enc=zstd rc=0 lines-with-secret=1 (header masked: 1)
+
+### a Basic attach template: the reflected rendered header holds the secret in base64
+x-echo-authorization: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+content-length: 249
+--
+  "Authorization": [
+   "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+--- with scrubbing of the exact secret only (-scrub-rendered=false)
+x-echo-authorization: Basic cHlwaXVzZXI6UFlQSS1SRUFMLTMzY2MwMw==
+pypiuser:PYPI-REAL-33cc03
+
+### truncated upstream body through the scrubber
+curl: (18) transfer closed with outstanding read data remaining
+h1 rc=18 code=200 bytes=8
+h2 rc=92 code=200 bytes=8
+curl: (92) HTTP/2 stream 1 reset by server (error 0x2 INTERNAL_ERROR)
+
+### upstream certificate signed by the per-pod CA is refused
+upstream failure
+ status=502
+01:32:26.613874 upstream: hostile.example.test:443: tls: failed to verify certificate: x509: certificate signed by unknown authority
+  requests the hostile upstream received: 0
+
+### a leaf from the leaked per-pod CA for a name outside the constraints, reached through an opaque tunnel
+curl: (60) SSL certificate OpenSSL verify result: permitted subtree violation (47)
+More details here: https://curl.se/docs/sslcerts.html
+X509v3 Basic Constraints: critical
+    CA:TRUE, pathlen:0
+X509v3 Name Constraints: critical
+    Permitted:
+      DNS:api.example.test
+      DNS:ghes.example.test
+      DNS:gitlab.example.test
+      DNS:gitplain.example.test
+      DNS:hostile.example.test
+      DNS:llm.example.test
+      DNS:pinned.example.test
+      DNS:pypi.example.test
+      DNS:registry.example.test
+      DNS:vcs.example.test
+    Excluded:
+      IP:0.0.0.0/0.0.0.0
+      IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0
+
+### wrong trust on I2: netagent with the public CA as its egress bundle, then a wrong server name
+wrong CA, bound host: 502
+wrong CA, opaque: 000
+01:32:27.499785 upstream: api.example.test:443: proxy tls: tls: failed to verify certificate: x509: certificate signed by unknown authority
+wrong server name, bound: 502
+01:32:29.215705 upstream: api.example.test:443: proxy tls: tls: failed to verify certificate: x509: certificate is valid for lenny-egress.lenny-system.svc, not wrong.lenn
+
+### CA persistence across a container restart, private directory modes
+before=6fc3e89581a82c9f after=6fc3e89581a82c9f
+total 16
+drwxr-xr-x    5 root     root           160 Nov  3 01:28 .
+drwxr-xr-x    1 root     root          4096 Nov  3 01:32 ..
+-rw-------    1 root     root           241 Nov  3 01:28 ca-key.pem
+-rw-r--r--    1 root     root           973 Nov  3 01:28 ca.pem
+-rw-------    1 root     root           198 Nov  3 01:28 ca.state
+
+### counters
+{"active":0,"attached":0,"authorityMismatch":0,"connect":0,"dialErrors":0,"goroutines":4,"heapAlloc":415152,"heapInuse":1105920,"heapSys":3833856,"numGC":0,"opaque":0,"plain":0,"refused":0,"requests":0,"scrubHits":0,"stackInuse":360448,"sys":8083720,"terminated":0}

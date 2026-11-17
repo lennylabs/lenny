@@ -1,0 +1,80 @@
+// Stand-in decision service: gRPC ext_authz on :9000.
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"log"
+	"net"
+	"os"
+	"strings"
+	"sync"
+	"time"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+var gw = map[string]string{"ok": "198.20.0.21:8443", "wrongsan": "198.20.0.22:8443", "foreign": "198.20.0.23:8443", "plainport": "198.20.0.21:8080"}
+var mu sync.Mutex
+var logf *os.File
+
+func hdr(k, v string) *corev3.HeaderValueOption {
+	return &corev3.HeaderValueOption{Header: &corev3.HeaderValue{Key: k, Value: v}, AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD}
+}
+
+type az struct{}
+
+func (az) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	h := req.GetAttributes().GetRequest().GetHttp()
+	host := h.GetHost()
+	name := strings.Split(host, ":")[0]
+	label := strings.Split(name, ".")[0]
+	mu.Lock()
+	json.NewEncoder(logf).Encode(map[string]any{"t": time.Now().Format(time.RFC3339Nano), "mode": "grpc", "method": h.GetMethod(), "host": host, "pod_proxy_auth": h.GetHeaders()["proxy-authorization"]})
+	mu.Unlock()
+	deny := func(code int, reason, body string) *authv3.CheckResponse {
+		return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{Status: &typev3.HttpStatus{Code: typev3.StatusCode(code)}, Body: body, Headers: []*corev3.HeaderValueOption{hdr("x-lenny-deny-reason", reason)}}}}
+	}
+	switch label {
+	case "deny503":
+		return deny(503, "no_live_agent", "no attested live replica\n"), nil
+	case "deny403":
+		return deny(403, "reserved_host", "reserved\n"), nil
+	}
+	route, addr := "outbound", gw["ok"]
+	if a, ok := gw[label]; ok {
+		addr = a
+	}
+	switch label {
+	case "tsm":
+		route = "outbound-tsm"
+	case "plain", "plainport":
+		route = "outbound-plain"
+	}
+	md, _ := structpb.NewStruct(map[string]any{"x-lenny-upstream": addr})
+	ok := &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", route)}}
+	if label == "nogrant" {
+		ok.HeadersToRemove = []string{"proxy-authorization"}
+	} else {
+		ok.Headers = append(ok.Headers, hdr("proxy-authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("grant:signed-grant-for-"+name))))
+	}
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md, HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: ok}}, nil
+}
+
+func main() {
+	logf, _ = os.OpenFile("/raw/authz.jsonl", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	ln, err := net.Listen("tcp", ":9000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	g := grpc.NewServer()
+	authv3.RegisterAuthorizationServer(g, az{})
+	log.Fatal(g.Serve(ln))
+}

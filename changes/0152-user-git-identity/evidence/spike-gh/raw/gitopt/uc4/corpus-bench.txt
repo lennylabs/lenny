@@ -1,0 +1,29 @@
+documents=166 largestBytes=7180 maxTokens=698 maxDepthExpanded=14 maxDepthWithinOneDefinition=14 maxMutationRootFields=1 maxValueDepth=2 par
+   1 mutation field "mergePullRequest" is denied by the preset
+   1 mutation field "addPullRequestReview" is denied by the preset
+   1 mutation field "createLinkedBranch" is denied by the preset
+   1 mutation field "enablePullRequestAutoMerge" is denied by the preset
+   1 mutation field "disablePullRequestAutoMerge" is denied by the preset
+BenchmarkUC4
+BenchmarkUC4/create
+BenchmarkUC4/create-2         	     200	     19590 ns/op	  18.02 MB/s	   11048 B/op	     281 allocs/op
+BenchmarkUC4/largest
+BenchmarkUC4/largest-2        	     200	    120310 ns/op	  19.85 MB/s	  105888 B/op	    1956 allocs/op
+BenchmarkUC4/body65k
+BenchmarkUC4/body65k-2        	     200	    600101 ns/op	 109.62 MB/s	  583764 B/op	     276 allocs/op
+BenchmarkUC4/bound258k
+BenchmarkUC4/bound258k-2      	     200	   2731523 ns/op	  94.52 MB/s	 1679090 B/op	     229 allocs/op
+BenchmarkUC4/tokens4096
+BenchmarkUC4/tokens4096-2     	     200	   1088868 ns/op	   7.54 MB/s	 1366362 B/op	   20579 allocs/op
+BenchmarkUC4/depth32
+BenchmarkUC4/depth32-2        	     200	     35886 ns/op	   3.15 MB/s	   22322 B/op	     421 allocs/op
+BenchmarkUC4/status
+BenchmarkUC4/status-2         	     200	     68091 ns/op	  26.92 MB/s	   59978 B/op	    1048 allocs/op
+BenchmarkUC4/doc64k-comment
+BenchmarkUC4/doc64k-comment-2 	     200	    695064 ns/op	  94.30 MB/s	  475741 B/op	     102 allocs/op
+BenchmarkUC4/body512k
+BenchmarkUC4/body512k-2       	     200	   3650280 ns/op	 143.63 MB/s	 5186401 B/op	     155 allocs/op
+BenchmarkUC4/variables-40k-nodes
+BenchmarkUC4/variables-40k-nodes-2         	     200	  10461070 ns/op	  12.24 MB/s	 7511451 B/op	  272168 allocs/op
+BenchmarkUC4/rest-get
+BenchmarkUC4/rest-get-2                    	     200	      2072 ns/op	    1112 B/op	      16 allocs/op

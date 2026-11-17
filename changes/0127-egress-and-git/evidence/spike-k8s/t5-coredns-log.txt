@@ -1,0 +1,12 @@
+[INFO] 10.244.0.18:44172 - 28298 "AAAA IN example.com.spike.svc.cluster.local. udp 53 false 512" NXDOMAIN qr,aa,rd 146 0.000044833s
+[INFO] 10.244.0.18:44172 - 27917 "A IN example.com.spike.svc.cluster.local. udp 53 false 512" NXDOMAIN qr,aa,rd 146 0.000058167s
+[INFO] 10.244.0.18:42671 - 47603 "AAAA IN example.com.svc.cluster.local. udp 47 false 512" NXDOMAIN qr,aa,rd 140 0.000086417s
+[INFO] 10.244.0.18:42671 - 47264 "A IN example.com.svc.cluster.local. udp 47 false 512" NXDOMAIN qr,aa,rd 140 0.000089166s
+[INFO] 10.244.0.18:39625 - 28950 "A IN example.com.cluster.local. udp 43 false 512" NXDOMAIN qr,aa,rd 136 0.000036833s
+[INFO] 10.244.0.18:39625 - 29290 "AAAA IN example.com.cluster.local. udp 43 false 512" NXDOMAIN qr,aa,rd 136 0.000053958s
+[INFO] 10.244.0.18:51344 - 18214 "AAAA IN example.com. udp 29 false 512" NXDOMAIN qr,aa,rd 29 0.000574083s
+[INFO] 10.244.0.18:51344 - 18172 "A IN example.com. udp 29 false 512" NXDOMAIN qr,aa,rd 29 0.000320833s
+[INFO] 10.244.0.18:60787 - 44587 "AAAA IN github.com.spike.svc.cluster.local. udp 52 false 512" NXDOMAIN qr,aa,rd 145 0.000055208s
+[INFO] 10.244.0.18:60787 - 44504 "A IN github.com.spike.svc.cluster.local. udp 52 false 512" NXDOMAIN qr,aa,rd 145 0.000081167s
+[INFO] 10.244.0.18:33984 - 36405 "AAAA IN github.com.svc.cluster.local. udp 46 false 512" NXDOMAIN qr,aa,rd 139 0.000029583s
+[INFO] 10.244.0.18:33984 - 36107 "A IN github.com.svc.cluster.local. udp 46 false 512" NXDOMAIN qr,aa,rd 139 0.000022333s

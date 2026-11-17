@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: NAME, namespace: lenny-system, labels: {app: APP}}
+spec:
+  securityContext: {fsGroup: 65532, runAsUser: 65532, runAsNonRoot: true}
+  containers:
+  - name: envoy
+    image: envoyproxy/envoy:v1.40.2
+    imagePullPolicy: Never
+    command: [envoy, -c, /boot/BOOT, --concurrency, "2", --log-level, info]
+    resources: {limits: {memory: 256Mi}}
+    readinessProbe:
+      httpGet: {path: /healthz, port: 3443, scheme: HTTPS}
+      periodSeconds: 2
+      failureThreshold: 1
+      timeoutSeconds: 1
+    volumeMounts:
+    - {name: boot, mountPath: /boot, readOnly: true}
+    - {name: sds, mountPath: /sds, readOnly: true}
+    - {name: certs, mountPath: /certs/live, readOnly: true}
+    - {name: ca, mountPath: /ca, readOnly: true}
+  - name: wleaf
+    image: ob-tools:1
+    imagePullPolicy: Never
+    command: [ob, watchfile, /certs/live/tls.crt]
+    volumeMounts: [{name: certs, mountPath: /certs/live, readOnly: true}]
+  volumes:
+  - {name: boot, configMap: {name: envoy-boot}}
+  - {name: sds, configMap: {name: envoy-sds}}
+  - name: certs
+    secret: {secretName: SECRET, defaultMode: 0440, optional: OPTIONAL}
+  - {name: ca, configMap: {name: lenny-egress-ca}}

@@ -1,0 +1,18 @@
+title:	the title
+state:	OPEN
+author:	alice (widgets)
+labels:	bug
+comments:	1
+assignees:	bob (widgets)
+projects:	board (widgets)
+milestone:	the title
+issue-type:	widgets
+parent:	acme/widgets#9
+sub-issues:	acme/widgets#9
+sub-issues-completed:	1/1
+blocked-by:	acme/widgets#9
+blocking:	acme/widgets#9
+number:	9
+--
+a description
+rc=0

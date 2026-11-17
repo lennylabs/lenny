@@ -1,0 +1,25 @@
+all-clone-none                           rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-clone-helper                         rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-clone-url                            rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-clone-header                         rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-clone-other                          rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-none                            rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-helper                          rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-url                             rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-header                          rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-other                           rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-gh-helper                       rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-push-main                            rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+all-push-main-other                      rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+all-push-mixed                           rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+all-push-delete                          rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=ref deletion of refs/heads/feature refused
+all-push-option                          rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=push options are refused
+all-push-outside                         rc=0   identity=                       origin= refused=repository acme/secret is outside the session's writable set
+all-push-readonly                        rc=0   identity=                       origin= refused=repository acme/lib is outside the session's writable set
+all-read-outside                         rc=0   identity=                       origin= refused=repository acme/secret is outside the session's readable set
+all-reflect                              rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 refused=
+all-redirect-in-scope                    rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 ghes.example.test=USER-FILE-CURRENT:301 refused=
+all-redirect-out-of-scope                rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:302 refused=redirect to https://other.example.test/pub/lib.git/info/refs?service=git-upload-
+all-github-push                          rc=0   identity=held                   origin=github.com=USER-FILE-CURRENT:200 refused=
+all-github-push-main                     rc=0   identity=held                   origin=github.com=USER-FILE-CURRENT:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+all-lfs-store-host                       rc=0   identity=held                   origin=ghes.example.test=USER-FILE-CURRENT:200 lfs-store.example.test=-: refused=

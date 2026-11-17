@@ -1,0 +1,5 @@
+subjectAltName=DNS:api.example.test,DNS:ghes.example.test,DNS:registry.example.test,DNS:pypi.example.test,DNS:other.example.test
+authorityKeyIdentifier=keyid
+extendedKeyUsage=serverAuth
+keyUsage=critical,digitalSignature
+basicConstraints=CA:false

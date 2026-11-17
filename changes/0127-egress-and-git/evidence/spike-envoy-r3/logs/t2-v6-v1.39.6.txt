@@ -1,0 +1,41 @@
+## family=ALL filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:48666 => http=200 connect=200 time=0.019142s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:48678 => http=200 connect=200 time=0.005346s size=50 
+  http://dual.spike/                 hello from target, you are 198.18.0.10:33846 => http=200 connect=200 time=0.002788s size=45 
+  http://target.spike/               hello from target, you are 198.18.0.10:33852 => http=200 connect=200 time=0.001988s size=45 
+## family=AUTO filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:48694 => http=200 connect=200 time=0.017369s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:48700 => http=200 connect=200 time=0.006065s size=50 
+  http://dual.spike/                 hello from target, you are [2001:db8:1::10]:43590 => http=200 connect=200 time=0.002774s size=50 
+  http://target.spike/               hello from target, you are [2001:db8:1::10]:43594 => http=200 connect=200 time=0.002037s size=50 
+## family=V4_PREFERRED filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:48706 => http=200 connect=200 time=0.021030s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:48716 => http=200 connect=200 time=0.006907s size=50 
+  http://dual.spike/                 hello from target, you are 198.18.0.10:33868 => http=200 connect=200 time=0.003031s size=45 
+  http://target.spike/               hello from target, you are 198.18.0.10:33882 => http=200 connect=200 time=0.002961s size=45 
+## family=V4_ONLY filter=on
+  http://[2001:db8:2::20]/           => http=000 connect=503 time=0.012394s size=0 
+  http://v6only.spike/               => http=000 connect=503 time=0.004443s size=0 
+  http://dual.spike/                 hello from target, you are 198.18.0.10:52972 => http=200 connect=200 time=0.005645s size=45 
+  http://target.spike/               hello from target, you are 198.18.0.10:52980 => http=200 connect=200 time=0.001735s size=45 
+## family=V6_ONLY filter=on
+  http://[2001:db8:2::20]/           hello from target, you are [2001:db8:2::10]:58478 => http=200 connect=200 time=0.017593s size=50 
+  http://v6only.spike/               hello from target, you are [2001:db8:2::10]:58494 => http=200 connect=200 time=0.006807s size=50 
+  http://dual.spike/                 hello from target, you are [2001:db8:1::10]:52082 => http=200 connect=200 time=0.001855s size=50 
+  http://target.spike/               hello from target, you are [2001:db8:1::10]:52084 => http=200 connect=200 time=0.002672s size=50 
+## SSRF v6, family=ALL filter=on
+  http://[fd00:99::5]/               => http=000 connect=503 time=0.008211s size=0 
+  http://ula.spike/                  => http=000 connect=503 time=0.003041s size=0 
+  http://ll.spike/                   => http=000 connect=503 time=0.001206s size=0 
+  http://[fe80::7c5e:4aff:fed3:2b]/  => http=000 connect=503 time=0.001035s size=0 
+  http://loop6.spike:9901/           => http=000 connect=503 time=0.001189s size=0 
+  http://mapped.spike/               => http=000 connect=503 time=0.001324s size=0 
+  http://nat64.spike/                => http=000 connect=503 time=0.001683s size=0 
+  http://[::ffff:198.18.0.20]/       => http=000 connect=503 time=0.001775s size=0 
+  http://[2001:db8:1::20]/           hello from target, you are [2001:db8:1::10]:52096 => http=200 connect=200 time=0.006022s size=50 
+   log [fd00:99::5]:80            503 DF  dns_resolution_failure{address_denied} up=None
+## SSRF v6, family=ALL filter=OFF (control: shows the targets are reachable)
+  http://[fd00:99::5]/               hello from target, you are [fd00:99::10]:55398 => http=200 connect=200 time=0.011919s size=47 
+  http://ula.spike/                  hello from target, you are [fd00:99::10]:55412 => http=200 connect=200 time=0.003309s size=47 
+  http://mapped.spike/               => http=000 connect=503 time=0.001428s size=0 
+  http://[::ffff:198.18.0.20]/       => http=000 connect=503 time=0.001084s size=0 

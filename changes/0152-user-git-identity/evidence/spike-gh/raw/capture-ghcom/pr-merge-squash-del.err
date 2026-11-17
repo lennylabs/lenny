@@ -1,0 +1,2 @@
+fatal: unable to access 'https://github.com/acme/widgets.git/': SSL certificate problem: unable to get local issuer certificate
+! warning: not possible to fast-forward to: "main"

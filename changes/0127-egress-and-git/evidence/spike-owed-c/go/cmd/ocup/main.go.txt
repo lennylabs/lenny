@@ -1,0 +1,550 @@
+// fakeup is the fake "public internet" for the injection spike. One process
+// serves every test hostname (selected by Host) over TLS (cert from the
+// separate public test CA) and plain HTTP. It logs every request's headers so
+// tests can prove what the upstream actually received.
+package main
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"bufio"
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"crypto/rand"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/klauspost/compress/zstd"
+)
+
+var (
+	ghSecret   = os.Getenv("GH_SECRET")
+	npmSecret  = os.Getenv("NPM_SECRET")
+	pypiUser   = os.Getenv("PYPI_USER")
+	pypiSecret = os.Getenv("PYPI_SECRET")
+	acmeSecret = os.Getenv("ACME_SECRET")
+)
+
+var npmTgz []byte
+var wheel []byte
+
+func hostOf(r *http.Request) string {
+	h := r.Host
+	if i := strings.LastIndex(h, ":"); i > 0 && !strings.Contains(h[i:], "]") {
+		h = h[:i]
+	}
+	return h
+}
+
+func logReq(r *http.Request) {
+	m := map[string]any{
+		"t": time.Now().Format(time.RFC3339Nano), "host": r.Host, "proto": r.Proto,
+		"tls": r.TLS != nil, "method": r.Method, "uri": r.RequestURI, "headers": r.Header,
+	}
+	b, _ := json.Marshal(m)
+	log.Printf("REQ %s", b)
+}
+
+func main() {
+	cert := flag.String("cert", "/certs/up/tls.crt", "")
+	key := flag.String("key", "/certs/up/tls.key", "")
+	h1only := flag.Bool("h1only", false, "")
+	flag.BoolVar(&quiet, "quiet", false, "")
+	flag.Parse()
+	rand.Read(noise)
+	log.SetFlags(0)
+	npmTgz = buildNpmTgz()
+	wheel = buildWheel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", route)
+	go func() { log.Fatal(http.ListenAndServe(":80", mux)) }()
+	srv := &http.Server{Addr: ":443", Handler: mux}
+	if *h1only {
+		srv.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){}
+	}
+	log.Fatal(srv.ListenAndServeTLS(*cert, *key))
+}
+
+var quiet bool
+var noise = make([]byte, 1<<16)
+
+// bulk writes incompressible bytes for mb MiB, or until the client goes away.
+func bulk(w http.ResponseWriter, r *http.Request) {
+	var mb int64
+	fmt.Sscan(r.URL.Query().Get("mb"), &mb)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	if r.URL.Query().Get("cl") != "" {
+		w.Header().Set("Content-Length", fmt.Sprint(mb<<20))
+	}
+	for sent := int64(0); sent < mb<<20; sent += int64(len(noise)) {
+		if _, err := w.Write(noise); err != nil {
+			return
+		}
+	}
+}
+
+// hold writes an opening chunk and a small tick every tick interval until the client leaves.
+func hold(w http.ResponseWriter, r *http.Request) {
+	t, _ := time.ParseDuration(r.URL.Query().Get("tick"))
+	if t == 0 {
+		t = 10 * time.Second
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	fl := w.(http.Flusher)
+	if r.URL.Query().Get("gz") != "" {
+		w.Header().Set("Content-Encoding", "gzip")
+		g := gzip.NewWriter(w)
+		defer g.Close()
+		fmt.Fprint(g, "data: open\n\n")
+		g.Flush()
+		fl.Flush()
+		tk := time.NewTicker(t)
+		defer tk.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-tk.C:
+				fmt.Fprint(g, "data: tick\n\n")
+				if err := g.Flush(); err != nil {
+					return
+				}
+				fl.Flush()
+			}
+		}
+	}
+	fmt.Fprint(w, "data: open\n\n")
+	fl.Flush()
+	tk := time.NewTicker(t)
+	defer tk.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-tk.C:
+			if _, err := fmt.Fprint(w, "data: tick\n\n"); err != nil {
+				return
+			}
+			fl.Flush()
+		}
+	}
+}
+
+// stream is an SSE stream whose events carry their send time in nanoseconds, so a client can compute delivery lag.
+// n events, gap between them, size of filler, optional gzip with a flush per event, optional reflected Authorization in every kth event,
+// optional stall (a long pause before the last event).
+func stream(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	var n, size, reflect int
+	fmt.Sscan(q.Get("n"), &n)
+	fmt.Sscan(q.Get("size"), &size)
+	fmt.Sscan(q.Get("reflect"), &reflect)
+	gap, _ := time.ParseDuration(q.Get("gap"))
+	stall, _ := time.ParseDuration(q.Get("stall"))
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	fl := w.(http.Flusher)
+	var out io.Writer = w
+	flush := func() { fl.Flush() }
+	if q.Get("gz") != "" {
+		w.Header().Set("Content-Encoding", "gzip")
+		g := gzip.NewWriter(w)
+		defer g.Close()
+		out = g
+		flush = func() { g.Flush(); fl.Flush() }
+	}
+	fill := strings.Repeat("z", size)
+	for i := 0; i < n; i++ {
+		a := ""
+		if reflect > 0 && i%reflect == 0 {
+			a = r.Header.Get("Authorization")
+		}
+		if stall > 0 && i == n-1 {
+			time.Sleep(stall)
+		}
+		ev := fmt.Sprintf("data: {\"n\":%d,\"ts\":%d,\"auth\":%q,\"f\":\"%s\"}\n\n", i, time.Now().UnixNano(), a, fill)
+		if q.Get("chunk") != "" { // the event in small flushed writes, so a secret straddles chunks
+			var c int
+			fmt.Sscan(q.Get("chunk"), &c)
+			for j := 0; j < len(ev); j += c {
+				if _, err := io.WriteString(out, ev[j:min(j+c, len(ev))]); err != nil {
+					return
+				}
+				flush()
+			}
+		} else if _, err := io.WriteString(out, ev); err != nil {
+			return
+		}
+		flush()
+		if i < n-1 {
+			time.Sleep(gap)
+		}
+	}
+}
+
+// gitlabAPI is a minimal GitLab REST surface for glab.
+func gitlabAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	want := os.Getenv("GITLAB_SECRET")
+	if want == "" || r.Header.Get("Private-Token") != want && r.Header.Get("Authorization") != "Bearer "+want {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"message":"401 Unauthorized"}`))
+		return
+	}
+	w.Write([]byte(`{"id":1,"username":"alice","name":"Alice Example","state":"active"}`))
+}
+
+func route(w http.ResponseWriter, r *http.Request) {
+	if !quiet {
+		logReq(r)
+	}
+	host := hostOf(r)
+	p := r.URL.Path
+	switch {
+	case p == "/bulk":
+		bulk(w, r)
+	case p == "/bulktext": // compressible text, gzip when asked
+		var mb int
+		fmt.Sscan(r.URL.Query().Get("mb"), &mb)
+		line := []byte(strings.Repeat("{\"model\":\"m\",\"delta\":\"the quick brown fox\",\"index\":12345}\n", 1000))
+		var out io.Writer = w
+		if r.URL.Query().Get("gz") != "" {
+			w.Header().Set("Content-Encoding", "gzip")
+			g := gzip.NewWriter(w)
+			defer g.Close()
+			out = g
+		}
+		for sent := 0; sent < mb<<20; sent += len(line) {
+			if _, err := out.Write(line); err != nil {
+				return
+			}
+		}
+	case p == "/bulkup":
+		n, _ := io.Copy(io.Discard, r.Body)
+		fmt.Fprintln(w, n)
+	case p == "/hold":
+		hold(w, r)
+	case p == "/cut": // a truncated chunked body: the connection closes without the terminal chunk
+		fmt.Fprint(w, "partial-")
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler)
+	case p == "/stream":
+		stream(w, r)
+	case host == "gitlab.example.test" && strings.HasPrefix(p, "/api/v4"):
+		gitlabAPI(w, r)
+	case p == "/small":
+		w.Write([]byte("ok\n"))
+	case p == "/echo":
+		echo(w, r)
+	case p == "/sse":
+		sse(w, r)
+	case p == "/ws":
+		ws(w, r)
+	case p == "/acme/check":
+		// The fake "ACME API": 200 only with the real secret.
+		got := r.Header.Get("Authorization") + "|" + r.Header.Get("X-Api-Key") + "|" + r.URL.Query().Get("api_key")
+		if acmeSecret != "" && strings.Contains(got, acmeSecret) {
+			w.Write([]byte(`{"ok":true}` + "\n"))
+			return
+		}
+		http.Error(w, `{"ok":false}`, 401)
+	case host == "ghes.example.test":
+		ghes(w, r)
+	case host == "registry.example.test":
+		npmReg(w, r)
+	case host == "pypi.example.test":
+		pypi(w, r)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func echoBody(r *http.Request) []byte {
+	m := map[string]any{"proto": r.Proto, "method": r.Method, "uri": r.RequestURI, "host": r.Host, "headers": r.Header}
+	b, _ := json.MarshalIndent(m, "", " ")
+	return append(b, '\n')
+}
+
+func echo(w http.ResponseWriter, r *http.Request) {
+	body := echoBody(r)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Echo-Authorization", r.Header.Get("Authorization"))
+	switch r.URL.Query().Get("enc") {
+	case "gzip": // forced, ignoring Accept-Encoding (misbehaving server)
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		gz.Write(body)
+		gz.Close()
+	case "auto": // honours Accept-Encoding like a normal server
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			gz.Write(body)
+			gz.Close()
+			return
+		}
+		w.Write(body)
+	case "deflate":
+		w.Header().Set("Content-Encoding", "deflate")
+		fw, _ := flate.NewWriter(w, 5)
+		fw.Write(body)
+		fw.Close()
+	case "zstd-auto": // honours Accept-Encoding when it lists zstd, as a production CDN does
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") {
+			w.Header().Set("Content-Encoding", "zstd")
+			z, _ := zstd.NewWriter(w)
+			z.Write(body)
+			z.Close()
+			return
+		}
+		w.Write(body)
+	case "zstd": // forced, ignoring Accept-Encoding
+		w.Header().Set("Content-Encoding", "zstd")
+		z, _ := zstd.NewWriter(w)
+		z.Write(body)
+		z.Close()
+	case "b64":
+		w.Write([]byte(base64.StdEncoding.EncodeToString(body) + "\n"))
+	case "hex":
+		w.Write([]byte(hex.EncodeToString(body) + "\n"))
+	case "split": // tiny flushed chunks so the secret straddles chunk boundaries
+		fl, _ := w.(http.Flusher)
+		for i := 0; i < len(body); i += 5 {
+			j := min(i+5, len(body))
+			w.Write(body[i:j])
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+	default:
+		w.Write(body)
+	}
+}
+
+func sse(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	fl := w.(http.Flusher)
+	for i := 0; i < 5; i++ {
+		fmt.Fprintf(w, "data: {\"n\":%d,\"t\":\"%s\",\"auth\":%q}\n\n", i, time.Now().Format("15:04:05.000"), r.Header.Get("Authorization"))
+		fl.Flush()
+		time.Sleep(400 * time.Millisecond)
+	}
+}
+
+// ws is a minimal RFC 6455 echo server (text frames, no extensions).
+func ws(w http.ResponseWriter, r *http.Request) {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		http.Error(w, "need websocket upgrade", 400)
+		return
+	}
+	key := r.Header.Get("Sec-WebSocket-Key")
+	h := sha1.Sum([]byte(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+	conn, brw, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	fmt.Fprintf(brw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", base64.StdEncoding.EncodeToString(h[:]))
+	writeFrame(brw, "hello auth="+r.Header.Get("Authorization"))
+	brw.Flush()
+	if r.URL.Query().Get("frag") != "" { // the reflection split across two fragments of one message
+		a := r.Header.Get("Authorization")
+		m := len(a) / 2
+		brw.Write(append([]byte{0x01, byte(m)}, a[:m]...))
+		brw.Flush()
+		time.Sleep(50 * time.Millisecond)
+		brw.Write(append([]byte{0x80, byte(len(a) - m)}, a[m:]...))
+		brw.Flush()
+	}
+	for {
+		op, msg, err := readFrame(brw.Reader)
+		if err != nil || op == 8 {
+			return
+		}
+		if op == 1 {
+			writeFrame(brw, "echo:"+string(msg))
+			brw.Flush()
+		}
+	}
+}
+
+func writeFrame(w io.Writer, s string) {
+	b := []byte{0x81}
+	n := len(s)
+	switch {
+	case n < 126:
+		b = append(b, byte(n))
+	case n < 65536:
+		b = append(b, 126, byte(n>>8), byte(n))
+	default:
+		b = append(b, 127)
+		b = binary.BigEndian.AppendUint64(b, uint64(n))
+	}
+	w.Write(append(b, s...))
+}
+
+func readFrame(r *bufio.Reader) (byte, []byte, error) {
+	var h [2]byte
+	if _, err := io.ReadFull(r, h[:]); err != nil {
+		return 0, nil, err
+	}
+	op := h[0] & 0x0f
+	masked := h[1]&0x80 != 0
+	n := uint64(h[1] & 0x7f)
+	if n == 126 {
+		var e [2]byte
+		io.ReadFull(r, e[:])
+		n = uint64(binary.BigEndian.Uint16(e[:]))
+	} else if n == 127 {
+		var e [8]byte
+		io.ReadFull(r, e[:])
+		n = binary.BigEndian.Uint64(e[:])
+	}
+	var mask [4]byte
+	if masked {
+		io.ReadFull(r, mask[:])
+	}
+	p := make([]byte, n)
+	if _, err := io.ReadFull(r, p); err != nil {
+		return 0, nil, err
+	}
+	if masked {
+		for i := range p {
+			p[i] ^= mask[i%4]
+		}
+	}
+	return op, p, nil
+}
+
+// ---- fake GHES ----
+func ghes(w http.ResponseWriter, r *http.Request) {
+	a := r.Header.Get("Authorization")
+	ok := ghSecret != "" && (a == "token "+ghSecret || a == "Bearer "+ghSecret)
+	w.Header().Set("Content-Type", "application/json")
+	if !ok {
+		w.WriteHeader(401)
+		w.Write([]byte(`{"message":"Bad credentials","documentation_url":"https://docs.github.com/rest"}`))
+		return
+	}
+	w.Header().Set("X-Oauth-Scopes", "repo, read:org")
+	switch r.URL.Path {
+	case "/api/v3/user", "/api/v3/user/":
+		w.Write([]byte(`{"login":"alice","id":1,"name":"Alice Example","type":"User"}`))
+	case "/api/graphql":
+		w.Write([]byte(`{"data":{"viewer":{"login":"alice"}}}`))
+	case "/api/v3/", "/api/v3":
+		w.Write([]byte(`{"current_user_url":"https://ghes.example.test/api/v3/user"}`))
+	default:
+		w.WriteHeader(404)
+		w.Write([]byte(`{"message":"Not Found"}`))
+	}
+}
+
+// ---- fake npm registry ----
+func npmReg(w http.ResponseWriter, r *http.Request) {
+	if npmSecret == "" || r.Header.Get("Authorization") != "Bearer "+npmSecret {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("WWW-Authenticate", `Bearer realm="spike"`)
+		w.WriteHeader(401)
+		w.Write([]byte(`{"error":"unauthorized"}`))
+		return
+	}
+	switch r.URL.Path {
+	case "/spike-leftpad":
+		sum := sha512.Sum512(npmTgz)
+		s1 := sha1.Sum(npmTgz)
+		doc := map[string]any{
+			"name": "spike-leftpad", "dist-tags": map[string]string{"latest": "1.0.0"},
+			"versions": map[string]any{"1.0.0": map[string]any{
+				"name": "spike-leftpad", "version": "1.0.0",
+				"dist": map[string]string{
+					"tarball":   "https://registry.example.test/spike-leftpad/-/spike-leftpad-1.0.0.tgz",
+					"integrity": "sha512-" + base64.StdEncoding.EncodeToString(sum[:]),
+					"shasum":    hex.EncodeToString(s1[:]),
+				}}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(doc)
+	case "/spike-leftpad/-/spike-leftpad-1.0.0.tgz":
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(npmTgz)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func buildNpmTgz() []byte {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	add := func(name, body string) {
+		tw.WriteHeader(&tar.Header{Name: name, Mode: 0644, Size: int64(len(body)), ModTime: time.Unix(1700000000, 0)})
+		tw.Write([]byte(body))
+	}
+	add("package/package.json", `{"name":"spike-leftpad","version":"1.0.0","main":"index.js"}`)
+	add("package/index.js", "module.exports = (s, n) => String(s).padStart(n);\n")
+	tw.Close()
+	gz.Close()
+	return buf.Bytes()
+}
+
+// ---- fake PyPI simple index ----
+func pypi(w http.ResponseWriter, r *http.Request) {
+	u, p, ok := r.BasicAuth()
+	if !ok || pypiSecret == "" || u != pypiUser || p != pypiSecret {
+		w.Header().Set("WWW-Authenticate", `Basic realm="spike"`)
+		http.Error(w, "unauthorized", 401)
+		return
+	}
+	sum := sha256.Sum256(wheel)
+	switch r.URL.Path {
+	case "/simple/", "/simple":
+		w.Write([]byte(`<html><body><a href="/simple/spikepkg/">spikepkg</a></body></html>`))
+	case "/simple/spikepkg/", "/simple/spikepkg":
+		fmt.Fprintf(w, `<html><body><a href="/files/spikepkg-1.0.0-py3-none-any.whl#sha256=%x">spikepkg-1.0.0-py3-none-any.whl</a></body></html>`, sum)
+	case "/files/spikepkg-1.0.0-py3-none-any.whl":
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(wheel)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func buildWheel() []byte {
+	files := [][2]string{
+		{"spikepkg/__init__.py", "VALUE = 'spikepkg-ok'\n"},
+		{"spikepkg-1.0.0.dist-info/METADATA", "Metadata-Version: 2.1\nName: spikepkg\nVersion: 1.0.0\n"},
+		{"spikepkg-1.0.0.dist-info/WHEEL", "Wheel-Version: 1.0\nGenerator: spike\nRoot-Is-Purelib: true\nTag: py3-none-any\n"},
+	}
+	var record strings.Builder
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, f := range files {
+		fw, _ := zw.Create(f[0])
+		fw.Write([]byte(f[1]))
+		s := sha256.Sum256([]byte(f[1]))
+		fmt.Fprintf(&record, "%s,sha256=%s,%d\n", f[0], base64.RawURLEncoding.EncodeToString(s[:]), len(f[1]))
+	}
+	record.WriteString("spikepkg-1.0.0.dist-info/RECORD,,\n")
+	fw, _ := zw.Create("spikepkg-1.0.0.dist-info/RECORD")
+	fw.Write([]byte(record.String()))
+	zw.Close()
+	return buf.Bytes()
+}

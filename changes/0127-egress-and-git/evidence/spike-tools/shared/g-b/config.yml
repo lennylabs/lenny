@@ -1,0 +1,8 @@
+hosts:
+    gitlab.example.test:
+        token: tok-X
+        api_host: gitlab.example.test
+        api_protocol: https
+check_update: false
+glamour_style_auto_migrated: "true"
+last_seen_version: v1.126.0

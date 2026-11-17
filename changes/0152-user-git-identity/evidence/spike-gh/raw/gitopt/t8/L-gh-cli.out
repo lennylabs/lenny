@@ -1,0 +1,107 @@
+### L-remote-v rc=0
+$ git remote -v
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+### L-pr-create rc=1
+$ gh pr create --title t --body b 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### L-pr-list rc=1
+$ gh pr list 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### L-pr-view rc=1
+$ gh pr view --json number 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### L-pr-status rc=1
+$ gh pr status 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### L-glab rc=1
+$ cd /tmp/tmp.ziDOM3b6Dc; git clone -q https://gitlab.example.test/acme/widgets.git gl; cd gl; env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected glab mr list 2>&1
+  GITLAB_HOST is currently set to gitlab.example.test                                                                 
+                                                                                                                      
+  Configured remotes: 127.0.0.1:3129.                                                                                 
+### GHREPO-pr-create-nohead rc=1
+$ GH_REPO=ghes.example.test/acme/widgets gh pr create --title t --body b 2>&1
+could not resolve remote "origin": none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### GHREPO-pr-create-head rc=0
+$ GH_REPO=ghes.example.test/acme/widgets gh pr create --title t --body b --head feature-alt-1793731041 2>&1
+https://ghes.example.test/acme/widgets/pull/7
+### GHREPO-pr-list rc=0
+$ GH_REPO=ghes.example.test/acme/widgets gh pr list 2>&1
+
+### GHREPO-pr-view-noarg rc=1
+$ GH_REPO=ghes.example.test/acme/widgets gh pr view --json number,headRefName 2>&1
+could not resolve remote "origin": none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### GHREPO-pr-status rc=1
+$ GH_REPO=ghes.example.test/acme/widgets gh pr status 2>&1
+could not resolve remote "origin": none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### GHREPO-pr-checkout rc=1
+$ GH_REPO=ghes.example.test/acme/widgets gh pr checkout 7 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### set-default rc=1
+$ gh repo set-default ghes.example.test/acme/widgets 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### gh-resolved-config rc=1
+$ git config remote.origin.gh-resolved base; gh pr list 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### noconfig-wrapper-view rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null gh pr view --json number,headRefName 2>&1
+{"headRefName":"feature-alt-1793731041","number":7}
+### noconfig-wrapper-create rc=1
+$ git checkout -q -b w-1793731041; git push -q -u origin HEAD; GIT_CONFIG_GLOBAL=/dev/null gh pr create --title t --body b 2>&1
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+aborted: you must first push the current branch to a remote, or use the --head flag
+### noconfig-wrapper-checkout rc=1
+$ GIT_CONFIG_GLOBAL=/dev/null gh pr checkout 7 2>&1
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+failed to run git: exit status 128
+### glab-R rc=0
+$ cd /tmp/tmp.ziDOM3b6Dc/gl; env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected glab mr list -R gitlab.example.test/acme/widgets 2>&1
+
+What's new in glab v1.127.0
+  Run: glab whatsnew
+### glab-R-create rc=1
+$ cd /tmp/tmp.ziDOM3b6Dc/gl; git checkout -q -b gl-1793731041; git commit -q --allow-empty -m e; git push -q -u origin HEAD; env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected glab mr create -R gitlab.example.test/acme/widgets --title t --description d --source-branch gl-1793731041 --target-branch main --yes 2>&1
+  GITLAB_HOST is currently set to gitlab.example.test                                                                 
+                                                                                                                      
+  Configured remotes: 127.0.0.1:3129.                                                                                 
+### PIO-remote-v rc=0
+$ git remote -v
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (push)
+### PIO-gh-list rc=0
+$ gh pr list 2>&1
+
+### PIO-fetch rc=128
+$ git fetch origin 2>&1
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+### PIO-push rc=128
+$ git push -q origin HEAD 2>&1
+remote: refused by egress policy
+fatal: unable to access 'http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+### LPI-remote-v rc=0
+$ git remote -v
+origin	http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+### LPI-gh-list rc=0
+$ gh pr list 2>&1
+
+### LPI-gh-view rc=0
+$ gh pr view --json number,headRefName 2>&1
+{"headRefName":"feature-alt-1793731041","number":7}
+### LPI-fetch rc=0
+$ git fetch origin 2>&1
+
+### LPI-push rc=128
+$ git push -q origin HEAD 2>&1
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+### port-url-gh rc=0
+$ cd /tmp/tmp.ziDOM3b6Dc; git init -q z; cd z; git remote add origin http://ghes.example.test:3129/acme/widgets.git; gh pr list 2>&1
+
+### loop-short-gh rc=1
+$ cd /tmp/tmp.ziDOM3b6Dc/z; git remote set-url origin http://127.0.0.1:3129/acme/widgets.git; gh pr list 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### loop-short-gh-host rc=1
+$ cd /tmp/tmp.ziDOM3b6Dc/z; GH_HOST=127.0.0.1 GH_ENTERPRISE_TOKEN=x gh pr list 2>&1
+Post "https://127.0.0.1/api/graphql": dial tcp 127.0.0.1:443: connect: connection refused
+script-rc=0

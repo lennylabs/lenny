@@ -1,0 +1,4 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: short, namespace: lenny-system}
+spec: {secretName: short, duration: 10m, renewBefore: 9m, dnsNames: [x.y], issuerRef: {name: lenny-egress-ca, kind: Issuer}}

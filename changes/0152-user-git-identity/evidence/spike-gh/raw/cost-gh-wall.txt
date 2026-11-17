@@ -1,0 +1,8 @@
+filter on
+gh pr create wall ms, 8 runs, empty cache: [130, 74, 89, 68, 71, 80, 95, 85] median 82
+filter off
+gh pr create wall ms, 8 runs, empty cache: [96, 92, 73, 76, 81, 64, 74, 80] median 78
+filter on
+gh pr create wall ms, 8 runs, empty cache: [97, 68, 89, 79, 78, 67, 63, 64] median 73
+filter off
+gh pr create wall ms, 8 runs, empty cache: [92, 68, 67, 62, 61, 64, 62, 58] median 63

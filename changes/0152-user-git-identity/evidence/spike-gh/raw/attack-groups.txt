@@ -1,0 +1,68 @@
+== ghes {'PASS': 519, 'PASS-did-not-reach': 1, 'PASS-reached-no-cred': 2}
+  ('around', 'nocred', 'PASS-did-not-reach') 1
+  ('around', 'nocred', 'PASS-reached-no-cred') 2
+  ('bound', 'allow', 'PASS') 3
+  ('bound', 'refuse', 'PASS') 8
+  ('chunked', 'allow', 'PASS') 1
+  ('chunked', 'refuse', 'PASS') 3
+  ('control', 'allow', 'PASS') 24
+  ('gql-differential', 'allow', 'PASS') 2
+  ('gql-differential', 'refuse', 'PASS') 2
+  ('gql-evasion', 'allow', 'PASS') 2
+  ('gql-evasion', 'refuse', 'PASS') 122
+  ('gql-field', 'refuse', 'PASS') 50
+  ('gql-malformed', 'allow', 'PASS') 2
+  ('gql-malformed', 'refuse', 'PASS') 24
+  ('gql-path', 'refuse', 'PASS') 20
+  ('h1-framing', 'allow', 'PASS') 1
+  ('h1-framing', 'refuse', 'PASS') 15
+  ('h2', 'allow', 'PASS') 2
+  ('h2', 'refuse', 'PASS') 16
+  ('rest-method', 'refuse', 'PASS') 34
+  ('rest-override', 'refuse', 'PASS') 32
+  ('rest-path', 'refuse', 'PASS') 56
+  ('rest-route', 'refuse', 'PASS') 42
+  ('reuse', 'allow', 'PASS') 9
+  ('reuse', 'refuse', 'PASS') 11
+  ('transport', 'allow', 'PASS') 6
+  ('transport', 'refuse', 'PASS') 32
+  how ('allow', 'PASS', 'http2') 52
+  how ('nocred', 'PASS-did-not-reach', 'status0') 1
+  how ('nocred', 'PASS-reached-no-cred', 'http2') 2
+  how ('refuse', 'PASS', 'filter') 449
+  how ('refuse', 'PASS', 'http4') 11
+  how ('refuse', 'PASS', 'status0') 7
+== ghcom {'PASS': 519, 'PASS-did-not-reach': 1, 'PASS-reached-no-cred': 2}
+  ('around', 'nocred', 'PASS-did-not-reach') 1
+  ('around', 'nocred', 'PASS-reached-no-cred') 2
+  ('bound', 'allow', 'PASS') 3
+  ('bound', 'refuse', 'PASS') 8
+  ('chunked', 'allow', 'PASS') 1
+  ('chunked', 'refuse', 'PASS') 3
+  ('control', 'allow', 'PASS') 24
+  ('gql-differential', 'allow', 'PASS') 2
+  ('gql-differential', 'refuse', 'PASS') 2
+  ('gql-evasion', 'allow', 'PASS') 2
+  ('gql-evasion', 'refuse', 'PASS') 122
+  ('gql-field', 'refuse', 'PASS') 50
+  ('gql-malformed', 'allow', 'PASS') 2
+  ('gql-malformed', 'refuse', 'PASS') 24
+  ('gql-path', 'refuse', 'PASS') 20
+  ('h1-framing', 'allow', 'PASS') 1
+  ('h1-framing', 'refuse', 'PASS') 15
+  ('h2', 'allow', 'PASS') 2
+  ('h2', 'refuse', 'PASS') 16
+  ('rest-method', 'refuse', 'PASS') 34
+  ('rest-override', 'refuse', 'PASS') 32
+  ('rest-path', 'refuse', 'PASS') 56
+  ('rest-route', 'refuse', 'PASS') 42
+  ('reuse', 'allow', 'PASS') 9
+  ('reuse', 'refuse', 'PASS') 11
+  ('transport', 'allow', 'PASS') 6
+  ('transport', 'refuse', 'PASS') 32
+  how ('allow', 'PASS', 'http2') 52
+  how ('nocred', 'PASS-did-not-reach', 'status0') 1
+  how ('nocred', 'PASS-reached-no-cred', 'http2') 2
+  how ('refuse', 'PASS', 'filter') 449
+  how ('refuse', 'PASS', 'http4') 11
+  how ('refuse', 'PASS', 'status0') 7

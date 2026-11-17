@@ -1,0 +1,301 @@
+// soak: open N CONNECT tunnels through the proxy, read the server's periodic chunks on each one,
+// and report when and how every tunnel ends. Optionally probe new CONNECTs at an interval.
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"os"
+	"bufio"
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+var (
+	proxyTLS  = flag.Bool("proxy-tls", false, "TLS to the proxy")
+	proxyCA   = flag.String("proxy-ca", "", "CA file")
+	proxySNI  = flag.String("proxy-sni", "lenny-egress.lenny-system.svc", "")
+	noResume  = flag.Bool("no-resume", false, "disable TLS session resumption")
+	tls12Only = flag.Bool("tls12", false, "")
+	tlsOnce   sync.Once
+	tlsCfg    *tls.Config
+)
+
+func dialProxy(addr string, to time.Duration) (net.Conn, error) {
+	if !*proxyTLS {
+		return net.DialTimeout("tcp", addr, to)
+	}
+	tlsOnce.Do(func() {
+		pool := x509.NewCertPool()
+		b, err := os.ReadFile(*proxyCA)
+		if err != nil {
+			panic(err)
+		}
+		pool.AppendCertsFromPEM(b)
+		tlsCfg = &tls.Config{RootCAs: pool, ServerName: *proxySNI, NextProtos: []string{"http/1.1"}}
+		if !*noResume {
+			tlsCfg.ClientSessionCache = tls.NewLRUClientSessionCache(64)
+		}
+		if *tls12Only {
+			tlsCfg.MaxVersion = tls.VersionTLS12
+		}
+	})
+	d := &tls.Dialer{NetDialer: &net.Dialer{Timeout: to}, Config: tlsCfg}
+	ctx, c := context.WithTimeout(context.Background(), to)
+	defer c()
+	return d.DialContext(ctx, "tcp", addr)
+}
+
+type tun struct {
+	id      int
+	opened  time.Duration
+	lat     time.Duration
+	code    int
+	ticks   int64
+	last    time.Duration
+	ended   time.Duration
+	reason  string
+	timeout bool
+}
+
+func main() {
+	proxy := flag.String("proxy", "198.19.0.10:3128", "")
+	target := flag.String("target", "target.spike:7000", "")
+	cred := flag.String("cred", "agent:good", "")
+	n := flag.Int("n", 200, "tunnels")
+	rate := flag.Int("rate", 50, "tunnels opened per second")
+	max := flag.Duration("max", 25*time.Minute, "stop reading after this long from start")
+	report := flag.Duration("report", 30*time.Second, "report interval")
+	probe := flag.Duration("probe", 0, "attempt a fresh CONNECT every interval (0 = off)")
+	probeDur := flag.Duration("probe-for", 0, "stop probing after this long (0 = until end)")
+	flag.Parse()
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(*cred))
+	start := time.Now()
+	since := func() time.Duration { return time.Since(start) }
+	fmt.Printf("start wallclock %s\n", start.UTC().Format("15:04:05.000"))
+	tuns := make([]*tun, *n)
+	var open, ticks atomic.Int64
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	ended := []*tun{}
+	finish := func(t *tun, reason string) {
+		t.ended = since()
+		t.reason = reason
+		mu.Lock()
+		ended = append(ended, t)
+		mu.Unlock()
+		open.Add(-1)
+	}
+	one := func(t *tun) {
+		defer wg.Done()
+		t0 := time.Now()
+		t.opened = since()
+		c, err := dialProxy(*proxy, 10*time.Second)
+		if err != nil {
+			t.code = -1
+			t.reason = "dial: " + err.Error()
+			mu.Lock()
+			ended = append(ended, t)
+			mu.Unlock()
+			return
+		}
+		c.SetDeadline(t0.Add(10 * time.Second))
+		fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\n\r\n", *target, *target, auth)
+		br := bufio.NewReader(c)
+		resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+		t.lat = time.Since(t0)
+		if err != nil {
+			t.code = -1
+			t.reason = "connect: " + err.Error()
+			c.Close()
+			mu.Lock()
+			ended = append(ended, t)
+			mu.Unlock()
+			return
+		}
+		t.code = resp.StatusCode
+		if resp.StatusCode != 200 {
+			c.Close()
+			t.reason = fmt.Sprintf("status %d", resp.StatusCode)
+			mu.Lock()
+			ended = append(ended, t)
+			mu.Unlock()
+			return
+		}
+		open.Add(1)
+		c.SetDeadline(start.Add(*max))
+		buf := make([]byte, 4096)
+		for {
+			k, err := br.Read(buf)
+			if k > 0 {
+				t.ticks++
+				ticks.Add(1)
+				t.last = since()
+			}
+			if err != nil {
+				e := err.Error()
+				switch {
+				case strings.Contains(e, "EOF"):
+					e = "EOF (clean close)"
+				case strings.Contains(e, "reset"):
+					e = "RST (connection reset)"
+				case strings.Contains(e, "timeout"):
+					e = "max reached (still open)"
+					t.timeout = true
+				}
+				finish(t, e)
+				c.Close()
+				return
+			}
+		}
+	}
+	// probes
+	stopProbe := make(chan struct{})
+	var probeMu sync.Mutex
+	probeLog := []string{}
+	if *probe > 0 {
+		go func() {
+			tk := time.NewTicker(*probe)
+			defer tk.Stop()
+			for {
+				select {
+				case <-stopProbe:
+					return
+				case <-tk.C:
+				}
+				if *probeDur > 0 && since() > *probeDur {
+					return
+				}
+				t0 := time.Now()
+				at := since()
+				c, err := dialProxy(*proxy, 10*time.Second)
+				var r string
+				if err != nil {
+					r = "dial error: " + err.Error()
+				} else {
+					c.SetDeadline(t0.Add(3 * time.Second))
+					fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\n\r\n", *target, *target, auth)
+					resp, err := http.ReadResponse(bufio.NewReader(c), &http.Request{Method: "CONNECT"})
+					if err != nil {
+						r = "connect error: " + err.Error()
+					} else {
+						r = fmt.Sprintf("%d", resp.StatusCode)
+						if resp.StatusCode == 200 {
+							// Keep it a moment so the server's first tick can arrive, then close.
+							c.SetDeadline(time.Now().Add(1500 * time.Millisecond))
+							b := make([]byte, 64)
+							k, err := c.Read(b)
+							if k > 0 {
+								r += " +data"
+							} else if err != nil {
+								r += " then " + err.Error()
+							}
+						}
+					}
+					c.Close()
+				}
+				line := fmt.Sprintf("probe t=%6.1fs %s -> %s (%v)", at.Seconds(), t0.UTC().Format("15:04:05.000"), r, time.Since(t0).Round(time.Millisecond))
+				fmt.Println(line)
+				probeMu.Lock()
+				probeLog = append(probeLog, line)
+				probeMu.Unlock()
+			}
+		}()
+	}
+	// reporter
+	stopRep := make(chan struct{})
+	go func() {
+		tk := time.NewTicker(*report)
+		defer tk.Stop()
+		lastTicks := int64(0)
+		for {
+			select {
+			case <-stopRep:
+				return
+			case <-tk.C:
+			}
+			tt := ticks.Load()
+			mu.Lock()
+			reasons := map[string]int{}
+			for _, t := range ended {
+				reasons[t.reason]++
+			}
+			mu.Unlock()
+			fmt.Printf("t=%6.1fs open=%d ticks=%d (+%d) ended=%v\n", since().Seconds(), open.Load(), tt, tt-lastTicks, reasons)
+			lastTicks = tt
+		}
+	}()
+	iv := time.Second / time.Duration(*rate)
+	next := time.Now()
+	for i := 0; i < *n; i++ {
+		tuns[i] = &tun{id: i}
+		wg.Add(1)
+		go one(tuns[i])
+		next = next.Add(iv)
+		time.Sleep(time.Until(next))
+	}
+	wg.Wait()
+	for *probe > 0 && *probeDur > 0 && since() < *probeDur {
+		time.Sleep(200 * time.Millisecond)
+	}
+	close(stopRep)
+	close(stopProbe)
+	// summary
+	reasons := map[string]int{}
+	var lifetimes []time.Duration
+	var lats []time.Duration
+	minT, maxT := int64(1<<62), int64(0)
+	codes := map[int]int{}
+	for _, t := range tuns {
+		codes[t.code]++
+		if t.code == 200 {
+			lats = append(lats, t.lat)
+			reasons[t.reason]++
+			lifetimes = append(lifetimes, t.ended-t.opened)
+			if t.ticks < minT {
+				minT = t.ticks
+			}
+			if t.ticks > maxT {
+				maxT = t.ticks
+			}
+		} else {
+			reasons[t.reason]++
+		}
+	}
+	sort.Slice(lifetimes, func(i, j int) bool { return lifetimes[i] < lifetimes[j] })
+	sort.Slice(lats, func(i, j int) bool { return lats[i] < lats[j] })
+	p := func(v []time.Duration, f float64) time.Duration {
+		if len(v) == 0 {
+			return 0
+		}
+		return v[int(float64(len(v)-1)*f)].Round(10 * time.Millisecond)
+	}
+	var endTimes []time.Duration
+	for _, t := range tuns {
+		if t.code == 200 && !t.timeout {
+			endTimes = append(endTimes, t.ended)
+		}
+	}
+	sort.Slice(endTimes, func(i, j int) bool { return endTimes[i] < endTimes[j] })
+	fmt.Printf("SUMMARY n=%d codes=%v end_reasons=%v ticks_total=%d ticks_per_tunnel=[%d..%d] connect_lat p50=%v p99=%v lifetime min=%v p50=%v max=%v elapsed=%.1fs\n",
+		*n, codes, reasons, ticks.Load(), minT, maxT, p(lats, .5), p(lats, .99), p(lifetimes, 0), p(lifetimes, .5), p(lifetimes, 1), since().Seconds())
+	if len(endTimes) > 0 {
+		fmt.Printf("ENDS (tunnels closed by the peer) rel. to start: first=%.2fs p50=%.2fs last=%.2fs; wallclock first=%s last=%s\n",
+			endTimes[0].Seconds(), endTimes[len(endTimes)/2].Seconds(), endTimes[len(endTimes)-1].Seconds(),
+			start.Add(endTimes[0]).UTC().Format("15:04:05.000"), start.Add(endTimes[len(endTimes)-1]).UTC().Format("15:04:05.000"))
+	}
+	if len(os.Getenv("DUMP")) > 0 {
+		for _, t := range tuns {
+			fmt.Printf("  tun %3d code=%d opened=%.1fs ended=%.1fs life=%.1fs ticks=%d last_tick=%.1fs reason=%s\n", t.id, t.code, t.opened.Seconds(), t.ended.Seconds(), (t.ended - t.opened).Seconds(), t.ticks, t.last.Seconds(), t.reason)
+		}
+	}
+}

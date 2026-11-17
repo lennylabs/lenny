@@ -1,0 +1,124 @@
+source: github/rest-api-description descriptions/api.github.com/api.github.com.json, info.version 1.1.4
+write routes under /repos with the listed effects: 72
+merge       POST   /repos/{owner}/{repo}/merge-upstream  [repos/merge-upstream]
+merge       POST   /repos/{owner}/{repo}/merges  [repos/merge]
+merge       PUT    /repos/{owner}/{repo}/pulls/{pull_number}/merge  [pulls/merge]
+merge       PUT    /repos/{owner}/{repo}/pulls/{pull_number}/merge-async  [pulls/merge-async]
+merge       PUT    /repos/{owner}/{repo}/pulls/{pull_number}/update-branch  [pulls/update-branch]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection  [repos/delete-branch-protection]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/enforce_admins  [repos/delete-admin-branch-protection]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews  [repos/delete-pull-request-review-protection]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_signatures  [repos/delete-commit-signature-protection]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks  [repos/remove-status-check-protection]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks/contexts  [repos/remove-status-check-contexts]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions  [repos/delete-access-restrictions]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps  [repos/remove-app-access-restrictions]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/teams  [repos/remove-team-access-restrictions]
+protection  DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/users  [repos/remove-user-access-restrictions]
+protection  DELETE /repos/{owner}/{repo}/environments/{environment_name}  [repos/delete-an-environment]
+protection  DELETE /repos/{owner}/{repo}/environments/{environment_name}/deployment-branch-policies/{branch_policy_id}  [repos/delete-deployment-branch-policy]
+protection  DELETE /repos/{owner}/{repo}/environments/{environment_name}/deployment_protection_rules/{protection_rule_id}  [repos/disable-deployment-protection-rule]
+protection  DELETE /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}  [actions/delete-environment-secret]
+protection  DELETE /repos/{owner}/{repo}/environments/{environment_name}/variables/{name}  [actions/delete-environment-variable]
+protection  PATCH  /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews  [repos/update-pull-request-review-protection]
+protection  PATCH  /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks  [repos/update-status-check-protection]
+protection  PATCH  /repos/{owner}/{repo}/environments/{environment_name}/variables/{name}  [actions/update-environment-variable]
+protection  POST   /repos/{owner}/{repo}/actions/runs/{run_id}/approve  [actions/approve-workflow-run]
+protection  POST   /repos/{owner}/{repo}/actions/runs/{run_id}/deployment_protection_rule  [actions/review-custom-gates-for-run]
+protection  POST   /repos/{owner}/{repo}/actions/runs/{run_id}/force-cancel  [actions/force-cancel-workflow-run]
+protection  POST   /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments  [actions/review-pending-deployments-for-run]
+protection  POST   /repos/{owner}/{repo}/branches/{branch}/protection/enforce_admins  [repos/set-admin-branch-protection]
+protection  POST   /repos/{owner}/{repo}/branches/{branch}/protection/required_signatures  [repos/create-commit-signature-protection]
+protection  POST   /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks/contexts  [repos/add-status-check-contexts]
+protection  POST   /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps  [repos/add-app-access-restrictions]
+protection  POST   /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/teams  [repos/add-team-access-restrictions]
+protection  POST   /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/users  [repos/add-user-access-restrictions]
+protection  POST   /repos/{owner}/{repo}/environments/{environment_name}/deployment-branch-policies  [repos/create-deployment-branch-policy]
+protection  POST   /repos/{owner}/{repo}/environments/{environment_name}/deployment_protection_rules  [repos/create-deployment-protection-rule]
+protection  POST   /repos/{owner}/{repo}/environments/{environment_name}/variables  [actions/create-environment-variable]
+protection  POST   /repos/{owner}/{repo}/issues/{issue_number}/suggestions/{suggestion_id}/approve  [issues/approve-suggestion]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions  [actions/set-github-actions-permissions-repository]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions/access  [actions/set-workflow-access-to-repository]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions/artifact-and-log-retention  [actions/set-artifact-and-log-retention-settings-repository]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions/fork-pr-contributor-approval  [actions/set-fork-pr-contributor-approval-permissions-repository]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions/fork-pr-workflows-private-repos  [actions/set-private-repo-fork-pr-workflows-settings-repository]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions/selected-actions  [actions/set-allowed-actions-repository]
+protection  PUT    /repos/{owner}/{repo}/actions/permissions/workflow  [actions/set-github-actions-default-workflow-permissions-repository]
+protection  PUT    /repos/{owner}/{repo}/branches/{branch}/protection  [repos/update-branch-protection]
+protection  PUT    /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks/contexts  [repos/set-status-check-contexts]
+protection  PUT    /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps  [repos/set-app-access-restrictions]
+protection  PUT    /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/teams  [repos/set-team-access-restrictions]
+protection  PUT    /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/users  [repos/set-user-access-restrictions]
+protection  PUT    /repos/{owner}/{repo}/environments/{environment_name}  [repos/create-or-update-environment]
+protection  PUT    /repos/{owner}/{repo}/environments/{environment_name}/deployment-branch-policies/{branch_policy_id}  [repos/update-deployment-branch-policy]
+protection  PUT    /repos/{owner}/{repo}/environments/{environment_name}/secrets/{secret_name}  [actions/create-or-update-environment-secret]
+ref         DELETE /repos/{owner}/{repo}/contents/{path}  [repos/delete-file]
+ref         DELETE /repos/{owner}/{repo}/git/refs/{ref}  [git/delete-ref]
+ref         PATCH  /repos/{owner}/{repo}/git/refs/{ref}  [git/update-ref]
+ref         POST   /repos/{owner}/{repo}/branches/{branch}/rename  [repos/rename-branch]
+ref         POST   /repos/{owner}/{repo}/git/commits  [git/create-commit]
+ref         POST   /repos/{owner}/{repo}/git/refs  [git/create-ref]
+ref         POST   /repos/{owner}/{repo}/git/tags  [git/create-tag]
+ref         POST   /repos/{owner}/{repo}/git/trees  [git/create-tree]
+ref         PUT    /repos/{owner}/{repo}/contents/{path}  [repos/create-or-update-file-contents]
+review      DELETE /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers  [pulls/remove-requested-reviewers]
+review      DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}  [pulls/delete-pending-review]
+review      POST   /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers  [pulls/request-reviewers]
+review      POST   /repos/{owner}/{repo}/pulls/{pull_number}/requested_reviewers/rerequest  [pulls/rerequest-reviewers]
+review      POST   /repos/{owner}/{repo}/pulls/{pull_number}/reviews  [pulls/create-review]
+review      POST   /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/events  [pulls/submit-review]
+review      PUT    /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}  [pulls/update-review]
+review      PUT    /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals  [pulls/dismiss-review]
+ruleset     DELETE /repos/{owner}/{repo}/rulesets/{ruleset_id}  [repos/delete-repo-ruleset]
+ruleset     POST   /repos/{owner}/{repo}/rulesets  [repos/create-repo-ruleset]
+ruleset     PUT    /repos/{owner}/{repo}/rulesets/{ruleset_id}  [repos/update-repo-ruleset]
+
+source: docs.github.com/public/fpt/schema.docs.graphql, Mutation fields: 246 selected: 48
+  addPullRequestReview
+  addPullRequestReviewComment
+  addPullRequestReviewThread
+  addPullRequestReviewThreadReply
+  approveDeployments
+  closePullRequest
+  createBranchProtectionRule
+  createCommitOnBranch
+  createDeployment
+  createDeploymentStatus
+  createEnvironment
+  createRef
+  createRepositoryRuleset
+  deleteBranchProtectionRule
+  deleteDeployment
+  deleteEnvironment
+  deletePullRequestReview
+  deletePullRequestReviewComment
+  deleteRef
+  deleteRepositoryRuleset
+  dequeuePullRequest
+  disablePullRequestAutoMerge
+  dismissPullRequestReview
+  enablePullRequestAutoMerge
+  enqueuePullRequest
+  markPullRequestReadyForReview
+  mergeBranch
+  mergePullRequest
+  pinEnvironment
+  rejectDeployments
+  reopenPullRequest
+  reorderEnvironment
+  requestReviews
+  requestReviewsByLogin
+  rerequestReviews
+  resolveReviewThread
+  revertPullRequest
+  submitPullRequestReview
+  unresolveReviewThread
+  updateBranchProtectionRule
+  updateEnvironment
+  updatePullRequestBranch
+  updatePullRequestReview
+  updatePullRequestReviewComment
+  updateRef
+  updateRefs
+  updateRepositoryRuleset
+  updateTeamReviewAssignment

@@ -1,0 +1,22 @@
+  [stripped thread returned to the scheduler, then goroutines ran] 67 threads; distinct credential states:
+    1 x Groups=[0 65534] Inh=0000000000000000 Prm=0000000000000000 Eff=0000000000000000 Amb=0000000000000000
+    66 x Groups=[0 65534] Inh=00000000000000c1 Prm=00000000000000c1 Eff=00000000000000c1 Amb=00000000000000c1
+200 setpriv launches from a process with one stripped thread: 0 failed
+trap:159, a123456=[2,47621819077272,0,0,0,0]
+results: got {r1=18446744073709551615,r2=0,errno=1}, want {r1=0,r2=47621819077272,errno=0}
+fatal error: AllThreadsSyscall6 results differ between threads; runtime corrupted
+
+goroutine 0 [idle]:
+runtime.fatal({0x11a4aa, 0x44})
+	/opt/homebrew/Cellar/go/1.26.3/libexec/src/runtime/panic.go:1253 +0x58
+runtime.runPerThreadSyscall()
+	/opt/homebrew/Cellar/go/1.26.3/libexec/src/runtime/os_linux.go:905 +0x23c
+runtime.sighandler(0x21, 0x1fe020?, 0x2b4fd1146c90?, 0x1fd820)
+	/opt/homebrew/Cellar/go/1.26.3/libexec/src/runtime/signal_unix.go:687 +0x5b0
+runtime.sigtrampgo(0x21, 0x2b4fd1146da0, 0x2b4fd1146e20)
+	/opt/homebrew/Cellar/go/1.26.3/libexec/src/runtime/signal_unix.go:491 +0xc4
+runtime.sigtramp()
+	/opt/homebrew/Cellar/go/1.26.3/libexec/src/runtime/sys_linux_arm64.s:476 +0x54
+
+goroutine 1 [running]:
+	goroutine running on other thread; stack unavailable

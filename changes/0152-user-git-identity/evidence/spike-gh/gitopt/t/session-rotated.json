@@ -1,0 +1,28 @@
+{
+ "ghes.example.test": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "NEW-VALUE-after-rotation",
+  "noCredential": "challenge"
+ },
+ "github.com": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "NEW-VALUE-after-rotation",
+  "noCredential": "challenge"
+ }
+}

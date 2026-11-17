@@ -1,0 +1,13 @@
+=== the check's own time, from the agent's log
+passing tunnels 10019 hello delivered whole 10016 first byte to decision us p50 2 p99 10 parser alone us p50 0.291 p99 0.875
+hello sizes seen, bytes [214, 228, 245, 463, 1474, 1492, 1493, 1521, 1545, 1565, 1606, 1636, 9096]
+=== MTU of the client's interface
+1500
+=== matching SNI, inner Host naming another host (check is on the server name only)
+ok host=other.oa.test sni=target.oa.test tls=304
+{"result":"pass","sni":"target.oa.test"}
+=== Encrypted Client Hello: outer name equals the authority, inner name differs
+ECHCONFIGLIST AEX+DQBBBwAgACCFg82Ktfw8cRpGuFoeY6ovg7bgzruBRevMl8m6x0cBaQAEAAEAAQASZWNoLXB1YmxpYy5vYS50ZXN0AAA=
+TLS ok ech_accepted=true: 200 OK ech-server: inner SNI="secret.oa.test" err=<nil> (8.5ms)
+{"authority":"ech-public.oa.test:443","result":"pass","reason":null,"sni":"ech-public.oa.test","hello_bytes":1625}
+ECHCONFIGLIST AEX+DQBBBwAgACCFg82Ktfw8cRpGuFoeY6ovg7bgzruBRevMl8m6x0cBaQAEAAEAAQASZWNoLXB1YmxpYy5vYS50ZXN0AAA=

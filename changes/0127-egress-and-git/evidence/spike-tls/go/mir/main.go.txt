@@ -1,0 +1,100 @@
+// mir: two programs in one. "serve": mirror stand-in, git upload-pack --stateless-rpc over HTTP or HTTPS, flushing each write.
+// "fwd": netagent local git endpoint stand-in, plain HTTP on loopback, reverse proxy to the mirror over HTTP or HTTPS.
+package main
+
+import (
+	"compress/gzip"
+	"crypto/tls"
+	"crypto/x509"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+type flushW struct {
+	w http.ResponseWriter
+	f http.Flusher
+}
+
+func (f flushW) Write(p []byte) (int, error) { n, e := f.w.Write(p); f.f.Flush(); return n, e }
+
+func main() {
+	mode := os.Args[1]
+	fs := flag.NewFlagSet(mode, flag.ExitOnError)
+	addr := fs.String("addr", ":8080", "")
+	root := fs.String("root", "/repos", "")
+	cert := fs.String("cert", "", "")
+	key := fs.String("key", "", "")
+	up := fs.String("up", "", "")
+	caf := fs.String("ca", "", "")
+	sni := fs.String("sni", "lenny-git-mirror.lenny-system.svc", "")
+	fs.Parse(os.Args[2:])
+	if mode == "fwd" {
+		u, _ := url.Parse(*up)
+		rp := httputil.NewSingleHostReverseProxy(u)
+		rp.FlushInterval = -1
+		tr := &http.Transport{ForceAttemptHTTP2: false, DisableCompression: true}
+		if *caf != "" {
+			p := x509.NewCertPool()
+			b, err := os.ReadFile(*caf)
+			if err != nil {
+				log.Fatal(err)
+			}
+			p.AppendCertsFromPEM(b)
+			tr.TLSClientConfig = &tls.Config{RootCAs: p, ServerName: *sni}
+		}
+		rp.Transport = tr
+		log.Fatal(http.ListenAndServe(*addr, rp))
+	}
+	h := func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), ".git/", 2)
+		if len(parts) != 2 {
+			http.NotFound(w, r)
+			return
+		}
+		dir := filepath.Join(*root, parts[0]+".git")
+		var cmd *exec.Cmd
+		switch {
+		case parts[1] == "info/refs" && r.URL.Query().Get("service") == "git-upload-pack":
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			cmd = exec.Command("git", "upload-pack", "--stateless-rpc", "--advertise-refs", dir)
+			if !strings.Contains(r.Header.Get("Git-Protocol"), "version=2") {
+				fmt.Fprint(w, "001e# service=git-upload-pack\n0000")
+			}
+		case parts[1] == "git-upload-pack" && r.Method == "POST":
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+			cmd = exec.Command("git", "upload-pack", "--stateless-rpc", dir)
+			var in io.Reader = r.Body
+			if r.Header.Get("Content-Encoding") == "gzip" {
+				g, err := gzip.NewReader(r.Body)
+				if err != nil {
+					http.Error(w, "gzip", 400)
+					return
+				}
+				in = g
+			}
+			cmd.Stdin = in
+		default:
+			http.NotFound(w, r)
+			return
+		}
+		cmd.Env = append(os.Environ(), "GIT_PROTOCOL="+r.Header.Get("Git-Protocol"))
+		cmd.Stdout = flushW{w, w.(http.Flusher)}
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Print(err)
+		}
+	}
+	if *cert != "" {
+		log.Fatal(http.ListenAndServeTLS(*addr, *cert, *key, http.HandlerFunc(h)))
+	}
+	log.Fatal(http.ListenAndServe(*addr, http.HandlerFunc(h)))
+}

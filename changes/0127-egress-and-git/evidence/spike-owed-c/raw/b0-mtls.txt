@@ -1,0 +1,11 @@
+decision service, egress.decision: HTTP 200 ok
+token service, credential.mint: HTTP 200 ok
+token service, egress.decision (not its stream): HTTP 403 refused 1 records
+mirror, git.operation, routed tenant: HTTP 200 ok
+mirror, git.operation, a tenant whose route does not name it: HTTP 403 refused 1 records
+a leaf from the same CA outside the allowlist: HTTP 403 client not allowed
+the decision service's SAN under a foreign CA: refused at TLS or transport: Post "https://198.19.0.31:8443/v1/records": remote error: tls: certificate required
+no client certificate: refused at TLS or transport: Post "https://198.19.0.31:8443/v1/records": remote error: tls: certificate required
+   stored for tprobe: credential.mint|lenny-token-service.lenny-system.svc|1
+egress.decision|lenny-egress-authz.lenny-system.svc|1
+git.operation|lenny-git-mirror.lenny-system.svc|1

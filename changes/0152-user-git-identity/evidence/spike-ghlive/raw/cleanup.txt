@@ -1,0 +1,34 @@
+test-repo close PR #9: 200
+test-repo close PR #8: 200
+test-repo close PR #7: 200
+test-repo close PR #6: 200
+test-repo close PR #5: 200
+test-repo close PR #4: 200
+test-repo close PR #3: 200
+test-repo close PR #2: 200
+test-repo close PR #1: 200
+test-repo delete refs/heads/spike/s15a: 204
+test-repo delete refs/heads/spike/s15c: 204
+test-repo delete refs/heads/spike/s16-base-1793987435: 204
+test-repo delete refs/heads/spike/s16-head-1793987436: 204
+test-repo delete refs/heads/spike/s3-app-1793987252: 204
+test-repo delete refs/heads/spike/s3-app-1793987321: 204
+test-repo delete refs/heads/spike/s3-author-1793987284: 204
+test-repo delete refs/heads/spike/s3-author-1793987374: 204
+test-repo delete refs/heads/spike/s3-child-1793987273: 204
+test-repo delete refs/heads/spike/s3-child-1793987356: 204
+test-repo delete refs/heads/spike/s3-control-1793987242: 204
+test-repo delete refs/heads/spike/s3-control-1793987308: 204
+test-repo delete refs/heads/spike/s3-unattr-1793987417: 204
+test-repo delete refs/heads/spike/s3-user-1793987262: 204
+test-repo delete refs/heads/spike/s3-user-1793987338: 204
+test-repo-2 close PR #3: 200
+test-repo-2 close PR #2: 200
+test-repo-2 close PR #1: 200
+test-repo-2 delete refs/heads/spike/mo: 204
+test-repo-2 delete refs/heads/spike/s15b: 204
+test-repo-2 delete refs/heads/spike/s15d: 204
+test-repo-2 delete refs/heads/spike/s16-base-1793987451: 204
+test-repo-2 delete refs/heads/spike/s16-head-1793987452: 204
+remaining spike refs: test-repo 0, test-repo-2 0
+open spike PRs: 0 0 

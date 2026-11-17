@@ -1,0 +1,407 @@
+agent-pod-layout-design.md | @class | Change: lands as current behavior; PL-2 and PL-8 are removals.
+agent-pod-layout-design.md | PL-1 | POD
+agent-pod-layout-design.md | PL-2 | OUT-REMOVED
+agent-pod-layout-design.md | PL-3 | RTPFS
+agent-pod-layout-design.md | PL-4 | RTPFS:0.5,FILEX:0.5
+agent-pod-layout-design.md | PL-5 | PODVOL
+agent-pod-layout-design.md | PL-6 | RTPFS
+agent-pod-layout-design.md | PL-7 | OUT-ARCHIVE
+agent-pod-layout-design.md | PL-8 | OUT-REMOVED
+agent-pod-layout-design.md | PL-9 | POOL:0.5,SLOT:0.5
+agent-pod-layout-design.md | PL-10 | PODVOL:0.6,QUOTA:0.4
+agent-pod-layout-design.md | Requirements | POD
+agent-pod-layout-design.md | Limits | POD
+agent-runtimes-only-design.md | @class | Removal: archive only, except AR-3 (one runtime connection per session) and AR-4 (refusal of removed fields), which land.
+agent-runtimes-only-design.md | AR-1 | OUT-REMOVED
+agent-runtimes-only-design.md | AR-2 | OUT-REMOVED
+agent-runtimes-only-design.md | AR-3 | RTPHAND
+agent-runtimes-only-design.md | AR-4 | ERR:0.5,RUNTIME:0.5
+agent-runtimes-only-design.md | AR-5 | SCREATE
+agent-runtimes-only-design.md | AR-6 | OUT-OPGUIDE
+anthropic-messages-api-design.md | @class | Moves to the Anthropic adapter repository; only AM-4 (conversation input) governs Lenny.
+anthropic-messages-api-design.md | AM-1 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-2 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-3 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-4 | MSG:0.5,CAPIMSG:0.5
+anthropic-messages-api-design.md | AM-5 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-6 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-7 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-8 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-9 | OUT-ADAPTER
+anthropic-messages-api-design.md | AM-10 | OUT-ADAPTER
+billing-resource-attribution-design.md | @class | Change: lands as current behavior.
+billing-resource-attribution-design.md | Design | RCLASS:0.25,ATTR:0.45,EVTBILL:0.2,ADMRT:0.1
+billing-resource-attribution-design.md | Residual risks | ATTR
+client-tools-design.md | @class | Change: lands as current behavior; the surface mappings of CT-6 for provider protocols move to adapters.
+client-tools-design.md | CT-1 | RTPMSG:0.6,CAPIMSG:0.4
+client-tools-design.md | CT-2 | RTPHAND
+client-tools-design.md | CT-3 | CTOOL
+client-tools-design.md | CT-4 | CTOOL
+client-tools-design.md | CT-5 | CTOOL
+client-tools-design.md | CT-6 | CAPIMSG:0.5,OUT-ADAPTER:0.5
+client-tools-design.md | CT-7 | CTOOL
+client-tools-design.md | CT-8 | CTOOL
+client-tools-design.md | CT-9 | DLG
+client-tools-design.md | CT-10 | RTPSDK:0.5,RTPCONF:0.5
+client-tools-design.md | Requirements | CTOOL
+connector-authorization-and-external-memory-design.md | @class | Record: archive only, except CA-0 (shared OAuth link flow) and CA-10 (memory removal, with the external memory pattern for the operator guide).
+connector-authorization-and-external-memory-design.md | CA-0 | LINK
+connector-authorization-and-external-memory-design.md | CA-1 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-2 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-3 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-4 | LINK:0.5,OUT-ARCHIVE:0.5
+connector-authorization-and-external-memory-design.md | CA-5 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-6 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-7 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-8 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-9 | OUT-ARCHIVE
+connector-authorization-and-external-memory-design.md | CA-10 | OUT-REMOVED
+connector-authorization-and-external-memory-design.md | External memory pattern | OUT-OPGUIDE
+connector-removal-design.md | @class | Removal with additions: CR-1 is archive only; CR-2 to CR-4 land.
+connector-removal-design.md | CR-1 | OUT-REMOVED
+connector-removal-design.md | CR-2 | OPSVC
+connector-removal-design.md | CR-3 | OPSVC
+connector-removal-design.md | CR-4 | OPSVC:0.5,SUSP:0.5
+connector-removal-design.md | Requirements | OPSVC
+connector-removal-design.md | Threat model | OPSVC
+decision-records-design.md | @class | Removal: archive only. It deletes ADR labels and the docs/adr folder; §19 leaves the specification under the same decision.
+decision-records-design.md | REC-1 | OUT-REMOVED
+delegation-availability-design.md | @class | Change: lands as current behavior.
+delegation-availability-design.md | DA-1 | DAVAIL
+delegation-availability-design.md | DA-2 | DAVAIL
+delegation-availability-design.md | DA-3 | DAVAIL
+delegation-availability-design.md | DA-4 | DAVAIL:0.5,RTPTOOL:0.5
+delegation-availability-design.md | DA-5 | DAVAIL
+delegation-availability-design.md | DA-6 | DAVAIL
+delegation-availability-design.md | DA-7 | DAVAIL:0.5,INPUT:0.5
+delegation-availability-design.md | Requirements | DAVAIL
+egress-and-git-design.md | @class | Change: lands as current behavior across network, credentials, and several components.
+egress-and-git-design.md | Requirements | EGRESS
+egress-and-git-design.md | Security properties | EGRESS
+egress-and-git-design.md | Architecture | EGDEC:0.3,NETAGENT:0.25,EGPROXY:0.15,EGAUTHZ:0.15,GITMIR:0.05,PKI:0.05,AGDNS:0.05
+egress-and-git-design.md | Git | GIT:0.5,GITMIR:0.2,CDELIV:0.15,CPOOL:0.1,APOOLS:0.05
+egress-and-git-design.md | Credential delivery to runtimes | CDELIV
+egress-and-git-design.md | Interfaces | IFMAP
+egress-and-git-design.md | Configuration by scope | EGRESS
+egress-and-git-design.md | Effective policy | EGRESS
+egress-and-git-design.md | Injected configuration | RTPFS:0.5,EGRESS:0.5
+egress-and-git-design.md | Runtime SDKs | RTPSDK
+egress-and-git-design.md | Pod models | POD
+egress-and-git-design.md | Network policy and placement | NETISO:0.6,AGDNS:0.2,PLACE:0.2
+egress-and-git-design.md | Defaults, replacement, and augmentation | EGDEF
+egress-and-git-design.md | TLS interception | EGDEF
+egress-and-git-design.md | Residual risks and limits | EGRESS:0.5,SECMODEL:0.5
+egress-and-git-design.md | Reserved for other designs | OUT-ARCHIVE
+forensics-evidence-preservation-design.md | @class | Change: lands as current behavior.
+forensics-evidence-preservation-design.md | Requirements | FORENSIC
+forensics-evidence-preservation-design.md | Security properties | FORENSIC
+forensics-evidence-preservation-design.md | Architecture | FORENSIC
+forensics-evidence-preservation-design.md | FE-1 | FORENSIC:0.5,APOD:0.3,PODINIT:0.2
+forensics-evidence-preservation-design.md | FE-2 | HOLD:0.6,GITMIR:0.4
+forensics-evidence-preservation-design.md | FE-3 | HOLD:0.6,DATACLASS:0.4
+forensics-evidence-preservation-design.md | FE-4 | FORENSIC
+forensics-evidence-preservation-design.md | FE-5 | FORENSIC:0.5,OUT-RUNBOOKS:0.5
+forensics-evidence-preservation-design.md | FE-6 | ACTSTR
+forensics-evidence-preservation-design.md | Configuration by scope | FORENSIC:0.5,ACTSTR:0.5
+forensics-evidence-preservation-design.md | Scenarios | OUT-OPGUIDE
+forensics-evidence-preservation-design.md | Residual risks | FORENSIC
+github-credential-addon-design.md | @class | Change: lands as current behavior.
+github-credential-addon-design.md | GH-1 | ADDON
+github-credential-addon-design.md | GH-2 | ADDON:0.6,PRAUTH:0.4
+github-credential-addon-design.md | GH-3 | ADDON:0.5,EGRESS:0.5
+github-credential-addon-design.md | Configuration by scope | ADDON
+github-credential-addon-design.md | Worked examples | OUT-OPGUIDE
+github-credential-addon-design.md | Residual risks | ADDON
+gitlab-credential-addon-design.md | @class | Change: lands as current behavior.
+gitlab-credential-addon-design.md | GL-1 | ADDON
+gitlab-credential-addon-design.md | GL-2 | ADDON:0.6,PRAUTH:0.4
+gitlab-credential-addon-design.md | GL-3 | ADDON:0.5,EGRESS:0.5
+gitlab-credential-addon-design.md | Configuration by scope | ADDON
+gitlab-credential-addon-design.md | Worked examples | OUT-OPGUIDE
+gitlab-credential-addon-design.md | Residual risks | ADDON
+incremental-checkpoint-design.md | @class | Change: lands as current behavior; IC-9 is a removal; measurements and benchmarks stay in the archive.
+incremental-checkpoint-design.md | Requirements | CKPT
+incremental-checkpoint-design.md | Security properties | CKPT:0.5,CKSTORE:0.5
+incremental-checkpoint-design.md | IC-1 | CKPASS:0.8,SUPV:0.2
+incremental-checkpoint-design.md | IC-2 | CKSTORE:0.5,STOROBJ:0.5
+incremental-checkpoint-design.md | IC-3 | CKPT:0.5,CHGWPOD:0.5
+incremental-checkpoint-design.md | IC-4 | CKSTORE:0.8,QUOTA:0.2
+incremental-checkpoint-design.md | IC-5 | RESTORE:0.7,SDERIVE:0.15,SEND:0.15
+incremental-checkpoint-design.md | IC-6 | CKSTORE:0.6,HOLD:0.2,ERASE:0.2
+incremental-checkpoint-design.md | IC-7 | CKPASS:0.6,GWDRAIN:0.4
+incremental-checkpoint-design.md | IC-8 | CKPT:0.5,CKPASS:0.5
+incremental-checkpoint-design.md | IC-9 | OUT-REMOVED
+incremental-checkpoint-design.md | Stored formats and wire contracts this forces | STOROBJ:0.5,CHGWPOD:0.5
+llm-response-cache-removal-design.md | @class | Removal: archive only, except RC-5 (provider prompt caching passthrough), which lands in LLMUP.
+llm-response-cache-removal-design.md | RC-1 | OUT-REMOVED
+llm-response-cache-removal-design.md | RC-2 | OUT-REMOVED
+llm-response-cache-removal-design.md | RC-3 | OUT-REMOVED
+llm-response-cache-removal-design.md | RC-4 | OUT-REMOVED
+llm-response-cache-removal-design.md | RC-5 | LLMUP
+llm-upstreams-and-cost-budgets-design.md | @class | Change: lands as current behavior; LU-4 is a removal.
+llm-upstreams-and-cost-budgets-design.md | Requirements | LLMUP
+llm-upstreams-and-cost-budgets-design.md | LU-1 | LLMUP
+llm-upstreams-and-cost-budgets-design.md | LU-2 | LLMUP:0.6,SCREATE:0.2,DLG:0.2
+llm-upstreams-and-cost-budgets-design.md | LU-3 | GWLLM:0.4,LLMUP:0.3,CHEGRESS:0.3
+llm-upstreams-and-cost-budgets-design.md | LU-4 | OUT-REMOVED:0.8,ERR:0.2
+llm-upstreams-and-cost-budgets-design.md | LU-5 | RATE
+llm-upstreams-and-cost-budgets-design.md | LU-6 | BUDGET
+llm-upstreams-and-cost-budgets-design.md | LU-7 | USAGE:0.6,EVTBILL:0.4
+llm-upstreams-and-cost-budgets-design.md | LU-8 | LLMUP
+llm-upstreams-and-cost-budgets-design.md | LU-9 | LLMUP
+llm-upstreams-and-cost-budgets-design.md | LU-10 | LLMUP:0.6,STREAM:0.4
+llm-upstreams-and-cost-budgets-design.md | LU-11 | LLMUP
+llm-upstreams-and-cost-budgets-design.md | Limits | LLMUP
+mcp-protocol-upgrade-design.md | @class | Mostly moves to the MCP adapter repository; MP-5, MP-7, and MP-8 govern Lenny; MP-6 is withdrawn.
+mcp-protocol-upgrade-design.md | MP-1 | OUT-ADAPTER
+mcp-protocol-upgrade-design.md | MP-2 | OUT-ADAPTER
+mcp-protocol-upgrade-design.md | MP-3 | OUT-ADAPTER
+mcp-protocol-upgrade-design.md | MP-4 | OUT-ADAPTER
+mcp-protocol-upgrade-design.md | MP-5 | RTPTOOL
+mcp-protocol-upgrade-design.md | MP-6 | OUT-REMOVED
+mcp-protocol-upgrade-design.md | MP-7 | OPSMCP:0.5,RTPSDK:0.5
+mcp-protocol-upgrade-design.md | MP-8 | COMPAT
+mcp-protocol-upgrade-design.md | MP-9 | OUT-ADAPTER
+message-delivery-design.md | @class | Change: lands as current behavior; MD-8 and part of MD-21 move to adapters.
+message-delivery-design.md | Requirements | MSG
+message-delivery-design.md | MD-1 | MSG
+message-delivery-design.md | MD-2 | RTPHAND:0.5,MSG:0.5
+message-delivery-design.md | MD-3 | INBOX
+message-delivery-design.md | MD-4 | MSG
+message-delivery-design.md | MD-5 | MSG
+message-delivery-design.md | MD-6 | MSG:0.6,GWCOORD:0.4
+message-delivery-design.md | MD-7 | CAPIMSG
+message-delivery-design.md | MD-8 | OUT-ADAPTER
+message-delivery-design.md | MD-9 | IMSG:0.6,DLG:0.4
+message-delivery-design.md | MD-10 | CTOOL
+message-delivery-design.md | MD-11 | INBOX
+message-delivery-design.md | MD-12 | RTPSDK
+message-delivery-design.md | MD-13 | OUT-REFRT
+message-delivery-design.md | MD-14 | MSG
+message-delivery-design.md | MD-15 | STREAM
+message-delivery-design.md | MD-16 | STREAM:0.7,RTPMSG:0.3
+message-delivery-design.md | MD-17 | STREAM
+message-delivery-design.md | MD-18 | FILEMSG
+message-delivery-design.md | MD-19 | INPUT
+message-delivery-design.md | MD-20 | STREAM:0.5,USAGE:0.5
+message-delivery-design.md | MD-21 | STREAM:0.5,OUT-ADAPTER:0.5
+message-delivery-design.md | MD-22 | DTREE
+message-delivery-design.md | MD-23 | RTPMSG:0.5,RTPTOOL:0.5
+message-delivery-design.md | MD-24 | RTPMSG
+message-delivery-design.md | MD-25 | DTREE:0.5,CAPIEVT:0.5
+message-delivery-design.md | MD-26 | FILEMSG:0.5,FILEX:0.5
+message-delivery-design.md | Worked example | WKMSG
+message-delivery-design.md | Limits | MSG
+placement-design.md | @class | Change: lands as current behavior.
+placement-design.md | Requirements | PLACE
+placement-design.md | Security properties | PLACE
+placement-design.md | PM-1 | PLACE
+placement-design.md | PM-2 | PLACE
+placement-design.md | PM-3 | PLACE:0.7,APOOLS:0.3
+placement-design.md | PM-4 | PLACE
+placement-design.md | PM-5 | PLACE:0.5,WPC:0.5
+placement-design.md | PM-6 | PLACE:0.5,WEBHOOK:0.5
+placement-design.md | PM-7 | PLACE:0.5,RESID:0.5
+placement-design.md | PM-8 | PLACE:0.4,GW:0.2,LOPS:0.2,TOKSVC:0.2
+placement-design.md | PM-9 | ARCH
+placement-design.md | Removals | OUT-REMOVED
+placement-design.md | Limits | PLACE
+pod-lifecycle-controller-design.md | @class | Rename and reframing: lands in the kind pages and the controller pages; PLC-5 (Go names) leaves to code.
+pod-lifecycle-controller-design.md | PLC-1 | WPC:0.5,PSC:0.5
+pod-lifecycle-controller-design.md | PLC-2 | KPSET:0.35,KAPOD:0.35,KPCLAIM:0.3
+pod-lifecycle-controller-design.md | PLC-3 | K8S:0.25,KPSET:0.25,KAPOD:0.25,KPCLAIM:0.25
+pod-lifecycle-controller-design.md | PLC-4 | WPC
+pod-lifecycle-controller-design.md | PLC-5 | OUT-CODE
+pod-lifecycle-controller-design.md | PLC-6 | OUT-ARCHIVE
+pod-lifecycle-controller-design.md | PLC-7 | NAMING:0.5,RUNTIME:0.25,POOL:0.25
+rest-only-client-api-design.md | @class | Change and removal: RO-1, RO-2, RO-4, RO-6, and RO-7 land; RO-8 to RO-10 move to adapter repositories; RO-11 is archive only.
+rest-only-client-api-design.md | Requirements | CAPI
+rest-only-client-api-design.md | External protocol versions | OUT-ADAPTER
+rest-only-client-api-design.md | RO-1 | CAPI:0.5,IFMAP:0.5
+rest-only-client-api-design.md | RO-2 | CAPISES:0.3,CAPIMSG:0.3,CAPIEVT:0.2,INPUT:0.2
+rest-only-client-api-design.md | RO-3 | IFMAP:0.5,OUT-ADAPTER:0.5
+rest-only-client-api-design.md | RO-4 | AUTHZ
+rest-only-client-api-design.md | RO-5 | OUT-ADAPTER:0.6,COMPAT:0.4
+rest-only-client-api-design.md | RO-6 | OUT-ADAPTER:0.5,CAPI:0.5
+rest-only-client-api-design.md | RO-7 | CLI:0.4,PLAY:0.3,OUT-CLIENT:0.3
+rest-only-client-api-design.md | RO-8 | OUT-ADAPTER
+rest-only-client-api-design.md | RO-9 | OUT-ADAPTER
+rest-only-client-api-design.md | RO-10 | OUT-ADAPTER
+rest-only-client-api-design.md | RO-11 | OUT-REMOVED
+rest-only-client-api-design.md | RO-12 | OUT-ARCHIVE
+runtime-protocol-design.md | @class | Change: lands as current behavior.
+runtime-protocol-design.md | Requirements | RTP
+runtime-protocol-design.md | RP-1 | RTPHAND
+runtime-protocol-design.md | RP-2 | RTPHAND
+runtime-protocol-design.md | RP-3 | RTPTOOL
+runtime-protocol-design.md | RP-4 | RTPHAND:0.5,DAVAIL:0.5
+runtime-protocol-design.md | RP-5 | RTPTOOL:0.5,RTPSDK:0.5
+runtime-protocol-design.md | RP-6 | ADAPTER:0.5,RTP:0.5
+runtime-protocol-design.md | RP-7 | RTP:0.5,COMPAT:0.5
+runtime-protocol-design.md | RP-8 | RTPCONF
+runtime-protocol-design.md | Worked example | OUT-RTGUIDE
+runtime-revisions-design.md | @class | Change: lands as current behavior; it replaces the pool-level RuntimeUpgrade.
+runtime-revisions-design.md | Requirements | REV
+runtime-revisions-design.md | RV-1 | REV
+runtime-revisions-design.md | RV-2 | REV
+runtime-revisions-design.md | RV-3 | REV:0.5,POOL:0.5
+runtime-revisions-design.md | RV-4 | REV
+runtime-revisions-design.md | RV-5 | REV:0.5,RUNTIME:0.5
+runtime-revisions-design.md | RV-6 | REV
+runtime-revisions-design.md | RV-7 | REV:0.6,CAPISES:0.4
+runtime-revisions-design.md | Worked example | OUT-OPGUIDE
+runtime-routing-design.md | @class | Change and removal: RT-1 removes experiments and evaluations (archive only); RT-2 to RT-6 land.
+runtime-routing-design.md | Requirements | ROUTE
+runtime-routing-design.md | RT-1 | OUT-REMOVED
+runtime-routing-design.md | RT-2 | INTCPT:0.5,INTCPTIF:0.5
+runtime-routing-design.md | RT-3 | ROUTE
+runtime-routing-design.md | RT-4 | ROUTE
+runtime-routing-design.md | RT-5 | INTCPT
+runtime-routing-design.md | RT-6 | INTCPT
+runtime-routing-design.md | RT-7 | OUT-ARCHIVE
+security-oversight-design.md | @class | Change: lands as current behavior.
+security-oversight-design.md | Requirements | SECOV
+security-oversight-design.md | Security properties | SECOV
+security-oversight-design.md | SO-1 | SECROLE
+security-oversight-design.md | SO-2 | SECOV:0.7,TSET:0.3
+security-oversight-design.md | SO-3 | SIEM
+security-oversight-design.md | SO-4 | SECOV
+security-oversight-design.md | SO-5 | SECROLE:0.6,SECOV:0.4
+security-oversight-design.md | SO-6 | PKI:0.5,SECOV:0.5
+security-oversight-design.md | SO-7 | LOPS:0.5,SECROLE:0.5
+security-oversight-design.md | Configuration by scope | SECOV
+security-oversight-design.md | Worked scenarios | OUT-OPGUIDE
+security-oversight-design.md | Interactions with | EGRESS:0.5,SECOV:0.5
+security-oversight-design.md | Residual risks | SECOV
+service-account-credentials-design.md | @class | Change: lands as current behavior.
+service-account-credentials-design.md | Requirements | SACRED
+service-account-credentials-design.md | SA-1 | SACRED
+service-account-credentials-design.md | SA-2 | SACRED
+service-account-credentials-design.md | SA-3 | SACRED:0.6,TOKX:0.4
+service-account-credentials-design.md | SA-4 | SACRED
+service-account-credentials-design.md | SA-5 | CDELIV
+service-account-credentials-design.md | SA-6 | PRINC
+service-account-credentials-design.md | Configuration by scope | SACRED
+service-account-credentials-design.md | Threat model | SACRED
+session-derive-design.md | @class | Change: lands as current behavior; replay leaves.
+session-derive-design.md | Requirements | SDERIVE
+session-derive-design.md | Security properties | SDERIVE
+session-derive-design.md | SD-1 | SDERIVE:0.7,CAPISES:0.3
+session-derive-design.md | What an exact start does not cover | SDERIVE
+session-derive-design.md | Stored formats and wire contracts this forces | STORPG
+session-isolation-design.md | @class | Change: lands as current behavior.
+session-isolation-design.md | Requirements | SLOT
+session-isolation-design.md | SI-1 | SLOT:0.5,POD:0.5
+session-isolation-design.md | SI-2 | SLOT:0.5,CHINTRA:0.5
+session-isolation-design.md | SI-3 | SUPV:0.4,SLOTOPS:0.3,SETUP:0.3
+session-isolation-design.md | SI-4 | SLOTOPS:0.6,KAPOD:0.4
+session-isolation-design.md | SI-5 | SUPV
+session-isolation-design.md | SI-6 | CKPT:0.3,RESTORE:0.2,SLOT:0.3,SCRUB:0.2
+session-isolation-design.md | SI-7 | SLOT
+session-isolation-design.md | SI-8 | REPO
+session-isolation-design.md | SI-9 | SLOT:0.5,RCLASS:0.5
+session-isolation-design.md | SI-10 | SLOT
+session-isolation-design.md | SI-11 | SLOT:0.5,PLACE:0.5
+session-isolation-design.md | SI-12 | OUT-ARCHIVE
+session-lifecycle-design.md | @class | Change: lands as current behavior.
+session-lifecycle-design.md | Requirements | SESS
+session-lifecycle-design.md | SL-1 | SESS
+session-lifecycle-design.md | SL-2 | SESS
+session-lifecycle-design.md | SL-3 | SUSP
+session-lifecycle-design.md | SL-4 | SUSP:0.5,DTREE:0.5
+session-lifecycle-design.md | SL-5 | SUSP:0.5,INBOX:0.5
+session-lifecycle-design.md | SL-6 | SUSP
+session-lifecycle-design.md | SL-7 | SEND
+session-lifecycle-design.md | SL-8 | DTREE
+session-lifecycle-design.md | SL-9 | DTREE
+session-lifecycle-design.md | SL-10 | TIMEOUT:0.5,ADMIT:0.5
+session-lifecycle-design.md | SL-11 | CAPISES:0.5,SESS:0.5
+session-lifecycle-design.md | SL-12 | DTREE
+tenant-derived-runtimes-design.md | @class | Change: lands as current behavior; DR-1 to DR-3 are prerequisites recorded in the archive.
+tenant-derived-runtimes-design.md | Requirements | DERIVED
+tenant-derived-runtimes-design.md | Security properties | DERIVED
+tenant-derived-runtimes-design.md | DR-1 to DR-3 | OUT-ARCHIVE
+tenant-derived-runtimes-design.md | DR-4 | DERIVED
+tenant-derived-runtimes-design.md | Who turns it on | DERIVED:0.6,TSET:0.4
+tenant-derived-runtimes-design.md | Fields | DERIVED:0.5,ADMRT:0.5
+tenant-derived-runtimes-design.md | DR-5 | OWNPOOL:0.6,POOL:0.2,APOOLS:0.2
+tenant-derived-runtimes-design.md | DR-6 | DERIVED
+tenant-derived-runtimes-design.md | DR-9 | CLONE
+tenant-derived-runtimes-design.md | DR-12 | REPO:0.5,RTPFS:0.5
+tenant-derived-runtimes-design.md | DR-10 | OWNPOOL:0.6,PLACE:0.2,ATTR:0.2
+tenant-derived-runtimes-design.md | DR-8 | DERIVED
+tenant-derived-runtimes-design.md | DR-7 | DERIVED:0.5,SECOV:0.5
+tenant-derived-runtimes-design.md | Configuration by scope | DERIVED
+tenant-derived-runtimes-design.md | Scenarios | OUT-OPGUIDE
+tenant-derived-runtimes-design.md | Residual risks | DERIVED
+tenant-outbound-connector-design.md | @class | Change: lands as current behavior.
+tenant-outbound-connector-design.md | Requirements | OUTCONN
+tenant-outbound-connector-design.md | Security properties | OUTCONN
+tenant-outbound-connector-design.md | Build versus adopt | OUT-ARCHIVE
+tenant-outbound-connector-design.md | Design | OUTCONN:0.5,OUTGW:0.25,OUTAGT:0.15,ADMTEN:0.1
+tenant-outbound-connector-design.md | Configuration by scope | OUTCONN
+tenant-outbound-connector-design.md | Scenarios | OUT-OPGUIDE
+tenant-outbound-connector-design.md | Residual risks | OUTCONN
+tenant-scoping-identity-design.md | @class | Change: lands as current behavior.
+tenant-scoping-identity-design.md | Requirements | ENV
+tenant-scoping-identity-design.md | Security properties | TENISO
+tenant-scoping-identity-design.md | TS-1 | ENV
+tenant-scoping-identity-design.md | TS-3 | ENV:0.6,SCREATE:0.2,TENISO:0.2
+tenant-scoping-identity-design.md | Identity model | PRINC:0.6,AUTHN:0.2,AUTHZ:0.2
+tenant-scoping-identity-design.md | Configuration by scope | ENV:0.5,PRINC:0.5
+tenant-scoping-identity-design.md | Scenarios | OUT-OPGUIDE
+tenant-scoping-identity-design.md | Residual risks | TENISO
+tenant-security-settings-design.md | @class | Change: lands as current behavior; TSS-9 is a removal.
+tenant-security-settings-design.md | Requirements | TSET
+tenant-security-settings-design.md | Security properties | TSET
+tenant-security-settings-design.md | Inventory | TSET
+tenant-security-settings-design.md | TSS-1 | TSET
+tenant-security-settings-design.md | TSS-2 | TSET
+tenant-security-settings-design.md | TSS-3 | ADMTEN
+tenant-security-settings-design.md | TSS-4 | TSET:0.5,KMS:0.5
+tenant-security-settings-design.md | TSS-5 | TSET:0.5,DATACLASS:0.5
+tenant-security-settings-design.md | TSS-6 | TSET:0.5,PLACE:0.5
+tenant-security-settings-design.md | TSS-7 | TSET
+tenant-security-settings-design.md | TSS-8 | DATACLASS
+tenant-security-settings-design.md | TSS-9 | OUT-REMOVED
+user-credential-delivery-design.md | @class | Change: lands as current behavior.
+user-credential-delivery-design.md | Requirements | UCRED
+user-credential-delivery-design.md | Threat model | UCRED
+user-credential-delivery-design.md | UC-1 | UCRED
+user-credential-delivery-design.md | UC-2 | LINK
+user-credential-delivery-design.md | UC-3 | UCRED
+user-credential-delivery-design.md | UC-4 | CREQ
+user-credential-delivery-design.md | UC-5 | CDELIV
+user-credential-delivery-design.md | UC-7 | ADDON
+user-credential-delivery-design.md | UC-8 | LINK:0.6,INPUT:0.4
+user-credential-delivery-design.md | Configuration by scope | UCRED
+user-credential-delivery-design.md | Worked examples | OUT-OPGUIDE
+user-credential-delivery-design.md | Residual risks | UCRED
+user-git-identity-design.md | @class | Change: lands as current behavior.
+user-git-identity-design.md | Personas and requirements | REPOAUTH
+user-git-identity-design.md | Threat model | REPOAUTH:0.5,PRAUTH:0.5
+user-git-identity-design.md | UG-1 | LINK:0.5,ADDON:0.5
+user-git-identity-design.md | UG-2 | REPOAUTH
+user-git-identity-design.md | UG-3 | PRAUTH
+user-git-identity-design.md | UG-4 | PRAUTH
+user-git-identity-design.md | Configuration by scope | REPOAUTH:0.5,PRAUTH:0.5
+user-git-identity-design.md | Worked examples | OUT-OPGUIDE
+user-git-identity-design.md | Residual risks | PRAUTH
+workspace-materialization-design.md | @class | Change: lands as current behavior.
+workspace-materialization-design.md | Requirements | MATER
+workspace-materialization-design.md | Security properties | MATER
+workspace-materialization-design.md | WM-1 | MATER
+workspace-materialization-design.md | WM-2 | MATER:0.5,SUPV:0.5
+workspace-materialization-design.md | WM-3 | MATER:0.5,CHINTRA:0.5
+workspace-materialization-design.md | WM-4 | MATER
+workspace-materialization-design.md | WM-5 | MATER
+workspace-materialization-design.md | WM-7 | MATER
+workspace-materialization-design.md | WM-8 | MATER
+workspace-materialization-design.md | WM-9 | MATER:0.5,UPLOAD:0.5
+workspace-materialization-design.md | WM-10 | REPO:0.5,MATER:0.5
+workspace-materialization-design.md | WM-11 | SUPV:0.5,CKPT:0.5
+workspace-materialization-design.md | WM-12 | UPLOAD:0.5,FILEX:0.5
+workspace-materialization-design.md | WM-13 | RESTORE:0.5,SDERIVE:0.5
+workspace-materialization-design.md | WM-14 | MATER:0.5,POD:0.5
+workspace-materialization-design.md | WM-15 | REPO
+workspace-materialization-design.md | WM-16 | UPLOAD:0.5,REPO:0.5

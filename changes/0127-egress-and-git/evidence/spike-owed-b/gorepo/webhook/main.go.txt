@@ -1,0 +1,75 @@
+// Prototype of the design's egress-group decider beside the repository's own label deciders, compiled from the working tree.
+// /label-immutability and /tenant-label-immutability are the repository's code unchanged.
+// /egress-group is the prototype: only the gateway and the controller may set the label, and only from unset.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+
+	admissionv1 "k8s.io/api/admission/v1"
+	corev1 "k8s.io/api/core/v1"
+
+	labelimm "github.com/lennylabs/lenny/pkg/admission/label_immutability"
+	"github.com/lennylabs/lenny/pkg/admission/webhook"
+)
+
+const groupLabel = "lenny.dev/egress-group"
+
+// decideEgressGroup distinguishes unset from present-and-empty by map presence, which the existing deciders' string
+// comparison does not.
+func decideEgressGroup(old, new map[string]string, oldExists bool, user string) (bool, string) {
+	ov, had := old[groupLabel]
+	nv, has := new[groupLabel]
+	if had == has && ov == nv {
+		return true, ""
+	}
+	if had {
+		return false, fmt.Sprintf("egress_group_immutable: %s is set to %q and cannot change to %q", groupLabel, ov, nv)
+	}
+	if nv == "" {
+		return false, fmt.Sprintf("egress_group_immutable: %s cannot be empty", groupLabel)
+	}
+	if user != labelimm.GatewayServiceAccount && user != labelimm.WarmPoolControllerSA {
+		return false, fmt.Sprintf("egress_group_immutable: %s may not set %s", user, groupLabel)
+	}
+	return true, ""
+}
+
+func labels(raw []byte) (map[string]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var p corev1.Pod
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return nil, err
+	}
+	return p.Labels, nil
+}
+
+func main() {
+	mux := http.NewServeMux()
+	mux.Handle("/label-immutability", webhook.Handler(webhook.LabelImmutability()))
+	mux.Handle("/tenant-label-immutability", webhook.Handler(webhook.TenantLabelImmutability()))
+	mux.Handle("/egress-group", webhook.Handler(func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+		n, err := labels(req.Object.Raw)
+		if err != nil {
+			return webhook.Deny(http.StatusBadRequest, err.Error())
+		}
+		o, err := labels(req.OldObject.Raw)
+		if err != nil {
+			return webhook.Deny(http.StatusBadRequest, err.Error())
+		}
+		ok, why := decideEgressGroup(o, n, len(req.OldObject.Raw) > 0, req.UserInfo.Username)
+		log.Printf("egress-group op=%s sub=%q user=%s old=%v new=%v allowed=%v", req.Operation, req.SubResource, req.UserInfo.Username, o[groupLabel], n[groupLabel], ok)
+		if ok {
+			return webhook.Allow()
+		}
+		return webhook.Deny(403, why)
+	}))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { fmt.Fprintln(w, "ok") })
+	log.Fatal(http.ListenAndServeTLS(":8443", "/tls/tls.crt", "/tls/tls.key", mux))
+}

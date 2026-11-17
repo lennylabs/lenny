@@ -1,0 +1,36 @@
+# helm: "chart":"cilium-1.20.4" "app_version":"1.20.4" 
+# image: quay.io/cilium/cilium:v1.20.4@sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e
+# kube-proxy ds: Error from server (NotFound): daemonsets.apps "kube-proxy" not found
+# cilium status (worker agent pod/cilium-226ch):
+KVStore:                Disabled   
+KubeProxyReplacement:   True   [eth0    172.18.0.2 fc00:f853:ccd:e793::2 fe80::e0b0:9bff:fef0:36e1 (Direct Routing)]
+Host firewall:          Disabled
+Cilium:                 Ok   1.20.4 (v1.20.4-beb276d2)
+Routing:                Network: Tunnel [vxlan]   Host: Legacy
+Attach Mode:            TCX
+Device Mode:            veth
+Masquerading:           IPTables [IPv4: Enabled, IPv6: Disabled]
+Proxy Status:            OK, ip 10.244.1.69, 0 redirects active on ports 10000-20000, Envoy: external
+Hubble:                  Ok   Current/Max Flows: 250/4095 (6.11%), Flows/s: 8.32   Metrics: Disabled
+KubeProxyReplacement Details:
+  Socket LB:            Enabled
+  Socket LB Tracing:    Enabled
+  Socket LB Coverage:   Full
+  Devices:              eth0    172.18.0.2 fc00:f853:ccd:e793::2 fe80::e0b0:9bff:fef0:36e1 (Direct Routing)
+  Mode:                 SNAT
+  Backend Selection:    Random
+  Session Affinity:     Enabled
+Encryption:       Disabled        
+# cilium config excerpt:
+"bpf-lb-sock":"false"
+"datapath-mode":"veth"
+"enable-bpf-clock-probe":"false"
+"enable-host-firewall":"false"
+"enable-ipv4":"true"
+"enable-l7-proxy":"true"
+"enable-policy":"default"
+"install-no-conntrack-iptables-rules":"false"
+"ipam":"kubernetes"
+"kube-proxy-replacement":"true"
+"routing-mode":"tunnel"
+"tunnel-protocol":"vxlan"

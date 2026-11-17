@@ -1,0 +1,66 @@
+package main
+
+// Reloading server identity and client trust for the stand-in decision service.
+// TLS_CERT and TLS_KEY name the Secret mount; TLS_CLIENT_CA names the lenny-egress-ca ConfigMap mount.
+// The certificate and the bundle are read for every handshake, which stands for "keeps last good on a failed reload".
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+var (
+	lastMu   sync.Mutex
+	lastCert *tls.Certificate
+	lastPool *x509.CertPool
+)
+
+func reloadingConfig() *tls.Config {
+	allowed := strings.Split(os.Getenv("TLS_CLIENT_SANS"), ",")
+	return &tls.Config{
+		NextProtos: []string{"h2"},
+		GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+			lastMu.Lock()
+			defer lastMu.Unlock()
+			if kp, err := tls.LoadX509KeyPair(os.Getenv("TLS_CERT"), os.Getenv("TLS_KEY")); err == nil {
+				lastCert = &kp
+			} else {
+				log.Printf("RELOAD cert failed, keeping last good: %v", err)
+			}
+			if b, err := os.ReadFile(os.Getenv("TLS_CLIENT_CA")); err == nil {
+				p := x509.NewCertPool()
+				if p.AppendCertsFromPEM(b) {
+					lastPool = p
+				}
+			}
+			if lastCert == nil || lastPool == nil {
+				return nil, fmt.Errorf("no certificate or bundle yet")
+			}
+			return &tls.Config{
+				Certificates: []tls.Certificate{*lastCert},
+				NextProtos:   []string{"h2"},
+				ClientCAs:    lastPool,
+				ClientAuth:   tls.RequireAndVerifyClientCert,
+				VerifyPeerCertificate: func(_ [][]byte, chains [][]*x509.Certificate) error {
+					for _, ch := range chains {
+						for _, d := range ch[0].DNSNames {
+							for _, w := range allowed {
+								if d == w {
+									log.Printf("I3PEER ts=%d san=%s serial=%x issuer=%s notAfter=%s", time.Now().UnixNano(), d, ch[0].SerialNumber, ch[0].Issuer.CommonName, ch[0].NotAfter.Format(time.RFC3339))
+									return nil
+								}
+							}
+						}
+					}
+					log.Printf("I3PEER ts=%d refused: SAN not allowed", time.Now().UnixNano())
+					return fmt.Errorf("client SAN not allowed")
+				},
+			}, nil
+		},
+	}
+}

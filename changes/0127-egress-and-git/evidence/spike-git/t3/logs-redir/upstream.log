@@ -1,0 +1,13 @@
+2026/11/01 21:55:11 UP GET /moved301/org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:55:11 UP done GET /moved301/org/repo.git/info/refs in 0s
+2026/11/01 21:55:11 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=false cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:55:11 UP GET /tohub/google/protobuf.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:55:11 UP done GET /tohub/google/protobuf.git/info/refs in 0s
+2026/11/01 21:55:12 UP GET /tohub/google/protobuf.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:55:12 UP done GET /tohub/google/protobuf.git/info/refs in 0s
+2026/11/01 21:55:13 UP GET /moved301/org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:55:13 UP done GET /moved301/org/repo.git/info/refs in 0s
+2026/11/01 21:55:13 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:55:13 UP done GET /org/repo.git/info/refs in 1ms
+2026/11/01 21:55:13 UP POST /org/repo.git/git-upload-pack auth=true cl=108 te=[] ce="" gp="version=2"
+2026/11/01 21:55:13 UP done POST /org/repo.git/git-upload-pack in 1ms

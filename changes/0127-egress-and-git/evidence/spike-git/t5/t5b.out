@@ -1,0 +1,3 @@
+git push url: http://127.0.0.1:7077/https/github.com/org/lfsrepo
+      1 GET /https/github.com/org/lfsrepo/info/refs?service=git-upload-pack op= None
+      1 POST /P/github.com/org/lfsrepo.git/info/lfs/objects/batch op= upload

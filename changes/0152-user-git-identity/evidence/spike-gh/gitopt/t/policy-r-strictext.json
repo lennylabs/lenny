@@ -1,0 +1,827 @@
+{
+ "ghes": {
+  "mode": "deny",
+  "restPrefix": "/api/v3",
+  "graphqlPath": "/api/graphql",
+  "maxBody": 262144,
+  "lexStrict": true,
+  "canonicalForward": true,
+  "maxDepth": 64,
+  "maxTokens": 15000,
+  "denyMutations": [
+   "addPullRequestReview",
+   "approveDeployments",
+   "createBranchProtectionRule",
+   "createCommitOnBranch",
+   "createRef",
+   "createRepositoryRuleset",
+   "deleteBranchProtectionRule",
+   "deletePullRequestReview",
+   "deleteRef",
+   "deleteRepositoryRuleset",
+   "dequeuePullRequest",
+   "disablePullRequestAutoMerge",
+   "dismissPullRequestReview",
+   "enablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "mergeBranch",
+   "mergePullRequest",
+   "rejectDeployments",
+   "revertPullRequest",
+   "submitPullRequestReview",
+   "updateBranchProtectionRule",
+   "updatePullRequestBranch",
+   "updatePullRequestReview",
+   "updateRef",
+   "updateRefs",
+   "updateRepositoryRuleset"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews/{id}/events"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/update-branch"
+   },
+   {
+    "method": "POST",
+    "path": ".../merges"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/merge-async"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/update-branch"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/enforce_admins"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_pull_request_reviews"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_signatures"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_status_checks"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_status_checks/contexts"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions/apps"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions/teams"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions/users"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/deployment-branch-policies/{branch_policy_id}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/deployment_protection_rules/{protection_rule_id}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/secrets/{secret_name}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/variables/{name}"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{branch}/protection/required_pull_request_reviews"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{branch}/protection/required_status_checks"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../environments/{environment_name}/variables/{name}"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/approve"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/deployment_protection_rule"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/force-cancel"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/pending_deployments"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/enforce_admins"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/required_signatures"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/required_status_checks/contexts"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/restrictions/apps"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/restrictions/teams"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/restrictions/users"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/{environment_name}/deployment-branch-policies"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/{environment_name}/deployment_protection_rules"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/{environment_name}/variables"
+   },
+   {
+    "method": "POST",
+    "path": ".../issues/{issue_number}/suggestions/{suggestion_id}/approve"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/access"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/artifact-and-log-retention"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/fork-pr-contributor-approval"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/fork-pr-workflows-private-repos"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/selected-actions"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/workflow"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/required_status_checks/contexts"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/restrictions/apps"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/restrictions/teams"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/restrictions/users"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/{environment_name}"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/{environment_name}/deployment-branch-policies/{branch_policy_id}"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/{environment_name}/secrets/{secret_name}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/rename"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "PUT",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{pull_number}/reviews"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}/events"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}/dismissals"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../rulesets/{ruleset_id}"
+   },
+   {
+    "method": "POST",
+    "path": ".../rulesets"
+   },
+   {
+    "method": "PUT",
+    "path": ".../rulesets/{ruleset_id}"
+   }
+  ],
+  "stripHeaders": [
+   "Authorization"
+  ],
+  "matcher": "strict",
+  "apiPrefixes": [
+   "/api/v3",
+   "/api/graphql",
+   "/api/uploads"
+  ],
+  "encodedPaths": [
+   "**/contents/{enc}",
+   "**/branches/{enc}",
+   "**/branches/{enc}/*",
+   "**/labels/{enc}",
+   "**/compare/{enc}",
+   "**/git/ref/{enc}",
+   "**/git/refs/{enc}",
+   "**/git/matching-refs/{enc}",
+   "**/releases/tags/{enc}",
+   "**/commits/{enc}",
+   "**/commits/{enc}/*",
+   "**/environments/{enc}",
+   "**/environments/{enc}/*",
+   "**/secrets/{enc}",
+   "**/variables/{enc}",
+   "**/topics/{enc}"
+  ]
+ },
+ "ghcom": {
+  "mode": "deny",
+  "restPrefix": "",
+  "graphqlPath": "/graphql",
+  "maxBody": 262144,
+  "lexStrict": true,
+  "canonicalForward": true,
+  "maxDepth": 64,
+  "maxTokens": 15000,
+  "denyMutations": [
+   "addPullRequestReview",
+   "approveDeployments",
+   "createBranchProtectionRule",
+   "createCommitOnBranch",
+   "createRef",
+   "createRepositoryRuleset",
+   "deleteBranchProtectionRule",
+   "deletePullRequestReview",
+   "deleteRef",
+   "deleteRepositoryRuleset",
+   "dequeuePullRequest",
+   "disablePullRequestAutoMerge",
+   "dismissPullRequestReview",
+   "enablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "mergeBranch",
+   "mergePullRequest",
+   "rejectDeployments",
+   "revertPullRequest",
+   "submitPullRequestReview",
+   "updateBranchProtectionRule",
+   "updatePullRequestBranch",
+   "updatePullRequestReview",
+   "updateRef",
+   "updateRefs",
+   "updateRepositoryRuleset"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews/{id}/events"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/update-branch"
+   },
+   {
+    "method": "POST",
+    "path": ".../merges"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/merge-async"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/update-branch"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/enforce_admins"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_pull_request_reviews"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_signatures"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_status_checks"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/required_status_checks/contexts"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions/apps"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions/teams"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{branch}/protection/restrictions/users"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/deployment-branch-policies/{branch_policy_id}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/deployment_protection_rules/{protection_rule_id}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/secrets/{secret_name}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/{environment_name}/variables/{name}"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{branch}/protection/required_pull_request_reviews"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{branch}/protection/required_status_checks"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../environments/{environment_name}/variables/{name}"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/approve"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/deployment_protection_rule"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/force-cancel"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{run_id}/pending_deployments"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/enforce_admins"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/required_signatures"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/required_status_checks/contexts"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/restrictions/apps"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/restrictions/teams"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/protection/restrictions/users"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/{environment_name}/deployment-branch-policies"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/{environment_name}/deployment_protection_rules"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/{environment_name}/variables"
+   },
+   {
+    "method": "POST",
+    "path": ".../issues/{issue_number}/suggestions/{suggestion_id}/approve"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/access"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/artifact-and-log-retention"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/fork-pr-contributor-approval"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/fork-pr-workflows-private-repos"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/selected-actions"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/workflow"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/required_status_checks/contexts"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/restrictions/apps"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/restrictions/teams"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{branch}/protection/restrictions/users"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/{environment_name}"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/{environment_name}/deployment-branch-policies/{branch_policy_id}"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/{environment_name}/secrets/{secret_name}"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{branch}/rename"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "PUT",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{pull_number}/reviews"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}/events"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{pull_number}/reviews/{review_id}/dismissals"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../rulesets/{ruleset_id}"
+   },
+   {
+    "method": "POST",
+    "path": ".../rulesets"
+   },
+   {
+    "method": "PUT",
+    "path": ".../rulesets/{ruleset_id}"
+   }
+  ],
+  "stripHeaders": [
+   "Authorization"
+  ],
+  "matcher": "strict",
+  "apiPrefixes": [],
+  "encodedPaths": [
+   "**/contents/{enc}",
+   "**/branches/{enc}",
+   "**/branches/{enc}/*",
+   "**/labels/{enc}",
+   "**/compare/{enc}",
+   "**/git/ref/{enc}",
+   "**/git/refs/{enc}",
+   "**/git/matching-refs/{enc}",
+   "**/releases/tags/{enc}",
+   "**/commits/{enc}",
+   "**/commits/{enc}/*",
+   "**/environments/{enc}",
+   "**/environments/{enc}/*",
+   "**/secrets/{enc}",
+   "**/variables/{enc}",
+   "**/topics/{enc}"
+  ]
+ },
+ "gitlab": {
+  "mode": "deny",
+  "restPrefix": "/api/v4",
+  "graphqlPath": "/api/graphql",
+  "maxBody": 262144,
+  "lexStrict": true,
+  "canonicalForward": true,
+  "maxDepth": 64,
+  "maxTokens": 15000,
+  "denyMutations": [
+   "mergeRequestAccept"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../merge_requests/{n}/approve"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge_requests/{n}/unapprove"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge_requests/{n}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge_requests/{n}/rebase"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge_requests/{n}/reset_approvals"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge_requests/{n}/cancel_merge_when_pipeline_succeeds"
+   }
+  ],
+  "stripHeaders": [
+   "Authorization",
+   "Private-Token",
+   "Job-Token",
+   "Sudo"
+  ],
+  "bodyRules": [
+   {
+    "path": ".../merge_requests",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   },
+   {
+    "path": ".../merge_requests/{n}",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   },
+   {
+    "path": ".../notes",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   },
+   {
+    "path": ".../discussions",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   }
+  ],
+  "matcher": "strict",
+  "apiPrefixes": [
+   "/api/v4",
+   "/api/graphql"
+  ],
+  "encodedPaths": [
+   "/api/v4/projects/{enc}",
+   "/api/v4/projects/{enc}/**",
+   "/api/v4/projects/{enc}/*",
+   "/api/v4/projects/{enc}/*/*",
+   "/api/v4/projects/{enc}/*/*/*",
+   "/api/v4/projects/{enc}/*/*/*/*",
+   "/api/v4/groups/{enc}",
+   "/api/v4/groups/{enc}/*",
+   "**/repository/branches/{enc}",
+   "**/repository/files/{enc}",
+   "**/repository/files/{enc}/*",
+   "**/repository/tags/{enc}",
+   "**/repository/commits/{enc}",
+   "**/repository/commits/{enc}/*",
+   "**/labels/{enc}",
+   "**/wikis/{enc}",
+   "**/repository/tree/{enc}"
+  ]
+ }
+}

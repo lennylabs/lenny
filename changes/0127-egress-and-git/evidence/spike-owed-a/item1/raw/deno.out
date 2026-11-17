@@ -1,0 +1,10 @@
+deno-fetch-rustls https://allowed.oa.test/ OK 200
+deno-fetch-rustls https://denied.oa.test/ REFUSED TypeError: error sending request for url (https://denied.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+deno-fetch-rustls https://sub.allowed.oa.test/ OK 200
+deno-fetch-rustls https://viaint.oa.test/ REFUSED TypeError: error sending request for url (https://viaint.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+deno-fetch-rustls https://198.19.50.20/ OK 200
+deno-fetch-rustls https://ctl.oa.test/ OK 200
+deno-fetch-rustls https://unk.oa.test/ REFUSED TypeError: error sending request for url (https://unk.oa.test/): client error (Connect): invalid peer certificate: UnknownIssuer
+deno-fetch-rustls https://xallowed.oa.test/ OK 200
+deno-fetch-rustls https://xdenied.oa.test/ REFUSED TypeError: error sending request for url (https://xdenied.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation)
+deno-fetch-rustls https://198.19.50.20:8443/ REFUSED TypeError: error sending request for url (https://198.19.50.20:8443/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolatio

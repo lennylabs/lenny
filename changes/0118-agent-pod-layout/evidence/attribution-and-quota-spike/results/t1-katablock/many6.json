@@ -1,0 +1,1 @@
+{"many6-slot1/v6":{"N":1000,"DiagOK":0,"ProcOK":1000,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1000},"DiagErrs":{"no such file or directory":1000},"ProcErrs":{},"DiagLat":{"max_us":49.128,"n":1000,"p50_us":8.376,"p99_us":13.274},"ProcLat":{"max_us":1489479.522,"n":1000,"p50_us":2167.438,"p99_us":322604.067},"ProcRowsMax":1731}}

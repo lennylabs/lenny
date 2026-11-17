@@ -1,0 +1,39 @@
+// fsprobe: 8 KiB write and fdatasync in a loop on a path, reporting latency tail, to separate the disk's own stalls from Postgres.
+package main
+
+import (
+	"fmt"
+	"os"
+	"sort"
+	"syscall"
+	"time"
+)
+
+func main() {
+	d, _ := time.ParseDuration(os.Args[2])
+	f, err := os.OpenFile(os.Args[1], os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		panic(err)
+	}
+	defer os.Remove(os.Args[1])
+	b := make([]byte, 8192)
+	var lat []time.Duration
+	var off int64
+	t0 := time.Now()
+	for time.Since(t0) < d {
+		s := time.Now()
+		f.WriteAt(b, off)
+		syscall.Fdatasync(int(f.Fd()))
+		e := time.Since(s)
+		lat = append(lat, e)
+		if e > 50*time.Millisecond {
+			fmt.Printf("  +%.1fs stall %v\n", time.Since(t0).Seconds(), e.Round(time.Millisecond))
+		}
+		off = (off + 8192) % (16 << 20)
+		time.Sleep(time.Millisecond)
+	}
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	n := len(lat)
+	over := func(x time.Duration) int { c := 0; for _, v := range lat { if v > x { c++ } }; return c }
+	fmt.Printf("fdatasync n=%d p50=%v p99=%v p99.9=%v max=%v over50ms=%d over150ms=%d\n", n, lat[n/2], lat[n*99/100], lat[n*999/1000], lat[n-1], over(50*time.Millisecond), over(150*time.Millisecond))
+}

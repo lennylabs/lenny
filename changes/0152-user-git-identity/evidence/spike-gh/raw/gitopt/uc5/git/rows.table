@@ -1,0 +1,140 @@
+     exp=ref got=ref http=403  strict ghes.example.test trailing slash                         | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test .json                                  | path "/acme/widgets.git/git-receive-pack.json" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test double slash                           | path "/acme//widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test leading double slash                   | path "//acme/widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test %2d                                    | path "/acme/widgets.git/git%2dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test %252d                                  | path "/acme/widgets.git/git%252dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test upper case                             | path "/acme/widgets.git/GIT-RECEIVE-PACK" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test mixed case info/refs                   | path "/acme/widgets.git/Info/Refs" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test %2F in info/refs                       | path "/acme/widgets.git/info%2Frefs" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test semicolon                              | 
+     exp=ref got=ref http=403  strict ghes.example.test dot segment                            | path "/acme/./widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test dotdot                                 | path "/acme/x/../widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test encoded dotdot                         | path "/acme/x/%2e%2e/widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test INFO/LFS                               | path "/acme/widgets.git/INFO/LFS/objects/batch" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test bare .git/                             | path "/x/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  strict ghes.example.test marker deep in a path                  | path "/a/b/c/info/refs/d" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test trailing slash                       | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test .json                                | path "/acme/widgets.git/git-receive-pack.json" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test double slash                         | path "/acme//widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test leading double slash                 | path "//acme/widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test %2d                                  | path "/acme/widgets.git/git%2dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test %252d                                | path "/acme/widgets.git/git%252dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test upper case                           | path "/acme/widgets.git/GIT-RECEIVE-PACK" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test mixed case info/refs                 | path "/acme/widgets.git/Info/Refs" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test %2F in info/refs                     | path "/acme/widgets.git/info%2Frefs" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test semicolon                            | 
+     exp=ref got=ref http=403  strict gitlab.example.test dot segment                          | path "/acme/./widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test dotdot                               | path "/acme/x/../widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test encoded dotdot                       | path "/acme/x/%2e%2e/widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test INFO/LFS                             | path "/acme/widgets.git/INFO/LFS/objects/batch" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test bare .git/                           | path "/x/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  strict gitlab.example.test marker deep in a path                | path "/a/b/c/info/refs/d" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test trailing slash                          | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test .json                                   | path "/acme/widgets.git/git-receive-pack.json" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test double slash                            | path "/acme//widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test leading double slash                    | path "//acme/widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test %2d                                     | path "/acme/widgets.git/git%2dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test %252d                                   | path "/acme/widgets.git/git%252dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test upper case                              | path "/acme/widgets.git/GIT-RECEIVE-PACK" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test mixed case info/refs                    | path "/acme/widgets.git/Info/Refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test %2F in info/refs                        | path "/acme/widgets.git/info%2Frefs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test semicolon                               | 
+     exp=ref got=ref http=403  strict api.example.test dot segment                             | path "/acme/./widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test dotdot                                  | path "/acme/x/../widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test encoded dotdot                          | path "/acme/x/%2e%2e/widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test INFO/LFS                                | path "/acme/widgets.git/INFO/LFS/objects/batch" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test bare .git/                              | path "/x/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  strict api.example.test marker deep in a path                   | path "/a/b/c/info/refs/d" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test trailing slash                        | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test .json                                 | path "/acme/widgets.git/git-receive-pack.json" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test double slash                          | path "/acme//widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test leading double slash                  | path "//acme/widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test %2d                                   | path "/acme/widgets.git/git%2dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test %252d                                 | path "/acme/widgets.git/git%252dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test upper case                            | path "/acme/widgets.git/GIT-RECEIVE-PACK" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test mixed case info/refs                  | path "/acme/widgets.git/Info/Refs" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test %2F in info/refs                      | path "/acme/widgets.git/info%2Frefs" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test semicolon                             | 
+     exp=ref got=ref http=403  strict other.example.test dot segment                           | path "/acme/./widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test dotdot                                | path "/acme/x/../widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test encoded dotdot                        | path "/acme/x/%2e%2e/widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test INFO/LFS                              | path "/acme/widgets.git/INFO/LFS/objects/batch" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test bare .git/                            | path "/x/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  strict other.example.test marker deep in a path                 | path "/a/b/c/info/refs/d" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com trailing slash                            | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com .json                                     | path "/acme/widgets.git/git-receive-pack.json" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com double slash                              | path "/acme//widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com leading double slash                      | path "//acme/widgets.git/git-receive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com %2d                                       | path "/acme/widgets.git/git%2dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com %252d                                     | path "/acme/widgets.git/git%252dreceive-pack" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com upper case                                | path "/acme/widgets.git/GIT-RECEIVE-PACK" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com mixed case info/refs                      | path "/acme/widgets.git/Info/Refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com %2F in info/refs                          | path "/acme/widgets.git/info%2Frefs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com semicolon                                 | 
+     exp=ref got=ref http=403  strict api.github.com dot segment                               | path "/acme/./widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com dotdot                                    | path "/acme/x/../widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com encoded dotdot                            | path "/acme/x/%2e%2e/widgets.git/info/refs" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com INFO/LFS                                  | path "/acme/widgets.git/INFO/LFS/objects/batch" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com bare .git/                                | path "/x/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  strict api.github.com marker deep in a path                     | path "/a/b/c/info/refs/d" is not a canonical git path
+     exp=ref got=ref http=403  collateral GET ghes.example.test/api/v3/repos/acme/widgets/con  | info/refs query "" refused: smart HTTP with one service only
+     exp=ref got=ref http=403  collateral GET ghes.example.test/api/v3/repos/acme/.git/config  | path "/api/v3/repos/acme/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  collateral GET api.github.com/repos/acme/widgets/contents/.git  | path "/repos/acme/widgets/contents/.git/config" is not a canonical git path
+     exp=ref got=ref http=403  collateral GET api.github.com/repos/acme/widgets/contents/git-  | path "/repos/acme/widgets/contents/git-upload-pack.md" is not a canonical git path
+     exp=ref got=ref http=403  collateral PUT contents/.git/config                             | path "/repos/acme/widgets/contents/.git/config" is not a canonical git path
+     exp=fwd got=fwd http=200  not a marker, GET gitlog.txt                                   Authorization=Bearer ACME-REAL-9f2c71 | 
+     exp=ref got=ref http=403  query no query                                                  | info/refs query "" refused: smart HTTP with one service only
+     exp=ref got=ref http=403  query two services                                              | info/refs query "service=git-upload-pack&service=git-receive-pack" refused: smart HTTP with 
+     exp=ref got=ref http=403  query repeat same                                               | info/refs query "service=git-upload-pack&service=git-upload-pack" refused: smart HTTP with o
+     exp=ref got=ref http=403  query other value                                               | info/refs query "service=foo" refused: smart HTTP with one service only
+     exp=ref got=ref http=403  query Service case                                              | info/refs query "Service=git-upload-pack" refused: smart HTTP with one service only
+     exp=ref got=ref http=403  query extra key                                                 | info/refs query "service=git-upload-pack&x=1" refused: smart HTTP with one service only
+     exp=ref got=ref http=403  query encoded value                                             | info/refs query "service=git%2dupload-pack" refused: smart HTTP with one service only
+     exp=ref got=ref http=403  query empty                                                     | info/refs query "service=" refused: smart HTTP with one service only
+     exp=fwd got=fwd http=200  query upload-pack                                              Authorization=Basic eC1hY2Nlc3MtdG9rZW46TUlOVC1S | 
+     exp=fwd got=fwd http=200  query receive-pack                                             Authorization=Basic eC1hY2Nlc3MtdG9rZW46TUlOVC1X | 
+     exp=ref got=ref http=403  override X-HTTP-Method-Override: POST                           | header X-Http-Method-Override refused on a git path
+     exp=ref got=ref http=403  override X-HTTP-Method: POST                                    | header X-Http-Method refused on a git path
+     exp=ref got=ref http=403  override X-Method-Override: POST                                | header X-Method-Override refused on a git path
+     exp=ref got=ref http=403  override X-Original-Method: POST                                | header X-Original-Method refused on a git path
+     exp=ref got=ref http=403  override X-Original-URL: /x                                     | header X-Original-Url refused on a git path
+     exp=ref got=ref http=403  override X-Rewrite-URL: /x                                      | header X-Rewrite-Url refused on a git path
+     exp=ref got=ref http=403  override X-Forwarded-Path: /x                                   | header X-Forwarded-Path refused on a git path
+     exp=ref got=ref http=403  override X-Forwarded-Prefix: /x                                 | header X-Forwarded-Prefix refused on a git path
+     exp=ref got=ref http=403  override X-Forwarded-Uri: /x                                    | header X-Forwarded-Uri refused on a git path
+     exp=ref got=ref http=403  override X-Envoy-Original-Path: /x                              | header X-Envoy-Original-Path refused on a git path
+     exp=ref got=ref http=403  override Upgrade: websocket                                     | header Upgrade refused on a git path
+     exp=ref got=ref http=403  override HTTP2-Settings: AAMAAABkAAQAoAAAAAIAAAAA               | header Http2-Settings refused on a git path
+     exp=ref got=ref http=403  override Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==            | header Sec-Websocket-Key refused on a git path
+     exp=fwd got=fwd http=200  headers: only what git sends                                   Authorization=Basic eC1hY2Nlc3MtdG9rZW46TUlOVC1S Git-Protocol=version=2 | 
+     exp=fwd got=fwd http=200  receive-pack plain, allowed ref                                Authorization=Basic eC1hY2Nlc3MtdG9rZW46TUlOVC1X | 
+     exp=ref got=ref http=403  receive-pack main                                               | ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+     exp=ref got=ref http=415  receive-pack gzip, allowed ref                                  | compressed receive-pack body refused: commands must be readable
+     exp=ref got=ref http=415  receive-pack gzip, main                                         | compressed receive-pack body refused: commands must be readable
+     exp=ref got=ref http=415  receive-pack deflate                                            | compressed receive-pack body refused: commands must be readable
+     exp=ref got=ref http=403  receive-pack push-cert                                          | signed push refused: its commands sit inside a certificate
+     exp=ref got=ref http=403  receive-pack push option                                        | push options are refused
+     exp=ref got=ref http=403  receive-pack wrong type                                         | git-receive-pack refuses Content-Type "application/json"
+     exp=ref got=ref http=403  receive-pack with a query                                       | git-receive-pack is POST with no query
+     exp=ref got=ref http=403  receive-pack GET                                                | git-receive-pack is POST with no query
+     exp=fwd got=fwd http=200  bound api.example.test fetch public, client credential          | 
+     exp=fwd got=fwd http=401  bound api.example.test fetch private, no secret attached        | 
+     exp=ref got=ref http=403  bound api.example.test push advert                              | push to a host no VCS pool covers is refused
+     exp=ref got=ref http=403  bound api.example.test push                                     | push to a host no VCS pool covers is refused
+     exp=ref got=ref http=403  bound api.example.test LFS upload                               | push to a host no VCS pool covers is refused
+     exp=fwd got=fwd http=200  bound api.example.test other request takes inject              Authorization=Bearer ACME-REAL-9f2c71 | 
+     exp=fwd got=fwd http=200  bound other.example.test fetch public, client credential        | 
+     exp=fwd got=fwd http=401  bound other.example.test fetch private, no secret attached      | 
+     exp=ref got=ref http=403  bound other.example.test push advert                            | push to a host no VCS pool covers is refused
+     exp=ref got=ref http=403  bound other.example.test push                                   | push to a host no VCS pool covers is refused
+     exp=ref got=ref http=403  bound other.example.test LFS upload                             | push to a host no VCS pool covers is refused
+     exp=fwd got=fwd http=200  bound other.example.test other request takes inject            Authorization=Bearer OTHER-REAL-11ee05 | 
+     exp=fwd got=fwd http=200  plain absolute-form, covered                                   Authorization=Basic eC1hY2Nlc3MtdG9rZW46TUlOVC1S | 
+     exp=ref got=ref http=403  plain absolute-form, covered, receive-pack main                 | ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+     exp=fwd got=fwd http=200  plain absolute-form, bound, fetch                               | 
+     exp=ref got=ref http=403  plain absolute-form, bound, push                                | push to a host no VCS pool covers is refused
+     exp=ref got=ref http=403  plain absolute-form, spelling                                   | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  h2 spelling                                                     | path "/acme/widgets.git/git-receive-pack/" is not a canonical git path
+     exp=ref got=ref http=403  h2 receive-pack main                                            | ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+TOTALS [(('fwd', 'fwd'), 13), (('ref', 'ref'), 126)]

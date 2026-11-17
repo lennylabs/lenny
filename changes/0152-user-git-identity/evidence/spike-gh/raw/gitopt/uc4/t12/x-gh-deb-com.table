@@ -1,0 +1,23 @@
+no-write-at-stub   rc=0   com-auth-status                          writes= refused=
+no-write-at-stub   rc=0   com-repo-view                            writes= refused=
+OVER               rc=1   com-ssh-key-add                          writes= refused=POST /user/keys is denied by the preset
+ok-forwarded       rc=0   com-ssh-key-delete                       writes=DELETE /user/keys/1 refused=
+ok-forwarded       rc=0   com-gpg-key-add                          writes=POST /user/gpg_keys refused=
+OVER               rc=1   com-secret-set-env                       writes= refused=PUT {repo}/environments/** is denied by the preset
+OVER               rc=1   com-secret-delete-env                    writes= refused=DELETE {repo}/environments/** is denied by the preset
+OVER               rc=1   com-variable-set-env                     writes= refused=POST {repo}/environments/** is denied by the preset
+OVER               rc=1   com-variable-delete-env                  writes= refused=DELETE {repo}/environments/** is denied by the preset
+ok-forwarded       rc=0   com-secret-set-org                       writes=PUT /orgs/acme/actions/secrets/S refused=
+ok-forwarded       rc=0   com-repo-edit-automerge                  writes=PATCH /repos/acme/widgets refused=
+ok-forwarded       rc=0   com-pr-create-65536-lt                   writes=git-push,createPullRequest refused=
+ok-forwarded       rc=0   com-pr-comment-65536-lt                  writes=addComment refused=
+ok-forwarded       rc=0   com-pr-comment-65536-emoji               writes=addComment refused=
+ok-forwarded       rc=0   com-pr-comment-500k                      writes=addComment refused=
+ok-forwarded       rc=0   com-pr-edit-20-reviewers                 writes=requestReviewsByLogin,updatePullRequest refused=
+OVER               rc=1   com-api-gql-17-root                      writes= refused=17 root fields is over the bound of 16
+OVER               rc=1   com-api-post-query                       writes= refused=a write takes no query string under this preset
+OVER               rc=1   com-api-form-input                       writes= refused=a write takes a JSON body under this preset, got "application/x-www-form-urlenco
+no-write-at-stub   rc=1   com-api-repo-graphql-tools               writes= refused=
+ok-forwarded       rc=1   com-api-repo-graphql-tools-issue         writes=POST /repos/acme/graphql-tools/issues refused=
+OVER               rc=1   com-api-repositories-alias-merge         writes= refused=PUT {repo}/pulls/*/merge is denied by the preset
+TOTAL 22 {'ok-forwarded': 10, 'ok-refused-denied': 0, 'OVER': 9, 'MISS': 0, 'no-write-at-stub': 3}

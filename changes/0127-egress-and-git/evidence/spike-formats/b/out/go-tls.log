@@ -1,0 +1,17 @@
+go version go1.26.7 linux/arm64
+--- gotls-home600
+# get https://fake.test/t/gotls-home600/example.com/foo/@v/v1.0.0.info: 404 Not Found (0.041s)
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-home600/example.com/foo/@v/v1.0.0.info: 404 Not Found
+--- gotls-home644
+# get https://fake.test/t/gotls-home644/example.com/foo/@v/v1.0.0.info: 404 Not Found (0.010s)
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-home644/example.com/foo/@v/v1.0.0.info: 404 Not Found
+--- gotls-env600
+# get https://fake.test/t/gotls-env600/example.com/foo/@v/v1.0.0.info: 404 Not Found (0.010s)
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-env600/example.com/foo/@v/v1.0.0.info: 404 Not Found
+--- gotls-env644
+# get https://fake.test/t/gotls-env644/example.com/foo/@v/v1.0.0.info: 404 Not Found (0.009s)
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-env644/example.com/foo/@v/v1.0.0.info: 404 Not Found
+--- gotls-goauthoff
+go: example.com/foo@v1.0.0: reading https://fake.test/t/gotls-goauthoff/example.com/foo/@v/v1.0.0.info: 401 Unauthorized
+--- gohttp-goinsecure
+go: example.com/foo@v1.0.0: reading http://fake.test/t/gohttp-goinsecure/example.com/foo/@v/v1.0.0.info: 401 Unauthorized

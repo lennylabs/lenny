@@ -1,0 +1,808 @@
+{
+ "ghes": {
+  "denyMutations": [
+   "addPullRequestReview",
+   "submitPullRequestReview",
+   "updatePullRequestReview",
+   "deletePullRequestReview",
+   "dismissPullRequestReview",
+   "mergePullRequest",
+   "enablePullRequestAutoMerge",
+   "disablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "dequeuePullRequest",
+   "mergeBranch",
+   "updatePullRequestBranch",
+   "revertPullRequest",
+   "createCommitOnBranch",
+   "createRef",
+   "updateRef",
+   "updateRefs",
+   "deleteRef",
+   "createLinkedBranch",
+   "approveDeployments",
+   "rejectDeployments",
+   "updateEnvironment",
+   "deleteEnvironment",
+   "createBranchProtectionRule",
+   "updateBranchProtectionRule",
+   "deleteBranchProtectionRule",
+   "createRepositoryRuleset",
+   "updateRepositoryRuleset",
+   "deleteRepositoryRuleset"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "POST",
+    "path": ".../merges"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merges"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../merges"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../merges"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "POST",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "POST",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "PUT",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "PATCH",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "DELETE",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "POST",
+    "path": "/user/keys"
+   },
+   {
+    "method": "PUT",
+    "path": "/user/keys"
+   },
+   {
+    "method": "PATCH",
+    "path": "/user/keys"
+   },
+   {
+    "method": "DELETE",
+    "path": "/user/keys"
+   },
+   {
+    "method": "POST",
+    "path": ".../keys"
+   },
+   {
+    "method": "PUT",
+    "path": ".../keys"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../keys"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../keys"
+   }
+  ]
+ },
+ "ghcom": {
+  "denyMutations": [
+   "addPullRequestReview",
+   "submitPullRequestReview",
+   "updatePullRequestReview",
+   "deletePullRequestReview",
+   "dismissPullRequestReview",
+   "mergePullRequest",
+   "enablePullRequestAutoMerge",
+   "disablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "dequeuePullRequest",
+   "mergeBranch",
+   "updatePullRequestBranch",
+   "revertPullRequest",
+   "createCommitOnBranch",
+   "createRef",
+   "updateRef",
+   "updateRefs",
+   "deleteRef",
+   "createLinkedBranch",
+   "approveDeployments",
+   "rejectDeployments",
+   "updateEnvironment",
+   "deleteEnvironment",
+   "createBranchProtectionRule",
+   "updateBranchProtectionRule",
+   "deleteBranchProtectionRule",
+   "createRepositoryRuleset",
+   "updateRepositoryRuleset",
+   "deleteRepositoryRuleset"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/reviews/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/merge"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/merge-async"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../pulls/{x}/update-branch"
+   },
+   {
+    "method": "POST",
+    "path": ".../merges"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merges"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../merges"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../merges"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../merge-upstream"
+   },
+   {
+    "method": "POST",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../contents/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/commits"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/trees"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "PUT",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/tags"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{x}/rename"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/pending_deployments"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/approve"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/deployment_protection_rule"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/runs/{x}/force-cancel"
+   },
+   {
+    "method": "POST",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../environments/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../branches/{x}/protection/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../rulesets/**"
+   },
+   {
+    "method": "POST",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "PUT",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "PATCH",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "DELETE",
+    "path": "/orgs/*/rulesets/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "PUT",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../actions/permissions/**"
+   },
+   {
+    "method": "POST",
+    "path": "/user/keys"
+   },
+   {
+    "method": "PUT",
+    "path": "/user/keys"
+   },
+   {
+    "method": "PATCH",
+    "path": "/user/keys"
+   },
+   {
+    "method": "DELETE",
+    "path": "/user/keys"
+   },
+   {
+    "method": "POST",
+    "path": ".../keys"
+   },
+   {
+    "method": "PUT",
+    "path": ".../keys"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../keys"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../keys"
+   }
+  ]
+ }
+}

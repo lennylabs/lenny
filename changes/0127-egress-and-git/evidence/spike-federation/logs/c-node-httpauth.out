@@ -1,0 +1,21 @@
+### TEST c-node-httpauth  23:26:40
+### docker run --network spikefed-net --env-file env/azwi.env -e AZURE_AUTHORITY_HOST=http://login.azure.test -e SLEEP=1 -w /napp spikefed-node:t node azwi.js
+/deps/node_modules/@azure/identity/dist/commonjs/client/identityClient.js:52
+      throw new Error("The authorityHost address must use the 'https' protocol.");
+            ^
+
+Error: The authorityHost address must use the 'https' protocol.
+    at new IdentityClient (/deps/node_modules/@azure/identity/dist/commonjs/client/identityClient.js:52:13)
+    at generateMsalConfiguration (/deps/node_modules/@azure/identity/dist/commonjs/msal/nodeFlows/msalClient.js:52:22)
+    at createMsalClient (/deps/node_modules/@azure/identity/dist/commonjs/msal/nodeFlows/msalClient.js:80:17)
+    at new ClientAssertionCredential (/deps/node_modules/@azure/identity/dist/commonjs/credentials/clientAssertionCredential.js:67:62)
+    at new WorkloadIdentityCredential (/deps/node_modules/@azure/identity/dist/commonjs/credentials/workloadIdentityCredential.js:173:19)
+    at /napp/azwi.js:11:15
+    at Object.<anonymous> (/napp/azwi.js:20:3)
+    at Module._compile (node:internal/modules/cjs/loader:1929:14)
+    at Object..js (node:internal/modules/cjs/loader:2060:10)
+    at Module.load (node:internal/modules/cjs/loader:1651:32)
+
+Node.js v24.22.2
+### exit 1
+### server log:

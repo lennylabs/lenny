@@ -1,0 +1,8 @@
+hosts:
+    gitlab.example.test:
+        token: tok-RO
+        api_host: gitlab.example.test
+        api_protocol: https
+        git_protocol: https
+check_update: false
+telemetry: false

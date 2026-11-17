@@ -1,0 +1,22 @@
+=== CONNECT gate: refused until the first binding generation
+ghes.example.test http=000 connect=503
+curl: (56) CONNECT tunnel failed, response 503
+api.example.test http=000 connect=503
+curl: (56) CONNECT tunnel failed, response 503
+curl: (56) CONNECT tunnel failed, response 503
+lfs-store.example.test http=000 connect=503
+--- first generation arrives: ok
+ghes.example.test http=403 connect=200
+api.example.test http=200 connect=200
+lfs-store.example.test http=200 connect=200
+--- docker restart of netagent
+curl: (56) CONNECT tunnel failed, response 503
+ghes.example.test http=000 connect=503
+--- generation again: ok
+ghes.example.test http=403 connect=200
+=== terminated marker: netagent with stale data, github.com absent from its covered set
+curl: (56) CONNECT tunnel failed, response 403
+github.com http=000 connect=403
+ghes.example.test http=403 connect=200
+lfs-store.example.test http=200 connect=200
+"code":200 "target":"api.example.test:443" "code":200 "target":"lfs-store.example.test:443" "code":403 "target":"github.com:443" "code":200 "target":"lfs-store.example.test:443"

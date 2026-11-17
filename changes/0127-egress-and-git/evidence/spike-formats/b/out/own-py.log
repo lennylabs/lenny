@@ -1,0 +1,16 @@
+-rw-r--r-- 1 0 0 46 Nov  2 06:42 /cfg/netrc
+-rw-r--r-- 1 0 0 46 Nov  2 06:42 /home/u/.netrc
+uid 1000
+--- requests-ownhome
+200
+--- httpx-netrcauth-ownhome
+EXC NetrcParseError ~/.netrc file owner (root, uid 1000) does not match current user (None, line None)
+--- pip-ownhome
+ERROR: No matching distribution found for spikepkg
+uid 1000
+--- requests-ownenv
+200
+--- httpx-netrcauth-ownenv
+200
+--- pip-ownenv
+ERROR: No matching distribution found for spikepkg

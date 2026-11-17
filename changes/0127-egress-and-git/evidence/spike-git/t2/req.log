@@ -1,0 +1,7 @@
+{"m": "GET", "path": "/https/github.com/x/y/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/https/evil.example.com/x/y/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/F/github.com/x/y/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/https/github.com/x/explicit/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/https/github.com/x/lsremote/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/P/github.com/x/explicitB/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/https/github.com/x/trace/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}

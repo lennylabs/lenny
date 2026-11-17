@@ -1,0 +1,181 @@
+# Spike bootstrap: CONNECT termination + ext_authz + SSRF filter + per-request chaining.
+# Placeholders (__X__) are replaced by render.py for the timeout variants.
+admin:
+  address: {socket_address: {address: 0.0.0.0, port_value: 9901}}
+
+static_resources:
+  listeners:
+  - name: egress
+    address: {socket_address: {address: 0.0.0.0, port_value: 3128}}
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: egress
+          codec_type: HTTP1
+          upgrade_configs:
+          - upgrade_type: CONNECT
+          
+          access_log:
+          - name: envoy.access_loggers.stdout
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+              log_format:
+                json_format:
+                  t: "%START_TIME%"
+                  method: "%REQ(:METHOD)%"
+                  authority: "%REQ(:AUTHORITY)%"
+                  code: "%RESPONSE_CODE%"
+                  flags: "%RESPONSE_FLAGS%"
+                  details: "%RESPONSE_CODE_DETAILS%"
+                  conn_term: "%CONNECTION_TERMINATION_DETAILS%"
+                  dur_ms: "%DURATION%"
+                  peer: "%DOWNSTREAM_REMOTE_ADDRESS%"
+                  up_cluster: "%UPSTREAM_CLUSTER%"
+                  up_host: "%UPSTREAM_HOST%"
+                  up_fail: "%UPSTREAM_TRANSPORT_FAILURE_REASON%"
+                  rx: "%BYTES_RECEIVED%"
+                  tx: "%BYTES_SENT%"
+                  route_hdr: "%REQ(x-lenny-route)%"
+                  tenant: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:tenant)%"
+                  session: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:session)%"
+                  rule: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:rule)%"
+                  decision: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:decision)%"
+                  deny_reason: "%DYNAMIC_METADATA(envoy.filters.http.ext_authz:reason)%"
+          http_filters:
+          - name: envoy.filters.http.ext_authz
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+              transport_api_version: V3
+              grpc_service:
+                envoy_grpc: {cluster_name: authz}
+                timeout: 2s
+              failure_mode_allow: false
+              clear_route_cache: true
+              status_on_error: {code: ServiceUnavailable}
+          - name: envoy.filters.http.dynamic_forward_proxy
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.dynamic_forward_proxy.v3.FilterConfig
+              dns_cache_config: &dns_cache
+                name: egress_dns
+                dns_lookup_family: ALL
+                resolved_address_filter: {ranges: [{address_prefix: '0.0.0.0', prefix_len: 8}, {address_prefix: '10.0.0.0', prefix_len: 8}, {address_prefix: '100.64.0.0', prefix_len: 10}, {address_prefix: '127.0.0.0', prefix_len: 8}, {address_prefix: '169.254.0.0', prefix_len: 16}, {address_prefix: '172.16.0.0', prefix_len: 12}, {address_prefix: '192.0.0.0', prefix_len: 24}, {address_prefix: '192.168.0.0', prefix_len: 16}, {address_prefix: '224.0.0.0', prefix_len: 4}, {address_prefix: '240.0.0.0', prefix_len: 4}, {address_prefix: '::', prefix_len: 128}, {address_prefix: '::1', prefix_len: 128}, {address_prefix: '::ffff:0:0', prefix_len: 96}, {address_prefix: '64:ff9b::', prefix_len: 96}, {address_prefix: 'fc00::', prefix_len: 7}, {address_prefix: 'fe80::', prefix_len: 10}, {address_prefix: 'ff00::', prefix_len: 8}]}
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+              
+          route_config:
+            name: egress
+            virtual_hosts:
+            - name: all
+              domains: ["*"]
+              routes:
+              # Route chosen by the header ext_authz sets (route cache cleared after the check).
+              - match:
+                  connect_matcher: {}
+                  headers: [{name: x-lenny-route, string_match: {exact: direct}}]
+                route:
+                  cluster: dfp
+                  upgrade_configs: [{upgrade_type: CONNECT, connect_config: {}}]
+                  max_stream_duration: {max_stream_duration: 5s}
+              - match:
+                  connect_matcher: {}
+                  headers: [{name: x-lenny-route, string_match: {exact: upstream-a}}]
+                route:
+                  cluster: dfp_via_proxy_a
+                  upgrade_configs: [{upgrade_type: CONNECT, connect_config: {}}]
+                  max_stream_duration: {max_stream_duration: 5s}
+              - match:
+                  connect_matcher: {}
+                  headers: [{name: x-lenny-route, string_match: {exact: upstream-b}}]
+                route:
+                  # No connect_config: Envoy forwards the CONNECT request itself to proxy B.
+                  cluster: proxy_b
+                  upgrade_configs: [{upgrade_type: CONNECT}]
+                  max_stream_duration: {max_stream_duration: 5s}
+                
+              - match:
+                  connect_matcher: {}
+                  headers: [{name: x-lenny-route, string_match: {exact: upstream-dyn}}]
+                route:
+                  # Forwarded CONNECT; the upstream proxy address comes from x-lenny-upstream (set by ext_authz).
+                  cluster: upstream_dynamic
+                  upgrade_configs: [{upgrade_type: CONNECT}]
+                  max_stream_duration: {max_stream_duration: 5s}
+                
+              - match:
+                  connect_matcher: {}
+                  headers: [{name: x-lenny-route, string_match: {exact: upstream-md}}]
+                route:
+                  # Forwarded CONNECT; upstream proxy address read from ext_authz dynamic metadata.
+                  cluster: upstream_dynamic_md
+                  upgrade_configs: [{upgrade_type: CONNECT}]
+                  max_stream_duration: {max_stream_duration: 5s}
+                
+              - match: {connect_matcher: {}}
+                direct_response: {status: 403, body: {inline_string: "no route decision\n"}}
+              - match: {prefix: /}
+                direct_response: {status: 405, body: {inline_string: "CONNECT only\n"}}
+
+  clusters:
+  - name: authz
+    type: STATIC
+    connect_timeout: 1s
+    typed_extension_protocol_options:
+      envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+        "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        explicit_http_config: {http2_protocol_options: {}}
+    load_assignment:
+      cluster_name: authz
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: 198.18.0.11, port_value: 9000}}}}]}]
+
+  - name: dfp
+    connect_timeout: 5s
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_forward_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+        dns_cache_config: *dns_cache
+
+  # Same DFP resolution (and SSRF filter), but the TCP connection goes to proxy A,
+  # which receives "CONNECT <resolved-target>" from the http_11_proxy transport socket.
+  - name: dfp_via_proxy_a
+    connect_timeout: 5s
+    lb_policy: CLUSTER_PROVIDED
+    cluster_type:
+      name: envoy.clusters.dynamic_forward_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.clusters.dynamic_forward_proxy.v3.ClusterConfig
+        dns_cache_config: *dns_cache
+    transport_socket:
+      name: envoy.transport_sockets.http_11_proxy
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.http_11_proxy.v3.Http11ProxyUpstreamTransport
+        default_proxy_address: {socket_address: {address: 198.18.0.12, port_value: 3128}}
+        transport_socket:
+          name: envoy.transport_sockets.raw_buffer
+          typed_config: {"@type": type.googleapis.com/envoy.extensions.transport_sockets.raw_buffer.v3.RawBuffer}
+
+  # Upstream proxy chosen per request from a header (IP:port) without per-tenant clusters.
+  - name: upstream_dynamic
+    type: ORIGINAL_DST
+    connect_timeout: 5s
+    lb_policy: CLUSTER_PROVIDED
+    original_dst_lb_config: {use_http_header: true, http_header_name: x-lenny-upstream}
+
+  - name: upstream_dynamic_md
+    type: ORIGINAL_DST
+    connect_timeout: 5s
+    lb_policy: CLUSTER_PROVIDED
+    original_dst_lb_config:
+      metadata_key: {key: envoy.filters.http.ext_authz, path: [{key: upstream}]}
+
+  # Plain cluster pointing at proxy B; used with CONNECT forwarding (no termination).
+  - name: proxy_b
+    type: STATIC
+    connect_timeout: 5s
+    load_assignment:
+      cluster_name: proxy_b
+      endpoints: [{lb_endpoints: [{endpoint: {address: {socket_address: {address: 198.18.0.13, port_value: 3128}}}}]}]

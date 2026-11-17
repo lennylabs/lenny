@@ -1,0 +1,241 @@
+REACHED         ghes    h1 POST /merge-upstream                         http=201 fwd=POST /api/v3/repos/acme/widgets/merge-upstream   | 
+refused         ghes    h1 POST /merges                                 http=403 fwd=   | POST .../merges is denied by the preset
+refused         ghes    h1 PUT /pulls/{pull_number}/merge               http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+REACHED         ghes    h1 PUT /pulls/{pull_number}/merge-async         http=201 fwd=PUT /api/v3/repos/acme/widgets/pulls/7/merge-async   | 
+refused         ghes    h1 PUT /pulls/{pull_number}/update-branch       http=403 fwd=   | PUT .../pulls/{n}/update-branch is denied by the preset
+REACHED         ghes    h1 DELETE /branches/{branch}/protection         http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/enforce http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/enforce   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/require   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/require   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/require   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/require   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/restric   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/restric   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/restric   | 
+REACHED         ghes    h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /api/v3/repos/acme/widgets/branches/main/protection/restric   | 
+REACHED         ghes    h1 DELETE /environments/{environment_name}      http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod   | 
+REACHED         ghes    h1 DELETE /environments/{environment_name}/depl http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod/deployment-bra   | 
+REACHED         ghes    h1 DELETE /environments/{environment_name}/depl http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod/deployment_pro   | 
+REACHED         ghes    h1 DELETE /environments/{environment_name}/secr http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod/secrets/S   | 
+REACHED         ghes    h1 DELETE /environments/{environment_name}/vari http=204 fwd=DELETE /api/v3/repos/acme/widgets/environments/prod/variables/1   | 
+REACHED         ghes    h1 PATCH /branches/{branch}/protection/required http=201 fwd=PATCH /api/v3/repos/acme/widgets/branches/main/protection/required   | 
+REACHED         ghes    h1 PATCH /branches/{branch}/protection/required http=201 fwd=PATCH /api/v3/repos/acme/widgets/branches/main/protection/required   | 
+REACHED         ghes    h1 PATCH /environments/{environment_name}/varia http=201 fwd=PATCH /api/v3/repos/acme/widgets/environments/prod/variables/1   | 
+REACHED         ghes    h1 POST /actions/runs/{run_id}/approve          http=201 fwd=POST /api/v3/repos/acme/widgets/actions/runs/1/approve   | 
+REACHED         ghes    h1 POST /actions/runs/{run_id}/deployment_prote http=201 fwd=POST /api/v3/repos/acme/widgets/actions/runs/1/deployment_protecti   | 
+REACHED         ghes    h1 POST /actions/runs/{run_id}/force-cancel     http=201 fwd=POST /api/v3/repos/acme/widgets/actions/runs/1/force-cancel   | 
+REACHED         ghes    h1 POST /actions/runs/{run_id}/pending_deployme http=201 fwd=POST /api/v3/repos/acme/widgets/actions/runs/1/pending_deployments   | 
+REACHED         ghes    h1 POST /branches/{branch}/protection/enforce_a http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/protection/enforce_a   | 
+REACHED         ghes    h1 POST /branches/{branch}/protection/required_ http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/protection/required_   | 
+REACHED         ghes    h1 POST /branches/{branch}/protection/required_ http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/protection/required_   | 
+REACHED         ghes    h1 POST /branches/{branch}/protection/restricti http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/protection/restricti   | 
+REACHED         ghes    h1 POST /branches/{branch}/protection/restricti http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/protection/restricti   | 
+REACHED         ghes    h1 POST /branches/{branch}/protection/restricti http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/protection/restricti   | 
+REACHED         ghes    h1 POST /environments/{environment_name}/deploy http=201 fwd=POST /api/v3/repos/acme/widgets/environments/prod/deployment-branc   | 
+REACHED         ghes    h1 POST /environments/{environment_name}/deploy http=201 fwd=POST /api/v3/repos/acme/widgets/environments/prod/deployment_prote   | 
+REACHED         ghes    h1 POST /environments/{environment_name}/variab http=201 fwd=POST /api/v3/repos/acme/widgets/environments/prod/variables   | 
+REACHED         ghes    h1 POST /issues/{issue_number}/suggestions/{sug http=201 fwd=POST /api/v3/repos/acme/widgets/issues/1/suggestions/1/approve   | 
+REACHED         ghes    h1 PUT /actions/permissions                     http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions   | 
+REACHED         ghes    h1 PUT /actions/permissions/access              http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions/access   | 
+REACHED         ghes    h1 PUT /actions/permissions/artifact-and-log-re http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions/artifact-and-lo   | 
+REACHED         ghes    h1 PUT /actions/permissions/fork-pr-contributor http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions/fork-pr-contrib   | 
+REACHED         ghes    h1 PUT /actions/permissions/fork-pr-workflows-p http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions/fork-pr-workflo   | 
+REACHED         ghes    h1 PUT /actions/permissions/selected-actions    http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions/selected-action   | 
+REACHED         ghes    h1 PUT /actions/permissions/workflow            http=201 fwd=PUT /api/v3/repos/acme/widgets/actions/permissions/workflow   | 
+REACHED         ghes    h1 PUT /branches/{branch}/protection            http=201 fwd=PUT /api/v3/repos/acme/widgets/branches/main/protection   | 
+REACHED         ghes    h1 PUT /branches/{branch}/protection/required_s http=201 fwd=PUT /api/v3/repos/acme/widgets/branches/main/protection/required_s   | 
+REACHED         ghes    h1 PUT /branches/{branch}/protection/restrictio http=201 fwd=PUT /api/v3/repos/acme/widgets/branches/main/protection/restrictio   | 
+REACHED         ghes    h1 PUT /branches/{branch}/protection/restrictio http=201 fwd=PUT /api/v3/repos/acme/widgets/branches/main/protection/restrictio   | 
+REACHED         ghes    h1 PUT /branches/{branch}/protection/restrictio http=201 fwd=PUT /api/v3/repos/acme/widgets/branches/main/protection/restrictio   | 
+REACHED         ghes    h1 PUT /environments/{environment_name}         http=201 fwd=PUT /api/v3/repos/acme/widgets/environments/prod   | 
+REACHED         ghes    h1 PUT /environments/{environment_name}/deploym http=201 fwd=PUT /api/v3/repos/acme/widgets/environments/prod/deployment-branch   | 
+REACHED         ghes    h1 PUT /environments/{environment_name}/secrets http=201 fwd=PUT /api/v3/repos/acme/widgets/environments/prod/secrets/S   | 
+REACHED         ghes    h1 DELETE /contents/{path}                      http=204 fwd=DELETE /api/v3/repos/acme/widgets/contents/f.txt   | 
+refused         ghes    h1 DELETE /git/refs/{ref}                       http=403 fwd=   | DELETE .../git/refs/** is denied by the preset
+refused         ghes    h1 PATCH /git/refs/{ref}                        http=403 fwd=   | PATCH .../git/refs/** is denied by the preset
+REACHED         ghes    h1 POST /branches/{branch}/rename               http=201 fwd=POST /api/v3/repos/acme/widgets/branches/main/rename   | 
+REACHED         ghes    h1 POST /git/commits                            http=200 fwd=POST /api/v3/repos/acme/widgets/git/commits   | 
+refused         ghes    h1 POST /git/refs                               http=403 fwd=   | POST .../git/refs/** is denied by the preset
+REACHED         ghes    h1 POST /git/tags                               http=201 fwd=POST /api/v3/repos/acme/widgets/git/tags   | 
+REACHED         ghes    h1 POST /git/trees                              http=201 fwd=POST /api/v3/repos/acme/widgets/git/trees   | 
+REACHED         ghes    h1 PUT /contents/{path}                         http=201 fwd=PUT /api/v3/repos/acme/widgets/contents/f.txt   | 
+REACHED         ghes    h1 DELETE /pulls/{pull_number}/requested_review http=204 fwd=DELETE /api/v3/repos/acme/widgets/pulls/7/requested_reviewers   | 
+REACHED         ghes    h1 DELETE /pulls/{pull_number}/reviews/{review_ http=204 fwd=DELETE /api/v3/repos/acme/widgets/pulls/7/reviews/1   | 
+REACHED         ghes    h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers   | 
+REACHED         ghes    h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers/rerequ   | 
+refused         ghes    h1 POST /pulls/{pull_number}/reviews            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h1 POST /pulls/{pull_number}/reviews/{review_id http=403 fwd=   | POST .../pulls/{n}/reviews/{id}/events is denied by the preset
+REACHED         ghes    h1 PUT /pulls/{pull_number}/reviews/{review_id} http=201 fwd=PUT /api/v3/repos/acme/widgets/pulls/7/reviews/1   | 
+REACHED         ghes    h1 PUT /pulls/{pull_number}/reviews/{review_id} http=201 fwd=PUT /api/v3/repos/acme/widgets/pulls/7/reviews/1/dismissals   | 
+REACHED         ghes    h1 DELETE /rulesets/{ruleset_id}                http=204 fwd=DELETE /api/v3/repos/acme/widgets/rulesets/1   | 
+REACHED         ghes    h1 POST /rulesets                               http=201 fwd=POST /api/v3/repos/acme/widgets/rulesets   | 
+REACHED         ghes    h1 PUT /rulesets/{ruleset_id}                   http=201 fwd=PUT /api/v3/repos/acme/widgets/rulesets/1   | 
+refused         ghes    h1 mutation addPullRequestReview                http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation addPullRequestReviewComment         http=200 fwd=POST /api/graphql addPullRequestReviewComment  | 
+REACHED         ghes    h1 mutation addPullRequestReviewThread          http=200 fwd=POST /api/graphql addPullRequestReviewThread  | 
+REACHED         ghes    h1 mutation addPullRequestReviewThreadReply     http=200 fwd=POST /api/graphql addPullRequestReviewThreadRepl  | 
+REACHED         ghes    h1 mutation approveDeployments                  http=200 fwd=POST /api/graphql approveDeployments  | 
+REACHED         ghes    h1 mutation closePullRequest                    http=200 fwd=POST /api/graphql closePullRequest  | 
+REACHED         ghes    h1 mutation createBranchProtectionRule          http=200 fwd=POST /api/graphql createBranchProtectionRule  | 
+refused         ghes    h1 mutation createCommitOnBranch                http=403 fwd=   | mutation field "createCommitOnBranch" is denied by the preset
+REACHED         ghes    h1 mutation createDeployment                    http=200 fwd=POST /api/graphql createDeployment  | 
+REACHED         ghes    h1 mutation createDeploymentStatus              http=200 fwd=POST /api/graphql createDeploymentStatus  | 
+REACHED         ghes    h1 mutation createEnvironment                   http=200 fwd=POST /api/graphql createEnvironment  | 
+refused         ghes    h1 mutation createRef                           http=403 fwd=   | mutation field "createRef" is denied by the preset
+REACHED         ghes    h1 mutation createRepositoryRuleset             http=200 fwd=POST /api/graphql createRepositoryRuleset  | 
+REACHED         ghes    h1 mutation deleteBranchProtectionRule          http=200 fwd=POST /api/graphql deleteBranchProtectionRule  | 
+REACHED         ghes    h1 mutation deleteDeployment                    http=200 fwd=POST /api/graphql deleteDeployment  | 
+REACHED         ghes    h1 mutation deleteEnvironment                   http=200 fwd=POST /api/graphql deleteEnvironment  | 
+refused         ghes    h1 mutation deletePullRequestReview             http=403 fwd=   | mutation field "deletePullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation deletePullRequestReviewComment      http=200 fwd=POST /api/graphql deletePullRequestReviewComment  | 
+refused         ghes    h1 mutation deleteRef                           http=403 fwd=   | mutation field "deleteRef" is denied by the preset
+REACHED         ghes    h1 mutation deleteRepositoryRuleset             http=200 fwd=POST /api/graphql deleteRepositoryRuleset  | 
+refused         ghes    h1 mutation dequeuePullRequest                  http=403 fwd=   | mutation field "dequeuePullRequest" is denied by the preset
+refused         ghes    h1 mutation disablePullRequestAutoMerge         http=403 fwd=   | mutation field "disablePullRequestAutoMerge" is denied by the preset
+refused         ghes    h1 mutation dismissPullRequestReview            http=403 fwd=   | mutation field "dismissPullRequestReview" is denied by the preset
+refused         ghes    h1 mutation enablePullRequestAutoMerge          http=403 fwd=   | mutation field "enablePullRequestAutoMerge" is denied by the preset
+refused         ghes    h1 mutation enqueuePullRequest                  http=403 fwd=   | mutation field "enqueuePullRequest" is denied by the preset
+REACHED         ghes    h1 mutation markPullRequestReadyForReview       http=200 fwd=POST /api/graphql markPullRequestReadyForReview  | 
+refused         ghes    h1 mutation mergeBranch                         http=403 fwd=   | mutation field "mergeBranch" is denied by the preset
+refused         ghes    h1 mutation mergePullRequest                    http=403 fwd=   | mutation field "mergePullRequest" is denied by the preset
+REACHED         ghes    h1 mutation pinEnvironment                      http=200 fwd=POST /api/graphql pinEnvironment  | 
+REACHED         ghes    h1 mutation rejectDeployments                   http=200 fwd=POST /api/graphql rejectDeployments  | 
+REACHED         ghes    h1 mutation reopenPullRequest                   http=200 fwd=POST /api/graphql reopenPullRequest  | 
+REACHED         ghes    h1 mutation reorderEnvironment                  http=200 fwd=POST /api/graphql reorderEnvironment  | 
+REACHED         ghes    h1 mutation requestReviews                      http=200 fwd=POST /api/graphql requestReviews  | 
+REACHED         ghes    h1 mutation requestReviewsByLogin               http=200 fwd=POST /api/graphql requestReviewsByLogin  | 
+REACHED         ghes    h1 mutation rerequestReviews                    http=200 fwd=POST /api/graphql rerequestReviews  | 
+REACHED         ghes    h1 mutation resolveReviewThread                 http=200 fwd=POST /api/graphql resolveReviewThread  | 
+refused         ghes    h1 mutation revertPullRequest                   http=403 fwd=   | mutation field "revertPullRequest" is denied by the preset
+refused         ghes    h1 mutation submitPullRequestReview             http=403 fwd=   | mutation field "submitPullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation unresolveReviewThread               http=200 fwd=POST /api/graphql unresolveReviewThread  | 
+REACHED         ghes    h1 mutation updateBranchProtectionRule          http=200 fwd=POST /api/graphql updateBranchProtectionRule  | 
+REACHED         ghes    h1 mutation updateEnvironment                   http=200 fwd=POST /api/graphql updateEnvironment  | 
+refused         ghes    h1 mutation updatePullRequestBranch             http=403 fwd=   | mutation field "updatePullRequestBranch" is denied by the preset
+refused         ghes    h1 mutation updatePullRequestReview             http=403 fwd=   | mutation field "updatePullRequestReview" is denied by the preset
+REACHED         ghes    h1 mutation updatePullRequestReviewComment      http=200 fwd=POST /api/graphql updatePullRequestReviewComment  | 
+refused         ghes    h1 mutation updateRef                           http=403 fwd=   | mutation field "updateRef" is denied by the preset
+refused         ghes    h1 mutation updateRefs                          http=403 fwd=   | mutation field "updateRefs" is denied by the preset
+REACHED         ghes    h1 mutation updateRepositoryRuleset             http=200 fwd=POST /api/graphql updateRepositoryRuleset  | 
+REACHED         ghes    h1 mutation updateTeamReviewAssignment          http=200 fwd=POST /api/graphql updateTeamReviewAssignment  | 
+REACHED         com     h1 POST /merge-upstream                         http=201 fwd=POST /repos/acme/widgets/merge-upstream   | 
+refused         com     h1 POST /merges                                 http=403 fwd=   | POST .../merges is denied by the preset
+refused         com     h1 PUT /pulls/{pull_number}/merge               http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+REACHED         com     h1 PUT /pulls/{pull_number}/merge-async         http=201 fwd=PUT /repos/acme/widgets/pulls/7/merge-async   | 
+refused         com     h1 PUT /pulls/{pull_number}/update-branch       http=403 fwd=   | PUT .../pulls/{n}/update-branch is denied by the preset
+REACHED         com     h1 DELETE /branches/{branch}/protection         http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/enforce http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/enforce_admins   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/required_pull_   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/required_signa   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/required_statu   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/require http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/required_statu   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/restrictions   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/restrictions/a   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/restrictions/t   | 
+REACHED         com     h1 DELETE /branches/{branch}/protection/restric http=204 fwd=DELETE /repos/acme/widgets/branches/main/protection/restrictions/u   | 
+REACHED         com     h1 DELETE /environments/{environment_name}      http=204 fwd=DELETE /repos/acme/widgets/environments/prod   | 
+REACHED         com     h1 DELETE /environments/{environment_name}/depl http=204 fwd=DELETE /repos/acme/widgets/environments/prod/deployment-branch-pol   | 
+REACHED         com     h1 DELETE /environments/{environment_name}/depl http=204 fwd=DELETE /repos/acme/widgets/environments/prod/deployment_protection   | 
+REACHED         com     h1 DELETE /environments/{environment_name}/secr http=204 fwd=DELETE /repos/acme/widgets/environments/prod/secrets/S   | 
+REACHED         com     h1 DELETE /environments/{environment_name}/vari http=204 fwd=DELETE /repos/acme/widgets/environments/prod/variables/1   | 
+REACHED         com     h1 PATCH /branches/{branch}/protection/required http=201 fwd=PATCH /repos/acme/widgets/branches/main/protection/required_pull_r   | 
+REACHED         com     h1 PATCH /branches/{branch}/protection/required http=201 fwd=PATCH /repos/acme/widgets/branches/main/protection/required_status   | 
+REACHED         com     h1 PATCH /environments/{environment_name}/varia http=201 fwd=PATCH /repos/acme/widgets/environments/prod/variables/1   | 
+REACHED         com     h1 POST /actions/runs/{run_id}/approve          http=201 fwd=POST /repos/acme/widgets/actions/runs/1/approve   | 
+REACHED         com     h1 POST /actions/runs/{run_id}/deployment_prote http=201 fwd=POST /repos/acme/widgets/actions/runs/1/deployment_protection_rule   | 
+REACHED         com     h1 POST /actions/runs/{run_id}/force-cancel     http=201 fwd=POST /repos/acme/widgets/actions/runs/1/force-cancel   | 
+REACHED         com     h1 POST /actions/runs/{run_id}/pending_deployme http=201 fwd=POST /repos/acme/widgets/actions/runs/1/pending_deployments   | 
+REACHED         com     h1 POST /branches/{branch}/protection/enforce_a http=201 fwd=POST /repos/acme/widgets/branches/main/protection/enforce_admins   | 
+REACHED         com     h1 POST /branches/{branch}/protection/required_ http=201 fwd=POST /repos/acme/widgets/branches/main/protection/required_signatu   | 
+REACHED         com     h1 POST /branches/{branch}/protection/required_ http=201 fwd=POST /repos/acme/widgets/branches/main/protection/required_status_   | 
+REACHED         com     h1 POST /branches/{branch}/protection/restricti http=201 fwd=POST /repos/acme/widgets/branches/main/protection/restrictions/app   | 
+REACHED         com     h1 POST /branches/{branch}/protection/restricti http=201 fwd=POST /repos/acme/widgets/branches/main/protection/restrictions/tea   | 
+REACHED         com     h1 POST /branches/{branch}/protection/restricti http=201 fwd=POST /repos/acme/widgets/branches/main/protection/restrictions/use   | 
+REACHED         com     h1 POST /environments/{environment_name}/deploy http=201 fwd=POST /repos/acme/widgets/environments/prod/deployment-branch-polic   | 
+REACHED         com     h1 POST /environments/{environment_name}/deploy http=201 fwd=POST /repos/acme/widgets/environments/prod/deployment_protection_r   | 
+REACHED         com     h1 POST /environments/{environment_name}/variab http=201 fwd=POST /repos/acme/widgets/environments/prod/variables   | 
+REACHED         com     h1 POST /issues/{issue_number}/suggestions/{sug http=201 fwd=POST /repos/acme/widgets/issues/1/suggestions/1/approve   | 
+REACHED         com     h1 PUT /actions/permissions                     http=201 fwd=PUT /repos/acme/widgets/actions/permissions   | 
+REACHED         com     h1 PUT /actions/permissions/access              http=201 fwd=PUT /repos/acme/widgets/actions/permissions/access   | 
+REACHED         com     h1 PUT /actions/permissions/artifact-and-log-re http=201 fwd=PUT /repos/acme/widgets/actions/permissions/artifact-and-log-reten   | 
+REACHED         com     h1 PUT /actions/permissions/fork-pr-contributor http=201 fwd=PUT /repos/acme/widgets/actions/permissions/fork-pr-contributor-ap   | 
+REACHED         com     h1 PUT /actions/permissions/fork-pr-workflows-p http=201 fwd=PUT /repos/acme/widgets/actions/permissions/fork-pr-workflows-priv   | 
+REACHED         com     h1 PUT /actions/permissions/selected-actions    http=201 fwd=PUT /repos/acme/widgets/actions/permissions/selected-actions   | 
+REACHED         com     h1 PUT /actions/permissions/workflow            http=201 fwd=PUT /repos/acme/widgets/actions/permissions/workflow   | 
+REACHED         com     h1 PUT /branches/{branch}/protection            http=201 fwd=PUT /repos/acme/widgets/branches/main/protection   | 
+REACHED         com     h1 PUT /branches/{branch}/protection/required_s http=201 fwd=PUT /repos/acme/widgets/branches/main/protection/required_status_c   | 
+REACHED         com     h1 PUT /branches/{branch}/protection/restrictio http=201 fwd=PUT /repos/acme/widgets/branches/main/protection/restrictions/apps   | 
+REACHED         com     h1 PUT /branches/{branch}/protection/restrictio http=201 fwd=PUT /repos/acme/widgets/branches/main/protection/restrictions/team   | 
+REACHED         com     h1 PUT /branches/{branch}/protection/restrictio http=201 fwd=PUT /repos/acme/widgets/branches/main/protection/restrictions/user   | 
+REACHED         com     h1 PUT /environments/{environment_name}         http=201 fwd=PUT /repos/acme/widgets/environments/prod   | 
+REACHED         com     h1 PUT /environments/{environment_name}/deploym http=201 fwd=PUT /repos/acme/widgets/environments/prod/deployment-branch-polici   | 
+REACHED         com     h1 PUT /environments/{environment_name}/secrets http=201 fwd=PUT /repos/acme/widgets/environments/prod/secrets/S   | 
+REACHED         com     h1 DELETE /contents/{path}                      http=204 fwd=DELETE /repos/acme/widgets/contents/f.txt   | 
+refused         com     h1 DELETE /git/refs/{ref}                       http=403 fwd=   | DELETE .../git/refs/** is denied by the preset
+refused         com     h1 PATCH /git/refs/{ref}                        http=403 fwd=   | PATCH .../git/refs/** is denied by the preset
+REACHED         com     h1 POST /branches/{branch}/rename               http=201 fwd=POST /repos/acme/widgets/branches/main/rename   | 
+REACHED         com     h1 POST /git/commits                            http=200 fwd=POST /repos/acme/widgets/git/commits   | 
+refused         com     h1 POST /git/refs                               http=403 fwd=   | POST .../git/refs/** is denied by the preset
+REACHED         com     h1 POST /git/tags                               http=201 fwd=POST /repos/acme/widgets/git/tags   | 
+REACHED         com     h1 POST /git/trees                              http=201 fwd=POST /repos/acme/widgets/git/trees   | 
+REACHED         com     h1 PUT /contents/{path}                         http=201 fwd=PUT /repos/acme/widgets/contents/f.txt   | 
+REACHED         com     h1 DELETE /pulls/{pull_number}/requested_review http=204 fwd=DELETE /repos/acme/widgets/pulls/7/requested_reviewers   | 
+REACHED         com     h1 DELETE /pulls/{pull_number}/reviews/{review_ http=204 fwd=DELETE /repos/acme/widgets/pulls/7/reviews/1   | 
+REACHED         com     h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /repos/acme/widgets/pulls/7/requested_reviewers   | 
+REACHED         com     h1 POST /pulls/{pull_number}/requested_reviewer http=201 fwd=POST /repos/acme/widgets/pulls/7/requested_reviewers/rerequest   | 
+refused         com     h1 POST /pulls/{pull_number}/reviews            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h1 POST /pulls/{pull_number}/reviews/{review_id http=403 fwd=   | POST .../pulls/{n}/reviews/{id}/events is denied by the preset
+REACHED         com     h1 PUT /pulls/{pull_number}/reviews/{review_id} http=201 fwd=PUT /repos/acme/widgets/pulls/7/reviews/1   | 
+REACHED         com     h1 PUT /pulls/{pull_number}/reviews/{review_id} http=201 fwd=PUT /repos/acme/widgets/pulls/7/reviews/1/dismissals   | 
+REACHED         com     h1 DELETE /rulesets/{ruleset_id}                http=204 fwd=DELETE /repos/acme/widgets/rulesets/1   | 
+REACHED         com     h1 POST /rulesets                               http=201 fwd=POST /repos/acme/widgets/rulesets   | 
+REACHED         com     h1 PUT /rulesets/{ruleset_id}                   http=201 fwd=PUT /repos/acme/widgets/rulesets/1   | 
+refused         com     h1 mutation addPullRequestReview                http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         com     h1 mutation addPullRequestReviewComment         http=200 fwd=POST /graphql addPullRequestReviewComment  | 
+REACHED         com     h1 mutation addPullRequestReviewThread          http=200 fwd=POST /graphql addPullRequestReviewThread  | 
+REACHED         com     h1 mutation addPullRequestReviewThreadReply     http=200 fwd=POST /graphql addPullRequestReviewThreadRepl  | 
+REACHED         com     h1 mutation approveDeployments                  http=200 fwd=POST /graphql approveDeployments  | 
+REACHED         com     h1 mutation closePullRequest                    http=200 fwd=POST /graphql closePullRequest  | 
+REACHED         com     h1 mutation createBranchProtectionRule          http=200 fwd=POST /graphql createBranchProtectionRule  | 
+refused         com     h1 mutation createCommitOnBranch                http=403 fwd=   | mutation field "createCommitOnBranch" is denied by the preset
+REACHED         com     h1 mutation createDeployment                    http=200 fwd=POST /graphql createDeployment  | 
+REACHED         com     h1 mutation createDeploymentStatus              http=200 fwd=POST /graphql createDeploymentStatus  | 
+REACHED         com     h1 mutation createEnvironment                   http=200 fwd=POST /graphql createEnvironment  | 
+refused         com     h1 mutation createRef                           http=403 fwd=   | mutation field "createRef" is denied by the preset
+REACHED         com     h1 mutation createRepositoryRuleset             http=200 fwd=POST /graphql createRepositoryRuleset  | 
+REACHED         com     h1 mutation deleteBranchProtectionRule          http=200 fwd=POST /graphql deleteBranchProtectionRule  | 
+REACHED         com     h1 mutation deleteDeployment                    http=200 fwd=POST /graphql deleteDeployment  | 
+REACHED         com     h1 mutation deleteEnvironment                   http=200 fwd=POST /graphql deleteEnvironment  | 
+refused         com     h1 mutation deletePullRequestReview             http=403 fwd=   | mutation field "deletePullRequestReview" is denied by the preset
+REACHED         com     h1 mutation deletePullRequestReviewComment      http=200 fwd=POST /graphql deletePullRequestReviewComment  | 
+refused         com     h1 mutation deleteRef                           http=403 fwd=   | mutation field "deleteRef" is denied by the preset
+REACHED         com     h1 mutation deleteRepositoryRuleset             http=200 fwd=POST /graphql deleteRepositoryRuleset  | 
+refused         com     h1 mutation dequeuePullRequest                  http=403 fwd=   | mutation field "dequeuePullRequest" is denied by the preset
+refused         com     h1 mutation disablePullRequestAutoMerge         http=403 fwd=   | mutation field "disablePullRequestAutoMerge" is denied by the preset
+refused         com     h1 mutation dismissPullRequestReview            http=403 fwd=   | mutation field "dismissPullRequestReview" is denied by the preset
+refused         com     h1 mutation enablePullRequestAutoMerge          http=403 fwd=   | mutation field "enablePullRequestAutoMerge" is denied by the preset
+refused         com     h1 mutation enqueuePullRequest                  http=403 fwd=   | mutation field "enqueuePullRequest" is denied by the preset
+REACHED         com     h1 mutation markPullRequestReadyForReview       http=200 fwd=POST /graphql markPullRequestReadyForReview  | 
+refused         com     h1 mutation mergeBranch                         http=403 fwd=   | mutation field "mergeBranch" is denied by the preset
+refused         com     h1 mutation mergePullRequest                    http=403 fwd=   | mutation field "mergePullRequest" is denied by the preset
+REACHED         com     h1 mutation pinEnvironment                      http=200 fwd=POST /graphql pinEnvironment  | 
+REACHED         com     h1 mutation rejectDeployments                   http=200 fwd=POST /graphql rejectDeployments  | 
+REACHED         com     h1 mutation reopenPullRequest                   http=200 fwd=POST /graphql reopenPullRequest  | 
+REACHED         com     h1 mutation reorderEnvironment                  http=200 fwd=POST /graphql reorderEnvironment  | 
+REACHED         com     h1 mutation requestReviews                      http=200 fwd=POST /graphql requestReviews  | 
+REACHED         com     h1 mutation requestReviewsByLogin               http=200 fwd=POST /graphql requestReviewsByLogin  | 
+REACHED         com     h1 mutation rerequestReviews                    http=200 fwd=POST /graphql rerequestReviews  | 
+REACHED         com     h1 mutation resolveReviewThread                 http=200 fwd=POST /graphql resolveReviewThread  | 
+refused         com     h1 mutation revertPullRequest                   http=403 fwd=   | mutation field "revertPullRequest" is denied by the preset
+refused         com     h1 mutation submitPullRequestReview             http=403 fwd=   | mutation field "submitPullRequestReview" is denied by the preset
+REACHED         com     h1 mutation unresolveReviewThread               http=200 fwd=POST /graphql unresolveReviewThread  | 
+REACHED         com     h1 mutation updateBranchProtectionRule          http=200 fwd=POST /graphql updateBranchProtectionRule  | 
+REACHED         com     h1 mutation updateEnvironment                   http=200 fwd=POST /graphql updateEnvironment  | 
+refused         com     h1 mutation updatePullRequestBranch             http=403 fwd=   | mutation field "updatePullRequestBranch" is denied by the preset
+refused         com     h1 mutation updatePullRequestReview             http=403 fwd=   | mutation field "updatePullRequestReview" is denied by the preset
+REACHED         com     h1 mutation updatePullRequestReviewComment      http=200 fwd=POST /graphql updatePullRequestReviewComment  | 
+refused         com     h1 mutation updateRef                           http=403 fwd=   | mutation field "updateRef" is denied by the preset
+refused         com     h1 mutation updateRefs                          http=403 fwd=   | mutation field "updateRefs" is denied by the preset
+REACHED         com     h1 mutation updateRepositoryRuleset             http=200 fwd=POST /graphql updateRepositoryRuleset  | 
+REACHED         com     h1 mutation updateTeamReviewAssignment          http=200 fwd=POST /graphql updateTeamReviewAssignment  | 
+TOTALS [(('com', 'REACHED'), 94), (('com', 'refused'), 26), (('ghes', 'REACHED'), 94), (('ghes', 'refused'), 26)]

@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: lenny-gateway, namespace: lenny-system}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: lenny-controller, namespace: lenny-system}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: lenny-pool-scaling-controller, namespace: lenny-system}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: agent, namespace: agents}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: ob-podwriter}
+rules:
+- apiGroups: [""]
+  resources: [pods, pods/status]
+  verbs: [get, list, watch, create, update, patch, delete]
+- apiGroups: [lenny.dev]
+  resources: [sandboxes, sandboxes/status, sandboxclaims, sandboxclaims/status]
+  verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: ob-podwriter}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: ob-podwriter}
+subjects:
+- {kind: ServiceAccount, name: lenny-gateway, namespace: lenny-system}
+- {kind: ServiceAccount, name: lenny-controller, namespace: lenny-system}
+- {kind: ServiceAccount, name: lenny-pool-scaling-controller, namespace: lenny-system}
+- {kind: ServiceAccount, name: agent, namespace: agents}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: ob-webhook, namespace: lenny-system}
+spec:
+  secretName: ob-webhook-tls
+  duration: 24h
+  dnsNames: [ob-webhook.lenny-system.svc]
+  issuerRef: {name: lenny-egress-selfsign, kind: Issuer}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: ob-webhook, namespace: lenny-system}
+spec: {selector: {app: ob-webhook}, ports: [{port: 443, targetPort: 8443}]}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: ob-webhook, namespace: lenny-system, labels: {app: ob-webhook}}
+spec:
+  containers:
+  - name: w
+    image: ob-webhook:1
+    imagePullPolicy: Never
+    command: [ob-webhook]
+    volumeMounts: [{name: tls, mountPath: /tls, readOnly: true}]
+  volumes: [{name: tls, secret: {secretName: ob-webhook-tls}}]

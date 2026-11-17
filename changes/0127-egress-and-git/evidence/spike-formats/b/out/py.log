@@ -1,0 +1,54 @@
+python 3.13.18 requests 2.34.2 httpx 0.28.1
+pip 26.2.2 from /usr/local/lib/python3.13/site-packages/pip (python 3.13)
+--- requests-home600
+200
+--- requests-notrustenv-home600
+401
+--- httpx-home600
+401
+--- httpx-netrcauth-home600
+200
+--- httpx-netrcauth-envfile-home600
+EXC FileNotFoundError [Errno 2] No such file or directory: '/cfg/netrc'
+--- pip-home600
+ERROR: Could not find a version that satisfies the requirement spikepkg (from versions: none)
+ERROR: No matching distribution found for spikepkg
+--- requests-home644
+200
+--- requests-notrustenv-home644
+401
+--- httpx-home644
+401
+--- httpx-netrcauth-home644
+EXC NetrcParseError ~/.netrc access too permissive: access permissions must restrict access to only the owner (None, line None)
+--- httpx-netrcauth-envfile-home644
+EXC FileNotFoundError [Errno 2] No such file or directory: '/cfg/netrc'
+--- pip-home644
+ERROR: Could not find a version that satisfies the requirement spikepkg (from versions: none)
+ERROR: No matching distribution found for spikepkg
+--- requests-env600
+200
+--- requests-notrustenv-env600
+401
+--- httpx-env600
+401
+--- httpx-netrcauth-env600
+EXC FileNotFoundError [Errno 2] No such file or directory: '/root/.netrc'
+--- httpx-netrcauth-envfile-env600
+200
+--- pip-env600
+ERROR: Could not find a version that satisfies the requirement spikepkg (from versions: none)
+ERROR: No matching distribution found for spikepkg
+--- requests-env644
+200
+--- requests-notrustenv-env644
+401
+--- httpx-env644
+401
+--- httpx-netrcauth-env644
+EXC FileNotFoundError [Errno 2] No such file or directory: '/root/.netrc'
+--- httpx-netrcauth-envfile-env644
+200
+--- pip-env644
+ERROR: Could not find a version that satisfies the requirement spikepkg (from versions: none)
+ERROR: No matching distribution found for spikepkg

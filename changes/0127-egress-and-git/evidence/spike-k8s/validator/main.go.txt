@@ -1,0 +1,401 @@
+// Spike validator: offline verification of projected SA tokens (aud=lenny-egress)
+// against the cluster OIDC discovery JWKS, plus a pod watch for liveness of the
+// bound pod UID, plus TokenReview for comparison. Stdlib only.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+const (
+	apiBase  = "https://kubernetes.default.svc"
+	saDir    = "/var/run/secrets/kubernetes.io/serviceaccount"
+	audience = "lenny-egress"
+	leeway   = 5 * time.Second
+)
+
+var (
+	httpc    *http.Client
+	saToken  string
+	issuer   string
+	keysMu   sync.RWMutex
+	keys     = map[string]*rsa.PublicKey{}
+	podsMu   sync.RWMutex
+	pods     = map[string]podState{} // uid -> state
+	podsSync bool
+)
+
+type podState struct {
+	NS, Name    string
+	Terminating bool
+	DeletionTS  string
+}
+
+func ts() string { return time.Now().UTC().Format("15:04:05.000") }
+
+func apiGet(url string) ([]byte, error) {
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("Authorization", "Bearer "+saToken)
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("GET %s: %d %s", url, resp.StatusCode, b)
+	}
+	return b, nil
+}
+
+func loadDiscovery() error {
+	b, err := apiGet(apiBase + "/.well-known/openid-configuration")
+	if err != nil {
+		return err
+	}
+	var d struct {
+		Issuer  string `json:"issuer"`
+		JWKSURI string `json:"jwks_uri"`
+	}
+	if err := json.Unmarshal(b, &d); err != nil {
+		return err
+	}
+	issuer = d.Issuer
+	log.Printf("discovery: issuer=%s jwks_uri=%s", d.Issuer, d.JWKSURI)
+	// jwks_uri points at the apiserver advertise address; fetch it as given.
+	jb, err := apiGet(d.JWKSURI)
+	if err != nil {
+		log.Printf("jwks_uri fetch failed (%v); falling back to %s/openid/v1/jwks", err, apiBase)
+		if jb, err = apiGet(apiBase + "/openid/v1/jwks"); err != nil {
+			return err
+		}
+	}
+	var set struct {
+		Keys []struct {
+			Kty, Kid, Alg, Use, N, E string
+		} `json:"keys"`
+	}
+	if err := json.Unmarshal(jb, &set); err != nil {
+		return err
+	}
+	keysMu.Lock()
+	defer keysMu.Unlock()
+	for _, k := range set.Keys {
+		if k.Kty != "RSA" {
+			continue
+		}
+		nb, _ := base64.RawURLEncoding.DecodeString(k.N)
+		eb, _ := base64.RawURLEncoding.DecodeString(k.E)
+		keys[k.Kid] = &rsa.PublicKey{N: new(big.Int).SetBytes(nb), E: int(new(big.Int).SetBytes(eb).Int64())}
+		log.Printf("jwks: kid=%s alg=%s use=%s", k.Kid, k.Alg, k.Use)
+	}
+	return nil
+}
+
+type claims struct {
+	Iss string          `json:"iss"`
+	Sub string          `json:"sub"`
+	Aud json.RawMessage `json:"aud"`
+	Exp int64           `json:"exp"`
+	Nbf int64           `json:"nbf"`
+	Iat int64           `json:"iat"`
+	K8s struct {
+		Namespace string `json:"namespace"`
+		Pod       *struct{ Name, UID string } `json:"pod"`
+		Node      *struct{ Name, UID string } `json:"node"`
+		SA        struct{ Name, UID string }  `json:"serviceaccount"`
+	} `json:"kubernetes.io"`
+}
+
+type result struct {
+	OK      bool    `json:"ok"`
+	Reason  string  `json:"reason,omitempty"`
+	Claims  *claims `json:"claims,omitempty"`
+	PodLive string  `json:"podState,omitempty"`
+}
+
+// verify does signature + standard claims offline, then checks the pod watch.
+func verify(tok string, requireNotTerminating bool) result {
+	parts := strings.Split(strings.TrimSpace(tok), ".")
+	if len(parts) != 3 {
+		return result{Reason: "malformed"}
+	}
+	hb, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return result{Reason: "bad header b64"}
+	}
+	var h struct{ Alg, Kid string }
+	json.Unmarshal(hb, &h)
+	if h.Alg != "RS256" {
+		return result{Reason: "alg " + h.Alg}
+	}
+	keysMu.RLock()
+	pk := keys[h.Kid]
+	keysMu.RUnlock()
+	if pk == nil {
+		return result{Reason: "unknown kid " + h.Kid}
+	}
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return result{Reason: "bad sig b64"}
+	}
+	sum := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if err := rsa.VerifyPKCS1v15(pk, crypto.SHA256, sum[:], sig); err != nil {
+		return result{Reason: "signature: " + err.Error()}
+	}
+	pb, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	var c claims
+	if err := json.Unmarshal(pb, &c); err != nil {
+		return result{Reason: "claims json"}
+	}
+	r := result{Claims: &c}
+	if c.Iss != issuer {
+		r.Reason = "iss " + c.Iss
+		return r
+	}
+	var auds []string
+	if json.Unmarshal(c.Aud, &auds) != nil {
+		var one string
+		json.Unmarshal(c.Aud, &one)
+		auds = []string{one}
+	}
+	okAud := false
+	for _, a := range auds {
+		okAud = okAud || a == audience
+	}
+	if !okAud {
+		r.Reason = fmt.Sprintf("aud %v", auds)
+		return r
+	}
+	now := time.Now()
+	if now.After(time.Unix(c.Exp, 0).Add(leeway)) {
+		r.Reason = "expired"
+		return r
+	}
+	if c.Nbf != 0 && now.Add(leeway).Before(time.Unix(c.Nbf, 0)) {
+		r.Reason = "not yet valid"
+		return r
+	}
+	if c.K8s.Pod == nil {
+		r.Reason = "token not pod-bound"
+		return r
+	}
+	podsMu.RLock()
+	st, ok := pods[c.K8s.Pod.UID]
+	synced := podsSync
+	podsMu.RUnlock()
+	switch {
+	case !synced:
+		r.Reason = "pod cache not synced"
+		return r
+	case !ok:
+		r.PodLive = "gone"
+		r.Reason = "pod uid not live"
+		return r
+	case st.Name != c.K8s.Pod.Name || st.NS != c.K8s.Namespace:
+		r.Reason = "pod name/ns mismatch"
+		return r
+	case st.Terminating:
+		r.PodLive = "terminating"
+		if requireNotTerminating {
+			r.Reason = "pod terminating"
+			return r
+		}
+	default:
+		r.PodLive = "live"
+	}
+	r.OK = true
+	return r
+}
+
+type podObj struct {
+	Metadata struct {
+		Name, Namespace, UID string
+		ResourceVersion       string `json:"resourceVersion"`
+		DeletionTimestamp     string `json:"deletionTimestamp"`
+	} `json:"metadata"`
+}
+
+func watchPods() {
+	for {
+		b, err := apiGet(apiBase + "/api/v1/pods?limit=500")
+		if err != nil {
+			log.Printf("list pods: %v", err)
+			time.Sleep(time.Second)
+			continue
+		}
+		var l struct {
+			Metadata struct{ ResourceVersion string } `json:"metadata"`
+			Items    []podObj                         `json:"items"`
+		}
+		json.Unmarshal(b, &l)
+		podsMu.Lock()
+		pods = map[string]podState{}
+		for _, p := range l.Items {
+			pods[p.Metadata.UID] = podState{p.Metadata.Namespace, p.Metadata.Name, p.Metadata.DeletionTimestamp != "", p.Metadata.DeletionTimestamp}
+		}
+		podsSync = true
+		podsMu.Unlock()
+		log.Printf("pods listed: %d rv=%s", len(l.Items), l.Metadata.ResourceVersion)
+		rv := l.Metadata.ResourceVersion
+		req, _ := http.NewRequest("GET", apiBase+"/api/v1/pods?watch=1&allowWatchBookmarks=true&resourceVersion="+rv, nil)
+		req.Header.Set("Authorization", "Bearer "+saToken)
+		wc := &http.Client{Transport: httpc.Transport} // no timeout
+		resp, err := wc.Do(req)
+		if err != nil {
+			log.Printf("watch: %v", err)
+			continue
+		}
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 1<<20), 16<<20)
+		for sc.Scan() {
+			var ev struct {
+				Type   string `json:"type"`
+				Object podObj `json:"object"`
+			}
+			if json.Unmarshal(sc.Bytes(), &ev) != nil {
+				continue
+			}
+			m := ev.Object.Metadata
+			podsMu.Lock()
+			switch ev.Type {
+			case "ADDED", "MODIFIED":
+				prev := pods[m.UID]
+				pods[m.UID] = podState{m.Namespace, m.Name, m.DeletionTimestamp != "", m.DeletionTimestamp}
+				if m.DeletionTimestamp != "" && !prev.Terminating && m.Namespace == "spike" {
+					log.Printf("WATCH %s pod %s/%s uid=%s deletionTimestamp=%s", ev.Type, m.Namespace, m.Name, m.UID, m.DeletionTimestamp)
+				}
+			case "DELETED":
+				delete(pods, m.UID)
+				if m.Namespace == "spike" {
+					log.Printf("WATCH DELETED pod %s/%s uid=%s", m.Namespace, m.Name, m.UID)
+				}
+			}
+			podsMu.Unlock()
+		}
+		resp.Body.Close()
+		log.Printf("watch ended, relisting")
+	}
+}
+
+func tokenReview(tok string) (bool, string) {
+	body, _ := json.Marshal(map[string]any{
+		"apiVersion": "authentication.k8s.io/v1", "kind": "TokenReview",
+		"spec": map[string]any{"token": strings.TrimSpace(tok), "audiences": []string{audience}},
+	})
+	req, _ := http.NewRequest("POST", apiBase+"/apis/authentication.k8s.io/v1/tokenreviews", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+saToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return false, err.Error()
+	}
+	defer resp.Body.Close()
+	var tr struct {
+		Status struct {
+			Authenticated bool     `json:"authenticated"`
+			Error         string   `json:"error"`
+			Audiences     []string `json:"audiences"`
+			User          struct {
+				Username string              `json:"username"`
+				Extra    map[string][]string `json:"extra"`
+			} `json:"user"`
+		} `json:"status"`
+	}
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 201 && resp.StatusCode != 200 {
+		return false, fmt.Sprintf("http %d %s", resp.StatusCode, b)
+	}
+	json.Unmarshal(b, &tr)
+	if tr.Status.Authenticated {
+		return true, tr.Status.User.Username + fmt.Sprintf(" aud=%v", tr.Status.Audiences)
+	}
+	return false, tr.Status.Error
+}
+
+// probe polls verify() and TokenReview for a token every interval and logs transitions.
+func probe(tok string, interval time.Duration, dur time.Duration) {
+	var lastV, lastT string
+	end := time.Now().Add(dur)
+	for time.Now().Before(end) {
+		r := verify(tok, false)
+		v := fmt.Sprintf("ok=%v state=%s reason=%s", r.OK, r.PodLive, r.Reason)
+		if v != lastV {
+			log.Printf("PROBE validator %s", v)
+			lastV = v
+		}
+		ok, msg := tokenReview(tok)
+		t := fmt.Sprintf("authenticated=%v %s", ok, msg)
+		if t != lastT {
+			log.Printf("PROBE tokenreview %s", t)
+			lastT = t
+		}
+		time.Sleep(interval)
+	}
+	log.Printf("PROBE done")
+}
+
+func main() {
+	log.SetFlags(0)
+	log.SetPrefix("")
+	log.SetOutput(writerFunc(func(p []byte) (int, error) { return os.Stdout.Write([]byte(ts() + " " + string(p))) }))
+	tb, err := os.ReadFile(saDir + "/token")
+	if err != nil {
+		log.Fatal(err)
+	}
+	saToken = strings.TrimSpace(string(tb))
+	ca, _ := os.ReadFile(saDir + "/ca.crt")
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(ca)
+	httpc = &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
+	for {
+		if err := loadDiscovery(); err != nil {
+			log.Printf("discovery: %v", err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		break
+	}
+	go watchPods()
+	http.HandleFunc("/validate", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		res := verify(string(b), r.URL.Query().Get("strict") == "1")
+		json.NewEncoder(w).Encode(res)
+	})
+	http.HandleFunc("/tokenreview", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		ok, msg := tokenReview(string(b))
+		fmt.Fprintf(w, "authenticated=%v %s\n", ok, msg)
+	})
+	http.HandleFunc("/probe", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		go probe(string(b), 100*time.Millisecond, 90*time.Second)
+		fmt.Fprintln(w, "probing")
+	})
+	log.Printf("listening :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+var _ = errors.New

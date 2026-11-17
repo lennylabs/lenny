@@ -1,0 +1,218 @@
+=== correct
+  preflight: PASS passed=3 failed=0
+  full: PASS passed=14 failed=0
+  full + address control: PASS passed=18 failed=0
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":5} after={"198.19.50.20":5}
+=== correct-n
+  preflight: PASS passed=3 failed=0
+  full: PASS passed=14 failed=0
+  full + address control: PASS passed=18 failed=0
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":10} after={"198.19.50.20":10}
+=== mapped-rule
+  preflight: FAIL passed=1 failed=2
+    FAIL auth.no-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+  full: FAIL passed=8 failed=6
+    FAIL auth.no-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 403, wanted [407]
+    FAIL positive public.oa.test:443: status 403
+    FAIL separation.b-own-host other.oa.test:443: status 403, wanted [200]
+    FAIL sync.canary-host-added (rotation 1, age 6s) canary-1.oa.test:443: status 403, wanted [200]
+  full + address control: FAIL passed=11 failed=7
+    FAIL auth.no-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 403, wanted [407]
+    FAIL positive public.oa.test:443: status 403
+    FAIL separation.b-own-host other.oa.test:443: status 403, wanted [200]
+    FAIL address.control-public-sibling pub.wild.oa.test:443: status 403, wanted [200]
+    FAIL sync.canary-host-added (rotation 1, age 6s) canary-1.oa.test:443: status 403, wanted [200]
+    truth: no-cred->target=403 wrong-pw->target=403 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":10} after={"198.19.50.20":10}
+=== noauth
+  preflight: FAIL passed=1 failed=2
+    FAIL auth.no-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 200, wanted [407]
+  full: FAIL passed=8 failed=6
+    FAIL auth.no-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 200, wanted [407]
+    FAIL auth.retired-never-cached public.oa.test:443: status 200, wanted [403 407]
+    FAIL separation.a-to-b-host other.oa.test:443: status 200, wanted [403]
+    FAIL separation.b-to-a-host public.oa.test:443: status 200, wanted [403]
+  full + address control: FAIL passed=12 failed=6
+    FAIL auth.no-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 200, wanted [407]
+    FAIL auth.retired-never-cached public.oa.test:443: status 200, wanted [403 407]
+    FAIL separation.a-to-b-host other.oa.test:443: status 200, wanted [403]
+    FAIL separation.b-to-a-host public.oa.test:443: status 200, wanted [403]
+    truth: no-cred->target=200 wrong-pw->target=200 tenant->unlisted=200 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":34} after={"198.19.50.20":37}
+=== noauth-list
+  preflight: FAIL passed=1 failed=2
+    FAIL auth.no-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 200, wanted [407]
+  full: FAIL passed=8 failed=6
+    FAIL auth.no-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 200, wanted [407]
+    FAIL auth.retired-never-cached public.oa.test:443: status 200, wanted [403 407]
+    FAIL separation.a-to-b-host other.oa.test:443: status 200, wanted [403]
+    FAIL separation.b-to-a-host public.oa.test:443: status 200, wanted [403]
+  full + address control: FAIL passed=12 failed=6
+    FAIL auth.no-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 200, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 200, wanted [407]
+    FAIL auth.retired-never-cached public.oa.test:443: status 200, wanted [403 407]
+    FAIL separation.a-to-b-host other.oa.test:443: status 200, wanted [403]
+    FAIL separation.b-to-a-host public.oa.test:443: status 200, wanted [403]
+    truth: no-cred->target=200 wrong-pw->target=200 tenant->unlisted=200 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":61} after={"198.19.50.20":64}
+=== fakeauth
+  preflight: FAIL passed=2 failed=1
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+  full: FAIL passed=12 failed=2
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 200, wanted [407]
+  full + address control: FAIL passed=16 failed=2
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 200, wanted [407]
+    truth: no-cred->target=407 wrong-pw->target=200 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":73} after={"198.19.50.20":74}
+=== refuseall
+  preflight: PASS passed=3 failed=0
+  full: FAIL passed=11 failed=3
+    FAIL positive public.oa.test:443: status 403
+    FAIL separation.b-own-host other.oa.test:443: status 403, wanted [200]
+    FAIL sync.canary-host-added (rotation 1, age 15s) canary-1.oa.test:443: status 403, wanted [200]
+  full + address control: FAIL passed=14 failed=4
+    FAIL positive public.oa.test:443: status 403
+    FAIL separation.b-own-host other.oa.test:443: status 403, wanted [200]
+    FAIL address.control-public-sibling pub.wild.oa.test:443: status 403, wanted [200]
+    FAIL sync.canary-host-added (rotation 1, age 15s) canary-1.oa.test:443: status 403, wanted [200]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":74} after={"198.19.50.20":74}
+=== refuse-hard
+  preflight: FAIL passed=1 failed=2
+    FAIL auth.no-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+  full: FAIL passed=8 failed=6
+    FAIL auth.no-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 403, wanted [407]
+    FAIL positive public.oa.test:443: status 403
+    FAIL separation.b-own-host other.oa.test:443: status 403, wanted [200]
+    FAIL sync.canary-host-added (rotation 1, age 17s) canary-1.oa.test:443: status 403, wanted [200]
+  full + address control: FAIL passed=11 failed=7
+    FAIL auth.no-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.invented-credential public.oa.test:443: status 403, wanted [407]
+    FAIL auth.wrong-password public.oa.test:443: status 403, wanted [407]
+    FAIL positive public.oa.test:443: status 403
+    FAIL separation.b-own-host other.oa.test:443: status 403, wanted [200]
+    FAIL address.control-public-sibling pub.wild.oa.test:443: status 403, wanted [200]
+    FAIL sync.canary-host-added (rotation 1, age 17s) canary-1.oa.test:443: status 403, wanted [200]
+    truth: no-cred->target=403 wrong-pw->target=403 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":74} after={"198.19.50.20":74}
+=== notls
+  preflight: FAIL passed=0 failed=1
+    FAIL tls 198.19.50.50:3128: proxy TLS: tls: first record does not look like a TLS handshake
+  full: FAIL passed=0 failed=1
+    FAIL tls 198.19.50.50:3128: proxy TLS: tls: first record does not look like a TLS handshake
+  full + address control: FAIL passed=0 failed=1
+    FAIL tls 198.19.50.50:3128: proxy TLS: tls: first record does not look like a TLS handshake
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":74} after={"198.19.50.20":74}
+=== wrongca
+  preflight: FAIL passed=0 failed=1
+    FAIL tls 198.19.50.50:3128: proxy TLS: tls: failed to verify certificate: x509: certificate is valid for unk.oa.test, not lenny-egress.lenny-syste
+  full: FAIL passed=0 failed=1
+    FAIL tls 198.19.50.50:3128: proxy TLS: tls: failed to verify certificate: x509: certificate is valid for unk.oa.test, not lenny-egress.lenny-syste
+  full + address control: FAIL passed=0 failed=1
+    FAIL tls 198.19.50.50:3128: proxy TLS: tls: failed to verify certificate: x509: certificate is valid for unk.oa.test, not lenny-egress.lenny-syste
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"198.19.50.20":74} after={"198.19.50.20":74}
+=== noaddr
+  preflight: PASS passed=3 failed=0
+  full: FAIL passed=11 failed=3
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+  full + address control: FAIL passed=12 failed=6
+    FAIL address.private-sibling priv.wild.oa.test:443: status 200, wanted [403]
+    FAIL address.loopback-sibling loop.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.metadata-sibling meta.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=200 tenant->private-10=200 tenant->metadata-name=503 tenant->loopback-name=503
+    target connections before={"172.30.50.20":3,"198.19.50.20":81} after={"10.77.0.20":1,"172.30.50.20":4,"198.19.50.20":81}
+=== addrafter
+  preflight: PASS passed=3 failed=0
+  full: FAIL passed=11 failed=3
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+  full + address control: FAIL passed=12 failed=6
+    FAIL address.private-sibling priv.wild.oa.test:443: status 200, wanted [403]
+    FAIL address.loopback-sibling loop.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.metadata-sibling meta.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=200 tenant->private-10=200 tenant->metadata-name=503 tenant->loopback-name=503
+    target connections before={"10.77.0.20":1,"172.30.50.20":7,"198.19.50.20":88} after={"10.77.0.20":2,"172.30.50.20":8,"198.19.50.20":88}
+=== droplits
+  preflight: PASS passed=3 failed=0
+  full: FAIL passed=11 failed=3
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+  full + address control: FAIL passed=12 failed=6
+    FAIL address.private-sibling priv.wild.oa.test:443: status 200, wanted [403]
+    FAIL address.loopback-sibling loop.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.metadata-sibling meta.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=200 tenant->private-10=200 tenant->metadata-name=503 tenant->loopback-name=503
+    target connections before={"10.77.0.20":2,"172.30.50.20":11,"198.19.50.20":95} after={"10.77.0.20":3,"172.30.50.20":12,"198.19.50.20":95}
+=== droplits-n
+  preflight: PASS passed=3 failed=0
+  full: FAIL passed=13 failed=1
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+  full + address control: FAIL passed=14 failed=4
+    FAIL address.private-sibling priv.wild.oa.test:443: status 200, wanted [403]
+    FAIL address.loopback-sibling loop.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.metadata-sibling meta.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.refused rebind.oa.test:443: status 200, wanted [403]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=200 tenant->private-10=200 tenant->metadata-name=503 tenant->loopback-name=503
+    target connections before={"10.77.0.20":3,"172.30.50.20":15,"198.19.50.20":102} after={"10.77.0.20":4,"172.30.50.20":16,"198.19.50.20":102}
+=== droplits-rfc1918
+  preflight: PASS passed=3 failed=0
+  full: FAIL passed=12 failed=2
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+  full + address control: FAIL passed=14 failed=4
+    FAIL address.loopback-sibling loop.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.metadata-sibling meta.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.refused 127.0.0.1:443: status 503, wanted [403]
+    FAIL address.refused 169.254.169.254:443: status 503, wanted [403]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=503 tenant->loopback-name=503
+    target connections before={"10.77.0.20":4,"172.30.50.20":16,"198.19.50.20":109} after={"10.77.0.20":4,"172.30.50.20":16,"198.19.50.20":109}
+=== droplits-rfc1918-n
+  preflight: PASS passed=3 failed=0
+  full: PASS passed=14 failed=0
+  full + address control: FAIL passed=16 failed=2
+    FAIL address.loopback-sibling loop.wild.oa.test:443: status 503, wanted [403]
+    FAIL address.metadata-sibling meta.wild.oa.test:443: status 503, wanted [403]
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=403 tenant->metadata-name=503 tenant->loopback-name=503
+    target connections before={"10.77.0.20":4,"172.30.50.20":16,"198.19.50.20":116} after={"10.77.0.20":4,"172.30.50.20":16,"198.19.50.20":116}
+=== partialaddr-n
+  preflight: PASS passed=3 failed=0
+  full: PASS passed=14 failed=0
+  full + address control: PASS passed=18 failed=0
+    truth: no-cred->target=407 wrong-pw->target=407 tenant->unlisted=403 tenant->private-172=403 tenant->private-10=200 tenant->metadata-name=403 tenant->loopback-name=403
+    target connections before={"10.77.0.20":4,"172.30.50.20":16,"198.19.50.20":123} after={"10.77.0.20":5,"172.30.50.20":16,"198.19.50.20":123}

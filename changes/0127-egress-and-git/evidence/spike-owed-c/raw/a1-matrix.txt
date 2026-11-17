@@ -1,0 +1,128 @@
+
+=== curl h1
+{"ok":true}
+ 1.1 200
+rc=0
+
+=== curl h2
+{"ok":true}
+ 2 200
+rc=0
+
+=== curl plain upgrade
+{"ok":true}
+ 1.1 200
+rc=0
+
+=== Python requests, httpx h1, httpx h2, aiohttp
+requests {"ok":true}
+httpx {"ok":true} HTTP/1.1
+httpx-h2 {"ok":true} HTTP/2
+aiohttp {"ok":true}
+rc=0
+
+=== pip
+pip-installed spikepkg-ok
+rc=0
+
+=== Node 24 fetch
+node-fetch 200 {"ok":true}
+rc=0
+
+=== npm
+
+added 1 package in 234ms
+npm-installed   x
+rc=0
+
+=== Go net/http
+go HTTP/2.0 200 {"ok":true}
+
+rc=0
+
+=== Java 21 HttpClient
+Picked up JAVA_TOOL_OPTIONS: -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=3128 -Djavax.net.ssl.trustStore=/s/trust.p12 -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=PKCS12
+java HTTP_2 200 {"ok":true}
+rc=0
+
+=== gh
+{"login":"alice","id":1,"name":"Alice Example","type":"User"}rc=0
+
+=== glab, https, placeholder in GITLAB_TOKEN
+{"id":1,"username":"alice","name":"Alice Example","state":"active"}
+What's new in glab v1.126.0
+  Run: glab whatsnew
+rc=0
+
+=== glab, api_protocol http through HTTP_PROXY
+{"id":1,"username":"alice","name":"Alice Example","state":"active"}
+What's new in glab v1.126.0
+  Run: glab whatsnew
+rc=0
+
+=== git OpenSSL (Alpine): clone through an opaque tunnel, unbound host
+hint:
+hint: 	git branch -m <name>
+fatal: your current branch 'master' does not have any commits yet
+0
+rc=0
+
+=== git OpenSSL (Alpine): clone through termination, bound non-VCS host, then a 64 MiB chunked push
+error: failed to push some refs to 'https://gitplain.example.test/r.git'
+push-rc=0
+0
+rc=0
+
+=== git OpenSSL (Alpine): clone against a VCS-covered host through HTTPS_PROXY (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'https://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== git OpenSSL (Alpine): push over the plain HTTP upgrade to a VCS-covered host (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'http://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== git GnuTLS (Debian): clone through an opaque tunnel, unbound host
+hint:
+hint: 	git branch -m <name>
+fatal: your current branch 'master' does not have any commits yet
+0
+rc=0
+
+=== git GnuTLS (Debian): clone through termination, bound non-VCS host, then a 64 MiB chunked push
+error: failed to push some refs to 'https://gitplain.example.test/r.git'
+push-rc=0
+0
+rc=0
+
+=== git GnuTLS (Debian): clone against a VCS-covered host through HTTPS_PROXY (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'https://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== git GnuTLS (Debian): push over the plain HTTP upgrade to a VCS-covered host (design: refused)
+remote: smart HTTP on a VCS host goes through the local git endpoint
+fatal: unable to access 'http://vcs.example.test/r.git/': The requested URL returned error: 403
+rc=128
+
+=== rustls: reqwest with the root added
+https://api.example.test/acme/check OK 200 HTTP/2.0
+https://other.example.test/small OK 200 HTTP/2.0
+rc=0
+
+=== rustls: reqwest with rustls-native-certs, SSL_CERT_FILE
+https://api.example.test/acme/check OK 200 HTTP/2.0
+https://other.example.test/small OK 200 HTTP/2.0
+rc=0
+
+=== Deno (rustls) fetch
+deno 200 {"ok":true}
+rc=0
+
+=== Bun (BoringSSL) fetch
+bun 200 {"ok":true}
+rc=0
+
+=== netagent counters
+{"active":0,"attached":38,"authorityMismatch":0,"connect":32,"dialErrors":0,"goroutines":10,"heapAlloc":3294160,"heapInuse":4653056,"heapSys":7634944,"numGC":4,"opaque":4,"plain":4,"refused":4,"requests":42,"scrubHits":0,"stackInuse":753664,"sys":14285064,"terminated":28}

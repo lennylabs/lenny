@@ -1,0 +1,46 @@
+### GitLab with .git
+  {"bytes":65,"class":"ok","err":"","ms":315,"proto":"v2","sha":"d6f30dcf9b9fb390ed86425d96153ddf028ba8e9"}
+  truth d6f30dcf9b9fb390ed86425d96153ddf028ba8e9
+  (GitLab advert size v0) {"bytes":1048576,"class":"bounded","err":"byte cap","ms":436,"proto":"v0","sha":""}
+### hostile hosts
+  fast: {"bytes":65,"class":"ok","err":"","ms":20,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}
+  big: {"bytes":1048576,"class":"bounded","err":"byte cap","ms":16,"proto":"v2","sha":""}
+  slow: {"bytes":590,"class":"bounded","err":"time cap","ms":10005,"proto":"v2","sha":""}
+  hang: {"bytes":0,"class":"bounded","err":"time cap","ms":10013,"proto":"v2","sha":""}
+  redirect: {"bytes":0,"class":"unresolvable","err":"redirect refused (302)","ms":5,"proto":"v2","sha":""}
+  malformed: {"bytes":11,"class":"bounded","err":"malformed pkt-line header \"zzzz\"","ms":4,"proto":"v2","sha":""}
+  oversize: {"bytes":4096,"class":"bounded","err":"oversize pkt-line 65535","ms":4,"proto":"v2","sha":""}
+  busy: {"bytes":0,"class":"transient","err":"host 503","ms":3,"proto":"v2","sha":""}
+  v0only: {"bytes":159,"class":"ok","err":"","ms":5,"proto":"v0","sha":"0123456789abcdef0123456789abcdef01234567"}
+  v0big (match sorts early): {"bytes":1048576,"class":"ok","err":"matched before cap","ms":14,"proto":"v0","sha":"0123456789abcdef0123456789abcdef01234567"}
+  v0late (match after 20 MiB): {"bytes":1048576,"class":"bounded","err":"byte cap","ms":13,"proto":"v0","sha":""}
+### classification on the egress path
+  decision denies: {"bytes":0,"class":"policy_denied","err":"CONNECT 403","ms":1,"proto":"v2","sha":""}
+  bad token: {"bytes":0,"class":"policy_denied","err":"CONNECT 403","ms":1,"proto":"v2","sha":""}
+  name does not resolve: {"bytes":0,"class":"transient","err":"Post \"https://no-such-host.invalid/x.git/git-upload-pack\": Service Unavailable","ms":32,"proto":"v2","sha":""}
+### tunnel reuse across tenants (20 calls alternating acme and globex)
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+  keepalive=true decisions seen: authz1  authz2 
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+  keepalive=false decisions seen: authz1  authz2 
+### latency, one tunnel per call, local git host
+  direct:    n=500 c=1 wall=352ms rate=1422/s p50=700µs p90=800µs p99=1.6ms max=2.8ms classes=map[ok:500]
+  via Envoy: n=500 c=1 wall=529ms rate=945/s p50=1ms p90=1.2ms p99=2ms max=2.5ms classes=map[ok:500]
+### burst, via two Envoys
+  c=50:  n=3000 c=50 wall=975ms rate=3077/s p50=14.1ms p90=28.6ms p99=42.1ms max=59.9ms classes=map[ok:3000]
+  c=200: n=6000 c=200 wall=1.405s rate=4271/s p50=42.9ms p90=80.5ms p99=130.3ms max=202.8ms classes=map[ok:6000]
+### real host through Envoy, 10 sequential calls each
+  https://github.com/git/git direct: n=10 c=1 wall=3.14s rate=3/s p50=281.7ms p90=352.5ms p99=352.5ms max=470ms classes=map[ok:10]
+  https://github.com/git/git envoy:  n=10 c=1 wall=2.913s rate=3/s p50=293.2ms p90=313.4ms p99=313.4ms max=314.2ms classes=map[ok:10]
+  https://bitbucket.org/atlassian/aui direct: n=10 c=1 wall=3.979s rate=3/s p50=389ms p90=424.9ms p99=424.9ms max=434.9ms classes=map[ok:10]
+  https://bitbucket.org/atlassian/aui envoy:  n=10 c=1 wall=3.852s rate=3/s p50=382.4ms p90=392.1ms p99=392.1ms max=407.8ms classes=map[ok:10]
+  https://gitlab.com/gitlab-org/gitlab-runner.git direct: n=10 c=1 wall=3.235s rate=3/s p50=307.5ms p90=348.8ms p99=348.8ms max=416.4ms classes=map[ok:10]
+  https://gitlab.com/gitlab-org/gitlab-runner.git envoy:  n=10 c=1 wall=3.394s rate=3/s p50=335.3ms p90=383.8ms p99=383.8ms max=393.8ms classes=map[ok:10]

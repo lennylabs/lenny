@@ -1,0 +1,4 @@
+agent:good envoy_cpu_ticks(1/100s)=608 per1000=304ms  n=20000 c=16 3380.5/s results=map[TLS ok ech_accepted=false: 200 OK hello :20000] p50=4.3ms p90=7.18ms p99=11.07ms
+agent:sni envoy_cpu_ticks(1/100s)=685 per1000=342ms  n=20000 c=16 3315.0/s results=map[TLS ok ech_accepted=false: 200 OK hello :20000] p50=4.38ms p90=7.31ms p99=11.24ms
+agent:good envoy_cpu_ticks(1/100s)=590 per1000=295ms  n=20000 c=16 3456.1/s results=map[TLS ok ech_accepted=false: 200 OK hello :20000] p50=4.2ms p90=7.02ms p99=10.78ms
+agent:sni envoy_cpu_ticks(1/100s)=743 per1000=371ms  n=20000 c=16 3073.2/s results=map[TLS ok ech_accepted=false: 200 OK hello :20000] p50=4.51ms p90=8.1ms p99=15.65ms

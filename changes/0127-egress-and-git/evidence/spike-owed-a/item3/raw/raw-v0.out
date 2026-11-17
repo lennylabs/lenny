@@ -1,0 +1,57 @@
+mode v0only
+--- Gitea behind the stripping front
+0000000    H   T   T   P   /   2       2   0   0      \r  \n   c   a   c
+0000020    h   e   -   c   o   n   t   r   o   l   :       m   a   x   -
+0000040    a   g   e   =   0   ,       p   r   i   v   a   t   e   ,    
+0000060    m   u   s   t   -   r   e   v   a   l   i   d   a   t   e   ,
+0000100        n   o   -   t   r   a   n   s   f   o   r   m  \r  \n   c
+0000120    o   n   t   e   n   t   -   t   y   p   e   :       a   p   p
+0000140    l   i   c   a   t   i   o   n   /   x   -   g   i   t   -   u
+0000160    p   l   o   a   d   -   p   a   c   k   -   r   e   s   u   l
+0000200    t  \r  \n   d   a   t   e   :       T   u   e   ,       0   3
+0000220        N   o   v       2   0   2   6       0   0   :   0   5   :
+0000240    3   6       G   M   T  \r  \n   s   e   t   -   c   o   o   k
+0000260    i   e   :       i   _   l   i   k   e   _   g   i   t   e   a
+0000300    =   9   0   3   f   d   8   a   7   5   8   3   b   d   c   e
+0000320    8   ;       P   a   t   h   =   /   ;       H   t   t   p   O
+0000340    n   l   y   ;       S   e   c   u   r   e   ;       S   a   m
+0000360    e   S   i   t   e   =   L   a   x  \r  \n   s   e   t   -   c
+0000400    o   o   k   i   e   :       _   c   s   r   f   =   b   T   H
+0000420    u   5   -   r   7   P   c   z   y   b   B   T   I   b   X   e
+0000440    O   R   6   R   u   i   z   s   6   M   T   c   5   M   z   Y
+0000460    2   N   D   M   z   N   j   A   5   M   z   c   4   N   D   I
+0000500    x   N   A   ;       P   a   t   h   =   /   ;       M   a   x
+0000520    -   A   g   e   =   8   6   4   0   0   ;       H   t   t   p
+0000540    O   n   l   y   ;       S   e   c   u   r   e   ;       S   a
+0000560    m   e   S   i   t   e   =   L   a   x  \r  \n   x   -   f   r
+mode pass
+--- stock git http-backend, gitsrv -v0only
+0000000    H   T   T   P   /   2       2   0   0      \r  \n   c   a   c
+0000020    h   e   -   c   o   n   t   r   o   l   :       n   o   -   c
+0000040    a   c   h   e   ,       m   a   x   -   a   g   e   =   0   ,
+0000060        m   u   s   t   -   r   e   v   a   l   i   d   a   t   e
+0000100   \r  \n   c   o   n   t   e   n   t   -   t   y   p   e   :    
+0000120    a   p   p   l   i   c   a   t   i   o   n   /   x   -   g   i
+0000140    t   -   u   p   l   o   a   d   -   p   a   c   k   -   r   e
+0000160    s   u   l   t  \r  \n   e   x   p   i   r   e   s   :       F
+0000200    r   i   ,       0   1       J   a   n       1   9   8   0    
+0000220    0   0   :   0   0   :   0   0       G   M   T  \r  \n   p   r
+0000240    a   g   m   a   :       n   o   -   c   a   c   h   e  \r  \n
+0000260    c   o   n   t   e   n   t   -   l   e   n   g   t   h   :    
+0000300    0  \r  \n   d   a   t   e   :       T   u   e   ,       0   3
+0000320        N   o   v       2   0   2   6       0   0   :   0   5   :
+0000340    3   8       G   M   T  \r  \n  \r  \n                        
+0000352
+fatal: git upload-pack: protocol error, expected to get object ID, not 'command=ls-refs'
+2026/11/03 00:05:38 POST /r.git/git-upload-pack proto=HTTP/2.0 status=200 cl=80 te=[] ce="" gitproto="version=2" reqbytes=80 respbytes=0 dur=3ms err=exit status 1
+{"bytes":294,"class":"ok","code":"","err":"","host_status":200,"ms":8,"proto":"v0","reason":"","requests":2,"sha":"78298a7f35c88a164df97de56a18c6cb31a84b2d"}
+--- after the client treats an empty 200 as a v2 refusal
+{"bytes":294,"class":"ok","code":"","err":"","host_status":200,"ms":9,"proto":"v0","reason":"","requests":2,"sha":"78298a7f35c88a164df97de56a18c6cb31a84b2d"}
+{"bytes":294,"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","err":"ref absent","host_status":200,"ms":6,"proto":"v0","reason":"ref_not_found","requests":2,"sha":""}
+mode v0only
+{"bytes":610,"class":"ok","code":"","err":"","host_status":200,"ms":19,"proto":"v0","reason":"","requests":2,"sha":"5f8022063d0211fd38a97368f38fca32173a191e"}
+{"bytes":610,"class":"ok","code":"","err":"","host_status":200,"ms":17,"proto":"v0","reason":"","requests":2,"sha":"5f8022063d0211fd38a97368f38fca32173a191e"}
+{"bytes":610,"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","err":"ref absent","host_status":200,"ms":18,"proto":"v0","reason":"ref_not_found","requests":2,"sha":""}
+{"bytes":0,"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","err":"host 401","host_status":401,"ms":28,"proto":"v0","reason":"auth_failed","requests":2,"sha":""}
+{"bytes":0,"class":"unresolvable","code":"GIT_CLONE_REF_UNRESOLVABLE","err":"host 401","host_status":401,"ms":5,"proto":"v0","reason":"auth_failed","requests":2,"sha":""}
+mode pass

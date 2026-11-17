@@ -1,0 +1,18 @@
+### private origin by name with no DNS, raw tunnel to the address the decision pins
+(eval):38: no such file or directory: docker exec ls-client /b/lsrefs -mode one -insecure -proxy http://198.19.0.41:3128
+initech ls-refs : 
+(eval):39: no such file or directory: docker exec ls-client /b/lsrefs -mode one -insecure -proxy http://198.19.0.41:3128
+acme ls-refs    : 
+(the name has no DNS record)
+### hostile large response through the raw tunnel
+(eval):42: no such file or directory: docker exec ls-client /b/lsrefs -mode one -insecure -proxy http://198.19.0.41:3128
+big: 
+### stock git through the raw tunnel, address pinned by the decision
+ebdc087dc99d68bb340c282b2ba5f722def28d19	refs/heads/master
+clone ok, head ebdc087dc99d68bb340c282b2ba5f722def28d19
+75.1M
+initech ls-refs : {"bytes":65,"class":"ok","err":"","ms":8,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}
+acme ls-refs    : {"bytes":0,"class":"policy_denied","err":"CONNECT 403","ms":1,"proto":"v2","sha":""}
+initech big     : {"bytes":1048576,"class":"bounded","err":"byte cap","ms":11,"proto":"v2","sha":""}
+--- decision service down
+initech         : {"bytes":0,"class":"transient","err":"Post \"https://gitlab.initech.internal/fast.git/git-upload-pack\": Service Unavailable","ms":512,"proto":"v2","sha":""}

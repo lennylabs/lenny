@@ -1,0 +1,41 @@
+{
+ "ghes.example.test": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": false
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-CURRENT",
+  "handling": 2
+ },
+ "github.com": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": false
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-CURRENT",
+  "handling": 2
+ },
+ "gitlab.example.test": {
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": false
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-CURRENT",
+  "handling": 2
+ }
+}

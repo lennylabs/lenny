@@ -1,0 +1,19 @@
+stored submodule URLs:
+submodule.abs.url https://github.com/org/absmod
+submodule.rel.url https://github.com/org/relmod.git
+submodule.scp.url git@gitlab.com:grp/scpmod.git
+Cloning into '/tmp/s/clone/abs'...
+fatal: repository 'http://127.0.0.1:7072/https/github.com/org/absmod/' not found
+fatal: clone of 'https://github.com/org/absmod' into submodule path '/tmp/s/clone/abs' failed
+Cloning into '/tmp/s/clone/rel'...
+fatal: repository 'http://127.0.0.1:7072/https/github.com/org/relmod.git/' not found
+fatal: clone of 'https://github.com/org/relmod.git' into submodule path '/tmp/s/clone/rel' failed
+### go get with GOPRIVATE, GOPROXY=direct
+go: github.com/acme/widget@latest: module github.com/acme/widget: git ls-remote -q --end-of-options origin in /tmp/h2b/go/pkg/mod/cache/vcs/1754a358ebc0d64a857add8f810b7da6b031e6fbb5757e5de663aea17ec30a42: exit status 128:
+	fatal: repository 'http://127.0.0.1:7072/https/github.com/acme/widget/' not found
+== request log
+GET /https/github.com/org/absmod/info/refs?service=git-upload-pack
+GET /https/github.com/org/relmod.git/info/refs?service=git-upload-pack
+GET /scp/gitlab.com:grp/scpmod.git/info/refs?service=git-upload-pack
+GET /https/github.com/org/absmod/info/refs?service=git-upload-pack
+GET /https/github.com/acme/widget/info/refs?service=git-upload-pack

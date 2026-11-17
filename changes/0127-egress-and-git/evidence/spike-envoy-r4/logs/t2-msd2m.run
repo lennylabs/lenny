@@ -1,0 +1,12 @@
+envoy soak ready (envoy/t2-msd2m.json) "version": "b2d89e0ae53916f28770771fbdd49c5c99c5c5a2/1.40.2/Clean/RELEASE/BoringSSL"
+min=0 t=2s docker=24.84MiB / 7.75GiB cpu=7.99% alloc=11463696 heap=16777216 periodic_log_lines=0 | cluster.dfp.upstream_cx_active: 107 http.egress.downstream_cx_active: 107 http.egress.downstream_rq_active: 107 http.egress.downstream_rq_idle_timeout: 0 http.egress.downstream_rq_max_duration_reached: 0 server.memory_allocated: 6255296 
+min=1 t=63s docker=31.31MiB / 7.75GiB cpu=2.49% alloc=15733856 heap=23068672 periodic_log_lines=0 | cluster.dfp.upstream_cx_active: 202 http.egress.downstream_cx_active: 202 http.egress.downstream_rq_active: 202 http.egress.downstream_rq_idle_timeout: 0 http.egress.downstream_rq_max_duration_reached: 0 server.memory_allocated: 15641144 
+min=2 t=124s docker=30.14MiB / 7.75GiB cpu=2.74% alloc=6841184 heap=23068672 periodic_log_lines=202 | cluster.dfp.upstream_cx_active: 0 http.egress.downstream_cx_active: 0 http.egress.downstream_rq_active: 0 http.egress.downstream_rq_idle_timeout: 0 http.egress.downstream_rq_max_duration_reached: 202 server.memory_allocated: 15669576 
+min=3 t=186s docker=30.1MiB / 7.75GiB cpu=0.26% alloc=6777808 heap=23068672 periodic_log_lines=203 | cluster.dfp.upstream_cx_active: 0 http.egress.downstream_cx_active: 0 http.egress.downstream_rq_active: 0 http.egress.downstream_rq_idle_timeout: 0 http.egress.downstream_rq_max_duration_reached: 202 server.memory_allocated: 6753080 
+soak t2-msd2m done
+t=  60.0s open=200 ticks=11664 (+11664) ended=map[]
+t= 120.0s open=200 ticks=23632 (+11968) ended=map[]
+SUMMARY n=200 codes=map[200:200] end_reasons=map[EOF (clean close):200] ticks_total=24000 ticks_per_tunnel=[120..120] connect_lat p50=0s p99=20ms lifetime min=2m0.1s p50=2m0.11s max=2m0.13s elapsed=124.1s
+t=  60.0s open=2 ticks=0 (+0) ended=map[]
+t= 120.1s open=2 ticks=0 (+0) ended=map[]
+SUMMARY n=2 codes=map[200:2] end_reasons=map[EOF (clean close):2] ticks_total=0 ticks_per_tunnel=[0..0] connect_lat p50=0s p99=0s lifetime min=2m0.11s p50=2m0.11s max=2m0.11s elapsed=120.6s

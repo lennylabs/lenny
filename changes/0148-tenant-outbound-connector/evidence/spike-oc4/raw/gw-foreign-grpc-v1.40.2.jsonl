@@ -1,0 +1,1 @@
+{"event": "handshake_failed", "err": "SSLError(1, '[SSL: TLSV1_ALERT_UNKNOWN_CA] tlsv1 alert unknown ca (_ssl.c:1035)')", "t": 1793911324.6781354, "gw": "foreign"}

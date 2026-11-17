@@ -1,0 +1,11 @@
+package main
+
+import (
+	"fmt"
+	"syscall"
+)
+
+func main() {
+	err := syscall.Kill(-1, syscall.SIGKILL)
+	fmt.Println("kill(-1, SIGKILL):", err)
+}

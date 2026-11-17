@@ -1,0 +1,888 @@
+# Workspace materialization
+
+Status: `Draft`, revision 14, 2026-11-16. Programs: [v1](../programs/v1.md).
+
+Each factual claim carries one of these tags where the source matters:
+
+| Tag | Meaning |
+| :-- | :-- |
+| **[source]** | Read in the Lenny tree or the specification on 2026-11-12. |
+| **[measured]** | Measured in the materialization spike, the asynchronous-worker spike, or the AWS re-validation of 2026-11-12. "Validation record" in `steps.md` gives the run. |
+| **[design]** | What this design requires. Nothing implements it. |
+| **[inference]** | Reasoned from the sources and not run. "Validation owed" in `steps.md` lists each one that matters. |
+
+## Problem
+
+A session's workspace starts from a workspace plan: inline files, uploaded files, uploaded archives, directories, and git clones, composed with the runtime's and the tenant's defaults and with files a parent exports to a child. Several Lenny processes write that plan into the pod today, and each of them runs with more reach than the session it serves **[source]**:
+
+- The gateway reads every uploaded archive into memory with `io.ReadAll`, decompresses it with `archive.Extract` inside the process that serves every tenant, and rewrites each archive into one `uploadFile` source per entry under a synthetic `__archx_` reference, plus `mkdir` and `symlink` sources (`pkg/gateway/podlifecycle/podsession/archiveextract.go`). A parser bug there runs in a process shared by every tenant.
+- The adapter writes the rewritten sources into the slot through its own mount (`pkg/adapter/workspace/materialize.go`), and under the egress design it also runs the in-pod `git` clone. The adapter runs under its own UID, mounts every slot's volumes and the checkpoint spool, and holds the pod's service account token. A parser bug there reaches every slot on the pod.
+- Under [SI decision D9](../0145-session-isolation/decisions.md#decisions) every entry in a slot's workspace belongs to the slot UID, and the adapter reaches slot files only through the supervisor's file-descriptor broker. The adapter's own git work on a slot repository then works on a repository the adapter UID does not own ([SI O11](../0145-session-isolation/decisions.md#open-decisions)).
+
+The specification also contradicts itself about who materializes. "Current state" lists each contradiction.
+
+The owner asked for a study of whether all workspace materialization, files and archives included, can move into a Lenny Go helper that the supervisor's forked worker runs as the slot UID. The study and its spike answered yes, and the owner accepted it with its recommendations on 2026-11-12. This design states the result.
+
+Two later results of the same day changed how the helper runs. On AWS, a detached checkout of LLVM over a warm store through the supervisor's synchronous worker took 19.2 s, during which a broker request waited 19.1 s, and the capture copy's repack outlived the adapter's 120 s broker deadline, so the slot was declared dead **[measured]**. The owner therefore approved an asynchronous worker that keeps serving the broker during a run. The same checkout time is what every session that names a large repository pays at bind, which led the owner to approve checking out known clones before the session arrives.
+
+## Scope
+
+In scope:
+
+- The `lenny-materialize` helper, how it is staged, and what it writes ("WM-2").
+- The `setup` request on `CH-SUPERVISE` with file descriptors, as the asynchronous-worker spike left it, and the supervisor's checks ("WM-3").
+- The plan the adapter gives the helper, upload staging, the content socket, and how the adapter treats what the helper returns ("WM-4", "WM-5").
+- Limits enforced while streaming, ordering, collisions, and atomicity ("WM-6" to "WM-8").
+- Archive extraction leaving the gateway, and the rule that replaces "pod binaries neither decompress archives" ("WM-9").
+- Every git step on a slot repository, the pinned git, and the fetch grant handed to the egress design ("WM-10").
+- How runs of the asynchronous worker interact with broker requests, checkpoints, and cancellation ("WM-11").
+- Mid-session uploads, child-file imports, resume, derive, and the snapshotless rebuild ("WM-12", "WM-13").
+- Memory sizing for materialization ("WM-14").
+- The warm-up checkout of clones known before a session, and its reflink rebuild from a pristine tree ("WM-15").
+- Reflink clones of staged uploads into the workspace ("WM-16").
+
+Non-goals:
+
+- The pod's containers, volumes, mount paths, the reserved `/lenny` root, and the reserved names at the top of `/workspace`. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) owns them.
+- The supervisor's broker, its `fs` operations, and the rest of `CH-SUPERVISE` outside `setup`. [`0145-session-isolation`](../0145-session-isolation/change.md) owns them, and states the worker's rules for `cleanup`.
+- Checkpoint capture, checkpoint restore, the derive `from: latest` seed, the session-file restore, and every export and read path (seal, `ExportPaths`, `ExportOutputFile`). They stay in the adapter, through the broker (D4).
+- `sharedAssets` under `/lenny/assets` and the deletion of withheld stores, which are pod-wide and run before any slot code. The warm store fill runs in the `lenny-store-fill` init container, which [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) renders under decision 61 of [`0127-egress-and-git`](../0127-egress-and-git/decisions.md#decisions). This design states what the fill writes, the pristine tree among it, because the reflink rebuild reads it, and the conditions under which the fill keeps the rule of "WM-9" (D20).
+- Setup commands themselves. They stay in the worker of [SI decision D6](../0145-session-isolation/decisions.md#decisions); this design states the request that runs them and how their output returns.
+- `netagent`'s attribution of a connection to a slot, which is [SI O9](../0145-session-isolation/decisions.md#open-decisions), and the fetch grant's mechanism, which the egress design owns.
+
+## Terms
+
+| Term | Meaning |
+| :-- | :-- |
+| Helper | `lenny-materialize`, a static Go binary that Lenny ships. The slot's supervisor worker executes it as the slot UID. It writes plan sources into the slot's workspace and runs every git step on a slot repository ("WM-2"). |
+| Helper run | One execution of the helper for one `setup` request, under one deadline, with one plan and one result. |
+| Worker run | One setup command or one helper run, which the supervisor runs as the slot UID for one `setup` request. At most one worker run is outstanding per slot, and the supervisor keeps serving `fs`, `ping`, and `end` while it runs ("WM-11"). |
+| Subcommand | The helper's first argument, which selects what a run does: `materialize`, `overlay`, `prestage`, `capture-copy`, `restore-complete`, or `discard` ("WM-2"). |
+| Helper plan | The adapter's rewrite of a session's workspace plan for one helper run: the sources, the limits, the git inputs, and the paths. It travels as a sealed memfd ("WM-4"). It is distinct from the workspace plan the gateway stores. |
+| Content socket | A Unix stream socketpair whose one end the helper receives at descriptor 5 and whose other end the adapter holds with its read side shut down. The adapter sends each content source's staged file over it, one at a time, and reads nothing from it ("WM-4"). |
+| Done pipe | A pipe whose write end the adapter sends with each content source and whose read end it watches for hang-up, which tells it that the helper has finished with that source without reading any byte the helper wrote ("WM-4"). |
+| Staging space | The part of the spool volume that upload staging may use, which the slots of a pod share: the adapter's usable share of the spool, `spoolSizeLimitBytes` divided by `spoolHeadroomFactor`, less every slot's `checkpointCaptureBudgetBytes` ("WM-4", D19). At the defaults it is 7.5 GiB on a pod with one slot and 6 GiB on a pod with four. |
+| `spoolSizeLimitBytes` | The pool setting, 16 GiB by default, that is the `sizeLimit` of the pod's spool volume, one value for the pod whatever its slot count (D19). |
+| `lenny-store-fill` | The init container that fills each warm repository store and writes its pristine tree with the pinned git before the pod's other containers start, under a UID of its own, with no credential and the store volume as its only writable mount (D20). |
+| Result pipe | A pipe whose write end the helper receives and whose read end the adapter holds. The helper writes one JSON object to it ("WM-5"). |
+| Log pipes | Two pipes, for standard output and standard error, whose write ends a setup command or the helper receives and whose read ends the adapter holds (D2). |
+| Cancel pipe | A pipe whose read end only the supervisor holds and whose write end the adapter holds. The adapter cancels a worker run by closing its end. No program receives the cancel pipe, and a byte written to it cancels nothing ("WM-3"). |
+| Refusal | A `setupdone` with `malformed_request`, `gen_mismatch`, or `worker_busy`. It means the request did not run, and it never carries `exit` or `signal` ("WM-3"). |
+| Seed | The tree the adapter restores into a slot through the broker before a helper run applies sources over it: a resume's snapshot or a `from: latest` derive's starting snapshot ("WM-7"). |
+| Overlay | A mid-session helper run that adds files to a running session's workspace: a mid-session upload or a child-file import ("WM-12"). |
+| Overlay directory | The hidden directory `/workspace/.lenny-overlay-<id>`, named by the adapter, in which an overlay assembles its entries before it moves them into place ("WM-8"). |
+| Warm-up checkout | A checkout of a warm-list entry with `prestage: true`, made before any session, which the helper stages under `/workspace/.lenny-prestage/<entry>` at warm-up and after each slot release, and adopts by rename at bind ("WM-15"). |
+| Pristine tree | A checked-out working tree of a store's commit, written by `lenny-store-fill` at `/lenny/git-stores/<hash>.tree`, from which the helper clones file content by reflink when it builds a warm-up checkout ("WM-15"). |
+| Reflink clone | A copy made with `FICLONE`, which shares the source's extents until either file is written. It needs both files on one filesystem, which runc pods on XFS or btrfs give and gVisor and Kata do not **[measured]**. |
+| Slot-reported | Data that came from a helper run's result or log, which a process at the slot UID wrote and which the platform does not verify. A client-visible warning built from it carries `provenance: "slot_reported"` ("WM-5"). |
+| Platform-verified | Data a platform process produced or checked itself, such as an upload's size, which the adapter counts when it stages the file, or a pack's chunk hashes, which a restore recomputes. |
+| Pinned git | The static `git` binary, with its helper programs, that a Lenny release builds from a pinned upstream version and stages read-only in `/lenny/bin` (D3, "WM-10"). |
+| Fetch grant | A registration the adapter makes with `netagent` before a helper run that fetches, naming the slot, the repository URLs, and a time window, so that `netagent` treats a fetch from that slot within the window as materialization (D6, "WM-10"). |
+| Tree-size check | The step that streams a commit's tree listing before checkout and charges each entry against the remaining workspace bytes, as draft 0111's rule 2 charges it ("WM-10"). |
+| Index refresh | A `git update-index --refresh` of a slot repository run more than 1 s after its checkout, so git writes no duplicate loose objects into the slot ("WM-10"). |
+| Upload staging | The adapter's copy, on the spool volume, of one content source's bytes, which exists from shortly before the helper applies that source until the helper has finished with it ("WM-4"). |
+| `runtimes.minSlotMemoryBytes` | The platform-wide floor on a slot container's memory limit, a Helm value, 1Gi until validation replaces it ("WM-14"). |
+
+### Terms from other designs and the platform
+
+| Term | Meaning |
+| :-- | :-- |
+| Slot, slot container, slot UID | A place on a pod where one session runs. Each slot has its own container, named `runtime-<n>`, running under its own UID ([`0145-session-isolation`, "SI-1"](../0145-session-isolation/change.md#si-1-pod-layout); [`0118-agent-pod-layout`, "PL-1"](../0118-agent-pod-layout/change.md#pl-1-pod-blueprint)). |
+| Runtime supervisor | The platform's freestanding C program that is the first process of every runtime container. It launches the runtime's `command`, answers the adapter on `CH-SUPERVISE`, serves the broker, and runs End, Sweep, cleanup, and setup ([§4.7.10 Deployment Model](../../spec/04_system-components.md#4710-deployment-model), **Runtime supervisor.**; PL-1). |
+| Worker | The supervisor's child for one `cleanup` or `setup` request. For `setup` the program itself is the supervisor's child, so the supervisor enforces its deadline and its cancellation directly ("WM-3"). |
+| `CH-SUPERVISE` | The JSON Lines connection between the adapter and a slot's supervisor ([§28.5.3 Intra-pod](../../spec/28_communication-channels.md#2853-intra-pod)). No message on it carries a byte a runtime process or a command wrote **[source]**. |
+| `setup` message | SI's request that runs one program in the slot container as the slot UID ([SI decision D6](../0145-session-isolation/decisions.md#decisions), [SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands)). "WM-3" states its members. |
+| File-descriptor broker | The supervisor's handling of the `fs` request: it opens, creates, and watches entries of the slot's volumes as the slot UID and passes the descriptors to the adapter over `SCM_RIGHTS` ([SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker)). |
+| Broker root | A directory descriptor the supervisor opens on each brokered slot volume when it starts, before any session binds to the slot, and resolves every request beneath for the pod's life. The adapter treats the broker's replies as untrusted from the first run of the supervisor's worker for the first session bound to the slot, normally the helper's `materialize` or `restore-complete`, or from that session's launch when no run precedes it. The restore at bind precedes that run and is unaffected ([SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker); [IC S6](../0131-incremental-checkpoint/change.md#security-properties)). |
+| Workspace volume | The slot's disk-backed volume, mounted as `/workspace` in the slot container. It is the runtime's working directory, and nothing is nested in it except the reserved names of [PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout). |
+| Reserved names | `.lenny-canary`, `.lenny-build`, `.lenny-prestage`, `.lenny-overlay-<id>`, and `.lenny-discard-<id>` at the top of `/workspace`, which PL-3 reserves for the platform's transient work and which checkpoints, downloads, and exports skip. A `lost+found` directory at the volume's root, which an `ext4` volume such as a Kata `block-plain` volume holds, is not a reserved name, and checkpoints and downloads skip it as well ([IC-1](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes)). |
+| Spool volume | `lenny-spool`, the volume only the adapter mounts, at `/adapter/spool`, which holds each slot's checkpoint spool, export clones, and upload staging at `/adapter/spool/<n>/staging/` ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). Its `sizeLimit` is `spoolSizeLimitBytes`, and the adapter uses half of it ([IC-7](../0131-incremental-checkpoint/change.md#ic-7-size-limits-and-drain-budgets)). |
+| `/lenny/bin` | The read-only volume in every runtime container that holds the supervisor, the helper, and the pinned git (PL-3). |
+| `/lenny/git-stores` | The read-only volume of warm repository stores, mounted at the same path in every slot container: each store at `/lenny/git-stores/<hash>` and its pristine tree at `/lenny/git-stores/<hash>.tree`. `lenny-store-fill` writes both before the pod's other containers start, and the adapter mounts the volume read-write at `/adapter/git-stores` only to delete a withheld store and its pristine tree, never to parse repository data (PL-3, D20). |
+| Warm pod | A pod whose infrastructure is ready, with its warm-up checkouts staged. No runtime process runs on it before a session binds ([PL-8](../0118-agent-pod-layout/change.md#pl-8-removal-of-pre-launched-runtimes)). |
+| Workspace plan | A session's `sources[]` and `setupCommands[]` ([§14 Workspace Plan Schema](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema)). The gateway composes the runtime's defaults into it with `ComposeInto` (`pkg/gateway/runtime/runtimestore/workspace_defaults.go`) and stores it **[source]**. |
+| `PrepareWorkspace`, `FinalizeWorkspace`, `RunSetup` | The gateway-to-adapter RPCs that stage upload content, materialize the plan, and run setup commands ([§4.7.1 Role and Gateway RPC Contract](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract)). A `FinalizeWorkspace` with `mid_session` set carries a mid-session upload **[source]**. |
+| Upload Handler | The gateway subsystem that accepts uploads and today extracts archives under the limits of [§7.4 Upload Safety](../../spec/07_session-lifecycle.md#74-upload-safety) **[source]**. |
+| `netagent` | The pod's egress and git container, which attaches credentials to git requests on covered hosts ([`0127-egress-and-git`](../0127-egress-and-git/change.md#git-on-covered-hosts-netagent)). |
+| Repository store and slot repository | A store is a read-only bare repository on `/lenny/git-stores`, filled before the pod is ready. A slot repository is a session's repository that borrows the store's objects through `objects/info/alternates` ([`0147-tenant-derived-runtimes`, "Warm stores"](../0147-tenant-derived-runtimes/change.md#warm-stores)). A store comes only from a `gitRepository` entry of `sharedAssets` (D25). |
+| Default clone and withheld store | A default clone is a `gitClone` source that every session of a runtime gets, from the defaults of an operator runtime or a tenant's derived runtime ([DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones)). It declares no store. A withheld store is a store the adapter deletes for one session because that session failed its read checks ([`0147-tenant-derived-runtimes`, "Warm stores"](../0147-tenant-derived-runtimes/change.md#warm-stores)). |
+| Owned pool | A pool owned by one tenant, whose sessions all belong to that tenant ([DR-5](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools)). |
+| Draft 0111's rules 2, 3, 5, and 6 | Rule 2 charges a commit's tree against `workspaceSizeLimitBytes`. Rule 3 builds a slot repository. Rule 5, the capture copy, copies into a repository's own object store every object it holds only through the store and needs, before each checkpoint. Rule 6, restore completion, rewires alternates after a restore and fetches `lenny.baseCommit` when the pod's store differs ([`0147-tenant-derived-runtimes`, "Terms"](../0147-tenant-derived-runtimes/change.md#terms)). |
+| Disk watch | The adapter's measurement of each slot volume's use, which fails that slot's session and runs the slot release at `adapter.diskWatchThresholdPercent` of the volume's `sizeLimit`, 90% by default ([SI-10](../0145-session-isolation/change.md#si-10-what-stays-shared); PL-5 states the mechanism). |
+| Dead slot | A slot whose container ended, whose supervisor link failed, whose request missed its deadline, whose broker reply the adapter refused, whose slot release failed, including a release that left a brokered volume not empty, or whose supervisor failed its self-test. It serves no session for the pod's life and counts in the pod's occupancy ([SI-4](../0145-session-isolation/change.md#si-4-slot-liveness-and-the-slot-count)). |
+| Snapshotless rebuild | The resume of a session with no checkpoint, which rebuilds its workspace from the stored plan, runs its setup commands, and starts the runtime with no carried state ([§7.3 Retry and Resume](../../spec/07_session-lifecycle.md#73-retry-and-resume), step 3e). |
+| Child-file import | A parent's copy of a child's output file into its own workspace through `ImportFile` on `CH-FILEIMPORT` ([MD-26](../0135-message-delivery/change.md#md-26-files-from-a-child)). |
+| Pod Security Standards Restricted | The Kubernetes Pod Security Standards profile named Restricted. The design writes the full name so that it is not read as a data class. |
+
+### Labels from other designs
+
+| Label | Where | Meaning |
+| :-- | :-- | :-- |
+| SI D6, D8, D9, O9, O11 | [`0145-session-isolation`, "Decisions" and "Open decisions"](../0145-session-isolation/decisions.md#decisions) | D6 runs setup commands in the slot container through `setup`. D8 is the volume layout without subPath. D9 is the file-descriptor broker. O9 asks how `netagent` attributes a connection to a slot. O11 asks where git on a slot repository runs; the owner settled it on 2026-11-12. |
+| SI-3, SI-4, SI-5, SI-6, SI-10 | [`0145-session-isolation`](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) | Slot release and setup commands, slot liveness, the broker and the asynchronous worker protocol, checkpoint and materialization through the broker, and what stays shared, including the disk watch. |
+| PL-1, PL-3, PL-5, PL-8 | [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) | The pod blueprint, the runtime-visible layout with the reserved names, the volumes with the spool's sizing, and the removal of pre-launched runtimes. |
+| IC-1, IC-5, IC-7, S4, S6, IC D3 | [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes) | Capture in passes, restore and derive, size limits with the spool cap and `spoolHeadroomFactor`, the restore's chunk hash check, the adapter's checks on broker replies, and the 10 GiB default of `workspaceSizeLimitBytes`. |
+| EG decisions 52, 60, and 61 | [`0127-egress-and-git`, "Decisions"](../0127-egress-and-git/decisions.md#decisions) | The fetch grant on `CH-FETCHGRANT`, per-slot `netagent` scopes, and the `lenny-store-fill` container, the last two settled by the owner on 2026-11-13. |
+| EG proposal 3 and "The gateway runs no git" | [`0127-egress-and-git`, "Target state"](../0127-egress-and-git/change.md#target-state) | The pod git path, under which the clone moved from the gateway into the pod. |
+| DR-5, DR-9, DR-11, DR-12 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) | Owned pools, default git clones, shared assets and warm stores with withheld stores, and repository folders with the working directory. |
+| RV D19 | [`0140-runtime-revisions`, "Field classes"](../0140-runtime-revisions/change.md#field-classes) | `workspaceDefaults` is a gateway-read field, so a resume keeps the stored plan. |
+| SD-1 and its modes | [`0144-session-derive`, "What each mode starts from"](../0144-session-derive/change.md#what-each-mode-starts-from) | `from: latest` restores a snapshot and passes no plan source. `from: start` rebuilds from the stored plan. |
+| MD-18, MD-26 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-18-files) | Output files and their export, and child-file imports. |
+| BR-2 and billing decision 7 | [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) | Session pod time, and the mapping of a resource class onto containers. |
+| FE-1 freeze | [`0128-forensics-evidence-preservation`, "Freezing the agent"](../0128-forensics-evidence-preservation/change.md#freezing-the-agent) | The supervisor's stop of every process in a quarantined pod's runtime container. |
+
+## High-level design
+
+Every write of a workspace plan into a slot happens inside the slot, under the slot's own UID. The adapter keeps the jobs that need the platform's privileges, and the helper does the jobs that parse untrusted content.
+
+The adapter receives the plan from the gateway and writes a helper plan: every source, the limits the session is under, and the git inputs the gateway authorized. It seals that plan in a memory file so nothing can change it. It then asks the slot's supervisor to run the helper, attaching the plan, the write ends of a result pipe and two log pipes, and one end of a socket pair. The supervisor enters the workspace and executes `/lenny/bin/lenny-materialize` as the slot UID.
+
+The helper applies the sources in plan order. For a source whose bytes the platform holds, an uploaded file, an archive, a parent's export, or a child's file, the adapter fetches that one source, stages it as a file on the spool volume, which only the adapter mounts, checks it, and hands the helper a read-only descriptor of it over the socket. The helper writes it into `/workspace`, as a reflink clone where the filesystem allows one, or decompresses it if it is an archive, and then closes the descriptor and a pipe that came with it, which tells the adapter it may delete the staged file and fetch the next. Staging therefore holds one source at a time. The helper resolves every path without following a symbolic link or crossing a mount, so a hostile archive or a link an earlier source planted cannot steer a write outside the tree. For a git source it runs the pinned git: it builds the repository in a hidden directory, borrows objects from the pod's store, fetches through `netagent`, checks the tree's size before checkout, checks out, and moves the result into place. When it ends it writes a short report on the result pipe.
+
+The adapter treats that report as untrusted. It decodes it strictly, accepts only codes from a closed list, and uses it for nothing beyond the session's own success or failure and the warnings shown to the session's own client, which it marks as slot-reported. Sizes come from the adapter's own counts and its disk watch, and never from the helper.
+
+The supervisor runs one program at a time per slot and keeps answering broker requests, pings, and `end` while it runs, so a long checkout no longer stops the slot's checkpoint walk or makes the slot look dead. The adapter cancels a run by closing a pipe whose other end only the supervisor holds, and the supervisor then kills the program's process group. The helper is never told to stop; the adapter cleans up after a cancelled run with a `discard` run.
+
+Clones that every session of a pool will get are checked out before the session arrives. At warm-up, and again at the end of each slot release, the helper checks them out into a reserved directory in the slot's workspace. When a session binds, the helper moves each tree into place with one rename and checks out only the difference if the session's commit moved. Where the filesystem supports reflinks, the helper builds these trees by cloning file content from a pristine tree the pod keeps beside each store, which costs little disk and little time. No runtime process exists in the slot before the session binds, so nothing can see a tree before it is meant for the session.
+
+Checkpoint restore stays in the adapter, through the broker. When a session resumes, the adapter restores the snapshot first and then runs the helper to reconnect each repository to the pod's store.
+
+A parser bug in the helper reaches only what the session already reaches. The gateway and the adapter no longer decompress archives or run git on a session's content.
+
+```
+ gateway                         agent pod
+ +---------------------+        +-----------------------------------------------------------------+
+ | plan; uploads as    |        | adapter (adapter UID)                                           |
+ | stored, served one  |------->|   writes the helper plan into a sealed memfd                    |
+ | source at a time    |  gRPC  |   registers a fetch grant with netagent                         |
+ +---------------------+        |   sends `setup` + 6 descriptors over SCM_RIGHTS                 |
+                                |   per content source: fetch, stage (0600, /adapter/spool/<n>/   |
+                                |   staging), verify, send its fd + a done pipe on the socket     |
+                                |        |                         |                ^             |
+                                |        | CH-SUPERVISE            | content socket | result pipe,|
+                                |        | (integers only)         | (adapter -> )  | log pipes   |
+                                |        v                         v                |             |
+                                | runtime-<n> (slot UID)                            |             |
+                                |   supervisor -> /lenny/bin/lenny-materialize -----+             |
+                                |                   FICLONE or writes /workspace (openat2)        |
+                                |                   runs /lenny/bin/git -> netagent               |
+                                |                   adopts /workspace/.lenny-prestage/<entry>     |
+                                +-----------------------------------------------------------------+
+```
+
+## Current state
+
+### Specification
+
+The specification places materialization in three places, and some of its statements cannot hold together **[source]**:
+
+- **Who extracts archives.** [§4.7.1 Role and Gateway RPC Contract](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract) gives `FinalizeWorkspace` the work to "materialize the plan's sources" and promote them, which reads as the adapter materializing every source. [§7.1 Normal Flow](../../spec/07_session-lifecycle.md#71-normal-flow) step 12 says "archives extracted in the gateway", [§7.4 Upload Safety](../../spec/07_session-lifecycle.md#74-upload-safety) says extraction "is never delegated to agent pods", and [§13.4 Upload Security](../../spec/13_security-model.md#134-upload-security) says "pod binaries neither decompress archives nor canonicalize paths on untrusted input". The tree reconciles them by rewriting the plan in the gateway, so the sources the adapter receives are not the bound plan's sources.
+- **Who applies modes.** The `mode` field note in [§14 Workspace Plan Schema](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema) says the gateway "applies the result via `os.Chmod` after the file or directory is written". The gateway cannot change a mode on a pod's file.
+- **Who decompresses checkpoints.** [§10.1.7 preStop Hook Drain](../../spec/10_gateway-internals.md#1017-prestop-hook-drain), **Reassembly on resume.**, feeds checkpoint chunks into "one decompress→untar pipeline inside the agent pod", and the adapter's `workspace.Extract` and `ExtractTree` decompress gzip tar streams on restore. Both contradict §13.4's sentence. [IC decision D4](../0131-incremental-checkpoint/decisions.md#decisions) removes the reassembly, and IC's restore still decompresses packs in the adapter.
+- **Which channel carries materialization.** No channel in [§28.3 Registers](../../spec/28_communication-channels.md#283-registers) carries `PrepareWorkspace` or `FinalizeWorkspace`. Their only mentions in §28 are inside the `CH-OBJSTORE` card.
+- **Other statements that a gateway writes pod files.** [§6.4 Pod Filesystem Layout](../../spec/06_warm-pod-model.md#64-pod-filesystem-layout), **Responsibility split:**, says the gateway's `FinalizeWorkspace` "materializes files from `/workspace/slots/{sessionId}/staging/`". §7.3 step 3e says "the gateway materializes the workspace on the replacement pod". §7.4's symlink bullet says "the gateway **re-validates every symlink**" after promotion. [§8.2 Delegation Mechanism](../../spec/08_recursive-delegation.md#82-delegation-mechanism) step 6 says the "Gateway streams rebased files into child".
+- **Setup commands.** [§7.5 Setup Commands](../../spec/07_session-lifecycle.md#75-setup-commands) runs them in the session's workspace, fully logged. `CH-SUPERVISE` carries `launch`, `end`, `sweep`, `cleanup`, and `ping` today, and its card says the adapter "has at most one request outstanding" and that a request unanswered within its bound is a link failure.
+- **Limits.** §7.4 and §13.4 state the archive validators as non-tunable platform ceilings: 256 MiB decompressed per archive, a 100:1 ratio, 10,000 entries, 64 MiB per entry, 32 path components, 4,096-byte paths, non-regular entries refused, symbolic links refused unless the Runtime sets `allowSymlinks`, and `stripComponents` skips with one `workspace_plan_strip_components_skip` warning per skipped entry. [§4.4.4 Checkpoint SLOs and Scheduling](../../spec/04_system-components.md#444-checkpoint-slos-and-scheduling), **Hard workspace size limit.**, requires `emptyDir.sizeLimit` at the pool's `workspaceSizeLimitBytes`.
+- **Order.** [§5.1 Runtime](../../spec/05_runtime-registry-and-pool-model.md#51-runtime), **Derived Runtime Instantiation**, gives the order: source snapshot, base defaults, derived defaults, client uploads, file exports from a parent. It also says the adapter "MUST remove all files" from the session's directory before materializing. §14's **Path collision rule** makes the later source win and emits `workspace_plan_path_collision`.
+
+### Tree
+
+- The gateway's `rewriteExtractedSources` fetches each `uploadArchive` blob, reads it whole with `io.ReadAll`, runs `archive.Extract` under `gatedExtract`, and keeps every extracted file's bytes in a map until `PrepareWorkspace` streams them **[source]**.
+- The adapter's `materializeSource` refuses `uploadArchive` and `gitClone` sources with "the adapter must not decompress archives" and "the adapter must not clone or decompress", writes `inlineFile`, `mkdir`, `uploadFile`, and the internal `symlink` source with `os` calls through its own mount, and applies modes with `os.Chmod` **[source]**. It builds the tree in a sibling build directory and renames it onto the session's directory, and a mid-session `FinalizeWorkspace` overlays file by file (`MaterializeOverlayWithPolicy`) **[source]**.
+- `workspace.RunSetup` runs setup commands in the adapter's process with `exec.CommandContext` and keeps 64 KiB of each stream (`SetupStreamCapBytes`) **[source]**.
+- `sv_handle_cleanup` forks a worker that changes to the workspace base, runs each command under a deadline, and returns; the supervisor waits up to the deadline plus a 5 s backstop (`SV_CLEANUP_BACKSTOP_SLACK_MS`) and serves nothing else meanwhile. The supervisor reads requests with `read`, so it receives no descriptors **[source]**. The worker starts each command in a new session with `setsid` **[source]**.
+
+## Detailed design
+
+### WM-1 What moves and what stays
+
+| Writer or operation | Today | Under this design | Runs as |
+| :-- | :-- | :-- | :-- |
+| `inlineFile` and `mkdir` sources | Adapter materializer, own mount | Helper, `materialize` | Slot UID |
+| `uploadFile` sources, pre-start | Gateway streams into the slot's staging; adapter copies | Adapter stages each on the spool volume in turn; helper clones or writes it from a descriptor passed on the content socket | Slot UID |
+| `uploadArchive` sources | Gateway reads and extracts in memory, rewrites into per-entry sources | Gateway passes the archive as stored; helper extracts while streaming | Slot UID |
+| `gitClone` sources | Gateway clone (broken in deployed images, F-14.1.37); under the egress design, the adapter's clone | Helper with the pinned git | Slot UID |
+| Runtime `workspaceDefaults` files | Composed into `inlineFile` sources by `ComposeInto`; adapter writes | Helper, from the plan memfd | Slot UID |
+| Tenant default files and default clones ([DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones)) | Composed by the gateway; adapter writes and clones | Helper | Slot UID |
+| `from: start` derive copies of uploads | Adapter | Helper | Slot UID |
+| [§8.7](../../spec/08_recursive-delegation.md#87-file-export-model) exports into a child | Gateway streams the rebased files; adapter writes | Helper, as `uploadFile` sources (or `uploadArchive` when the child's plan names one) | Child's slot UID |
+| Mid-session `upload_to_session` | Adapter overlay | Helper, `overlay` | Slot UID |
+| Child-file import ([MD-26](../0135-message-delivery/change.md#md-26-files-from-a-child)) | Adapter downloads, verifies, and writes beneath the root | Adapter downloads and verifies; helper writes, `overlay` | Slot UID for the write |
+| Snapshotless rebuild (§7.3 step 3e) | Adapter materializer | Helper, `materialize` | Slot UID |
+| Capture copy and restore completion (draft 0111 rules 5 and 6) | Adapter git | Helper, `capture-copy` and `restore-complete` | Slot UID |
+| Index refresh after checkout | Not done today | Helper, at the end of `materialize`, `prestage`, and `restore-complete` | Slot UID |
+| Checkout of the warm-list entries with `prestage: true` | Not done today; every session checks out at bind | Helper, `prestage`, at warm-up and after each slot release; adopted by `materialize` at bind ("WM-15") | Slot UID |
+| Pristine trees beside the stores | Not done today | `lenny-store-fill`, before the adapter starts (D20) | The fill's own UID |
+| Working-directory check ([DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory)) | Adapter `openat2` on its own mount | Adapter, through a broker `open` | Slot UID opens; adapter checks |
+| Setup commands | Adapter process (`RunSetup`) | SI D6 worker, with output on log pipes | Slot UID |
+| Checkpoint capture, seal, `ExportPaths`, `ExportOutputFile` | Adapter | Adapter, through the broker (unchanged) | Adapter UID |
+| Checkpoint restore, `from: latest` seed, session-file restore | Adapter | Adapter, through the broker (unchanged) | Adapter UID, entries created by the slot UID |
+| `sharedAssets` (`/lenny/assets`) | Adapter at warm time | Unchanged | Adapter or PL's fill |
+| Warm store fill | Fill step | `lenny-store-fill` init container, with each store's pristine tree (D20, "WM-15") | The fill's own UID |
+| Withheld-store deletion | Adapter | Adapter, by unlinking through its read-write mount of the store volume, with no git and no read of repository data (D20) | Adapter UID |
+| `/artifacts/{sessionId}/` | Adapter creates and deletes | Removed by the owner on 2026-11-12 ([`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md)) | None |
+
+The case for the move is privilege. A naive extractor run as the slot UID could write only to its own `/tmp`, and got `EROFS` on the warm stores, the stage volume, and `/run/lenny`, and `EACCES` on `/etc`. The same extractor run as the adapter UID wrote into the spool and into another slot's workspace volume **[measured]**.
+
+### WM-2 The helper and how it is staged
+
+**Binary.** `lenny-materialize` is a static Go binary with no program interpreter, built in the Lenny release with the supervisor. It reads its plan from descriptor 3, writes its result on descriptor 4, and receives content sources on the content socket at descriptor 5 ("WM-3"). It receives no cancel descriptor: the supervisor ends a cancelled run by killing its process group (D13). It takes one subcommand:
+
+| Subcommand | When | What it does |
+| :-- | :-- | :-- |
+| `materialize` | Pre-start: `FinalizeWorkspace`, the snapshotless rebuild, and a `from: start` derive | Removes the staged trees of withheld stores, adopts the staged warm-up checkouts the plan uses, applies the plan's sources in order into `/workspace`, builds each git source that no staged tree serves, renames the unused staged trees aside, and ends with the index refresh. Without a seed it first checks that `/workspace` holds nothing but `.lenny-prestage` and an empty `lost+found` ("WM-7", "WM-8", "WM-15"). |
+| `overlay` | A mid-session upload or a child-file import | Assembles the sources in the overlay directory and moves each entry into place ("WM-8"). |
+| `prestage` | At warm-up and at the end of each slot release | Checks out the pod's warm-list entries with `prestage: true` into `/workspace/.lenny-prestage/<entry>`, by reflink from the pristine tree where it can, and refreshes their indexes ("WM-15"). |
+| `restore-complete` | After a restore seed: a resume or a `from: latest` derive | Removes the withheld stores' staged trees, renames the rest of `.lenny-prestage` aside to a `.lenny-discard-<id>` tree for a background `discard`, then runs draft 0111's rule 6 on each repository the plan's `gitClone` paths name, then the index refresh ("WM-10", "WM-15"). |
+| `capture-copy` | Before a checkpoint's pre-copy pass | Runs draft 0111's rule 5 on each repository the plan's `gitClone` paths name ("WM-10"). |
+| `discard` | After a helper run that ended without a valid result, and in the background after a bind | Removes the reserved directories the plan names: `.lenny-build`, an overlay directory, `.lenny-prestage`, or a `.lenny-discard-<id>` tree ("WM-8", "WM-15"). |
+
+**Staging.** The stage step that PL defines copies the helper into `/lenny/bin` with mode `0111`, so a slot process can execute it and cannot read it **[design]**. A process that executes a file it cannot read is non-dumpable from `execve` onward, so no window exists between `execve` and the helper's first instruction in which a process of the same UID can attach to it **[measured]**. The supervisor keeps that state: the worker leaves the program non-dumpable only when the binary is staged exec-only, so a setup command stays dumpable as any process of the session is **[measured]**. The helper also calls `prctl(PR_SET_DUMPABLE, 0)` first thing, so it stays non-dumpable if a deployer's staging leaves the binary readable **[design]**. The pinned git is staged beside it ("WM-10").
+
+**Start-up.** Before it reads the plan, the helper:
+
+- sets `FD_CLOEXEC` on every descriptor it received, so no git child or other program it starts inherits the result pipe, the content socket, or a content descriptor **[design]**;
+- sets its umask to 0, so the modes it creates are exact **[design]**;
+- runs with the empty environment the worker gives it ("WM-3"), so no runtime-author variable such as `GODEBUG` or `GIT_DIR` reaches it, and builds git's environment itself ("WM-10") **[design]**.
+
+The supervisor has already set `no_new_privs`, a core-dump limit of 0, and, for a helper run, `RLIMIT_FSIZE` ("WM-3").
+
+**Where it runs.** The worker resolves the request's `cwd` beneath the workspace broker root, `/workspace`, and starts the helper there. The helper never receives a directory descriptor, so it cannot reach the spool or any adapter directory through `openat` **[measured]**. Its writes reach only what the slot container mounts writable: `/workspace`, `/session`, and `/tmp`, and it writes only `/workspace`.
+
+### WM-3 The protocol
+
+This is the `setup` request as the asynchronous-worker spike of 2026-11-12 left it, after three rounds of independent review ("Validation record" in `steps.md`). [SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker) states the rest of `CH-SUPERVISE` and the rules every request shares.
+
+**The request.** The adapter sends one `setup` per setup command or helper run **[measured]**:
+
+```
+{"type":"setup","gen":<gen>,"id":<id>,
+ "argv":["/lenny/bin/lenny-materialize","materialize"],
+ "cwd":"<raw bytes, relative to /workspace>","env":"empty",
+ "timeoutMs":<ms>,"fsizeBytes":<bytes or 0>,"nfds":<K>}
+```
+
+- `argv` is the program and its arguments. `argv[0]` is an absolute path, or a name with no slash that the fixed `PATH` resolves; a relative `argv[0]` containing a slash is refused. For a setup command the adapter builds `argv` as `RunSetup` does today, `/bin/sh -c <command>` in shell mode or the split argument list under `shell: false`.
+- `cwd` is relative to the workspace root and resolved beneath it with `RESOLVE_BENEATH | RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`. It is empty for a helper run, and for a setup command it is the command's `cwd` from [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory).
+- `env` is `launch`, the launch environment, for a setup command, or `empty` for a helper run. It names a choice and carries no value, so the rule that only `launch` carries environment values holds. The launch environment includes `HOME=/tmp/home`, which the supervisor creates before the command runs ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)).
+- `timeoutMs` is the run's deadline. For setup commands the adapter sends each command with the smaller of its own timeout and the time left in the Runtime's `setupPolicy.timeoutSeconds`, so per-command and total bounds hold across requests.
+- `fsizeBytes` is the `RLIMIT_FSIZE` the supervisor sets before it executes the program, or 0 for none. The adapter sets it on helper runs only, to the remaining workspace bytes (D13).
+- `nfds` is the number of descriptors attached, at least 3 and at most 253: 3 for a setup command and 6 for a helper run. `cancelFd` of revision 1 is gone, because the cancel pipe always sits at passed index 2.
+
+The adapter sends one program per request so that each program's output, exit status, and deadline are its own, which a pipe shared by several commands cannot separate. This replaces SI-3's list of commands with total and per-command deadlines in one message, and its log path in the workspace.
+
+**Descriptors.** The adapter attaches the `K` descriptors with `SCM_RIGHTS`. A `sendmsg` that carries descriptors carries exactly one request line, or the start of one, and the supervisor binds a batch of descriptors to the line that holds the last byte of the read that delivered them, because the kernel ends a `recvmsg` after the segment that carries them **[measured]**. The supervisor places them as follows **[measured]**:
+
+| Passed index | Descriptor in the program | Contents |
+| :-- | :-- | :-- |
+| None | 0 | `/dev/null` |
+| 0 | 1 | Write end of the standard output log pipe |
+| 1 | 2 | Write end of the standard error log pipe |
+| 2 | None | The cancel pipe's read end, which only the supervisor holds and watches |
+| 3 | 3 | A helper run: the plan, a sealed memfd |
+| 4 | 4 | A helper run: the result pipe's write end |
+| 5 | 5 | A helper run: the helper's end of the content socket |
+
+Passed index `i` from 3 up becomes the program's descriptor `i`, and the supervisor closes every other descriptor above them with `close_range` before it executes the program. A setup command therefore holds only descriptors 0 to 2, and a helper run holds 0 to 5. Content descriptors never cross `CH-SUPERVISE`: they reach the helper on the content socket, one per source ("WM-4").
+
+**The plan memfd.** The adapter creates the plan with `memfd_create(MFD_ALLOW_SEALING | MFD_CLOEXEC)`, writes it, and seals it with `F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL`, so neither the helper nor any process that reaches the descriptor can change it **[design]**. Its pages count against the adapter's memory.
+
+**The supervisor's checks.** The supervisor reads every request with `recvmsg` and `MSG_CMSG_CLOEXEC`, so a descriptor never reaches a program the supervisor did not mean it for. It **[measured]**:
+
+- accepts descriptors only with a `setup` line, and closes them and answers `malformed_request` when they arrive with any other line;
+- accepts exactly `nfds` descriptors, and closes them and answers `malformed_request` on a mismatch, on more than 253, or on `MSG_CTRUNC`;
+- checks the bounds of `argv`, the `argv[0]` rule above, and the bounds of `cwd`;
+- answers `worker_busy` to a `setup` while another worker run is outstanding, and closes its descriptors;
+- keeps only the cancel pipe's read end once the program holds its descriptors, so it holds no other descriptor between requests.
+
+**The run.** The supervisor resolves `cwd` beneath the workspace broker root and forks the program as its own child **[measured]**:
+
+- The child starts a new session, so the program leads its own process group, sets `no_new_privs`, sets `RLIMIT_CORE` to 0, sets `RLIMIT_FSIZE` when `fsizeBytes` is set, places the descriptors, chooses the environment, and executes `argv[0]`.
+- The supervisor, as PID 1, enforces `timeoutMs` itself. At the deadline it sends `SIGKILL` to the program's process group and to the program, then waits up to 5 s for the status.
+- When the program exits on its own, the supervisor kills the program's process group as it reaps it. A setup command therefore cannot leave a background job running in its group. A process that left the group with `setsid` survives until the next End, which ends every process in the container. This is a behaviour change from today's setup commands, whose background jobs outlived them **[measured]**.
+- The adapter cancels a run only by closing its write end of the cancel pipe. The supervisor polls the read end with no requested event, so the hang-up wakes it and a byte written to the pipe cancels nothing; it then kills the process group as at the deadline **[measured]**.
+- An `end` request cancels an outstanding run first. The run's `setupdone` carries `setup_cancelled` and precedes `ended` when the program's status has reached the supervisor, and follows `ended` within the 5 s status wait otherwise, as [SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) states **[measured]**.
+
+**The reply.** `{"type":"setupdone","gen":<gen>,"id":<id>, ...}` carries integers and enumerated codes only, so `CH-SUPERVISE` still carries no byte a slot process wrote **[measured]**:
+
+| Members | Meaning |
+| :-- | :-- |
+| `exit` | The program exited with that status. Without `error`, the status is 0. |
+| `signal` | The program was ended by that signal: by the supervisor at the deadline or on cancellation, or by the kernel, such as `SIGXFSZ` at `RLIMIT_FSIZE`. |
+| `"error":"setup_failed"` | With `exit` or `signal`: a non-zero status or a signal. With `"reason":"cwd"` and an `errno`: `cwd` did not resolve to a directory beneath the root, and nothing ran. With `"reason":"exec"` and an `errno`: `execve` failed, and nothing ran. |
+| `"error":"setup_timeout"` | The deadline passed, with the program's `signal` when its status arrived. |
+| `"error":"setup_cancelled"` | The adapter closed the cancel pipe, or an `end` arrived, with the program's `signal` when its status arrived. |
+| `"error":"setup_spawn_failed"` | A step inside the supervisor failed before the program ran. |
+| `"error":"malformed_request"`, `"gen_mismatch"`, or `"worker_busy"` | A refusal. |
+
+**Trust point.** The adapter treats every broker reply of a slot as untrusted from the first run of the supervisor's worker for the first session bound to the slot, which is normally the helper's `materialize` or `restore-complete`, or from that session's launch when no run precedes it ([SIR-22](../0145-session-isolation/change.md#requirements); [IC S6](../0131-incremental-checkpoint/change.md#security-properties)). The adapter restores a seed at bind before that run, so the restore is unaffected.
+
+**The refusal rule.** A refusal keeps the request's own reply type, so a refused `setup` answers `setupdone`, a refused `cleanup` answers `cleaned`, and so on. It means the request did not run, and it never carries `exit` or `signal`. Its descriptors are closed, so the adapter sees end-of-file on the log pipes at once **[measured]**.
+
+**Bounds.** The supervisor answers within `timeoutMs` plus the 5 s status wait. A status that does not arrive within that wait is a failure, which the supervisor reports without `exit` or `signal`. Under runc a ptracer of the same UID can hold the program's status, so such a run ends at the deadline plus 5 s, which harms only the session itself **[measured]**. Every reply goes through a polled send with a 10 s no-progress bound, and the supervisor exits if the adapter stops reading, so the adapter reads `CH-SUPERVISE` continuously ([SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker)) **[measured]**.
+
+**Size.** The materialization spike added 179 lines of C over the broker prototype. The asynchronous-worker spike's cumulative change over the merged broker and materialization base adds a net 376 lines across its review rounds, taking the supervisor to 4,915 lines, and builds freestanding with `-Werror` **[measured]**. The supervisor and the adapter ship together, and the supervisor needs Linux 5.9 or later for `close_range`, `openat2`, and `STATX_MNT_ID` **[measured]**.
+
+### WM-4 The plan the adapter builds
+
+**Inputs.** The gateway composes the workspace plan as today: `ComposeInto` places the runtime's default files as `inlineFile` sources ahead of the client's, DR-9 adds default clones, and §8.7 adds a parent's exports as `uploadFile` sources. The gateway sends the stored plan on `FinalizeWorkspace`, with the Runtime's `allowSymlinks`, each `gitClone` source's `resolvedCommitSha`, the set of URLs restore completion may fetch, and `withheldStores` ([`0147-tenant-derived-runtimes`, "Withheld stores"](../0147-tenant-derived-runtimes/change.md#warm-stores)). Upload bytes stay with the gateway as the Upload Handler stored them, archives compressed, until the adapter asks for one.
+
+**Staging, one source at a time (D12).** A content source is an `uploadFile`, an `uploadArchive`, a parent's export, or a child's file for an import. For each content source, in plan order, while the helper run is in progress **[design]**:
+
+1. The adapter waits for free staging space ("Staging space" below), asks the gateway for that one source's bytes on `PrepareWorkspace`, naming the source (D21), and writes them into a file of mode `0600` under `/adapter/spool/<n>/staging/`, counting its bytes as it writes them, so the size is platform-verified. A child's file arrives on `CH-OBJSTORE` under the gateway's grants instead, and the adapter verifies every chunk under IC S4 as it writes it.
+2. When the plan names a SHA-256 for an upload, or the upload is a delegation export whose hash §7.4 makes mandatory, the adapter checks it on the staged file.
+3. The adapter opens the staged file `O_RDONLY`, creates a fresh pipe, the done pipe, and sends one message on the content socket carrying the staged file's descriptor and the done pipe's write end, with an 8-byte header holding the source's index. It closes its own copies of both.
+4. The helper receives the message, checks that the index is the next content source of its plan, applies the source, and closes both descriptors.
+5. The adapter waits for hang-up on the done pipe's read end and reads nothing from it. It then truncates the staged file to zero and unlinks it, and moves to the next source.
+
+The adapter shuts down the read side of its end of the content socket when it creates it, so nothing the helper writes there reaches the adapter, and the helper's writes fail. Truncation frees the staged file's blocks even if the helper kept a descriptor open, so a helper that misbehaves cannot hold spool space past its turn, and it then reads a short file that fails its own session. A reflink clone of the staged file in the workspace keeps its own reference to the shared extents, so truncation does not touch it ("WM-16"). The collision map stays in the helper's memory for the whole run, because every source of the run is applied in one process.
+
+**Content descriptors.** Each is an `O_RDONLY` descriptor of a spool file the adapter created with mode `0600`. In the materialization spike, which passed such descriptors on `setup` itself, the helper could not write one (`EBADF`), reopen one writable through `/proc/self/fd` (`EACCES`, because the file is `0600` and adapter-owned), `fchmod` one (`EPERM`), `ftruncate` one (`EINVAL`), or `openat` relative to one (`ENOTDIR`), and its device and inode matched the adapter's `fstat`, under runc and gVisor **[measured]**. A descriptor received on the content socket is the same open file description, so the same results hold **[inference]**.
+
+**Staging space (D19).** Staging holds one source per slot at a time, and the slots of a pod share one staging space on the spool volume. The spool volume's `sizeLimit` is the pool's `spoolSizeLimitBytes`, 16 GiB by default. The adapter uses at most `spoolSizeLimitBytes` divided by `spoolHeadroomFactor`, 2, of it, so that the kubelet's count stays below the limit when it counts more than the adapter ([IC-7](../0131-incremental-checkpoint/change.md#ic-7-size-limits-and-drain-budgets)). Out of that usable share the adapter reserves each slot's `checkpointCaptureBudgetBytes`, a pool setting, 512 MiB by default, for its checkpoint spool and export clones, and the rest is the staging space: 7.5 GiB on a pod with one slot and 6 GiB on a pod with four, at the defaults **[design]**.
+
+- **Admission.** Pool admission refuses a pool whose staging space, `spoolSizeLimitBytes / spoolHeadroomFactor − maxConcurrentSessionsPerPod × checkpointCaptureBudgetBytes`, is below `minStagingBytes`, a constant of 1 GiB, and names the three settings in its error.
+- **At upload.** The gateway refuses an upload larger than its pool's staging space when the client uploads it, with `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`, `details.reason: "staging_limit"`, and `details.limitBytes`, so a source that could never be staged fails before the session binds. It refuses a parent's export into a child over the child pool's staging space the same way, and a child-file import over the parent pool's staging space with `IMPORT_LIMIT_EXCEEDED` and `details.reason: "staging_limit"`, before it signs a grant.
+- **While staging.** The adapter counts staged bytes against the shared space. A source that does not fit the free space waits, in arrival order across the pod's slots, until other slots' staged sources are released, and fails when the run's deadline would pass first, with the same code as at upload and `details.reason: "staging_timeout"`: `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` for an upload or a parent's export, and `IMPORT_LIMIT_EXCEEDED` for a child-file import. The reason tells a source too large for the pool, `staging_limit`, from one that waited too long behind other slots, `staging_timeout`. Each staged file is truncated and unlinked as soon as its done pipe hangs up, so a slot holds staging space only while the helper applies its current source.
+
+There is no streaming path: every content source is a file before the helper reads it, which also gives a zip archive the random access its central directory needs.
+
+**Mid-session.** An overlay stages its sources the same way, one at a time over its own content socket.
+
+**The rewrite.** For each run the adapter builds a helper plan **[design]**:
+
+- **Sources, in plan order.** Each keeps its type, its path as raw bytes, and its mode. `inlineFile` content travels in the plan itself. `uploadFile` and `uploadArchive` carry a content index in place of `uploadRef`, which the content socket's header matches. An `uploadArchive` carries `format`, `stripComponents`, and `pathPrefix`. A source of a type the adapter does not know is dropped, and the adapter emits `workspace_plan_unknown_source_type` itself, as [§14.1 WorkspacePlan Schema Versioning](../../spec/14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) **Unknown `source.type` handling.** requires.
+- **Limits.** The remaining workspace bytes, which are the pool's `workspaceSizeLimitBytes` less the seed's bytes from the manifest the adapter restored; the §7.4 archive ceilings, as lowered by deployer policy; the Runtime's `allowSymlinks`; the chart value `adapter.maxCloneTreeEntries`; and the warning cap of 256 (D14).
+- **Git inputs.** For each `gitClone` source: the normalized URL, `resolvedCommitSha`, `path`, `depth`, `submodules`, the `origin` URL, and the store directory under `/lenny/git-stores` when a store on the pod serves the URL under [`0147-tenant-derived-runtimes`, "Session"](../0147-tenant-derived-runtimes/change.md#warm-stores), and the staged entry the source adopts, when it is the first source of the composed workspace that a staged entry serves ("WM-15"). For `restore-complete`, the URLs the gateway passed for the bind. For `capture-copy` and `restore-complete`, the plan's `gitClone` paths.
+- **Staged trees.** For `materialize` and `restore-complete`, the entries under `.lenny-prestage` the adapter staged, each with its store, its commit, and the plan source it serves, and the staged entries whose store is withheld for the session. For `prestage`, the entries to stage ("WM-15").
+- **Paths.** The reserved name a run creates or removes: the overlay directory for an `overlay`, the `.lenny-discard-<id>` name for a bind, and every name a `discard` removes.
+- **Deadline.** The run's own deadline, which the helper checks between entries.
+
+**Encoding.** The helper plan is a versioned protocol buffer message, `MaterializePlan`, with paths as `bytes`, so any file name passes unchanged **[design]**. The helper refuses a plan whose version it does not know.
+
+### WM-5 Result validation and what a forged result can do
+
+**What the helper writes.** One JSON object on the result pipe, then it closes the pipe:
+
+```
+{"ok":false,"reason":"max_entry_count","sourceIndex":3,"entryPath":"<bytes>",
+ "warnings":[{"code":"workspace_plan_path_collision","path":"<bytes>",
+              "winningSourceIndex":5,"losingSourceIndex":2}],
+ "warningsDropped":0}
+```
+
+The result carries no size, count, or hash, so the adapter has none to misuse **[design]**. A run the supervisor killed, at its deadline or on cancellation, writes no result, and the adapter takes its outcome from `setupdone` alone. `content_mismatch` reports a content message whose index is not the next content source of the plan. The spike's result carried `files`, `dirs`, and `bytes` for diagnosis **[measured]**; those go to the log pipe.
+
+**What the adapter checks** **[design]**, as the spike's adapter did **[measured]**:
+
+- It reads at most 64 KiB, and closes the pipe and fails the run on more.
+- It decodes strictly: no unknown member, no duplicate member, no trailing data after the object.
+- `reason` comes from a closed set, which the adapter maps to the client-facing error code with its own table:
+
+| `reason` | Client-facing error |
+| :-- | :-- |
+| `max_decompressed_size`, `max_decompression_ratio`, `max_entry_count`, `max_entry_size`, `max_path_depth`, `max_path_length`, `path_escapes_root`, `non_regular_entry`, `symlink`, `symlink_target_escapes_root`, `format_error`, `size_limit`, `git_tree_limit`, `content_mismatch` | `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with `details.reason` |
+| `path_crosses_symlink`, `target_exists`, `target_type_conflict`, `workspace_not_empty` | `WORKSPACE_PLAN_INVALID` with `details.reason` |
+| `git_fetch_pending` | `SESSION_CREATION_FAILED` with the reason `git_fetch_pending`, as [`0127-egress-and-git`](../0127-egress-and-git/change.md#target-state) states |
+| `git_fetch_failed`, `git_checkout_failed` | `SESSION_CREATION_FAILED` with that reason |
+| `deadline`, `internal` | The adapter's own outcome for the run |
+| None: the adapter's own outcome when a content source's wait for staging space reaches the run's deadline ("WM-4") | `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`, or `IMPORT_LIMIT_EXCEEDED` for a child-file import, with `details.reason: "staging_timeout"` |
+
+- `sourceIndex` is in range, and names a source of a type that can produce the reason.
+- Warning codes come from a closed set: `workspace_plan_strip_components_skip` and `workspace_plan_path_collision`. A strip warning must name an `uploadArchive` source whose `stripComponents` is above 0. A collision warning's winning index must exceed its losing index, and both must be in range.
+- `entryPath` and `path` are at most 4,096 bytes, and the number of warnings is at most the plan's cap.
+- Success requires both `setupdone` without `error` and a result with `ok: true`. Any other combination fails the run.
+
+**What the adapter uses.** The adapter uses the outcome, the reason, and the warnings for the session's own client. Every size it needs comes from its own counts or its disk watch: the bytes it staged, the seed's bytes from the manifest it restored, and the volume's use. The working-directory check after materialization runs through a broker `open`, so it is platform-verified.
+
+**Slot-reported provenance.** A warning event built from a result carries `provenance: "slot_reported"`, and every renderer treats `entryPath` and `path` as data: escaped, never interpreted, and never used as a path by a platform process **[design]**.
+
+**What a forged result can do.** A process at the slot UID that could write the result, or a helper whose parsing an archive subverted, can:
+
+- fail its own session;
+- report success over a tree that differs from the plan;
+- show its own client false warnings from the closed set, with byte strings of its choosing in `entryPath`, marked slot-reported;
+- move `lenny_upload_extraction_aborted_total`'s `error_type` label within its closed set.
+
+It cannot affect the adapter, another slot, a quota, or billing, because nothing outside the session's outcome reads the result **[design]**. In the spike, an oversized result, an unknown member, two concatenated objects, an unknown code, an out-of-range index, and a stall each failed the session, the stall at the deadline. A well-formed lie passed: it claimed 10 bytes after the helper wrote 64 MiB, which the adapter measured at 67,108,903 bytes itself **[measured]**.
+
+**Who can write the result.** Only the helper can write the result. A sibling process at the same UID, which in the spike was a runtime process running beside the helper, failed to forge the result in 160 of 160 attempts on each runtime. No runtime process runs beside a pre-start helper run any longer (PL-8), but a mid-session overlay still has the session's processes beside it. With the helper non-dumpable, `/proc/<pid>/fd` was refused. With the helper dumpable, reopening descriptor 4 still returned `EACCES`, because the pipe's inode belongs to the adapter **[measured]**. Staging the helper `0111` made it non-dumpable from `execve` **[measured]**. A process that can attach to a dumpable process of its UID could also take a descriptor with `pidfd_getfd`, which the spike did not try **[inference]**; non-dumpability and `FD_CLOEXEC` on every inherited descriptor ("WM-2") close it.
+
+### WM-6 Limits while streaming, and the platform backstops
+
+**In the helper.** The helper enforces, while it streams and before each write grows a file **[design]** **[measured]**:
+
+- the running total across the whole plan against the remaining workspace bytes;
+- per archive, the decompressed total, the ratio of decompressed to compressed bytes read so far, the entry count, each entry's size, path depth, and path length, at the §7.4 values;
+- a per-read bound on every decompressor read.
+
+A first spike version that checked only per entry wrote the whole 2 GiB of a bomb, so every check runs on running counters **[measured]**. With the checks running, a 2 GiB zero-filled `tar.gz` and a 2 GiB zip each stopped at about 260 MB with `max_decompression_ratio` when the size ceilings were raised to 4 GiB. With the ratio check off and a 256 MiB total, the `tar.gz` stopped at 256 MiB with `max_decompressed_size`, and under every §7.4 value at once its single 2 GiB entry stopped at its header with `max_entry_size`. The helper's resident memory stayed between 3.8 and 6.4 MB **[measured]**. A zip with a lying size header failed with `format_error` **[measured]**.
+
+**Backstops that do not depend on the helper's honesty.**
+
+| Backstop | Owner | What it bounds |
+| :-- | :-- | :-- |
+| The disk watch at `adapter.diskWatchThresholdPercent`, 90% by default, of the workspace volume's `sizeLimit` | Adapter ([SI-10](../0145-session-isolation/change.md#si-10-what-stays-shared)) | The session's total disk use, before the kubelet evicts the pod |
+| `emptyDir.sizeLimit` at the pool's `workspaceSizeLimitBytes` | Kubelet | The volume |
+| The run's deadline, enforced by the supervisor as PID 1 with `SIGKILL` to the process group, then its 5 s status wait | Supervisor | Time |
+| The slot container's memory limit | Kernel | Memory, at the cost of the slot ("WM-14") |
+| `RLIMIT_FSIZE` on every helper run, set to the remaining workspace bytes, and on no setup command | Kernel | The largest single file the helper writes (D13); the spike measured `SIGXFSZ` at the limit **[measured]** |
+| The staging space | Gateway and adapter | Each content source: the gateway refuses one larger than the pool's staging space at upload with `staging_limit`, and the adapter makes a source wait for free staging space and fails it with `staging_timeout` at the run's deadline ("WM-4") |
+
+The disk watch is also the backstop for the git tree-size check (D9).
+
+### WM-7 Ordering and collisions
+
+**Order.** For a request that carries both a seed and sources, the order is:
+
+1. The adapter deletes each withheld store, with its pristine tree, from the store volume ([`0147-tenant-derived-runtimes`, "Withheld stores"](../0147-tenant-derived-runtimes/change.md#warm-stores)).
+2. The adapter restores the seed through the broker ([IC-5](../0131-incremental-checkpoint/change.md#ic-5-restore-derive-download-and-seal)).
+3. The helper runs `restore-complete`, which first removes the withheld stores' staged trees and renames the rest of `.lenny-prestage` aside for a background `discard`, then rewires the seed's repositories.
+4. The helper runs `materialize`, applying sources in plan order: base defaults, derived defaults, default clones, the client's sources, and a parent's exports, as §5.1 and §14.1 order them.
+5. The adapter checks the working directory through the broker.
+6. Setup commands run, one `setup` each.
+7. The supervisor launches the runtime ([PL-8](../0118-agent-pod-layout/change.md#pl-8-removal-of-pre-launched-runtimes)).
+
+Without a seed, steps 2 and 3 do not run, and `materialize` adopts the staged trees the plan uses ("WM-15"). Steps 3 and 4 can be one helper run when both apply **[design]**. Today's users of a seed carry no sources: a resume restores its snapshot only, and a `from: latest` derive passes the binder none of the plan's sources ([`0144-session-derive`, "What each mode starts from"](../0144-session-derive/change.md#what-each-mode-starts-from)). The order still holds for any later caller.
+
+**Collisions.** The helper keeps a map from each written path to the index of the source that wrote it. A later source that writes the same path wins and raises `workspace_plan_path_collision` with §14's fields **[measured]**. Directories are not tracked, because two sources creating one directory is merging. Duplicate entries inside one archive are silent, as today. Seeded paths are not tracked, because the warning's index fields name only sources, so a source that overwrites a seeded file raises nothing **[design]**.
+
+**Resolution.** Every path component resolves from the workspace root with `openat2` under `RESOLVE_BENEATH | RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS | RESOLVE_NO_MAGICLINKS`. A write through a symbolic link inside the tree fails with `path_crosses_symlink`, whether an earlier source of the same plan or the seed planted the link **[measured]**. Final components open with `O_NOFOLLOW | O_CREAT | O_EXCL` or replace an existing regular file by rename, so no write follows a final-component link **[design]**.
+
+**Modes and owners.** Every entry belongs to the slot UID. File modes keep their permission bits, and setuid, setgid, and sticky are dropped from archive entries: `04755`, `02755`, and `01777` were written as `0755`, `0755`, and `0777` **[measured]**. A `mkdir` source keeps the sticky bit, which §14 permits there. Directory modes are applied last, deepest first, so a directory mode such as `0555` does not block the writes beneath it **[design]**.
+
+**Clones.** A git source that no staged tree serves is built in a fresh directory inside the overlay or build directory, which is on the same volume, and then moved into place, as an adopted staged tree is ("WM-15"): a target that does not exist takes the whole tree by one rename, and a target that exists is merged path by path under the collision rule, with any `.git` at the target replaced as a unit, as [`0127-egress-and-git`](../0127-egress-and-git/change.md#target-state) requires. The helper owns both sides of every rename, so the broker needs no rename, overwrite, or unlink operation, and SI-5's operation set stays closed **[design]**.
+
+### WM-8 Atomicity under the fixed layout
+
+Under the owner's layout of 2026-11-12, `/workspace` is the workspace volume itself, a mount point, and the runtime's working directory ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)). The platform's transient work uses only the reserved names PL-3 lists. No sibling directory exists on the volume for a build tree to be promoted from, and the mount point cannot be renamed. Atomicity therefore differs before and after the session starts.
+
+**Before start.** `materialize` writes straight into `/workspace`. The volume holds nothing but the staged warm-up checkouts under `.lenny-prestage`, because every slot release empties it, checks that it is empty, and then stages them ([SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands); "WM-15"), or it holds a seed. Without a seed the helper checks that the root holds no entry other than `.lenny-prestage` and an empty directory named `lost+found`, and fails with `workspace_not_empty` otherwise, which replaces §5.1's requirement that the adapter remove all files first **[design]**. An `ext4` volume, such as a Kata `block-plain` volume, holds `lost+found` at its root, and the release's emptiness check passes it only when it is empty ([SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands), SIR-34), so a check that refused it would fail every seedless bind there. Checkpoints and downloads skip it ([IC-1](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes)). On any failure the session fails, and the slot release empties the volume. No runtime process exists in the slot before the session's materialization and setup commands end (PL-8), so nothing sees a partial tree. Git sources that no staged tree serves build in `/workspace/.lenny-build/`, which the helper removes before it ends.
+
+**Mid-session.** `overlay` assembles its entries in the overlay directory, `/workspace/.lenny-overlay-<id>`, with an identifier the adapter chooses for the run. It then moves each entry into place: an entry whose target does not exist moves with one rename of its highest absent ancestor, and a file that replaces an existing file moves by one rename over it, so the runtime never sees a partly written file **[design]**. It removes the overlay directory at the end, and on a failure it removes the overlay directory and leaves every target untouched that it had not yet moved.
+
+- **No-replace moves.** A move whose target must not exist, such as a child-file import without `overwrite`, uses `renameat2` with `RENAME_NOREPLACE`. gVisor returned `EINVAL` for that flag **[measured]**, so on `EINVAL` the helper checks the target with `fstatat` and `AT_SYMLINK_NOFOLLOW` and then renames. The window between the check and the rename is open only to the session's own processes, so a race costs only that session **[design]**.
+- **A run that ends without its result.** After a timeout, a cancellation, or a result the adapter refuses, the supervisor has already killed the helper's process group, and the adapter runs `discard` with the same name. If `discard` fails too, the name stays reserved, the session receives a warning event, and the slot release removes it **[design]**.
+- **Checkpoints.** The supervisor serves the broker during an overlay ("WM-11"), so a checkpoint's walk can run while an overlay is in flight. The walk and the tracker skip every reserved name at the top of `/workspace` ([IC-1](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes), "Reserved names"), so an overlay directory in flight is never captured, and the entries the overlay has already moved into place are captured as any concurrent write is, under IC's racy-write rule. A checkpoint still waits for the overlay's `setupdone` before its capture copy, because the capture copy is a helper run and only one runs at a time. A session that creates an entry with a reserved name has it skipped, which PL-6 states in the runtime-author contract.
+- **What the runtime sees.** The overlay directory is visible to the runtime while the overlay runs. A process that writes into it or replaces it affects only its own session, and a planted link makes the move fail with `path_crosses_symlink`.
+
+The runtime adapter sends `FilesUpdated` only after `setupdone` and a valid result, as [§7.4 Upload Safety](../../spec/07_session-lifecycle.md#74-upload-safety) requires for a mid-session upload.
+
+### WM-9 Archive extraction leaves the gateway
+
+**What the gateway keeps.** The upload API, the `uploadToken` checks, the inbound body cap of `remaining_quota_bytes`, the storage quota, the check of `uploadArchive.format` against `tar`, `tar.gz`, and `zip` at plan validation, and storage of the blob. At finalize it streams each upload to the adapter as stored **[design]**.
+
+**What the gateway drops.** `rewriteExtractedSources`, `extractOneArchive`, `gatedExtract`, the in-memory `archive.Extract` path, the `__archx_` synthetic references, the internal `symlink` source variant, and the Upload Handler's extraction goroutine pool and circuit breaker, whose only purpose was isolating extraction from the other subsystems **[design]**. A plan's archives no longer occupy gateway memory between bind and `PrepareWorkspace`.
+
+**What the helper takes over.** Every §7.4 validator, at the same values and with the same `details.reason` codes, stays a non-tunable platform ceiling that deployer policy may lower. The post-promotion symlink re-validation leaves, because no promotion exists and the helper refuses a link whose target escapes the workspace when it creates the link: with `allowSymlinks`, the target, resolved against the link's location, must stay beneath `/workspace` and must not enter `/proc`, `/sys`, `/dev`, `/run/lenny`, or `/lenny`, and a later write through any link fails under "WM-7" **[design]**. In the spike, a link to `/tmp` or to `../../..` was refused, or failed with `symlink_target_escapes_root` under `allowSymlinks` **[measured]**.
+
+**The rule that replaces "pod binaries neither decompress archives".** §13.4's sentence becomes **[design]**:
+
+> No platform-privileged process parses untrusted content. A platform-privileged process is one that holds a credential or reaches beyond one session: the gateway, the adapter, `netagent`, the controllers, and the git mirror. Untrusted content is archive bytes, git objects and trees, the content of uploaded or session-written files, and anything a process at a slot UID wrote. Such content is decompressed, unpacked, and written only by `lenny-materialize` at the session's slot UID, except the warm-list repositories that `lenny-store-fill` fetches and checks out under the confinement of "The store fill" below. A platform-privileged process exchanges data with a slot only in formats the platform defines, decoded strictly under fixed bounds: `CH-MSGSOCK` frames, broker replies, and the helper's result.
+
+Three parsers of git data outside a slot are confined by construction rather than excepted from the rule: `lenny-store-fill`, which holds no credential, has only the store volume writable, and ends before any session code runs ("The store fill" below); the git mirror's sandboxed fetch subprocess, which holds no credential or identity; and `netagent`'s bounded parsing of the git protocol on covered hosts ([`0127-egress-and-git`, "Git"](../0127-egress-and-git/change.md#git)) **[design]**.
+
+**The checkpoint exception.** The adapter's restore decompresses packs and decodes manifests, and the gateway decodes the same formats when it renders a workspace download or an output file ([IC-5](../0131-incremental-checkpoint/change.md#ic-5-restore-derive-download-and-seal)). These are platform formats that an adapter wrote, under grants confined to the session's own prefix (IC S1 to S3), and a restore recomputes every chunk's SHA-256 against its chunk ID (IC S4). File content inside a pack passes through as opaque bytes written through broker descriptors, and no platform process interprets it. A manifest is pod-produced, so its decoder is bounded: the restore limit is `workspaceSizeLimitBytes`, the gateway bounds a manifest before rendering, and every path resolves beneath the broker root. The exception therefore lets platform processes decode platform-produced, integrity-checked formats under fixed bounds, and leaves the content those formats carry uninterpreted **[design]**.
+
+**The store fill.** The warm repository stores and their pristine trees hold git objects and trees from repositories on the pool's warm list, which the rule names as untrusted content. No platform-privileged process parses them **[design]** (D20):
+
+- The `lenny-store-fill` init container fills each store and writes its pristine tree with the pinned git, under a UID of its own that differs from the adapter's and from every slot's, holds no service account token and no VCS token, and mounts the store volume as its only writable volume. It starts after the `netagent` native sidecar and before the adapter and the slot containers, so no session code runs while it parses repository data.
+- Its fetches go through `netagent`, which attributes the fill's UID as the platform fill and applies the fill's authorization, with `transfer.fsckObjects=true`, hooks and repository configuration ignored, under `warmCloneBytes` and `controller.tuning.gitStoreFillTimeout`.
+- The content comes only from repositories on the pool's warm list, which an operator or the tenant admin of an owned pool declared, never from a session's plan.
+- It writes with a dedicated store GID as the group, the chart value `storeFill.gid`, which is the primary group of both `lenny-store-fill` and the adapter and of no other container, and a umask of `0002`, so directories are `0775`, object files `0444`, and nothing in the volume grants write to the other class (D23). Its mode pass after each fill also clears every setuid and setgid bit in the store and its pristine tree, and every agent-pod container runs with `allowPrivilegeEscalation: false`, so a set-ID bit has no effect in any case. Every slot reads the volume through the other class on a read-only mount, and none can write it, and no slot container holds the store GID. On Kata `block-plain`, whose volume root carries the dedicated `fsGroup` GID and the setgid bit, the fill regroups each store's directory to the store GID before it writes into it ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)), and under user namespaces the fill's UID maps within the pod's range.
+- The adapter keeps a read-write mount of the store volume only to delete a withheld store and its pristine tree before a session, by unlinking through the group class of the directories with the store GID, its primary group, and never reads or parses repository data, a pristine tree included ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)). It deletes with `unlinkat` relative to directory descriptors it opens with `openat2` under `RESOLVE_BENEATH`, `RESOLVE_NO_XDEV`, and `RESOLVE_NO_SYMLINKS`, so the deletion follows no symbolic link the fill wrote.
+
+A defect in git's object parsing during the fill reaches only the fill container, which holds no credential and ends before the pod reports READY. The owner made the decision conditional on the container working from a permissions standpoint, which "Validation owed" in `steps.md` lists.
+
+### WM-10 Git
+
+**Every git step on a slot repository runs in the helper (D9).** The helper runs the pinned git as a child process, as the slot UID, and the adapter runs no git on slot repositories. A failed step reaches the adapter only as a reason in the slot-reported result.
+
+**`materialize`, for each `gitClone` source** **[design]**, following draft 0111's rule 3 as the egress design rewrites its transport:
+
+1. `git init` in a fresh directory under `/workspace/.lenny-build/`, with `--template=` so no template directory is read.
+2. When a store on the pod serves the URL, the store's objects directory, `/lenny/git-stores/<hash>/objects`, written to `objects/info/alternates` as an absolute path.
+3. A fetch of `resolvedCommitSha` through `netagent` unless the commit is already reachable, shallow when no store serves the URL.
+4. The tree-size check: the helper streams the commit's tree listing under its own git directory and charges each blob at its size rounded up to 4,096 bytes plus 128 bytes per entry, with the total running across the plan's clones and files. It stops with `git_tree_limit` at the remaining workspace bytes, at the chart value `adapter.maxCloneTreeEntries`, or at the run's deadline. A commit the store holds causes no fetch, so the pool's fetch size cap cannot bound what a checkout writes, and this check does. The disk watch is its backstop.
+5. A detached checkout, `origin` set to the upstream HTTPS URL, and the config keys `lenny.gitStoreUrl` and `lenny.baseCommit`.
+6. The move into the target ("WM-7").
+7. The index refresh, at the end of the run, once more than 1 s has passed since the last checkout. Without it git wrote 2,342 duplicate loose objects, about 28 MB, into the slot, because it cannot freshen objects in a read-only store **[measured]** (spike 1 of [`0145-session-isolation`](../0145-session-isolation/steps.md#validation-record)). The helper refreshes after every move, so ctime changes from the moves are covered too. The owner settled the timing under O8 (D14): the refresh runs at the end of the same run, after waiting out whatever remains of 1 s, which the later sources of a plan usually cover.
+
+**`capture-copy`.** Before a checkpoint's pre-copy pass, the adapter runs `capture-copy` on the plan's `gitClone` paths. For each repository carrying `lenny.*` keys, the helper copies into the repository's own object store every object the repository needs and holds only through the store, leaving out `lenny.baseCommit` and its ancestors, as rule 5 states. The adapter starts pre-copy only after the capture copy's `setupdone`, so the capture copy finishes before pre-copy starts, and the asynchronous worker keeps the broker serving meanwhile **[design]**. On AWS a `git repack -a -d -l` of LLVM as the capture copy outlived the 120 s broker deadline of the synchronous worker **[measured]**; under the asynchronous worker its deadline is the checkpoint attempt's ("WM-11"). A repository the agent wired to a store without `lenny.*` keys gets no store service, as [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#relationship-to-draft-proposal-0111) states.
+
+**`restore-complete`.** After a restore seed, the helper runs rule 6 on each repository the plan's `gitClone` paths name: it overwrites `objects/info/alternates` with the pod's store for `lenny.gitStoreUrl` when the store exists and the URL is in the set the gateway passed for the bind, removes alternates otherwise, and fetches `lenny.baseCommit` when the pod's store differs, shallow first and with history only when a listing finds a missing object, within the remaining workspace bytes. A `lenny.gitStoreUrl` outside the passed set gets no alternates and no fetch **[design]**. Withheld stores are deleted before restore completion runs, so a withheld store's URL finds no store.
+
+**Git's configuration and environment.** The helper gives git an environment of its own **[design]**:
+
+- `GIT_CONFIG_SYSTEM=/run/netagent/gitconfig`, the configuration `netagent` renders with `http.proxy`, the pod trust bundle, and `transfer.fsckObjects=true` ([`0127-egress-and-git`, "Git configuration"](../0127-egress-and-git/change.md#git-configuration));
+- `GIT_CONFIG_GLOBAL=/dev/null`, `HOME` set to a directory that does not exist, `GIT_TERMINAL_PROMPT=0`, `GIT_EXEC_PATH` naming the pinned git's helper programs, and `PATH=/lenny/bin`;
+- `-c core.hooksPath=/dev/null -c core.fsmonitor=false` on every command, and no command run in a target with a configuration the target supplied.
+
+Under the slot UID these rules protect the integrity of the plan's outcome. A tenant default file or a client file that plants a `.git/config` in a clone's target could run code only at the slot UID, which every session file can already reach through the agent, so the escalation that DR-9's "Not verified" in [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) guarded against at the adapter UID no longer exists.
+
+**The pinned git (D3).** A Lenny release builds git from a pinned upstream version as a static binary with libcurl and its TLS library linked in, without `RUNTIME_PREFIX`, and ships it with the helper. The stage step copies `git` and its helper programs, among them `git-remote-https`, into `/lenny/bin` with mode `0111`, so git processes are non-dumpable as the helper is **[design]**. Whether the pinned git runs correctly when exec-only is owed **[inference]**. The runtime's own git, which the agent uses, stays whatever the runtime image ships. The alternatives were the runtime image's git, which varies by image, can be absent from a distroless image, and would make the tree-size check depend on an author's binary, and go-git in the helper, whose parity with git's checkout, alternates, and fsck rules nobody has measured **[inference]**.
+
+**The fetch grant (D6).** `netagent` attributes a connection to a slot by UID under SI O9, and the helper and the agent share the slot UID, so `netagent` cannot tell a materialization fetch from the agent's. Before a helper run that may fetch, the adapter registers a grant with `netagent` naming the slot, the normalized URLs the run may fetch, and a window ending at the run's deadline plus the supervisor's 5 s status wait, and it revokes the grant at `setupdone`. Within the grant, `netagent` treats the slot's fetch of a named URL as materialization: the pool's fetch retry window and its hold apply on initial materialization, the 30 s wait applies on the resume path, the provisional binding's read scope applies during a resume, and the `git.operation` record names materialization. Outside a grant, a fetch is the session's own, under its binding **[design]**. A process of the session that fetches a granted URL inside the window gets the same treatment, which reaches no repository the plan does not name. The helper holds no credential: no service account token and no VCS token, because `netagent` attaches them. [`0127-egress-and-git`](../0127-egress-and-git/change.md) owns the grant's carrier, the intra-pod channel `CH-FETCHGRANT` on `netagent`'s socket `@lenny-netagent-grant`, which `netagent` accepts only from the adapter UID, and `netagent`'s handling, with the slot attribution that answers SI O9 and the per-slot scopes of its decision 60, which the owner settled on 2026-11-13. A grant covers `materialize` and `overlay` runs with a `gitClone` source and `restore-complete`; `prestage` fetches nothing and needs none.
+
+### WM-11 The worker, broker requests, and checkpoints
+
+**The change (D10).** Under revision 1 the supervisor waited for a worker and read no request meanwhile, so neither a broker `fs` request nor a `ping` was served during a run **[source]**. On AWS a checkout through that worker held a broker request for 19.1 s, and a capture copy outlived the 120 s broker deadline, so the slot was declared dead **[measured]**. The owner approved an asynchronous worker. The supervisor now forks the program and returns to its loop, and while a run is outstanding it serves `fs`, `ping`, and `end`, and answers every other request with `worker_busy` **[measured]**. In the spike, three broker walks of 100,100 entries each ran during a 60 s `setup` in 224 to 245 ms, the same as with no run, and 591 pings during it were answered with a 99th percentile of 0.2 ms **[measured]**.
+
+**Adapter-side rules.** **[design]**
+
+- At most one `setup` or `cleanup` run is outstanding per slot. The adapter queues the next run behind the outstanding one, and sends the second `sweep` after a `cleanup` run only after the second `end`, as the release order End, Sweep, cleanup, End, Sweep requires ([SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands)). The release launches nothing, and `launch` follows a bind's materialization and setup commands (PL-8).
+- Broker requests, pings, and `end` go out during a run as at any other time, under their own deadlines. A broker request no longer waits for a run, so the liveness rule for a missing reply is the one SI-4 states for every request.
+- A `setupdone` is a link failure only when it misses the run's deadline plus the supervisor's 5 s status wait plus a margin for the reply.
+- The adapter reads `CH-SUPERVISE` continuously, because the supervisor exits when a reply makes no progress for 10 s ([SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker)).
+- The adapter treats a refusal as a request that did not run, and resends it only after the reason clears: after `setupdone` for `worker_busy`, and never for `malformed_request` or `gen_mismatch`, which are its own defects.
+
+**Cancellation (D13).** The adapter cancels a worker run by closing its end of the cancel pipe. It does so when the session is cancelled or deleted, when the pod drains, when a forensics `freeze` must reach the slot, when a bind preempts a running `prestage`, and when a foreground run preempts a background `discard` ("WM-15"). The supervisor kills the program's process group and answers `setupdone` with `setup_cancelled`; an `end` does the same before it ends the runtime **[measured]**. The helper is never asked to stop and writes no result when it is killed. After a cancelled helper run the adapter runs `discard` on every reserved name the run could have left: `.lenny-build`, the overlay directory, or a partly staged `.lenny-prestage`. A cancelled setup command's process group is gone, and a process that escaped with `setsid` ends at the next End.
+
+**Each run's bound.**
+
+| Run | Deadline |
+| :-- | :-- |
+| `materialize` at finalize | The `FinalizeWorkspace` call's remaining deadline less a margin for the result, which keeps the Runtime's `setupPolicy.timeoutSeconds` and the gateway's `maxFinalizingTimeoutSeconds` arithmetic of the egress design unchanged |
+| `materialize` on a snapshotless rebuild | Inside the 300 s `resuming` watchdog of [§7.3](../../spec/07_session-lifecycle.md#73-retry-and-resume), with `netagent`'s 30 s wait |
+| `restore-complete` | Inside the `Resume` or bind call's deadline |
+| `capture-copy` | Inside the pool's `checkpointAttemptTimeoutSeconds` ([IC-7](../0131-incremental-checkpoint/change.md#ic-7-size-limits-and-drain-budgets)) |
+| `overlay` | The deadline of the mid-session `FinalizeWorkspace` or the `ImportFile` stream that asked for it |
+| `prestage` | The pod's warm-up checkout timeout: the runtime revision's `prestageTimeoutSeconds`, else the pool's, else `adapter.prestageTimeoutSeconds`, 900 s by default ("WM-15"); a bind cancels it sooner |
+| `discard` | `adapter.discardTimeoutSeconds`, 300 s by default; a run it does not finish is resumed by the next `discard` |
+| A setup command | The smaller of its `timeoutSeconds` and the time left in the Runtime's `setupPolicy.timeoutSeconds` |
+
+**Checkpoints.** The checkpoint's walk, its tracker, and its reads go through the broker, so they proceed during a run, and the walk skips the reserved names ([IC-1](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes), "Reserved names" and "Helper runs"). A checkpoint that starts during a worker run waits for that run's `setupdone` before its capture copy, because the capture copy is itself a helper run, and then runs pre-copy. A background `discard` is cancelled for it and resumed afterwards. A run that outlasts the attempt deadline fails that attempt, and the next periodic attempt follows. The change tracker's `inotify` descriptor is already held by the adapter, so the adapter keeps reading events during a run, and an overlay's writes show up as dirty paths, which they are.
+
+**Exports and the seal.** `ExportOutputFile`'s freeze and the seal reach slot files through the broker, so they proceed during a run, and a file an overlay is moving into place is frozen as any concurrently written file is ([MD-18](../0135-message-delivery/change.md#md-18-files)).
+
+**What the supervisor change costs.** The supervisor is on the untrusted side of the boundary ([§4.7.11](../../spec/04_system-components.md#4711-adapter-agent-security-boundary) item 8), and the owner required a security review of the change. Three independent reviews read the cumulative diff; the last found nothing at Medium or above, and its Low items are fixed **[measured]**. The spike also recorded these limits **[measured]**:
+
+- Under gVisor, PID 1 is not immune to `SIGSTOP` or `SIGKILL` from a slot process, so the adapter's liveness deadline is the only backstop for a stopped supervisor. `SO_SNDTIMEO` is not enforced on Unix stream sockets there, which the polled send replaces. `/proc/1/fd` names are listable by the slot. gVisor applies no `SCM_RIGHTS` in-flight limit.
+- Under runc, a same-UID ptracer can hold the setup program's status, so the run ends at the deadline plus 5 s, which harms only the session itself.
+- When the kernel refuses to attach descriptors to an `fs` reply, with `ETOOMANYREFS` or another failure on the first byte, the supervisor resends the reply without descriptors and gives each affected path the errno, and it keeps serving. A refused `mkfile` removes the entry it created. A slot that held every in-flight descriptor its UID allowed got that errno on its own requests and nothing worse, and on runc pools user namespaces make the limit per pod ([`0136-placement`, "PM-1"](../0136-placement/change.md#pm-1-node-classes-and-presets)).
+
+### WM-12 Mid-session uploads and child-file imports
+
+**Mid-session uploads.** On a Runtime with `capabilities.midSessionUpload: true`, `upload_to_session` reaches the adapter as a `FinalizeWorkspace` with `mid_session` set, as today. The adapter runs `overlay` with the upload's sources, archives included, and stages each content source in turn as "WM-4" states, under the same limits as pre-start, with the remaining workspace bytes from its disk watch. Last-writer-wins applies against existing files, as today's overlay does **[design]**.
+
+**Child-file imports.** For `import_child_session_file` ([MD-26](../0135-message-delivery/change.md#md-26-files-from-a-child)), the adapter downloads the file's packs on `CH-OBJSTORE` under the gateway's grants and verifies every chunk under IC S4, as today. It verifies them into a staged file on the spool volume, as "WM-4" states for every content source, and hands the file's descriptor to the helper on the content socket. The helper writes the file at the destination with `overlay`, as a reflink clone where it can ("WM-16"), refusing an existing target with `target_exists` unless the call set `overwrite: true` **[design]**. The call returns, or the `reply` arrives, after `setupdone` and a valid result. The path, size, and `sha256` the reply reports come from the adapter's verification, which is platform-verified. The staged file takes staging space as any content source does ("WM-4", D19): the gateway refuses an import larger than the parent pool's staging space before it signs a grant, with `IMPORT_LIMIT_EXCEEDED` and `details.reason: "staging_limit"`, and an import that fits waits for free space. At the defaults the staging space holds a file of the 5 GiB default of MD-18's output files on a pod of up to six slots, and a deployer who runs more slots per pod raises `spoolSizeLimitBytes`. There is no streaming path for imports (D12).
+
+**Limits.** `fileImportLimits` on the delegation lease and the parent's workspace limit apply as MD-26 states, and the helper's running total enforces the workspace limit again.
+
+### WM-13 Resume and derive
+
+| Path | Seed | Helper runs | Setup commands |
+| :-- | :-- | :-- | :-- |
+| Resume from a checkpoint | The latest snapshot, restored by the adapter through the broker, with the session files | `restore-complete` | None, as §7.3 states |
+| Snapshotless rebuild (§7.3 step 3e) | None | `materialize` from the stored plan, adopting the slot's staged trees, and staging its uploads again, which fail the rebuild once they have expired | The stored plan's commands |
+| `from: latest` derive, first bind | The starting snapshot, through the broker | `restore-complete` | The plan's commands and `additionalSetupCommands` |
+| `from: start` derive | None | `materialize` from the copied plan, with the copied uploads, adopting the slot's staged trees | The plan's commands and `additionalSetupCommands` |
+| A resume before the first checkpoint | As the first bind it repeats | As the first bind it repeats | As the first bind it repeats |
+
+The stored plan holds each clone's commit and each command's `cwd`, so a rebuild materializes the same commits and runs each command in the same folder ([RV D19](../0140-runtime-revisions/change.md#field-classes), [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory)). Every path in this table creates entries owned by the slot UID: the seed through broker-created entries ([IC-5](../0131-incremental-checkpoint/change.md#ic-5-restore-derive-download-and-seal)), and everything else through the helper. The open item on dubious ownership that the egress and session-derive designs carry is settled. A path with a seed clears the slot's staged trees in `restore-complete`, which removes the withheld stores' trees and renames the rest aside for a background `discard`, because the seed brings its own repositories, and the runtime launches after the last row's helper run and setup commands (PL-8).
+
+### WM-14 Memory sizing
+
+**What the spike measured.** The helper's own resident memory is small: 20 to 33 MB for 100,000 files in a `tar.gz`, 61 to 75 MB in a zip, and 4 to 19 MB for large files **[measured]**. The pages it writes are charged to the slot's memory cgroup, and that is where the risk lies **[measured]**:
+
+- A slot with a 512Mi limit, beside an adapter with no limit, took 9.8 to 20.2 s to write 1 GiB of large files from a `tar.gz` and 37.7 to 42.5 s from a zip under runc, against 0.7 to 1.3 s under gVisor. The likely cause is per-cgroup dirty-page writeback throttling **[inference]**.
+- In a back-to-back run with equal 1Gi limits under runc, the slot ended during the second run's broker-path baseline, after 69,200 of 100,000 files, with 2.2 GB on the volume. The study attributed it to an out-of-memory kill and did not isolate the cause **[measured]**. Kernel memory for the dentries and inodes of the runs' files, charged to the slot's cgroup, is one candidate **[inference]**.
+- In a separate run whose recorded manifest limits both the adapter and the slot to 1Gi under runc, the adapter container ended during the broker-path baseline for the 100,000-file zip, with the controlling command killed by SIGKILL. The study's summary does not mention this run, and its cause was not recorded **[measured]**. The broker-path baseline is the adapter writing through broker descriptors, which is also how a restore writes, so this run bears on the adapter's own memory during a restore **[inference]**.
+
+An out-of-memory kill takes every process in the slot container, the supervisor included, and the slot is then dead for the pod's life ([SI-4](../0145-session-isolation/change.md#si-4-slot-liveness-and-the-slot-count)). A materialization that kills its slot therefore costs the pod a slot, beyond failing the session.
+
+**The floor (D11).** The platform-wide Helm value `runtimes.minSlotMemoryBytes` is the floor on a slot container's memory limit, 1Gi until the validation of "Validation owed" in `steps.md` replaces it. Pool and resource-class validation refuses a configuration whose per-slot memory falls below it, counting the pool's `shmSizeLimitBytes` in the slot's memory ([PL-9](../0118-agent-pod-layout/change.md#pl-9-pool-settings-and-renames)). A platform admin may lower the floor, which logs a warning, and a pool owner may not configure below it. Billing decision 7's mapping refuses a resource class whose per-slot share falls below it **[design]**.
+
+**Pacing.** Whatever the floor, the helper paces its writeback: it calls `fdatasync` and `posix_fadvise(POSIX_FADV_DONTNEED)` on each file every 8 MiB it writes, which bounds the dirty pages one run holds **[inference]**. The 8 MiB interval is an internal constant (D11). A reflink clone writes no data pages, so it needs no pacing.
+
+**Restore stays charged to the adapter.** The adapter writes a restore through broker descriptors, so a restore's dirty pages count against the adapter's cgroup. Under the owner's layout, `/session` is disk-backed, so SI-6's tmpfs charge for restored session files no longer applies, and the remaining charge is page cache that writeback clears **[inference]**. The owner kept restore in the adapter, to be revisited if that charge becomes a problem (D4).
+
+### WM-15 Warm-up checkout and reflink rebuild
+
+**What is staged (D16, D22, D25).** A runtime declares which repositories its sessions are expected to clone by putting `prestage: true` on their `gitRepository` entries of `sharedAssets`. The pod stages every entry of its rendered warm list that carries `prestage: true` ([`0147-tenant-derived-runtimes`, "Warm stores"](../0147-tenant-derived-runtimes/change.md#warm-stores)), which are these **[design]**:
+
+- the operator's `gitRepository` entries of the runtime's `sharedAssets` with `prestage: true`, on every pool of the runtime ([`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md#decisions), D29);
+- a tenant's `gitRepository` assets with `prestage: true` ([`0147-tenant-derived-runtimes`, "Tenant shared assets"](../0147-tenant-derived-runtimes/change.md#tenant-shared-assets)), on the pool owned by that one tenant ([DR-5](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools)), because a shared pool's next session can belong to any tenant.
+
+An entry without `prestage` fills a store and stages nothing, and a default clone stages nothing by itself: it is a source a staged tree can serve. The pod controller renders the warm list for `lenny-store-fill`, which fills the stores, and for the adapter, which reads it for `prestage` and for the contribution to the platform chunk sets. The pod stages the list of the runtime revision its template names, because the list comes from `sharedAssets`, which is pod-affecting, while `workspaceDefaults` is gateway-read and outside the pod hash ([RV D19](../0140-runtime-revisions/change.md#field-classes)) and decides only which source adopts a tree. A session's composed workspace, its runtime's default clones followed by the plan's sources, decides what is adopted: at bind the first `gitClone` source whose URL a staged entry's store serves, and that a store may serve, which leaves out a source with `depth` or `submodules: true`, adopts that entry's tree at its own `path`, checks it out in place when its commit differs from the staged one, and the helper discards every staged tree no source adopts ("Adoption at bind" below). A pod whose staged list differs from the session's workspace therefore costs a checkout and never a wrong tree. A runtime write, an operator's or a tenant's, answers with a `Warning` when the staged trees of its entries with `prestage: true`, as the latest `prestage` runs on its pools measured them, together exceed half of `workspaceSizeLimitBytes`, because every idle slot holds them and a session that adopts none of them still carries their bytes until the background `discard` ends ([`0147-tenant-derived-runtimes`, "Warm stores"](../0147-tenant-derived-runtimes/change.md#warm-stores)).
+
+**Why an entry names no path (D25).** The owner asked, on 2026-11-14: "does prestage need a path? Can't the path be determined at the time of copying (based on workspaceDefaults and the session plan)?" The path is read from the composed workspace at bind. The adoption renames the staged tree within the slot's workspace volume, so every file keeps its inode number and modification time and the index the run refreshed stays valid at the new path, and nothing in the tree records its own location: its alternates name the store by its absolute path under `/lenny/git-stores`, and `lenny.gitStoreUrl` and `lenny.baseCommit` name the repository and the commit.
+
+**When it is staged.** The adapter runs `prestage` in each slot **[design]**:
+
+- at warm-up, after `lenny-store-fill` has filled the stores and their pristine trees and ended, and after the start-up canary check, the start-up Sweep, and the empty check, and before the pod reports READY ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction), "Start-up canary");
+- at the end of each slot release, after End, Sweep, cleanup, End, the second Sweep, the adapter's removal of what remains, and the emptiness check ([SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands)). The release launches no runtime (PL-8).
+
+The slot accepts a session as soon as its release has passed the emptiness check. If a session binds while `prestage` runs, the adapter cancels the run, runs `discard` on `.lenny-prestage`, and materializes the plan without staged trees, so staging never delays a bind.
+
+**Timeout (D26).** Each `prestage` run ends at the pod's warm-up checkout timeout **[design]**. It is the `prestageTimeoutSeconds` of the runtime revision the pod's template names, with a tenant-derived runtime's value merged over its base revision's, else the pool's `prestageTimeoutSeconds`, else the chart value `adapter.prestageTimeoutSeconds`, 900 seconds by default. An operator sets it on a Runtime or a pool, and a tenant admin sets it on a tenant-derived runtime within the grant entry's `maxPrestageTimeoutSeconds`, whose default is the chart value ([`0147-tenant-derived-runtimes`, "Fields"](../0147-tenant-derived-runtimes/change.md#fields)), because a tenant chooses which repositories its owned pool stages. The pod controller renders the value onto the adapter, so the runtime's field is versioned and pod-affecting ([`0140-runtime-revisions`, "Field classes"](../0140-runtime-revisions/change.md#field-classes)), and a pool's change reaches pods created afterwards. A longer timeout delays READY at warm-up by at most its value and delays no bind, because a bind cancels the run after a release.
+
+**What `prestage` does.** For each entry, the helper builds the repository in `/workspace/.lenny-prestage/<entry>`, where `<entry>` is an identifier the adapter assigns:
+
+1. `git init` with `--template=`, the store's objects directory written to `objects/info/alternates`, and the config keys `lenny.gitStoreUrl` and `lenny.baseCommit`, as rule 3 does at bind ("WM-10").
+2. The tree-size check on the store's commit, charged against the slot's `workspaceSizeLimitBytes` across every entry the run stages.
+3. A detached checkout of the store's commit, which needs no fetch, because the store holds it. Where the pristine tree allows it, the reflink rebuild below replaces the checkout.
+4. The index refresh at the end of the run, after whatever remains of 1 s.
+
+The run uses no fetch grant and reaches no network.
+
+**A skipped entry.** An entry whose tree-size check stops, because its tree would take the slot past its `workspaceSizeLimitBytes` or past `adapter.maxCloneTreeEntries`, and every entry not yet staged when the run reaches its timeout, is skipped in that slot **[design]**. The helper removes the entry's partial directory, the run ends with the entries it staged, and the slot still reports ready. A session that clones the repository on that slot builds it from the store under rule 3, as a source with no staged entry is built. The adapter counts each skip in `lenny_prestage_skipped_total` by reason, `git_tree_limit` or `timeout`, and reports it as a `PrestageSkipped` event on the `AgentPod` naming the entry and the reason, and the next `prestage` of the slot, after its next release, tries the entry again.
+
+**Adoption at bind.** `materialize` without a seed handles the staged entries in this order **[design]**:
+
+1. It removes the staged tree of every store the session withholds, before it applies any source. The adapter has already deleted the store itself, and no runtime process exists in the slot, so the tree is gone before the session starts.
+2. At the plan position of the first `gitClone` source of the composed workspace, defaults first, whose normalized URL a staged entry's store serves and that sets neither `depth` nor `submodules: true`, it renames `.lenny-prestage/<entry>` to that source's `path`, whatever the path is, and sets the repository's `origin` to the adopting source's URL, which equals the store's URL after normalization. A target that already exists is merged path by path under the collision rule, as a built clone is ("WM-7"). A later source of the same URL in the same workspace is built from the store under rule 3, as a source with no staged entry is.
+3. When the source's `resolvedCommitSha` differs from the staged commit, it fetches the commit through `netagent` under the run's fetch grant when the commit is not reachable, runs the tree-size check on the new commit, checks it out in place, which writes only the files that differ, and sets `lenny.baseCommit`.
+4. After the last source, it renames `.lenny-prestage`, with any entry the plan did not use, to `/workspace/.lenny-discard-<id>`.
+5. It runs the index refresh at the end of the run.
+
+The helper charges every adopted tree and every tree it renamed aside against the remaining workspace bytes, so bytes the background deletion has not yet freed still count. It keeps charging a tree renamed aside because the kubelet counts those bytes against the volume's `sizeLimit` and the disk watch counts them too, until the `discard` frees them: a check that left them out would admit a plan that the disk watch then fails, or that the kubelet ends by evicting the whole pod.
+
+**Unused trees.** After the runtime launches, the adapter runs `discard` on `.lenny-discard-<id>` in the background. A foreground run that the session needs, an overlay or a capture copy, cancels it, and the adapter runs it again afterwards; a `discard` that was killed partway resumes where it stopped. If the session ends first, the release Sweep removes the tree. A tree renamed aside can come only from a store the session may read, because withheld stores' trees were removed in step 1, so its visibility to the runtime exposes nothing the session cannot already read through `/lenny/git-stores`.
+
+**With a seed.** A resume or a `from: latest` derive restores its own repositories, so `restore-complete` removes the withheld stores' staged trees first and renames the rest of `.lenny-prestage` aside for a background `discard`.
+
+**Checkpoints and downloads.** The walk, the tracker, the download, and the exports skip `.lenny-prestage` and `.lenny-discard-<id>` ([IC-1](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes), "Reserved names"; PL-3). The disk watch counts them, because their bytes are on the volume.
+
+**Platform chunk sets.** On a never-launched pod, one to which no session has bound on any slot ([SIR-38](../0145-session-isolation/change.md#requirements)), after the first `prestage` of every slot and before READY, the adapter contributes each staged entry's working tree, without `.git`, to its store's platform chunk set, and the runtime's `artifact` and `inline` assets to the runtime's set, under [`0131-incremental-checkpoint`, "IC-4", "Platform chunk sets"](../0131-incremental-checkpoint/change.md#platform-chunk-sets) **[design]**. It reads one slot's staged tree through that slot's broker and uploads only chunks the set does not hold. It never reads a pristine tree or anything else on the store volume, which holds repository data that only `lenny-store-fill` parses ("WM-9"). A staged tree's chunks go to the source of the warm-list entry that staged it, so a tenant's entry feeds that tenant's set and never a platform-owned set of the same URL. The adapter records the identity of each staged file and the commit it was staged at, in every `prestage` run, on every pod, so that a session that adopts the tree at bind has its file index seeded from the matching contribution and its first pre-copy reads no unchanged adopted file. A `prestage` at a slot release adds nothing to a set, because a session has bound to the pod. A bind runs the session's setup commands before the runtime launches, so the first bind, rather than the first launch, ends a pod's contributions.
+
+**Reflink rebuild.** A checkout writes every file of the tree, which costs disk and time on each slot at every release. Where the filesystem supports reflinks, the helper builds the staged tree from a pristine tree instead **[design]**:
+
+- **The pristine tree.** When `lenny-store-fill` fills a store, it also checks out the store's commit, without a `.git` directory, at `<hash>.tree` beside the store on the store volume, which slots see read-only at `/lenny/git-stores/<hash>.tree`. After the checkout it sets every mode with an explicit pass that does not depend on the checkout's umask: directories `0775` with the store GID as their group, regular files `0444`, and executable files `0555`, with every setuid and setgid bit cleared, so the slots read it through the other class and the adapter can delete it through the group class (D23). It writes one pristine tree per store that serves a staged entry. `warmCloneBytes` covers it, and a withheld store's pristine tree is deleted with the store.
+- **The rebuild.** For each entry the helper creates the repository as step 1 of `prestage` states, then walks the pristine tree. It creates each directory, creates each regular file as the slot UID with `O_CREAT | O_EXCL` and the mode git records for it, clones its content from the pristine file with `FICLONE`, and recreates each symbolic link with the target the pristine tree holds. It then writes the index from the commit with `git read-tree` and runs the index refresh. The files are the slot UID's own, and each copy is independent: a write to one copies only the written extents.
+- **The fallback.** The helper tries `FICLONE` once per run. On `EOPNOTSUPP`, `EXDEV`, or `EINVAL`, as under gVisor and on Kata, it falls back to the normal checkout for every entry of the run **[measured]** for gVisor, **[inference]** for Kata.
+- **The kubelet's count.** The kubelet counts each clone at full size against the slot's workspace volume, and the disk watch counts it so too ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)), so the rebuild saves node disk and time without changing any size limit.
+
+Whether the refresh after `git read-tree` re-reads every file, and whether a copied index under `core.checkStat=minimal` avoids that, is owed ("Validation owed" in `steps.md`). The rebuild stays this simple: one pristine tree per store, at the store's commit, and the normal checkout everywhere else.
+
+### WM-16 Reflink clones of staged uploads
+
+**The clone (D15).** For an `uploadFile` source, and for a child's file, the helper creates the target as the slot UID and clones the staged file's content into it with `FICLONE` on the descriptor it received. The spool volume and the workspace volume are directories of one node filesystem on runc, and Linux 5.18 and later allow a clone across two mounts of one filesystem, which spike 2 measured from a slot volume into the spool in 36 to 98 µs for 200 MiB with every extent shared **[measured]**. The helper then applies the source's mode **[design]**.
+
+**Fallbacks.** On `EOPNOTSUPP`, `EXDEV`, or `EINVAL` the helper uses `copy_file_range`, which under gVisor made real copies at 41 to 48 ms per 200 MiB, and then plain reads and writes, at 105 to 127 ms per 200 MiB **[measured]**. It probes once per run and keeps the method that worked.
+
+**What it saves.** The upload's bytes are written to disk once, into the staging file, and the workspace file shares them. The adapter's truncation of the staging file after the source drops only the staging file's reference, so the clone keeps its content ("WM-4"). An archive is still decompressed, because its entries are not stored in the archive as they appear on disk. The kubelet counts the clone at its full size against the workspace volume, as it counts any file there.
+
+## Worked example
+
+Alice creates a session on pool `team-agents` under runc on XFS. The Runtime's defaults hold a file `AGENTS.md` and a default clone of `github.com/acme/monorepo` at `path: repo`, and its `sharedAssets` holds a `gitRepository` entry for that URL with `prestage: true`, so a store on the pod serves the clone, and Alice's plan adds an uploaded `fixtures.tar.gz` at `pathPrefix: repo/test/fixtures` and an uploaded `notes.pdf`.
+
+1. Before the session, at the end of slot 0's last release, the adapter ran `prestage`. The helper, as UID 20000, built `/workspace/.lenny-prestage/e0` by cloning the files of `/lenny/git-stores/<hash>.tree` with `FICLONE`, wrote the index from the store's commit, and refreshed it.
+2. The gateway composes the plan, resolves the clone's commit, which is two commits past the store's, and stores the plan. Alice's uploads are stored as received.
+3. At finalize, the adapter writes the helper plan: source 0 the default file, source 1 the clone with its commit, its store directory, and staged entry `e0`, source 2 the archive as content index 0, source 3 the PDF as content index 1, the remaining workspace bytes, and the archive ceilings. It seals the memfd, registers a fetch grant for the monorepo URL, creates the content socket, shuts down its read side, and sends `setup` with `nfds` 6.
+4. The supervisor starts the helper as UID 20000 in `/workspace` with the plan at descriptor 3, the result pipe at 4, and the content socket at 5. The helper finds only `.lenny-prestage`, writes `AGENTS.md`, renames `.lenny-prestage/e0` to `/workspace/repo`, fetches the two commits through `netagent`, runs the tree-size check, and checks out the new commit in place, which writes only the files that changed.
+5. The adapter fetches the archive from the gateway, writes it to a `0600` file under `/adapter/spool/0/staging/`, counts 31 MB, and sends its descriptor and a done pipe. The helper extracts it into `repo/test/fixtures`; one entry overwrites a file the checkout wrote, which raises `workspace_plan_path_collision` with source 2 winning over source 1. The helper closes both descriptors, and the adapter sees the done pipe hang up, truncates and unlinks the staged file, and stages the PDF, which the helper clones into `/workspace/notes.pdf`.
+6. The helper renames the now empty `.lenny-prestage` to `.lenny-discard-7`, waits out the rest of 1 s since the checkout, refreshes the index, and writes `{"ok":true,"warnings":[...],"warningsDropped":0}`.
+7. During the run the adapter's broker requests and pings for slot 1 and slot 0 were answered as usual. The adapter gets `setupdone` with `exit` 0, decodes the result, revokes the grant, and checks the working directory `repo` through a broker `open`. Alice's client receives the collision warning marked slot-reported.
+8. The adapter sends each setup command as its own `setup` with two log pipes and the cancel pipe, keeps 64 KiB of each stream, and, when they are done, asks the supervisor to launch the runtime. It then runs `discard` on `.lenny-discard-7` in the background.
+
+## Requirements
+
+| # | Requirement |
+| :-- | :-- |
+| WMR-1 | Every write of a plan source, a workspace default, a parent's export, a mid-session upload, a child-file import, a warm-up checkout, and a snapshotless rebuild into a slot's workspace runs in `lenny-materialize` as the slot UID, through `setup` on the slot's `CH-SUPERVISE` (D1, D9, D16). |
+| WMR-2 | No platform-privileged process parses untrusted content. The adapter's restore and the gateway's download rendering decode only platform-produced pack and manifest formats, with chunk hashes verified and decoders bounded. The warm stores and their pristine trees are written by `lenny-store-fill`, which holds no credential and runs only on warm-list repositories before any session code, and the adapter runs no git ("WM-9", D20). |
+| WMR-3 | The adapter restores a seed through the broker, and a helper run applies sources only after the seed (D4). |
+| WMR-4 | Every git step on a slot repository runs in the helper with the pinned git, and the adapter runs no git on slot repositories (D3, D9). |
+| WMR-5 | The adapter takes no size, count, path, or hash from a helper result. Success requires `setupdone` with `exit` 0 and no `error`, and a valid result with `ok: true`, and anything else fails the run. |
+| WMR-6 | The adapter decodes a result strictly under "WM-5": at most 64 KiB, no unknown or duplicate member, no trailing data, reasons and warning codes from closed sets, indexes in range, a strip warning only for an archive with `stripComponents` above 0, `entryPath` at most 4,096 bytes, and at most 256 warnings. |
+| WMR-7 | A client-visible warning built from a helper result carries `provenance: "slot_reported"`, and its byte strings are rendered as data. |
+| WMR-8 | The helper enforces the running plan total, the §7.4 archive validators, and the tree-size charge on running counters while it streams. |
+| WMR-9 | The helper resolves every path component beneath `/workspace` with `RESOLVE_BENEATH`, `RESOLVE_NO_XDEV`, `RESOLVE_NO_SYMLINKS`, and `RESOLVE_NO_MAGICLINKS`, and receives no directory descriptor. It keeps no cache of directory descriptors in the first release (D13). |
+| WMR-10 | The helper and the pinned git are staged with mode `0111` in `/lenny/bin`. The helper calls `prctl(PR_SET_DUMPABLE, 0)`, sets `FD_CLOEXEC` on every descriptor it received, and runs with an empty environment (D7). |
+| WMR-11 | The supervisor reads requests with `recvmsg` and `MSG_CMSG_CLOEXEC`, binds a descriptor batch to the line holding the last byte of its read, accepts descriptors only with a `setup` and only in the exact `nfds` count from 3 to 253, refuses `MSG_CTRUNC`, keeps only the cancel pipe's read end after the program holds its descriptors, and answers `setupdone` with integers and enumerated codes only. |
+| WMR-12 | At most one `setup` or `cleanup` run is outstanding per slot. During a run the supervisor serves `fs`, `ping`, and `end` and answers every other request with `worker_busy`. A refusal keeps the request's reply type, means the request did not run, and carries no `exit` or `signal` (D10). |
+| WMR-13 | The supervisor enforces each run's deadline as PID 1, sends `SIGKILL` to the program's process group at the deadline, on cancellation, and when the program exits on its own, and reports a status that does not arrive within 5 s as a failure. |
+| WMR-14 | The adapter cancels a run only by closing the cancel pipe's write end, no program receives the cancel pipe, and a cancelled helper run is followed by `discard` of every reserved name it could have left (D13). |
+| WMR-15 | `RLIMIT_FSIZE` is set on every helper run, to the remaining workspace bytes, and on no setup command (D13). |
+| WMR-16 | The capture copy completes before a checkpoint's pre-copy pass. A checkpoint waits for an outstanding run's `setupdone` before its capture copy, and its walk, the export reads, and the seal proceed during a run and skip the reserved names. |
+| WMR-17 | Slot memory for materialization is validated on managed nodes under runc, gVisor, and Kata before the default of `runtimes.minSlotMemoryBytes` changes from 1Gi. Pool and resource-class validation refuses a per-slot memory below the floor, a platform admin may lower it with a logged warning, and the helper paces its writeback every 8 MiB (D11). |
+| WMR-18 | Content sources reach the helper only on the content socket, one at a time in plan order, each as an `O_RDONLY` descriptor of a `0600` adapter-owned staged file with a done pipe. The adapter shuts down its read side of the socket, reads nothing from a done pipe, and truncates and unlinks each staged file once its done pipe hangs up (D12). |
+| WMR-19 | Hash verification of uploads and imports runs in the adapter on the staged file before its descriptor reaches the helper. |
+| WMR-20 | A helper run's result and logs reach the adapter only through pipes, and the adapter drains each log pipe to its end, keeping 64 KiB of each stream (D2). |
+| WMR-21 | The pod's staged bytes never exceed the staging space, `spoolSizeLimitBytes / spoolHeadroomFactor` less every slot's `checkpointCaptureBudgetBytes`. The gateway refuses an upload, an export into a child, or an import larger than the receiving pool's staging space before any byte reaches a pod, and a source that does not fit the free space waits and fails with `staging_timeout` at its run's deadline (D19). |
+| WMR-27 | Pool admission refuses a pool whose staging space is below `minStagingBytes`, 1 GiB (D19). |
+| WMR-28 | `lenny-store-fill` runs as an init container after the `netagent` native sidecar and before the adapter, under a UID distinct from the adapter's and every slot's, with no service account token, no VCS token, and the store volume as its only writable mount. The stores and pristine trees it writes are readable by every slot. The adapter's read-write mount of the store volume serves only the deletion of withheld stores (D20). |
+| WMR-22 | An overlay assembles entries in an overlay directory on the workspace volume and moves them into place, removes the directory on failure, falls back from `RENAME_NOREPLACE` on `EINVAL` to a check and a rename, and a leftover after a failed `discard` keeps its reserved name until the slot release. |
+| WMR-23 | A pre-start `materialize` without a seed fails unless `/workspace` holds no entry other than `.lenny-prestage` and an empty `lost+found` directory. |
+| WMR-24 | Before a helper run that may fetch, the adapter registers a fetch grant with `netagent` scoped to the slot, the URLs, and the run's window, and revokes it at `setupdone` (D6). |
+| WMR-25 | The warm-list entries with `prestage: true` of "WM-15" are staged by `prestage` at warm-up and after each slot release, an entry that fails its tree-size check or the run's timeout is skipped with the slot left ready, the staged trees are adopted by rename at bind, and the staged tree of a withheld store is removed by the helper before any source is applied, while the adapter deletes only the store and its pristine tree. A bind cancels a running `prestage`. Unused staged trees are renamed to `.lenny-discard-<id>` and deleted by a background `discard` (D16). |
+| WMR-26 | Where `FICLONE` works, `prestage` builds a staged tree by cloning the pristine tree's files into slot-owned files, and the helper clones an `uploadFile` source or a child's file from its staged file. Elsewhere it falls back to a checkout, to `copy_file_range`, and to reads and writes (D15, D16). |
+
+## Security properties
+
+- WMS-1. A parser bug in the helper reaches only what the session already reaches: the slot's writable volumes and its `/tmp`. The spike's naive extractor as the slot UID got `EROFS` on the stores, the stage volume, and `/run/lenny`, and could not reach the spool or another slot, which the same extractor as the adapter UID wrote **[measured]**.
+- WMS-2. Neither the gateway nor the adapter decompresses an archive or runs git. The gateway no longer holds a plan's archives or their extracted entries in memory. Git data of the warm list's stores is parsed only by `lenny-store-fill`, which holds no credential and ends before any session code runs ("WM-9", D20).
+- WMS-3. A forged result can fail its own session, report success over a wrong tree, show its own client false warnings from the closed set marked slot-reported, and move the extraction-abort metric's label within its closed set. It cannot affect the adapter, another slot, a quota, or billing ("WM-5").
+- WMS-4. A process beside the helper in the slot cannot forge its result, change its plan, or alter its content: the helper is non-dumpable, the pipes' inodes belong to the adapter, the plan is sealed, and the content descriptors are read-only descriptors of files the slot cannot open **[measured]**.
+- WMS-5. `CH-SUPERVISE` still carries no byte a slot process wrote. Slot-written bytes reach the adapter only on the result and log pipes, which the adapter treats as untrusted. The content socket and the done pipes carry nothing from the helper to the adapter.
+- WMS-6. The helper holds no credential. `netagent` attaches git credentials, and the slot container holds no service account token.
+- WMS-7. A run that never ends costs its session and none of the slot's broker service: the supervisor keeps serving `fs`, `ping`, and `end`, kills the run at its deadline, and reports it within 5 s more **[measured]**.
+- WMS-8. Every hostile archive the spike sent left no byte outside the target: zip-slip and absolute paths, links to `/tmp` and `../../..`, writes through an in-tree link, hard links inside and outside the tree, a character device, a FIFO, setuid, setgid, and sticky modes, 10,001 entries, depth 41, and decompression bombs, with identical outcomes under runc and gVisor **[measured]**.
+- WMS-9. A helper that keeps a content descriptor past its turn holds no spool space, because the adapter truncates the staged file; and a setup command leaves no background job in its process group after it exits **[measured]** for the process group, **[design]** for the truncation.
+
+## Limits
+
+- **One run at a time per slot.** A long overlay, setup command, or capture copy delays the next run of that slot, a checkpoint's capture copy among them. Broker requests, pings, and `end` are not delayed ("WM-11").
+- **Memory.** Materialization's pages count against the slot's memory, and an out-of-memory kill loses the slot for the pod's life ("WM-14").
+- **gVisor.** No `RENAME_NOREPLACE`, so no-replace moves use a check and a rename; no `FICLONE`, so staged uploads are copied and warm-up checkouts are full checkouts; materialization of many small files is slower than under runc ("Validation record" in `steps.md`).
+- **Kata.** No reflink between the volumes, as on gVisor **[inference]**.
+- **Slot-reported data.** The client sees warnings the platform cannot verify, marked as such.
+- **Overlay visibility.** The runtime can see an overlay directory while the overlay runs, and a tree renamed aside until its background deletion ends.
+- **Plans with many small uploads.** Each content source costs one staged file, one message, and one done pipe, so a plan of thousands of `uploadFile` sources pays that per source; an archive is the efficient way to send many files.
+- **Background jobs in setup commands.** A setup command's background job in its own process group ends when the command exits. A job that must outlive the command has to `setsid`, and it ends at the next End.
+- **Warm-up checkouts cost each slot.** Every slot of every warm pod holds a checkout of each warm-list entry with `prestage: true`, which counts against its workspace limit and, without reflinks, its node disk and warm-up time.
+- **The store fill parses git before READY.** A defect in git during the fill reaches the `lenny-store-fill` container, which holds no credential, and could leave a malformed store that every slot of the pod reads; `transfer.fsckObjects=true` and the slots' own git checks bound what such a store can do ("WM-9").
+- **Shared staging space.** The slots of a pod share the staging space, so a slot whose source waits for space can be delayed by another slot's large source, and a pod with many slots at the default `spoolSizeLimitBytes` has less staging space per pod ("WM-4").
+- **The pinned git.** Each Lenny release carries one git version for materialization, and its security updates ship with Lenny releases.
+
+## Alternatives rejected
+
+- **Keep extraction in the gateway.** A parser bug runs in a process every tenant shares, and the gateway holds whole archives in memory **[source]**.
+- **Materialize in the adapter through broker `mkfile`.** The adapter would parse archives and run git with access to every slot's volumes and the spool, which the spike's naive extractor showed reachable **[measured]**. Speed does not decide it: under runc the broker baseline took 2.92 s against the helper's 1.53 s for 100,000 files in a `tar.gz`, and 1.60 s against 2.04 s in a zip **[measured]**.
+- **Results through a broker-read file in the workspace.** The session's processes could replace the file between the helper's write and the adapter's read (D2).
+- **A synchronous worker.** Revision 1's decision D5. On AWS a checkout held the broker for 19 s and a capture copy outlived the 120 s broker deadline **[measured]**, so the owner reversed it (D10).
+- **A cancel descriptor in the helper, or a cancel line on `CH-SUPERVISE`.** The supervisor is the program's parent and kills its process group, which needs no cooperation from the helper and works for setup commands too (D13).
+- **Bundle files.** Revision 1's answer to the descriptor limit. One source at a time over the content socket passes six descriptors per run whatever the plan holds (D12).
+- **Staging the whole plan, or streaming imports through a pipe.** Revision 1's O4 options. The first reserves spool space for every source of a plan at once, and the second gives the helper a second content path; the owner chose one source at a time with no streaming path (D12).
+- **Reading acknowledgments from the helper on the content socket.** That would put slot-written bytes into the adapter; the done pipe's hang-up carries the same signal with no bytes (D12).
+- **A directory-descriptor cache.** Not in the first release; its measurement decides a later one (D13).
+- **Running a one-slot pod's slot at the adapter's UID.** The owner asked whether a pod with one slot could run the slot under the adapter's UID to avoid staging. The coordinator advised against it, and the owner chose the reflink clone instead (D18):
+  - It breaks the checks that rest on distinct UIDs: the `SO_PEERCRED` identity of the adapter and the supervisor, `netagent`'s per-UID treatment of traffic, the separation of IPC objects, and file ownership on the shared volumes.
+  - It does not remove staging, because the containers' mounts still separate the adapter's spool from the slot's workspace.
+  - It brings back a second code path for one-slot pods, which the removal of the embedded model retired the same day.
+- **Checking out every clone at bind.** It puts the whole checkout in the session's start, 19.2 s for LLVM over a warm store on AWS **[measured]**; the warm-up checkout moves it before the session (D16).
+- **A pristine tree per slot, or hard links into the store volume.** A per-slot copy costs a checkout per slot anyway, and a hard link would share one inode between slots, so a write by one session would reach another. A reflink clone is a slot-owned file with independent content (D16).
+- **Restore through the helper.** Restore needs object-store grants over `CH-OBJSTORE` and the chunk checks of S4, it is the inverse of capture under SI decision D3, and the broker already restores exactly (D4).
+- **The runtime image's git or go-git.** See "WM-10" (D3).
+- **One `setup` carrying several commands.** A shared pipe cannot separate the commands' outputs or statuses ("WM-3").
+- **A per-slot staging allowance.** Revision 2's `stagingSizeLimitBytes` reserved the largest single source once per slot, which multiplies the reserved disk by the slot count and needs a value nobody knows ahead of time. The owner chose one pod-wide spool size instead (D19).
+- **The store fill in the adapter as a stated exception, or in `netagent`.** The first kept a git parser in the container that holds the pod's gateway credentials and every slot's volumes, and the second in the container that holds the egress identity and every upstream token. The owner chose a separate container (D20).
+
+## Specification changes
+
+| Section | Change |
+| :-- | :-- |
+| [§4.7.1 Role and Gateway RPC Contract](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract), the `PrepareWorkspace`, `FinalizeWorkspace`, and `RunSetup` rows | `PrepareWorkspace` serves one source's stored bytes at the adapter's request, archives as stored, which the adapter stages on its spool volume. `FinalizeWorkspace` restores a seed through the broker when the request carries one, runs `restore-complete`, and runs `lenny-materialize` in the session's slot, writing in place with no build tree and no promotion and adopting staged warm-up checkouts; with `mid_session` it runs `overlay`. `RunSetup` sends one `setup` per command. |
+| [§4.7.9 Startup Sequence for `type: agent` Runtimes](../../spec/04_system-components.md#479-startup-sequence-for-type-agent-runtimes), step 5 | Materialization and setup run through the session's slot supervisor, and the runtime launches after them; a failure maps as "WM-5" states. Before READY each slot runs `prestage`. |
+| [§4.7.10 Deployment Model](../../spec/04_system-components.md#4710-deployment-model), **Runtime supervisor.** | The `setup` request of "WM-3": `argv`, `cwd`, `env`, `timeoutMs`, `fsizeBytes`, and `nfds`; the descriptor layout with the cancel pipe at passed index 2 held only by the supervisor; `no_new_privs`, `RLIMIT_CORE` 0, and `RLIMIT_FSIZE` on helper runs; the process-group kill at the deadline, on cancellation, and at a normal exit; the `setupdone` reply with `exit` or `signal` and its errors, including `setup_failed` with `reason` `cwd` or `exec`, and `setup_spawn_failed`; the refusal rule; and service of `fs`, `ping`, and `end` during a run. `lenny-materialize` and the pinned git staged `0111` beside the supervisor. |
+| [§4.7.11 Adapter-Agent Security Boundary](../../spec/04_system-components.md#4711-adapter-agent-security-boundary), item 8 | Descriptors cross `CH-SUPERVISE` only on `setup`; `setupdone` carries integers only; the helper's result and the logs travel on pipes the adapter treats as untrusted; content reaches the helper on a socket the adapter does not read; the helper is non-dumpable. |
+| [§4.4.4 Checkpoint SLOs and Scheduling](../../spec/04_system-components.md#444-checkpoint-slos-and-scheduling), **Hard workspace size limit.** | The helper's running bound against `workspaceSizeLimitBytes` less the seed, with `RLIMIT_FSIZE`, the disk watch, and `sizeLimit` as backstops. |
+| [§5.1 Runtime](../../spec/05_runtime-registry-and-pool-model.md#51-runtime), **Derived Runtime Instantiation** | The order: withheld stores deleted, a seed restored through the broker, then the helper's sources. The requirement that the adapter remove all files before materializing becomes the helper's refusal of a workspace holding anything but `.lenny-prestage` without a seed. |
+| [§5.2 Pool Configuration and Execution Modes](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) | `spoolSizeLimitBytes`, 16 GiB by default, joins the pool fields, with the admission refusal of a pool whose staging space is below `minStagingBytes` (D19). Pool validation refuses a per-slot memory below `runtimes.minSlotMemoryBytes` (D11). |
+| [§6.1 What a Pre-Warmed Pod Looks Like](../../spec/06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) | A warm pod's slots hold the warm-up checkouts of the warm list's entries with `prestage: true` under `.lenny-prestage`, which the first `gitClone` source of each repository in a session's workspace adopts at its own `path`, and the stores hold their pristine trees, which `lenny-store-fill` writes before the adapter starts ("WM-15", D20, D22); PL owns the rest of the section. |
+| [§5.1 Runtime](../../spec/05_runtime-registry-and-pool-model.md#51-runtime), **`sharedAssets`** | A `gitRepository` entry's `prestage: true`, under which the warm-up checkout stages it (D25, which replaces D22's `path`); `0140-runtime-revisions` stages the field. The Runtime field `prestageTimeoutSeconds`, the warm-up checkout timeout, which a derived runtime overrides and a pool sets beside it (D26). |
+| [§6.4 Pod Filesystem Layout](../../spec/06_warm-pod-model.md#64-pod-filesystem-layout), **Responsibility split:** | The gateway materializes nothing; the helper writes the workspace; the adapter stages one content source at a time on the spool volume. PL rewrites the rest of the section. |
+| [§7.1 Normal Flow](../../spec/07_session-lifecycle.md#71-normal-flow), steps 10 to 13 | Step 12: the adapter fetches and stages each content source in turn, and the helper extracts or clones it as the slot UID. Step 13: setup commands run through the slot's supervisor, and the runtime launches after them. |
+| [§7.3 Retry and Resume](../../spec/07_session-lifecycle.md#73-retry-and-resume), step 3e | The snapshotless rebuild runs the helper from the stored plan. A resume from a checkpoint runs `restore-complete` after the restore. |
+| [§7.4 Upload Safety](../../spec/07_session-lifecycle.md#74-upload-safety) | Extraction runs in `lenny-materialize` at the slot UID while streaming, at the same ceilings and reason codes. The staging, validation, and promotion pattern becomes the in-place write before start and the overlay directory mid-session. The post-promotion symlink re-validation becomes the refusal at creation and `path_crosses_symlink`. Symbolic-link targets may not enter `/lenny`. The Upload Handler's extraction isolation leaves. Warnings carry slot-reported provenance and a cap of 256 with a dropped count (D14). The gateway refuses an upload larger than the pool's staging space at upload time, and a source that waits for staging space past its run's deadline fails, both with `staging_limit` (D19). |
+| [§7.5 Setup Commands](../../spec/07_session-lifecycle.md#75-setup-commands) | Output returns on log pipes, 64 KiB kept per stream; one `setup` per command; cancellation by closing the cancel pipe; a command's process group is killed when it exits, so background jobs in its group end with it. |
+| [§8.2 Delegation Mechanism](../../spec/08_recursive-delegation.md#82-delegation-mechanism), step 6 | The child's adapter stages each exported file in turn and the child's helper writes it. |
+| [§8.7 File Export Model](../../spec/08_recursive-delegation.md#87-file-export-model), **Validation:** | An exported archive is unpacked by the child's helper under the same validators. |
+| [§10.1.7 preStop Hook Drain](../../spec/10_gateway-internals.md#1017-prestop-hook-drain), **Reassembly on resume.** | Already removed by IC decision D4; no further change. |
+| [§13.4 Upload Security](../../spec/13_security-model.md#134-upload-security) | "Pod binaries neither decompress archives nor canonicalize paths on untrusted input" becomes the rule of "WM-9" with its checkpoint exception and the parsers it confines by construction, `lenny-store-fill` among them. **Archive validators** are enforced by the helper. "Size limits enforced at gateway and pod" names the gateway's body cap, the staging space with its refusal at upload, and the helper's running bound. |
+| [§14 Workspace Plan Schema](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema), the `mode` and `uploadArchive.stripComponents` field notes and **Path collision rule** | The helper applies modes as the slot UID with a umask of 0, dropping setuid, setgid, and sticky from archive entries. The helper applies `stripComponents`. The collision warning is emitted from the helper's result, slot-reported, and seeded paths are not tracked. |
+| [§14.1 WorkspacePlan Schema Versioning](../../spec/14_workspace-plan-schema.md#141-workspaceplan-schema-versioning), **Consumer obligations by consumer type.** and **Unknown `source.type` handling.** | The replay clones `resolvedCommitSha` through the helper. The adapter drops an unknown source type and emits the warning before it builds the helper plan. |
+| [§16.1 Metrics](../../spec/16_observability.md#161-metrics) | `lenny_upload_extraction_aborted_total` counts slot-reported reasons. New: `lenny_materialize_duration_seconds` by subcommand and outcome, `lenny_materialize_result_refused_total` by refusal, `lenny_setup_cancelled_total`, `lenny_prestage_adopted_total` by outcome (adopted, moved, unused), `lenny_prestage_skipped_total` by reason (`git_tree_limit`, `timeout`), and `lenny_materialize_reflink_total` by method (clone, copy, write). |
+| [§17.8.1 Operational Defaults — Quick Reference](../../spec/17_deployment-topology.md#1781-operational-defaults--quick-reference) | `runtimes.minSlotMemoryBytes`, 1Gi; `adapter.prestageTimeoutSeconds`, 900; `adapter.discardTimeoutSeconds`, 300; `spoolSizeLimitBytes`, 16 GiB; `minStagingBytes`, 1 GiB. |
+| [§15.1 REST API](../../spec/15_external-api-surface.md#151-rest-api), the upload routes and the error catalog | An upload larger than the pool's staging space is refused at upload with `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`, `details.reason: "staging_limit"`, and `details.limitBytes`, and the error's `details.reason` list gains `staging_limit` and `staging_timeout`, the second for a source whose wait for staging space reached its run's deadline, which `IMPORT_LIMIT_EXCEEDED` carries as well (D19). |
+| [§4.6.1 Warm Pool Controller (Pod Lifecycle)](../../spec/04_system-components.md#461-warm-pool-controller-pod-lifecycle) and [§6.4 Pod Filesystem Layout](../../spec/06_warm-pod-model.md#64-pod-filesystem-layout) | The `lenny-store-fill` init container, after the `netagent` native sidecar and before the adapter, under its own UID, with no credential and the store volume as its only writable mount, and the adapter's read-write mount of the store volume for the deletion of withheld stores alone (D20). PL stages the container in the pod blueprint. |
+| [§28.3 Registers](../../spec/28_communication-channels.md#283-registers), channel register | The `CH-SUPERVISE` vocabulary adds `setup` and `setupdone` with descriptors and the refusals. Rows for `CH-MATERIALIZE`, `CH-SETUPLOG`, `CH-MATRESULT`, and `CH-MATCONTENT` (O6, D21). `CH-FETCHGRANT` is the egress design's row. |
+| [§28.5.3 Intra-pod](../../spec/28_communication-channels.md#2853-intra-pod), `CH-SUPERVISE` | **Messages.** adds `setup` and `setupdone`, the `SCM_RIGHTS` descriptors and their count, and the supervisor's refusals. **Preconditions.** states that one `setup` or `cleanup` run is outstanding, that `fs`, `ping`, and `end` are served during it, and that every other request is answered `worker_busy`. **Timing.** states the bound as the deadline plus the 5 s status wait. Cards for the pipes and the content socket under O6. |
+| [§28.5.1 Gateway-to-pod](../../spec/28_communication-channels.md#2851-gateway-to-pod) | A card for `CH-MATERIALIZE` under O6, with `PrepareWorkspace` serving one source per request. |
+| [§28.6 Exclusivity and concurrency model](../../spec/28_communication-channels.md#286-exclusivity-and-concurrency-model) | One outstanding worker run per slot, with broker requests served beside it. |
+
+## Non-specification changes
+
+- `cmd/lenny-materialize` and its packages: the subcommands, `prestage` included, the plan decoder, the content socket reader with its done pipes, the streaming extractors for `tar`, `tar.gz`, and `zip`, the `openat2` resolver, the collision map, the overlay mover with its no-replace fallback, the reflink clones with their fallbacks, the pristine-tree rebuild, the git driver, and the result writer.
+- `schemas/` or `pkg/proto`: `MaterializePlan`, versioned, with paths as `bytes`, and the result's JSON schema.
+- `supervisor/`: the asynchronous worker of the spike's final tree, with `recvmsg` and descriptor bookkeeping, the `setup` handler, the descriptor layout, `cwd` resolution, `env`, the cancel watch, `RLIMIT_FSIZE`, `no_new_privs`, `RLIMIT_CORE`, the process-group kill, the refusal rule, and `setupdone`.
+- `pkg/adapter`: per-source fetching and staging on the spool volume, the content socket and done pipes, truncation of staged files, the plan writer and memfd sealing, the result decoder, the log readers, the per-slot run queue, cancellation by close, `prestage` at warm-up and after release, the background `discard`, the shared staging space with its wait and its reservation of each slot's spool cap, the deletion of withheld stores without git, the fetch-grant client, the working-directory check through the broker, and the removal of `workspace.Materialize*`, `RunSetup`'s local execution, `ExtractTree`'s tar path, and the refusal of `uploadArchive` and `gitClone`.
+- `pkg/gateway/podlifecycle/podsession`: removal of `rewriteExtractedSources` and its helpers, and `PrepareWorkspace` serving one source per request; `pkg/upload/archive` leaves the gateway. The Upload Handler and the delegation and import paths refuse a source larger than the pool's staging space.
+- `cmd/lenny-store-fill` and its image: the store fill and the pristine trees with the pinned git, moved out of the adapter, which then needs no git binary; the pod builder renders it as an init container (D20).
+- The pool schema and `lenny-pool-config-validator`: `spoolSizeLimitBytes`, `prestageTimeoutSeconds`, the staging-floor refusal, and the memory floor check.
+- The Runtime schema and the pod controller: `prestageTimeoutSeconds` on a Runtime and a derived runtime, and the rendering of a pod's effective warm-up checkout timeout onto the adapter (D26).
+- `charts/`: `runtimes.minSlotMemoryBytes`, `adapter.prestageTimeoutSeconds`, and `adapter.discardTimeoutSeconds`.
+- The release build: the pinned static git and its version record.
+- `docs/`: the pages listed under "Documentation".
+
+## Documentation
+
+The owner asked on 2026-11-13 that every design document all of its relevant details. The documentation changes land with the specification changes, and published pages cite no specification section numbers.
+
+| Page | Change |
+| :-- | :-- |
+| `docs/runtime-author-guide/lifecycle.md` and the workspace page of the runtime author guide | Materialization runs as the slot UID before the runtime launches, so the runtime finds its workspace complete at `session_start`. The reserved names at the top of `/workspace`, `.lenny-build`, `.lenny-prestage`, `.lenny-overlay-<id>`, and `.lenny-discard-<id>`, are the platform's, are skipped by checkpoints, downloads, and exports, and a runtime leaves them alone. An overlay directory is visible while a mid-session upload or import runs, and a tree renamed aside is visible until its background deletion ends. `FilesUpdated` arrives after a mid-session upload is in place. A setup command runs as the slot UID with the launch environment and `HOME=/tmp/home`, one command per request, with its output kept to 64 KiB per stream, and its process group is killed when it exits, so a background job ends with it unless it calls `setsid`, and then at the next End. Archive entries lose setuid, setgid, and sticky bits, and symbolic links are refused unless the Runtime sets `allowSymlinks`, and even then may not leave `/workspace` or enter `/proc`, `/sys`, `/dev`, `/run/lenny`, or `/lenny`. Materialization uses its own pinned git, and the runtime's git is whatever its image ships. |
+| `docs/operator-guide/configuration.md` and `docs/reference/configuration.md` | Each setting with its default and bounds: `spoolSizeLimitBytes` (16 GiB per pod) with the staging space it leaves at each slot count and the 1 GiB `minStagingBytes` floor admission enforces; `runtimes.minSlotMemoryBytes` (1Gi), which a platform admin may lower with a logged warning and a pool may not go below; `adapter.prestageTimeoutSeconds` (900), with `prestageTimeoutSeconds` on a Runtime and on a pool, which override it in that order, and a tenant-derived runtime's value within its grant entry's `maxPrestageTimeoutSeconds`; `adapter.discardTimeoutSeconds` (300); `adapter.maxCloneTreeEntries`; the §7.4 archive ceilings as non-tunable maxima that deployer policy may lower; the 256-warning cap per run; `controller.tuning.gitStoreFillTimeout` and `warmCloneBytes` for the store fill; and `prestage: true` on a `gitRepository` entry of `sharedAssets` (D25, decision 67 of the egress design), which stages a checkout in each idle slot that the first `gitClone` source of the repository in the session's workspace adopts at its own `path`, while a staged tree that no source adopts never appears in a checkpoint, download, or export and is visible only under `.lenny-discard-<id>` until its `discard` ends. |
+| `docs/operator-guide/namespace-and-isolation.md` and the pod page of the operator guide | The `lenny-store-fill` init container, its UID, its absent credentials, its read-write store volume, and the adapter's delete-only use of that volume; the warm-up checkout and the reflink rebuild, which need runc on XFS with `reflink=1` or Btrfs and Linux 5.18 or later, and fall back to a full checkout under gVisor and Kata; and the supervisor's need for Linux 5.9 or later. |
+| `docs/operator-guide/troubleshooting.md` | The failure modes and what each looks like: `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` with each validator reason, `git_tree_limit`, `content_mismatch`, `staging_limit` at upload, and `staging_timeout` after a wait for staging space; `WORKSPACE_PLAN_INVALID` with `path_crosses_symlink`, `target_exists`, `target_type_conflict`, or `workspace_not_empty`; `SESSION_CREATION_FAILED` with `git_fetch_pending`, `git_fetch_failed`, or `git_checkout_failed`; a run that times out or is cancelled; a slot lost to an out-of-memory kill during materialization, which costs the pod that slot; a store fill that fails or times out, which keeps the pod from READY; a `prestage` that skips an entry after its tree-size check or its timeout, which leaves the slot ready and the repository built from the store at bind, and which `lenny_prestage_skipped_total` and the `PrestageSkipped` event report; and the runtime write's `Warning` when the staged trees exceed half of `workspaceSizeLimitBytes`. |
+| `docs/reference/metrics.md` | `lenny_upload_extraction_aborted_total`, `lenny_materialize_duration_seconds`, `lenny_materialize_result_refused_total`, `lenny_setup_cancelled_total`, `lenny_prestage_adopted_total`, `lenny_prestage_skipped_total`, and `lenny_materialize_reflink_total`. |
+| `docs/client-guide` upload pages | An upload larger than the pool's staging space is refused when it is uploaded, a warning built from the helper's result carries `provenance: "slot_reported"`, and an archive skipped under `stripComponents` reports at most 256 warnings with a dropped count. |
+| `docs/reference/` pages for the intra-pod channels | `CH-SUPERVISE` with `setup` and `setupdone`, and `CH-MATERIALIZE`, `CH-SETUPLOG`, `CH-MATRESULT`, and `CH-MATCONTENT`. |
+
+## Tests
+
+| Tier | Test |
+| :-- | :-- |
+| 1 | The helper's extractors against every hostile archive of "Validation record" in `steps.md`, the running-counter checks, the collision map, mode handling, the `openat2` resolver, the no-replace fallback on `EINVAL`, the tree-size charge, and the content socket's index check. The adapter's result decoder against each forged result. The supervisor's `setup` parser against stray, missing, extra, and truncated descriptors, a relative `argv[0]` with a slash, and a `cwd` outside the root. The rendered warm-up checkout timeout: the runtime revision's `prestageTimeoutSeconds`, then the pool's, then `adapter.prestageTimeoutSeconds`, with a tenant-derived runtime's value over its base revision's. |
+| 2 | The supervisor in a container as a non-root UID, under runc and gVisor: `setup` with a deadline, a cancellation by close, a byte on the cancel pipe that cancels nothing, `worker_busy` and the closed descriptors of a refused request, `fs` and `ping` served during a run, `end` during a run, the process-group kill at a normal exit, `SIGXFSZ` at `fsizeBytes`, and `setup_failed` with `reason` `cwd` and `exec`. The helper with a plan memfd and the content socket, staged files sent one at a time, a staged file truncated while the helper holds it, and `FICLONE` with its fallbacks. |
+| 3 | `MaterializePlan` and the result schema between the adapter and the helper, and `setup` and `setupdone` between the adapter and the supervisor. |
+| 4 | Staging: an upload larger than the pool's staging space is refused at upload with `staging_limit`; a contribution reads the staged tree through a slot's broker and no file of the store volume, and a tenant entry's tree feeds the tenant-owned set; the pristine tree's modes are `0775`, `0444`, and `0555` whatever umask the checkout ran under; on a pod with two slots, a source that does not fit the free space waits for the other slot's source and then stages, and fails with `staging_timeout` at its run's deadline, as `IMPORT_LIMIT_EXCEEDED` for an import; pool admission refuses a pool whose staging space is below 1 GiB; each slot's spool cap stays reserved while the other slot stages. The store fill: `lenny-store-fill` fills the stores and pristine trees before the adapter starts, slots read them, the adapter deletes a withheld store without running git, and on Kata `block-plain` and under user namespaces the volume's ownership lets both happen. |
+| 4 | A pod with two slots: pre-start materialization of every source type including a `gitClone` against a store; `prestage` at warm-up and after a release, of an operator `gitRepository` entry and of a tenant `gitRepository` asset with `prestage: true`, adoption at bind by a default clone and by a plan's clone at any `path`, with and without a moved commit, the adopted files keeping their inode numbers and modification times, a second source of the same URL built from the store, no adoption by a source with `depth`, a withheld store's staged tree removed before any source, an unused tree renamed aside and deleted in the background, the adopted repository's `origin` set to the adopting source's URL, an entry whose tree-size check stops skipped with the slot still ready and the session's clone built from the store, and a bind that cancels a running `prestage`; a mid-session upload; a child-file import with and without `overwrite`; a resume with `restore-complete`; a capture copy before a checkpoint; a checkpoint walk during an overlay that skips the overlay directory; setup commands with output on pipes; and a cancelled run followed by `discard`. |
+| 5 | The same on Kind with `netagent` and a fetch grant, and a snapshotless rebuild. |
+| 6 | Materialization of 100,000 files and of 1 GiB in large files on EKS, GKE, and AKS, under runc, gVisor, and Kata; a seedless bind on Kata `block-plain`, whose volume root holds an empty `lost+found`, and its refusal with `workspace_not_empty` when `lost+found` holds an entry; `prestage` of Chromium and Linux by checkout and by reflink rebuild; deletion of an unused Chromium tree. |
+| 7 | Back-to-back materializations at `runtimes.minSlotMemoryBytes`, with the slot's memory and the time recorded. |
+| 8 | A helper killed mid-run, a supervisor killed during `setup`, a `SIGSTOP` of the helper by a sibling past the deadline, and a sibling that stops the supervisor under gVisor. |
+| 9 | A sibling process forging the result, reading the plan, writing a content descriptor, and taking a descriptor with `pidfd_getfd`; a helper that writes to the content socket or a done pipe; a planted link in the overlay directory; a hostile `.git/config` in a clone's target. |
+| 10 | The rendered pod passes Pod Security Standards Restricted admission with `/lenny/bin` and its modes, and with `lenny-store-fill` as an init container after `netagent`, under its own UID, with no service account token and the store volume as its only writable mount. |
+| 11 | The documentation states every item of "Documentation": the slot-reported warnings, the pinned git, the memory floor, `spoolSizeLimitBytes` and the staging space, the reserved names, `lenny-store-fill`, the failure codes, and the process-group kill of setup commands. |
+
+## Instructions for reviewers of other designs
+
+- [`0145-session-isolation`](../0145-session-isolation/change.md):
+  - Add a decision generalizing O11: all workspace materialization runs in `lenny-materialize` as the slot UID through `setup`, as D1 to D18 of this design state.
+  - SI-3 and SI-5 state the asynchronous worker protocol of "WM-3" and "WM-11" for every request that shares it: at most one `setup` or `cleanup` run outstanding; `fs`, `ping`, and `end` served during it and `worker_busy` otherwise; the refusal rule; cancellation by closing the cancel pipe at passed index 2, held only by the supervisor; the process-group kill at the deadline, on cancellation, and at a normal exit; the second `sweep` after a cleanup run only after the second `end`, with no `launch` at release; descriptor batches bound to the line holding the last byte of their read; the polled send with its 10 s no-progress bound; the `ETOOMANYREFS` resend; the refusal of mode bits outside `01777` and of a relative `argv[0]` with a slash; and the minimum kernel 5.9. Retire the per-message command list with its total deadline and the log path in the workspace.
+  - SI-3's release ends with `prestage` and launches no runtime (PL-8, "WM-15").
+  - Rewrite SI-6's **Materialization.** paragraph to point here: the helper writes file sources, which the broker no longer creates, and O11's option (a), building in the adapter's build directory and copying through the broker, is superseded.
+  - Add requirements that materialization runs as the slot UID through the helper and that its result is untrusted.
+  - SIR-22 and SI-5's broker root take the trust point of IC S6: the first worker run of the first session bound to the slot, usually a helper run, or that session's launch when no worker run precedes it.
+  - In SI-12, add the 179 lines of the materialization spike and the net 376 lines of the asynchronous-worker spike, and in "Validation record" in `steps.md` point to this design's record and record the gVisor limits and the runc residual of "WM-11".
+  - SIR-10's "the adapter's build directories" on the spool volume leave; upload staging stays, one source per slot at a time in the staging space the slots share under `spoolSizeLimitBytes` (D19).
+- [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md): `lenny-spool`'s `sizeLimit` is the pool's `spoolSizeLimitBytes`, 16 GiB by default, one value per pod, in place of the sum over slots of the spool cap and `stagingSizeLimitBytes` plus headroom (D19); the pod blueprint gains the `lenny-store-fill` init container after the `netagent` native sidecar and before the adapter, with its own UID, no credential, and `lenny-git-stores` as its only writable mount, and the adapter's mount of `lenny-git-stores` stays read-write for the deletion of withheld stores alone (D20); the volume table's writer of `/lenny/git-stores` becomes `lenny-store-fill`, and O5 is answered by EG decision 61; the pristine trees sit at `/lenny/git-stores/<hash>.tree` within `warmCloneBytes`; the reserved names of PL-3 match those this design creates.
+- [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md):
+  - Restore and the seed are unchanged. State that the helper applies sources after the seed, and that `restore-complete` follows every restore of a workspace holding plan repositories, removes the withheld stores' staged trees, and renames the rest aside for a background `discard`.
+  - In IC-1, "Git repositories", the capture copy is the helper's `capture-copy`, which completes before pre-copy, and a background `discard` is cancelled for it.
+  - The reserved names IC-1 skips add `.lenny-discard-<id>`. Revision 16 of that design applies it.
+  - In IC-7, the spool volume also holds upload staging, outside each slot's spool cap, in the staging space the slots share under `spoolSizeLimitBytes` (D19). Revision 16 of that design applies it.
+  - Under WM-9's rule, IC's pack and manifest decoding is the stated exception; IC-5's "The manifest is untrusted input from the pod" stays and is cited by it.
+- [`0127-egress-and-git`](../0127-egress-and-git/change.md):
+  - Rewrite the first bullet of **The gateway runs no git.** and the bullet beginning "The adapter clones into a new empty directory": the helper runs the clone and every git step as the slot UID with the pinned git and `GIT_CONFIG_SYSTEM`, holds no token, and builds in a fresh directory or adopts a staged tree before moving the result; the adapter image needs no git binary, because `lenny-store-fill` fills the stores and the pristine trees (D20).
+  - Settle the 0111 open item on workspace ownership: every entry is slot-owned.
+  - Own the fetch grant of WM-10 with SI O9: its carrier from the adapter to `netagent`, its scope of slot, URLs, and window, and `netagent`'s treatment of a granted fetch. `prestage` needs no grant.
+  - Rewrite the §13.4 exception under "Residual risks and limits", **Tree validation**, to the rule of WM-9, which keeps a checkpoint exception and confines `lenny-store-fill`, the mirror's fetch subprocess, and `netagent`'s git-path parsing by construction. Record decision 61 as settled on 2026-11-13 with the owner's condition and the feasibility conditions of D20, and name the fill's UID among the identities `netagent` attributes.
+  - The sentence that the adapter's own git traffic uses the same port refers to the helper's and `lenny-store-fill`'s.
+- [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md):
+  - Rules 2, 3, 5, and 6 and the checkout bound run in the helper, and their failures reach the session as slot-reported reasons, `git_tree_limit` mapping to `UPLOAD_ARCHIVE_LIMIT_EXCEEDED`.
+  - Every rendered warm-list entry with `prestage: true` is checked out before the session ("WM-15", D25), which replaces the warm default clones and the operator entries with a `path` of earlier revisions; a staged tree of a withheld store is removed before the session starts, and `lenny-store-fill` writes a pristine tree beside each store that serves one, within `warmCloneBytes`. The operator's `gitRepository` entries with `prestage: true` are staged on every pool of the runtime (D25). The withheld-store refusal on SDK-warm pools has no case left (PL-8).
+  - The fill moves into `lenny-store-fill` (D20), and withheld-store deletion and the read checks are otherwise unchanged.
+  - The security requirement under DR-9's "Not verified" about the adapter's UID running the clone becomes an integrity rule at the slot UID; the `openat2` requirement for every materializer write moves to the helper.
+- [`0140-runtime-revisions`](../0140-runtime-revisions/change.md): `workspaceDefaults` files reach the helper as `inlineFile` sources inside the plan memfd, and its default clones are staged as "WM-15" states. `sharedAssets` is unchanged.
+- [`0144-session-derive`](../0144-session-derive/change.md): a `from: latest` derive restores the snapshot through the broker and runs `restore-complete`; a `from: start` derive runs `materialize` from the copied plan with the copied uploads and adopts staged trees. Remove the sentence under "Additional setup commands" that a repository the adapter checks out or restores is owned by UID 65532. SD-P4's concern about a kept file reaching an operator command at the adapter's UID no longer applies once setup runs at the slot UID.
+- [`0135-message-delivery`](../0135-message-delivery/change.md): in MD-26, the adapter downloads and verifies the file into a staged file, and the helper writes it with `overlay`, as a reflink clone where it can, refusing an existing target unless `overwrite: true`; the staged file takes the staging space the slots share, and the gateway refuses an import larger than the parent pool's staging space before it signs a grant (D19). Correct the spool path in "Terms" and in MD-18's **Freeze** from `/workspace/staging/` to `/adapter/spool/<n>/export/`. An import whose wait for staging space reaches the helper run's deadline fails with `IMPORT_LIMIT_EXCEEDED` and `details.reason: "staging_timeout"`.
+- [`0146-session-lifecycle`](../0146-session-lifecycle/change.md): the snapshotless rebuild runs the helper. A suspension, an idle release, or a pod release during a worker run cancels it by closing the cancel pipe before the checkpoint and release proceed, and the release ends with `prestage`.
+- [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md): materialization's and `prestage`'s CPU and memory are charged to the slot container's cgroup, and the gateway no longer spends CPU or memory extracting archives. Restore stays charged to the adapter, and the store fill is charged to the `lenny-store-fill` init container, as pod start-up overhead. Decision 7's mapping refuses a class whose per-slot memory falls below `runtimes.minSlotMemoryBytes`. `spoolSizeLimitBytes` adds to the pod's ephemeral-storage request once per pod (D19).
+- [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md): a `freeze` is not served during a worker run, so the adapter cancels the run by closing the cancel pipe and sends `freeze` after `setupdone`; broker requests for evidence capture proceed during a run. A helper's result and logs are slot-written and are recorded as slot-reported evidence. The `/artifacts` copy step leaves under the owner's decision.
+
+## Sources
+
+Read in the tree on 2026-11-12:
+
+- `pkg/gateway/podlifecycle/podsession/archiveextract.go`, `pkg/gateway/runtime/runtimestore/workspace_defaults.go`.
+- `pkg/adapter/staging.go`, `pkg/adapter/workspace/materialize.go`, `extract.go`, `archive.go`, `setup.go`, `tree.go`, and `pkg/adapter/resume.go`.
+- `supervisor/supervisor.c`, `procs.c`, and `supervisor.h`.
+- The specification sections listed under "Specification changes" and "Current state".
+- The designs listed in the status line.
+
+Records of 2026-11-12 in the session scratchpad, which do not persist: the materialization study's report and the spike's code and logs under `spike-mat/`, the asynchronous-worker spike's final tree, diffs, and logs under `spike-async/`, the AWS re-validation results under `aws-ic-reval/`, and the owner's decisions of that day in `spike-reports-2026-11-12.md`.
+
+External references this design relies on and did not re-read for this revision: `openat2(2)`, `memfd_create(2)` and file sealing in `fcntl(2)`, `unix(7)` on `SCM_RIGHTS`, `SCM_MAX_FD`, and `shutdown(2)`, `pipe(7)` on hang-up, `ioctl_ficlone(2)`, `copy_file_range(2)`, `prctl(2)` on `PR_SET_DUMPABLE` and `PR_SET_NO_NEW_PRIVS`, `pidfd_getfd(2)`, `rename(2)` on `RENAME_NOREPLACE`, `setrlimit(2)` on `RLIMIT_FSIZE` and `RLIMIT_CORE`, `close_range(2)`, and git's documentation of alternates, `read-tree`, `core.checkStat`, and `update-index --refresh`.

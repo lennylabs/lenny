@@ -1,0 +1,37 @@
+### TEST c-py-wi-httpauth  23:20:02
+### docker run --network spikefed-net --env-file env/azwi.env -e AZURE_AUTHORITY_HOST=http://login.azure.test -e SLEEP=1 spikefed-py:t python az_wi.py
+Traceback (most recent call last):
+  File "/app/az_wi.py", line 17, in <module>
+    cred = WorkloadIdentityCredential(**kw)
+  File "/usr/local/lib/python3.13/site-packages/azure/identity/_credentials/workload_identity.py", line 144, in __init__
+    super(WorkloadIdentityCredential, self).__init__(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        tenant_id=tenant_id,
+        ^^^^^^^^^^^^^^^^^^^^
+    ...<3 lines>...
+        **kwargs,
+        ^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/azure/identity/_credentials/client_assertion.py", line 50, in __init__
+    self._client = AadClient(
+                   ~~~~~~~~~^
+        tenant_id,
+        ^^^^^^^^^^
+    ...<5 lines>...
+        **kwargs
+        ^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/azure/identity/_internal/aad_client_base.py", line 54, in __init__
+    self._authority = normalize_authority(authority) if authority else get_default_authority()
+                                                                       ~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/azure/identity/_internal/utils.py", line 91, in get_default_authority
+    return normalize_authority(authority)
+  File "/usr/local/lib/python3.13/site-packages/azure/identity/_internal/utils.py", line 82, in normalize_authority
+    raise ValueError(
+        "'{}' is an invalid authority. The value must be a TLS protected (https) URL.".format(authority)
+    )
+ValueError: 'http://login.azure.test' is an invalid authority. The value must be a TLS protected (https) URL.
+### exit 1
+### server log:

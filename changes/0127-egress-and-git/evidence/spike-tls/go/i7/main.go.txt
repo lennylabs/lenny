@@ -1,0 +1,121 @@
+// i7: subscription stream stand-in. "serve" runs a gRPC health service with a per-RPC token check; "subs" holds N connections each with a Watch stream and reports readiness over time.
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"sync/atomic"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	hpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
+
+type tok struct{ secure bool }
+
+func (t tok) GetRequestMetadata(context.Context, ...string) (map[string]string, error) {
+	return map[string]string{"authorization": "Bearer good"}, nil
+}
+func (t tok) RequireTransportSecurity() bool { return t.secure }
+
+func main() {
+	mode := os.Args[1]
+	fs := flag.NewFlagSet(mode, flag.ExitOnError)
+	addr := fs.String("addr", ":7443", "")
+	cert := fs.String("cert", "", "")
+	key := fs.String("key", "", "")
+	caf := fs.String("ca", "", "")
+	n := fs.Int("n", 2000, "")
+	rate := fs.Int("rate", 500, "")
+	dur := fs.Duration("dur", 60*time.Second, "")
+	fs.Parse(os.Args[2:])
+	if mode == "serve" {
+		var opts []grpc.ServerOption
+		if *cert != "" {
+			c, err := tls.LoadX509KeyPair(*cert, *key)
+			if err != nil {
+				log.Fatal(err)
+			}
+			opts = append(opts, grpc.Creds(credentials.NewServerTLSFromCert(&c)))
+		}
+		var bad atomic.Int64
+		opts = append(opts, grpc.StreamInterceptor(func(srv any, ss grpc.ServerStream, i *grpc.StreamServerInfo, h grpc.StreamHandler) error {
+			md, _ := metadata.FromIncomingContext(ss.Context())
+			if a := md["authorization"]; len(a) != 1 || a[0] != "Bearer good" {
+				bad.Add(1)
+				return status.Error(codes.Unauthenticated, "no token")
+			}
+			return h(srv, ss)
+		}))
+		s := grpc.NewServer(opts...)
+		hs := health.NewServer()
+		hs.SetServingStatus("", hpb.HealthCheckResponse_SERVING)
+		hpb.RegisterHealthServer(s, hs)
+		l, err := net.Listen("tcp", *addr)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Fatal(s.Serve(l))
+	}
+	var dial []grpc.DialOption
+	if *caf != "" {
+		p := x509.NewCertPool()
+		b, err := os.ReadFile(*caf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		p.AppendCertsFromPEM(b)
+		dial = append(dial, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: p, ServerName: "lenny-egress-authz.lenny-system.svc", ClientSessionCache: tls.NewLRUClientSessionCache(4)})), grpc.WithPerRPCCredentials(tok{true}))
+	} else {
+		dial = append(dial, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithPerRPCCredentials(tok{false}))
+	}
+	var live, starts, fails atomic.Int64
+	tick := time.NewTicker(time.Second / time.Duration(*rate))
+	for i := 0; i < *n; i++ {
+		<-tick.C
+		go func() {
+			conn, err := grpc.NewClient(*addr, dial...)
+			if err != nil {
+				fails.Add(1)
+				return
+			}
+			c := hpb.NewHealthClient(conn)
+			for {
+				st, err := c.Watch(context.Background(), &hpb.HealthCheckRequest{}, grpc.WaitForReady(true))
+				if err == nil {
+					_, err = st.Recv()
+				}
+				if err != nil {
+					fails.Add(1)
+					time.Sleep(200 * time.Millisecond)
+					continue
+				}
+				starts.Add(1)
+				live.Add(1)
+				for {
+					if _, err = st.Recv(); err != nil {
+						break
+					}
+				}
+				live.Add(-1)
+			}
+		}()
+	}
+	t0 := time.Now()
+	for time.Since(t0) < *dur {
+		time.Sleep(time.Second)
+		fmt.Printf("t=%3ds live=%d starts=%d retries=%d\n", int(time.Since(t0).Seconds()), live.Load(), starts.Load(), fails.Load())
+	}
+}

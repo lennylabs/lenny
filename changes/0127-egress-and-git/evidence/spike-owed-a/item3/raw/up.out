@@ -1,0 +1,24 @@
+{"version":"1.24.7"}
+
+New user 'alice' has been successfully created!
+New user 'bob' has been successfully created!
+{"full_name":"alice/priv","private":true}
+{"full_name":"alice/pub","private":false}
+remote: 
+remote: Create a new pull request for 'dev':        
+remote:   https://gitea.internal.oa.test/alice/priv/pulls/new/dev        
+remote: 
+remote: ... Processing 3 references        
+remote: Processed 3 references in total        
+5f8022063d0211fd38a97368f38fca32173a191e
+b326228db6e2a3a5c7e374e36f622f320beb62d4
+5f8022063d0211fd38a97368f38fca32173a191e
+remote: 
+remote: Create a new pull request for 'dev':        
+remote:   https://gitea.internal.oa.test/alice/pub/pulls/new/dev        
+remote: 
+remote: ... Processing 3 references        
+remote: Processed 3 references in total        
+5c276f130ba1e33d591100ba2f304e6ef2f9f6e9
+eeda6c84e21615fad39ebb6062f117e5f3fdb63a
+5c276f130ba1e33d591100ba2f304e6ef2f9f6e9

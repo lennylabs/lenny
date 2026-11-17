@@ -1,0 +1,201 @@
+### deny-mr-create rc=0
+$ glab mr create --title t --description d --yes 2>&1 | tail -1
+  Run: glab whatsnew
+### deny-mr-view rc=0
+$ glab mr view 7 2>&1 | head -2 | tail -1
+state:	open
+### deny-mr-list rc=0
+$ glab mr list 2>&1 | tail -1
+
+### deny-D-mr-approve rc=0
+$ glab mr approve 7 2>&1 | tail -1 | cut -c1-120
+
+### deny-mr-revoke-D rc=0
+$ glab mr revoke 7 2>&1 | tail -1 | cut -c1-120
+
+### deny-D-mr-merge rc=0
+$ glab mr merge 7 --yes 2>&1 | tail -1 | cut -c1-120
+
+### deny-D-mr-rebase rc=0
+$ glab mr rebase 7 2>&1 | tail -1 | cut -c1-120
+
+### deny-mr-note rc=0
+$ glab mr note 7 -m hello 2>&1 | tail -1 | cut -c1-120
+https://gitlab.example.test/acme/widgets/-/merge_requests/7#note_1
+### deny-mr-update rc=0
+$ glab mr update 7 --title n 2>&1 | tail -1 | cut -c1-120
+https://gitlab.example.test/acme/widgets/-/merge_requests/7
+### deny-mr-close rc=0
+$ glab mr close 7 2>&1 | tail -1 | cut -c1-120
+https://gitlab.example.test/acme/widgets/-/merge_requests/7
+### deny-issue-create rc=0
+$ glab issue create --title t --description d --yes 2>&1 | tail -1 | cut -c1-120
+
+### deny-D-raw-7-approve rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/approve' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/approve
+### deny-D-raw-7-approve-numeric rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/1/merge_requests/7/approve' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/approve
+### deny-D-raw-7-approve-fullencoded rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Fapprove' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/approve
+### deny-D-raw-7-approve-case rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/APPROVE' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/approve
+### deny-D-raw-7-approve-trailing rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/approve/' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/approve
+### deny-D-raw-7-unapprove rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/unapprove' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/unappro
+### deny-D-raw-7-unapprove-numeric rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/1/merge_requests/7/unapprove' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/unappro
+### deny-D-raw-7-unapprove-fullencoded rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Funapprove' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/unappro
+### deny-D-raw-7-unapprove-case rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/UNAPPROVE' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/unappro
+### deny-D-raw-7-unapprove-trailing rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/unapprove/' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/unappro
+### deny-D-raw-7-merge rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/merge' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/merge is
+### deny-D-raw-7-merge-numeric rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/1/merge_requests/7/merge' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/merge is
+### deny-D-raw-7-merge-fullencoded rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Fmerge' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/merge is
+### deny-D-raw-7-merge-case rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/MERGE' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/merge is
+### deny-D-raw-7-merge-trailing rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/merge/' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/merge is
+### deny-D-raw-7-rebase rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/rebase' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/rebase i
+### deny-D-raw-7-rebase-numeric rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/1/merge_requests/7/rebase' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/rebase i
+### deny-D-raw-7-rebase-fullencoded rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Frebase' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/rebase i
+### deny-D-raw-7-rebase-case rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/REBASE' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/rebase i
+### deny-D-raw-7-rebase-trailing rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/rebase/' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/rebase i
+### deny-D-raw-7-reset_approvals rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/reset_approvals' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/reset_ap
+### deny-D-raw-7-reset_approvals-numeric rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/1/merge_requests/7/reset_approvals' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/reset_ap
+### deny-D-raw-7-reset_approvals-fullencoded rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Freset_approvals' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/reset_ap
+### deny-D-raw-7-reset_approvals-case rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/RESET_APPROVALS' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/reset_ap
+### deny-D-raw-7-reset_approvals-trailing rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/reset_approvals/' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/reset_ap
+### deny-D-raw-7-cancel_merge_when_pipeline_succeeds rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/cancel_merge_when_pipeline_succeeds' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/cancel_
+### deny-D-raw-7-cancel_merge_when_pipeline_succeeds-numeric rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/1/merge_requests/7/cancel_merge_when_pipeline_succeeds' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/cancel_
+### deny-D-raw-7-cancel_merge_when_pipeline_succeeds-fullencoded rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets%2Fmerge_requests%2F7%2Fcancel_merge_when_pipeline_succeeds' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/cancel_
+### deny-D-raw-7-cancel_merge_when_pipeline_succeeds-case rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/MERGE_REQUESTS/7/CANCEL_MERGE_WHEN_PIPELINE_SUCCEEDS' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/cancel_
+### deny-D-raw-7-cancel_merge_when_pipeline_succeeds-trailing rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/cancel_merge_when_pipeline_succeeds/' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: POST .../merge_requests/{n}/cancel_
+### deny-D-raw-override rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST -H 'X-HTTP-Method-Override: PUT' 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/merge' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: PUT .../merge_requests/{n}/merge is
+### deny-D-gql-accept rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-ga https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: mutation field \"mergeRequestAccept
+### deny-D-gql-alias rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-gb https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: mutation field \"mergeRequestAccept
+### deny-D-gql-fragment rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-gf https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: mutation field \"mergeRequestAccept
+### deny-gql-neighbour-set-draft rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-gd https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=200{"data":{"mergeRequestSetDraft":{"errors":"s-errors"}}}
+### deny-raw-neighbour-update rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT -H 'Content-Type: application/json' -d '{"target_branch":"release"}' 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7' 2>&1; cut -c1-90 /tmp/b
+http=200{"approvals_before_merge":null,"assignees":[],"author":{"id":1,"name":"Alice","state":"act
+### deny-T-desc-merge rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-d1 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-desc-approve-line2 rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-d2 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-desc-escaped rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-d3 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-desc-cr rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-d4 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-query rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests?title=t&description=/merge' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a query value matches a denied text
+### deny-T-form rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X POST -d 'title=t&description=/merge' 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a form value matches a denied text 
+### deny-T-update rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -X PUT -H 'Content-Type: application/json' --data-binary @/tmp/j-d5 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-note rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-n1 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/notes' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-discussion rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-n2 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests/7/discussions' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-issue-note rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-n2 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/issues/1/notes' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-commit-comment rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' -d '{"note":"/merge"}' 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/repository/commits/abc/comments' 2>&1; cut -c1-90 /tmp/b
+http=200{"ok":true}
+### deny-T-gql-note rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-gn https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a literal in createNote matches a d
+### deny-T-gql-note-var rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-gv https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a variable of createNote matches a 
+### deny-T-gql-mr-create rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-gc https://gitlab.example.test/api/graphql 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a literal in mergeRequestCreate mat
+### deny-T-glab-create rc=0
+$ glab mr create --title t --description /merge --source-branch feature --target-branch main --yes 2>&1 | tail -1 | cut -c1-120
+
+### deny-T-glab-note rc=0
+$ glab mr note 7 -m /merge 2>&1 | tail -1 | cut -c1-120
+
+### deny-T-fp-path-in-desc rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-f1 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=201{"approvals_before_merge":null,"assignees":[],"author":{"id":1,"name":"Alice","state":"act
+### deny-T-fp-mention rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-f2 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-codeblock rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-f3 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=403{"message":"refused by the egress operation allowlist: a string in the body matches a deni
+### deny-T-other-action rc=0
+$ curl -sS -m 12 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Private-Token: lenny-injected' -H 'Content-Type: application/json' --data-binary @/tmp/j-f4 'https://gitlab.example.test/api/v4/projects/acme%2Fwidgets/merge_requests' 2>&1; cut -c1-90 /tmp/b
+http=201{"approvals_before_merge":null,"assignees":[],"author":{"id":1,"name":"Alice","state":"act

@@ -1,0 +1,12 @@
+parent valid: 200  parent expires_in at issue: 28800s
+child1: {"issued":true,"expires_at":"2026-11-07T01:44:05.000Z","permissions":null,"repos":[],"message":null}
+child2: {"issued":true,"expires_at":"2026-11-07T01:44:06.000Z"}
+now: 2026-11-06T17:44:06Z
+child1 same as parent: no; child1 same as child2: no
+== S5: revoke child1
+revoke child1 status: 204
+after revoke: child1 401  child2 200  parent 200
+== S1: refresh the parent
+refresh: {"refreshed":true,"expires_in":28800,"refresh_token_expires_in":15638400,"new_refresh_token":true}
+after refresh: old parent 401  new parent 200  child2 200
+child2 still reads test-repo contents: 200

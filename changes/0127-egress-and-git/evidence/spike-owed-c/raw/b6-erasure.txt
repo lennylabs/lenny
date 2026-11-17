@@ -1,0 +1,44 @@
+sent 2000
+sent 2000
+sent 1000
+sent 500
+<nil>
+<nil>
+   compression of the encrypted stream: agent.activity|5500|571|39.5%
+[2026-11-03 03:55:23 UTC] 884KiB STANDARD tA/evidence/agent.activity/2026110303/w0-1a19f8c0e3e-1-7c02d2d252cf2d58.gz
+[2026-11-03 03:55:28 UTC] 110KiB STANDARD tA/evidence/agent.activity/2026110303/w0-1a19f8c0e3e-4001-13b36bd2395c8169.gz
+read: decrypted payloads per session=map[s1:2500 s2:2000 s9:1000] records unreadable per session=map[] unencrypted=0 chunks=0 sample={"command":"curl -H 'Authorization: Bearer c35d3f758fb65493b
+verify: rows=3 objects=3 batches=3 records=5500 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=2 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 0.0s
+compact: groups=2 skipped=0 failed=0 batches merged=3 bytes=1242440 wall=0.03s par=4 groups/s=71.2 group ms p50=11.1 p99=11.1 max=21.9 cpu=0.03s
+verify: rows=2 objects=2 batches=3 records=5500 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=4 (compaction 2) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 0.0s
+read: decrypted payloads per session=map[s1:2500 s2:2000 s9:1000] records unreadable per session=map[] unencrypted=0 chunks=0 sample={"command":"curl -H 'Authorization: Bearer c4bc6b8175c9dbd2a
+### destroy session s1's key
+destroyed 1 key rows
+read: decrypted payloads per session=map[s2:2000 s9:1000] records unreadable per session=map[s1:2500] unencrypted=0 chunks=0 sample={"command":"curl -H 'Authorization: Bearer c4bc6b8175c9dbd2a
+verify: rows=2 objects=2 batches=3 records=5500 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=4 (compaction 2) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 0.0s
+### new records for s1 after destruction, with ingest still running: it holds a cached key
+sent 100
+read: decrypted payloads per session=map[s2:2000 s9:1000] records unreadable per session=map[s1:2600] unencrypted=0 chunks=0 sample={"command":"curl -H 'Authorization: Bearer c4bc6b8175c9dbd2a
+
+### sequenceEnd: chunk mode (CHUNK=1): one session's payloads compress, then encrypt, per batch
+sent 2000
+sent 2000
+sent 1000
+<nil>
+<nil>
+   stored bytes per 5,000 payloads: agent.activity|3|265008|199725|75.4%
+destroyed 1 key rows
+  chunk session=s1 sequence=1 sequenceEnd=2000
+  chunk session=s2 sequence=2001 sequenceEnd=4000
+  chunk session=s9 sequence=1 sequenceEnd=1000
+read: decrypted payloads per session=map[s2:2000 s9:1000] records unreadable per session=map[s1:1] unencrypted=0 chunks=2 sample={"command":"curl -H 'Authorization: Bearer 0ef8f081d89374da3
+verify: rows=2 objects=2 batches=2 records=3 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=2 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 0.0s
+compact: groups=2 skipped=0 failed=0 batches merged=2 bytes=199725 wall=0.02s par=4 groups/s=86.7 group ms p50=9.2 p99=9.2 max=11.4 cpu=0.02s
+verify: rows=2 objects=2 batches=2 records=3 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=4 (compaction 2) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 0.0s
+gaps: positions=2 records present=5000, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0
+
+### sequenceEnd with two sessions interleaved in one tenant's sequence: ranges overlap
+sent 2000
+  chunk session=s3 sequence=1 sequenceEnd=1999
+  chunk session=s4 sequence=2 sequenceEnd=2000
+read: decrypted payloads per session=map[s3:1000 s4:1000] records unreadable per session=map[] unencrypted=0 chunks=2 sample={"command":"curl -H 'Authorization: Bearer e0e6dc2d4cfa02e80

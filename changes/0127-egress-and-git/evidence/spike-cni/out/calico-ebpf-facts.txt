@@ -1,0 +1,33 @@
+# worker calico-node pod: pod/calico-node-b7jtx (restarts: 0)
+2026-11-02 08:43:56.821 [INFO][75] felix/int_dataplane.go 2654: Received *proto.ServiceAccountUpdate update from calculation graph. msg=id:{namespace:"kube-system"  name:"kube-proxy"}  labels:{key:"projectcalico.org/name
+2026-11-02 08:44:23.663 [INFO][75] felix/config_batcher.go 245: Sending config update global: map[BPFConnectTimeLoadBalancing:TCP BPFEnabled:true BPFHostNetworkedNATWithoutCTLB:Enabled CalicoVersion:v3.33.0 ClusterGUID:5
+2026-11-02 08:44:23.663 [INFO][75] felix/config_params.go 692: Merging in config from datastore (global): map[BPFConnectTimeLoadBalancing:TCP BPFEnabled:true BPFHostNetworkedNATWithoutCTLB:Enabled CalicoVersion:v3.33.0 C
+2026-11-02 08:44:23.666 [WARNING][75] felix/daemon.go 846: Felix is shutting down reason="config changed"
+2026-11-02 08:44:23.666 [INFO][75] felix/daemon.go 901: Sleeping to avoid tight restart loop. reason="config changed"
+2026-11-02 08:44:25.829 [INFO][380] felix/int_dataplane.go 678: BPF enabled, configuring iptables/nftables layer to clean up kube-proxy's rules.
+2026-11-02 08:44:25.896 [INFO][380] felix/int_dataplane.go 1089: BPF enabled, starting BPF endpoint manager and map manager.
+2026-11-02 08:44:27.155 [INFO][380] felix/int_dataplane.go 2813: BPF enabled, disabling unprivileged BPF usage.
+2026-11-02 08:44:27.177 [INFO][380] felix/config_batcher.go 245: Sending config update global: map[BPFConnectTimeLoadBalancing:TCP BPFEnabled:true BPFHostNetworkedNATWithoutCTLB:Enabled CalicoVersion:v3.33.0 ClusterGUID:
+2026-11-02 08:44:27.177 [INFO][380] felix/config_params.go 692: Merging in config from datastore (global): map[BPFConnectTimeLoadBalancing:TCP BPFEnabled:true BPFHostNetworkedNATWithoutCTLB:Enabled CalicoVersion:v3.33.0 
+2026-11-02 08:44:27.179 [INFO][380] felix/int_dataplane.go 2654: Received *proto.ServiceAccountUpdate update from calculation graph. msg=id:{namespace:"kube-system"  name:"kube-proxy"}  labels:{key:"projectcalico.org/nam
+2026-11-02 08:44:27.182 [INFO][380] felix/kube-proxy.go 195: kube-proxy v4 node info updated, hostname="spike-cni-worker" hostIPs=[10.244.136.192]
+2026-11-02 08:44:27.182 [INFO][380] felix/kube-proxy.go 195: kube-proxy v4 node info updated, hostname="spike-cni-worker" hostIPs=[10.244.136.192 172.18.0.3]
+2026-11-02 08:44:27.206 [INFO][380] felix/bpf_ep_mgr.go 2127: Default BPF policy programs loaded.
+2026-11-02 08:44:27.729 [INFO][380] felix/bpf_ep_mgr.go 2558: Applied program to host interface id="tunl0"
+2026-11-02 08:44:27.729 [INFO][380] felix/bpf_ep_mgr.go 2558: Applied program to host interface id="bpfout.cali"
+2026-11-02 08:44:27.729 [INFO][380] felix/bpf_ep_mgr.go 2558: Applied program to host interface id="lo"
+2026-11-02 08:44:27.729 [INFO][380] felix/bpf_ep_mgr.go 2558: Applied program to host interface id="eth0"
+2026-11-02 08:44:27.780 [INFO][380] felix/bpf_ep_mgr.go 3331: Attached programs to the WEP hook=egress iface="cali9a62eb58743" type="workload"
+2026-11-02 08:44:27.780 [INFO][380] felix/bpf_ep_mgr.go 3331: Attached programs to the WEP hook=egress iface="cali408c677da5e" type="workload"
+# bpffs on worker:
+38
+bpfoutcali_egress
+bpfoutcali_ingress
+cali1d3c30776fa_egress
+cali1d3c30776fa_ingress
+cali200a441712d_egress
+cali200a441712d_ingress
+cali408c677da5e_egress
+cali408c677da5e_ingress
+calico_failsafe_ports_v1
+xdp

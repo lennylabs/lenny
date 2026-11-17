@@ -1,0 +1,15 @@
+## FULL_URI=http://cred-nonlo:8080/creds
+-- boto3
+ValueError: Unsupported host 'cred-nonlo'.  Can only retrieve metadata from a loopback address or one of these hosts: 169.254.170.2, 169.254.170.23, fd00:ec2::23, localhost
+-- cli v1
+
+Unsupported host 'cred-nonlo'.  Can only retrieve metadata from a loopback address or one of these hosts: 169.254.170.2, 169.254.170.23, fd00:ec2::23, localhost
+-- cli v2
+
+aws: [ERROR]: Unsupported host 'cred-nonlo'.  Can only retrieve metadata from a loopback address or one of these hosts: 169.254.170.2, 169.254.170.23, fd00:ec2::23, localhost
+-- go
+CFGERR invalid endpoint host, "cred-nonlo", only loopback/ecs/eks hosts are allowed
+-- js
+06:40:50 ERR CredentialsProviderError Could not load credentials from any providers
+-- java
+06:40:51 ERR SdkClientException Unable to load credentials from any of the providers in the chain AwsCredentialsProviderChain(credentialsProviders=[SystemPropertyCredentialsProvider(), EnvironmentVariableCredentialsProvider(), WebIdentityTokenCredentialsProvider(), ProfileCredentialsProvider(profileName=default, profileFile=Profil

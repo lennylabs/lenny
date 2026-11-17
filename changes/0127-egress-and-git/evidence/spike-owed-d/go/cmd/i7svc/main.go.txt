@@ -1,0 +1,210 @@
+// i7svc: a stand-in for the decision service on I7 and the Token Service on I8 for one test. TLS with the egress PKI on :8443, control on :9002.
+package main
+
+import (
+	"crypto/tls"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type pod struct {
+	User, Pass string
+	Allow      map[string]bool
+	Addr       map[string]string
+	Gen        int64
+	Opens      int64
+	Closes     int64
+	SNIClosed  int64
+	waiters    []chan struct{}
+}
+
+var (
+	mu                                 sync.Mutex
+	pods                               = map[string]*pod{}
+	nDecide, nAllow, nDeny, nCred, nRep atomic.Int64
+	seq                                atomic.Int64
+	credDown                           atomic.Bool
+	delay                              atomic.Int64
+)
+
+func match(a map[string]bool, authority string) bool {
+	h, _, err := net.SplitHostPort(authority)
+	if err != nil {
+		h = authority
+	}
+	return a[strings.ToLower(h)]
+}
+func tok(r *http.Request) *pod {
+	t := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	mu.Lock()
+	defer mu.Unlock()
+	return pods[t]
+}
+func main() {
+	cfg := flag.String("cfg", "/cfg/pods.json", "")
+	leaf := flag.String("leaf", "", "")
+	flag.Parse()
+	b, err := os.ReadFile(*cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var in map[string]struct {
+		User, Pass string
+		Allow      []string
+		Addr       map[string]string
+	}
+	if err := json.Unmarshal(b, &in); err != nil {
+		log.Fatal(err)
+	}
+	for k, v := range in {
+		p := &pod{User: v.User, Pass: v.Pass, Allow: map[string]bool{}, Addr: v.Addr}
+		for _, h := range v.Allow {
+			p.Allow[h] = true
+		}
+		pods[k] = p
+	}
+	m := http.NewServeMux()
+	m.HandleFunc("/v1/decide", func(w http.ResponseWriter, r *http.Request) {
+		if d := delay.Load(); d > 0 {
+			time.Sleep(time.Duration(d) * time.Millisecond)
+		}
+		p := tok(r)
+		if p == nil {
+			http.Error(w, "unknown token", 401)
+			return
+		}
+		var x struct{ Authority string }
+		json.NewDecoder(r.Body).Decode(&x)
+		nDecide.Add(1)
+		mu.Lock()
+		ok := match(p.Allow, x.Authority)
+		h, _, _ := net.SplitHostPort(x.Authority)
+		addr := p.Addr[h]
+		mu.Unlock()
+		out := map[string]any{"decisionId": fmt.Sprintf("d-%d", seq.Add(1))}
+		if ok {
+			nAllow.Add(1)
+			out["outcome"] = "allow"
+			if addr != "" {
+				out["addr"] = addr
+			}
+		} else {
+			nDeny.Add(1)
+			out["outcome"] = "deny"
+		}
+		json.NewEncoder(w).Encode(out)
+	})
+	m.HandleFunc("/v1/credential", func(w http.ResponseWriter, r *http.Request) {
+		p := tok(r)
+		if p == nil || credDown.Load() {
+			http.Error(w, "unavailable", 503)
+			return
+		}
+		nCred.Add(1)
+		mu.Lock()
+		defer mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]string{"user": p.User, "pass": p.Pass})
+	})
+	m.HandleFunc("/v1/subscribe", func(w http.ResponseWriter, r *http.Request) {
+		p := tok(r)
+		if p == nil {
+			http.Error(w, "unknown token", 401)
+			return
+		}
+		var g int64
+		fmt.Sscan(r.URL.Query().Get("gen"), &g)
+		mu.Lock()
+		if p.Gen != g {
+			defer mu.Unlock()
+			json.NewEncoder(w).Encode(map[string]int64{"gen": p.Gen})
+			return
+		}
+		ch := make(chan struct{})
+		p.waiters = append(p.waiters, ch)
+		mu.Unlock()
+		select {
+		case <-ch:
+		case <-time.After(15 * time.Second):
+		case <-r.Context().Done():
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		json.NewEncoder(w).Encode(map[string]int64{"gen": p.Gen})
+	})
+	m.HandleFunc("/v1/report", func(w http.ResponseWriter, r *http.Request) {
+		p := tok(r)
+		if p == nil {
+			http.Error(w, "unknown token", 401)
+			return
+		}
+		var x struct{ Opens, Closes, SniClosed int64 }
+		json.NewDecoder(r.Body).Decode(&x)
+		nRep.Add(1)
+		mu.Lock()
+		p.Opens += x.Opens
+		p.Closes += x.Closes
+		p.SNIClosed = x.SniClosed
+		mu.Unlock()
+	})
+	c := http.NewServeMux()
+	c.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		o := map[string]any{"decide": nDecide.Load(), "allow": nAllow.Load(), "deny": nDeny.Load(), "credential": nCred.Load(), "reports": nRep.Load()}
+		for k, p := range pods {
+			o[k] = map[string]int64{"opens": p.Opens, "closes": p.Closes, "sniClosed": p.SNIClosed, "gen": p.Gen}
+		}
+		json.NewEncoder(w).Encode(o)
+	})
+	c.HandleFunc("/allow", func(w http.ResponseWriter, r *http.Request) { // /allow?pod=&hosts=a,b
+		mu.Lock()
+		defer mu.Unlock()
+		p := pods[r.URL.Query().Get("pod")]
+		p.Allow = map[string]bool{}
+		for _, h := range strings.Split(r.URL.Query().Get("hosts"), ",") {
+			p.Allow[h] = true
+		}
+		fmt.Fprintln(w, "ok")
+	})
+	c.HandleFunc("/cred", func(w http.ResponseWriter, r *http.Request) { // /cred?pod=&user=&pass=
+		mu.Lock()
+		defer mu.Unlock()
+		p := pods[r.URL.Query().Get("pod")]
+		p.User, p.Pass = r.URL.Query().Get("user"), r.URL.Query().Get("pass")
+		fmt.Fprintln(w, "ok")
+	})
+	c.HandleFunc("/creddown", func(w http.ResponseWriter, r *http.Request) { credDown.Store(r.URL.Query().Get("v") == "1"); fmt.Fprintln(w, "ok") })
+	c.HandleFunc("/delay", func(w http.ResponseWriter, r *http.Request) {
+		var d int64
+		fmt.Sscan(r.URL.Query().Get("ms"), &d)
+		delay.Store(d)
+		fmt.Fprintln(w, "ok")
+	})
+	c.HandleFunc("/bump", func(w http.ResponseWriter, r *http.Request) { // a binding change
+		mu.Lock()
+		defer mu.Unlock()
+		p := pods[r.URL.Query().Get("pod")]
+		p.Gen++
+		for _, ch := range p.waiters {
+			close(ch)
+		}
+		p.waiters = nil
+		fmt.Fprintln(w, "ok")
+	})
+	go func() { log.Fatal(http.ListenAndServe(":9002", c)) }()
+	crt, err := tls.LoadX509KeyPair(*leaf+"/tls.crt", *leaf+"/tls.key")
+	if err != nil {
+		log.Fatal(err)
+	}
+	s := &http.Server{Addr: ":8443", Handler: m, TLSConfig: &tls.Config{Certificates: []tls.Certificate{crt}, MinVersion: tls.VersionTLS12}}
+	log.Fatal(s.ListenAndServeTLS("", ""))
+}

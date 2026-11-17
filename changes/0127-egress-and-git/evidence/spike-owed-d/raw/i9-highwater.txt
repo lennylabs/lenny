@@ -1,0 +1,42 @@
+Bucket created successfully `m/evidence`.
+schema ok
+--- run 1
+export: delivered=25601 parts skipped by index=0 cursor positions=1143 cursor bytes=90679 1.2s
+export: delivered=49264 parts skipped by index=1143 cursor positions=1200 cursor bytes=95577 1.8s
+export: delivered=36502 parts skipped by index=3169 cursor positions=1200 cursor bytes=95629 1.3s
+export: delivered=52515 parts skipped by index=4893 cursor positions=1200 cursor bytes=95823 1.6s
+   busy: n=22349 codes={'200': 21276, '403': 1073} p50=0.57 p90=1.12 p99=4.53 p99.9=23.1 max=41.6 ms
+   small: n=22622 codes={'200': 21483, '403': 1139} p50=0.58 p90=1.14 p99=5.11 p99.9=23.1 max=38.5 ms
+   elapsed 45s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+export: delivered=45398 parts skipped by index=7042 cursor positions=1200 cursor bytes=95894 1.3s
+export: delivered=1000 parts skipped by index=9197 cursor positions=1200 cursor bytes=95896 0.2s
+   high-water cursor:   not delivered: t2 egress.tunnel lenny-egress-authz.lenny-system.svc d1a1a09cd395-1c2798 5091 5091
+  not delivered: t0 egress.tunnel lenny-egress-authz.lenny-system.svc d1a1a09cd395-1c2798 5808 5808
+  not delivered: t2 egress.tunnel lenny-egress-authz.lenny-system.svc d1a1a09cd395-1c2798 5589 5589
+exportcheck: delivered lines=210280 distinct=210280 stored records=216289 duplicates=0 not delivered=6009 delivered but not stored=0
+audit: positions=1200 records present=216007 duplicates=169 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=6024
+  gap sequence numbers by reason: map[replica_lost:6024]; record kinds: map[:216176 gap:297]; positions with a closing record: 0
+consume: delivered=45120 tenants=300 pages=303 parts skipped=0 server-side retries=0 client errors=0 1.5s 29337 records/s
+consume: delivered=85666 tenants=300 pages=306 parts skipped=0 server-side retries=0 client errors=0 2.0s 42328 records/s
+consume: delivered=85518 tenants=300 pages=306 parts skipped=0 server-side retries=0 client errors=0 2.2s 38938 records/s
+   ranges cursor, every stream: exportcheck: delivered lines=216304 distinct=216289 stored records=216289 duplicates=15 not delivered=0 delivered but not stored=0
+--- run 2
+export: delivered=25414 parts skipped by index=0 cursor positions=897 cursor bytes=71564 1.0s
+export: delivered=48569 parts skipped by index=897 cursor positions=900 cursor bytes=71988 1.5s
+export: delivered=35065 parts skipped by index=2467 cursor positions=900 cursor bytes=72040 1.2s
+export: delivered=53713 parts skipped by index=4021 cursor positions=900 cursor bytes=72443 1.4s
+   busy: n=22464 codes={'200': 21363, '403': 1101} p50=0.60 p90=1.07 p99=3.19 p99.9=19.1 max=41.0 ms
+   small: n=22503 codes={'200': 21314, '403': 1189} p50=0.60 p90=1.08 p99=3.26 p99.9=20.5 max=41.1 ms
+   elapsed 45s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+export: delivered=44110 parts skipped by index=5707 cursor positions=900 cursor bytes=72585 1.2s
+export: delivered=2975 parts skipped by index=7345 cursor positions=900 cursor bytes=72589 0.2s
+   high-water cursor:   not delivered: t0 egress.tunnel lenny-egress-authz.lenny-system.svc d1a1a09df23c-a5a2b1 4814 4814
+  not delivered: t255 egress.tunnel lenny-egress-authz.lenny-system.svc d1a1a09df23c-a5a2b1 69 69
+  not delivered: t172 egress.tunnel lenny-egress-authz.lenny-system.svc d1a1a09df23c-a5a2b1 69 69
+exportcheck: delivered lines=209846 distinct=209846 stored records=215957 duplicates=0 not delivered=6111 delivered but not stored=0
+audit: positions=900 records present=215675 duplicates=158 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=6124
+  gap sequence numbers by reason: map[replica_lost:6124]; record kinds: map[:215833 gap:295]; positions with a closing record: 0
+consume: delivered=45115 tenants=300 pages=303 parts skipped=0 server-side retries=0 client errors=0 1.5s 30680 records/s
+consume: delivered=85501 tenants=300 pages=306 parts skipped=0 server-side retries=0 client errors=0 2.1s 40951 records/s
+consume: delivered=85354 tenants=300 pages=306 parts skipped=0 server-side retries=0 client errors=0 1.8s 46894 records/s
+   ranges cursor, every stream: exportcheck: delivered lines=215970 distinct=215957 stored records=215957 duplicates=13 not delivered=0 delivered but not stored=0

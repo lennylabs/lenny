@@ -1,0 +1,9 @@
+certificate.cert-manager.io/longleaf created
+certificate.cert-manager.io/longleaf condition met
+before: leaf issuer lenny-egress-ca-4, renewalTime 2026-11-03T16:28:08Z, revision 1
+MARK 1793665689088258049 issuer switched
+150 s after the switch: leaf issuer lenny-egress-ca-4, revision 1, Ready=True
+[{"lastTransitionTime":"2026-11-03T00:28:08Z","message":"Certificate is up to date and has not expired","observedGeneration":1,"reason":"Ready","status":"True","type":"Ready"}]
+Manually triggered issuance of Certificate lenny-system/longleaf
+after cmctl renew: leaf issuer lenny-egress-ca-5, revision 2
+ca.crt in the leaf Secret: subject=CN=lenny-egress-ca-5

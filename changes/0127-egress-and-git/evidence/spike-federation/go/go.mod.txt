@@ -1,0 +1,3 @@
+module spikefed
+
+go 1.26

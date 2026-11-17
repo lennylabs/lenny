@@ -1,0 +1,88 @@
+
+### a. Baseline: 500/s across 2,500 tenants, 25 of them regulated, no noisy tenant
+   busy: n=27436 codes={'200': 26071, '403': 1365, '503': 1} p50=0.74 p90=2.54 p99=4.45 p99.9=33.0 max=116.7 ms
+   small: n=27562 codes={'200': 26200, '403': 1362} p50=0.67 p90=1.14 p99=2.93 p99.9=13.2 max=47.4 ms
+   elapsed 120s ticks=56986 broken=0
+   oc-envoy: 281m CPU, memory 32 MiB, peak 34 MiB
+   oc-dec: 156m CPU, memory 28 MiB, peak 30 MiB
+   oc-ev1: 82m CPU, memory 297 MiB, peak 298 MiB
+   oc-ev2: 67m CPU, memory 175 MiB, peak 176 MiB
+   oc-pg: 40m CPU, memory 1153 MiB, peak 1403 MiB
+   oc-minio: 141m CPU, memory 1343 MiB, peak 1655 MiB
+   gaps: positions=7500 records present=287875, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0   of which, reported apart, tenant t7: records present=55 gaps=0 missing=0 announced=0   against the producer's own high-water marks, which no consumer has: positions with a lost tail=0 records in those tails=0; positions with nothing stored=0 records=0 
+   producer: emitted=167637 prodDropped=0 sendFail=0 queued=0 commits p50=1.7 p99=6.5 max=150.1 ms over150=1 refused=1
+   replica 1: records=192504 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=27 aggregatesOut=25 buffered=0
+   replica 2: records=95426 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=26 aggregatesOut=24 buffered=0
+   quiet tenants' time to durable s (p50, p99, max), noisy tenant: noisy|6|48.2|60.6|60.6|55 quiet|14855|60.2|65.0|69.7|287871 
+
+### b. t7 adds 3,000 denied CONNECTs/s to one host
+   busy: n=27554 codes={'200': 26177, '403': 1377, '503': 13} p50=0.59 p90=1.52 p99=2.85 p99.9=56.1 max=149.7 ms
+   small: n=27432 codes={'200': 26059, '403': 1373} p50=0.52 p90=0.89 p99=1.91 p99.9=5.6 max=43.1 ms
+   noisy: n=329996 codes={'403': 329996} p50=0.41 p90=0.72 p99=1.56 p99.9=4.5 max=21.2 ms
+   elapsed 120s ticks=56989 broken=0
+   oc-envoy: 515m CPU, memory 42 MiB, peak 45 MiB
+   oc-dec: 295m CPU, memory 35 MiB, peak 37 MiB
+   oc-ev1: 103m CPU, memory 318 MiB, peak 319 MiB
+   oc-ev2: 42m CPU, memory 172 MiB, peak 173 MiB
+   oc-pg: 24m CPU, memory 1136 MiB, peak 1403 MiB
+   oc-minio: 105m CPU, memory 1287 MiB, peak 1655 MiB
+   gaps: positions=7500 records present=287868, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0   of which, reported apart, tenant t7: records present=359939 gaps=0 missing=0 announced=0   against the producer's own high-water marks, which no consumer has: positions with a lost tail=0 records in those tails=0; positions with nothing stored=0 records=0 
+   producer: emitted=527505 prodDropped=0 sendFail=0 queued=0 commits p50=1.0 p99=7.4 max=151.4 ms over150=13 refused=13
+   replica 1: records=552035 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=359925 aggregatesOut=26 buffered=0
+   replica 2: records=95772 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=23 aggregatesOut=21 buffered=0
+   quiet tenants' time to durable s (p50, p99, max), noisy tenant: noisy|6|60.3|60.5|60.5|40 quiet|14832|60.2|64.3|69.1|287866 
+
+### c. t7 adds 3,000 denied CONNECTs/s, a new host each time
+   busy: n=27562 codes={'200': 26218, '403': 1344, '503': 2} p50=0.59 p90=1.50 p99=2.99 p99.9=12.8 max=143.8 ms
+   small: n=27436 codes={'200': 26148, '403': 1288} p50=0.52 p90=0.89 p99=1.97 p99.9=6.5 max=44.1 ms
+   noisy: n=330000 codes={'403': 330000} p50=0.41 p90=0.71 p99=1.70 p99.9=5.8 max=31.4 ms
+   elapsed 120s ticks=57099 broken=0
+   oc-envoy: 519m CPU, memory 36 MiB, peak 38 MiB
+   oc-dec: 302m CPU, memory 34 MiB, peak 35 MiB
+   oc-ev1: 107m CPU, memory 516 MiB, peak 517 MiB
+   oc-ev2: 43m CPU, memory 173 MiB, peak 174 MiB
+   oc-pg: 25m CPU, memory 1021 MiB, peak 1403 MiB
+   oc-minio: 104m CPU, memory 1378 MiB, peak 1655 MiB
+   gaps: positions=7500 records present=288336, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0   of which, reported apart, tenant t7: records present=77677 gaps=3 missing=157795 announced=0   against the producer's own high-water marks, which no consumer has: positions with a lost tail=2 records in those tails=124484; positions with nothing stored=0 records=0 
+   producer: emitted=527675 prodDropped=0 sendFail=0 queued=0 commits p50=1.0 p99=3.7 max=150.1 ms over150=2 refused=2
+   replica 1: records=552186 droppedTenant=282281 droppedGlobal=0 gapRecords=402 aggregatedIn=28 aggregatesOut=27 buffered=0
+   replica 2: records=96108 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=20 aggregatesOut=19 buffered=0
+   quiet tenants' time to durable s (p50, p99, max), noisy tenant: noisy|8|58.3|60.5|60.5|78079 quiet|14824|60.1|64.7|69.3|288334 
+
+### d. As c, evidence off and no access log: what the same flood costs in Envoy and the decision service alone
+   busy: n=27438 codes={'200': 26106, '403': 1332} p50=0.51 p90=0.80 p99=1.23 p99.9=12.8 max=74.2 ms
+   small: n=27562 codes={'200': 26170, '403': 1392} p50=0.51 p90=0.80 p99=1.23 p99.9=8.8 max=75.1 ms
+   noisy: n=330003 codes={'403': 330003} p50=0.40 p90=0.66 p99=1.05 p99.9=10.4 max=75.2 ms
+   elapsed 120s ticks=57010 broken=0
+
+### e. t7 floods the producer directly at 100,000 records/s, one host each, past every bound, beside the 500/s base load
+   busy: n=27695 codes={'200': 26334, '403': 1361, '503': 8} p50=0.42 p90=1.33 p99=4.08 p99.9=10.5 max=148.9 ms
+   small: n=27297 codes={'200': 25912, '403': 1385, '503': 1} p50=0.39 p90=0.74 p99=3.25 p99.9=7.1 max=92.5 ms
+   elapsed 120s ticks=56990 broken=0
+   oc-envoy: 177m CPU, memory 33 MiB, peak 34 MiB
+   oc-dec: 348m CPU, memory 54 MiB, peak 85 MiB
+   oc-ev1: 328m CPU, memory 344 MiB, peak 345 MiB
+   oc-ev2: 57m CPU, memory 233 MiB, peak 234 MiB
+   oc-pg: 22m CPU, memory 968 MiB, peak 1403 MiB
+   oc-minio: 109m CPU, memory 1515 MiB, peak 1655 MiB
+   gaps: positions=9981 records present=287873, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0   of which, reported apart, tenant t7: records present=1402446 gaps=352 missing=3546428 announced=665   against the producer's own high-water marks, which no consumer has: positions with a lost tail=1 records in those tails=1201; positions with nothing stored=0 records=0 
+   producer: emitted=5117788 prodDropped=1798349 sendFail=0 queued=0 commits p50=0.8 p99=6.6 max=151.4 ms over150=9 refused=9
+   replica 1: records=3286598 droppedTenant=1749725 droppedGlobal=0 gapRecords=267 aggregatedIn=16 aggregatesOut=15 buffered=0
+   replica 2: records=153797 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=29 aggregatesOut=27 buffered=0
+   quiet tenants' time to durable s (p50, p99, max), noisy tenant: noisy|179|0.9|60.4|60.6|1403064 quiet|18766|60.1|63.8|68.5|287870 
+
+### f. Same flood, one host: aggregation applies
+   busy: n=27484 codes={'200': 26127, '403': 1357, '503': 1} p50=0.41 p90=1.31 p99=4.21 p99.9=12.1 max=105.5 ms
+   small: n=27515 codes={'200': 26173, '403': 1342} p50=0.38 p90=0.72 p99=3.69 p99.9=7.8 max=33.1 ms
+   elapsed 120s ticks=57069 broken=0
+   oc-envoy: 173m CPU, memory 32 MiB, peak 33 MiB
+   oc-dec: 337m CPU, memory 50 MiB, peak 75 MiB
+   oc-ev1: 305m CPU, memory 307 MiB, peak 314 MiB
+   oc-ev2: 39m CPU, memory 179 MiB, peak 181 MiB
+   oc-pg: 22m CPU, memory 969 MiB, peak 1403 MiB
+   oc-minio: 100m CPU, memory 1610 MiB, peak 1655 MiB
+   gaps: positions=7500 records present=288191, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0   of which, reported apart, tenant t7: records present=3072129 gaps=770 missing=1850042 announced=587   against the producer's own high-water marks, which no consumer has: positions with a lost tail=0 records in those tails=0; positions with nothing stored=0 records=0 
+   producer: emitted=5089832 prodDropped=1850042 sendFail=0 queued=0 commits p50=0.8 p99=3.9 max=150.1 ms over150=1 refused=1
+   replica 1: records=3265492 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=3072088 aggregatesOut=19 buffered=0
+   replica 2: records=95599 droppedTenant=0 droppedGlobal=0 gapRecords=0 aggregatedIn=17 aggregatesOut=17 buffered=0
+   quiet tenants' time to durable s (p50, p99, max), noisy tenant: noisy|6|60.2|62.1|62.2|832 quiet|14859|60.2|64.8|69.2|288190 

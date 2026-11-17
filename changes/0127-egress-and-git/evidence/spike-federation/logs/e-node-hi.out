@@ -1,0 +1,6 @@
+### TEST e-node-hi  23:24:50
+### docker run --network container:spikefed-srv -e GCE_METADATA_HOST=127.0.0.1:8080 -e GCE_METADATA_IP=127.0.0.1:8080 -e API_URL=http://127.0.0.1/api/whoami -w /napp spikefed-node:t node gce.js
+ERR getClient Could not load the default credentials. Browse to https://cloud.google.com/docs/authentication/getting-started for more information.
+### exit 0
+### server log:
+{"ts": "07:24:50", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md-404", "method": "GET", "path": "/computeMetadata/v1/instance", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "127.0.0.1:8080"}}

@@ -1,0 +1,73 @@
+=== t1 gvisor rc=gvisor hostUsers=true 2026-11-14T07:23:27Z
+pod/t1-gvisor created
+pod/t1-gvisor condition met
+--- ids
+netagent {"uid":10001,"gid":10001,"groups":[10001],"uid_map":"         0          0 4294967295\n"}
+adapter {"uid":10000,"gid":10000,"groups":[10000],"uid_map":"         0          0 4294967295\n"}
+slot0 {"uid":20000,"gid":20000,"groups":[20000],"uid_map":"         0          0 4294967295\n"}
+slot1 {"uid":20001,"gid":20001,"groups":[20001],"uid_map":"         0          0 4294967295\n"}
+slot2 {"uid":20002,"gid":20002,"groups":[20002],"uid_map":"         0          0 4294967295\n"}
+--- kernel
+Linux t1-gvisor 4.19.0-gvisor #1 SMP Sun Jan 10 15:06:54 PST 2016 x86_64 GNU/Linux
+-r--r--r-- 1 root root 0 Nov 14 07:23 /proc/net/tcp
+-r--r--r-- 1 root root 0 Nov 14 07:23 /proc/net/tcp6
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode                                                     
+   3: 0100007F:2328 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10001        0        4 1 0000000000000000 0 0 0 0 -1
+   5: 0100007F:238C 00000000:0000 0A 00000000:00000000 00:00000000 00000000 10001        0        6 1 0000000000000000 0 0 0 0 -1
+--- basic
+{"connect":{"max_us":555.739,"n":1,"p50_us":555.739,"p99_us":555.739},"errs":[],"fail":0,"label":"basic-slot0","ok":1,"uid":20000}
+{"connect":{"max_us":340.019,"n":1,"p50_us":340.019,"p99_us":340.019},"errs":[],"fail":0,"label":"basic6-slot0","ok":1,"uid":20000}
+{"connect":{"max_us":310.846,"n":1,"p50_us":310.846,"p99_us":310.846},"errs":[],"fail":0,"label":"basic-slot1","ok":1,"uid":20001}
+{"connect":{"max_us":301.84,"n":1,"p50_us":301.84,"p99_us":301.84},"errs":[],"fail":0,"label":"basic6-slot1","ok":1,"uid":20001}
+{"connect":{"max_us":247.313,"n":1,"p50_us":247.313,"p99_us":247.313},"errs":[],"fail":0,"label":"basic-slot2","ok":1,"uid":20002}
+{"connect":{"max_us":317.608,"n":1,"p50_us":317.608,"p99_us":317.608},"errs":[],"fail":0,"label":"basic6-slot2","ok":1,"uid":20002}
+{"connect":{"max_us":341.531,"n":1,"p50_us":341.531,"p99_us":341.531},"errs":[],"fail":0,"label":"basic-adapter","ok":1,"uid":10000}
+{"connect":{"max_us":265.245,"n":1,"p50_us":265.245,"p99_us":265.245},"errs":[],"fail":0,"label":"basic6-adapter","ok":1,"uid":10000}
+{"basic-adapter/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"10000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":62.054,"n":1,"p50_us":62.054,"p99_us":62.054},"ProcLat":{"max_us":115.813,"n":1,"p50_us":115.813,"p99_us":115.813},"ProcRowsMax":3},"basic-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":30.466,"n":1,"p50_us":30.466,"p99_us":30.466},"ProcLat":{"max_us":180.768,"n":1,"p50_us":180.768,"p99_us":180.768},"ProcRowsMax":1},"basic-slot1/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":85.182,"n":1,"p50_us":85.182,"p99_us":85.182},"ProcLat":{"max_us":94.183,"n":1,"p50_us":94.183,"p99_us":94.183},"ProcRowsMax":3},"basic-slot2/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20002/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":87.491,"n":1,"p50_us":87.491,"p99_us":87.491},"ProcLat":{"max_us":126.19,"n":1,"p50_us":126.19,"p99_us":126.19},"ProcRowsMax":1},"basic6-adapter/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"10000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":17.93,"n":1,"p50_us":17.93,"p99_us":17.93},"ProcLat":{"max_us":138.833,"n":1,"p50_us":138.833,"p99_us":138.833},"ProcRowsMax":2},"basic6-slot0/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":14.648,"n":1,"p50_us":14.648,"p99_us":14.648},"ProcLat":{"max_us":150.901,"n":1,"p50_us":150.901,"p99_us":150.901},"ProcRowsMax":2},"basic6-slot1/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":21.447,"n":1,"p50_us":21.447,"p99_us":21.447},"ProcLat":{"max_us":173.243,"n":1,"p50_us":173.243,"p99_us":173.243},"ProcRowsMax":1},"basic6-slot2/v6":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20002/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":48.442,"n":1,"p50_us":48.442,"p99_us":48.442},"ProcLat":{"max_us":117.526,"n":1,"p50_us":117.526,"p99_us":117.526},"ProcRowsMax":1}}
+"ok"
+--- many (3 x 334 concurrent, held)
+held 1002
+{"diag_err":1002,"dump_af10":{"err":"protocol not supported","ms":0.007,"rows":0},"dump_af2":{"err":"protocol not supported","ms":0.016,"rows":0},"held":1002,"par8_diag_total_ms":1.358,"par8_proc_total_ms":1253.253,"proc_err":0,"seq_diag":{"max_us":930.858,"n":1002,"p50_us":19.457,"p99_us":576.334},"seq_proc":{"max_us":8086.252,"n":1002,"p50_us":4470.433,"p99_us":6693.558},"uids":{"proc:20000":334,"proc:20001":334,"proc:20002":334}}
+--- ss in netagent (iproute2 sock_diag)
+    334 uid:20000
+    334 uid:20001
+    334 uid:20002
+Cannot open netlink socket: Protocol not supported
+ESTAB 0      0      127.0.0.1:58032 127.0.0.1:9000 uid:20002 ino:907 sk:0 
+--- host view of the pod netns (root, init userns)
+no host pid (sandboxed)
+{"connect":{"max_us":16639.782,"n":334,"p50_us":7246.538,"p99_us":15886.935},"errs":[],"fail":0,"label":"many-slot0","ok":334,"uid":20000}
+{"connect":{"max_us":29846.985,"n":334,"p50_us":8036.305,"p99_us":22923.157},"errs":[],"fail":0,"label":"many-slot1","ok":334,"uid":20001}
+{"connect":{"max_us":21632.849,"n":334,"p50_us":7927.148,"p99_us":17568.294},"errs":[],"fail":0,"label":"many-slot2","ok":334,"uid":20002}
+{"many-slot0/v4":{"N":334,"DiagOK":0,"ProcOK":334,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":334},"DiagErrs":{"protocol not supported":334},"ProcErrs":{},"DiagLat":{"max_us":1183.847,"n":334,"p50_us":23.242,"p99_us":725.811},"ProcLat":{"max_us":318686.852,"n":334,"p50_us":35317.787,"p99_us":270207.568},"ProcRowsMax":1533},"many-slot1/v4":{"N":334,"DiagOK":0,"ProcOK":334,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":334},"DiagErrs":{"protocol not supported":334},"ProcErrs":{},"DiagLat":{"max_us":3321.312,"n":334,"p50_us":24.757,"p99_us":1114.457},"ProcLat":{"max_us":300208.039,"n":334,"p50_us":92183.552,"p99_us":284163.376},"ProcRowsMax":1953},"many-slot2/v4":{"N":334,"DiagOK":0,"ProcOK":334,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20002/st1":334},"DiagErrs":{"protocol not supported":334},"ProcErrs":{},"DiagLat":{"max_us":16229.777,"n":334,"p50_us":23.56,"p99_us":4202.618},"ProcLat":{"max_us":304631.897,"n":334,"p50_us":79492.609,"p99_us":282012.169},"ProcRowsMax":1902}}
+"ok"
+--- passing a socket over an abstract Unix socket, slot0 -> slot1
+{"passcli":"sent","uid":20000,"connected":false,"err":""}
+{"passsrv":"used","uid":20001,"connect_err":"","write_err":""}
+{"passcli":"sent","uid":20000,"connected":true,"err":""}
+{"passsrv":"used","uid":20001,"connect_err":"transport endpoint is already connected","write_err":""}
+--- forked child and a nested user namespace in slot0
+{"connect":{"max_us":279.738,"n":1,"p50_us":279.738,"p99_us":279.738},"errs":[],"fail":0,"label":"fork-slot0","ok":1,"uid":20000}
+uid=0(root) gid=0(root) groups=0(root)
+{"connect":{"max_us":298.037,"n":1,"p50_us":298.037,"p99_us":298.037},"errs":[],"fail":0,"label":"unshareU-slot0","ok":1,"uid":0}
+unshare exit 0
+uid=20001 gid=65534(nobody) groups=65534(nobody)
+{"connect":{"max_us":273.316,"n":1,"p50_us":273.316,"p99_us":273.316},"errs":[],"fail":0,"label":"unshareMap-slot0","ok":1,"uid":20001}
+unshare map exit 0
+{"fork-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":29.973,"n":1,"p50_us":29.973,"p99_us":29.973},"ProcLat":{"max_us":148.591,"n":1,"p50_us":148.591,"p99_us":148.591},"ProcRowsMax":1},"passC-into-slot1/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":26.902,"n":1,"p50_us":26.902,"p99_us":26.902},"ProcLat":{"max_us":313.791,"n":1,"p50_us":313.791,"p99_us":313.791},"ProcRowsMax":3},"passU-into-slot1/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":15.953,"n":1,"p50_us":15.953,"p99_us":15.953},"ProcLat":{"max_us":186.76,"n":1,"p50_us":186.76,"p99_us":186.76},"ProcRowsMax":1},"unshareMap-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":39.523,"n":1,"p50_us":39.523,"p99_us":39.523},"ProcLat":{"max_us":110.812,"n":1,"p50_us":110.812,"p99_us":110.812},"ProcRowsMax":4},"unshareU-slot0/v4":{"N":1,"DiagOK":0,"ProcOK":1,"DiagMismatch":0,"ProcMismatch":1,"DiagUIDs":{},"ProcUIDs":{"20000/st1":1},"DiagErrs":{"protocol not supported":1},"ProcErrs":{},"DiagLat":{"max_us":12.532,"n":1,"p50_us":12.532,"p99_us":12.532},"ProcLat":{"max_us":159.483,"n":1,"p50_us":159.483,"p99_us":159.483},"ProcRowsMax":3}}
+"ok"
+--- close before lookup (lookup delayed 100 ms)
+"ok"
+{"connect":{"max_us":1770.185,"n":20,"p50_us":805.611,"p99_us":1411.77},"errs":[],"fail":0,"label":"close-slot0","ok":20,"uid":20000}
+{"close-slot0/v4":{"N":20,"DiagOK":0,"ProcOK":0,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{},"DiagErrs":{"protocol not supported":20},"ProcErrs":{"not found":20},"DiagLat":{"max_us":65.106,"n":20,"p50_us":16.406,"p99_us":46.002},"ProcLat":{"max_us":469.553,"n":20,"p50_us":340.46,"p99_us":410.872},"ProcRowsMax":22}}
+"ok"
+{"connect":{"max_us":1426.665,"n":20,"p50_us":854.265,"p99_us":1371.66},"errs":[],"fail":0,"label":"rst-slot0","ok":20,"uid":20000}
+{"rst-slot0/v4":{"N":20,"DiagOK":0,"ProcOK":0,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{},"DiagErrs":{"protocol not supported":20},"ProcErrs":{"not found":20},"DiagLat":{"max_us":234.378,"n":20,"p50_us":21.379,"p99_us":60.924},"ProcLat":{"max_us":608.621,"n":20,"p50_us":355.061,"p99_us":484.957},"ProcRowsMax":22}}
+"ok"
+"ok"
+--- many over v6 (1 x 1000)
+{"diag_err":1000,"dump_af10":{"err":"protocol not supported","ms":0.003,"rows":0},"dump_af2":{"err":"protocol not supported","ms":0.016,"rows":0},"held":1000,"par8_diag_total_ms":1.294,"par8_proc_total_ms":1466.628,"proc_err":0,"seq_diag":{"max_us":979.122,"n":1000,"p50_us":19.134,"p99_us":690.161},"seq_proc":{"max_us":9664.119,"n":1000,"p50_us":5367.402,"p99_us":7953.725},"uids":{"proc:20001":1000}}
+{"connect":{"max_us":14416.323,"n":1000,"p50_us":2824.974,"p99_us":12543.766},"errs":[],"fail":0,"label":"many6-slot1","ok":1000,"uid":20001}
+{"many6-slot1/v6":{"N":1000,"DiagOK":0,"ProcOK":1000,"DiagMismatch":0,"ProcMismatch":0,"DiagUIDs":{},"ProcUIDs":{"20001/st1":1000},"DiagErrs":{"protocol not supported":1000},"ProcErrs":{},"DiagLat":{"max_us":18192.681,"n":1000,"p50_us":22.043,"p99_us":1932.377},"ProcLat":{"max_us":338686.174,"n":1000,"p50_us":63903.895,"p99_us":285887.055},"ProcRowsMax":1988}}
+pod "t1-gvisor" deleted from aq namespace
+=== t1 gvisor done 2026-11-14T07:25:07Z

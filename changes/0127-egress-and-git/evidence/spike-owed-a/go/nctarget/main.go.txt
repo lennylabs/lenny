@@ -1,0 +1,60 @@
+// nctarget: TLS origin choosing a leaf by SNI, with HTTP/2, serving just enough for curl, npm, pip, and git.
+package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+func main() {
+	dir := os.Args[1]
+	certs := map[string]*tls.Certificate{}
+	for _, n := range []string{"allowed", "denied", "sub", "ip", "viaint", "ctl", "unk", "xallowed", "xdenied", "xip"} {
+		c, err := tls.LoadX509KeyPair(filepath.Join(dir, n, "tls.crt"), filepath.Join(dir, n, "tls.key"))
+		if err != nil {
+			log.Fatal(err)
+		}
+		certs[n] = &c
+	}
+	byName := map[string]string{"allowed.oa.test": "allowed", "denied.oa.test": "denied", "sub.allowed.oa.test": "sub", "viaint.oa.test": "viaint", "ctl.oa.test": "ctl", "unk.oa.test": "unk", "xallowed.oa.test": "xallowed", "xdenied.oa.test": "xdenied"}
+	cfg := func(noSNI string) *tls.Config {
+		return &tls.Config{NextProtos: []string{"h2", "http/1.1"}, GetCertificate: func(h *tls.ClientHelloInfo) (*tls.Certificate, error) {
+			if n, ok := byName[h.ServerName]; ok {
+				return certs[n], nil
+			}
+			return certs[noSNI], nil
+		}}
+	}
+	whl, _ := os.ReadFile(filepath.Join(dir, "..", "oapkg-1.0-py3-none-any.whl"))
+	mux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s %s %s", r.Proto, r.Host, r.Method, r.URL)
+		p := r.URL.Path
+		switch {
+		case strings.HasSuffix(p, "info/refs"):
+			w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			line := "1111111111111111111111111111111111111111 refs/heads/main\x00agent=oa\n"
+			fmt.Fprintf(w, "001e# service=git-upload-pack\n0000%04x%s0000", len(line)+4, line)
+		case p == "/simple/oapkg/":
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!doctype html><a href="/oapkg-1.0-py3-none-any.whl">oapkg-1.0-py3-none-any.whl</a>`)
+		case strings.HasSuffix(p, ".whl"):
+			w.Write(whl)
+		case p == "/oapkg":
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{"name":"oapkg","dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":"oapkg","version":"1.0.0","dist":{"tarball":"https://`+r.Host+`/oapkg-1.0.0.tgz","shasum":"0000000000000000000000000000000000000000"}}}}`)
+		default:
+			fmt.Fprintf(w, "ok %s\n", r.Proto)
+		}
+	})
+	go func() {
+		s := &http.Server{Addr: ":8443", Handler: mux, TLSConfig: cfg("xip")}
+		log.Fatal(s.ListenAndServeTLS("", ""))
+	}()
+	s := &http.Server{Addr: ":443", Handler: mux, TLSConfig: cfg("ip")}
+	log.Fatal(s.ListenAndServeTLS("", ""))
+}

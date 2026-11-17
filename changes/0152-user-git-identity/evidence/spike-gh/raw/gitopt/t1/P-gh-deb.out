@@ -1,0 +1,76 @@
+git version 2.47.3
+	libcurl-gnutls.so.4 => /lib/aarch64-linux-gnu/libcurl-gnutls.so.4 (0x
+	libngtcp2_crypto_gnutls.so.8 => /lib/aarch64-linux-gnu/libngtcp2_cryp
+	libgnutls.so.30 => /lib/aarch64-linux-gnu/libgnutls.so.30 (0x0000ffff
+	libssl.so.3 => /lib/aarch64-linux-gnu/libssl.so.3 (0x0000ffffb1810000
+### ls-remote rc=0
+$ git ls-remote https://ghes.example.test/acme/widgets.git | head -2
+81562c39c21f35be45d05c9f6f2597a2d79e4df3	HEAD
+81562c39c21f35be45d05c9f6f2597a2d79e4df3	refs/heads/feature
+### clone rc=0
+$ git clone -q https://ghes.example.test/acme/widgets.git c && git -C c log --oneline | wc -l
+6
+### remote-v rc=0
+$ git -C c remote -v
+origin	http://ghes.example.test/acme/widgets.git (fetch)
+origin	http://ghes.example.test/acme/widgets.git (push)
+### push rc=0
+$ git -C c push -q origin HEAD 2>&1
+
+### fetch rc=0
+$ git -C c fetch origin 2>&1 && git -C c rev-parse --abbrev-ref origin/lenny/Pghdeb-1793730932
+origin/lenny/Pghdeb-1793730932
+### shallow rc=0
+$ git clone -q --depth 1 https://ghes.example.test/acme/widgets.git s && git -C s log --oneline | wc -l
+1
+### partial rc=0
+$ git clone -q --filter=blob:none --no-checkout https://ghes.example.test/acme/widgets.git p && git -C p cat-file --batch-check --batch-all-objects 2>/dev/null | grep -c blob; git -C p checkout -q main && test -s p/blob && echo checked-out
+0
+checked-out
+### push-main-refused rc=1
+$ git -C c push -q origin HEAD:refs/heads/main 2>&1
+error: RPC failed; HTTP 403 curl 22 The requested URL returned error: 403
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+### normal-no-prompt rc=0
+$ GIT_ASKPASS=/tmp/askpass.sh git ls-remote https://ghes.example.test/acme/widgets.git | wc -l; printf 'askpass calls: '; cat /tmp/askpass.log 2>/dev/null | wc -l
+77
+askpass calls: 0
+### prompt-401-covered rc=0
+$ GIT_ASKPASS=/tmp/askpass.sh git ls-remote https://ghes.example.test/acme/needauth.git 2>&1 | tail -1; printf 'askpass calls: '; cat /tmp/askpass.log 2>/dev/null | wc -l
+fatal: Authentication failed for 'http://ghes.example.test/acme/needauth.git/'
+askpass calls: 2
+### prompt-401-unbound rc=0
+$ GIT_ASKPASS=/tmp/askpass.sh git ls-remote https://other.example.test/pub/needauth.git 2>&1 | tail -1; printf 'askpass calls: '; cat /tmp/askpass.log 2>/dev/null | wc -l
+fatal: Authentication failed for 'http://other.example.test/pub/needauth.git/'
+askpass calls: 2
+### redirect-in-scope rc=0
+$ git ls-remote https://ghes.example.test/acme/moved.git 2>&1 | wc -l; git ls-remote https://ghes.example.test/acme/moved.git >/dev/null 2>&1
+78
+### redirect-out-of-scope rc=128
+$ git ls-remote https://ghes.example.test/acme/evilredir.git 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/evilredir.git/': The requested URL returned error: 403
+### clone-outside rc=128
+$ git clone -q https://ghes.example.test/acme/secret.git x 2>&1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### push-64mib-default rc=0
+$ git -C b push -q origin HEAD 2>&1
+
+### push-64mib-chunked-h1 rc=0
+$ git -c http.version=HTTP/1.1 -C b push -q origin HEAD 2>&1
+
+### lfs-push rc=0
+$ git clone -q https://ghes.example.test/acme/lfsrepo.git l && cd l && git lfs install --local >/dev/null && git lfs track '*.bin' >/dev/null && head -c 3000000 /dev/urandom > o.bin && git add .gitattributes o.bin && git commit -qm lfs && git checkout -q -b lenny/Pghdeb-1793730932-lfs && git push -q origin HEAD 2>&1
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.http://ghes.example.test/acme/lfsrepo.git/info/lfs.locksverify true
+Uploading LFS objects: 100% (1/1), 3.0 MB | 0 B/s, done.
+### lfs-fetch rc=0
+$ git clone -q -b lenny/Pghdeb-1793730932-lfs https://ghes.example.test/acme/lfsrepo.git l2 2>&1 && ls -la l2/o.bin | cut -c20-60 && git -C l2 lfs ls-files | cut -c1-60; test "$(head -c 7 l2/o.bin)" != version
+oot 3000000 Nov  3 18:35 l2/o.bin
+873f2df0cf * o.bin
+### submodules rc=0
+$ git clone -q --recurse-submodules https://ghes.example.test/acme/super.git u 2>&1; r=$?; for s in abs rel other; do printf '%s ' $s; git -C u/$s rev-parse --show-toplevel 2>/dev/null | grep -c /$s$; done; exit $r
+abs 1
+rel 1
+other 1
+script-rc=0

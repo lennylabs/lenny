@@ -1,0 +1,85 @@
+### 0. controls: the client has no route and no name for the origin
+curl: (6) Could not resolve host: git.internal.oa.test
+curl by name rc=6
+curl: (28) Connection timed out after 3003 milliseconds
+curl by address rc=28
+### 1. small push, content-length POST
+push rc=0
+f6e91693f86c9dc9723950225001f0dd4c9285ca
+f6e91693f86c9dc9723950225001f0dd4c9285ca
+GET /small.git/info/refs?service=git-receive-pack proto=HTTP/2.0 status=200 cl=0 te=[] ce="" gitproto="" reqbytes=0 respbytes=222 dur=4ms err=<nil>
+POST /small.git/git-receive-pack proto=HTTP/2.0 status=200 cl=374 te=[] ce="" gitproto="" reqbytes=374 respbytes=50 dur=8ms err=<nil>
+### 2. clone, then a second push from the clone
+push rc=0
+5545d2afe58eff99a12826b1c532ea114ee0ff75
+5545d2afe58eff99a12826b1c532ea114ee0ff75
+### 3. 64 MiB random: over http.postBuffer, so git sends a chunked POST
+1898578deed654d28c089dc53dc390d14045024b
+      1 23:50:52.613368 http.c:836              => Send header: Content-Length: 4
+pipe rc=
+1898578deed654d28c089dc53dc390d14045024b
+POST /mid.git/git-receive-pack proto=HTTP/2.0 status=200 cl=4 te=[] ce="" gitproto="" reqbytes=4 respbytes=0 dur=2ms err=<nil>
+POST /mid.git/git-receive-pack proto=HTTP/2.0 status=200 cl=-1 te=[] ce="" gitproto="" reqbytes=67129715 respbytes=50 dur=3.099s err=<nil>
+### 4. same content with http.postBuffer raised, so the POST carries a content-length
+push rc=0
+1898578deed654d28c089dc53dc390d14045024b
+POST /midcl.git/git-receive-pack proto=HTTP/2.0 status=200 cl=67129715 te=[] ce="" gitproto="" reqbytes=67129715 respbytes=50 dur=1.533s err=<nil>
+### 5. 1 GiB random, through the tunnel and directly
+a966b2b8231da1ff0f54e3cded8336042826eec8
+a966b2b8231da1ff0f54e3cded8336042826eec8
+tunnel push rc=0
+tunnel push seconds 24.1
+POST /bigt.git/git-receive-pack proto=HTTP/2.0 status=200 cl=-1 te=[] ce="" gitproto="" reqbytes=1073906039 respbytes=50 dur=23.955s err=<nil>
+envoy memory.peak before=20205568 after=21311488
+a966b2b8231da1ff0f54e3cded8336042826eec8
+direct push rc=0
+direct push seconds 24.2
+POST /bigd.git/git-receive-pack proto=HTTP/2.0 status=200 cl=-1 te=[] ce="" gitproto="" reqbytes=1073906039 respbytes=50 dur=24.097s err=<nil>
+### 6. a pre-receive rejection reaches the client, and the ref does not move
+remote: policy: refused by hook        
+ ! [remote rejected] main -> main (pre-receive hook declined)
+error: failed to push some refs to 'https://git.internal.oa.test/small.git'
+local 8487c97
+server 5545d2a
+### 7. ref creation and deletion
+create rc=0
+delete rc=0
+5545d2afe58eff99a12826b1c532ea114ee0ff75	HEAD
+5545d2afe58eff99a12826b1c532ea114ee0ff75	refs/heads/main
+### 8. a denied decision, an unpinned credential, and the decision service down
+fatal: unable to access 'https://git.internal.oa.test/small.git/': CONNECT tunnel failed, response 403
+fatal: unable to access 'https://git.internal.oa.test/small.git/': CONNECT tunnel failed, response 407
+fatal: unable to access 'https://git.internal.oa.test/small.git/': CONNECT tunnel failed, response 503
+### 9. Envoy killed during a 1 GiB push: the ref must not move, and a retry must land
+error: unable to rewind rpc post data - try increasing http.postBuffer
+error: RPC failed; curl 65 OpenSSL SSL_read: OpenSSL/3.5.9: error:0A000126:SSL routines::unexpected eof while reading, errno 0
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+rc=1
+server ref after cut: [none] quarantine dirs: 0
+POST /bigk.git/git-receive-pack proto=HTTP/2.0 status=200 cl=-1 te=[] ce="" gitproto="" reqbytes=112410387 respbytes=113 dur=2.531s err=client disconnected
+retry rc=0
+retry seconds 24.5
+a966b2b8231da1ff0f54e3cded8336042826eec8
+### 10. max_stream_duration 5 s cuts a large push cleanly
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+seconds until the client returned 7.5
+server ref: [none]
+{"authority":"git.internal.oa.test:443","authz":"authz1","code":200,"conn_term":null,"details":"via_upstream","dur_ms":7,"flags":"-","peer":"198.19.50.30:36678","rx":0,"t":"2026-11-02T23:52:50.658Z","tx":0,"type":"DownstreamTunnelSuccessfullyEstablished","up_host":"172.30.50.21:443"}
+### 11. a silent pre-receive hook against stream_idle_timeout 10 s
+ * [new branch]      main -> main
+receive.keepAlive default: seconds 25.1
+server ref: [f91938b]
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+keepalive off: seconds 20.4
+server ref after hook finished: [f91938b]
+### 12. proxy hop over TLS (I2), 64 MiB push
+fatal: unable to access 'https://git.internal.oa.test/midt.git/': SSL: no alternative certificate subject name matches target ipv4 address '198.19.50.41'
+rc=128
+main
+fatal: ambiguous argument 'main': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+POST /slow0.git/git-receive-pack proto=HTTP/2.0 status=200 cl=371 te=[] ce="" gitproto="" reqbytes=371 respbytes=143 dur=25.019s err=<nil>

@@ -1,0 +1,26 @@
+t=  1s done=300  map[200:300] p50=700µs p99=18.3ms open=300 ticks=300 broken=0
+t=  2s done=300  map[200:300] p50=800µs p99=9ms open=600 ticks=900 broken=0
+t=  3s done=300  map[200:300] p50=800µs p99=3.4ms open=900 ticks=1800 broken=0
+t=  4s done=300  map[200:300] p50=800µs p99=17ms open=1200 ticks=3000 broken=0
+t=  5s done=300  map[200:300] p50=800µs p99=3.4ms open=1500 ticks=4500 broken=0
+t=  6s done=300  map[200:300] p50=800µs p99=3.3ms open=1800 ticks=6296 broken=0
+t=  7s done=300  map[200:300] p50=800µs p99=16.6ms open=2100 ticks=8397 broken=0
+t=  8s done=300  map[200:300] p50=800µs p99=3.2ms open=2400 ticks=10791 broken=0
+t=  9s done=300  map[200:300] p50=900µs p99=3.6ms open=2700 ticks=13489 broken=0
+t= 10s done=300  map[200:300] p50=900µs p99=3.8ms open=3000 ticks=16487 broken=0
+t= 11s done=0    map[] p50=0s p99=0s open=3000 ticks=19487 broken=0
+t= 12s done=0    map[] p50=0s p99=0s open=3000 ticks=22487 broken=0
+t= 13s done=0    map[] p50=0s p99=0s open=3000 ticks=25468 broken=0
+t= 14s done=0    map[] p50=0s p99=0s open=3000 ticks=28470 broken=0
+t= 15s done=0    map[] p50=0s p99=0s open=3000 ticks=31466 broken=0
+t= 16s done=0    map[] p50=0s p99=0s open=2700 ticks=34171 broken=0
+t= 17s done=0    map[] p50=0s p99=0s open=2399 ticks=36575 broken=0
+t= 18s done=0    map[] p50=0s p99=0s open=2100 ticks=38673 broken=0
+t= 19s done=0    map[] p50=0s p99=0s open=1800 ticks=40477 broken=0
+t= 20s done=0    map[] p50=0s p99=0s open=1500 ticks=41983 broken=0
+t= 21s done=0    map[] p50=0s p99=0s open=1200 ticks=43185 broken=0
+t= 22s done=0    map[] p50=0s p99=0s open=899 ticks=44089 broken=0
+t= 23s done=0    map[] p50=0s p99=0s open=600 ticks=44693 broken=0
+t= 24s done=0    map[] p50=0s p99=0s open=300 ticks=44997 broken=0
+t= 25s done=0    map[] p50=0s p99=0s open=0 ticks=45000 broken=0
+SUMMARY attempts=3000 map[200:3000] 200-latency p50=800µs p90=2.5ms p99=7.8ms max=27.3ms ticks=45000 broken=0 elapsed=25.1s

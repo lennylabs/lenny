@@ -1,0 +1,6 @@
+documents=166 largestBytes=7180 maxTokens=698 maxDepthExpanded=14 maxDepthWithinOneDefinition=14 maxMutationRootFields=1 maxValueDepth=2 parseFailures=0 refused=5 deniedByName=5
+   1 mutation field "addPullRequestReview" is denied by the preset
+   1 mutation field "createLinkedBranch" is denied by the preset
+   1 mutation field "enablePullRequestAutoMerge" is denied by the preset
+   1 mutation field "disablePullRequestAutoMerge" is denied by the preset
+   1 mutation field "mergePullRequest" is denied by the preset

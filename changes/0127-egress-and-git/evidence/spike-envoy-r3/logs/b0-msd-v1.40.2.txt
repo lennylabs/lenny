@@ -1,0 +1,4 @@
+CONNECT status: 200 OK
+tunnel ended after 5.99s: EOF (last="tick 4.0")
+tunnel ended after 5.99s: read tcp 198.18.0.2:48902->198.18.0.10:3128: read: connection reset by peer (last="")
+target.spike:7000 200 - max_duration_timeout 5002 ms

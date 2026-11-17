@@ -1,0 +1,60 @@
+=== t2 kata  2026-11-14T07:35:06Z
+pod q-kata uid 4d37317e-658e-4ed9-bc2d-579034d625f8 rc=kata hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root  6 Nov 14 07:35 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:35 ..
+--- mounts in the slot
+137 129 0:44 / /workspace rw,nodev,relatime - virtiofs none rw
+139 129 0:45 / /other rw,nodev,relatime - virtiofs none rw
+--- (a) before
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":63060779008,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":64357400576,"type":"0x65735546","used_b":1296621568},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/other","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/other","qstatv_err":"function not implemented","statfs":{"avail_b":63060779008,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":64357400576,"type":"0x65735546","used_b":1296621568},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/adapter/ws","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":63060779008,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":64357400576,"type":"0x65735546","used_b":1296621568},"uid":10000}
+--- (b) assign 51487 256 MiB
+{"after_projid":51487,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/4d37317e-658e-4ed9-bc2d-579034d625f8/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":51487,"ihard":0}}
+host report proj 51487:  | du ws: 6 B
+--- (c) after
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451523,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace/sub","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451522,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":0},"uid":20000}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/adapter/ws","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/adapter/ws","qstatv_err":"function not implemented","statfs":{"avail_b":268435456,"bsize":4096,"ffree":31451522,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":0},"uid":10000}
+--- write 40 MiB
+{"acked_b":41943040,"close_err":"","err":"","file":"/workspace/f40","final_fsync_err":"","secs":0.198609817,"st_blocks_b":41943040,"st_size":41943040,"uid":20000,"where":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":226492416,"bsize":4096,"ffree":31451521,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":41943040},"uid":20000}
+host report proj 51487: /dev/nvme1n1 40960 0 262144 00 [--------] /data | du ws: 41943074 B
+--- (d) hidden
+{"chmod_err":"","dir":"/workspace/hidden","fsync_err":"","readdir_after_chmod":"open /workspace/hidden: permission denied","write_err":""}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":174063616,"bsize":4096,"ffree":31451519,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":94371840},"uid":20000}
+host report proj 51487: /dev/nvme1n1 92160 0 262144 00 [--------] /data | du ws: 94371906 B
+--- escape
+{"after_projid":0,"after_xflags":"0x0","clear_inherit":"inappropriate ioctl for device","dir":"/workspace/esc-1794641715266162384","file_projid":0,"file_projid_after":0,"file_set_projid0":"inappropriate ioctl for device","fsync_err":"","getx_err":"inappropriate ioctl for device","set_projid0":"inappropriate ioctl for device","set_projid777":"inappropriate ioctl for device","sub_projid":0,"sub_xflags":"0x0","uid":20000,"write_err":"","wrote_mb":16}
+host report proj 51487: /dev/nvme1n1 108544 0 262144 00 [--------] /data | du ws: 111149168 B
+--- (e) fill, no fsync per chunk
+{"acked_b":157286400,"close_err":"","err":"write /workspace/big: no space left on device","errno":"28","file":"/workspace/big","final_fsync_err":"","secs":0.760926048,"st_blocks_b":157286400,"st_size":157286400,"uid":20000,"where":"write"}
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"virtiofs","mountpoint":"/workspace","opts":"rw,nodev,relatime","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":0,"bsize":4096,"ffree":31451536,"files":31457280,"size_b":268435456,"type":"0x65735546","used_b":268435456},"uid":20000}
+host report proj 51487: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435579 B
+total 194560
+drwxrwxrwx. 5 root  root         84 Nov 14 07:35 .
+drwxr-xr-x. 4 root  root         29 Nov 14 07:35 ..
+-rw-r--r--. 1 20000 20000 157286400 Nov 14 07:35 big
+drwxr-xr-x. 2 20000 20000        15 Nov 14 07:35 esc-1794641715266162384
+-rw-r--r--. 1 20000 20000  41943040 Nov 14 07:35 f40
+d---------. 2 20000 20000        18 Nov 14 07:35 hidden
+drwxr-xr-x. 2 20000 20000         6 Nov 14 07:35 sub
+--- (e) fill with fsync each chunk
+host report proj 51487: /dev/nvme1n1 108544 0 262144 00 [--------] /data | du ws: 111149168 B
+{"acked_b":157286400,"close_err":"","err":"write /workspace/big2: no space left on device","errno":"28","file":"/workspace/big2","final_fsync_err":"","secs":0.53451119,"st_blocks_b":157286400,"st_size":157286400,"uid":20000,"where":"write"}
+host report proj 51487: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 268435580 B
+--- (e) read back the end of the file
+total 194560
+drwxrwxrwx 5 root  root         85 Nov 14 07:35 .
+drwxr-xr-x 1 root  root         58 Nov 14 07:35 ..
+-rw-r--r-- 1 20000 20000 157286400 Nov 14 07:35 big2
+drwxr-xr-x 2 20000 20000        15 Nov 14 07:35 esc-1794641715266162384
+-rw-r--r-- 1 20000 20000  41943040 Nov 14 07:35 f40
+d--------- 2 20000 20000        18 Nov 14 07:35 hidden
+drwxr-xr-x 2 20000 20000         6 Nov 14 07:35 sub
+ 01 08 0f 16 1d 24 2b 32 39 40 47 4e 55 5c 63 6a
+ 71 78 7f 86 8d 94 9b a2 a9 b0 b7 be c5 cc d3 da
+pod still Running/ after 30 s (not evicted)
+=== t2 kata done 2026-11-14T07:35:52Z

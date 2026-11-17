@@ -1,0 +1,46 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+
+	"cloud.google.com/go/compute/metadata"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+)
+
+func main() {
+	ctx := context.Background()
+	fmt.Println("metadata.OnGCE():", metadata.OnGCE())
+	if pid, err := metadata.ProjectIDWithContext(ctx); err == nil {
+		fmt.Println("metadata.ProjectID:", pid)
+	} else {
+		fmt.Println("ERR projectid:", err)
+	}
+	if e, err := metadata.EmailWithContext(ctx, "default"); err == nil {
+		fmt.Println("metadata.Email:", e)
+	}
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		fmt.Println("ERR FindDefaultCredentials:", err)
+		return
+	}
+	fmt.Println("creds project:", creds.ProjectID)
+	for i := 0; i < 2; i++ {
+		tok, err := creds.TokenSource.Token()
+		if err != nil {
+			fmt.Println("ERR token:", err)
+			return
+		}
+		fmt.Println("token:", tok.AccessToken)
+		r, err := oauth2.NewClient(ctx, creds.TokenSource).Get(os.Getenv("API_URL"))
+		if err != nil {
+			fmt.Println("ERR api:", err)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		fmt.Println("api ->", string(b))
+	}
+}

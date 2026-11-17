@@ -1,0 +1,23 @@
+mkdir: <nil>
+setxattr ACL: <nil>
+read back default ACL: 44 bytes, <nil>
+    getfacl: Removing leading '/' from absolute path names
+    # file: data/s
+    # owner: 65532
+    # group: 65532
+    user::rwx
+    group::rwx
+    group:63001:r-x
+    mask::rwx
+    other::---
+    default:user::rwx
+    default:group::rwx
+    default:group:63001:r-x
+    default:mask::rwx
+    default:other::---
+    
+    setfacl-rc=0
+    /dev/vda1      ext4 954976684 76317524 830075328   9% /data
+    /dev/vda1 /data ext4 rw,relatime,discard 0 0
+reader-ls-rc=0
+reader under its group only: <nil>

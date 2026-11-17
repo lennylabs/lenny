@@ -1,0 +1,8 @@
+1793570980.596 peer=172.20.0.8 user=agent NONE_NONE/200 CONNECT example.com:443 dst=- hier=HIER_NONE/- tag=globex ea=tenant=globex,session=s-b,rule=r1,reason=- route=upB dur=63ms up=0 down=115 sni=example.com
+1793570980.653 peer=172.20.0.8 user=agent TCP_TUNNEL/200 CONNECT example.com:443 dst=172.20.0.4 hier=FIRSTUP_PARENT/upB tag=- ea=- route=- dur=57ms up=5069 down=1680 sni=example.com
+1793570980.897 peer=172.20.0.8 user=agent NONE_NONE/200 CONNECT example.com:443 dst=- hier=HIER_NONE/- tag=acme ea=tenant=acme,session=s-a,rule=r1,reason=- route=direct dur=2ms up=0 down=115 sni=example.com
+1793570980.954 peer=172.20.0.8 user=agent TCP_TUNNEL/200 CONNECT example.com:443 dst=172.66.147.243 hier=HIER_DIRECT/example.com tag=- ea=- route=- dur=57ms up=5070 down=1680 sni=example.com
+1793570981.206 peer=172.20.0.8 user=agent NONE_NONE/200 CONNECT example.com:443 dst=- hier=HIER_NONE/- tag=acme ea=sni-mismatch route=direct dur=0ms up=0 down=115 sni=github.com
+1793570981.545 peer=172.20.0.8 user=agent TCP_TUNNEL/200 CONNECT example.com:443 dst=172.20.0.4 hier=FIRSTUP_PARENT/upB tag=globex ea=tenant=globex,session=s-b,rule=r1,reason=- route=upB dur=91ms up=6502 down=2088 sni=-
+1793570981.900 peer=172.20.0.8 user=agent TCP_TUNNEL/200 CONNECT example.com:443 dst=172.20.0.3 hier=FIRSTUP_PARENT/upA tag=initech ea=tenant=initech,session=s-c,rule=r1,reason=- route=upA dur=96ms up=6502 down=2088 sni=-
+1793570982.257 peer=172.20.0.8 user=agent TCP_TUNNEL/200 CONNECT example.com:443 dst=172.66.147.243 hier=HIER_DIRECT/example.com tag=acme ea=tenant=acme,session=s-a,rule=r1,reason=- route=direct dur=91ms up=6501 down=2088 sni=-

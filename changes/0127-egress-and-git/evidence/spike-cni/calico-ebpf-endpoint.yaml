@@ -1,0 +1,10 @@
+# Calico eBPF dataplane prerequisite: Calico must reach the API server without kube-proxy.
+# KUBERNETES_SERVICE_HOST is patched in with the control-plane node IP before applying.
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: kubernetes-services-endpoint
+  namespace: kube-system
+data:
+  KUBERNETES_SERVICE_HOST: "CP_IP_PLACEHOLDER"
+  KUBERNETES_SERVICE_PORT: "6443"

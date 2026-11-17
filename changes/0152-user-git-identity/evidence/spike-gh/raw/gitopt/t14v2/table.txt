@@ -1,0 +1,168 @@
+ghes-2.103.3-allow-pr-create-rev-assign      rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.103.3-allow-pr-edit-title             rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.103.3-allow-pr-edit-meta              rc=1   forwarded=updatePullRequest refused=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not on 
+ghes-2.103.3-allow-pr-comment                rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.103.3-allow-pr-view                   rc=0   forwarded= refused=
+ghes-2.103.3-allow-pr-merge                  rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.103.3-allow-pr-create-rev-assign       rc=0   forwarded=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+com-2.103.3-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.103.3-allow-pr-edit-meta               rc=1   forwarded=requestReviewsByLogin,replaceActorsForAssignable,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+com-2.103.3-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.103.3-allow-pr-view                    rc=0   forwarded= refused=
+com-2.103.3-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.103.3-deny-pr-create-rev-assign       rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.103.3-deny-pr-edit-title              rc=0   forwarded=updatePullRequest refused=
+ghes-2.103.3-deny-pr-edit-meta               rc=0   forwarded=POST requested_reviewers,updatePullRequest,addLabelsToLabelable refused=
+ghes-2.103.3-deny-pr-comment                 rc=0   forwarded=addComment refused=
+ghes-2.103.3-deny-pr-view                    rc=0   forwarded= refused=
+ghes-2.103.3-deny-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.103.3-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+com-2.103.3-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+com-2.103.3-deny-pr-edit-meta                rc=0   forwarded=requestReviewsByLogin,replaceActorsForAssignable,addLabelsToLabelable, refused=
+com-2.103.3-deny-pr-comment                  rc=0   forwarded=addComment refused=
+com-2.103.3-deny-pr-view                     rc=0   forwarded= refused=
+com-2.103.3-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+ghes-2.72.0-allow-pr-create-rev-assign       rc=1   forwarded= refused=query field "user" is not on the allowlist
+ghes-2.72.0-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.72.0-allow-pr-edit-meta               rc=1   forwarded=requestReviews,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+ghes-2.72.0-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.72.0-allow-pr-view                    rc=0   forwarded= refused=
+ghes-2.72.0-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.72.0-allow-pr-create-rev-assign        rc=1   forwarded= refused=query field "user" is not on the allowlist
+com-2.72.0-allow-pr-edit-title               rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.72.0-allow-pr-edit-meta                rc=1   forwarded=requestReviews,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+com-2.72.0-allow-pr-comment                  rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.72.0-allow-pr-view                     rc=0   forwarded= refused=
+com-2.72.0-allow-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.72.0-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.72.0-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+ghes-2.72.0-deny-pr-edit-meta                rc=0   forwarded=requestReviews,addLabelsToLabelable,updatePullRequest refused=
+ghes-2.72.0-deny-pr-comment                  rc=0   forwarded=addComment refused=
+ghes-2.72.0-deny-pr-view                     rc=0   forwarded= refused=
+ghes-2.72.0-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.72.0-deny-pr-create-rev-assign         rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+com-2.72.0-deny-pr-edit-title                rc=0   forwarded=updatePullRequest refused=
+com-2.72.0-deny-pr-edit-meta                 rc=0   forwarded=requestReviews,addLabelsToLabelable,updatePullRequest refused=
+com-2.72.0-deny-pr-comment                   rc=0   forwarded=addComment refused=
+com-2.72.0-deny-pr-view                      rc=0   forwarded= refused=
+com-2.72.0-deny-pr-merge                     rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+ghes-2.73.0-allow-pr-create-rev-assign       rc=1   forwarded= refused=query field "user" is not on the allowlist
+ghes-2.73.0-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.73.0-allow-pr-edit-meta               rc=1   forwarded=requestReviews,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+ghes-2.73.0-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.73.0-allow-pr-view                    rc=0   forwarded= refused=
+ghes-2.73.0-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.73.0-allow-pr-create-rev-assign        rc=1   forwarded= refused=query field "user" is not on the allowlist
+com-2.73.0-allow-pr-edit-title               rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.73.0-allow-pr-edit-meta                rc=1   forwarded=replaceActorsForAssignable,requestReviews,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+com-2.73.0-allow-pr-comment                  rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.73.0-allow-pr-view                     rc=0   forwarded= refused=
+com-2.73.0-allow-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.73.0-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.73.0-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+ghes-2.73.0-deny-pr-edit-meta                rc=0   forwarded=requestReviews,updatePullRequest,addLabelsToLabelable refused=
+ghes-2.73.0-deny-pr-comment                  rc=0   forwarded=addComment refused=
+ghes-2.73.0-deny-pr-view                     rc=0   forwarded= refused=
+ghes-2.73.0-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.73.0-deny-pr-create-rev-assign         rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+com-2.73.0-deny-pr-edit-title                rc=0   forwarded=updatePullRequest refused=
+com-2.73.0-deny-pr-edit-meta                 rc=0   forwarded=requestReviews,replaceActorsForAssignable,addLabelsToLabelable,updateP refused=
+com-2.73.0-deny-pr-comment                   rc=0   forwarded=addComment refused=
+com-2.73.0-deny-pr-view                      rc=0   forwarded= refused=
+com-2.73.0-deny-pr-merge                     rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+ghes-2.86.0-allow-pr-create-rev-assign       rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.86.0-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.86.0-allow-pr-edit-meta               rc=1   forwarded=updatePullRequest refused=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not on 
+ghes-2.86.0-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.86.0-allow-pr-view                    rc=0   forwarded= refused=
+ghes-2.86.0-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.86.0-allow-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+com-2.86.0-allow-pr-edit-title               rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.86.0-allow-pr-edit-meta                rc=1   forwarded= refused=POST /repos/acme/widgets/pulls/7/requested_reviewers is not on the all
+com-2.86.0-allow-pr-comment                  rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.86.0-allow-pr-view                     rc=0   forwarded= refused=
+com-2.86.0-allow-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.86.0-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.86.0-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+ghes-2.86.0-deny-pr-edit-meta                rc=0   forwarded=POST requested_reviewers,addLabelsToLabelable,updatePullRequest refused=
+ghes-2.86.0-deny-pr-comment                  rc=0   forwarded=addComment refused=
+ghes-2.86.0-deny-pr-view                     rc=0   forwarded= refused=
+ghes-2.86.0-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.86.0-deny-pr-create-rev-assign         rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+com-2.86.0-deny-pr-edit-title                rc=0   forwarded=updatePullRequest refused=
+com-2.86.0-deny-pr-edit-meta                 rc=1   forwarded=addLabelsToLabelable,POST requested_reviewers refused=
+com-2.86.0-deny-pr-comment                   rc=0   forwarded=addComment refused=
+com-2.86.0-deny-pr-view                      rc=0   forwarded= refused=
+com-2.86.0-deny-pr-merge                     rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+ghes-2.87.0-allow-pr-create-rev-assign       rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.87.0-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.87.0-allow-pr-edit-meta               rc=1   forwarded=updatePullRequest refused=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not on 
+ghes-2.87.0-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.87.0-allow-pr-view                    rc=0   forwarded= refused=
+ghes-2.87.0-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.87.0-allow-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+com-2.87.0-allow-pr-edit-title               rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.87.0-allow-pr-edit-meta                rc=1   forwarded=requestReviewsByLogin refused=mutation field "addLabelsToLabelable" is not on the allowlist
+com-2.87.0-allow-pr-comment                  rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.87.0-allow-pr-view                     rc=0   forwarded= refused=
+com-2.87.0-allow-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.87.0-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.87.0-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+ghes-2.87.0-deny-pr-edit-meta                rc=0   forwarded=updatePullRequest,POST requested_reviewers,addLabelsToLabelable refused=
+ghes-2.87.0-deny-pr-comment                  rc=0   forwarded=addComment refused=
+ghes-2.87.0-deny-pr-view                     rc=0   forwarded= refused=
+ghes-2.87.0-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.87.0-deny-pr-create-rev-assign         rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+com-2.87.0-deny-pr-edit-title                rc=0   forwarded=updatePullRequest refused=
+com-2.87.0-deny-pr-edit-meta                 rc=1   forwarded=addLabelsToLabelable,requestReviewsByLogin refused=
+com-2.87.0-deny-pr-comment                   rc=0   forwarded=addComment refused=
+com-2.87.0-deny-pr-view                      rc=0   forwarded= refused=
+com-2.87.0-deny-pr-merge                     rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+ghes-2.93.0-allow-pr-create-rev-assign       rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.93.0-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.93.0-allow-pr-edit-meta               rc=1   forwarded=updatePullRequest refused=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not on 
+ghes-2.93.0-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.93.0-allow-pr-view                    rc=0   forwarded= refused=
+ghes-2.93.0-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.93.0-allow-pr-create-rev-assign        rc=0   forwarded=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+com-2.93.0-allow-pr-edit-title               rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.93.0-allow-pr-edit-meta                rc=1   forwarded=requestReviewsByLogin,replaceActorsForAssignable,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+com-2.93.0-allow-pr-comment                  rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.93.0-allow-pr-view                     rc=0   forwarded= refused=
+com-2.93.0-allow-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.93.0-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.93.0-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+ghes-2.93.0-deny-pr-edit-meta                rc=0   forwarded=POST requested_reviewers,updatePullRequest,addLabelsToLabelable refused=
+ghes-2.93.0-deny-pr-comment                  rc=0   forwarded=addComment refused=
+ghes-2.93.0-deny-pr-view                     rc=0   forwarded= refused=
+ghes-2.93.0-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.93.0-deny-pr-create-rev-assign         rc=0   forwarded=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+com-2.93.0-deny-pr-edit-title                rc=0   forwarded=updatePullRequest refused=
+com-2.93.0-deny-pr-edit-meta                 rc=0   forwarded=requestReviewsByLogin,replaceActorsForAssignable,addLabelsToLabelable, refused=
+com-2.93.0-deny-pr-comment                   rc=0   forwarded=addComment refused=
+com-2.93.0-deny-pr-view                      rc=0   forwarded= refused=
+com-2.93.0-deny-pr-merge                     rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+ghes-2.94.0-allow-pr-create-rev-assign       rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.94.0-allow-pr-edit-title              rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+ghes-2.94.0-allow-pr-edit-meta               rc=1   forwarded=updatePullRequest refused=POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not on 
+ghes-2.94.0-allow-pr-comment                 rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+ghes-2.94.0-allow-pr-view                    rc=0   forwarded= refused=
+ghes-2.94.0-allow-pr-merge                   rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+com-2.94.0-allow-pr-create-rev-assign        rc=0   forwarded=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+com-2.94.0-allow-pr-edit-title               rc=1   forwarded= refused=input field "title" on updatePullRequest is not on the allowlist
+com-2.94.0-allow-pr-edit-meta                rc=1   forwarded=requestReviewsByLogin,replaceActorsForAssignable,updatePullRequest refused=mutation field "addLabelsToLabelable" is not on the allowlist
+com-2.94.0-allow-pr-comment                  rc=1   forwarded= refused=mutation field "addComment" is not on the allowlist
+com-2.94.0-allow-pr-view                     rc=0   forwarded= refused=
+com-2.94.0-allow-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is not on the allowlist
+ghes-2.94.0-deny-pr-create-rev-assign        rc=0   forwarded=createPullRequest,updatePullRequest,requestReviews refused=
+ghes-2.94.0-deny-pr-edit-title               rc=0   forwarded=updatePullRequest refused=
+ghes-2.94.0-deny-pr-edit-meta                rc=0   forwarded=updatePullRequest,POST requested_reviewers,addLabelsToLabelable refused=
+ghes-2.94.0-deny-pr-comment                  rc=0   forwarded=addComment refused=
+ghes-2.94.0-deny-pr-view                     rc=0   forwarded= refused=
+ghes-2.94.0-deny-pr-merge                    rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset
+com-2.94.0-deny-pr-create-rev-assign         rc=0   forwarded=createPullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+com-2.94.0-deny-pr-edit-title                rc=0   forwarded=updatePullRequest refused=
+com-2.94.0-deny-pr-edit-meta                 rc=0   forwarded=requestReviewsByLogin,replaceActorsForAssignable,addLabelsToLabelable, refused=
+com-2.94.0-deny-pr-comment                   rc=0   forwarded=addComment refused=
+com-2.94.0-deny-pr-view                      rc=0   forwarded= refused=
+com-2.94.0-deny-pr-merge                     rc=1   forwarded= refused=mutation field "mergePullRequest" is denied by the preset

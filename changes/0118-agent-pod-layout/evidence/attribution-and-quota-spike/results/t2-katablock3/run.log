@@ -1,0 +1,12 @@
+=== t4 2026-11-14T07:44:47Z
+start | guest: {"size_mb":61271.04296875,"used_mb":0.0234375} | host disk.img allocated: 4 MiB | kubelet: 
+after 64 MiB | guest: {"size_mb":61271.04296875,"used_mb":64.0234375} | host disk.img allocated: 117 MiB | kubelet: 
+after 50 MiB under a mode-000 dir | guest: {"size_mb":61271.04296875,"used_mb":114.02734375} | host disk.img allocated: 167 MiB | kubelet: 
+after rm of 64 MiB (discard mount option) | guest: {"size_mb":61271.04296875,"used_mb":50.02734375} | host disk.img allocated: 103 MiB | kubelet: 103.484375
+{"acked_b":1258291200,"close_err":"","err":"","file":"/workspace/over","final_fsync_err":"","secs":10.189894556,"st_blocks_b":1258295296,"st_size":1258291200,"uid":20000,"where":""}
+after 1200 MiB (sizeLimit 1Gi) | guest: {"size_mb":61271.04296875,"used_mb":1250.03125} | host disk.img allocated: 1303 MiB | kubelet: 103.484375
+pod phase Failed/Evicted after 56 s
+Evicted     Usage of EmptyDir volume "ws" exceeds the limit "1Gi". 
+Killing     Stopping container slot
+Killing     Stopping container adapter
+=== t4 done

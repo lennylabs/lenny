@@ -1,0 +1,116 @@
+### mr-create-basic (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets?license=true&with_custom_attributes=true [200]
+  GET /api/v4/projects/acme%2Fwidgets?license=true&with_custom_attributes=true [200]
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+### mr-create-all (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets?license=true&with_custom_attributes=true [200]
+  GET /api/v4/projects/acme%2Fwidgets/milestones?include_parent_milestones=true&per_page=30&title=v1 [200]
+  GET /api/v4/users?per_page=30&username=bob [200]
+  GET /api/v4/users?per_page=30&username=bob [200]
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+### mr-view (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+### mr-view-comments (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7/discussions?page=1&per_page=20&sort=asc [200]
+### mr-list (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests?page=1&per_page=30&state=opened [200]
+### mr-approve (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/approve [201]
+### mr-merge (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge [200]
+### mr-merge-auto (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge [200]
+### mr-merge-now (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge [200]
+### mr-merge-squash (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge [200]
+### api-rest-get (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets [200]
+### api-rest-post (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+### api-graphql (rc=0)
+  GQL query (anon): currentUser
+### api-graphql-mut (rc=0)
+  GQL mutation (anon): mergeRequestAccept
+### a-approve (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/approve [201]
+### a-merge (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge [200]
+### a-api-approve (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/approve [201]
+### a-api-unapprove (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/unapprove [200]
+### a-api-merge (rc=0)
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge [200]
+### a-api-merge-id (rc=0)
+  PUT /api/v4/projects/1/merge_requests/7/merge [200]
+### a-api-mwps-cancel (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/cancel_merge_when_pipeline_succeeds [200]
+### a-api-rebase (rc=0)
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/rebase [200]
+### a-api-update (rc=0)
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 [200]
+### a-api-note-quick (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes [201]
+### a-gql-accept (rc=0)
+  GQL mutation (anon): mergeRequestAccept
+### a-gql-alias (rc=0)
+  GQL mutation (anon): mergeRequestAccept
+### a-gql-approve (rc=0)
+  GQL mutation (anon): mergeRequestSetDraft
+### a-quick-approve (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets?license=true&with_custom_attributes=true [200]
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+### a-quick-merge (rc=0)
+  GET /api/v4/projects/acme%2Fwidgets?license=true&with_custom_attributes=true [200]
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+### a-api-quick-merge (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+### a-api-auto-create (rc=0)
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests [201]
+
+=== headers at the stub (count)
+  Accept-Encoding: 47
+  Private-Token: 47
+  User-Agent: 47
+  Accept: 30
+  Content-Length: 27
+  Content-Type: 27
+=== Content-Encoding of requests: {'(none)': 47}
+=== protocols at the stub: {'HTTP/2.0': 47}
+=== largest GraphQL documents (doc bytes, body bytes, case, op)
+   (120, 136, 'a-gql-approve', '')
+   (96, 114, 'a-gql-alias', '')
+   (93, 111, 'api-graphql-mut', '')
+   (93, 111, 'a-gql-accept', '')
+   (34, 46, 'api-graphql', '')
+=== union of mutation fields
+  mergeRequestAccept ['a-gql-accept', 'a-gql-alias', 'api-graphql-mut']
+  mergeRequestSetDraft ['a-gql-approve']
+=== union of query fields
+  currentUser 1 cases
+=== union of REST routes
+  GET /api/v4/projects/acme%2Fwidgets ['api-rest-get']
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7 ['a-approve', 'a-merge', 'mr-approve', 'mr-merge', 'mr-merge-auto', 'mr-merge-now', 'mr-merge-squash', 'mr-view', 'mr-view-comments']
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests/7/discussions?page=1&per_page=20&sort=asc ['mr-view-comments']
+  GET /api/v4/projects/acme%2Fwidgets/merge_requests?page=1&per_page=30&state=opened ['mr-list']
+  GET /api/v4/projects/acme%2Fwidgets/milestones?include_parent_milestones=true&per_page=30&title=v1 ['mr-create-all']
+  GET /api/v4/projects/acme%2Fwidgets?license=true&with_custom_attributes=true ['a-quick-approve', 'a-quick-merge', 'mr-create-all', 'mr-create-basic']
+  GET /api/v4/users?per_page=30&username=bob ['mr-create-all']
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests ['a-api-auto-create', 'a-api-quick-merge', 'a-quick-approve', 'a-quick-merge', 'api-rest-post', 'mr-create-all', 'mr-create-basic']
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/approve ['a-api-approve', 'a-approve', 'mr-approve']
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/cancel_merge_when_pipeline_succeeds ['a-api-mwps-cancel']
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/notes ['a-api-note-quick']
+  POST /api/v4/projects/acme%2Fwidgets/merge_requests/7/unapprove ['a-api-unapprove']
+  PUT /api/v4/projects/1/merge_requests/7/merge ['a-api-merge-id']
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7 ['a-api-update']
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/merge ['a-api-merge', 'a-merge', 'mr-merge', 'mr-merge-auto', 'mr-merge-now', 'mr-merge-squash']
+  PUT /api/v4/projects/acme%2Fwidgets/merge_requests/7/rebase ['a-api-rebase']

@@ -1,0 +1,161 @@
+ghes    path r%65views                               L=REACHED D=refused S=refused X=refused
+ghes    path m%65rge                                 L=REACHED D=refused S=refused X=refused
+ghes    path reviews/                                L=REACHED D=refused S=refused X=refused
+ghes    path merge/                                  L=REACHED D=refused S=refused X=refused
+ghes    path reviews.json                            L=REACHED D=REACHED S=refused X=refused
+ghes    path merge.json                              L=REACHED D=REACHED S=refused X=refused
+ghes    path git/refs.json                           L=REACHED D=REACHED S=refused X=refused
+ghes    path %2F in merge                            L=REACHED D=refused S=refused X=refused
+ghes    path double-encoded                          L=REACHED D=refused S=refused X=refused
+ghes    gql graphq%6C                                L=REACHED D=refused S=refused X=refused
+ghes    gql trailing slash                           L=REACHED D=refused S=refused X=refused
+ghes    gql .json                                    L=REACHED D=refused S=refused X=refused
+ghes    gql double slash                             L=REACHED D=refused S=refused X=refused
+ghes    coverage gql denied                          L=refused D=refused S=refused X=refused
+ghes    coverage gql allowed                         L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    coverage rest merge                          L=refused D=refused S=refused X=refused
+ghes    coverage rest review                         L=refused D=refused S=refused X=refused
+ghes    coverage rest ref                            L=refused D=refused S=refused X=refused
+ghes    unmatched /graphql2                          L=REACHED D=refused S=refused X=refused
+ghes    unmatched /graphql/foo                       L=REACHED D=REACHED S=refused X=refused
+ghes    unmatched /graphqlx                          L=REACHED D=refused S=refused X=refused
+ghes    unmatched /api/graphqlx                      L=REACHED D=refused S=refused X=refused
+ghes    unmatched /api/foo                           L=REACHED D=REACHED S=refused X=refused
+ghes    unmatched /api/v3/graphql                    L=REACHED D=refused S=refused X=refused
+ghes    unmatched /api/graphql on this host          L=refused D=refused S=refused X=refused
+ghes    unmatched /graphql on this host              L=REACHED D=refused S=refused X=refused
+ghes    unmatched /api/v9 merge                      L=refused D=refused S=refused X=refused
+ghes    legit label with a space                     L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    legit contents read                          L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    legit branch with a slash                    L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    legit tag release                            L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    legit undeclared escape                      L=REACHED D=REACHED S=refused X=refused
+ghes    override X-Original-URL: /api/v3/repo on POS L=refused D=refused S=refused X=refused
+ghes    override X-Rewrite-URL: /api/v3/repo on POST L=refused D=refused S=refused X=refused
+ghes    override X-HTTP-Method-Override: PUT on POST L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    override X-HTTP-Method-Override: GET on POST L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    override method on POST merge                L=refused D=refused S=refused X=refused
+ghes    Sudo on a GitHub host                        L=REACHED D=REACHED S=REACHED X=REACHED
+com     path r%65views                               L=REACHED D=refused S=refused X=refused
+com     path m%65rge                                 L=REACHED D=refused S=refused X=refused
+com     path reviews/                                L=REACHED D=refused S=refused X=refused
+com     path merge/                                  L=REACHED D=refused S=refused X=refused
+com     path reviews.json                            L=REACHED D=REACHED S=refused X=refused
+com     path merge.json                              L=REACHED D=REACHED S=refused X=refused
+com     path git/refs.json                           L=REACHED D=REACHED S=refused X=refused
+com     path %2F in merge                            L=REACHED D=refused S=refused X=refused
+com     path double-encoded                          L=REACHED D=refused S=refused X=refused
+com     gql graphq%6C                                L=REACHED D=refused S=refused X=refused
+com     gql trailing slash                           L=REACHED D=refused S=refused X=refused
+com     gql .json                                    L=REACHED D=refused S=refused X=refused
+com     gql double slash                             L=REACHED D=refused S=refused X=refused
+com     coverage gql denied                          L=refused D=refused S=refused X=refused
+com     coverage gql allowed                         L=REACHED D=REACHED S=REACHED X=REACHED
+com     coverage rest merge                          L=refused D=refused S=refused X=refused
+com     coverage rest review                         L=refused D=refused S=refused X=refused
+com     coverage rest ref                            L=refused D=refused S=refused X=refused
+com     unmatched /graphql2                          L=REACHED D=refused S=refused X=refused
+com     unmatched /graphql/foo                       L=REACHED D=REACHED S=refused X=refused
+com     unmatched /graphqlx                          L=REACHED D=refused S=refused X=refused
+com     unmatched /api/graphqlx                      L=REACHED D=refused S=refused X=refused
+com     unmatched /api/foo                           L=REACHED D=REACHED S=refused X=refused
+com     unmatched /api/v3/graphql                    L=REACHED D=refused S=refused X=refused
+com     unmatched /api/graphql on this host          L=REACHED D=refused S=refused X=refused
+com     unmatched /graphql on this host              L=refused D=refused S=refused X=refused
+com     unmatched /api/v9 merge                      L=refused D=refused S=refused X=refused
+com     legit label with a space                     L=REACHED D=REACHED S=REACHED X=REACHED
+com     legit contents read                          L=REACHED D=REACHED S=REACHED X=REACHED
+com     legit branch with a slash                    L=REACHED D=REACHED S=REACHED X=REACHED
+com     legit tag release                            L=REACHED D=REACHED S=REACHED X=REACHED
+com     legit undeclared escape                      L=REACHED D=REACHED S=refused X=refused
+com     override X-Original-URL: /repos/a/b/p on POS L=refused D=refused S=refused X=refused
+com     override X-Rewrite-URL: /repos/a/b/p on POST L=refused D=refused S=refused X=refused
+com     override X-HTTP-Method-Override: PUT on POST L=REACHED D=REACHED S=REACHED X=REACHED
+com     override X-HTTP-Method-Override: GET on POST L=REACHED D=REACHED S=REACHED X=REACHED
+com     override method on POST merge                L=refused D=refused S=refused X=refused
+com     Sudo on a GitHub host                        L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl path appr%6Fve                            L=REACHED D=refused S=refused X=refused
+gl      gl path approve.json                         L=REACHED D=REACHED S=refused X=refused
+gl      gl path approve/                             L=REACHED D=refused S=refused X=refused
+gl      gl path unapprove.json                       L=REACHED D=REACHED S=refused X=refused
+gl      gl path merge.json                           L=REACHED D=REACHED S=refused X=refused
+gl      gl path m%65rge                              L=REACHED D=refused S=refused X=refused
+gl      gl path merge/                               L=REACHED D=refused S=refused X=refused
+gl      gl path rebase.json                          L=REACHED D=REACHED S=refused X=refused
+gl      gl path encoded project, appr%6Fve           L=REACHED D=refused S=refused X=refused
+gl      gl path encoded project, approve             L=refused D=refused S=refused X=refused
+gl      gl path full-encoded tail                    L=REACHED D=refused S=refused X=refused
+gl      gl gql graphq%6C                             L=REACHED D=refused S=refused X=refused
+gl      gl gql trailing slash                        L=REACHED D=refused S=refused X=refused
+gl      gl gql denied                                L=refused D=refused S=refused X=refused
+gl      gl unmatched /api/v3 approve                 L=refused D=refused S=refused X=refused
+gl      gl unmatched /api/foo                        L=REACHED D=REACHED S=refused X=refused
+gl      gl unmatched /graphql                        L=REACHED D=refused S=refused X=refused
+gl      gl legit project id                          L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl legit nested group                        L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl legit lower-case %2f                      L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl legit file path                           L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl legit branch                              L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl legit undeclared escape                   L=REACHED D=REACHED S=refused X=refused
+gl      gl override X-Original-URL: /api/v4/pr on GE L=refused D=refused S=refused X=refused
+gl      gl override X-Rewrite-URL: /api/v4/pr on GET L=refused D=refused S=refused X=refused
+gl      gl override X-HTTP-Method-Override: PUT on G L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl override Sudo: root on GET                L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl override Sudo: 1 on GET                   L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl Authorization beside the binding          L=REACHED D=REACHED S=REACHED X=REACHED
+gl      gl override PUT on POST merge                L=refused D=refused S=refused X=refused
+generic generic override X-Original-URL              L=REACHED D=REACHED S=REACHED X=REACHED
+generic generic override X-Rewrite-URL               L=REACHED D=REACHED S=REACHED X=REACHED
+generic generic override X-HTTP-Method-Override      L=REACHED D=REACHED S=REACHED X=REACHED
+generic generic override Sudo                        L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote newline escape               L=REACHED D=refused S=refused X=refused
+com     text createNote newline escape               L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote newline escape               L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote CR escape                    L=REACHED D=refused S=refused X=refused
+com     text createNote CR escape                    L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote CR escape                    L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text addComment newline approve              L=REACHED D=refused S=refused X=refused
+com     text addComment newline approve              L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text addComment newline approve              L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text addComment unicode slash                L=REACHED D=refused S=refused X=refused
+com     text addComment unicode slash                L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text addComment unicode slash                L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote unicode newline and slash    L=REACHED D=refused S=refused X=refused
+com     text createNote unicode newline and slash    L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote unicode newline and slash    L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote leading                      L=REACHED D=refused S=refused X=refused
+com     text createNote leading                      L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote leading                      L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote block string                 L=REACHED D=refused S=refused X=refused
+com     text createNote block string                 L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote block string                 L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote block leading                L=REACHED D=refused S=refused X=refused
+com     text createNote block leading                L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote block leading                L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote list argument                L=REACHED D=refused S=refused X=refused
+com     text createNote list argument                L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote list argument                L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote variable                     L=REACHED D=refused S=refused X=refused
+com     text createNote variable                     L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote variable                     L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote nested variable              L=REACHED D=refused S=refused X=refused
+com     text createNote nested variable              L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote nested variable              L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote variable default             L=REACHED D=REACHED S=refused X=refused
+com     text createNote variable default             L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote variable default             L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote fragment                     L=REACHED D=refused S=refused X=refused
+com     text createNote fragment                     L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote fragment                     L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote alias                        L=REACHED D=refused S=refused X=refused
+com     text createNote alias                        L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote alias                        L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote directive argument           L=REACHED D=REACHED S=refused X=refused
+com     text createNote directive argument           L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote directive argument           L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote nested field argument        L=REACHED D=REACHED S=refused X=refused
+com     text createNote nested field argument        L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote nested field argument        L=REACHED D=REACHED S=REACHED X=REACHED
+gl      text createNote benign                       L=REACHED D=REACHED S=REACHED X=REACHED
+com     text createNote benign                       L=REACHED D=REACHED S=REACHED X=REACHED
+ghes    text createNote benign                       L=REACHED D=REACHED S=REACHED X=REACHED

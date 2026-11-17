@@ -1,0 +1,2 @@
+curl: (7) Failed to connect to 1.1.1.1 port 443 after 0 ms: Could not connect to server
+curl: (6) Could not resolve host: cli.github.com

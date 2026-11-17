@@ -1,0 +1,6 @@
+<settings>
+  <proxies>
+    <proxy><id>p-https</id><active>true</active><protocol>https</protocol><host>proxy</host><port>3128</port><nonProxyHosts>localhost</nonProxyHosts></proxy>
+    <proxy><id>p-http</id><active>true</active><protocol>http</protocol><host>proxy</host><port>3128</port><nonProxyHosts>localhost</nonProxyHosts></proxy>
+  </proxies>
+</settings>

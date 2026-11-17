@@ -1,0 +1,68 @@
+{"t": "06:39:33.741", "tag": "curl-noflag-home600", "path": "/t/curl-noflag-home600/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:39:33.745", "tag": "curl-netrc-home600", "path": "/t/curl-netrc-home600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:39:33.748", "tag": "curl-netrcopt-home600", "path": "/t/curl-netrcopt-home600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:39:33.752", "tag": "bbwget-home600", "path": "/t/bbwget-home600/plain", "auth": null, "basic": null, "ua": "Wget"}
+{"t": "06:39:33.753", "tag": "gnuwget-home600", "path": "/t/gnuwget-home600/plain", "auth": null, "basic": null, "ua": "Wget/1.25.0"}
+{"t": "06:39:33.754", "tag": "gnuwget-home600", "path": "/t/gnuwget-home600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Wget/1.25.0"}
+{"t": "06:39:33.759", "tag": "git-home600", "path": "/t/git-home600/repo.git/info/refs?service=git-upload-pack", "auth": null, "basic": null, "ua": "git/2.49.1"}
+{"t": "06:39:33.759", "tag": "git-home600", "path": "/t/git-home600/repo.git/info/refs?service=git-upload-pack", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "git/2.49.1"}
+{"t": "06:39:33.763", "tag": "curl-noflag-home644", "path": "/t/curl-noflag-home644/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:39:33.766", "tag": "curl-netrc-home644", "path": "/t/curl-netrc-home644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:39:33.768", "tag": "curl-netrcopt-home644", "path": "/t/curl-netrcopt-home644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:39:33.771", "tag": "bbwget-home644", "path": "/t/bbwget-home644/plain", "auth": null, "basic": null, "ua": "Wget"}
+{"t": "06:39:33.772", "tag": "gnuwget-home644", "path": "/t/gnuwget-home644/plain", "auth": null, "basic": null, "ua": "Wget/1.25.0"}
+{"t": "06:39:33.772", "tag": "gnuwget-home644", "path": "/t/gnuwget-home644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Wget/1.25.0"}
+{"t": "06:39:33.776", "tag": "git-home644", "path": "/t/git-home644/repo.git/info/refs?service=git-upload-pack", "auth": null, "basic": null, "ua": "git/2.49.1"}
+{"t": "06:39:33.776", "tag": "git-home644", "path": "/t/git-home644/repo.git/info/refs?service=git-upload-pack", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "git/2.49.1"}
+{"t": "06:39:33.780", "tag": "curl-noflag-env600", "path": "/t/curl-noflag-env600/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:39:33.784", "tag": "curl-netrcopt-env600", "path": "/t/curl-netrcopt-env600/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:39:33.787", "tag": "curl-netrcfile-env600", "path": "/t/curl-netrcfile-env600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:39:33.788", "tag": "bbwget-env600", "path": "/t/bbwget-env600/plain", "auth": null, "basic": null, "ua": "Wget"}
+{"t": "06:39:33.789", "tag": "gnuwget-env600", "path": "/t/gnuwget-env600/plain", "auth": null, "basic": null, "ua": "Wget/1.25.0"}
+{"t": "06:39:33.792", "tag": "git-env600", "path": "/t/git-env600/repo.git/info/refs?service=git-upload-pack", "auth": null, "basic": null, "ua": "git/2.49.1"}
+{"t": "06:39:33.796", "tag": "curl-noflag-env644", "path": "/t/curl-noflag-env644/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:39:33.800", "tag": "curl-netrcopt-env644", "path": "/t/curl-netrcopt-env644/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:39:33.802", "tag": "curl-netrcfile-env644", "path": "/t/curl-netrcfile-env644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:39:33.803", "tag": "bbwget-env644", "path": "/t/bbwget-env644/plain", "auth": null, "basic": null, "ua": "Wget"}
+{"t": "06:39:33.804", "tag": "gnuwget-env644", "path": "/t/gnuwget-env644/plain", "auth": null, "basic": null, "ua": "Wget/1.25.0"}
+{"t": "06:39:33.807", "tag": "git-env644", "path": "/t/git-env644/repo.git/info/refs?service=git-upload-pack", "auth": null, "basic": null, "ua": "git/2.49.1"}
+{"t": "06:39:39.749", "tag": "requests-home600", "path": "/t/requests-home600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-requests/2.34.2"}
+{"t": "06:39:39.750", "tag": "requests-notrustenv-home600", "path": "/t/requests-notrustenv-home600/plain", "auth": null, "basic": null, "ua": "python-requests/2.34.2"}
+{"t": "06:39:39.765", "tag": "httpx-home600", "path": "/t/httpx-home600/plain", "auth": null, "basic": null, "ua": "python-httpx/0.28.1"}
+{"t": "06:39:39.768", "tag": "httpx-netrcauth-home600", "path": "/t/httpx-netrcauth-home600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-httpx/0.28.1"}
+{"t": "06:39:39.932", "tag": "pip-home600", "path": "/t/pip-home600/simple/spikepkg/", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "pip/26.2.2 {\"ci\":null,\"cpu\":\"aarch64\",\"distro\":{\"id\":\"trixie"}
+{"t": "06:39:40.016", "tag": "requests-home644", "path": "/t/requests-home644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-requests/2.34.2"}
+{"t": "06:39:40.017", "tag": "requests-notrustenv-home644", "path": "/t/requests-notrustenv-home644/plain", "auth": null, "basic": null, "ua": "python-requests/2.34.2"}
+{"t": "06:39:40.029", "tag": "httpx-home644", "path": "/t/httpx-home644/plain", "auth": null, "basic": null, "ua": "python-httpx/0.28.1"}
+{"t": "06:39:40.153", "tag": "pip-home644", "path": "/t/pip-home644/simple/spikepkg/", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "pip/26.2.2 {\"ci\":null,\"cpu\":\"aarch64\",\"distro\":{\"id\":\"trixie"}
+{"t": "06:39:40.241", "tag": "requests-env600", "path": "/t/requests-env600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-requests/2.34.2"}
+{"t": "06:39:40.243", "tag": "requests-notrustenv-env600", "path": "/t/requests-notrustenv-env600/plain", "auth": null, "basic": null, "ua": "python-requests/2.34.2"}
+{"t": "06:39:40.256", "tag": "httpx-env600", "path": "/t/httpx-env600/plain", "auth": null, "basic": null, "ua": "python-httpx/0.28.1"}
+{"t": "06:39:40.261", "tag": "httpx-netrcauth-envfile-env600", "path": "/t/httpx-netrcauth-envfile-env600/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-httpx/0.28.1"}
+{"t": "06:39:40.400", "tag": "pip-env600", "path": "/t/pip-env600/simple/spikepkg/", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "pip/26.2.2 {\"ci\":null,\"cpu\":\"aarch64\",\"distro\":{\"id\":\"trixie"}
+{"t": "06:39:40.476", "tag": "requests-env644", "path": "/t/requests-env644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-requests/2.34.2"}
+{"t": "06:39:40.477", "tag": "requests-notrustenv-env644", "path": "/t/requests-notrustenv-env644/plain", "auth": null, "basic": null, "ua": "python-requests/2.34.2"}
+{"t": "06:39:40.489", "tag": "httpx-env644", "path": "/t/httpx-env644/plain", "auth": null, "basic": null, "ua": "python-httpx/0.28.1"}
+{"t": "06:39:40.493", "tag": "httpx-netrcauth-envfile-env644", "path": "/t/httpx-netrcauth-envfile-env644/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-httpx/0.28.1"}
+{"t": "06:39:40.620", "tag": "pip-env644", "path": "/t/pip-env644/simple/spikepkg/", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "pip/26.2.2 {\"ci\":null,\"cpu\":\"aarch64\",\"distro\":{\"id\":\"trixie"}
+{"t": "06:39:49.525", "tag": "go-home600", "path": "/t/go-home600/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:39:49.535", "tag": "go-home644", "path": "/t/go-home644/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:39:49.542", "tag": "go-env600", "path": "/t/go-env600/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:39:49.553", "tag": "go-env644", "path": "/t/go-env644/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:39:50.085", "tag": "npm-home600", "path": "/t/npm-home600/npm", "auth": null, "basic": null, "ua": "npm/11.19.1 node/v24.22.2 linux arm64 workspaces/false"}
+{"t": "06:39:50.092", "tag": "npm-home600", "path": "/t/npm-home600/spikepkg", "auth": null, "basic": null, "ua": "npm/11.19.1 node/v24.22.2 linux arm64 workspaces/false"}
+{"t": "06:39:50.142", "tag": "nodefetch-home600", "path": "/t/nodefetch-home600/plain", "auth": null, "basic": null, "ua": "node"}
+{"t": "06:39:50.245", "tag": "npm-home644", "path": "/t/npm-home644/spikepkg", "auth": null, "basic": null, "ua": "npm/11.19.1 node/v24.22.2 linux arm64 workspaces/false"}
+{"t": "06:39:50.290", "tag": "nodefetch-home644", "path": "/t/nodefetch-home644/plain", "auth": null, "basic": null, "ua": "node"}
+{"t": "06:39:50.386", "tag": "npm-env600", "path": "/t/npm-env600/spikepkg", "auth": null, "basic": null, "ua": "npm/11.19.1 node/v24.22.2 linux arm64 workspaces/false"}
+{"t": "06:39:50.422", "tag": "nodefetch-env600", "path": "/t/nodefetch-env600/plain", "auth": null, "basic": null, "ua": "node"}
+{"t": "06:39:50.519", "tag": "npm-env644", "path": "/t/npm-env644/spikepkg", "auth": null, "basic": null, "ua": "npm/11.19.1 node/v24.22.2 linux arm64 workspaces/false"}
+{"t": "06:39:50.555", "tag": "nodefetch-env644", "path": "/t/nodefetch-env644/plain", "auth": null, "basic": null, "ua": "node"}
+{"t": "06:39:51.264", "tag": "javahttp-home600", "path": "/t/javahttp-home600/plain", "auth": null, "basic": null, "ua": "Java-http-client/21.0.13"}
+{"t": "06:39:51.273", "tag": "javahuc-home600", "path": "/t/javahuc-home600/plain", "auth": null, "basic": null, "ua": "Java/21.0.13"}
+{"t": "06:39:51.985", "tag": "javahttp-home644", "path": "/t/javahttp-home644/plain", "auth": null, "basic": null, "ua": "Java-http-client/21.0.13"}
+{"t": "06:39:51.993", "tag": "javahuc-home644", "path": "/t/javahuc-home644/plain", "auth": null, "basic": null, "ua": "Java/21.0.13"}
+{"t": "06:39:52.703", "tag": "javahttp-env600", "path": "/t/javahttp-env600/plain", "auth": null, "basic": null, "ua": "Java-http-client/21.0.13"}
+{"t": "06:39:52.710", "tag": "javahuc-env600", "path": "/t/javahuc-env600/plain", "auth": null, "basic": null, "ua": "Java/21.0.13"}
+{"t": "06:39:53.415", "tag": "javahttp-env644", "path": "/t/javahttp-env644/plain", "auth": null, "basic": null, "ua": "Java-http-client/21.0.13"}
+{"t": "06:39:53.422", "tag": "javahuc-env644", "path": "/t/javahuc-env644/plain", "auth": null, "basic": null, "ua": "Java/21.0.13"}

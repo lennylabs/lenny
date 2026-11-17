@@ -1,0 +1,1208 @@
+// uc4.go: the rule evaluator as user-credential-delivery-design.md revision 3, UC-4, states it.
+// It holds no provider code. The presets and generic rule sets are data, and a request reaches this file through matcher "uc4".
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/formatter"
+	"github.com/vektah/gqlparser/v2/parser"
+)
+
+type uc4Rule struct {
+	Action  string   `json:"action"`
+	Methods []string `json:"methods"` // WRITE names any method other than GET, HEAD, and OPTIONS
+	Path    string   `json:"path"`
+	pats    [][]string
+	m       map[string]bool
+}
+
+type encSeg struct {
+	Pattern       string   `json:"pattern"` // "**" any prefix, "*" one segment, "{enc}" one encoded segment, "{enc*}" this and every later segment
+	RefuseDecoded []string `json:"refuseDecoded,omitempty"`
+	toks          []string
+	refuse        map[string]bool
+}
+
+type uc4Config struct {
+	Default         string     `json:"default"` // allow or deny
+	RepoRoots       []string   `json:"repoRoots,omitempty"`
+	Rules           []*uc4Rule `json:"rules,omitempty"`
+	GraphQLPaths    []string   `json:"graphqlPaths,omitempty"`
+	AllowMutations  []string   `json:"allowMutations,omitempty"`
+	BodyPatterns    []string   `json:"bodyPatterns,omitempty"`
+	WriteNoQuery    bool       `json:"writeNoQuery,omitempty"`
+	WriteJSONOnly   bool       `json:"writeJSONOnly,omitempty"`
+	EncodedSegments []*encSeg  `json:"encodedSegments,omitempty"`
+	RefuseFamilies  bool       `json:"refuseFamilies,omitempty"`
+	DenyBodyKeys    []string   `json:"denyBodyKeys,omitempty"`
+	UndecodableDeny bool       `json:"undecodableRefused,omitempty"`
+	UploadsPath     string     `json:"uploadsPath,omitempty"`
+	RoutingHeaders  []string   `json:"routingHeaders,omitempty"`
+	MaxBody         int64      `json:"maxBody,omitempty"`
+	MaxDoc          int        `json:"maxDocument,omitempty"`
+	MaxTokens       int        `json:"maxTokens,omitempty"`
+	MaxDepth        int        `json:"maxDepth,omitempty"`
+	MaxJSONDepth    int        `json:"maxJSONDepth,omitempty"`
+	MaxRootFields   int        `json:"maxRootFields,omitempty"`
+	BodyReadMs      int        `json:"bodyReadMs,omitempty"`
+	CheckBudgetUs   int        `json:"checkBudgetUs,omitempty"`
+	res             []*regexp.Regexp
+	denyKeys        map[string]bool
+	allowM          map[string]bool
+	gql             map[string]bool
+	prefixLower     string
+}
+
+func (u *uc4Config) compile(restPrefix string) error {
+	u.prefixLower = strings.ToLower(restPrefix)
+	if !strings.HasPrefix(u.prefixLower, "/") {
+		u.prefixLower = "/" + u.prefixLower
+	}
+	if !strings.HasSuffix(u.prefixLower, "/") {
+		u.prefixLower += "/"
+	}
+	for _, r := range u.Rules {
+		r.m = map[string]bool{}
+		for _, x := range r.Methods {
+			r.m[strings.ToUpper(x)] = true
+		}
+		paths := []string{r.Path}
+		if strings.HasPrefix(r.Path, "{repo}") {
+			paths = nil
+			for _, root := range u.RepoRoots {
+				paths = append(paths, root+strings.TrimPrefix(r.Path, "{repo}"))
+			}
+		}
+		for _, p := range paths {
+			r.pats = append(r.pats, strings.Split(strings.ToLower(strings.TrimPrefix(p, "/")), "/"))
+		}
+	}
+	for _, e := range u.EncodedSegments {
+		e.toks = strings.Split(strings.TrimPrefix(e.Pattern, "/"), "/")
+		e.refuse = set(e.RefuseDecoded, true)
+	}
+	for _, s := range u.BodyPatterns {
+		re, err := regexp.Compile(s)
+		if err != nil {
+			return err
+		}
+		u.res = append(u.res, re)
+	}
+	u.denyKeys = set(u.DenyBodyKeys, true)
+	u.allowM = set(u.AllowMutations, false)
+	u.gql = set(u.GraphQLPaths, true)
+	if len(u.RoutingHeaders) == 0 {
+		u.RoutingHeaders = []string{"X-Original-URL", "X-Rewrite-URL", "X-Forwarded-Path", "X-Forwarded-Prefix", "X-Forwarded-Uri", "X-Envoy-Original-Path"}
+	}
+	def := func(p *int64, v int64) {
+		if *p == 0 {
+			*p = v
+		}
+	}
+	defi := func(p *int, v int) {
+		if *p == 0 {
+			*p = v
+		}
+	}
+	def(&u.MaxBody, 512<<10)
+	defi(&u.MaxDoc, 64<<10)
+	defi(&u.MaxTokens, 4096)
+	defi(&u.MaxDepth, 32)
+	defi(&u.MaxJSONDepth, 32)
+	defi(&u.MaxRootFields, 16)
+	defi(&u.BodyReadMs, 30000)
+	defi(&u.CheckBudgetUs, 100000)
+	return nil
+}
+
+// segMatch reads one pattern: "*" is one segment, and a trailing "**" is the rest, zero segments included.
+func segMatch(pat, got []string) bool {
+	for i, t := range pat {
+		if t == "**" && i == len(pat)-1 {
+			return len(got) >= i
+		}
+		if i >= len(got) {
+			return false
+		}
+		if t != "*" && t != got[i] {
+			return false
+		}
+	}
+	return len(got) == len(pat)
+}
+
+func isWriteMethod(m string) bool {
+	switch strings.ToUpper(m) {
+	case "GET", "HEAD", "OPTIONS":
+		return false
+	}
+	return true
+}
+
+func hasControl(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 0x20 || s[i] == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
+// uc4Canon is the canonical path rule: the result is what is forwarded.
+func (u *uc4Config) uc4Canon(raw string) (string, *deny) {
+	if strings.ContainsAny(raw, "\\;") {
+		return "", no(403, "path holds a backslash or a parameter")
+	}
+	if hasControl(raw) || strings.ContainsAny(raw, " ") {
+		return "", no(403, "path holds a control byte")
+	}
+	var segs []string
+	for _, x := range strings.Split(strings.TrimPrefix(raw, "/"), "/") {
+		switch x {
+		case "":
+		case ".", "..":
+			return "", no(403, "path holds a dot segment")
+		default:
+			segs = append(segs, x)
+		}
+	}
+	for i, x := range segs {
+		if !strings.Contains(x, "%") {
+			continue
+		}
+		e := u.encodedFor(segs, i)
+		if e == nil {
+			return "", no(403, "percent escape outside a declared encoded segment: %s", x)
+		}
+		d, err := url.PathUnescape(x)
+		if err != nil || strings.Contains(d, "%") {
+			return "", no(403, "a declared encoded segment does not decode once: %s", x)
+		}
+		if hasControl(d) {
+			return "", no(403, "a declared encoded segment holds a control byte")
+		}
+		for _, part := range strings.Split(d, "/") {
+			if part == "." || part == ".." {
+				return "", no(403, "a declared encoded segment holds a dot segment")
+			}
+			if e.refuse[strings.ToLower(part)] {
+				return "", no(403, "a declared encoded segment holds the route word %q", part)
+			}
+		}
+	}
+	return "/" + strings.Join(segs, "/"), nil
+}
+
+func (u *uc4Config) encodedFor(segs []string, i int) *encSeg {
+	for _, e := range u.EncodedSegments {
+		toks := e.toks
+		anyp := toks[0] == "**"
+		if anyp {
+			toks = toks[1:]
+		}
+		k := -1
+		for n, t := range toks {
+			if t == "{enc}" || t == "{enc*}" {
+				k = n
+				break
+			}
+		}
+		if k < 0 {
+			continue
+		}
+		multi := toks[k] == "{enc*}"
+		try := func(at int) bool { // at is the index the {enc} token sits on
+			start := at - k
+			if start < 0 || (!anyp && start != 0) {
+				return false
+			}
+			if multi {
+				if len(segs) < start+k+1 {
+					return false
+				}
+			} else if start+len(toks) > len(segs) {
+				return false
+			}
+			for n := 0; n < len(toks); n++ {
+				if multi && n >= k {
+					break
+				}
+				t := toks[n]
+				if n == k || t == "*" {
+					continue
+				}
+				if !strings.EqualFold(t, segs[start+n]) {
+					return false
+				}
+			}
+			return true
+		}
+		if multi {
+			for at := i; at >= k; at-- {
+				if try(at) {
+					return e
+				}
+			}
+		} else if try(i) {
+			return e
+		}
+	}
+	return nil
+}
+
+// ---- JSON, decoded at the token level at every depth
+
+type jnode struct {
+	kind byte // o a s n b z
+	keys []string
+	vals []*jnode
+	s    string
+}
+
+func surrogateCheck(b []byte) *deny {
+	in := false
+	var hi bool
+	hex4 := func(i int) (int, bool) {
+		if i+4 > len(b) {
+			return 0, false
+		}
+		v, err := strconv.ParseUint(string(b[i:i+4]), 16, 32)
+		return int(v), err == nil
+	}
+	for i := 0; i < len(b); i++ {
+		c := b[i]
+		if !in {
+			if c == '"' {
+				in = true
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			if hi {
+				return no(400, "a lone surrogate in a JSON string")
+			}
+			in = false
+		case '\\':
+			i++
+			if i >= len(b) {
+				return nil
+			}
+			if b[i] == 'u' {
+				v, ok := hex4(i + 1)
+				if !ok {
+					return nil
+				}
+				i += 4
+				switch {
+				case v >= 0xD800 && v <= 0xDBFF:
+					if hi {
+						return no(400, "a lone surrogate in a JSON string")
+					}
+					hi = true
+					continue
+				case v >= 0xDC00 && v <= 0xDFFF:
+					if !hi {
+						return no(400, "a lone surrogate in a JSON string")
+					}
+					hi = false
+					continue
+				}
+			}
+			if hi {
+				return no(400, "a lone surrogate in a JSON string")
+			}
+		default:
+			if hi {
+				return no(400, "a lone surrogate in a JSON string")
+			}
+		}
+	}
+	return nil
+}
+
+func strictJSON(b []byte, maxDepth int) (*jnode, *deny) {
+	if !utf8.Valid(b) {
+		return nil, no(400, "body is not valid UTF-8")
+	}
+	if e := surrogateCheck(b); e != nil {
+		return nil, e
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var val func(t json.Token, depth int) (*jnode, *deny)
+	val = func(t json.Token, depth int) (*jnode, *deny) {
+		switch x := t.(type) {
+		case json.Delim:
+			if depth+1 > maxDepth {
+				return nil, no(403, "JSON nesting is over the bound of %d", maxDepth)
+			}
+			if x == '{' {
+				n := &jnode{kind: 'o'}
+				seen := map[string]bool{}
+				for dec.More() {
+					kt, err := dec.Token()
+					if err != nil {
+						return nil, no(400, "malformed JSON")
+					}
+					k, ok := kt.(string)
+					if !ok {
+						return nil, no(400, "malformed JSON")
+					}
+					if seen[k] {
+						return nil, no(403, "duplicate JSON key %q", k)
+					}
+					seen[k] = true
+					vt, err := dec.Token()
+					if err != nil {
+						return nil, no(400, "malformed JSON")
+					}
+					c, e := val(vt, depth+1)
+					if e != nil {
+						return nil, e
+					}
+					n.keys, n.vals = append(n.keys, k), append(n.vals, c)
+				}
+				if _, err := dec.Token(); err != nil {
+					return nil, no(400, "malformed JSON")
+				}
+				return n, nil
+			}
+			if x == '[' {
+				n := &jnode{kind: 'a'}
+				for dec.More() {
+					vt, err := dec.Token()
+					if err != nil {
+						return nil, no(400, "malformed JSON")
+					}
+					c, e := val(vt, depth+1)
+					if e != nil {
+						return nil, e
+					}
+					n.vals = append(n.vals, c)
+				}
+				if _, err := dec.Token(); err != nil {
+					return nil, no(400, "malformed JSON")
+				}
+				return n, nil
+			}
+			return nil, no(400, "malformed JSON")
+		case string:
+			return &jnode{kind: 's', s: x}, nil
+		case json.Number:
+			return &jnode{kind: 'n', s: x.String()}, nil
+		case bool:
+			return &jnode{kind: 'b', s: strconv.FormatBool(x)}, nil
+		case nil:
+			return &jnode{kind: 'z'}, nil
+		}
+		return nil, no(400, "malformed JSON")
+	}
+	t, err := dec.Token()
+	if err != nil {
+		return nil, no(400, "malformed JSON")
+	}
+	n, e := val(t, 0)
+	if e != nil {
+		return nil, e
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, no(403, "data after the JSON value")
+	}
+	return n, nil
+}
+
+func jstr(w *bytes.Buffer, s string) {
+	en := json.NewEncoder(w)
+	en.SetEscapeHTML(false)
+	en.Encode(s)
+	w.Truncate(w.Len() - 1)
+}
+
+func (n *jnode) encode(w *bytes.Buffer) {
+	switch n.kind {
+	case 'o':
+		w.WriteByte('{')
+		for i, k := range n.keys {
+			if i > 0 {
+				w.WriteByte(',')
+			}
+			jstr(w, k)
+			w.WriteByte(':')
+			n.vals[i].encode(w)
+		}
+		w.WriteByte('}')
+	case 'a':
+		w.WriteByte('[')
+		for i, c := range n.vals {
+			if i > 0 {
+				w.WriteByte(',')
+			}
+			c.encode(w)
+		}
+		w.WriteByte(']')
+	case 's':
+		jstr(w, n.s)
+	case 'n', 'b':
+		w.WriteString(n.s)
+	default:
+		w.WriteString("null")
+	}
+}
+
+// lineHit applies a pattern per line to one decoded string.
+func lineHit(re *regexp.Regexp, s string) string {
+	for _, l := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\v' || r == '\f' || r == 0x85 || r == 0x2028 || r == 0x2029
+	}) {
+		if m := re.FindString(l); m != "" {
+			return m
+		}
+	}
+	return ""
+}
+
+func (u *uc4Config) strHit(s string) string {
+	for _, re := range u.res {
+		if m := lineHit(re, s); m != "" {
+			return m
+		}
+	}
+	return ""
+}
+
+// walkJSON applies body patterns to every string value and denyBodyKeys to every key.
+func (u *uc4Config) walkJSON(n *jnode) *deny {
+	switch n.kind {
+	case 's':
+		if m := u.strHit(n.s); m != "" {
+			return no(403, "a string in the body matches a denied pattern: %q", m)
+		}
+	case 'a':
+		for _, c := range n.vals {
+			if e := u.walkJSON(c); e != nil {
+				return e
+			}
+		}
+	case 'o':
+		for i, k := range n.keys {
+			if u.denyKeys[strings.ToLower(k)] {
+				return no(403, "JSON key %q is refused on a write", k)
+			}
+			if e := u.walkJSON(n.vals[i]); e != nil {
+				return e
+			}
+		}
+	}
+	return nil
+}
+
+func caseVariantTop(n *jnode) *deny {
+	if n.kind != 'o' {
+		return nil
+	}
+	seen := map[string]string{}
+	for _, k := range n.keys {
+		f := strings.ToLower(k)
+		if o, ok := seen[f]; ok && o != k {
+			return no(403, "case-variant top-level keys %q and %q", o, k)
+		}
+		seen[f] = k
+	}
+	return nil
+}
+
+// ---- GraphQL
+
+func valueStrings(v *ast.Value, f func(string) string) string {
+	if v == nil {
+		return ""
+	}
+	if v.Kind == ast.StringValue || v.Kind == ast.BlockValue {
+		if m := f(v.Raw); m != "" {
+			return m
+		}
+	}
+	for _, c := range v.Children {
+		if m := valueStrings(c.Value, f); m != "" {
+			return m
+		}
+	}
+	return ""
+}
+
+func dirStrings(ds ast.DirectiveList, f func(string) string) string {
+	for _, d := range ds {
+		for _, a := range d.Arguments {
+			if m := valueStrings(a.Value, f); m != "" {
+				return m
+			}
+		}
+	}
+	return ""
+}
+
+func selStrings(ss ast.SelectionSet, f func(string) string) string {
+	for _, s := range ss {
+		switch x := s.(type) {
+		case *ast.Field:
+			for _, a := range x.Arguments {
+				if m := valueStrings(a.Value, f); m != "" {
+					return m
+				}
+			}
+			if m := dirStrings(x.Directives, f); m != "" {
+				return m
+			}
+			if m := selStrings(x.SelectionSet, f); m != "" {
+				return m
+			}
+		case *ast.InlineFragment:
+			if m := dirStrings(x.Directives, f); m != "" {
+				return m
+			}
+			if m := selStrings(x.SelectionSet, f); m != "" {
+				return m
+			}
+		case *ast.FragmentSpread:
+			if m := dirStrings(x.Directives, f); m != "" {
+				return m
+			}
+		}
+	}
+	return ""
+}
+
+func docStrings(d *ast.QueryDocument, f func(string) string) string {
+	for _, o := range d.Operations {
+		if m := dirStrings(o.Directives, f); m != "" {
+			return m
+		}
+		for _, vd := range o.VariableDefinitions {
+			if m := valueStrings(vd.DefaultValue, f); m != "" {
+				return m
+			}
+			if m := dirStrings(vd.Directives, f); m != "" {
+				return m
+			}
+		}
+		if m := selStrings(o.SelectionSet, f); m != "" {
+			return m
+		}
+	}
+	for _, fr := range d.Fragments {
+		if m := dirStrings(fr.Directives, f); m != "" {
+			return m
+		}
+		if m := selStrings(fr.SelectionSet, f); m != "" {
+			return m
+		}
+	}
+	return ""
+}
+
+// expandedDepth is selection nesting with fragment spreads followed. A cycle is refused. Memoised per fragment, so a wide chain costs little.
+func expandedDepth(ss ast.SelectionSet, d *ast.QueryDocument, memo map[string]int, onPath map[string]bool) (int, bool) {
+	max := 0
+	for _, s := range ss {
+		n := 0
+		var ok bool
+		switch x := s.(type) {
+		case *ast.Field:
+			if len(x.SelectionSet) == 0 {
+				n = 1
+				break
+			}
+			n, ok = expandedDepth(x.SelectionSet, d, memo, onPath)
+			if !ok {
+				return 0, false
+			}
+			n++
+		case *ast.InlineFragment:
+			n, ok = expandedDepth(x.SelectionSet, d, memo, onPath)
+			if !ok {
+				return 0, false
+			}
+			n++
+		case *ast.FragmentSpread:
+			if v, seen := memo[x.Name]; seen {
+				n = v
+				break
+			}
+			fr := d.Fragments.ForName(x.Name)
+			if fr == nil {
+				return 0, false
+			}
+			if onPath[x.Name] {
+				return 0, false
+			}
+			onPath[x.Name] = true
+			n, ok = expandedDepth(fr.SelectionSet, d, memo, onPath)
+			delete(onPath, x.Name)
+			if !ok {
+				return 0, false
+			}
+			memo[x.Name] = n
+		}
+		if n > max {
+			max = n
+		}
+	}
+	return max, true
+}
+
+func valueDepth(v *ast.Value) int {
+	if v == nil {
+		return 0
+	}
+	m := 0
+	for _, c := range v.Children {
+		if x := valueDepth(c.Value); x > m {
+			m = x
+		}
+	}
+	return m + 1
+}
+
+func maxValueDepth(d *ast.QueryDocument) int {
+	m := 0
+	f := func(v *ast.Value) {
+		if x := valueDepth(v); x > m {
+			m = x
+		}
+	}
+	var sel func(ss ast.SelectionSet)
+	sel = func(ss ast.SelectionSet) {
+		for _, s := range ss {
+			switch x := s.(type) {
+			case *ast.Field:
+				for _, a := range x.Arguments {
+					f(a.Value)
+				}
+				sel(x.SelectionSet)
+			case *ast.InlineFragment:
+				sel(x.SelectionSet)
+			}
+		}
+	}
+	for _, o := range d.Operations {
+		for _, vd := range o.VariableDefinitions {
+			f(vd.DefaultValue)
+		}
+		sel(o.SelectionSet)
+	}
+	for _, fr := range d.Fragments {
+		sel(fr.SelectionSet)
+	}
+	return m
+}
+
+// docCheck is the document half of the GraphQL rule. It returns the parsed document.
+func (p *policy) docCheck(doc, opName string) (*ast.QueryDocument, *deny) {
+	u := p.UC4
+	if len(doc) > u.MaxDoc {
+		return nil, no(413, "document of %d bytes is over the %d byte bound", len(doc), u.MaxDoc)
+	}
+	if e := lexCheck(doc); e != nil {
+		return nil, e
+	}
+	d, err := parser.ParseQueryWithTokenLimit(&ast.Source{Input: doc}, u.MaxTokens)
+	if err != nil {
+		return nil, no(400, "GraphQL parse error: %s", strings.SplitN(err.Error(), "\n", 2)[0])
+	}
+	if len(d.Operations) != 1 {
+		return nil, no(403, "a document holds one operation, and this one holds %d", len(d.Operations))
+	}
+	o := d.Operations[0]
+	if opName != "" && o.Name != opName {
+		return nil, no(403, "operationName %q names no operation in the document", opName)
+	}
+	if o.Operation == ast.Subscription {
+		return nil, no(403, "a subscription is refused")
+	}
+	dp, ok := expandedDepth(o.SelectionSet, d, map[string]int{}, map[string]bool{})
+	if !ok {
+		return nil, no(403, "a fragment cycle or an unknown fragment")
+	}
+	if dp > u.MaxDepth {
+		return nil, no(403, "selection nesting of %d is over the bound of %d", dp, u.MaxDepth)
+	}
+	for _, fr := range d.Fragments {
+		x, ok := expandedDepth(fr.SelectionSet, d, map[string]int{}, map[string]bool{})
+		if !ok {
+			return nil, no(403, "a fragment cycle or an unknown fragment")
+		}
+		if x > u.MaxDepth {
+			return nil, no(403, "selection nesting of %d in a fragment is over the bound of %d", x, u.MaxDepth)
+		}
+	}
+	if x := maxValueDepth(d); x > u.MaxDepth {
+		return nil, no(403, "value nesting of %d is over the bound of %d", x, u.MaxDepth)
+	}
+	if o.Operation != ast.Mutation {
+		for _, fr := range d.Fragments {
+			if strings.EqualFold(fr.TypeCondition, "Mutation") {
+				return nil, no(403, "a query document defines a fragment on Mutation")
+			}
+		}
+		var walk func(ss ast.SelectionSet) *deny
+		walk = func(ss ast.SelectionSet) *deny {
+			for _, s := range ss {
+				switch x := s.(type) {
+				case *ast.Field:
+					if p.denyM[x.Name] {
+						return no(403, "a query names the denied mutation field %q", x.Name)
+					}
+					if e := walk(x.SelectionSet); e != nil {
+						return e
+					}
+				case *ast.InlineFragment:
+					if strings.EqualFold(x.TypeCondition, "Mutation") {
+						return no(403, "a query spreads a fragment on Mutation")
+					}
+					if e := walk(x.SelectionSet); e != nil {
+						return e
+					}
+				}
+			}
+			return nil
+		}
+		if e := walk(o.SelectionSet); e != nil {
+			return nil, e
+		}
+		for _, fr := range d.Fragments {
+			if e := walk(fr.SelectionSet); e != nil {
+				return nil, e
+			}
+		}
+		return d, nil // A query is otherwise not checked further.
+	}
+	if len(o.SelectionSet) > u.MaxRootFields {
+		return nil, no(403, "%d root fields is over the bound of %d", len(o.SelectionSet), u.MaxRootFields)
+	}
+	for _, s := range o.SelectionSet {
+		f, isf := s.(*ast.Field)
+		if !isf {
+			return nil, no(403, "a mutation's root selections must be fields")
+		}
+		if p.denyM[f.Name] {
+			return nil, no(403, "mutation field %q is denied by the preset", f.Name)
+		}
+		if u.Default == "deny" && !u.allowM[f.Name] {
+			return nil, no(403, "mutation field %q is not allowed", f.Name)
+		}
+	}
+	if m := docStrings(d, u.strHit); m != "" {
+		return nil, no(403, "a string in the document matches a denied pattern: %q", m)
+	}
+	return d, nil
+}
+
+func (p *policy) uc4GraphQL(r *http.Request, hasq bool) ([]byte, *deny) {
+	u := p.UC4
+	if strings.ToUpper(r.Method) != "POST" {
+		return nil, no(403, "GraphQL accepts POST only, got %s", r.Method)
+	}
+	if hasq {
+		return nil, no(403, "GraphQL refuses a URL query")
+	}
+	if r.Header.Get("Content-Encoding") != "" {
+		return nil, no(415, "compressed GraphQL body refused")
+	}
+	cts := r.Header["Content-Type"]
+	if len(cts) != 1 {
+		return nil, no(403, "GraphQL needs exactly one Content-Type")
+	}
+	if mt, _, err := mime.ParseMediaType(cts[0]); err != nil || mt != "application/json" {
+		return nil, no(403, "GraphQL refuses Content-Type %q", cts[0])
+	}
+	release, e := checkGate()
+	if e != nil {
+		return nil, e
+	}
+	defer release()
+	b, e := u.readBounded(r)
+	if e != nil {
+		return nil, e
+	}
+	t0 := time.Now()
+	n, e := strictJSON(b, u.MaxJSONDepth)
+	if e != nil {
+		return nil, e
+	}
+	if n.kind != 'o' {
+		return nil, no(403, "the envelope must be a JSON object")
+	}
+	if e := caseVariantTop(n); e != nil {
+		return nil, e
+	}
+	var doc, opName string
+	hasDoc := false
+	qi := -1
+	for i, k := range n.keys {
+		v := n.vals[i]
+		lk := strings.ToLower(k)
+		if (lk == "query" || lk == "variables" || lk == "operationname") && k != map[string]string{"query": "query", "variables": "variables", "operationname": "operationName"}[lk] {
+			return nil, no(403, "case-variant top-level key %q", k)
+		}
+		switch k {
+		case "query":
+			if v.kind != 's' {
+				return nil, no(400, "query is not a string")
+			}
+			doc, hasDoc, qi = v.s, true, i
+		case "operationName":
+			if v.kind == 's' {
+				opName = v.s
+			} else if v.kind != 'z' {
+				return nil, no(400, "operationName is not a string")
+			}
+		case "variables":
+			if v.kind != 'o' && v.kind != 'z' {
+				return nil, no(403, "variables must be an object or null")
+			}
+		}
+	}
+	if !hasDoc || doc == "" {
+		return nil, no(400, "query is missing")
+	}
+	d, e := p.docCheck(doc, opName)
+	if e != nil {
+		return nil, e
+	}
+	if d.Operations[0].Operation == ast.Mutation {
+		for i, k := range n.keys {
+			if k == "query" {
+				continue
+			}
+			if e := u.walkJSON(n.vals[i]); e != nil {
+				return nil, e
+			}
+		}
+	}
+	var pr bytes.Buffer
+	formatter.NewFormatter(&pr, formatter.WithCompacted()).FormatQueryDocument(d)
+	n.vals[qi] = &jnode{kind: 's', s: pr.String()}
+	var o bytes.Buffer
+	n.encode(&o)
+	if time.Since(t0) > time.Duration(u.CheckBudgetUs)*time.Microsecond {
+		return nil, no(503, "the check went past its budget of %d us", u.CheckBudgetUs)
+	}
+	return o.Bytes(), nil
+}
+
+// readBounded holds a body to its size bound and its read deadline.
+func (u *uc4Config) readBounded(r *http.Request) ([]byte, *deny) {
+	if r.ContentLength > u.MaxBody {
+		return nil, no(413, "body of %d bytes is over the %d byte bound", r.ContentLength, u.MaxBody)
+	}
+	type res struct {
+		b   []byte
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		b, err := io.ReadAll(io.LimitReader(r.Body, u.MaxBody+1))
+		ch <- res{b, err}
+	}()
+	select {
+	case x := <-ch:
+		if x.err != nil {
+			return nil, no(400, "body read failed: %v", x.err)
+		}
+		if int64(len(x.b)) > u.MaxBody {
+			return nil, no(413, "body is over the %d byte bound", u.MaxBody)
+		}
+		return x.b, nil
+	case <-time.After(time.Duration(u.BodyReadMs) * time.Millisecond):
+		return nil, no(408, "body read went past %d ms", u.BodyReadMs)
+	}
+}
+
+var nChecks atomic.Int64
+
+// checkGate is the per-pod bound on concurrent checks. Past it the caller answers 429 with Retry-After.
+func checkGate() (func(), *deny) {
+	if nChecks.Add(1) > 4 {
+		nChecks.Add(-1)
+		return nil, no(429, "more than 4 concurrent checks in this pod")
+	}
+	return func() { nChecks.Add(-1) }, nil
+}
+
+func uc4Upgrade(r *http.Request) *deny {
+	if strings.EqualFold(r.Method, "CONNECT") {
+		return no(403, "CONNECT inside a terminated connection is refused")
+	}
+	if r.Header.Get("Upgrade") != "" || r.Header.Get("HTTP2-Settings") != "" || r.Header.Get("Sec-WebSocket-Key") != "" || r.Header.Get("Sec-WebSocket-Version") != "" {
+		return no(403, "upgrade, h2c, and WebSocket are refused")
+	}
+	for _, v := range r.Header["Connection"] {
+		for _, t := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(t), "upgrade") {
+				return no(403, "upgrade, h2c, and WebSocket are refused")
+			}
+		}
+	}
+	return nil
+}
+
+// checkUC4 is the whole request decision.
+func (p *policy) checkUC4(r *http.Request) (fb []byte, keep bool, d *deny) {
+	u := p.UC4
+	if e := uc4Upgrade(r); e != nil {
+		return nil, false, e
+	}
+	for _, h := range []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override", "X-Original-Method"} {
+		if _, ok := r.Header[h]; ok {
+			return nil, false, no(403, "method override header %s refused", h)
+		}
+	}
+	for _, h := range u.RoutingHeaders {
+		if _, ok := r.Header[http.CanonicalHeaderKey(h)]; ok {
+			return nil, false, no(403, "routing override header %s refused", h)
+		}
+	}
+	uri := r.RequestURI
+	if uri == "" {
+		uri = r.URL.RequestURI()
+	}
+	if !strings.HasPrefix(uri, "/") {
+		i := strings.Index(uri, "://")
+		if i < 0 {
+			return nil, false, no(400, "request target is neither origin-form nor absolute-form")
+		}
+		rest := uri[i+3:]
+		j := strings.IndexByte(rest, '/')
+		if j < 0 {
+			return nil, false, no(400, "absolute-form target without a path")
+		}
+		uri = rest[j:]
+	}
+	rawPath, rawq, hasq := strings.Cut(uri, "?")
+	if i := strings.IndexByte(rawq, '#'); i >= 0 {
+		rawq = rawq[:i]
+	}
+	if i := strings.IndexByte(rawPath, '#'); i >= 0 {
+		rawPath = rawPath[:i]
+	}
+	canon, e := u.uc4Canon(rawPath)
+	if e != nil {
+		return nil, false, e
+	}
+	if canon != rawPath {
+		dec, err := url.PathUnescape(canon)
+		if err != nil {
+			return nil, false, no(403, "path does not decode")
+		}
+		r.URL.Path, r.URL.RawPath = dec, canon
+		r.RequestURI = canon
+		if hasq {
+			r.RequestURI += "?" + rawq
+		}
+	}
+	q, qerr := url.ParseQuery(rawq)
+	if _, ok := q["_method"]; ok || strings.Contains(strings.ToLower(rawq), "_method") {
+		return nil, false, no(403, "_method in the query is refused")
+	}
+	method := strings.ToUpper(r.Method)
+	write := isWriteMethod(method)
+	lower := strings.ToLower(canon)
+	if u.RefuseFamilies && hasq && rawq != "" && qerr != nil {
+		return nil, false, no(403, "the query does not decode")
+	}
+	isGQL := u.gql[lower]
+	isUploads := u.UploadsPath != "" && segMatch(strings.Split(strings.TrimPrefix(strings.ToLower(u.UploadsPath), "/"), "/"), strings.Split(strings.TrimPrefix(lower, "/"), "/"))
+	if u.RefuseFamilies && !isGQL && !isUploads {
+		first := strings.SplitN(strings.TrimPrefix(lower, "/"), "/", 2)[0]
+		nonRoot := u.prefixLower != "/"
+		under := nonRoot && (lower+"/" == u.prefixLower || strings.HasPrefix(lower, u.prefixLower))
+		if (first == "api" || strings.HasPrefix(first, "graphql")) && !under {
+			return nil, false, no(403, "path %s is in the GraphQL and API family and no flavour path owns it", canon)
+		}
+		if under {
+			below := strings.TrimPrefix(lower+"/", u.prefixLower)
+			if strings.HasPrefix(below, "graphql") {
+				return nil, false, no(403, "path %s begins with graphql below the REST prefix", canon)
+			}
+		}
+		if nonRoot && write && !under {
+			return nil, false, no(403, "a write outside the REST prefix, the GraphQL paths, and the uploads path is refused: %s", canon)
+		}
+	}
+	// A POST whose final segment is graphql is refused unless it is a listed path.
+	if method == "POST" && !isGQL {
+		last := lower[strings.LastIndexByte(lower, '/')+1:]
+		if i := strings.IndexByte(last, '.'); i >= 0 {
+			last = last[:i]
+		}
+		if last == "graphql" {
+			return nil, false, no(403, "POST with a final graphql segment on an unlisted path: %s", canon)
+		}
+	}
+	if isUploads {
+		return nil, true, nil // the uploads path admits a query string and a binary body
+	}
+	if write && u.WriteNoQuery && hasq {
+		return nil, false, no(403, "a write takes no query string under this preset")
+	}
+	if isGQL {
+		b, e := p.uc4GraphQL(r, hasq)
+		return b, false, e
+	}
+	// Patterns below the prefix.
+	below, ok := strings.CutPrefix(lower+"/", u.prefixLower)
+	matched, allowed := false, false
+	if ok {
+		below = strings.TrimSuffix(below, "/")
+		cands := []string{below}
+		// For a deny rule the final segment is also compared at each dot. An admit compares the path as sent.
+		li := strings.LastIndexByte(below, '/') + 1
+		for k := len(below) - 1; k >= li; k-- {
+			if below[k] == '.' {
+				cands = append(cands, below[:k])
+			}
+		}
+		for _, c := range cands {
+			got := strings.Split(c, "/")
+			for _, rl := range u.Rules {
+				if !rl.m[method] && !(write && rl.m["WRITE"]) {
+					continue
+				}
+				for _, pat := range rl.pats {
+					if segMatch(pat, got) {
+						if rl.Action == "deny" {
+							return nil, false, no(403, "%s %s is denied by the preset", method, rl.Path)
+						}
+						if c == below {
+							matched, allowed = true, true
+						}
+					}
+				}
+			}
+		}
+	}
+	_ = matched
+	if u.Default == "deny" && !allowed {
+		return nil, false, no(403, "%s %s matches no allow rule", method, canon)
+	}
+	if !write {
+		return nil, true, nil
+	}
+	mt := ""
+	cts := r.Header["Content-Type"]
+	if len(cts) >= 1 {
+		mt, _, _ = mime.ParseMediaType(cts[0])
+	}
+	hasBody := r.ContentLength != 0 && r.Body != nil && r.Body != http.NoBody
+	if u.WriteJSONOnly && hasBody && (len(cts) != 1 || mt != "application/json") {
+		return nil, false, no(403, "a write takes a JSON body under this preset, got %q", strings.Join(cts, ","))
+	}
+	// A form can carry _method, so a form write is read whatever else applies to it.
+	inspect := len(u.res) > 0 || len(u.denyKeys) > 0 || mt == "application/x-www-form-urlencoded"
+	if len(u.res) > 0 {
+		for _, vs := range q {
+			for _, v := range vs {
+				if m := u.strHit(v); m != "" {
+					return nil, false, no(403, "a query value matches a denied pattern: %q", m)
+				}
+			}
+		}
+	}
+	if !inspect || !hasBody {
+		return nil, true, nil
+	}
+	release, e := checkGate()
+	if e != nil {
+		return nil, false, e
+	}
+	defer release()
+	if r.Header.Get("Content-Encoding") != "" {
+		if u.UndecodableDeny {
+			return nil, false, no(415, "a compressed write under body rules is refused")
+		}
+		return nil, true, nil
+	}
+	b, e := u.readBounded(r)
+	if e != nil {
+		return nil, false, e
+	}
+	t0 := time.Now()
+	budget := func() *deny {
+		if time.Since(t0) > time.Duration(u.CheckBudgetUs)*time.Microsecond {
+			return no(503, "the check went past its budget of %d us", u.CheckBudgetUs)
+		}
+		return nil
+	}
+	switch mt {
+	case "application/json":
+		n, je := strictJSON(b, u.MaxJSONDepth)
+		if je != nil {
+			if u.UndecodableDeny {
+				return nil, false, je
+			}
+			return b, false, nil
+		}
+		if e := caseVariantTop(n); e != nil {
+			return nil, false, e
+		}
+		if e := u.walkJSON(n); e != nil {
+			return nil, false, e
+		}
+		var o bytes.Buffer
+		n.encode(&o)
+		if e := budget(); e != nil {
+			return nil, false, e
+		}
+		return o.Bytes(), false, nil
+	case "application/x-www-form-urlencoded":
+		f, ferr := url.ParseQuery(string(b))
+		if ferr != nil && u.UndecodableDeny {
+			return nil, false, no(403, "a form body does not decode")
+		}
+		if _, ok := f["_method"]; ok {
+			return nil, false, no(403, "_method in a form is refused")
+		}
+		for _, vs := range f {
+			for _, v := range vs {
+				if m := u.strHit(v); m != "" {
+					return nil, false, no(403, "a form value matches a denied pattern: %q", m)
+				}
+			}
+		}
+		return b, false, nil
+	}
+	if u.UndecodableDeny {
+		return nil, false, no(415, "a write these rules cannot decode is refused")
+	}
+	return b, false, nil
+}
+
+// clientCred reads the credential a client sent on a git request: Basic password, Bearer, or token.
+func clientCred(r *http.Request) (user, tok string, ok bool) {
+	u, p, isb := r.BasicAuth()
+	if isb {
+		return u, p, p != ""
+	}
+	a := r.Header.Get("Authorization")
+	for _, pre := range []string{"Bearer ", "bearer ", "token ", "Token "} {
+		if strings.HasPrefix(a, pre) {
+			return "", strings.TrimFunc(a[len(pre):], unicode.IsSpace), true
+		}
+	}
+	return "", "", false
+}

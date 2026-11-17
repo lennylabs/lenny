@@ -1,0 +1,88 @@
+=== 7 restricted pool, formula host covered, marker gated
+### covered-fetch-public rc=0
+290530acc3ef265c629207382d6e4c193ed72b61	refs/heads/main
+git-exit=0
+### covered-fetch-private rc=0
+fatal: could not read Username for 'https://assets.example.test': terminal prompts disabled
+git-exit=128
+### covered-push-header rc=0
+fatal: unable to access 'https://assets.example.test/pub/lib.git/': The requested URL returned error: 403
+git-exit=128
+### covered-push-url rc=0
+fatal: unable to access 'https://assets.example.test/pub/lib.git/': The requested URL returned error: 403
+git-exit=128
+### covered-push-main rc=0
+fatal: unable to access 'https://assets.example.test/acme/widgets.git/': The requested URL returned error: 403
+git-exit=128
+### covered-curl-receive-advert rc=0
+http=403
+### covered-other-request rc=0
+http=200
+covered-fetch-public rc=0 identity=none origin=assets.example.test=-:200 refused=
+covered-fetch-private rc=0 identity=none origin=assets.example.test=-:401 refused=
+covered-push-header rc=0 identity= origin= refused=push to a host no VCS pool covers is refused
+covered-push-url rc=0 identity= origin= refused=push to a host no VCS pool covers is refused
+covered-push-main rc=0 identity= origin= refused=push to a host no VCS pool covers is refused
+covered-curl-receive-advert rc=0 identity= origin= refused=push to a host no VCS pool covers is refused
+covered-other-request rc=0 identity= origin=assets.example.test=-:200 refused=
+--- stale netagent data, the egress stand-in holds the host as covered
+CONNECT=403
+--- comparison: a pool where the host is not covered, so an opaque tunnel
+### opaque-fetch-public rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer USER-FILE-CURRENT' ls-remote https://assets.example.test/pub
+git-exit=0
+### opaque-fetch-private rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer USER-FILE-CURRENT' ls-remote https://assets.example.test/acm
+git-exit=0
+### opaque-push-header rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer USER-FILE-CURRENT' push -q https://assets.example.test/pub/l
+git-exit=0
+### opaque-push-url rc=0
+$ (git push -q https://x:USER-FILE-CURRENT@assets.example.test/pub/lib.git HEAD:refs/heads/x 2>&1; echo git-ex
+git-exit=0
+### opaque-push-main rc=0
+$ (git -c 'http.extraHeader=Authorization: Bearer USER-FILE-CURRENT' push -q https://assets.example.test/acme/
+git-exit=1
+### opaque-curl-receive-advert rc=0
+$ curl -sS -m 10 -o /dev/null -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 -H 'Authorization:
+http=200
+### opaque-other-request rc=0
+$ curl -sS -m 10 -o /dev/null -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 https://assets.exa
+http=200
+opaque-fetch-public rc=0 identity= origin=assets.example.test=USER-FILE-CURRENT:200 refused=
+opaque-fetch-private rc=0 identity= origin=assets.example.test=USER-FILE-CURRENT:200 refused=
+opaque-push-header rc=0 identity= origin=assets.example.test=USER-FILE-CURRENT:200 refused=
+opaque-push-url rc=0 identity= origin=assets.example.test=-:401 assets.example.test=USER-FILE-CURRENT:200 refused=
+opaque-push-main rc=0 identity= origin=assets.example.test=USER-FILE-CURRENT:200 refused=
+opaque-curl-receive-advert rc=0 identity= origin=assets.example.test=USER-FILE-CURRENT:200 refused=
+opaque-other-request rc=0 identity= origin=assets.example.test=-:200 refused=
+=== 8 assertion
+--- 3 git and 3 API requests
+   3 api http=200
+   3 git http=200
+CONNECTs at the egress stand-in:
+   ghes.example.test:443 code 200 marker 1 assert 'git gitdigest1'
+   ghes.example.test:443 code 200 marker 1 assert 'egress egressdigest1'
+upstream connections at the stub: git ['172.21.0.3:59032'] api ['172.21.0.3:59048'] shared []
+--- a forged client header on CONNECT
+   1 api http=200
+   1 git http=200
+CONNECTs at the egress stand-in:
+   ghes.example.test:443 code 200 marker 1 assert 'git gitdigest1'
+   ghes.example.test:443 code 200 marker 1 assert 'egress egressdigest1'
+upstream connections at the stub: git ['172.21.0.3:59060'] api ['172.21.0.3:59062'] shared []
+--- route edit on the git list, with idle pooled connections
+   3 api http=200
+   3 git http=200
+after the edit, pooled upstream connections open:
+CONNECTs at the egress stand-in:
+upstream connections at the stub: git ['172.21.0.3:59072'] api ['172.21.0.3:59088'] shared []
+--- the same edit, netagent restarted so no connection is pooled
+   3 api http=200
+   3 git http=502
+CONNECTs at the egress stand-in:
+   ghes.example.test:443 code 403 marker 1 assert 'git gitdigest1'
+   ghes.example.test:443 code 200 marker 1 assert 'egress egressdigest1'
+   ghes.example.test:443 code 403 marker 1 assert 'git gitdigest1'
+   ghes.example.test:443 code 403 marker 1 assert 'git gitdigest1'
+upstream connections at the stub: git [] api ['172.21.0.3:59094'] shared []

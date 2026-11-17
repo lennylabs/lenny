@@ -1,0 +1,6 @@
+2026/11/01 21:55:11 PX GET /https/moved301.test/org/repo/info/refs?service=git-upload-pack cl=0 te=[] -> host=moved301.test repo=org/repo svc=git-upload-pack 
+2026/11/01 21:55:11 REDIRECT 301 http://127.0.0.1:8080/moved301/org/repo.git/info/refs?service=git-upload-pack -> http://localhost:8080/org/repo.git/info/refs?service=git-upload-pack
+2026/11/01 21:55:11 PX GET /https/tohub.test/google/protobuf/info/refs?service=git-upload-pack cl=0 te=[] -> host=tohub.test repo=google/protobuf svc=git-upload-pack 
+2026/11/01 21:55:11 REDIRECT 301 http://127.0.0.1:8080/tohub/google/protobuf.git/info/refs?service=git-upload-pack -> https://github.com/google/protobuf.git/info/refs?service=git-upload-pack
+2026/11/01 21:55:11 PX GET /https/ghhttp.test/google/protobuf/info/refs?service=git-upload-pack cl=0 te=[] -> host=ghhttp.test repo=google/protobuf svc=git-upload-pack 
+2026/11/01 21:55:11 REDIRECT 301 http://github.com/google/protobuf.git/info/refs?service=git-upload-pack -> https://github.com/google/protobuf.git/info/refs?service=git-upload-pack

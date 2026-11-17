@@ -1,0 +1,30 @@
+curl-alpine-openssl https://allowed.oa.test/ OK rc=0
+curl-alpine-openssl https://denied.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: permitted subtree violation More details here: https://curl.se/docs/sslcerts.html 
+curl-alpine-openssl https://sub.allowed.oa.test/ OK rc=0
+curl-alpine-openssl https://viaint.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: permitted subtree violation More details here: https://curl.se/docs/sslcerts.html 
+curl-alpine-openssl https://198.19.50.20/ OK rc=0
+curl-alpine-openssl https://ctl.oa.test/ OK rc=0
+curl-alpine-openssl https://unk.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: unable to get local issuer certificate More details here: https://curl.se/docs/sslcerts.html 
+curl-alpine-openssl https://xallowed.oa.test/ OK rc=0
+curl-alpine-openssl https://xdenied.oa.test/ REFUSED rc=60 curl: (60) SSL certificate problem: permitted subtree violation More details here: https://curl.se/docs/sslcerts.html 
+curl-alpine-openssl https://198.19.50.20:8443/ REFUSED rc=60 curl: (60) SSL certificate problem: excluded subtree violation More details here: https://curl.se/docs/sslcerts.html 
+git-alpine-openssl https://allowed.oa.test/ OK rc=0
+git-alpine-openssl https://denied.oa.test/ REFUSED rc=128 fatal: unable to access 'https://denied.oa.test/x.git/': SSL certificate problem: permitted subtree violation 
+git-alpine-openssl https://sub.allowed.oa.test/ OK rc=0
+git-alpine-openssl https://viaint.oa.test/ REFUSED rc=128 fatal: unable to access 'https://viaint.oa.test/x.git/': SSL certificate problem: permitted subtree violation 
+git-alpine-openssl https://198.19.50.20/ OK rc=0
+git-alpine-openssl https://ctl.oa.test/ OK rc=0
+git-alpine-openssl https://unk.oa.test/ REFUSED rc=128 fatal: unable to access 'https://unk.oa.test/x.git/': SSL certificate problem: unable to get local issuer certificate 
+git-alpine-openssl https://xallowed.oa.test/ OK rc=0
+git-alpine-openssl https://xdenied.oa.test/ REFUSED rc=128 fatal: unable to access 'https://xdenied.oa.test/x.git/': SSL certificate problem: permitted subtree violation 
+git-alpine-openssl https://198.19.50.20:8443/ REFUSED rc=128 fatal: unable to access 'https://198.19.50.20:8443/x.git/': SSL certificate problem: excluded subtree violation 
+openssl-s_client https://allowed.oa.test/ OK
+openssl-s_client https://denied.oa.test/ REFUSED verify error:num=47:permitted subtree violation
+openssl-s_client https://sub.allowed.oa.test/ OK
+openssl-s_client https://viaint.oa.test/ REFUSED verify error:num=47:permitted subtree violation
+openssl-s_client https://198.19.50.20/ OK
+openssl-s_client https://ctl.oa.test/ OK
+openssl-s_client https://unk.oa.test/ REFUSED verify error:num=20:unable to get local issuer certificate
+openssl-s_client https://xallowed.oa.test/ OK
+openssl-s_client https://xdenied.oa.test/ REFUSED verify error:num=47:permitted subtree violation
+openssl-s_client https://198.19.50.20:8443/ REFUSED verify error:num=48:excluded subtree violation

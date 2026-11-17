@@ -1,0 +1,8 @@
+{
+  "type": "external_account",
+  "audience": "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/netagent-pool/providers/netagent",
+  "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+  "token_url": "http://sts.gcp.test/v1/token",
+  "service_account_impersonation_url": "http://iamcredentials.gcp.test/v1/projects/-/serviceAccounts/tenant-a@proj-a.iam.gserviceaccount.com:generateAccessToken",
+  "credential_source": {"file": "/var/run/netagent/gcp/token"}
+}

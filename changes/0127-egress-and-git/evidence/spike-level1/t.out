@@ -1,0 +1,54 @@
+### per-identity lists
+acme  -> git.spike (listed)      : connect=200 http=200
+acme  -> other.spike (not listed): connect=403 http=000
+globex-> other.spike (listed)    : connect=200 http=200
+globex-> git.spike (not listed)  : connect=403 http=000
+no credential                    : connect=407 http=000
+wrong password                   : connect=407 http=000
+### gateway resolver through level 1, one tunnel per call
+git.spike : {"bytes":65,"class":"ok","err":"","ms":4,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}
+real host : {"bytes":67,"class":"ok","err":"","ms":331,"proto":"v2","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+denied    : {"bytes":0,"class":"policy_denied","err":"CONNECT 403","ms":1,"proto":"v2","sha":""}
+### the credential works from any pod that can reach the proxy
+same credential from another container:      778 bytes body (empty body is success; an error prints text)
+### SSRF: stock Squid with no address rule, allowlist contains a name that resolves privately, and literals
+rebind.spike -> 172.30.0.20  : connect=200 http=200
+literal 127.0.0.1            : connect=503 http=000
+literal 169.254.169.254      : connect=000 http=000
+literal not on the list      : connect=403 http=000
+--- with the contract's address rule
+rebind.spike -> 172.30.0.20  : connect=403 http=000
+literal 127.0.0.1            : connect=403 http=000
+literal 169.254.169.254      : connect=403 http=000
+git.spike still allowed      : connect=200 http=200
+### server-name fronting: CONNECT to a listed host, TLS and Host naming an unlisted one
+acme, inner other.spike      : connect=200 http=200
+### revocation: remove git.spike from acme, reconfigure
+2026/11/02 18:42:48| Processing Configuration File: /run/l1/squid.conf (depth 0)
+2026/11/02 18:42:48| WARNING: Ignoring github.com because it is already covered by .github.com
+    advice: Remove value github.com from the ACL
+    acl name: hosts_p1-acme
+    configuration context: /run/l1/squid.conf(19) acl
+2026/11/02 18:42:48| Current Directory is /
+new CONNECT after reconfigure: connect=403 http=000, after 0.21 s
+tunnel opened before the edit, 8 s later: still open 
+### rotation: add a new verifier beside the old, then drop the old
+overlap, old password : connect=407 http=000
+overlap, new password : connect=200 http=200
+2026/11/02 18:42:57| Processing Configuration File: /run/l1/squid.conf (depth 0)
+2026/11/02 18:42:57| WARNING: Ignoring github.com because it is already covered by .github.com
+    advice: Remove value github.com from the ACL
+    acl name: hosts_p1-acme
+    configuration context: /run/l1/squid.conf(19) acl
+2026/11/02 18:42:57| Current Directory is /
+old dropped, old password immediately (ttl 60 s) : connect=407 http=000
+old dropped, new password                        : connect=200 http=200
+### default Squid credential cache: stale old password
+old password cached   : connect=407 http=000
+2026/11/02 18:42:59| Processing Configuration File: /run/l1/squid.conf (depth 0)
+2026/11/02 18:42:59| WARNING: Ignoring github.com because it is already covered by .github.com
+    advice: Remove value github.com from the ACL
+    acl name: hosts_p1-acme
+    configuration context: /run/l1/squid.conf(19) acl
+2026/11/02 18:42:59| Current Directory is /
+after verifier removal with ttl 7200 s: connect=407 http=000

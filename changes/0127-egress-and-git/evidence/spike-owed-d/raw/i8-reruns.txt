@@ -1,0 +1,235 @@
+=== S3 again: the drain bound no longer fires after a replica has returned, and a refused commit during a drain is named. SIGTERM at t=70 s, restart at t=80 s
+   SIGTERM at 1793693495.901
+08:11:44.091716 closed buffered=0 in 8.169s row err=<nil>
+   busy: n=119862 codes={'200': 113778, '403': 6084, '503': 108} p50=0.63 p90=1.64 p99=9.36 p99.9=37.1 max=150.8 ms
+   small: n=119954 codes={'200': 113855, '403': 6099, '503': 6} p50=0.54 p90=1.10 p99=6.53 p99.9=27.1 max=68.3 ms
+   elapsed 120s broken=0 refusedFirst=114 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+audit: positions=10000 records present=1150422 duplicates=0 | holes between records: missing=40 announced=40 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[refused_replica_draining:40]; record kinds: map[:1150422 gap:40]; positions with a closing record: 0
+   producer: decisions=239930 emitted=669843 prodDropped=0 sendFail=3 gapRecords=40 gapSeqs=40 queued=0 commitOK=25239 refused=114
+   replica 0: records=674977 batches=12512 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=3102 walFail=0 lateLanded=74 lateLost=0 commitTx=2907 manifestTx=0 groupP50=1 groupUsP50=576 groupUsP99=4185
+   replica 1: records=120392 batches=2509 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=7748 walFail=0 lateLanded=0 lateLost=0 commitTx=7568 manifestTx=0 groupP50=1 groupUsP50=593 groupUsP99=1667
+   stored records: 1150462 in 23660 rows
+   incarnation rows: 0|f 1|t 1|f 
+   1793693423.157 replica 0 live
+   1793693423.160 replica 1 live
+   1793693496.161 replica 1 draining
+   1793693503.789 replica 1 lost (durable stream closed cleanly, wasAlive=false): 0 positions with a tail, 0 sequence numbers in gap records
+   1793693503.863 first ack from replica 0 after losing 1: 74 ms after detection
+   1793693508.666 replica 1 live
+  incarnation w0-1a1a07592d2-791ef4 replica 0 started 08:10:22.305, last flush 08:13:02.124, NO CLOSING ROW
+  incarnation w1-1a1a075937e-c5be91 replica 1 started 08:10:22.474, last flush 08:11:43.651, closed 08:11:43.788
+  incarnation w1-1a1a076e2f4-62c9b3 replica 1 started 08:11:48.348, last flush 08:13:01.905, NO CLOSING ROW
+windows: egress.tunnel entries=455266 egress.accesslog entries=455266, tunnel entries with no access log entry=0: inside a window (last flush to next start) 0, within 5s of one 0, outside every window 0
+
+=== S4 again: frozen 30 s, with the producer naming every refusal it cannot settle (UNSETTLED_GAP=1)
+   frozen at 1793693664.861
+   released at 1793693694.956
+   busy: n=119843 codes={'200': 113832, '403': 6011, '503': 320} p50=0.61 p90=1.55 p99=10.60 p99.9=39.1 max=150.9 ms
+   small: n=119772 codes={'200': 113637, '403': 6135, '503': 2} p50=0.53 p90=1.07 p99=6.67 p99.9=24.7 max=105.7 ms
+   elapsed 120s broken=0 refusedFirst=322 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+audit: positions=10000 records present=1125231 duplicates=304 | holes between records: missing=21 announced=21 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=103490
+  gap sequence numbers by reason: map[refused_unsettled:322 replica_lost:103189]; record kinds: map[:1125535 gap:2809]; positions with a closing record: 0
+   producer: decisions=239937 emitted=669725 prodDropped=0 sendFail=1 gapRecords=2809 gapSeqs=103511 queued=0 commitOK=24828 refused=322
+   replica 0: records=636030 batches=12567 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=6484 walFail=0 lateLanded=0 lateLost=0 commitTx=6318 manifestTx=0 groupP50=1 groupUsP50=525 groupUsP99=3351
+   replica 1: records=492314 batches=10039 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=18645 walFail=0 lateLanded=301 lateLost=0 commitTx=17498 manifestTx=0 groupP50=1 groupUsP50=545 groupUsP99=4278
+   stored records: 1128344 in 22606 rows
+   incarnation rows: 0|f 1|f 
+   1793693602.045 replica 1 live
+   1793693602.045 replica 0 live
+   1793693666.173 replica 1 lost (durable stream broken, wasAlive=true): 2487 positions with a tail, 103189 sequence numbers in gap records
+   1793693666.234 first ack from replica 0 after losing 1: 60 ms after detection
+   1793693694.955 replica 1 live
+
+=== S5 again, reading the audit only after every buffer has emptied
+--- REHASH=0 REPORT=0 restart after 40 s
+   killed at 1793693785.390
+   restarted at 1793693826.539
+   busy: n=84655 codes={'200': 80414, '403': 4241} p50=0.59 p90=1.07 p99=5.16 p99.9=16.3 max=31.5 ms
+   small: n=85279 codes={'200': 80963, '403': 4316} p50=0.59 p90=1.06 p99=5.18 p99.9=16.7 max=31.5 ms
+   elapsed 85s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=169934 emitted=492688 prodDropped=37190 sendFail=11 gapRecords=12 gapSeqs=37190 queued=0 commitOK=0 refused=0
+audit: positions=7500 records present=718079 duplicates=0 | holes between records: missing=97363 announced=37190 unannounced=60173 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[producer_tenant_bound:37190]; record kinds: map[:718079 gap:12]; positions with a closing record: 0
+--- revision 42 restart after 40 s
+   killed at 1793693894.081
+   restarted at 1793693935.112
+   busy: n=85040 codes={'200': 80754, '403': 4286} p50=0.59 p90=1.03 p99=2.56 p99.9=14.4 max=38.5 ms
+   small: n=84905 codes={'200': 80633, '403': 4272} p50=0.59 p90=1.03 p99=2.50 p99.9=14.0 max=37.6 ms
+   elapsed 85s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=169945 emitted=492719 prodDropped=0 sendFail=0 gapRecords=2500 gapSeqs=61143 queued=0 commitOK=0 refused=0
+audit: positions=7505 records present=681681 duplicates=0 | holes between records: missing=61143 announced=61143 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[replica_lost:61143]; record kinds: map[:681681 gap:2500]; positions with a closing record: 0
+--- revision 42 restart after 90 s
+   killed at 1793694009.117
+   restarted at 1793694100.228
+   busy: n=134837 codes={'200': 128184, '403': 6653} p50=0.58 p90=1.12 p99=4.41 p99.9=28.1 max=48.2 ms
+   small: n=135095 codes={'200': 128377, '403': 6718} p50=0.58 p90=1.12 p99=4.67 p99.9=26.7 max=48.9 ms
+   elapsed 135s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=269932 emitted=783054 prodDropped=0 sendFail=0 gapRecords=2500 gapSeqs=65346 queued=0 commitOK=0 refused=0
+audit: positions=7500 records present=1230830 duplicates=0 | holes between records: missing=65346 announced=65346 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[replica_lost:65346]; record kinds: map[:1230829 denial_aggregate:1 gap:2500]; positions with a closing record: 0
+
+=== 4f again: a busy tenant whose allows interleave with denials (the first pass's tenant variable was overwritten, so that case had no interleaving)
+
+### t0 (a busy tenant, about 50 allows/s) with 1,000 denied/s of one host, beside 500/s
+   busy: n=20006 codes={'200': 19004, '403': 1002} p50=0.65 p90=1.08 p99=2.54 p99.9=7.8 max=18.5 ms
+   small: n=19994 codes={'200': 18994, '403': 1000} p50=0.65 p90=1.07 p99=2.55 p99.9=5.7 max=17.5 ms
+   noisy: n=80000 codes={'403': 80000} p50=0.55 p90=0.94 p99=2.35 p99.9=6.7 max=17.5 ms
+   elapsed 90s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=134948 emitted=220394 prodDropped=0 sendFail=0 gapRecords=0 gapSeqs=0 queued=0 commitOK=0 refused=0
+   replica 0: records=101287 batches=8034 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=204553 batches=8015 droppedTenant=0 aggIn=85515 aggOut=4319 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2499 records present=40474 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant t0: positions=1 records present=94474 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:49433 denial_aggregate:4319]; positions with a closing record: 0
+   noisy tenant stored: 3 rows, 13278 records, 438 kB stored
+   sampled identifiers:     4611
+lookup: identifiers=400 resolved to map[aggregate:365 whole record:35]; time per lookup p50=15ms p99=44ms
+
+### 100,000 records/s through the producer's flood path, for 45 s, beside 500/s: new hosts, then one host
+--- flood of new hosts&unique=1
+   busy: n=15014 codes={'200': 14235, '403': 779} p50=0.55 p90=0.92 p99=3.80 p99.9=31.3 max=46.6 ms
+   small: n=14986 codes={'200': 14237, '403': 749} p50=0.55 p90=0.91 p99=3.56 p99.9=11.3 max=36.6 ms
+   elapsed 70s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=34984 emitted=1976370 prodDropped=595112 sendFail=0 gapRecords=315 gapSeqs=1778753 queued=0 commitOK=0 refused=0
+   replica 0: records=1359412 batches=5987 droppedTenant=233166 aggIn=0 aggOut=0 gapRecords=147 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=88547 batches=5671 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2498 records present=34980 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant t7: positions=1 records present=1046728 duplicates=0 | holes between records: missing=827177 announced=827177 unannounced=0 | tails against truth: missing=1099 announced=1099 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=967997
+  gap sequence numbers by reason: map[ingest_tenant_bound:484988 producer_tenant_bound:1778752]; record kinds: map[:1081708 gap:460]; positions with a closing record: 0
+   noisy stored: 184 rows, 1047188 records, 36 MB
+--- flood, one host
+   busy: n=15015 codes={'200': 14244, '403': 771} p50=0.53 p90=0.90 p99=4.57 p99.9=8.9 max=16.6 ms
+   small: n=14985 codes={'200': 14264, '403': 721} p50=0.53 p90=0.89 p99=4.40 p99.9=8.4 max=14.7 ms
+   elapsed 70s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=34983 emitted=1954267 prodDropped=592485 sendFail=0 gapRecords=313 gapSeqs=1648150 queued=0 commitOK=0 refused=0
+   replica 0: records=1339682 batches=5743 droppedTenant=0 aggIn=1259977 aggOut=343 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   replica 1: records=88897 batches=5707 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+audit: positions=2495 records present=34977 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  noisy tenant t7: positions=1 records present=1260326 duplicates=0 | holes between records: missing=592480 announced=592480 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=1055665
+  gap sequence numbers by reason: map[producer_tenant_bound:1648145]; record kinds: map[:35326 denial_aggregate:343 gap:308]; positions with a closing record: 0
+   noisy stored: 1 rows, 1000 records, 30 kB
+
+=== 5a again: rolling restarts, the high-water cursor against the ranges cursor, with gap records on a cursor of their own
+export: delivered=25293 parts skipped by index=0 cursor positions=888 cursor bytes=70841 1.0s
+export: delivered=49408 parts skipped by index=888 cursor positions=900 cursor bytes=71989 1.5s
+export: delivered=41959 parts skipped by index=2475 cursor positions=1199 cursor bytes=95504 1.5s
+export: delivered=47464 parts skipped by index=4271 cursor positions=1200 cursor bytes=95800 1.4s
+export: delivered=48796 parts skipped by index=6125 cursor positions=1500 cursor bytes=119479 1.4s
+   busy: n=27679 codes={'200': 26316, '403': 1363} p50=0.54 p90=0.99 p99=2.88 p99.9=12.1 max=29.8 ms
+   small: n=27290 codes={'200': 25908, '403': 1382} p50=0.54 p90=0.99 p99=2.88 p99.9=12.3 max=27.9 ms
+   elapsed 55s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+export: delivered=47597 parts skipped by index=7901 cursor positions=1500 cursor bytes=119538 1.1s
+export: delivered=3348 parts skipped by index=9533 cursor positions=1500 cursor bytes=119555 0.3s
+   high-water cursor: exportcheck: delivered lines=263865 distinct=263865 stored records=263865 duplicates=0 not delivered=0 delivered but not stored=0
+   batches starting at or below an earlier batch's last, per stream: 
+consume: delivered=54969 tenants=300 pages=303 parts skipped=0 server-side retries=0 client errors=0 1.8s 30313 records/s
+   ranges cursor through the service: exportcheck: delivered lines=54969 distinct=54969 stored records=54969 duplicates=0 not delivered=0 delivered but not stored=0
+   1793694435.557 replica 1 live
+   1793694435.557 replica 0 live
+   1793694458.552 replica 1 draining
+   1793694460.320 replica 1 lost (durable stream closed cleanly, wasAlive=false): 0 positions with a tail, 0 sequence numbers in gap records
+   1793694460.384 first ack from replica 0 after losing 1: 64 ms after detection
+   1793694461.555 replica 1 live
+   1793694473.551 replica 0 draining
+   1793694474.735 replica 0 lost (durable stream closed cleanly, wasAlive=false): 0 positions with a tail, 0 sequence numbers in gap records
+audit: positions=300 records present=54969 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:54969]; positions with a closing record: 0
+
+=== 5a with a frozen replica: false gap records, then the same consumer
+   busy: n=22534 codes={'200': 21388, '403': 1146} p50=0.68 p90=1.14 p99=3.10 p99.9=56.0 max=97.0 ms
+   small: n=22434 codes={'200': 21295, '403': 1139} p50=0.67 p90=1.14 p99=3.19 p99.9=55.7 max=97.3 ms
+   elapsed 45s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+consume: delivered=45111 tenants=300 pages=303 parts skipped=0 server-side retries=0 client errors=0 1.6s 28135 records/s
+   ranges cursor: exportcheck: delivered lines=45111 distinct=45101 stored records=45101 duplicates=10 not delivered=0 delivered but not stored=0
+audit: positions=300 records present=44968 duplicates=62 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=2161
+  gap sequence numbers by reason: map[replica_lost:2161]; record kinds: map[:45030 gap:143]; positions with a closing record: 0
+
+=== 5b again: retention and anchors. Interval anchors exist before retention runs
+   busy: n=3028 codes={'200': 2862, '403': 166} p50=0.79 p90=1.66 p99=3.57 p99.9=10.3 max=23.1 ms
+   small: n=2961 codes={'200': 2815, '403': 146} p50=0.79 p90=1.88 p99=3.63 p99.9=14.9 max=19.7 ms
+   elapsed 20s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+--- chain event for retention: false
+verify: rows=781 objects=781 batches=781 records=28697 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=30 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=0 digest-only int
+retain: stream=egress.decision rows=191 younger than retention=0 held=0 kept for a consumer=0 removed=191 removed past the consumer bound=0 loss rows=0 chain events=0
+verify: rows=590 objects=590 batches=590 records=22708 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=30 (compaction 0) bad links=0 anchors not recomputing=30 anchored batches absent=191 digest-only compaction anchors=0 digest-only 
+   busy: n=2926 codes={'200': 2793, '403': 133} p50=0.79 p90=1.59 p99=3.65 p99.9=26.8 max=29.5 ms
+   small: n=3064 codes={'200': 2904, '403': 160} p50=0.80 p90=1.63 p99=3.75 p99.9=9.4 max=25.9 ms
+   elapsed 20s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+--- chain event for retention: true
+verify: rows=770 objects=770 batches=770 records=28778 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=30 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=0 digest-only int
+retain: stream=egress.decision rows=190 younger than retention=0 held=0 kept for a consumer=0 removed=190 removed past the consumer bound=0 loss rows=0 chain events=30
+verify: rows=580 objects=580 batches=580 records=22788 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=60 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=0 digest-only int
+--- a hold set while retention runs
+   busy: n=12599 codes={'200': 11998, '403': 601} p50=0.47 p90=0.99 p99=2.19 p99.9=19.7 max=28.7 ms
+   small: n=12367 codes={'200': 11757, '403': 610} p50=0.47 p90=0.98 p99=2.33 p99.9=15.8 max=25.1 ms
+   elapsed 25s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+  retention aborted for t214 a row was held or changed during retention
+  retention aborted for t78 a row was held or changed during retention
+  retention aborted for t133 a row was held or changed during retention
+  retention aborted for t225 a row was held or changed during retention
+  retention aborted for t215 a row was held or changed during retention
+  retention aborted for t24 a row was held or changed during retention
+  retention aborted for t131 a row was held or changed during retention
+retain: stream=egress.decision rows=5248 younger than retention=0 held=51 kept for a consumer=0 removed=5085 removed past the consumer bound=0 loss rows=0 chain events=388
+   held decision rows left: 163, unheld: 0
+verify: rows=13865 objects=13865 batches=13865 records=95410 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=388 (compaction 0) bad links=0 anchors not recomputing=0 anchored batches absent=0 digest-only compaction anchors=0 digest-o
+
+=== 5d again: the generator keeps its connections, and the tool has the port range
+--- baseline again, 180 s
+   busy: n=169897 codes={'200': 161422, '403': 8475, '503': 164} p50=0.58 p90=1.32 p99=3.38 p99.9=26.7 max=150.3 ms
+   small: n=169931 codes={'200': 161315, '403': 8616, '503': 9} p50=0.50 p90=0.91 p99=2.04 p99.9=5.1 max=110.1 ms
+   elapsed 180s broken=0 refusedFirst=173 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   od-envoy: 522m CPU, memory 53 MiB, peak 59 MiB
+   od-dec1: 267m CPU, memory 38 MiB, peak 40 MiB
+   od-ev1: 53m CPU, memory 323 MiB, peak 407 MiB
+   od-ev2: 194m CPU, memory 680 MiB, peak 834 MiB
+   od-pg: 57m CPU, memory 389 MiB, peak 988 MiB
+   od-minio: 131m CPU, memory 1658 MiB, peak 1962 MiB
+--- with egress.local 2,000/s, git.operation 200/s, and credential.mint 40/s
+   busy: n=170132 codes={'200': 161668, '403': 8464, '503': 189} p50=0.60 p90=1.44 p99=4.82 p99.9=38.9 max=153.1 ms
+   small: n=169671 codes={'200': 161163, '403': 8508, '503': 8} p50=0.52 p90=1.01 p99=3.07 p99.9=14.6 max=124.1 ms
+   elapsed 180s broken=0 refusedFirst=197 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+gen2 mint: sent=7028 failed=0 numbered=7028 positions=1866 incarnation=m1a1a08bd6a2-246fb8 in 180s
+gen2 local: sent=352300 failed=0 numbered=0 positions=0 incarnation=l1a1a08bd6a2-905723 in 180s
+gen2 gitop: sent=35130 failed=0 numbered=35130 positions=2496 incarnation=g1a1a08bd6b6-6f2cf9 in 180s
+   od-envoy: 538m CPU, memory 54 MiB, peak 60 MiB
+   od-dec1: 305m CPU, memory 38 MiB, peak 47 MiB
+   od-ev1: 136m CPU, memory 447 MiB, peak 579 MiB
+   od-ev2: 191m CPU, memory 474 MiB, peak 607 MiB
+   od-pg: 65m CPU, memory 400 MiB, peak 988 MiB
+   od-minio: 217m CPU, memory 1964 MiB, peak 1975 MiB
+   producer: decisions=359894 emitted=1358156 prodDropped=0 sendFail=0 gapRecords=0 gapSeqs=0 queued=0 commitOK=37333 refused=197
+   replica 0: records=989767 batches=22970 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=902 walFail=0 lateLanded=3 lateLost=0 commitTx=902 manifestTx=0 groupP50=1 groupUsP50=579 groupUsP99=6466
+   replica 1: records=1131569 batches=23036 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=36628 walFail=0 lateLanded=194 lateLost=0 commitTx=35358 manifestTx=0 groupP50=1 groupUsP50=522 groupUsP99=2827
+   local reports refused: "localRefused":0 accepted: "local":352300
+audit: positions=16862 records present=2121336 duplicates=0 | holes between records: missing=0 announced=0 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:2121336]; positions with a closing record: 0
+credential.mint|2506|7028|1185 kB|32.9|525
+egress.accesslog|15016|683492|22 MB|6.4|516
+egress.decision|7520|359894|18 MB|7.2|720
+egress.local|7510|352300|15 MB|8.0|551
+egress.tunnel|7545|683492|23 MB|4.9|724
+git.operation|5909|35130|4858 kB|27.3|520
+   forged tenant rows: 0
+   sample egress.local: {"stream":"egress.local","schemaVersion":1,"producer":"lenny-egress-authz.lenny-system.svc","incarnation":"d1a1a08bc355-43080a","sequence":1,"observedAt":"2026-11-03T08:34:41.460393923Z","tenantId":"t4","poolId":"pool-19f46d19-21b9-4bfe","podUid":"5eb52a14-1f06-ae69-2326-1f47fbd5e455","sessionId":"68e7a7ac-692d-176c-58d2-3d2f9690ecaa","environment":"production","traceId":"fa3339d86d1284e53d96af293e841e69","provenance
+   sample git.operation: {"stream":"git.operation","schemaVersion":1,"producer":"lenny-git-mirror.lenny-system.svc","incarnation":"g1a1a08bd6b6-6f2cf9","sequence":1,"observedAt":"2026-11-03T08:34:41.465000839Z","tenantId":"t2312","provenance":"enforced","payload":{"commit":"4f3a325e99f33e2b7864095673f3b5509d977ac5","operation":"fetch","refs":[{"new":"ed34b1daf79a886787c96d58c10eb4a08e90028e","old":"0e8b7a263e8291569c700ecbc3ddf9770ca473b8","
+   sample credential.mint: {"stream":"credential.mint","schemaVersion":1,"producer":"lenny-token-service.lenny-system.svc","incarnation":"m1a1a08bd6a2-246fb8","sequence":1,"observedAt":"2026-11-03T08:34:41.456485798Z","tenantId":"t2","provenance":"enforced","payload":{"binding":"binding-aaa972","definitionVersion":4,"expiry":"2026-11-03T09:34:41Z","hosts":["github.com"],"podUid":"08c7fe07-b56a-5c63-0832-5407b4eb17a3","provider":"github-app","s
+
+=== 5e again: a harder attempt at numbering outside the send order: few tenants, 400 decisions/s each, 1 s batches, three runs
+   busy: n=119923 codes={'200': 119923} p50=0.58 p90=0.98 p99=1.73 p99.9=7.2 max=39.1 ms
+   elapsed 60s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   batches starting at or below an earlier batch's last, per stream:  of 738 rows
+export: delivered=599615 parts skipped by index=0 cursor positions=15 cursor bytes=1221 3.8s
+   high-water: exportcheck: delivered lines=599615 distinct=599615 stored records=599615 duplicates=0 not delivered=0 delivered but not stored=0
+   busy: n=119931 codes={'200': 119931} p50=0.56 p90=0.97 p99=1.65 p99.9=10.2 max=32.0 ms
+   elapsed 60s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   batches starting at or below an earlier batch's last, per stream:  of 739 rows
+export: delivered=599655 parts skipped by index=0 cursor positions=15 cursor bytes=1221 3.8s
+   high-water: exportcheck: delivered lines=599655 distinct=599655 stored records=599655 duplicates=0 not delivered=0 delivered but not stored=0
+   busy: n=119942 codes={'200': 119942} p50=0.57 p90=0.99 p99=2.23 p99.9=40.0 max=75.1 ms
+   elapsed 60s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   batches starting at or below an earlier batch's last, per stream:  of 740 rows
+export: delivered=599710 parts skipped by index=0 cursor positions=15 cursor bytes=1221 3.7s
+   high-water: exportcheck: delivered lines=599710 distinct=599710 stored records=599710 duplicates=0 not delivered=0 delivered but not stored=0

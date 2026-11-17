@@ -1,0 +1,37 @@
+// mkleaf DIR NAME=dns1,dns2 ...: one CA (ca.pem, ca.key kept) and a leaf per argument.
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+func w(p, t string, b []byte) { os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: t, Bytes: b}), 0o644) }
+func main() {
+	dir := os.Args[1]
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "oa-spike-ca"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour)}
+	d, _ := x509.CreateCertificate(rand.Reader, ca, ca, &k.PublicKey, k)
+	c, _ := x509.ParseCertificate(d)
+	w(filepath.Join(dir, "ca.pem"), "CERTIFICATE", d)
+	for i, a := range os.Args[2:] {
+		n, sans, _ := strings.Cut(a, "=")
+		lk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		t := &x509.Certificate{SerialNumber: big.NewInt(int64(i + 10)), Subject: pkix.Name{CommonName: n}, DNSNames: strings.Split(sans, ","), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}}
+		ld, _ := x509.CreateCertificate(rand.Reader, t, c, &lk.PublicKey, k)
+		os.MkdirAll(filepath.Join(dir, n), 0o755)
+		w(filepath.Join(dir, n, "tls.crt"), "CERTIFICATE", ld)
+		b, _ := x509.MarshalPKCS8PrivateKey(lk)
+		w(filepath.Join(dir, n, "tls.key"), "PRIVATE KEY", b)
+		os.Chmod(filepath.Join(dir, n, "tls.key"), 0o644)
+	}
+}

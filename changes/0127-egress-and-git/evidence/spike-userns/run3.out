@@ -1,0 +1,87 @@
+Image: "spike-userns:4" with ID "sha256:
+################ host2: phase=Running
+== fetch child under UID 100001, group 70001, all capabilities cleared
+uid=100001 gid=70001 groups=70001
+CapInh: 0000000000000000 CapPrm: 0000000000000000 CapEff: 0000000000000000 CapBnd: 00000000000000c1 CapAmb: 0000000000000000 NoNewPrivs: 1 
+  write its own store: ALLOWED
+  write another store: refused (sh: 1: cannot create /data/b/evil: Permission denied)
+  list another store: refused (ls: cannot open directory '/data/b': Permission denied)
+  read the mirror's Secret: refused (cat: /secret/key: Permission denied)
+  write the root filesystem: refused (sh: 1: cannot create /evil: Read-only file system)
+  signal the parent: refused (/tmp/child.sh: 2: kill: Operation not permitted)
+  become root: refused (setpriv: setresuid failed: Operation not permitted)
+  change a file's owner: ALLOWED
+  switch to a sibling UID: refused (setpriv: setresuid failed: Operation not permitted)
+  planted a symlink to the Secret
+== after the child: the sweep (a helper under the fetch UID signals its own UID)
+  under 100001 before: 100001 S   sleep 300;
+  under 100001 after: [100001 S   sleep 300;]
+  parent alive: yes
+== re-chown, under the store's group, no symlink following
+  parent re-chowns the store: ALLOWED
+  lrwxrwxrwx 65533 70001 link
+  -rw-r--r-- 65533 70001 pack1
+  secret still owned: root nogroup
+== what a compromised parent can do
+  become UID 0: ALLOWED
+uid=0(root) gid=0(root) groups=0(root),65534(nogroup)
+CapEff: 00000000000000c1 CapBnd: 00000000000000c1 
+  read pid 1 environ: refused
+  mount: refused
+  sysctl write: refused
+sh: 1: cannot create /proc/sys/kernel/hostname: Read-only file system
+  write volume as root: ALLOWED (0)
+  switch to the runtime's UID 65533: ALLOWED
+== marker for the node view
+################ userns2: phase=Running
+== fetch child under UID 50001, group 40001, all capabilities cleared
+uid=50001 gid=40001 groups=40001
+CapInh: 0000000000000000 CapPrm: 0000000000000000 CapEff: 0000000000000000 CapBnd: 00000000000000c1 CapAmb: 0000000000000000 NoNewPrivs: 1 
+  write its own store: ALLOWED
+  write another store: refused (sh: 1: cannot create /data/b/evil: Permission denied)
+  list another store: refused (ls: cannot open directory '/data/b': Permission denied)
+  read the mirror's Secret: refused (cat: /secret/key: Permission denied)
+  write the root filesystem: refused (sh: 1: cannot create /evil: Read-only file system)
+  signal the parent: refused (/tmp/child.sh: 2: kill: Operation not permitted)
+  become root: refused (setpriv: setresuid failed: Operation not permitted)
+  change a file's owner: ALLOWED
+  switch to a sibling UID: refused (setpriv: setresuid failed: Operation not permitted)
+  planted a symlink to the Secret
+== after the child: the sweep (a helper under the fetch UID signals its own UID)
+  under 50001 before: 50001 S    sleep 300;
+  under 50001 after: [50001 S    sleep 300;]
+  parent alive: yes
+== re-chown, under the store's group, no symlink following
+  parent re-chowns the store: ALLOWED
+  lrwxrwxrwx 65533 40001 link
+  -rw-r--r-- 65533 40001 pack1
+  secret still owned: root nogroup
+== what a compromised parent can do
+  become UID 0: ALLOWED
+uid=0(root) gid=0(root) groups=0(root),65534(nogroup)
+CapEff: 00000000000000c1 CapBnd: 00000000000000c1 
+  read pid 1 environ: refused
+sh: 1: cannot create /proc/sys/kernel/hostname: Read-only file system
+  mount: refused
+  sysctl write: refused
+  write volume as root: ALLOWED (0)
+  switch to the runtime's UID 65533: ALLOWED
+== marker for the node view
+################ node view
+100001 70001 sleep 601
+65532 65532 sleep 600
+-1968258223 -1968268223 sleep 601
+-1968242692 -1968242692 sleep 600
+   drwxrws--- 65533 40001
+   drwxrws--- 65533 40002
+   a/ lrwxrwxrwx 65533 40001 link
+   a/ -rw-r--r-- 65533 40001 pack1
+################ Kubernetes 1.31.4, where the feature gate is off by default
+Have a nice day! 👋
+Image: "spike-userns:4" with ID "sha256:
+pod/old created
+stored hostUsers: [] phase=Running
+uid=65532 gid=65532 groups=65532,0(root),65534(nogroup)
+uid_map:  0 0 4294967295
+Deleted nodes: ["lenny-userns31-control-plane"]
+Deleted nodes: ["lenny-userns-control-plane"]

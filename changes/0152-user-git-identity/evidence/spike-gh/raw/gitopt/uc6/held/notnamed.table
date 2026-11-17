@@ -1,0 +1,25 @@
+notnamed-clone-none                      rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_widgets:200 refused=
+notnamed-clone-helper                    rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_widgets:200 refused=
+notnamed-clone-url                       rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_widgets:200 refused=
+notnamed-clone-header                    rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_widgets:200 refused=
+notnamed-clone-other                     rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_widgets:200 refused=
+notnamed-push-none                       rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+notnamed-push-helper                     rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+notnamed-push-url                        rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+notnamed-push-header                     rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+notnamed-push-other                      rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+notnamed-push-gh-helper                  rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=
+notnamed-push-main                       rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+notnamed-push-main-other                 rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+notnamed-push-mixed                      rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+notnamed-push-delete                     rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=ref deletion of refs/heads/feature refused
+notnamed-push-option                     rc=0   identity=mint                   origin=ghes.example.test=MINT-W-acme_widgets:200 refused=push options are refused
+notnamed-push-outside                    rc=0   identity=                       origin= refused=repository acme/secret is outside the session's writable set
+notnamed-push-readonly                   rc=0   identity=                       origin= refused=repository acme/lib is outside the session's writable set
+notnamed-read-outside                    rc=0   identity=                       origin= refused=repository acme/secret is outside the session's readable set
+notnamed-reflect                         rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_reflect:200 refused=
+notnamed-redirect-in-scope               rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_moved:301 ghes.example.test=MINT-R-acme_widgets:200 refused=
+notnamed-redirect-out-of-scope           rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_evilredir:302 refused=redirect to https://other.example.test/pub/lib.git/info/refs?service=git-upload-
+notnamed-github-push                     rc=0   identity=mint                   origin=github.com=MINT-W-acme_widgets:200 refused=
+notnamed-github-push-main                rc=0   identity=mint                   origin=github.com=MINT-W-acme_widgets:200 refused=ref refs/heads/main is outside allowedRefPatterns; the whole push is refused
+notnamed-lfs-store-host                  rc=0   identity=mint                   origin=ghes.example.test=MINT-R-acme_lfsrepo:200 ghes.example.test=MINT-W-acme_lfsrepo:200 lfs-store.example.test=-: refused=

@@ -1,0 +1,3 @@
+{"ev": "fetch", "path": "/creds", "auth": "tok1-js", "result": 200, "akid": "AKIDJS0001", "exp": "2026-11-02T06:47:40Z", "ua": null, "t": "06:40:40.921"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-js", "result": 200, "akid": "AKIDJS0002", "exp": "2026-11-02T06:49:41Z", "ua": null, "t": "06:42:41.128"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-js", "result": 200, "akid": "AKIDJS0003", "exp": "2026-11-02T06:51:41Z", "ua": null, "t": "06:44:41.273"}

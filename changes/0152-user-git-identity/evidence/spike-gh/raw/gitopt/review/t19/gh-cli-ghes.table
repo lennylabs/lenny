@@ -1,0 +1,9 @@
+ok-forwarded       rc=0   ghes-updateProjectV2                     writes=updateProjectV2 refused=
+ok-forwarded       rc=0   ghes-deleteProjectV2                     writes=deleteProjectV2 refused=
+ok-forwarded       rc=0   ghes-addProjectV2ItemById                writes=addProjectV2ItemById refused=
+ok-forwarded       rc=0   ghes-addProjectV2DraftIssue              writes=addProjectV2DraftIssue refused=
+ok-forwarded       rc=0   ghes-createProjectV2Field                writes=createProjectV2Field refused=
+ok-forwarded       rc=0   ghes-updateProjectV2ItemFieldValue       writes=updateProjectV2ItemFieldValue refused=
+ok-forwarded       rc=0   ghes-archiveProjectV2Item                writes=archiveProjectV2Item refused=
+ok-forwarded       rc=0   ghes-linkProjectV2ToRepository           writes=linkProjectV2ToRepository refused=
+TOTAL 8 {'ok-forwarded': 8, 'ok-refused-denied': 0, 'OVER': 0, 'MISS': 0, 'no-write-at-stub': 0}

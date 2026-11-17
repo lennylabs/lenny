@@ -1,0 +1,29 @@
+{"t": "06:41:34.571", "tag": "tlscheck", "path": "/t/tlscheck/plain", "auth": null, "basic": null, "ua": "curl/8.23.0"}
+{"t": "06:41:43.122", "tag": "gotls-home600", "path": "/t/gotls-home600/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.124", "tag": "gotls-home600", "path": "/t/gotls-home600/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.136", "tag": "gotls-home644", "path": "/t/gotls-home644/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.139", "tag": "gotls-home644", "path": "/t/gotls-home644/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.150", "tag": "gotls-env600", "path": "/t/gotls-env600/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.152", "tag": "gotls-env600", "path": "/t/gotls-env600/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.164", "tag": "gotls-env644", "path": "/t/gotls-env644/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.165", "tag": "gotls-env644", "path": "/t/gotls-env644/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.178", "tag": "gotls-goauthoff", "path": "/t/gotls-goauthoff/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.180", "tag": "gotls-goauthoff", "path": "/t/gotls-goauthoff/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:41:43.183", "tag": "gohttp-goinsecure", "path": "/t/gohttp-goinsecure/example.com/foo/@v/v1.0.0.info", "auth": null, "basic": null, "ua": "Go-http-client/1.1"}
+{"t": "06:42:07.013", "tag": "curl-ownhome", "path": "/t/curl-ownhome/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "curl/8.14.1"}
+{"t": "06:42:07.016", "tag": "gnuwget-ownhome", "path": "/t/gnuwget-ownhome/plain", "auth": null, "basic": null, "ua": "Wget/1.25.0"}
+{"t": "06:42:07.017", "tag": "gnuwget-ownhome", "path": "/t/gnuwget-ownhome/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Wget/1.25.0"}
+{"t": "06:42:07.023", "tag": "git-ownhome", "path": "/t/git-ownhome/repo.git/info/refs?service=git-upload-pack", "auth": null, "basic": null, "ua": "git/2.49.1"}
+{"t": "06:42:07.024", "tag": "git-ownhome", "path": "/t/git-ownhome/repo.git/info/refs?service=git-upload-pack", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "git/2.49.1"}
+{"t": "06:42:07.029", "tag": "curl-ownenv", "path": "/t/curl-ownenv/plain", "auth": null, "basic": null, "ua": "curl/8.14.1"}
+{"t": "06:42:07.031", "tag": "gnuwget-ownenv", "path": "/t/gnuwget-ownenv/plain", "auth": null, "basic": null, "ua": "Wget/1.25.0"}
+{"t": "06:42:07.035", "tag": "git-ownenv", "path": "/t/git-ownenv/repo.git/info/refs?service=git-upload-pack", "auth": null, "basic": null, "ua": "git/2.49.1"}
+{"t": "06:42:07.376", "tag": "requests-ownhome", "path": "/t/requests-ownhome/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-requests/2.34.2"}
+{"t": "06:42:07.550", "tag": "pip-ownhome", "path": "/t/pip-ownhome/simple/spikepkg/", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "pip/26.2.2 {\"ci\":null,\"cpu\":\"aarch64\",\"distro\":{\"id\":\"trixie"}
+{"t": "06:42:07.645", "tag": "requests-ownenv", "path": "/t/requests-ownenv/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-requests/2.34.2"}
+{"t": "06:42:07.659", "tag": "httpx-netrcauth-ownenv", "path": "/t/httpx-netrcauth-ownenv/plain", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "python-httpx/0.28.1"}
+{"t": "06:42:07.792", "tag": "pip-ownenv", "path": "/t/pip-ownenv/simple/spikepkg/", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "pip/26.2.2 {\"ci\":null,\"cpu\":\"aarch64\",\"distro\":{\"id\":\"trixie"}
+{"t": "06:42:08.077", "tag": "gotls-ownhome", "path": "/t/gotls-ownhome/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:42:08.080", "tag": "gotls-ownhome", "path": "/t/gotls-ownhome/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:42:08.093", "tag": "gotls-ownenv", "path": "/t/gotls-ownenv/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}
+{"t": "06:42:08.095", "tag": "gotls-ownenv", "path": "/t/gotls-ownenv/example.com/foo/@v/v1.0.0.info", "auth": "Basic YWxpY2U6czNjcmV0", "basic": "alice:s3cret", "ua": "Go-http-client/1.1"}

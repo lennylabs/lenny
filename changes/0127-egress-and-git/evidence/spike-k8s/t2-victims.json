@@ -1,0 +1,124 @@
+{
+ "apiVersion": "v1",
+ "kind": "List",
+ "items": [
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "victim-slow",
+    "namespace": "spike"
+   },
+   "spec": {
+    "serviceAccountName": "agent",
+    "automountServiceAccountToken": false,
+    "terminationGracePeriodSeconds": 30,
+    "containers": [
+     {
+      "name": "netagent",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "/bin/sh",
+       "-c",
+       "while true; do sleep 1; done"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "runAsNonRoot": true,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      },
+      "volumeMounts": [
+       {
+        "name": "egress-token",
+        "mountPath": "/var/run/secrets/lenny-egress",
+        "readOnly": true
+       }
+      ]
+     }
+    ],
+    "volumes": [
+     {
+      "name": "egress-token",
+      "projected": {
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "audience": "lenny-egress",
+          "expirationSeconds": 600,
+          "path": "token"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  },
+  {
+   "apiVersion": "v1",
+   "kind": "Pod",
+   "metadata": {
+    "name": "victim-fast",
+    "namespace": "spike"
+   },
+   "spec": {
+    "serviceAccountName": "agent",
+    "automountServiceAccountToken": false,
+    "terminationGracePeriodSeconds": 30,
+    "containers": [
+     {
+      "name": "netagent",
+      "image": "alpine:3.22",
+      "imagePullPolicy": "IfNotPresent",
+      "command": [
+       "/bin/sh",
+       "-c",
+       "trap 'echo got TERM; exit 0' TERM; while true; do sleep 1; done"
+      ],
+      "securityContext": {
+       "runAsUser": 65530,
+       "runAsGroup": 65530,
+       "runAsNonRoot": true,
+       "allowPrivilegeEscalation": false,
+       "capabilities": {
+        "drop": [
+         "ALL"
+        ]
+       }
+      },
+      "volumeMounts": [
+       {
+        "name": "egress-token",
+        "mountPath": "/var/run/secrets/lenny-egress",
+        "readOnly": true
+       }
+      ]
+     }
+    ],
+    "volumes": [
+     {
+      "name": "egress-token",
+      "projected": {
+       "sources": [
+        {
+         "serviceAccountToken": {
+          "audience": "lenny-egress",
+          "expirationSeconds": 600,
+          "path": "token"
+         }
+        }
+       ]
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

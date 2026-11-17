@@ -1,0 +1,3 @@
+clone error: authorization failed: {"message":"refused by the egress operation allowlist: smart HTTP on a VCS host goes through the local git endpoint"}
+clone-dir-absent rc=0
+container-rc=0

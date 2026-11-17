@@ -1,0 +1,399 @@
+refused         ghes    h1 path r%65views                               http=403 fwd=   | percent escape outside a declared encoded segment: r%65views
+refused         ghes    h2 path r%65views                               http=403 fwd=   | percent escape outside a declared encoded segment: r%65views
+refused         ghes    h1 path m%65rge                                 http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         ghes    h2 path m%65rge                                 http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         ghes    h1 path reviews/                                http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h2 path reviews/                                http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h1 path merge/                                  http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h2 path merge/                                  http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h1 path reviews.json                            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h2 path reviews.json                            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h1 path merge.json                              http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h2 path merge.json                              http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h1 path git/refs.json                           http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghes    h2 path git/refs.json                           http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghes    h1 path %2F in merge                            http=403 fwd=   | percent escape outside a declared encoded segment: 1%2Fmerge
+refused         ghes    h2 path %2F in merge                            http=403 fwd=   | percent escape outside a declared encoded segment: 1%2Fmerge
+refused         ghes    h1 path double-encoded                          http=403 fwd=   | percent escape outside a declared encoded segment: m%2565rge
+refused         ghes    h2 path double-encoded                          http=403 fwd=   | percent escape outside a declared encoded segment: m%2565rge
+refused         ghes    h1 gql graphq%6C                                http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         ghes    h2 gql graphq%6C                                http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         ghes    h1 gql trailing slash                           http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h2 gql trailing slash                           http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h1 gql .json                                    http=403 fwd=   | path /api/graphql.json is under /api and no preset route owns it
+refused         ghes    h2 gql .json                                    http=403 fwd=   | path /api/graphql.json is under /api and no preset route owns it
+refused         ghes    h1 gql double slash                             http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h2 gql double slash                             http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h1 coverage gql denied                          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h2 coverage gql denied                          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         ghes    h1 coverage gql allowed                         http=200 fwd=POST /api/graphql viewer  | 
+REACHED         ghes    h2 coverage gql allowed                         http=200 fwd=POST /api/graphql viewer  | 
+refused         ghes    h1 coverage rest merge                          http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h2 coverage rest merge                          http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h1 coverage rest review                         http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h2 coverage rest review                         http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghes    h1 coverage rest ref                            http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghes    h2 coverage rest ref                            http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghes    h1 unmatched /graphql2                          http=403 fwd=   | path /graphql2 is under /graphql and no preset route owns it
+refused         ghes    h2 unmatched /graphql2                          http=403 fwd=   | path /graphql2 is under /graphql and no preset route owns it
+refused         ghes    h1 unmatched /graphql/foo                       http=403 fwd=   | path /graphql/foo is under /graphql and no preset route owns it
+refused         ghes    h2 unmatched /graphql/foo                       http=403 fwd=   | path /graphql/foo is under /graphql and no preset route owns it
+refused         ghes    h1 unmatched /graphqlx                          http=403 fwd=   | path /graphqlx is under /graphql and no preset route owns it
+refused         ghes    h2 unmatched /graphqlx                          http=403 fwd=   | path /graphqlx is under /graphql and no preset route owns it
+refused         ghes    h1 unmatched /api/graphqlx                      http=403 fwd=   | path /api/graphqlx is under /api and no preset route owns it
+refused         ghes    h2 unmatched /api/graphqlx                      http=403 fwd=   | path /api/graphqlx is under /api and no preset route owns it
+refused         ghes    h1 unmatched /api/foo                           http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         ghes    h2 unmatched /api/foo                           http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         ghes    h1 unmatched /api/v3/graphql                    http=403 fwd=   | a GraphQL path in another spelling is refused: /api/v3/graphql
+refused         ghes    h2 unmatched /api/v3/graphql                    http=403 fwd=   | a GraphQL path in another spelling is refused: /api/v3/graphql
+refused         ghes    h1 unmatched /api/graphql on this host          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h2 unmatched /api/graphql on this host          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghes    h1 unmatched /graphql on this host              http=403 fwd=   | path /graphql is under /graphql and no preset route owns it
+refused         ghes    h2 unmatched /graphql on this host              http=403 fwd=   | path /graphql is under /graphql and no preset route owns it
+refused         ghes    h1 unmatched /api/v9 merge                      http=403 fwd=   | path /api/v9/repos/a/b/pulls/1/merge is under /api and no preset route owns it
+refused         ghes    h2 unmatched /api/v9 merge                      http=403 fwd=   | path /api/v9/repos/a/b/pulls/1/merge is under /api and no preset route owns it
+REACHED         ghes    h1 legit label with a space                     http=201 fwd=PATCH /api/v3/repos/a/b/labels/good%20first   | 
+REACHED         ghes    h2 legit label with a space                     http=201 fwd=PATCH /api/v3/repos/a/b/labels/good%20first   | 
+REACHED         ghes    h1 legit contents read                          http=200 fwd=GET /api/v3/repos/a/b/contents/dir%2Ffile.txt   | 
+REACHED         ghes    h2 legit contents read                          http=200 fwd=GET /api/v3/repos/a/b/contents/dir%2Ffile.txt   | 
+REACHED         ghes    h1 legit branch with a slash                    http=200 fwd=GET /api/v3/repos/a/b/branches/feat%2Fx   | 
+REACHED         ghes    h2 legit branch with a slash                    http=200 fwd=GET /api/v3/repos/a/b/branches/feat%2Fx   | 
+REACHED         ghes    h1 legit tag release                            http=200 fwd=GET /api/v3/repos/a/b/releases/tags/v1%2F2   | 
+REACHED         ghes    h2 legit tag release                            http=200 fwd=GET /api/v3/repos/a/b/releases/tags/v1%2F2   | 
+refused         ghes    h1 legit undeclared escape                      http=403 fwd=   | percent escape outside a declared encoded segment: comments%20
+refused         ghes    h2 legit undeclared escape                      http=403 fwd=   | percent escape outside a declared encoded segment: comments%20
+refused         ghes    h1 override X-Original-URL: /api/v3/repo on POS http=403 fwd=   | URL override header X-Original-Url refused
+refused         ghes    h2 override X-Original-URL: /api/v3/repo on POS http=403 fwd=   | URL override header X-Original-Url refused
+refused         ghes    h1 override X-Rewrite-URL: /api/v3/repo on POST http=403 fwd=   | URL override header X-Rewrite-Url refused
+refused         ghes    h2 override X-Rewrite-URL: /api/v3/repo on POST http=403 fwd=   | URL override header X-Rewrite-Url refused
+REACHED         ghes    h1 override X-HTTP-Method-Override: PUT on POST http=200 fwd=POST /api/v3/repos/a/b/issues  X-Http-Method-Override=PUT | 
+REACHED         ghes    h2 override X-HTTP-Method-Override: PUT on POST http=200 fwd=POST /api/v3/repos/a/b/issues  X-Http-Method-Override=PUT | 
+REACHED         ghes    h1 override X-HTTP-Method-Override: GET on POST http=200 fwd=POST /api/v3/repos/a/b/issues  X-Http-Method-Override=GET | 
+REACHED         ghes    h2 override X-HTTP-Method-Override: GET on POST http=200 fwd=POST /api/v3/repos/a/b/issues  X-Http-Method-Override=GET | 
+refused         ghes    h1 override method on POST merge                http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghes    h2 override method on POST merge                http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+REACHED         ghes    h1 Sudo on a GitHub host                        http=200 fwd=GET /api/v3/repos/a/b/pulls/1  Sudo=root | 
+REACHED         ghes    h2 Sudo on a GitHub host                        http=200 fwd=GET /api/v3/repos/a/b/pulls/1  Sudo=root | 
+refused         com     h1 path r%65views                               http=403 fwd=   | percent escape outside a declared encoded segment: r%65views
+refused         com     h2 path r%65views                               http=403 fwd=   | percent escape outside a declared encoded segment: r%65views
+refused         com     h1 path m%65rge                                 http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         com     h2 path m%65rge                                 http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         com     h1 path reviews/                                http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h2 path reviews/                                http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h1 path merge/                                  http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h2 path merge/                                  http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h1 path reviews.json                            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h2 path reviews.json                            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h1 path merge.json                              http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h2 path merge.json                              http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h1 path git/refs.json                           http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         com     h2 path git/refs.json                           http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         com     h1 path %2F in merge                            http=403 fwd=   | percent escape outside a declared encoded segment: 1%2Fmerge
+refused         com     h2 path %2F in merge                            http=403 fwd=   | percent escape outside a declared encoded segment: 1%2Fmerge
+refused         com     h1 path double-encoded                          http=403 fwd=   | percent escape outside a declared encoded segment: m%2565rge
+refused         com     h2 path double-encoded                          http=403 fwd=   | percent escape outside a declared encoded segment: m%2565rge
+refused         com     h1 gql graphq%6C                                http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         com     h2 gql graphq%6C                                http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         com     h1 gql trailing slash                           http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h2 gql trailing slash                           http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h1 gql .json                                    http=403 fwd=   | path /graphql.json is under /graphql and no preset route owns it
+refused         com     h2 gql .json                                    http=403 fwd=   | path /graphql.json is under /graphql and no preset route owns it
+refused         com     h1 gql double slash                             http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h2 gql double slash                             http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h1 coverage gql denied                          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h2 coverage gql denied                          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         com     h1 coverage gql allowed                         http=200 fwd=POST /graphql viewer  | 
+REACHED         com     h2 coverage gql allowed                         http=200 fwd=POST /graphql viewer  | 
+refused         com     h1 coverage rest merge                          http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h2 coverage rest merge                          http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h1 coverage rest review                         http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h2 coverage rest review                         http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         com     h1 coverage rest ref                            http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         com     h2 coverage rest ref                            http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         com     h1 unmatched /graphql2                          http=403 fwd=   | path /graphql2 is under /graphql and no preset route owns it
+refused         com     h2 unmatched /graphql2                          http=403 fwd=   | path /graphql2 is under /graphql and no preset route owns it
+refused         com     h1 unmatched /graphql/foo                       http=403 fwd=   | path /graphql/foo is under /graphql and no preset route owns it
+refused         com     h2 unmatched /graphql/foo                       http=403 fwd=   | path /graphql/foo is under /graphql and no preset route owns it
+refused         com     h1 unmatched /graphqlx                          http=403 fwd=   | path /graphqlx is under /graphql and no preset route owns it
+refused         com     h2 unmatched /graphqlx                          http=403 fwd=   | path /graphqlx is under /graphql and no preset route owns it
+refused         com     h1 unmatched /api/graphqlx                      http=403 fwd=   | path /api/graphqlx is under /api and no preset route owns it
+refused         com     h2 unmatched /api/graphqlx                      http=403 fwd=   | path /api/graphqlx is under /api and no preset route owns it
+refused         com     h1 unmatched /api/foo                           http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         com     h2 unmatched /api/foo                           http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         com     h1 unmatched /api/v3/graphql                    http=403 fwd=   | path /api/v3/graphql is under /api and no preset route owns it
+refused         com     h2 unmatched /api/v3/graphql                    http=403 fwd=   | path /api/v3/graphql is under /api and no preset route owns it
+refused         com     h1 unmatched /api/graphql on this host          http=403 fwd=   | path /api/graphql is under /api and no preset route owns it
+refused         com     h2 unmatched /api/graphql on this host          http=403 fwd=   | path /api/graphql is under /api and no preset route owns it
+refused         com     h1 unmatched /graphql on this host              http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h2 unmatched /graphql on this host              http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         com     h1 unmatched /api/v9 merge                      http=403 fwd=   | path /api/v9/repos/a/b/pulls/1/merge is under /api and no preset route owns it
+refused         com     h2 unmatched /api/v9 merge                      http=403 fwd=   | path /api/v9/repos/a/b/pulls/1/merge is under /api and no preset route owns it
+REACHED         com     h1 legit label with a space                     http=201 fwd=PATCH /repos/a/b/labels/good%20first   | 
+REACHED         com     h2 legit label with a space                     http=201 fwd=PATCH /repos/a/b/labels/good%20first   | 
+REACHED         com     h1 legit contents read                          http=200 fwd=GET /repos/a/b/contents/dir%2Ffile.txt   | 
+REACHED         com     h2 legit contents read                          http=200 fwd=GET /repos/a/b/contents/dir%2Ffile.txt   | 
+REACHED         com     h1 legit branch with a slash                    http=200 fwd=GET /repos/a/b/branches/feat%2Fx   | 
+REACHED         com     h2 legit branch with a slash                    http=200 fwd=GET /repos/a/b/branches/feat%2Fx   | 
+REACHED         com     h1 legit tag release                            http=200 fwd=GET /repos/a/b/releases/tags/v1%2F2   | 
+REACHED         com     h2 legit tag release                            http=200 fwd=GET /repos/a/b/releases/tags/v1%2F2   | 
+refused         com     h1 legit undeclared escape                      http=403 fwd=   | percent escape outside a declared encoded segment: comments%20
+refused         com     h2 legit undeclared escape                      http=403 fwd=   | percent escape outside a declared encoded segment: comments%20
+refused         com     h1 override X-Original-URL: /repos/a/b/p on POS http=403 fwd=   | URL override header X-Original-Url refused
+refused         com     h2 override X-Original-URL: /repos/a/b/p on POS http=403 fwd=   | URL override header X-Original-Url refused
+refused         com     h1 override X-Rewrite-URL: /repos/a/b/p on POST http=403 fwd=   | URL override header X-Rewrite-Url refused
+refused         com     h2 override X-Rewrite-URL: /repos/a/b/p on POST http=403 fwd=   | URL override header X-Rewrite-Url refused
+REACHED         com     h1 override X-HTTP-Method-Override: PUT on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=PUT | 
+REACHED         com     h2 override X-HTTP-Method-Override: PUT on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=PUT | 
+REACHED         com     h1 override X-HTTP-Method-Override: GET on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=GET | 
+REACHED         com     h2 override X-HTTP-Method-Override: GET on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=GET | 
+refused         com     h1 override method on POST merge                http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         com     h2 override method on POST merge                http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+REACHED         com     h1 Sudo on a GitHub host                        http=200 fwd=GET /repos/a/b/pulls/1  Sudo=root | 
+REACHED         com     h2 Sudo on a GitHub host                        http=200 fwd=GET /repos/a/b/pulls/1  Sudo=root | 
+refused         ghe     h1 path r%65views                               http=403 fwd=   | percent escape outside a declared encoded segment: r%65views
+refused         ghe     h2 path r%65views                               http=403 fwd=   | percent escape outside a declared encoded segment: r%65views
+refused         ghe     h1 path m%65rge                                 http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         ghe     h2 path m%65rge                                 http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         ghe     h1 path reviews/                                http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghe     h2 path reviews/                                http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghe     h1 path merge/                                  http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h2 path merge/                                  http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h1 path reviews.json                            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghe     h2 path reviews.json                            http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghe     h1 path merge.json                              http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h2 path merge.json                              http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h1 path git/refs.json                           http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghe     h2 path git/refs.json                           http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghe     h1 path %2F in merge                            http=403 fwd=   | percent escape outside a declared encoded segment: 1%2Fmerge
+refused         ghe     h2 path %2F in merge                            http=403 fwd=   | percent escape outside a declared encoded segment: 1%2Fmerge
+refused         ghe     h1 path double-encoded                          http=403 fwd=   | percent escape outside a declared encoded segment: m%2565rge
+refused         ghe     h2 path double-encoded                          http=403 fwd=   | percent escape outside a declared encoded segment: m%2565rge
+refused         ghe     h1 gql graphq%6C                                http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         ghe     h2 gql graphq%6C                                http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         ghe     h1 gql trailing slash                           http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h2 gql trailing slash                           http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h1 gql .json                                    http=403 fwd=   | path /graphql.json is under /graphql and no preset route owns it
+refused         ghe     h2 gql .json                                    http=403 fwd=   | path /graphql.json is under /graphql and no preset route owns it
+refused         ghe     h1 gql double slash                             http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h2 gql double slash                             http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h1 coverage gql denied                          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h2 coverage gql denied                          http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+REACHED         ghe     h1 coverage gql allowed                         http=200 fwd=POST /graphql viewer  | 
+REACHED         ghe     h2 coverage gql allowed                         http=200 fwd=POST /graphql viewer  | 
+refused         ghe     h1 coverage rest merge                          http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h2 coverage rest merge                          http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h1 coverage rest review                         http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghe     h2 coverage rest review                         http=403 fwd=   | POST .../pulls/{n}/reviews is denied by the preset
+refused         ghe     h1 coverage rest ref                            http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghe     h2 coverage rest ref                            http=403 fwd=   | POST .../git/refs/** is denied by the preset
+refused         ghe     h1 unmatched /graphql2                          http=403 fwd=   | path /graphql2 is under /graphql and no preset route owns it
+refused         ghe     h2 unmatched /graphql2                          http=403 fwd=   | path /graphql2 is under /graphql and no preset route owns it
+refused         ghe     h1 unmatched /graphql/foo                       http=403 fwd=   | path /graphql/foo is under /graphql and no preset route owns it
+refused         ghe     h2 unmatched /graphql/foo                       http=403 fwd=   | path /graphql/foo is under /graphql and no preset route owns it
+refused         ghe     h1 unmatched /graphqlx                          http=403 fwd=   | path /graphqlx is under /graphql and no preset route owns it
+refused         ghe     h2 unmatched /graphqlx                          http=403 fwd=   | path /graphqlx is under /graphql and no preset route owns it
+refused         ghe     h1 unmatched /api/graphqlx                      http=403 fwd=   | path /api/graphqlx is under /api and no preset route owns it
+refused         ghe     h2 unmatched /api/graphqlx                      http=403 fwd=   | path /api/graphqlx is under /api and no preset route owns it
+refused         ghe     h1 unmatched /api/foo                           http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         ghe     h2 unmatched /api/foo                           http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         ghe     h1 unmatched /api/v3/graphql                    http=403 fwd=   | path /api/v3/graphql is under /api and no preset route owns it
+refused         ghe     h2 unmatched /api/v3/graphql                    http=403 fwd=   | path /api/v3/graphql is under /api and no preset route owns it
+refused         ghe     h1 unmatched /api/graphql on this host          http=403 fwd=   | path /api/graphql is under /api and no preset route owns it
+refused         ghe     h2 unmatched /api/graphql on this host          http=403 fwd=   | path /api/graphql is under /api and no preset route owns it
+refused         ghe     h1 unmatched /graphql on this host              http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h2 unmatched /graphql on this host              http=403 fwd=   | mutation field "addPullRequestReview" is denied by the preset
+refused         ghe     h1 unmatched /api/v9 merge                      http=403 fwd=   | path /api/v9/repos/a/b/pulls/1/merge is under /api and no preset route owns it
+refused         ghe     h2 unmatched /api/v9 merge                      http=403 fwd=   | path /api/v9/repos/a/b/pulls/1/merge is under /api and no preset route owns it
+REACHED         ghe     h1 legit label with a space                     http=201 fwd=PATCH /repos/a/b/labels/good%20first   | 
+REACHED         ghe     h2 legit label with a space                     http=201 fwd=PATCH /repos/a/b/labels/good%20first   | 
+REACHED         ghe     h1 legit contents read                          http=200 fwd=GET /repos/a/b/contents/dir%2Ffile.txt   | 
+REACHED         ghe     h2 legit contents read                          http=200 fwd=GET /repos/a/b/contents/dir%2Ffile.txt   | 
+REACHED         ghe     h1 legit branch with a slash                    http=200 fwd=GET /repos/a/b/branches/feat%2Fx   | 
+REACHED         ghe     h2 legit branch with a slash                    http=200 fwd=GET /repos/a/b/branches/feat%2Fx   | 
+REACHED         ghe     h1 legit tag release                            http=200 fwd=GET /repos/a/b/releases/tags/v1%2F2   | 
+REACHED         ghe     h2 legit tag release                            http=200 fwd=GET /repos/a/b/releases/tags/v1%2F2   | 
+refused         ghe     h1 legit undeclared escape                      http=403 fwd=   | percent escape outside a declared encoded segment: comments%20
+refused         ghe     h2 legit undeclared escape                      http=403 fwd=   | percent escape outside a declared encoded segment: comments%20
+refused         ghe     h1 override X-Original-URL: /repos/a/b/p on POS http=403 fwd=   | URL override header X-Original-Url refused
+refused         ghe     h2 override X-Original-URL: /repos/a/b/p on POS http=403 fwd=   | URL override header X-Original-Url refused
+refused         ghe     h1 override X-Rewrite-URL: /repos/a/b/p on POST http=403 fwd=   | URL override header X-Rewrite-Url refused
+refused         ghe     h2 override X-Rewrite-URL: /repos/a/b/p on POST http=403 fwd=   | URL override header X-Rewrite-Url refused
+REACHED         ghe     h1 override X-HTTP-Method-Override: PUT on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=PUT | 
+REACHED         ghe     h2 override X-HTTP-Method-Override: PUT on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=PUT | 
+REACHED         ghe     h1 override X-HTTP-Method-Override: GET on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=GET | 
+REACHED         ghe     h2 override X-HTTP-Method-Override: GET on POST http=200 fwd=POST /repos/a/b/issues  X-Http-Method-Override=GET | 
+refused         ghe     h1 override method on POST merge                http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+refused         ghe     h2 override method on POST merge                http=403 fwd=   | PUT .../pulls/{n}/merge is denied by the preset
+REACHED         ghe     h1 Sudo on a GitHub host                        http=200 fwd=GET /repos/a/b/pulls/1  Sudo=root | 
+REACHED         ghe     h2 Sudo on a GitHub host                        http=200 fwd=GET /repos/a/b/pulls/1  Sudo=root | 
+refused         gl      h1 gl path appr%6Fve                            http=403 fwd=   | percent escape outside a declared encoded segment: appr%6Fve
+refused         gl      h2 gl path appr%6Fve                            http=403 fwd=   | percent escape outside a declared encoded segment: appr%6Fve
+refused         gl      h1 gl path approve.json                         http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h2 gl path approve.json                         http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h1 gl path approve/                             http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h2 gl path approve/                             http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h1 gl path unapprove.json                       http=403 fwd=   | POST .../merge_requests/{n}/unapprove is denied by the preset
+refused         gl      h2 gl path unapprove.json                       http=403 fwd=   | POST .../merge_requests/{n}/unapprove is denied by the preset
+refused         gl      h1 gl path merge.json                           http=403 fwd=   | PUT .../merge_requests/{n}/merge is denied by the preset
+refused         gl      h2 gl path merge.json                           http=403 fwd=   | PUT .../merge_requests/{n}/merge is denied by the preset
+refused         gl      h1 gl path m%65rge                              http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         gl      h2 gl path m%65rge                              http=403 fwd=   | percent escape outside a declared encoded segment: m%65rge
+refused         gl      h1 gl path merge/                               http=403 fwd=   | PUT .../merge_requests/{n}/merge is denied by the preset
+refused         gl      h2 gl path merge/                               http=403 fwd=   | PUT .../merge_requests/{n}/merge is denied by the preset
+refused         gl      h1 gl path rebase.json                          http=403 fwd=   | PUT .../merge_requests/{n}/rebase is denied by the preset
+refused         gl      h2 gl path rebase.json                          http=403 fwd=   | PUT .../merge_requests/{n}/rebase is denied by the preset
+refused         gl      h1 gl path encoded project, appr%6Fve           http=403 fwd=   | percent escape outside a declared encoded segment: appr%6Fve
+refused         gl      h2 gl path encoded project, appr%6Fve           http=403 fwd=   | percent escape outside a declared encoded segment: appr%6Fve
+refused         gl      h1 gl path encoded project, approve             http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h2 gl path encoded project, approve             http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h1 gl path full-encoded tail                    http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h2 gl path full-encoded tail                    http=403 fwd=   | POST .../merge_requests/{n}/approve is denied by the preset
+refused         gl      h1 gl gql graphq%6C                             http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         gl      h2 gl gql graphq%6C                             http=403 fwd=   | percent escape outside a declared encoded segment: graphq%6C
+refused         gl      h1 gl gql trailing slash                        http=403 fwd=   | mutation field "mergeRequestAccept" is denied by the preset
+refused         gl      h2 gl gql trailing slash                        http=403 fwd=   | mutation field "mergeRequestAccept" is denied by the preset
+refused         gl      h1 gl gql denied                                http=403 fwd=   | mutation field "mergeRequestAccept" is denied by the preset
+refused         gl      h2 gl gql denied                                http=403 fwd=   | mutation field "mergeRequestAccept" is denied by the preset
+refused         gl      h1 gl unmatched /api/v3 approve                 http=403 fwd=   | path /api/v3/projects/1/merge_requests/7/approve is under /api and no preset rou
+refused         gl      h2 gl unmatched /api/v3 approve                 http=403 fwd=   | path /api/v3/projects/1/merge_requests/7/approve is under /api and no preset rou
+refused         gl      h1 gl unmatched /api/foo                        http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         gl      h2 gl unmatched /api/foo                        http=403 fwd=   | path /api/foo is under /api and no preset route owns it
+refused         gl      h1 gl unmatched /graphql                        http=403 fwd=   | path /graphql is under /graphql and no preset route owns it
+refused         gl      h2 gl unmatched /graphql                        http=403 fwd=   | path /graphql is under /graphql and no preset route owns it
+REACHED         gl      h1 gl legit project id                          http=200 fwd=GET /api/v4/projects/acme%2Fwidgets   | 
+REACHED         gl      h2 gl legit project id                          http=200 fwd=GET /api/v4/projects/acme%2Fwidgets   | 
+REACHED         gl      h1 gl legit nested group                        http=200 fwd=GET /api/v4/projects/acme%2Fsub%2Fwidgets/merge_requests/7   | 
+REACHED         gl      h2 gl legit nested group                        http=200 fwd=GET /api/v4/projects/acme%2Fsub%2Fwidgets/merge_requests/7   | 
+REACHED         gl      h1 gl legit lower-case %2f                      http=200 fwd=GET /api/v4/projects/acme%2fwidgets/merge_requests/7   | 
+REACHED         gl      h2 gl legit lower-case %2f                      http=200 fwd=GET /api/v4/projects/acme%2fwidgets/merge_requests/7   | 
+REACHED         gl      h1 gl legit file path                           http=200 fwd=GET /api/v4/projects/1/repository/files/dir%2Ffile.txt?ref=main   | 
+REACHED         gl      h2 gl legit file path                           http=200 fwd=GET /api/v4/projects/1/repository/files/dir%2Ffile.txt?ref=main   | 
+REACHED         gl      h1 gl legit branch                              http=200 fwd=GET /api/v4/projects/1/repository/branches/feat%2Fx   | 
+REACHED         gl      h2 gl legit branch                              http=200 fwd=GET /api/v4/projects/1/repository/branches/feat%2Fx   | 
+refused         gl      h1 gl legit undeclared escape                   http=403 fwd=   | percent escape outside a declared encoded segment: 1%20
+refused         gl      h2 gl legit undeclared escape                   http=403 fwd=   | percent escape outside a declared encoded segment: 1%20
+refused         gl      h1 gl override X-Original-URL: /api/v4/pr on GE http=403 fwd=   | URL override header X-Original-Url refused
+refused         gl      h2 gl override X-Original-URL: /api/v4/pr on GE http=403 fwd=   | URL override header X-Original-Url refused
+refused         gl      h1 gl override X-Rewrite-URL: /api/v4/pr on GET http=403 fwd=   | URL override header X-Rewrite-Url refused
+refused         gl      h2 gl override X-Rewrite-URL: /api/v4/pr on GET http=403 fwd=   | URL override header X-Rewrite-Url refused
+REACHED         gl      h1 gl override X-HTTP-Method-Override: PUT on G http=200 fwd=GET /api/v4/projects/1  X-Http-Method-Override=PUT | 
+REACHED         gl      h2 gl override X-HTTP-Method-Override: PUT on G http=200 fwd=GET /api/v4/projects/1  X-Http-Method-Override=PUT | 
+REACHED         gl      h1 gl override Sudo: root on GET                http=200 fwd=GET /api/v4/projects/1  Sudo=root | 
+REACHED         gl      h2 gl override Sudo: root on GET                http=200 fwd=GET /api/v4/projects/1  Sudo=root | 
+REACHED         gl      h1 gl override Sudo: 1 on GET                   http=200 fwd=GET /api/v4/projects/1  Sudo=1 | 
+REACHED         gl      h2 gl override Sudo: 1 on GET                   http=200 fwd=GET /api/v4/projects/1  Sudo=1 | 
+REACHED         gl      h1 gl Authorization beside the binding          http=200 fwd=GET /api/v4/projects/1   | 
+REACHED         gl      h2 gl Authorization beside the binding          http=200 fwd=GET /api/v4/projects/1   | 
+refused         gl      h1 gl override PUT on POST merge                http=403 fwd=   | PUT .../merge_requests/{n}/merge is denied by the preset
+refused         gl      h2 gl override PUT on POST merge                http=403 fwd=   | PUT .../merge_requests/{n}/merge is denied by the preset
+REACHED         generic h1 generic override X-Original-URL              http=200 fwd=GET /x  X-Original-Url=/x | 
+REACHED         generic h2 generic override X-Original-URL              http=200 fwd=GET /x  X-Original-Url=/x | 
+REACHED         generic h1 generic override X-Rewrite-URL               http=200 fwd=GET /x  X-Rewrite-Url=/x | 
+REACHED         generic h2 generic override X-Rewrite-URL               http=200 fwd=GET /x  X-Rewrite-Url=/x | 
+REACHED         generic h1 generic override X-HTTP-Method-Override      http=200 fwd=GET /x  X-Http-Method-Override=PUT | 
+REACHED         generic h2 generic override X-HTTP-Method-Override      http=200 fwd=GET /x  X-Http-Method-Override=PUT | 
+REACHED         generic h1 generic override Sudo                        http=200 fwd=GET /x  Sudo=root | 
+REACHED         generic h2 generic override Sudo                        http=200 fwd=GET /x  Sudo=root | 
+refused         gl      h1 text createNote newline escape               http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote newline escape               http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote newline escape               http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote newline escape               http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote newline escape               http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote newline escape               http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote CR escape                    http=403 fwd=   | a string in the document matches a denied text pattern: "\r/merge"
+refused         gl      h2 text createNote CR escape                    http=403 fwd=   | a string in the document matches a denied text pattern: "\r/merge"
+REACHED         com     h1 text createNote CR escape                    http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote CR escape                    http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote CR escape                    http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote CR escape                    http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text addComment newline approve              http=403 fwd=   | a string in the document matches a denied text pattern: "\n/approve"
+refused         gl      h2 text addComment newline approve              http=403 fwd=   | a string in the document matches a denied text pattern: "\n/approve"
+REACHED         com     h1 text addComment newline approve              http=200 fwd=POST /graphql addComment  | 
+REACHED         com     h2 text addComment newline approve              http=200 fwd=POST /graphql addComment  | 
+REACHED         ghes    h1 text addComment newline approve              http=200 fwd=POST /api/graphql addComment  | 
+REACHED         ghes    h2 text addComment newline approve              http=200 fwd=POST /api/graphql addComment  | 
+refused         gl      h1 text addComment unicode slash                http=403 fwd=   | a string in the document matches a denied text pattern: "\n/approve"
+refused         gl      h2 text addComment unicode slash                http=403 fwd=   | a string in the document matches a denied text pattern: "\n/approve"
+REACHED         com     h1 text addComment unicode slash                http=200 fwd=POST /graphql addComment  | 
+REACHED         com     h2 text addComment unicode slash                http=200 fwd=POST /graphql addComment  | 
+REACHED         ghes    h1 text addComment unicode slash                http=200 fwd=POST /api/graphql addComment  | 
+REACHED         ghes    h2 text addComment unicode slash                http=200 fwd=POST /api/graphql addComment  | 
+refused         gl      h1 text createNote unicode newline and slash    http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote unicode newline and slash    http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote unicode newline and slash    http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote unicode newline and slash    http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote unicode newline and slash    http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote unicode newline and slash    http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote leading                      http=403 fwd=   | a string in the document matches a denied text pattern: "/merge"
+refused         gl      h2 text createNote leading                      http=403 fwd=   | a string in the document matches a denied text pattern: "/merge"
+REACHED         com     h1 text createNote leading                      http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote leading                      http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote leading                      http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote leading                      http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote block string                 http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote block string                 http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote block string                 http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote block string                 http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote block string                 http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote block string                 http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote block leading                http=403 fwd=   | a string in the document matches a denied text pattern: "/approve"
+refused         gl      h2 text createNote block leading                http=403 fwd=   | a string in the document matches a denied text pattern: "/approve"
+REACHED         com     h1 text createNote block leading                http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote block leading                http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote block leading                http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote block leading                http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote list argument                http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote list argument                http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote list argument                http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote list argument                http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote list argument                http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote list argument                http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote variable                     http=403 fwd=   | a variable of createNote matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote variable                     http=403 fwd=   | a variable of createNote matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote variable                     http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote variable                     http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote variable                     http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote variable                     http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote nested variable              http=403 fwd=   | a variable of createNote matches a denied text pattern: "\n/approve"
+refused         gl      h2 text createNote nested variable              http=403 fwd=   | a variable of createNote matches a denied text pattern: "\n/approve"
+REACHED         com     h1 text createNote nested variable              http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote nested variable              http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote nested variable              http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote nested variable              http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote variable default             http=403 fwd=   | a variable default matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote variable default             http=403 fwd=   | a variable default matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote variable default             http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote variable default             http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote variable default             http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote variable default             http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote fragment                     http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote fragment                     http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote fragment                     http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote fragment                     http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote fragment                     http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote fragment                     http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote alias                        http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote alias                        http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote alias                        http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote alias                        http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote alias                        http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote alias                        http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote directive argument           http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote directive argument           http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote directive argument           http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote directive argument           http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote directive argument           http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote directive argument           http=200 fwd=POST /api/graphql createNote  | 
+refused         gl      h1 text createNote nested field argument        http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+refused         gl      h2 text createNote nested field argument        http=403 fwd=   | a string in the document matches a denied text pattern: "\n/merge"
+REACHED         com     h1 text createNote nested field argument        http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote nested field argument        http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote nested field argument        http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote nested field argument        http=200 fwd=POST /api/graphql createNote  | 
+REACHED         gl      h1 text createNote benign                       http=200 fwd=POST /api/graphql createNote  | 
+REACHED         gl      h2 text createNote benign                       http=200 fwd=POST /api/graphql createNote  | 
+REACHED         com     h1 text createNote benign                       http=200 fwd=POST /graphql createNote  | 
+REACHED         com     h2 text createNote benign                       http=200 fwd=POST /graphql createNote  | 
+REACHED         ghes    h1 text createNote benign                       http=200 fwd=POST /api/graphql createNote  | 
+REACHED         ghes    h2 text createNote benign                       http=200 fwd=POST /api/graphql createNote  | 
+TOTALS [(('com', 'REACHED'), 50), (('com', 'refused'), 60), (('generic', 'REACHED'), 8), (('ghe', 'REACHED'), 16), (('ghe', 'refused'), 60), (('ghes', 'REACHED'), 50), (('ghes', 'refused'), 60), (('gl', 'REACHED'), 20), (('gl', 'refused'), 74)]

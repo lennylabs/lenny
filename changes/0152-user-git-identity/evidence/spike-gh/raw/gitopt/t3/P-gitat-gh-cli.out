@@ -1,0 +1,214 @@
+### ghes-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@ghes.example.test/acme/widgets.git (fetch)
+### ghes-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### ghes-ssh-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### ghes-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@ghes.example.test/acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### ghes-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@ghes.example.test/acme/widgets.git (fetch)
+and the repository exists.
+### ghes-ssh-added-later-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### ghes-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	http://ghes.example.test:acme/widgets.git (fetch)
+### ghes-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+fatal: unable to access 'http://ghes.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### ghes-scp-tool rc=1
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+no git remotes found
+### ghes-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@ghes.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+fatal: unable to access 'http://ghes.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### ghes-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	http://ghes.example.test:acme/widgets.git (fetch)
+fatal: unable to access 'http://ghes.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### ghes-scp-added-later-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@github.com/acme/widgets.git (fetch)
+### com-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### com-ssh-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@github.com/acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### com-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@github.com/acme/widgets.git (fetch)
+and the repository exists.
+### com-ssh-added-later-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### com-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	http://github.com:acme/widgets.git (fetch)
+### com-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+fatal: unable to access 'http://github.com:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### com-scp-tool rc=1
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+no git remotes found
+### com-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@github.com:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+fatal: unable to access 'http://github.com:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### com-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	http://github.com:acme/widgets.git (fetch)
+fatal: unable to access 'http://github.com:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### com-scp-added-later-tool rc=0
+$ env GH_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### gl-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@gitlab.example.test/acme/widgets.git (fetch)
+### gl-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### gl-ssh-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### gl-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@gitlab.example.test/acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### gl-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@gitlab.example.test/acme/widgets.git (fetch)
+and the repository exists.
+### gl-ssh-added-later-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### gl-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	http://gitlab.example.test:acme/widgets.git (fetch)
+### gl-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+fatal: unable to access 'http://gitlab.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### gl-scp-tool rc=1
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+  GITLAB_HOST is currently set to gitlab.example.test                                                                 
+                                                                                                                      
+  Configured remotes: .                                                                                               
+### gl-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@gitlab.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+fatal: unable to access 'http://gitlab.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### gl-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	http://gitlab.example.test:acme/widgets.git (fetch)
+fatal: unable to access 'http://gitlab.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### gl-scp-added-later-tool rc=0
+$ env GITLAB_HOST=gitlab.example.test GITLAB_TOKEN=lenny-injected timeout 15 glab mr list 2>&1
+Showing 1 open merge request on acme/widgets. (Page 1)
+
+!7	acme/widgets!7	the title	(main) ← (feature)
+### nossh-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	http://nossh.example.test:acme/widgets.git (fetch)
+### nossh-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+fatal: unable to access 'http://nossh.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### nossh-scp-tool rc=1
+$ env GH_HOST=nossh.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+no git remotes found
+### nossh-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@nossh.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+fatal: unable to access 'http://nossh.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### nossh-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	http://nossh.example.test:acme/widgets.git (fetch)
+fatal: unable to access 'http://nossh.example.test:acme/widgets.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### nossh-scp-added-later-tool rc=1
+$ env GH_HOST=nossh.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### arb-ssh-remote-v rc=0
+$ git remote -v | head -1
+origin	ssh://git@other.example.test/pub/lib.git (fetch)
+### arb-ssh-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### arb-ssh-tool rc=0
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### arb-ssh-self-clone rc=128
+$ timeout 20 git clone -q 'ssh://git@other.example.test/pub/lib.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### arb-ssh-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	ssh://git@other.example.test/pub/lib.git (fetch)
+and the repository exists.
+### arb-ssh-added-later-tool rc=0
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### arb-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	http://other.example.test:pub/lib.git (fetch)
+### arb-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+fatal: unable to access 'http://other.example.test:pub/lib.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### arb-scp-tool rc=1
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+no git remotes found
+### arb-scp-self-clone rc=128
+$ timeout 20 git clone -q 'git@other.example.test:pub/lib.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+fatal: unable to access 'http://other.example.test:pub/lib.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### arb-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	http://other.example.test:pub/lib.git (fetch)
+fatal: unable to access 'http://other.example.test:pub/lib.git/': URL rejected: Port number was not a decimal number between 0 and 65535
+### arb-scp-added-later-tool rc=1
+$ env GH_HOST=other.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+### otheruser-scp-remote-v rc=0
+$ git remote -v | head -1
+origin	alice@ghes.example.test:acme/widgets.git (fetch)
+### otheruser-scp-git rc=0
+$ timeout 15 git ls-remote origin 2>&1 | tail -2
+Please make sure you have the correct access rights
+and the repository exists.
+### otheruser-scp-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+### otheruser-scp-self-clone rc=128
+$ timeout 20 git clone -q 'alice@ghes.example.test:acme/widgets.git' c 2>&1; git -C c remote -v 2>/dev/null | head -1; git -C c config --get remote.origin.url 2>/dev/null
+
+Please make sure you have the correct access rights
+and the repository exists.
+### otheruser-scp-added-later rc=0
+$ git remote -v | grep later | head -1; timeout 15 git fetch later 2>&1 | tail -1
+later	alice@ghes.example.test:acme/widgets.git (fetch)
+and the repository exists.
+### otheruser-scp-added-later-tool rc=0
+$ env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected timeout 15 gh pr list 2>&1
+
+script-rc=0

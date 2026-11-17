@@ -1,0 +1,17 @@
+## fail-closed http mode (authz container stopped)
+
+curl: (7) CONNECT tunnel failed, response 503
+=> http=000 connect=503 time=1.007779s size=0
+=> http=200 connect=200 time=0.011979s size=50
+## authz process up but port closed? (kill -STOP: hang)
+=> http=000 connect=503 time=2.004244s size=0
+## peerhdr=0: what peer info arrives by default
+=> http=200 connect=200 time=0.014272s size=50
+2026/11/02 04:57:05 HTTP CHECK {"headers":{"Content-Length":["0"],"Proxy-Authorization":["Basic YWdlbnQ6Z29vZA=="],"X-Envoy-Expected-Rq-Timeout-Ms":["2000"],"X-Envoy-Internal":["true"]},"host":"target.spike:443","method":"CONNECT","n":3,"peer":"198.18.0.10:58024","proto":"HTTP/2.0","uri":"target.spike:443"}
+## v1.39.6 http h1
+=> http=000 connect=503 time=0.002726s size=0
+## v1.39.6 http h2
+=> http=200 connect=200 time=0.012278s size=45
+=> http=200 connect=200 time=0.007272s size=49
+=> http=000 connect=407 time=0.001360s size=0
+=> http=000 connect=403 time=0.000980s size=0

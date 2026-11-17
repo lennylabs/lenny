@@ -1,0 +1,914 @@
+// stub: records every request and answers enough for gh and glab to proceed. It is a permissive server on purpose:
+// it accepts GraphQL from a JSON object, a JSON array, a URL parameter, a form body, or application/graphql, and it decodes
+// gzip and zstd bodies, so that anything a filter lets through shows up as what a lax origin would have executed.
+package main
+
+import (
+	"bytes"
+	"compress/gzip"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/json"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	gl "github.com/graphql-go/graphql/language/ast"
+	glp "github.com/graphql-go/graphql/language/parser"
+	"github.com/klauspost/compress/zstd"
+	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/parser"
+)
+
+type op struct {
+	Type   string   `json:"type"`
+	Name   string   `json:"name,omitempty"`
+	Fields []string `json:"fields"`
+}
+type gqlInfo struct {
+	Via       string          `json:"via"`
+	Doc       string          `json:"doc"`
+	OpName    string          `json:"operationName,omitempty"`
+	Variables json.RawMessage `json:"variables,omitempty"`
+	Ops       []op            `json:"ops,omitempty"`    // gqlparser
+	OpsB      []op            `json:"opsB,omitempty"`   // graphql-go
+	Err       string          `json:"err,omitempty"`    // gqlparser error
+	ErrB      string          `json:"errB,omitempty"`   // graphql-go error
+}
+type rec struct {
+	T       string              `json:"t"`
+	Proto   string              `json:"proto"`
+	Method  string              `json:"method"`
+	URI     string              `json:"uri"`
+	Host    string              `json:"host"`
+	Headers map[string][]string `json:"headers"`
+	TE      []string            `json:"te,omitempty"`
+	BodyLen int                 `json:"bodyLen"`
+	Decoded string              `json:"decodedFrom,omitempty"`
+	Body    string              `json:"body,omitempty"`
+	GQL     []gqlInfo           `json:"gql,omitempty"`
+	Status  int                 `json:"status"`
+	Remote  string              `json:"remote,omitempty"`
+}
+
+var (
+	mu       sync.Mutex
+	recs     []rec
+	existing atomic.Bool
+	created  sync.Map
+)
+
+func collectB(sel *gl.SelectionSet, frags map[string]*gl.FragmentDefinition, seen map[string]bool) []string {
+	var out []string
+	if sel == nil {
+		return out
+	}
+	for _, s := range sel.Selections {
+		switch x := s.(type) {
+		case *gl.Field:
+			out = append(out, x.Name.Value)
+		case *gl.InlineFragment:
+			out = append(out, collectB(x.SelectionSet, frags, seen)...)
+		case *gl.FragmentSpread:
+			n := x.Name.Value
+			if f := frags[n]; f != nil && !seen[n] {
+				seen[n] = true
+				out = append(out, collectB(f.SelectionSet, frags, seen)...)
+			}
+		}
+	}
+	return out
+}
+
+func analyzeB(doc string, g *gqlInfo) {
+	defer func() {
+		if v := recover(); v != nil {
+			g.ErrB = fmt.Sprint("panic: ", v)
+		}
+	}()
+	d, err := glp.Parse(glp.ParseParams{Source: doc})
+	if err != nil {
+		g.ErrB = strings.SplitN(err.Error(), "\n", 2)[0]
+		return
+	}
+	frags := map[string]*gl.FragmentDefinition{}
+	for _, n := range d.Definitions {
+		if f, ok := n.(*gl.FragmentDefinition); ok {
+			frags[f.Name.Value] = f
+		}
+	}
+	for _, n := range d.Definitions {
+		if o, ok := n.(*gl.OperationDefinition); ok {
+			nm := ""
+			if o.Name != nil {
+				nm = o.Name.Value
+			}
+			g.OpsB = append(g.OpsB, op{Type: o.Operation, Name: nm, Fields: collectB(o.SelectionSet, frags, map[string]bool{})})
+		}
+	}
+}
+
+func collectA(ss ast.SelectionSet, d *ast.QueryDocument, seen map[string]bool) []string {
+	var out []string
+	for _, s := range ss {
+		switch x := s.(type) {
+		case *ast.Field:
+			out = append(out, x.Name)
+		case *ast.InlineFragment:
+			out = append(out, collectA(x.SelectionSet, d, seen)...)
+		case *ast.FragmentSpread:
+			if f := d.Fragments.ForName(x.Name); f != nil && !seen[x.Name] {
+				seen[x.Name] = true
+				out = append(out, collectA(f.SelectionSet, d, seen)...)
+			}
+		}
+	}
+	return out
+}
+
+func analyze(doc, opName, via string, vars json.RawMessage) (gqlInfo, *ast.QueryDocument) {
+	g := gqlInfo{Via: via, Doc: doc, OpName: opName, Variables: vars}
+	analyzeB(doc, &g)
+	d, err := parser.ParseQuery(&ast.Source{Input: doc})
+	if err != nil {
+		g.Err = err.Error()
+		return g, nil
+	}
+	for _, o := range d.Operations {
+		g.Ops = append(g.Ops, op{Type: string(o.Operation), Name: o.Name, Fields: collectA(o.SelectionSet, d, map[string]bool{})})
+	}
+	return g, d
+}
+
+// ----- the generic GraphQL responder: walks the selection set and fills values by field name.
+type scope struct {
+	parent string
+	host   string
+	number int
+	vals   map[string]any
+	vars   map[string]any
+}
+
+var typeFields = []string{"stateReason", "isInMergeQueue", "isMergeQueueEnabled", "autoMergeAllowed", "mergeQueue", "statusCheckRollup", "checkRunCount", "checkRunCountsByState", "statusContextCount", "statusContextCountsByState", "event", "visibility", "squashMergeAllowed", "pullRequestTemplates", "viewerDefaultMergeMethod", "closed", "reviewRequests", "title", "id", "name", "isBlank", "isImmutable", "workflowDispatch", "immutableActions", "projectsV2", "projects", "projectCards", "suggestedActors", "suggestedReviewerActors"}
+
+func boolName(n string) bool {
+	if strings.HasPrefix(n, "is") && len(n) > 2 && n[2] >= 'A' && n[2] <= 'Z' {
+		return true
+	}
+	for _, p := range []string{"has", "viewerCan", "viewerHas", "viewerDid", "viewerIs", "requires", "includes", "allows", "dismisses", "restricts"} {
+		if strings.HasPrefix(n, p) {
+			return true
+		}
+	}
+	switch n {
+	case "maintainerCanModify", "merged", "closed", "locked", "autoMergeAllowed", "deleteBranchOnMerge", "mergeCommitAllowed", "squashMergeAllowed", "rebaseMergeAllowed", "archived", "fork", "private":
+		return true
+	}
+	return false
+}
+
+func scalar(n string, s scope) any {
+	if v, ok := s.vals[n]; ok {
+		return v
+	}
+	if n == "locked" {
+		return s.number == 16 || s.number == 10
+	}
+	if n == "isPinned" {
+		return s.number == 10
+	}
+	if n == "isArchived" {
+		return s.vals["name"] == "archived"
+	}
+	if boolName(n) {
+		switch n {
+		case "isDraft":
+			return s.number == 8
+		case "viewerCanMergeAsAdmin", "viewerCanEnableAutoMerge":
+			return s.number == 11
+		case "isMergeQueueEnabled":
+			return s.number == 12
+		case  "isInMergeQueue", "isFork", "isPrivate", "isArchived", "isCrossRepository", "merged", "closed", "locked", "isMirror", "isTemplate", "isEmpty", "isBot", "isAuthor", "isOwner":
+			return false
+		case "hasNextPage", "hasPreviousPage":
+			return false
+		}
+		return true
+	}
+	switch n {
+	case "number":
+		if s.number != 0 {
+			return s.number
+		}
+		return 7
+	case "aheadBy", "behindBy", "issueCount", "total", "completed", "percentCompleted", "lines", "position", "line":
+		return 1
+	case "totalCount", "additions", "deletions", "changedFiles", "databaseId", "stargazerCount", "forkCount", "count", "fullDatabaseId", "diskUsage":
+		if n == "fullDatabaseId" {
+			return "1234"
+		}
+		return 1
+	case "url", "permalink":
+		switch s.parent {
+		case "pullRequest", "pullRequests", "createPullRequest", "nodes", "edges", "node":
+			return fmt.Sprintf("https://%s/acme/widgets/pull/%d", s.host, nz(s.number, 7))
+		case "issue":
+			return fmt.Sprintf("https://%s/acme/widgets/issues/%d", s.host, nz(s.number, 9))
+		case "addComment", "commentEdge", "comment":
+			return fmt.Sprintf("https://%s/acme/widgets/pull/7#issuecomment-1", s.host)
+		}
+		return fmt.Sprintf("https://%s/acme/widgets", s.host)
+	case "state":
+		if s.parent == "contexts" || s.parent == "statusCheckRollup" || s.parent == "checkRunCountsByState" || s.parent == "statusContextCountsByState" {
+			return "SUCCESS"
+		}
+		if s.number == 15 || s.number == 10 {
+			return "CLOSED"
+		}
+		if s.number == 17 {
+			return "MERGED"
+		}
+		return "OPEN"
+	case "mergeable":
+		return "MERGEABLE"
+	case "mergeStateStatus":
+		if s.number == 11 {
+			return "BLOCKED"
+		}
+		return "CLEAN"
+	case "reviewDecision":
+		return "APPROVED"
+	case "viewerPermission":
+		return "ADMIN"
+	case "viewerDefaultMergeMethod":
+		return "MERGE"
+	case "visibility":
+		return "PUBLIC"
+	case "status":
+		return "COMPLETED"
+	case "conclusion":
+		return "SUCCESS"
+	case "isRequired":
+		return false
+	case "headRefName":
+		return "feature"
+	case "baseRefName":
+		return "main"
+	case "oid", "headRefOid", "baseRefOid", "abbreviatedOid", "potentialMergeCommit":
+		return "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+	case "login":
+		if s.parent == "owner" || s.parent == "repositoryOwner" || s.parent == "headRepositoryOwner" {
+			return "acme"
+		}
+		if s.parent == "assignableUsers" || s.parent == "suggestedActors" || s.parent == "assignees" || s.parent == "requestedReviewer" {
+			return "bob"
+		}
+		return "alice"
+	case "name":
+		switch s.parent {
+		case "labels":
+			return "bug"
+		case "projects":
+			return "board"
+		case "repository", "headRepository", "repo", "createPullRequest":
+			return "widgets"
+		case "defaultBranchRef", "ref":
+			return "main"
+		}
+		return "widgets"
+	case "nameWithOwner":
+		return "acme/widgets"
+	case "title":
+		switch s.parent {
+		case "milestones":
+			return "v1"
+		case "projectsV2", "project":
+			return "board"
+		}
+		return "the title"
+	case "slug":
+		return "core"
+	case "description", "body", "bodyText", "bodyHTML":
+		return "a description"
+	case "__typename":
+		return "Repository"
+	case "color":
+		return "ff0000"
+	case "dueOn":
+		return nil
+	case "homepageUrl", "mirrorUrl", "sshUrl", "avatarUrl":
+		return "https://example.test/x"
+	case "content":
+		return "THUMBS_UP"
+	}
+	if strings.HasSuffix(n, "Count") {
+		return 1
+	}
+	if strings.HasSuffix(n, "At") || strings.HasSuffix(n, "Date") {
+		return "2026-10-01T10:00:00Z"
+	}
+	return "s-" + n
+}
+
+func nz(a, b int) int {
+	if a != 0 {
+		return a
+	}
+	return b
+}
+
+func firstType(ss ast.SelectionSet, d *ast.QueryDocument) string {
+	for _, x := range ss {
+		switch f := x.(type) {
+		case *ast.InlineFragment:
+			if f.TypeCondition != "" {
+				return f.TypeCondition
+			}
+		case *ast.FragmentSpread:
+			if fd := d.Fragments.ForName(f.Name); fd != nil && fd.TypeCondition != "" && fd.TypeCondition != "Actor" {
+				return fd.TypeCondition
+			}
+		}
+	}
+	return ""
+}
+
+var listObjects = map[string]bool{"checkRunCountsByState": true, "statusContextCountsByState": true, "reactionGroups": true, "nodes": true, "edges": true, "repositoryTopics": false, "latestReviews": false, "files": false, "pullRequestTemplates": true, "squashMergeCommitMessage": false, "issueTemplates": true, "suggestedLabels": true}
+var emptyLists = map[string]bool{"reactionGroups": true, "pullRequestTemplates": true, "issueTemplates": true}
+
+func selectObj(ss ast.SelectionSet, d *ast.QueryDocument, s scope, out map[string]any) {
+	for _, x := range ss {
+		switch f := x.(type) {
+		case *ast.Field:
+			key := f.Alias
+			if key == "" {
+				key = f.Name
+			}
+			out[key] = value(f, d, s)
+		case *ast.InlineFragment:
+			selectObj(f.SelectionSet, d, s, out)
+		case *ast.FragmentSpread:
+			if fd := d.Fragments.ForName(f.Name); fd != nil {
+				selectObj(fd.SelectionSet, d, s, out)
+			}
+		}
+	}
+}
+
+func value(f *ast.Field, d *ast.QueryDocument, s scope) any {
+	child := scope{parent: f.Name, host: s.host, number: s.number, vals: map[string]any{}, vars: s.vars}
+	if f.Name == "owner" {
+		if o, ok := s.vals["ownerArg"]; ok {
+			child.vals["login"] = o
+		}
+	}
+	if f.Name == "parent" {
+		if o, _ := s.vals["ownerArg"].(string); o == "alice" {
+			child.vals["ownerArg"] = "acme"
+		} else {
+			return nil
+		}
+	}
+	if f.Name == "nodes" || f.Name == "edges" || f.Name == "node" {
+		child.parent = s.parent
+		for k, v := range s.vals {
+			child.vals[k] = v
+		}
+	}
+	for _, a := range f.Arguments {
+		v, err := a.Value.Value(s.vars)
+		if err != nil {
+			continue
+		}
+		switch a.Name {
+		case "number", "pr_number":
+			if n, ok := v.(int64); ok {
+				child.number = int(n)
+			} else if n, ok := v.(float64); ok {
+				child.number = int(n)
+			} else if n, ok := v.(int); ok {
+				child.number = n
+			}
+		case "login", "slug":
+			child.vals[a.Name] = v
+		case "name":
+			if f.Name == "label" || f.Name == "repository" || f.Name == "user" {
+				child.vals["name"] = v
+			}
+		case "owner":
+			if f.Name == "repository" {
+				child.vals["ownerArg"] = v
+				if v == "alice" {
+					child.vals["isFork"] = true
+				}
+			}
+		}
+	}
+	if f.Name == "pullRequest" && child.number == 13 {
+		child.vals["isCrossRepository"] = true
+		child.vals["headRefName"] = "cross-branch"
+		child.vals["__headOwner"] = "alice"
+		child.vals["maintainerCanModify"] = false
+	}
+	if f.Name == "pullRequest" && child.number == 14 {
+		child.vals["isCrossRepository"] = true
+		child.vals["headRefName"] = "cross-branch"
+		child.vals["__headOwner"] = "alice"
+		child.vals["maintainerCanModify"] = true
+	}
+	if f.Name == "headRepository" {
+		child.vals["name"] = "widgets"
+	}
+	if f.Name == "__type" { // feature detection: every name is reported, so the newest code path is chosen
+		ls := []any{}
+		for _, n := range typeFields {
+			ls = append(ls, map[string]any{"name": n})
+		}
+		out := map[string]any{}
+		for _, x := range f.SelectionSet {
+			if sf, ok := x.(*ast.Field); ok {
+				switch sf.Name {
+				case "fields", "inputFields":
+					out[sf.Alias] = ls
+				case "enumValues":
+					out[sf.Alias] = []any{map[string]any{"name": "ISSUE"}, map[string]any{"name": "ISSUE_ADVANCED"}, map[string]any{"name": "REPOSITORY"}}
+				default:
+					out[sf.Alias] = "s-" + sf.Name
+				}
+			}
+		}
+		return out
+	}
+	if f.Name == "__typename" {
+		switch s.parent {
+		case "issueOrPullRequest":
+			if s.number == 9 || s.number == 10 {
+				return "Issue"
+			}
+			return "PullRequest"
+		case "issue":
+			return "Issue"
+		case "pullRequest", "pullRequests", "createPullRequest":
+			return "PullRequest"
+		case "contexts":
+			return "CheckRun"
+		case "requestedReviewer":
+			return "User"
+		case "owner", "repositoryOwner":
+			return "Organization"
+		}
+		return "User"
+	}
+	if len(f.SelectionSet) == 0 {
+		return scalar(f.Name, s)
+	}
+	if emptyLists[f.Name] {
+		return []any{}
+	}
+	if (f.Name == "nodes" || f.Name == "edges") && s.parent == "pullRequests" && s.vals["__head"] == true && !existing.Load() {
+		return []any{}
+	}
+	if f.Name == "headRepositoryOwner" {
+		if o, ok := s.vals["__headOwner"]; ok {
+			child.vals["login"] = o
+		}
+	}
+	if f.Name == "pullRequests" {
+		for _, a := range f.Arguments {
+			if a.Name == "headRefName" {
+				v, _ := a.Value.Value(s.vars)
+				name, _ := v.(string)
+				if o, ok := created.Load(name); ok {
+					child.vals["headRefName"] = name
+					child.vals["__headOwner"] = o
+					child.vals["isCrossRepository"] = o != "acme"
+				} else {
+					child.vals["__head"] = true
+				}
+			}
+		}
+	}
+	m := map[string]any{}
+	if t := firstType(f.SelectionSet, d); t != "" {
+		// give union members a concrete type by selecting everything and naming the first condition
+		child.vals["__typename"] = t
+	}
+	if f.Name == "parent" {
+		child.vals["isFork"] = false
+	}
+	selectObj(f.SelectionSet, d, child, m)
+	if listObjects[f.Name] && s.parent == "assignableUsers" {
+		m2 := map[string]any{}
+		c2 := child
+		c2.vals = map[string]any{"login": "alice"}
+		selectObj(f.SelectionSet, d, c2, m2)
+		return []any{m, m2}
+	}
+	if listObjects[f.Name] {
+		return []any{m}
+	}
+	return m
+}
+
+func graphqlResponse(d *ast.QueryDocument, g gqlInfo, host string) map[string]any {
+	data := map[string]any{}
+	vars := map[string]any{}
+	json.Unmarshal(g.Variables, &vars)
+	var o *ast.OperationDefinition
+	for _, x := range d.Operations {
+		if g.OpName == "" || x.Name == g.OpName {
+			o = x
+			break
+		}
+	}
+	if o == nil {
+		return map[string]any{"errors": []any{map[string]any{"message": "no operation"}}}
+	}
+	selectObj(o.SelectionSet, d, scope{host: host, parent: "root", vals: map[string]any{}, vars: vars}, data)
+	if o.Name == "UserOrgOwner" {
+		data["user"] = nil
+		return map[string]any{"data": data, "errors": []any{map[string]any{"type": "NOT_FOUND", "path": []any{"user"}, "message": "Could not resolve to a User"}}}
+	}
+	return map[string]any{"data": data}
+}
+
+// ----- REST
+var (
+	reRepo     = regexp.MustCompile(`^/repos/([^/]+)/([^/]+)(/.*)?$`)
+	rePull     = regexp.MustCompile(`^/pulls/(\d+)$`)
+	reGLProj   = regexp.MustCompile(`^/projects/([^/]+)(/.*)?$`)
+	reGLMR     = regexp.MustCompile(`^/merge_requests/(\d+)$`)
+)
+
+func ghPR(host string, n int) map[string]any {
+	return map[string]any{"id": n, "number": n, "node_id": "PR_x", "state": "open", "title": "the title", "body": "a description", "html_url": fmt.Sprintf("https://%s/acme/widgets/pull/%d", host, n), "user": map[string]any{"login": "alice"}, "head": map[string]any{"ref": "feature", "sha": "4b825dc6"}, "base": map[string]any{"ref": "main"}}
+}
+
+func restGH(w http.ResponseWriter, r *http.Request, path string, body []byte, host string) int {
+	h := w.Header()
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	h.Set("X-OAuth-Scopes", "repo, read:org, workflow, project, gist, delete_repo, admin:org, admin:public_key, delete:packages")
+	js := func(code int, v any) int {
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(v)
+		return code
+	}
+	if path == "" || path == "/" {
+		return js(200, map[string]any{"current_user_url": "https://" + host + "/user"})
+	}
+	if path == "/user" {
+		return js(200, map[string]any{"login": "alice", "id": 1, "name": "Alice"})
+	}
+	if path == "/repos/acme/widgets/contents/.github/workflows/ci.yml" {
+		return js(200, map[string]any{"name": "ci.yml", "path": ".github/workflows/ci.yml", "encoding": "base64", "content": "bmFtZTogY2kKb246IHdvcmtmbG93X2Rpc3BhdGNoCg=="})
+	}
+	if path == "/meta" {
+		return js(200, map[string]any{"installed_version": "3.20.0", "verifiable_password_authentication": false})
+	}
+	if m := reRepo.FindStringSubmatch(path); m != nil {
+		sub := m[3]
+		switch {
+		case sub == "":
+			return js(200, map[string]any{"id": 1, "name": m[2], "full_name": m[1] + "/" + m[2], "default_branch": "main", "owner": map[string]any{"login": m[1]}, "html_url": "https://" + host + "/" + m[1] + "/" + m[2], "permissions": map[string]any{"push": true}})
+		case sub == "/pulls" && r.Method == "POST":
+			return js(201, ghPR(host, 7))
+		case sub == "/pulls":
+			return js(200, []any{ghPR(host, 7)})
+		case rePull.MatchString(sub):
+			n, _ := strconv.Atoi(rePull.FindStringSubmatch(sub)[1])
+			if strings.Contains(r.Header.Get("Accept"), "diff") {
+				h.Set("Content-Type", "text/plain")
+				w.WriteHeader(200)
+				io.WriteString(w, "diff --git a/f b/f\n--- a/f\n+++ b/f\n@@ -1 +1 @@\n-x\n+y\n")
+				return 200
+			}
+			return js(200, ghPR(host, n))
+		case strings.HasSuffix(sub, "/merge"):
+			return js(200, map[string]any{"merged": true, "sha": "abc", "message": "merged"})
+		case strings.HasSuffix(sub, "/reviews") && r.Method == "POST":
+			return js(200, map[string]any{"id": 1, "state": "APPROVED"})
+		case strings.HasSuffix(sub, "/reviews"), strings.HasSuffix(sub, "/files"), strings.HasSuffix(sub, "/comments"), strings.HasSuffix(sub, "/commits"), strings.HasSuffix(sub, "/issues"):
+			return js(200, []any{})
+		case strings.HasPrefix(sub, "/git/refs") && r.Method == "DELETE":
+			w.WriteHeader(204)
+			return 204
+		case strings.HasSuffix(sub, "/readme"):
+			return js(200, map[string]any{"name": "README.md", "content": "aGVsbG8K", "encoding": "base64"})
+		case sub == "/forks":
+			return js(202, map[string]any{"name": m[2], "full_name": "alice/" + m[2], "owner": map[string]any{"login": "alice"}, "clone_url": "https://" + host + "/alice/" + m[2] + ".git", "created_at": "2026-10-01T10:00:00Z"})
+		}
+		return ghGeneric(w, r, path, host)
+	}
+	return ghGeneric(w, r, path, host)
+}
+
+// ghGeneric: a superset object for writes and reads, and lists for paths that read as lists, so that gh proceeds and the write is what the log shows.
+func ghGeneric(w http.ResponseWriter, r *http.Request, path, host string) int {
+	js := func(code int, v any) int {
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(v)
+		return code
+	}
+	obj := map[string]any{"id": 1, "number": 1, "node_id": "N_x", "name": "new", "full_name": "acme/widgets", "tag_name": "v1", "upload_url": "https://uploads." + host + "/repos/acme/widgets/releases/1/assets{?name,label}", "html_url": "https://" + host + "/acme/widgets/1", "url": "https://" + host + "/repos/acme/widgets/releases/1", "owner": map[string]any{"login": "acme"}, "user": map[string]any{"login": "alice"}, "title": "t", "body": "b", "state": "open", "created_at": "2026-10-01T10:00:00Z", "updated_at": "2026-10-01T10:00:00Z", "published_at": "2026-10-01T10:00:00Z", "draft": false, "prerelease": false, "assets": []any{map[string]any{"id": 1, "name": "existing.bin", "url": "https://" + host + apiP(host) + "/repos/acme/widgets/releases/assets/1", "browser_download_url": "https://" + host + apiP(host) + "/repos/acme/widgets/releases/assets/1"}}, "public": true, "description": "d", "default_branch": "main", "files": map[string]any{"f.txt": map[string]any{"filename": "f.txt", "content": "x", "type": "text/plain"}}, "clone_url": "https://" + host + "/acme/widgets.git", "workflow_id": 1, "head_branch": "main", "head_sha": "4b825dc6", "status": "completed", "conclusion": "success", "event": "push", "path": ".github/workflows/ci.yml", "jobs_url": "https://" + host + "/j", "run_number": 1, "run_attempt": 1, "merge_type": "fast-forward", "base_branch": "main", "message": "ok", "ref": "main", "color": "ff0000", "key_id": "1", "key": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=", "key_prefix": "JIRA-", "url_template": "https://x", "is_alphanumeric": true}
+	if strings.Contains(path, "/gists") {
+		obj["id"] = "1234"
+		obj["owner"] = map[string]any{"login": "alice"}
+	}
+	if strings.Contains(host, "ghes") {
+		obj["upload_url"] = "https://" + host + "/api/uploads/repos/acme/widgets/releases/1/assets{?name,label}"
+		obj["url"] = "https://" + host + "/api/v3/repos/acme/widgets/releases/1"
+	}
+	last := path[strings.LastIndex(path, "/")+1:]
+	switch {
+	case r.Method == "DELETE":
+		w.WriteHeader(204)
+		return 204
+	case r.Method != "GET" && r.Method != "HEAD":
+		return js(201, obj)
+	case last == "workflows":
+		return js(200, map[string]any{"total_count": 1, "workflows": []any{map[string]any{"id": 1, "name": "ci", "path": ".github/workflows/ci.yml", "state": "active"}}})
+	case last == "caches":
+		return js(200, map[string]any{"total_count": 1, "actions_caches": []any{map[string]any{"id": 1, "key": "k", "size_in_bytes": 1}}})
+	case last == "runs":
+		return js(200, map[string]any{"total_count": 0, "workflow_runs": []any{}})
+	case last == "jobs":
+		return js(200, map[string]any{"total_count": 0, "jobs": []any{}})
+	case last == "labels", last == "keys", last == "autolinks", last == "secrets", last == "variables", last == "releases", last == "gists", last == "rulesets", last == "branches", last == "tags", last == "assets":
+		return js(200, []any{})
+	}
+	return js(200, obj)
+}
+
+func glUser() map[string]any {
+	return map[string]any{"id": 1, "username": "alice", "name": "Alice", "state": "active", "web_url": "https://gitlab.example.test/alice"}
+}
+func glMR(host string, n int) map[string]any {
+	return map[string]any{"id": 100 + n, "iid": n, "project_id": 1, "title": "the title", "description": "a description", "state": "opened", "merged_by": nil, "source_branch": "feature", "target_branch": "main", "author": glUser(), "assignees": []any{}, "reviewers": []any{}, "labels": []any{}, "draft": false, "work_in_progress": false, "merge_status": "can_be_merged", "detailed_merge_status": "mergeable", "has_conflicts": false, "sha": "4b825dc6", "web_url": fmt.Sprintf("https://%s/acme/widgets/-/merge_requests/%d", host, n), "source_project_id": 1, "target_project_id": 1, "user_notes_count": 0, "changes_count": "1", "references": map[string]any{"full": "acme/widgets!7"}, "pipeline": nil, "created_at": "2026-10-01T10:00:00Z", "updated_at": "2026-10-01T10:00:00Z", "approvals_before_merge": nil, "should_remove_source_branch": false, "force_remove_source_branch": false, "squash": false, "user": map[string]any{"can_merge": true}, "head_pipeline": nil, "time_stats": map[string]any{}, "task_completion_status": map[string]any{"count": 0, "completed_count": 0}}
+}
+func glProject(host string) map[string]any {
+	return map[string]any{"id": 1, "name": "widgets", "path": "widgets", "path_with_namespace": "acme/widgets", "name_with_namespace": "acme / widgets", "default_branch": "main", "web_url": "https://" + host + "/acme/widgets", "http_url_to_repo": "https://" + host + "/acme/widgets.git", "ssh_url_to_repo": "git@" + host + ":acme/widgets.git", "namespace": map[string]any{"id": 1, "name": "acme", "path": "acme", "full_path": "acme", "kind": "group"}, "merge_requests_enabled": true, "issues_enabled": true, "archived": false, "visibility": "private", "only_allow_merge_if_pipeline_succeeds": false, "permissions": map[string]any{"project_access": map[string]any{"access_level": 40}}, "owner": glUser()}
+}
+
+func restGL(w http.ResponseWriter, r *http.Request, path string, host string) int {
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
+	js := func(code int, v any) int {
+		w.WriteHeader(code)
+		json.NewEncoder(w).Encode(v)
+		return code
+	}
+	if path == "/user" {
+		return js(200, glUser())
+	}
+	if path == "/version" {
+		return js(200, map[string]any{"version": "18.6.0", "revision": "x"})
+	}
+	if path == "/metadata" {
+		return js(200, map[string]any{"version": "18.6.0", "revision": "x", "enterprise": true})
+	}
+	if path == "/users" {
+		return js(200, []any{map[string]any{"id": 2, "username": "bob", "name": "Bob", "state": "active"}})
+	}
+	if m := reGLProj.FindStringSubmatch(path); m != nil {
+		sub := m[2]
+		switch {
+		case sub == "":
+			return js(200, glProject(host))
+		case sub == "/merge_requests" && r.Method == "POST":
+			return js(201, glMR(host, 7))
+		case sub == "/merge_requests":
+			return js(200, []any{glMR(host, 7)})
+		case reGLMR.MatchString(sub):
+			n, _ := strconv.Atoi(reGLMR.FindStringSubmatch(sub)[1])
+			return js(200, glMR(host, n))
+		case strings.HasSuffix(sub, "/approve"):
+			return js(201, map[string]any{"id": 107, "iid": 7, "approved_by": []any{map[string]any{"user": glUser()}}, "approvals_left": 0})
+		case strings.HasSuffix(sub, "/merge"):
+			m := glMR(host, 7)
+			m["state"] = "merged"
+			return js(200, m)
+		case strings.HasSuffix(sub, "/approval_state"):
+			return js(200, map[string]any{"approval_rules_overwritten": false, "rules": []any{}})
+		case strings.HasSuffix(sub, "/approvals"):
+			return js(200, map[string]any{"approvals_required": 0, "approvals_left": 0, "approved_by": []any{}})
+		case strings.HasSuffix(sub, "/milestones"):
+			return js(200, []any{map[string]any{"id": 1, "iid": 1, "title": "v1", "state": "active"}})
+		case strings.HasSuffix(sub, "/notes") && r.Method == "POST":
+			return js(201, map[string]any{"id": 1, "body": "x", "author": glUser()})
+		case strings.HasSuffix(sub, "/discussions"), strings.HasSuffix(sub, "/notes"), strings.HasSuffix(sub, "/pipelines"), strings.HasSuffix(sub, "/commits"), strings.HasSuffix(sub, "/diffs"), strings.HasSuffix(sub, "/labels"), strings.HasSuffix(sub, "/milestones"), strings.HasSuffix(sub, "/members/all"), strings.HasSuffix(sub, "/users"):
+			return js(200, []any{})
+		case strings.HasPrefix(sub, "/repository/branches"):
+			return js(200, map[string]any{"name": "feature", "merged": false, "protected": false, "default": false, "commit": map[string]any{"id": "4b825dc6"}})
+		}
+		return js(200, map[string]any{"ok": true})
+	}
+	return js(200, map[string]any{"ok": true})
+}
+
+func decodeBody(raw []byte, ce string) ([]byte, string) {
+	switch strings.ToLower(strings.TrimSpace(ce)) {
+	case "gzip", "x-gzip":
+		if gr, err := gzip.NewReader(bytes.NewReader(raw)); err == nil {
+			if b, err := io.ReadAll(gr); err == nil {
+				return b, "gzip"
+			}
+		}
+	case "zstd":
+		if zr, err := zstd.NewReader(bytes.NewReader(raw)); err == nil {
+			defer zr.Close()
+			if b, err := io.ReadAll(zr); err == nil {
+				return b, "zstd"
+			}
+		}
+	}
+	return raw, ""
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+	if gitRoute(w, r) {
+		return
+	}
+	raw, _ := io.ReadAll(r.Body)
+	body, dec := decodeBody(raw, r.Header.Get("Content-Encoding"))
+	rc := rec{Remote: r.RemoteAddr, T: time.Now().UTC().Format(time.RFC3339Nano), Proto: r.Proto, Method: r.Method, URI: r.RequestURI, Host: r.Host, Headers: r.Header, TE: r.TransferEncoding, BodyLen: len(raw), Decoded: dec}
+	if len(body) <= 1<<20 {
+		rc.Body = string(body)
+	}
+	host := strings.ToLower(r.Host)
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(host, ".")
+	if host == "api.github.com" {
+		host = "github.com"
+	}
+	u, _ := url.ParseRequestURI(r.RequestURI)
+	path := r.URL.Path
+	if u != nil {
+		path = u.Path
+	}
+	lower := strings.ToLower(path)
+	isGQL := strings.HasSuffix(strings.TrimRight(lower, "/"), "/graphql") || strings.Contains(lower, "graphql")
+	code := 0
+	if isGQL {
+		code = doGraphQL(w, r, body, host, &rc)
+	} else if strings.Contains(host, "gitlab") {
+		p := strings.TrimPrefix(u.EscapedPath(), "/api/v4")
+		code = restGL(w, r, p, host)
+	} else {
+		p := strings.TrimPrefix(path, "/api/v3")
+		code = restGH(w, r, p, body, host)
+	}
+	rc.Status = code
+	logRec(rc)
+}
+
+func doGraphQL(w http.ResponseWriter, r *http.Request, body []byte, host string, rc *rec) int {
+	type item struct {
+		doc, op, via string
+		vars         json.RawMessage
+	}
+	var items []item
+	ct := r.Header.Get("Content-Type")
+	q := r.URL.Query()
+	if q.Get("query") != "" {
+		items = append(items, item{q.Get("query"), q.Get("operationName"), "url-param", json.RawMessage(q.Get("variables"))})
+	}
+	t := bytes.TrimSpace(body)
+	switch {
+	case strings.HasPrefix(ct, "application/graphql"):
+		items = append(items, item{string(body), "", "application/graphql", nil})
+	case strings.HasPrefix(ct, "application/x-www-form-urlencoded"):
+		if v, err := url.ParseQuery(string(body)); err == nil && v.Get("query") != "" {
+			items = append(items, item{v.Get("query"), v.Get("operationName"), "form", json.RawMessage(v.Get("variables"))})
+		}
+	case len(t) > 0 && t[0] == '[':
+		var arr []struct {
+			Query         string          `json:"query"`
+			OperationName string          `json:"operationName"`
+			Variables     json.RawMessage `json:"variables"`
+		}
+		if json.Unmarshal(t, &arr) == nil {
+			for _, x := range arr {
+				items = append(items, item{x.Query, x.OperationName, "batch", x.Variables})
+			}
+		}
+	case len(t) > 0:
+		var x struct {
+			Query         string          `json:"query"`
+			OperationName string          `json:"operationName"`
+			Variables     json.RawMessage `json:"variables"`
+		}
+		if json.Unmarshal(t, &x) == nil && x.Query != "" { // last duplicate key wins, as encoding/json does
+			items = append(items, item{x.Query, x.OperationName, "json", x.Variables})
+		}
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("X-OAuth-Scopes", "repo, read:org, workflow, project, gist, delete_repo, admin:org, admin:public_key")
+	var results []any
+	for _, it := range items {
+		g, d := analyze(it.doc, it.op, it.via, it.vars)
+		rc.GQL = append(rc.GQL, g)
+		for _, o := range g.Ops {
+			for _, f := range o.Fields {
+				if f == "createPullRequest" {
+					var v struct {
+						Input struct {
+							HeadRefName string `json:"headRefName"`
+						} `json:"input"`
+					}
+					json.Unmarshal(it.vars, &v)
+					h, own := v.Input.HeadRefName, "acme"
+					if a, b, ok := strings.Cut(h, ":"); ok {
+						own, h = a, b
+					}
+					created.Store(h, own)
+				}
+			}
+		}
+		if d == nil {
+			results = append(results, map[string]any{"errors": []any{map[string]any{"message": g.Err}}})
+			continue
+		}
+		results = append(results, graphqlResponse(d, g, host))
+	}
+	if len(results) == 0 {
+		w.WriteHeader(400)
+		fmt.Fprintln(w, `{"errors":[{"message":"no query"}]}`)
+		return 400
+	}
+	w.WriteHeader(200)
+	if len(results) == 1 {
+		json.NewEncoder(w).Encode(results[0])
+	} else {
+		json.NewEncoder(w).Encode(results)
+	}
+	return 200
+}
+
+func genTLS(hosts []string, caOut string) tls.Certificate {
+	ck, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ct := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "stub public CA"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(72 * time.Hour)}
+	cd, err := x509.CreateCertificate(rand.Reader, ct, ct, &ck.PublicKey, ck)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ca, _ := x509.ParseCertificate(cd)
+	if err := os.WriteFile(caOut, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cd}), 0o644); err != nil {
+		log.Fatal(err)
+	}
+	lk, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	lt := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hosts[0]}, DNSNames: hosts, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(72 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	ld, err := x509.CreateCertificate(rand.Reader, lt, ca, &lk.PublicKey, ck)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{ld}, PrivateKey: lk}
+}
+
+func main() {
+	hosts := strings.Split(os.Getenv("STUB_HOSTS"), ",")
+	sort.Strings(hosts)
+	cert := genTLS(hosts, os.Args[1])
+	mux := http.NewServeMux()
+	mux.HandleFunc("/mode", func(w http.ResponseWriter, r *http.Request) { existing.Store(r.URL.Query().Get("existing") != "0"); fmt.Fprintln(w, "ok") })
+	mux.HandleFunc("/drain", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		out := recs
+		recs = nil
+		mu.Unlock()
+		enc := json.NewEncoder(w)
+		enc.SetEscapeHTML(false)
+		for _, x := range out {
+			enc.Encode(x)
+		}
+	})
+	go func() { log.Fatal(http.ListenAndServe(":9000", mux)) }()
+	logf, _ = os.OpenFile(os.Getenv("ORIGIN_LOG"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	s := &http.Server{Addr: ":443", Handler: http.HandlerFunc(handler), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"h2", "http/1.1"}}, ErrorLog: log.New(io.Discard, "", 0)}
+	log.Fatal(s.ListenAndServeTLS("", ""))
+}
+
+func apiP(host string) string {
+	if strings.Contains(host, "ghes") {
+		return "/api/v3"
+	}
+	return ""
+}

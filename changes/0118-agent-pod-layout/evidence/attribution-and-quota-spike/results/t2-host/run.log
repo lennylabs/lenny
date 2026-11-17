@@ -1,0 +1,17 @@
+=== t2 host  2026-11-14T07:15:16Z
+/dev/nvme1n1 xfs    rw,noatime,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota
+/dev/nvme1n1[/kubelet] xfs    rw,noatime,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota
+Project quota state on /data (/dev/nvme1n1)
+  Accounting: ON
+  Enforcement: ON
+  Inode: #131 (1 blocks, 1 extents)
+Blocks grace time: [7 days]
+Blocks max warnings: 0
+Inodes grace time: [7 days]
+Inodes max warnings: 0
+Realtime Blocks grace time: [7 days]
+ls: cannot access '/etc/projects': No such file or directory
+ls: cannot access '/etc/projid': No such file or directory
+{"getquota_bhard_b":0,"getquota_curspace_b":797470720,"mount":{"fstype":"xfs","mountpoint":"/data","opts":"rw,noatime","root":"/","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/data","projid":0,"projinherit":false,"qstatv":{"flags":"0x30","grp_acct":false,"prj_acct":true,"prj_enfd":true,"usr_acct":false},"statfs":{"avail_b":63074103296,"bsize":4096,"ffree":31451827,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1283297280},"uid":0,"xflags":"0x0","xgetquota":{"bcount_b":797470720,"bhard_b":0,"bsoft_b":0,"icount":5452,"id":0,"ihard":0}}
+{"getquota_bhard_b":0,"getquota_curspace_b":797470720,"mount":{"fstype":"xfs","mountpoint":"/var/lib/kubelet","opts":"rw,noatime","root":"/kubelet","source":"/dev/nvme1n1","super":"rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota"},"path":"/var/lib/kubelet","projid":0,"projinherit":false,"qstatv":{"flags":"0x30","grp_acct":false,"prj_acct":true,"prj_enfd":true,"usr_acct":false},"statfs":{"avail_b":63074103296,"bsize":4096,"ffree":31451827,"files":31457280,"size_b":64357400576,"type":"0x58465342","used_b":1283297280},"uid":0,"xflags":"0x80000000","xgetquota":{"bcount_b":797470720,"bhard_b":0,"bsoft_b":0,"icount":5452,"id":0,"ihard":0}}
+=== t2 host done 2026-11-14T07:15:16Z

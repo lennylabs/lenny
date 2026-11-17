@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: q-gvisor
+  namespace: aq
+  
+spec:
+  runtimeClassName: gvisor
+  hostUsers: true
+  terminationGracePeriodSeconds: 1
+  restartPolicy: Never
+  containers:
+  - name: slot
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","sleep"]
+    securityContext: {runAsUser: 20000, runAsGroup: 20000, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 100m, memory: 64Mi, ephemeral-storage: 3Gi}, limits: {memory: 1536Mi}}
+    volumeMounts: [{name: ws, mountPath: /workspace}, {name: other, mountPath: /other}]
+  - name: adapter
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","sleep"]
+    securityContext: {runAsUser: 10000, runAsGroup: 10000, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 256Mi}}
+    volumeMounts: [{name: ws, mountPath: /adapter/ws}]
+  volumes:
+  - {name: ws, emptyDir: {sizeLimit: 1Gi}}
+  - {name: other, emptyDir: {sizeLimit: 1Gi}}

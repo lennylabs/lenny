@@ -1,0 +1,29 @@
+package swaplib
+
+import (
+	"os"
+	"strconv"
+	"time"
+)
+
+// Swap atomically replaces dir/token with dir/token.v<N> (kubelet-style rename).
+func Swap(dir string, v int) {
+	b, err := os.ReadFile(dir + "/token.v" + strconv.Itoa(v))
+	if err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(dir+"/token.tmp", b, 0o644); err != nil {
+		panic(err)
+	}
+	if err := os.Rename(dir+"/token.tmp", dir+"/token"); err != nil {
+		panic(err)
+	}
+}
+
+func Sleep() {
+	s, _ := strconv.Atoi(os.Getenv("SLEEP"))
+	if s == 0 {
+		s = 31
+	}
+	time.Sleep(time.Duration(s) * time.Second)
+}

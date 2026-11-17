@@ -1,0 +1,30 @@
+rust-reqwest-rustls https://allowed.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls https://denied.oa.test/ REFUSED error sending request for url (https://denied.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-rustls https://sub.allowed.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls https://viaint.oa.test/ REFUSED error sending request for url (https://viaint.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-rustls https://198.19.50.20/ OK 200 HTTP/2.0
+rust-reqwest-rustls https://ctl.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls https://unk.oa.test/ REFUSED error sending request for url (https://unk.oa.test/): client error (Connect): invalid peer certificate: UnknownIssuer
+rust-reqwest-rustls https://xallowed.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls https://xdenied.oa.test/ REFUSED error sending request for url (https://xdenied.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-rustls https://198.19.50.20:8443/ REFUSED error sending request for url (https://198.19.50.20:8443/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-native-tls https://allowed.oa.test/ OK 200 HTTP/1.1
+rust-reqwest-native-tls https://denied.oa.test/ REFUSED error sending request for url (https://denied.oa.test/): client error (Connect): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889: (permitted subtree violation): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:
+rust-reqwest-native-tls https://sub.allowed.oa.test/ OK 200 HTTP/1.1
+rust-reqwest-native-tls https://viaint.oa.test/ REFUSED error sending request for url (https://viaint.oa.test/): client error (Connect): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889: (permitted subtree violation): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:
+rust-reqwest-native-tls https://198.19.50.20/ OK 200 HTTP/1.1
+rust-reqwest-native-tls https://ctl.oa.test/ OK 200 HTTP/1.1
+rust-reqwest-native-tls https://unk.oa.test/ REFUSED error sending request for url (https://unk.oa.test/): client error (Connect): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889: (unable to get local issuer certificate): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:
+rust-reqwest-native-tls https://xallowed.oa.test/ OK 200 HTTP/1.1
+rust-reqwest-native-tls https://xdenied.oa.test/ REFUSED error sending request for url (https://xdenied.oa.test/): client error (Connect): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889: (permitted subtree violation): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:
+rust-reqwest-native-tls https://198.19.50.20:8443/ REFUSED error sending request for url (https://198.19.50.20:8443/): client error (Connect): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889: (excluded subtree violation): error:0A000086:SSL routines:tls_post_process_server_certificate:certificate verify failed:../ssl/statem/statem_clnt.c:1889:
+rust-reqwest-rustls-native-roots https://allowed.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls-native-roots https://denied.oa.test/ REFUSED error sending request for url (https://denied.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-rustls-native-roots https://sub.allowed.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls-native-roots https://viaint.oa.test/ REFUSED error sending request for url (https://viaint.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-rustls-native-roots https://198.19.50.20/ OK 200 HTTP/2.0
+rust-reqwest-rustls-native-roots https://ctl.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls-native-roots https://unk.oa.test/ REFUSED error sending request for url (https://unk.oa.test/): client error (Connect): invalid peer certificate: UnknownIssuer
+rust-reqwest-rustls-native-roots https://xallowed.oa.test/ OK 200 HTTP/2.0
+rust-reqwest-rustls-native-roots https://xdenied.oa.test/ REFUSED error sending request for url (https://xdenied.oa.test/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))
+rust-reqwest-rustls-native-roots https://198.19.50.20:8443/ REFUSED error sending request for url (https://198.19.50.20:8443/): client error (Connect): invalid peer certificate: Other(OtherError(NameConstraintViolation))

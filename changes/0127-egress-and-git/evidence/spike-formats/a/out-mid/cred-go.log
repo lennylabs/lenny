@@ -1,0 +1,3 @@
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0001", "exp": "2026-11-02T06:47:40Z", "ua": "Go-http-client/1.1", "t": "06:40:40.622"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0002", "exp": "2026-11-02T06:49:40Z", "ua": "Go-http-client/1.1", "t": "06:42:40.791"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0003", "exp": "2026-11-02T06:51:40Z", "ua": "Go-http-client/1.1", "t": "06:44:40.935"}

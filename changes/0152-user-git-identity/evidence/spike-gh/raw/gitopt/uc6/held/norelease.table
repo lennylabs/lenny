@@ -1,0 +1,25 @@
+norelease-clone-none                     rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-clone-helper                   rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-clone-url                      rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-clone-header                   rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-clone-other                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-none                      rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-helper                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-url                       rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-header                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-other                     rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-gh-helper                 rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-main                      rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-main-other                rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-mixed                     rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-delete                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-option                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+norelease-push-outside                   rc=0   identity=                       origin= refused=repository acme/secret is outside the session's writable set
+norelease-push-readonly                  rc=0   identity=                       origin= refused=repository acme/lib is outside the session's writable set
+norelease-read-outside                   rc=0   identity=                       origin= refused=repository acme/secret is outside the session's readable set
+norelease-reflect                        rc=0   identity=held-no-value          origin=ghes.example.test=-:200 refused=
+norelease-redirect-in-scope              rc=0   identity=held-no-value          origin=ghes.example.test=-:301 ghes.example.test=-:401 refused=
+norelease-redirect-out-of-scope          rc=0   identity=held-no-value          origin=ghes.example.test=-:302 refused=redirect to https://other.example.test/pub/lib.git/info/refs?service=git-upload-
+norelease-github-push                    rc=0   identity=held-no-value          origin=github.com=-:401 refused=
+norelease-github-push-main               rc=0   identity=held-no-value          origin=github.com=-:401 refused=
+norelease-lfs-store-host                 rc=2   identity=held-no-value          origin=ghes.example.test=-:401 refused=

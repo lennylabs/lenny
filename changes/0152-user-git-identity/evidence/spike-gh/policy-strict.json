@@ -1,0 +1,170 @@
+{
+ "ghes": {
+  "restPrefix": "/api/v3",
+  "graphqlPath": "/api/graphql",
+  "maxBody": 262144,
+  "rest": [
+   {
+    "method": "GET",
+    "path": "/"
+   },
+   {
+    "method": "GET",
+    "path": "/meta"
+   },
+   {
+    "method": "GET",
+    "path": "/user"
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}"
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}/readme"
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}/pulls",
+    "query": [
+     "state",
+     "head",
+     "base",
+     "sort",
+     "direction",
+     "per_page",
+     "page"
+    ]
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}/pulls/{n}"
+   },
+   {
+    "method": "POST",
+    "path": "/repos/{o}/{r}/pulls"
+   }
+  ],
+  "graphqlQueries": [
+   "repository",
+   "viewer",
+   "organization",
+   "node",
+   "search",
+   "__type"
+  ],
+  "graphqlMutations": [
+   "createPullRequest",
+   "updatePullRequest",
+   "requestReviews",
+   "requestReviewsByLogin",
+   "replaceActorsForAssignable",
+   "addProjectV2ItemById"
+  ],
+  "mutationInputAllow": {
+   "updatePullRequest": [
+    "pullRequestId",
+    "assigneeIds",
+    "labelIds",
+    "projectIds",
+    "milestoneId"
+   ]
+  },
+  "headers": [
+   "Accept",
+   "Accept-Encoding",
+   "Authorization",
+   "Content-Type",
+   "Content-Length",
+   "User-Agent",
+   "X-Github-Api-Version",
+   "Graphql-Features",
+   "X-Gh-Cache-Ttl"
+  ],
+  "lexStrict": true,
+  "maxDepth": 32
+ },
+ "ghcom": {
+  "restPrefix": "",
+  "graphqlPath": "/graphql",
+  "maxBody": 262144,
+  "rest": [
+   {
+    "method": "GET",
+    "path": "/"
+   },
+   {
+    "method": "GET",
+    "path": "/user"
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}"
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}/readme"
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}/pulls",
+    "query": [
+     "state",
+     "head",
+     "base",
+     "sort",
+     "direction",
+     "per_page",
+     "page"
+    ]
+   },
+   {
+    "method": "GET",
+    "path": "/repos/{o}/{r}/pulls/{n}"
+   },
+   {
+    "method": "POST",
+    "path": "/repos/{o}/{r}/pulls"
+   }
+  ],
+  "graphqlQueries": [
+   "repository",
+   "viewer",
+   "organization",
+   "node",
+   "search",
+   "__type"
+  ],
+  "graphqlMutations": [
+   "createPullRequest",
+   "updatePullRequest",
+   "requestReviews",
+   "requestReviewsByLogin",
+   "replaceActorsForAssignable",
+   "addProjectV2ItemById"
+  ],
+  "mutationInputAllow": {
+   "updatePullRequest": [
+    "pullRequestId",
+    "assigneeIds",
+    "labelIds",
+    "projectIds",
+    "milestoneId"
+   ]
+  },
+  "headers": [
+   "Accept",
+   "Accept-Encoding",
+   "Authorization",
+   "Content-Type",
+   "Content-Length",
+   "User-Agent",
+   "X-Github-Api-Version",
+   "Graphql-Features",
+   "X-Gh-Cache-Ttl"
+  ],
+  "lexStrict": true,
+  "maxDepth": 32
+ }
+}

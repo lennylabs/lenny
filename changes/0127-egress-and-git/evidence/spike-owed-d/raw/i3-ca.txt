@@ -1,0 +1,164 @@
+            X509v3 Name Constraints: critical
+                Permitted:
+                  DNS:perm.nc.test
+                Excluded:
+                  IP:0.0.0.0/0.0.0.0
+                  IP:0:0:0:0:0:0:0:0/0:0:0:0:0:0:0:0
+    Signature Algorithm: ecdsa-with-SHA256
+### Firefox
+{"policies": {"Certificates": {"Install": ["/i3/certs/ca-nc.pem", "/i3/certs/ca-ncp.pem", "/i3/certs/ca-ncdns.pem", "/i3/certs/ca-ctl.pem"]}}}
+session: 153.6.0 None
+{"url": "https://perm.nc.test:8441/", "result": "served permitted", "code": "", "info": "", "error": "", "landing": "https://perm.nc.test:8441/", "secs": 0.61}
+{"url": "https://denied.other.test:8442/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8442/", "secs": 0.6}
+{"url": "https://sub.perm.nc.test:8443/", "result": "served subdomain", "code": "", "info": "", "error": "", "landing": "https://sub.perm.nc.test:8443/", "secs": 0.52}
+{"url": "https://198.19.60.20:8444/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://198.19.60.20:8444/", "secs": 0.6}
+{"url": "https://denied.other.test:8445/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8445/", "secs": 0.59}
+{"url": "https://denied.other.test:8446/", "result": "served control-unconstrained", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8446/", "secs": 0.53}
+{"url": "https://perm.nc.test:8447/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://perm.nc.test:8447/", "secs": 0.68}
+{"url": "https://198.19.60.20:8448/", "result": "served ip-dnsonly", "code": "", "info": "", "error": "", "landing": "https://198.19.60.20:8448/", "secs": 0.54}
+{"url": "https://denied.other.test:8449/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8449/", "secs": 0.58}
+{"url": "https://x.nc.test:8450/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://x.nc.test:8450/", "secs": 0.58}
+server requests so far: 8; by case:
+   2 control-unconstrained
+   2 ip-dnsonly
+   2 permitted
+   2 subdomain
+--- CA through NSS (certutil into the profile), no policy
+
+Certificate Nickname                                         Trust Attributes
+                                                             SSL,S/MIME,JAR/XPI
+
+ca-nc.pem                                                    C,,  
+ca-ncp.pem                                                   C,,  
+ca-ncdns.pem                                                 C,,  
+ca-ctl.pem                                                   C,,  
+session: 153.6.0 None
+{"url": "https://perm.nc.test:8441/", "result": "served permitted", "code": "", "info": "", "error": "", "landing": "https://perm.nc.test:8441/", "secs": 0.57}
+{"url": "https://denied.other.test:8442/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8442/", "secs": 0.68}
+{"url": "https://sub.perm.nc.test:8443/", "result": "served subdomain", "code": "", "info": "", "error": "", "landing": "https://sub.perm.nc.test:8443/", "secs": 0.52}
+{"url": "https://198.19.60.20:8444/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://198.19.60.20:8444/", "secs": 0.59}
+{"url": "https://denied.other.test:8445/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8445/", "secs": 0.58}
+{"url": "https://denied.other.test:8446/", "result": "served control-unconstrained", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8446/", "secs": 0.53}
+{"url": "https://perm.nc.test:8447/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://perm.nc.test:8447/", "secs": 0.59}
+{"url": "https://198.19.60.20:8448/", "result": "served ip-dnsonly", "code": "", "info": "", "error": "", "landing": "https://198.19.60.20:8448/", "secs": 0.55}
+{"url": "https://denied.other.test:8449/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://denied.other.test:8449/", "secs": 0.58}
+{"url": "https://x.nc.test:8450/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://x.nc.test:8450/", "secs": 0.59}
+--- CA only in SSL_CERT_FILE: the design's trust variables
+session: 153.6.0 None
+{"url": "https://perm.nc.test:8441/", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://perm.nc.test:8441/", "secs": 0.61}
+### .NET
+--- SDK 8.0
+   platform trust, SSL_CERT_FILE at a bundle
+runtime=.NET 8.0.33 SSL_CERT_FILE=/tmp/bundle.pem SSL_CERT_DIR= HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://sub.perm.nc.test:8443/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved subdomain\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://198.19.60.20:8444/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasExcludedNameConstraint]"}
+{"url":"https://denied.other.test:8445/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://denied.other.test:8446/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved control-unconstrained\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://perm.nc.test:8447/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[PartialChain]"}
+{"url":"https://198.19.60.20:8448/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved ip-dnsonly\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://denied.other.test:8449/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://x.nc.test:8450/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+   CustomRootTrust with those CAs
+runtime=.NET 8.0.33 SSL_CERT_FILE= SSL_CERT_DIR= HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://sub.perm.nc.test:8443/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved subdomain\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://198.19.60.20:8444/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasExcludedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8445/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8446/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved control-unconstrained\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://perm.nc.test:8447/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[PartialChain] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://198.19.60.20:8448/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved ip-dnsonly\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8449/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://x.nc.test:8450/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+   SSL_CERT_DIR alone (the design says this replaces the search path): public hosts or the CA
+runtime=.NET 8.0.33 SSL_CERT_FILE= SSL_CERT_DIR=/tmp/d HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://denied.other.test:8446/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[PartialChain]"}
+--- SDK 10.0
+   platform trust, SSL_CERT_FILE at a bundle
+runtime=.NET 10.0.14 SSL_CERT_FILE=/tmp/bundle.pem SSL_CERT_DIR= HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://sub.perm.nc.test:8443/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved subdomain\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://198.19.60.20:8444/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasExcludedNameConstraint]"}
+{"url":"https://denied.other.test:8445/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://denied.other.test:8446/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved control-unconstrained\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://perm.nc.test:8447/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[PartialChain]"}
+{"url":"https://198.19.60.20:8448/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved ip-dnsonly\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://denied.other.test:8449/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://x.nc.test:8450/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+   CustomRootTrust with those CAs
+runtime=.NET 10.0.14 SSL_CERT_FILE= SSL_CERT_DIR= HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://sub.perm.nc.test:8443/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved subdomain\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://198.19.60.20:8444/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasExcludedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8445/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8446/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved control-unconstrained\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://perm.nc.test:8447/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[PartialChain] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://198.19.60.20:8448/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved ip-dnsonly\u003C/body\u003E\u003C/html\u003E","chain":"customRoot ok=True chainStatus=[] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://denied.other.test:8449/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+{"url":"https://x.nc.test:8450/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"customRoot ok=False chainStatus=[HasNotPermittedNameConstraint] sslPolicyErrors=RemoteCertificateChainErrors"}
+   SSL_CERT_DIR alone (the design says this replaces the search path): public hosts or the CA
+runtime=.NET 10.0.14 SSL_CERT_FILE= SSL_CERT_DIR=/tmp/d HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+{"url":"https://denied.other.test:8446/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[PartialChain]"}
+server requests by case, whole run:
+   8 control-unconstrained
+   8 ip-dnsonly
+  10 permitted
+   8 subdomain
+### End to end: the real netagent's per-pod CA, Firefox and .NET through its proxy to a bound host, and a leaf from its key for a name outside
+Error response from daemon: network with name od-up already exists
+Error response from daemon: network with name od-pod already exists
+docker: Error response from daemon: Conflict. The container name "/od-authz1" is already in use by container "34b8b0fd38188f11dc8550a829c9d964b5d37996b98dde32609338021e7e25eb". You have to remove (or rename) that container to be able to reuse that name.
+
+Run 'docker run --help' for more information
+docker: Error response from daemon: Conflict. The container name "/od-authz2" is already in use by container "55ec86c511b1cf655919c58d14a9066583134e978aa7eb75391a068957dff8c7". You have to remove (or rename) that container to be able to reuse that name.
+
+Run 'docker run --help' for more information
+Error response from daemon: Conflict. The container name "/od-envoy" is already in use by container "5f8ce3b6efc91f0c69b3f1ac981165b6a3ba51b7aa2e87c9bed84c01fc2c633b". You have to remove (or rename) that container to be able to reuse that name.
+Error response from daemon: endpoint with name od-envoy already exists in network od-pod
+LIVE
+05:31:07.632437 per-pod CA sha256=654e8f51c4c0ad50 permitted=[api.example.test ghes.example.test gitlab.example.test gitplain.example.test hostile.example.test llm.example.test pinned.example.test pypi.example.test registry.example.test vcs
+--- Firefox, CA through policy, the proxy set in preferences
+{"policies": {"Certificates": {"Install": ["/run/netagent/ca.pem"]}}}
+session: 153.6.0 None
+{"url": "https://api.example.test/echo", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://api.example.test/echo", "secs": 0.64, "body": "JSONRaw DataHeadersSaveCopyCollapse AllExpand AllheadersAccept0\"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\"Accept-Encoding0\"gzip, deflate\"Accept-Language0\"en-US,en;q=0.9\"Authoriza"}
+{"url": "https://evil.example.test/small", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://evil.example.test/small", "secs": 0.56, "body": "\n    \n    \n    Warning: Security Risk\n    \n    \n    \n    \n    \n    \n  \n  "}
+--- Firefox, the design's profile only: HTTPS_PROXY, https_proxy, and SSL_CERT_FILE, with no policy
+session: 153.6.0 None
+{"url": "https://api.example.test/echo", "result": "NOT SERVED", "code": "", "info": "", "error": "", "landing": "https://api.example.test/echo", "secs": 0.62, "body": "\n    \n    \n    Warning: Security Risk\n    \n    \n    \n    \n    \n    \n  \n  "}
+--- .NET 8.0, the design's profile: HTTPS_PROXY and SSL_CERT_FILE at a bundle
+runtime=.NET 8.0.33 SSL_CERT_FILE=/tmp/b.pem SSL_CERT_DIR= HTTPS_PROXY=http://127.0.0.1:3128
+{"url":"https://api.example.test/echo","result":"HTTP 200 {\n \u0022headers\u0022: {\n  \u0022Authorization\u0022: [\n   \u0022xxxxxxxxxxxxxxxxxxx","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://evil.example.test/small","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+--- .NET 10.0, the design's profile: HTTPS_PROXY and SSL_CERT_FILE at a bundle
+runtime=.NET 10.0.14 SSL_CERT_FILE=/tmp/b.pem SSL_CERT_DIR= HTTPS_PROXY=http://127.0.0.1:3128
+{"url":"https://api.example.test/echo","result":"HTTP 200 {\n \u0022headers\u0022: {\n  \u0022Authorization\u0022: [\n   \u0022xxxxxxxxxxxxxxxxxxx","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://evil.example.test/small","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+
+##### the end-to-end block again, alone on its networks, Mon Nov  2 22:18:29 PST 2026
+### End to end: the real netagent's per-pod CA, Firefox and .NET through its proxy to a bound host, and a leaf from its key for a name outside
+LIVE
+06:18:32.859222 per-pod CA sha256=d6fb29eee9f1c886 permitted=[api.example.test ghes.example.test gitlab.example.test gitplain.example.test hostile.example.test llm.example.test pinned.example.test pypi.example.test registry.example.test vcs
+--- Firefox, CA through policy, the proxy set in preferences
+{"policies": {"Certificates": {"Install": ["/run/netagent/ca.pem"]}}}
+session: 153.6.0 None
+{"url": "https://api.example.test/echo", "result": "NOT SERVED", "code": "", "info": "{\"uri\":\"https://api.example.test/echo\",\"title\":\"\"}", "error": "", "landing": "https://api.example.test/echo", "secs": 0.63, "body": "JSONRaw DataHeadersSaveCopyCollapse AllExpand AllheadersAccept0\"text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\"Accept-Encoding0\"gzip, deflate\"Accept-Language0\"en-US,en;q=0
+{"url": "https://evil.example.test/small", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//evil.example.test/small&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://evil.example.test/small", "secs": 0.57, "body": "\n    \n    \n    Warning: Security R
+--- Firefox, the design's profile only: HTTPS_PROXY, https_proxy, and SSL_CERT_FILE, with no policy
+session: 153.6.0 None
+{"url": "https://api.example.test/echo", "result": "NOT SERVED", "code": "SEC_ERROR_UNKNOWN_ISSUER", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//api.example.test/echo&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_UNKNOWN_ISSUER\"}", "error": "", "landing": "https://api.example.test/echo", "secs": 0.64, "body": "\n    \n    \n    Warning: Security Risk\n    \n    \n    \
+--- .NET 8.0, the design's profile: HTTPS_PROXY and SSL_CERT_FILE at a bundle
+runtime=.NET 8.0.33 SSL_CERT_FILE=/tmp/b.pem SSL_CERT_DIR= HTTPS_PROXY=http://127.0.0.1:3128
+{"url":"https://api.example.test/echo","result":"HTTP 200 {\n \u0022headers\u0022: {\n  \u0022Authorization\u0022: [\n   \u0022xxxxxxxxxxxxxxxxxxx","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://evil.example.test/small","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}
+--- .NET 10.0, the design's profile: HTTPS_PROXY and SSL_CERT_FILE at a bundle
+runtime=.NET 10.0.14 SSL_CERT_FILE=/tmp/b.pem SSL_CERT_DIR= HTTPS_PROXY=http://127.0.0.1:3128
+{"url":"https://api.example.test/echo","result":"HTTP 200 {\n \u0022headers\u0022: {\n  \u0022Authorization\u0022: [\n   \u0022xxxxxxxxxxxxxxxxxxx","chain":"sslPolicyErrors=None chainStatus=[]"}
+{"url":"https://evil.example.test/small","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate was rejected by the provided RemoteCertificateValidationCallback.","chain":"sslPolicyErrors=RemoteCertificateChainErrors chainStatus=[HasNotPermittedNameConstraint]"}

@@ -1,0 +1,146 @@
+// camat: certificates and a TLS server for the name-constraint matrix. The constrained CA is built with the same x509 template the Go netagent uses.
+//   camat gen DIR     CAs and leaves
+//   camat serve DIR   one TLS listener per case, logging each completed handshake and request
+// Cases, each on its own port:
+//   8441 permitted leaf                 perm.nc.test            under ca-nc (permits perm.nc.test, excludes all IP ranges)
+//   8442 name outside the constraints   denied.other.test       under ca-nc
+//   8443 subdomain of a permitted host  sub.perm.nc.test        under ca-nc
+//   8444 IP leaf                        198.19.60.20            under ca-nc
+//   8445 outside, via an unconstrained intermediate   denied.other.test  ca-nc -> int -> leaf
+//   8446 control: same outside name under the unconstrained CA in the same trust set   denied.other.test  under ca-ctl
+//   8447 CA not installed               perm.nc.test            under ca-unk
+//   8448 IP leaf under a DNS-only constrained CA   198.19.60.20   under ca-ncdns
+//   8449 name outside under the DNS-only CA, control for it     denied.other.test   under ca-ncdns
+//   8450 wildcard leaf *.nc.test under ca-nc: broader than the permitted host
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+var serial = time.Now().UnixNano()
+
+func next() *big.Int { serial++; return big.NewInt(serial) }
+
+type ca struct {
+	c *x509.Certificate
+	k *ecdsa.PrivateKey
+	d []byte
+}
+
+func wr(p, t string, b []byte) {
+	os.MkdirAll(filepath.Dir(p), 0o755)
+	if err := os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: t, Bytes: b}), 0o644); err != nil {
+		panic(err)
+	}
+}
+func mk(dir, name string, parent *ca, dns []string, exclIP, unconstrainedIntermediate bool) *ca {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: next(), Subject: pkix.Name{CommonName: name}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(30 * 24 * time.Hour)}
+	if !unconstrainedIntermediate {
+		t.MaxPathLenZero = len(dns) > 0
+	}
+	if len(dns) > 0 {
+		t.PermittedDNSDomainsCritical = true
+		t.PermittedDNSDomains = dns
+	}
+	if exclIP {
+		_, v4, _ := net.ParseCIDR("0.0.0.0/0")
+		_, v6, _ := net.ParseCIDR("::/0")
+		t.ExcludedIPRanges = []*net.IPNet{v4, v6}
+	}
+	pc, pk := t, k
+	if parent != nil {
+		pc, pk = parent.c, parent.k
+	}
+	d, err := x509.CreateCertificate(rand.Reader, t, pc, &k.PublicKey, pk)
+	if err != nil {
+		panic(err)
+	}
+	c, _ := x509.ParseCertificate(d)
+	wr(filepath.Join(dir, name+".pem"), "CERTIFICATE", d)
+	return &ca{c, k, d}
+}
+func leaf(dir, name string, p *ca, chain []*ca, dns []string, ips []net.IP) {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	cn := "leaf"
+	if len(dns) > 0 {
+		cn = dns[0]
+	}
+	t := &x509.Certificate{SerialNumber: next(), Subject: pkix.Name{CommonName: cn}, DNSNames: dns, IPAddresses: ips, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(7 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	d, err := x509.CreateCertificate(rand.Reader, t, p.c, &k.PublicKey, p.k)
+	if err != nil {
+		panic(err)
+	}
+	out := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: d})
+	for _, c := range chain {
+		out = append(out, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: c.d})...)
+	}
+	os.MkdirAll(filepath.Join(dir, name), 0o755)
+	os.WriteFile(filepath.Join(dir, name, "tls.crt"), out, 0o644)
+	kb, _ := x509.MarshalPKCS8PrivateKey(k)
+	wr(filepath.Join(dir, name, "tls.key"), "PRIVATE KEY", kb)
+}
+
+var cases = map[int]string{8441: "permitted", 8442: "outside", 8443: "subdomain", 8444: "ip", 8445: "outside-via-int", 8446: "control-unconstrained", 8447: "unknown-ca", 8448: "ip-dnsonly", 8449: "outside-dnsonly", 8450: "wildcard-parent"}
+
+func main() {
+	dir := os.Args[2]
+	switch os.Args[1] {
+	case "gen":
+		nc := mk(dir, "ca-nc", nil, []string{"perm.nc.test"}, true, false)
+		ncd := mk(dir, "ca-ncdns", nil, []string{"perm.nc.test"}, false, false)
+		ctl := mk(dir, "ca-ctl", nil, nil, false, false)
+		unk := mk(dir, "ca-unk", nil, nil, false, false)
+		// A constrained root with room for an intermediate
+		ncp := func() *ca {
+			k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			t := &x509.Certificate{SerialNumber: next(), Subject: pkix.Name{CommonName: "ca-ncp"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(30 * 24 * time.Hour), PermittedDNSDomainsCritical: true, PermittedDNSDomains: []string{"perm.nc.test"}}
+			d, _ := x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+			c, _ := x509.ParseCertificate(d)
+			wr(filepath.Join(dir, "ca-ncp.pem"), "CERTIFICATE", d)
+			return &ca{c, k, d}
+		}()
+		in := mk(dir, "ca-int", ncp, nil, false, true)
+		ip := []net.IP{net.ParseIP("198.19.60.20")}
+		leaf(dir, "permitted", nc, nil, []string{"perm.nc.test"}, nil)
+		leaf(dir, "outside", nc, nil, []string{"denied.other.test"}, nil)
+		leaf(dir, "subdomain", nc, nil, []string{"sub.perm.nc.test"}, nil)
+		leaf(dir, "ip", nc, nil, nil, ip)
+		leaf(dir, "outside-via-int", in, []*ca{in}, []string{"denied.other.test"}, nil)
+		leaf(dir, "control-unconstrained", ctl, nil, []string{"denied.other.test"}, nil)
+		leaf(dir, "unknown-ca", unk, nil, []string{"perm.nc.test"}, nil)
+		leaf(dir, "ip-dnsonly", ncd, nil, nil, ip)
+		leaf(dir, "outside-dnsonly", ncd, nil, []string{"denied.other.test"}, nil)
+		leaf(dir, "wildcard-parent", nc, nil, []string{"*.nc.test"}, nil)
+	case "serve":
+		for port, name := range cases {
+			go func(port int, name string) {
+				crt, err := tls.LoadX509KeyPair(filepath.Join(dir, name, "tls.crt"), filepath.Join(dir, name, "tls.key"))
+				if err != nil {
+					log.Fatal(err)
+				}
+				s := &http.Server{Addr: fmt.Sprintf(":%d", port), ErrorLog: log.New(os.Stdout, name+" tlserr: ", 0), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					log.Printf("REQUEST case=%s host=%s proto=%s ua=%.40s", name, r.Host, r.Proto, r.UserAgent())
+					fmt.Fprintf(w, "<html><body>served %s</body></html>", name)
+				}), TLSConfig: &tls.Config{Certificates: []tls.Certificate{crt}}}
+				log.Fatal(s.ListenAndServeTLS("", ""))
+			}(port, name)
+		}
+		select {}
+	}
+}

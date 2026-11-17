@@ -1,0 +1,195 @@
+side	site	location	fate	new identifiers or note
+code	bindingstate.go:20	doc const statusFieldOwner	dropped by rule	helper constant; decision cited on applyStatus
+code	bindingstate.go:29	doc func WriteBoundStatus	dropped by rule	wrapper
+code	bindingstate.go:54	doc func writeBoundStatus	mechanical	CLAIM-R1, CLAIM-R9, kubernetes#podclaim.updateStatus
+code	bindingstate.go:80	doc func WriteRecyclingStatus	semantic	CLAIM-R10
+code	bindingstate.go:112	doc func WriteRewarmStartedStatus	no target	rewarmStartedAt removed by PL-8; code kept, issue CLAIM-I2
+code	bindingstate.go:153	doc type ReservedHold	dropped by rule	type carrying a token
+code	bindingstate.go:170	doc func WriteReservedStatus	mechanical	CLAIM-R10
+code	bindingstate.go:204	doc func WriteRebindStatus	mechanical	CLAIM-R10
+code	bindingstate.go:228	doc func WriteDispositionStatus	semantic	CLAIM-R9
+code	bindingstate.go:256	doc func DeleteOnHoldExpiry	mechanical	CLAIM-R10, kubernetes#podclaim.delete
+code	bindingstate.go:315	doc func applyStatus	semantic	GWCLAIM-R4; code lacks the resourceVersion precondition, issue GWCLAIM-I1
+code	claimer.go:3	package doc	semantic	package doc moved to doc.go naming GWCLAIM and CLAIM
+code	claimer.go:40	doc type NoIdlePodError	dropped by rule	type
+code	claimer.go:66	field Claimer.Now	dropped by rule	field
+code	claimer.go:69	field Claimer.OnRebind	dropped by rule	field
+code	claimer.go:89	field ClaimRequest.SessionID	dropped by rule	field
+code	claimer.go:100	field ClaimRequest.RequiresProcessAcknowledgment	removed with code	RequiresProcessAcknowledgment (SI D4)
+code	claimer.go:112	doc func (*Claimer).Claim	dropped by rule	caller; its five citations sit on the deciding functions
+code	claimer.go:132	body (*Claimer).Claim	mechanical	GWCLAIM-R3, moved from body to doc
+code	claimer.go:150	body (*Claimer).Claim	dropped by rule	inline; runtime-process half removed
+code	claimer.go:179	doc func (*Claimer).claimIdle	semantic	CLAIM-R7
+code	claimer.go:192	body (*Claimer).claimIdle	dropped by rule	inline
+code	claimer.go:208	body (*Claimer).claimIdle	semantic	consolidated into claimLost: CLAIM-R1, CLAIM-R11
+code	claimer.go:222	body (*Claimer).claimIdle	stale	said the orphan GC reclaims the claim; the code deletes it (issue CLAIM-I3)
+code	claimer.go:231	body (*Claimer).claimIdle	dropped by rule	inline; NET-003 not migrated
+code	claimer.go:244	doc func (*Claimer).endReservedHolds	semantic	CLAIM-R5
+code	claimer.go:287	doc func (*Claimer).rebindReserved	mechanical	CLAIM-R10; runtime-process half removed
+code	claimer.go:350	body (*Claimer).rebindReserved	dropped by rule	inline
+code	claimer.go:362	body (*Claimer).rebindReserved	dropped by rule	inline
+code	claimer.go:373	doc func (*Claimer).refuseReservedLifetime	removed with code	refuseReservedLifetime (SI D4)
+code	claimer.go:422	body (*Claimer).reservedClaimForTenant	semantic	moved to doc of reservedClaimForTenant: CLAIM-R5
+code	claimer.go:444	doc func CreateClaim	mechanical	CLAIM-R1, kubernetes#podclaim.create
+code	claimer.go:462	body CreateClaim	dropped by rule	inline
+code	claimer.go:470	body CreateClaim	stale	said the orphan GC reclaims a claim whose create failed; no claim exists
+code	claimer.go:478	doc func DeleteClaim	dropped by rule	wrapper
+code	claimer.go:501	doc func claimName	dropped by rule	helper
+code	claimer.go:509	doc func ClaimName	mechanical	CLAIM-R1
+code	slotclaimer.go:26	doc const LabelTenant	stale	cited the workspace-tier writer TSS-9 removes; constant now cites label-lenny-dev-tenant-id
+code	slotclaimer.go:43	doc func StampPodTenant	mechanical	CLAIM-R6
+code	slotclaimer.go:78	doc func StampDrainRequest	mechanical	APOD-R12
+code	slotclaimer.go:110	doc func StampScrubWarning	mechanical	APOD-R9; re-warm half stale
+code	slotclaimer.go:144	doc func StampMaxPodUptime	no target	no requirement for the uptime annotation; issue APOD-I1
+code	slotclaimer.go:188	doc var ErrNoConcurrentSlot	dropped by rule	sentinel
+code	slotclaimer.go:195	doc var ErrTenantMismatch	dropped by rule	sentinel
+code	slotclaimer.go:203	doc var ErrSlotCounterRelease	dropped by rule	sentinel
+code	slotclaimer.go:223	field SlotRequest.SessionID	dropped by rule	field
+code	slotclaimer.go:229	field SlotRequest.TenantID	dropped by rule	field
+code	slotclaimer.go:233	field SlotRequest.MaxConcurrentSessions	dropped by rule	field
+code	slotclaimer.go:238	field SlotRequest.MaxPodUptimeSeconds	dropped by rule	field
+code	slotclaimer.go:268	doc type SlotClaimer	dropped by rule	type
+code	slotclaimer.go:282	field SlotClaimer.Counter	dropped by rule	field
+code	slotclaimer.go:289	field SlotClaimer.OnSlotConflict	dropped by rule	field
+code	slotclaimer.go:295	field SlotClaimer.OnRehydrate	dropped by rule	field
+code	slotclaimer.go:304	field SlotClaimer.Now	dropped by rule	field
+code	slotclaimer.go:307	field SlotClaimer.RecycleBoundary	dropped by rule	field
+code	slotclaimer.go:317	field SlotClaimer.RollbackTimeout	dropped by rule	field
+code	slotclaimer.go:325	doc func (*SlotClaimer).rollbackContext	dropped by rule	helper
+code	slotclaimer.go:344	doc func (*SlotClaimer).now	dropped by rule	helper
+code	slotclaimer.go:352	doc func (*SlotClaimer).recordSlotConflict	dropped by rule	helper
+code	slotclaimer.go:360	doc func (*SlotClaimer).recordRehydration	dropped by rule	helper
+code	slotclaimer.go:368	doc func (*SlotClaimer).expiredByUptime	mechanical	APOD-R8
+code	slotclaimer.go:391	doc func (*SlotClaimer).ClaimSlot	semantic	SLOTOPS-R2, SLOT-R3, CLAIM-R12
+code	slotclaimer.go:429	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:461	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:466	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:503	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:524	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:531	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:558	body (*SlotClaimer).ClaimSlot	dropped by rule	inline
+code	slotclaimer.go:573	doc func (*SlotClaimer).rebindReservedSlot	mechanical	CLAIM-R10
+code	slotclaimer.go:625	doc func (*SlotClaimer).ReserveSlotOnPod	mechanical	SLOTOPS-R2
+code	slotclaimer.go:695	doc func (*SlotClaimer).reserveSlot	semantic	SLOTOPS-R1; bound differs from the requirement, issue SLOTOPS-I1
+code	slotclaimer.go:717	body (*SlotClaimer).reserveSlot	dropped by rule	inline
+code	slotclaimer.go:724	body (*SlotClaimer).reserveSlot	dropped by rule	inline
+code	slotclaimer.go:730	body (*SlotClaimer).reserveSlot	dropped by rule	inline
+code	slotclaimer.go:752	body (*SlotClaimer).reserveSlot	dropped by rule	inline
+code	slotclaimer.go:761	body (*SlotClaimer).reserveSlot	dropped by rule	inline
+code	slotclaimer.go:784	doc func (*SlotClaimer).acquireFreshClaim	mechanical	CLAIM-R3
+code	slotclaimer.go:820	doc func (*SlotClaimer).rollbackReservation	dropped by rule	wrapper
+code	slotclaimer.go:836	doc func (*SlotClaimer).ReleaseSlot	mechanical	SLOTOPS-R3, SLOT-R4
+code	slotclaimer.go:867	body (*SlotClaimer).ReleaseSlot	dropped by rule	inline
+code	slotclaimer.go:904	body (*SlotClaimer).disposeAtZero	semantic	moved to doc of disposeAtZero: CLAIM-R3
+code	slotclaimer.go:919	body (*SlotClaimer).disposeAtZero	dropped by rule	inline
+code	slotclaimer.go:927	body (*SlotClaimer).disposeAtZero	dropped by rule	inline
+code	slotclaimer.go:934	body (*SlotClaimer).disposeAtZero	dropped by rule	inline
+code	tenantpin.go:28	doc const LabelRuntimeProcess	removed with code	LabelRuntimeProcess (SI D4)
+code	tenantpin.go:34	doc func refusesUsedPodLifetime	removed with code	refusesUsedPodLifetime (SI D4)
+code	tenantpin.go:50	doc func AdmitTenantPin	semantic	CLAIM-R5, CLAIM-R6, CLAIM-R7
+code	tenantpin.go:108	doc func DrainRefusedPod	semantic	CLAIM-R5
+test	bindingstate_errors_test.go:68	doc func TestBindingStateWritersWrapGetErrors_spec_4_6_3	no target	no requirement on the pages; spec line removed
+test	bindingstate_errors_test.go:109	doc func TestBindingStateWritersWrapPatchErrors_spec_4_6_3	no target	no requirement on the pages; spec line removed
+test	bindingstate_errors_test.go:161	doc func TestDeleteOnHoldExpiryWrapsUnexpectedError_spec_4_6_1	mechanical	CLAIM-R10, kubernetes#podclaim.delete
+test	bindingstate_errors_test.go:194	doc func TestDeleteOnHoldExpiryAbortsOnConflict_spec_3_2	mechanical	CLAIM-R10, kubernetes#podclaim.delete
+test	bindingstate_test.go:53	doc func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3	mechanical	CLAIM-R1, GWCLAIM-R4
+test	bindingstate_test.go:117	doc func TestWriteBoundStatusIdempotentOnAlreadyBound_spec_4_6_1	mechanical	CLAIM-R1
+test	bindingstate_test.go:157	doc func TestRecyclePathBindingStateTransitions_spec_4_6_3	semantic	CLAIM-R9, CLAIM-R10
+test	bindingstate_test.go:255	doc func TestRewarmStartedRequiresRecyclingClaim_spec_4_6_3	no target	no requirement on the pages; spec line removed
+test	bindingstate_test.go:276	doc func TestWriteDispositionTerminalAndGuard_spec_4_6_3	mechanical	CLAIM-R9
+test	bindingstate_test.go:311	doc func TestHoldExpiryDeleteHonorsPreconditions_spec_4_6_1	mechanical	CLAIM-R10, kubernetes#podclaim.delete
+test	bindingstate_test.go:356	doc func TestRebindAbortsHoldExpiry_spec_3_2	mechanical	CLAIM-R10
+test	claimer_internal_test.go:46	doc func TestReservedClaimForTenantEligibility_spec_3_2	mechanical	CLAIM-R5, CLAIM-R10
+test	claimer_internal_test.go:94	doc func TestReservedClaimForTenantMissingClaimIsNotFound_spec_3_2	mechanical	CLAIM-R10
+test	claimer_internal_test.go:114	doc func TestClaimByNameReReadsCurrentObject_spec_3_2	mechanical	CLAIM-R10
+test	claimer_rebind_race_test.go:25	doc func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2	mechanical	CLAIM-R10
+test	claimer_test.go:34	body newScheme	dropped by rule	inline; section number removed from prose
+test	claimer_test.go:62	doc func TestClaimBindsAnIdlePod_spec_4_6	mechanical	CLAIM-R1
+test	claimer_test.go:78	body TestClaimBindsAnIdlePod_spec_4_6	dropped by rule	inline; section number removed from prose
+test	claimer_test.go:158	doc func TestClaimSkipsAlreadyClaimedPod_spec_4_6	mechanical	CLAIM-R1
+test	claimer_test.go:192	doc func TestClaimReturnsErrNoIdlePodWhenAllClaimed_spec_4_6	mechanical	CLAIM-R1
+test	claimer_test.go:212	doc func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3	mechanical	APOD-R4
+test	claimer_test.go:263	doc func reservedSandbox	dropped by rule	test helper; section number removed from prose
+test	claimer_test.go:302	doc func TestClaimRebindsReservedPodWithinHold_spec_3_2	mechanical	CLAIM-R10
+test	claimer_test.go:337	doc func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2	mechanical	CLAIM-R10
+test	claimer_test.go:367	doc func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2	semantic	CLAIM-R5
+test	claimidle_stamp_departure_test.go:19	doc func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1	semantic	CLAIM-R2, CLAIM-R15
+test	kept_runtime_rule_test.go:33	doc func TestOutsideRuleScanRefusesAndDrainsServedPods_spec_5_2	semantic	CLAIM-R5
+test	kept_runtime_rule_test.go:88	doc func TestOutsideRuleEndsReservedHoldInsteadOfRebinding_spec_4_6_1	semantic	CLAIM-R5
+test	kept_runtime_rule_test.go:148	doc func TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1	semantic	CLAIM-R5, CLAIM-R10
+test	kept_runtime_rule_test.go:220	doc func TestOutsideRuleFailedStampIsLoggedAndRetried_spec_5_2	semantic	CLAIM-R5
+test	kept_runtime_rule_test.go:265	doc func TestOutsideRuleClaimReadFailures_spec_5_2	semantic	CLAIM-R5
+test	maxpoduptime_test.go:25	doc func TestStampMaxPodUptimeStampsAnnotation_spec_4_6	no target	no requirement on the pages; spec line removed
+test	maxpoduptime_test.go:48	doc func TestStampMaxPodUptimeSkipsNonPositiveCap_spec_4_6	no target	no requirement on the pages; spec line removed
+test	maxpoduptime_test.go:75	doc func TestStampMaxPodUptimeToleratesMissingPod_spec_4_6	no target	no requirement on the pages; spec line removed
+test	maxpoduptime_test.go:87	doc func TestStampMaxPodUptimePropagatesPatchError_spec_4_6	no target	no requirement on the pages; spec line removed
+test	maxpoduptime_test.go:108	doc func TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6	no target	no requirement on the pages; spec line removed
+test	maxpoduptime_test.go:138	doc func TestClaimSlotSkipsMaxPodUptimeForNoCapPool_spec_4_6	no target	no requirement on the pages; spec line removed
+test	pinfixture_test.go:28	doc func pinnedPod	dropped by rule	test helper; section number removed from prose
+test	pinfixture_test.go:57	doc func reservedIn	dropped by rule	test helper; section number removed from prose
+test	reserveslotonpod_test.go:25	doc func activeSlots	dropped by rule	test helper; section number removed from prose
+test	reserveslotonpod_test.go:32	doc func slotMembers	dropped by rule	test helper; section number removed from prose
+test	reserveslotonpod_test.go:100	doc func TestReserveSlotOnPodReservesOnTheNamedPod_spec_5_2	mechanical	SLOTOPS-R2
+test	reserveslotonpod_test.go:131	doc func TestReserveSlotOnPodRollbackDisposesAtZeroOnly_spec_4_6_3	mechanical	CLAIM-R3, SLOTOPS-R3
+test	reserveslotonpod_test.go:181	doc func TestReserveSlotOnPodReturnsErrNoConcurrentSlotAtTheBound_spec_5_2	semantic	SLOTOPS-R1
+test	reserveslotonpod_test.go:206	doc func TestReserveSlotOnPodFailsClosedWhenThePerPodClaimIsGone_spec_4_6_1	semantic	SLOTOPS-R2
+test	reserveslotonpod_test.go:254	doc func TestReserveSlotOnPodFailsClosedWithNoSlotCounter_spec_12_4	no target	no requirement on the pages; spec line removed
+test	runtime_process_acquisition_test.go:39	doc func TestIdleScanRefusesUsedKeepPodWhenAcknowledgmentNotRequired_spec_5_2	removed with code	runtime-process test or fixture (SI D4)
+test	runtime_process_acquisition_test.go:81	doc func TestRebindRefusesReservedKeepPodWhenAcknowledgmentNotRequired_spec_4_6_1	removed with code	runtime-process test or fixture (SI D4)
+test	runtime_process_internal_test.go:39	doc func wantAdmit	removed with code	runtime-process test or fixture (SI D4)
+test	runtime_process_internal_test.go:56	doc func TestAdmitTenantPinLabelMatrix_spec_5_2	removed with code	runtime-process test or fixture (SI D4)
+test	runtime_process_internal_test.go:107	doc func TestAdmitTenantPinReadErrorReportsNoDrain_spec_5_2	mechanical	moved to tenantpin_internal_test.go: CLAIM-R7
+test	scrubwarning_test.go:26	doc func TestStampScrubWarningStampsAnnotation_spec_5_2	mechanical	APOD-R9
+test	scrubwarning_test.go:49	doc func TestStampScrubWarningToleratesMissingPod_spec_3_4	mechanical	APOD-R9
+test	scrubwarning_test.go:61	doc func TestStampScrubWarningPropagatesPatchError_spec_5_2	mechanical	APOD-R9
+test	slotclaimer_release_test.go:87	doc func TestReleaseSlotDuplicateLeavesLaterClaim_spec_5_2	mechanical	SLOTOPS-R3
+test	slotclaimer_release_test.go:114	doc func TestReleaseSlotErrorClassification_spec_5_2	semantic	SLOTOPS-R3
+test	slotclaimer_release_test.go:152	doc func TestReleaseSlotRecordsRehydrationWithPoolLabel_spec_5_2	mechanical	SLOTOPS-R6
+test	slotclaimer_release_test.go:192	doc func TestFreshClaimBoundWriteRollback_spec_4_6_3	mechanical	CLAIM-R3, SLOTOPS-R3
+test	slotclaimer_release_test.go:243	doc func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3	mechanical	CLAIM-R3
+test	slotclaimer_release_test.go:303	doc func TestRollbackCounterFailureKeepsMember_spec_5_2	semantic	SLOTOPS-R3
+test	slotclaimer_test.go:151	doc func assertNotGatewayStatusOwned	dropped by rule	test helper; section number removed from prose
+test	slotclaimer_test.go:171	doc func newCounter	dropped by rule	test helper; section number removed from prose
+test	slotclaimer_test.go:197	doc func TestClaimSlotOpensFreshIdlePod	semantic	SLOTOPS-R2, CLAIM-R1
+test	slotclaimer_test.go:224	doc var stored	dropped by rule	inline; section number removed from prose
+test	slotclaimer_test.go:239	body TestClaimSlotOpensFreshIdlePod	dropped by rule	inline; section number removed from prose
+test	slotclaimer_test.go:245	doc func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound	semantic	SLOTOPS-R1, SLOTOPS-R2
+test	slotclaimer_test.go:281	doc func TestClaimSlotClaimsFreshPodWhenBoundReached	semantic	SLOTOPS-R1, SLOTOPS-R2
+test	slotclaimer_test.go:307	doc func TestClaimSlotExhaustedWhenAllPodsFull	semantic	SLOTOPS-R2, CLAIM-R12
+test	slotclaimer_test.go:327	doc func TestClaimSlotRejectsCrossTenantSlotSharing	semantic	SLOT-R3, CLAIM-R6
+test	slotclaimer_test.go:347	doc func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch	semantic	SLOT-R3, SLOTOPS-R2
+test	slotclaimer_test.go:373	doc func TestClaimSlotRejectsInvalidRequests	semantic	setting-sessionpolicy-maxconcurrentsessionsperpod
+test	slotclaimer_test.go:386	doc func TestClaimSlotRequiresCounter	no target	no requirement on the pages; spec line removed
+test	slotclaimer_test.go:400	doc func TestReleaseSlotRequiresCounter	no target	no requirement on the pages; spec line removed
+test	slotclaimer_test.go:430	doc func TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName	mechanical	CLAIM-R1
+test	slotclaimer_test.go:468	doc func TestReleaseSlotKeyedDeletesClaimOnLastMember_spec_5_2	mechanical	SLOTOPS-R3, CLAIM-R3
+test	slotclaimer_test.go:498	doc func TestReleaseSlotLeakedKeepsSlotCounted	mechanical	SLOT-R4, SLOTOPS-R3
+test	slotclaimer_test.go:526	doc type fakeRecycleArmer	dropped by rule	inline; section number removed from prose
+test	slotclaimer_test.go:532	doc func TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4	semantic	CLAIM-R3, CLAIM-R10
+test	slotclaimer_test.go:572	doc func TestClaimSlotEmptyPoolReturnsErrNoIdlePod	semantic	CLAIM-R12
+test	slotclaimer_test.go:589	doc func TestClaimSlotRecordsConflictOnSlotContention	semantic	SLOTOPS-R2
+test	slotclaimer_test.go:616	doc func TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2	mechanical	APOD-R8
+test	slotclaimer_test.go:645	body TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2	dropped by rule	inline; section number removed from prose
+test	slotclaimer_test.go:654	doc func TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2	mechanical	APOD-R8
+test	slotclaimer_test.go:677	body TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2	dropped by rule	inline; section number removed from prose
+test	slotclaimer_test.go:688	doc func TestClaimSlotKeepsUnderUptimePod_spec_6_2	mechanical	APOD-R8
+test	slotclaimer_test.go:718	doc func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2	mechanical	APOD-R8
+test	slotclaimer_test.go:746	doc func seedReservedSlotPod	dropped by rule	test helper; section number removed from prose
+test	slotclaimer_test.go:773	doc func TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2	mechanical	CLAIM-R10
+test	slotclaimer_test.go:813	doc func TestClaimSlotSkipsExpiredReservedHold_spec_3_2	mechanical	CLAIM-R10
+test	span_test.go:17	doc func installSpanRecorder	dropped by rule	helper; the citation belonged on the span tests (GWCLAIM-R3)
+test	span_test.go:38	doc func TestClaimEmitsClaimPodSpan_spec_16_3	semantic	GWCLAIM-R3
+test	tenant_label_test.go:21	doc func agentPod	dropped by rule	test helper; section number removed from prose
+test	tenant_label_test.go:51	doc func mustCreateRuntimeClass	dropped by rule	test helper; section number removed from prose
+test	tenant_label_test.go:71	doc func TestClaimSlotStampsTenantLabelOnPod_spec_17_2_3	mechanical	CLAIM-R6
+test	tenant_label_test.go:92	doc func TestClaimSlotPodTenantStampIsIdempotent_spec_17_2_3	mechanical	CLAIM-R6
+test	tenant_label_test.go:112	doc func TestClaimStampsTenantLabelOnSessionPod_spec_17_2_3	mechanical	CLAIM-R6
+test	tenant_label_test.go:131	doc func TestClaimSlotToleratesMissingPod_spec_17_2_3	mechanical	CLAIM-R6
+test	tenant_label_test.go:149	doc func TestClaimSlotBindsKataMicrovmPod_spec_5_3_8	no target	(kept § citation)
+test	tenant_label_test.go:178	doc var stored	dropped by rule	inline; section number removed from prose
+test	tenantpin_test.go:16	doc func TestAdmitTenantPinDecisions_spec_5_2	semantic	CLAIM-R5, CLAIM-R6
+test	tenantpin_test.go:66	doc func TestPinReadErrorEndsAcquisitionWithoutExhaustion_spec_5_2	mechanical	CLAIM-R7
+test	tenantpin_test.go:121	doc func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2	semantic	CLAIM-R5
+test	tenantpin_test.go:176	doc func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2	semantic	CLAIM-R5, CLAIM-R6
+test	tenantpin_test.go:213	doc func TestKeptRuntimeRefusalWritesNothing_spec_5_2	semantic	CLAIM-R5
+test	tenantpin_test.go:260	doc func TestIdleScanNoIdlePodResultNamesRefusedPods_spec_5_2	semantic	CLAIM-R5, CLAIM-R13

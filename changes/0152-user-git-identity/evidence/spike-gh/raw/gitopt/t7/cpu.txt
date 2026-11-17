@@ -1,0 +1,8 @@
+r1-T netagent before: 54446 15384576  after: 768785 28708864  (usage_usec, memory.peak)
+r1-P netagent before: 38117 15503360  after: 553075 27901952  (usage_usec, memory.peak)
+r1-L netagent before: 39235 15126528  after: 559274 30400512  (usage_usec, memory.peak)
+r1-opaque netagent before: 38148 15892480  after: 92457 20828160  (usage_usec, memory.peak)
+r2-T netagent before: 36208 13697024  after: 725295 29069312  (usage_usec, memory.peak)
+r2-P netagent before: 37714 15327232  after: 554698 27877376  (usage_usec, memory.peak)
+r2-L netagent before: 37210 15663104  after: 578394 27906048  (usage_usec, memory.peak)
+r2-opaque netagent before: 46044 15650816  after: 101531 22458368  (usage_usec, memory.peak)

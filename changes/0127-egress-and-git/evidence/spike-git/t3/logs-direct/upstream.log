@@ -1,0 +1,50 @@
+2026/11/01 21:53:40 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:53:40 UP done GET /org/repo.git/info/refs in 1ms
+2026/11/01 21:53:40 UP POST /org/repo.git/git-upload-pack auth=true cl=181 te=[] ce="" gp="version=2"
+2026/11/01 21:53:40 UP done POST /org/repo.git/git-upload-pack in 1ms
+2026/11/01 21:53:40 UP POST /org/repo.git/git-upload-pack auth=true cl=223 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done POST /org/repo.git/git-upload-pack in 5.245s
+2026/11/01 21:53:45 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done GET /org/repo.git/info/refs in 1ms
+2026/11/01 21:53:45 UP POST /org/repo.git/git-upload-pack auth=true cl=212 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done POST /org/repo.git/git-upload-pack in 1ms
+2026/11/01 21:53:45 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done GET /org/repo.git/info/refs in 0s
+2026/11/01 21:53:45 UP POST /org/repo.git/git-upload-pack auth=true cl=181 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done POST /org/repo.git/git-upload-pack in 1ms
+2026/11/01 21:53:45 UP POST /org/repo.git/git-upload-pack auth=true cl=243 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done POST /org/repo.git/git-upload-pack in 5ms
+2026/11/01 21:53:45 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done GET /org/repo.git/info/refs in 0s
+2026/11/01 21:53:45 UP POST /org/repo.git/git-upload-pack auth=true cl=181 te=[] ce="" gp="version=2"
+2026/11/01 21:53:45 UP done POST /org/repo.git/git-upload-pack in 0s
+2026/11/01 21:53:45 UP POST /org/repo.git/git-upload-pack auth=true cl=250 te=[] ce="" gp="version=2"
+2026/11/01 21:53:50 UP done POST /org/repo.git/git-upload-pack in 4.692s
+2026/11/01 21:53:50 UP GET /org/repo.git/info/refs?service=git-receive-pack auth=true cl=0 te=[] ce="" gp=""
+2026/11/01 21:53:50 UP done GET /org/repo.git/info/refs in 1ms
+2026/11/01 21:53:50 UP POST /org/repo.git/git-receive-pack auth=true cl=438 te=[] ce="" gp=""
+2026/11/01 21:53:50 UP done POST /org/repo.git/git-receive-pack in 4ms
+2026/11/01 21:53:51 UP GET /org/repo.git/info/refs?service=git-receive-pack auth=true cl=0 te=[] ce="" gp=""
+2026/11/01 21:53:51 UP done GET /org/repo.git/info/refs in 1ms
+2026/11/01 21:53:52 UP POST /org/repo.git/git-receive-pack auth=true cl=4 te=[] ce="" gp=""
+2026/11/01 21:53:52 UP done POST /org/repo.git/git-receive-pack in 1ms
+2026/11/01 21:53:52 UP POST /org/repo.git/git-receive-pack auth=true cl=-1 te=[chunked] ce="" gp=""
+2026/11/01 21:53:53 UP done POST /org/repo.git/git-receive-pack in 1.136s
+2026/11/01 21:53:53 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:53:53 UP done GET /org/repo.git/info/refs in 0s
+2026/11/01 21:53:53 UP POST /org/repo.git/git-upload-pack auth=true cl=181 te=[] ce="" gp="version=2"
+2026/11/01 21:53:53 UP done POST /org/repo.git/git-upload-pack in 1ms
+2026/11/01 21:53:53 UP POST /org/repo.git/git-upload-pack auth=true cl=223 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done POST /org/repo.git/git-upload-pack in 8.334s
+2026/11/01 21:54:02 UP GET /moved301/org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done GET /moved301/org/repo.git/info/refs in 0s
+2026/11/01 21:54:02 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done GET /org/repo.git/info/refs in 1ms
+2026/11/01 21:54:02 UP POST /org/repo.git/git-upload-pack auth=true cl=108 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done POST /org/repo.git/git-upload-pack in 1ms
+2026/11/01 21:54:02 UP GET /moved307/org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done GET /moved307/org/repo.git/info/refs in 0s
+2026/11/01 21:54:02 UP GET /org/repo.git/info/refs?service=git-upload-pack auth=true cl=0 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done GET /org/repo.git/info/refs in 0s
+2026/11/01 21:54:02 UP POST /org/repo.git/git-upload-pack auth=true cl=108 te=[] ce="" gp="version=2"
+2026/11/01 21:54:02 UP done POST /org/repo.git/git-upload-pack in 1ms

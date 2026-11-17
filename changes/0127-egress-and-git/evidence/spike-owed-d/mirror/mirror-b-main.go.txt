@@ -1,0 +1,802 @@
+// mirror: a Go stand-in for the mirror's long-running parent, run under the design's setpriv start.
+// It uses the standard library only, so that the capability and thread behaviour shown is what a plain Go parent gets.
+package main
+
+import (
+	"encoding/binary"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+const (
+	ownerUID  = 60000
+	fetchBase = 61001
+	storeA    = 62001
+	storeB    = 62002
+	readerA   = 63001
+	readerUID = 64001
+	fsGroup   = 65534
+)
+
+var self, _ = os.Executable()
+
+func say(f string, a ...any) { fmt.Printf(f+"\n", a...) }
+
+func statusFields(path string) map[string]string {
+	m := map[string]string{}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return m
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if k, v, ok := strings.Cut(l, ":"); ok {
+			m[k] = strings.Join(strings.Fields(v), " ")
+		}
+	}
+	return m
+}
+
+func capLine(m map[string]string) string {
+	return fmt.Sprintf("Uid=%s Gid=%s Groups=[%s] Inh=%s Prm=%s Eff=%s Bnd=%s Amb=%s NNP=%s", m["Uid"], m["Gid"], m["Groups"], m["CapInh"], m["CapPrm"], m["CapEff"], m["CapBnd"], m["CapAmb"], m["NoNewPrivs"])
+}
+
+func threadCaps(label string) {
+	d, _ := os.ReadDir("/proc/self/task")
+	seen := map[string]int{}
+	for _, e := range d {
+		m := statusFields("/proc/self/task/" + e.Name() + "/status")
+		seen[fmt.Sprintf("Groups=[%s] Inh=%s Prm=%s Eff=%s Amb=%s", m["Groups"], m["CapInh"], m["CapPrm"], m["CapEff"], m["CapAmb"])]++
+	}
+	say("  [%s] %d threads; distinct credential states:", label, len(d))
+	for k, v := range seen {
+		say("    %d x %s", v, k)
+	}
+}
+
+// --- raw per-thread primitives. RawSyscall stays on this thread, unlike syscall.Setuid and friends, which Go applies to every thread.
+
+type capHdr struct {
+	version uint32
+	pid     int32
+}
+type capData struct{ eff, prm, inh uint32 }
+
+func clearAmbientInheritableThisThread() error {
+	const prCapAmbient, clearAll = 47, 4
+	if _, _, e := syscall.RawSyscall6(syscall.SYS_PRCTL, prCapAmbient, clearAll, 0, 0, 0, 0); e != 0 {
+		return fmt.Errorf("ambient clear: %w", e)
+	}
+	h := capHdr{0x20080522, 0}
+	var d [2]capData
+	if _, _, e := syscall.RawSyscall(syscall.SYS_CAPGET, uintptr(unsafe.Pointer(&h)), uintptr(unsafe.Pointer(&d)), 0); e != 0 {
+		return fmt.Errorf("capget: %w", e)
+	}
+	d[0].inh, d[1].inh = 0, 0
+	if _, _, e := syscall.RawSyscall(syscall.SYS_CAPSET, uintptr(unsafe.Pointer(&h)), uintptr(unsafe.Pointer(&d)), 0); e != 0 {
+		return fmt.Errorf("capset: %w", e)
+	}
+	return nil
+}
+
+func setgroupsThisThread(gs ...uint32) error {
+	var p unsafe.Pointer
+	if len(gs) > 0 {
+		p = unsafe.Pointer(&gs[0])
+	}
+	if _, _, e := syscall.RawSyscall(syscall.SYS_SETGROUPS, uintptr(len(gs)), uintptr(p), 0); e != 0 {
+		return e
+	}
+	return nil
+}
+
+// --- launch variants
+
+type launcher func(uid, gid int, env []string, args ...string) (*exec.Cmd, error)
+
+func base(env []string, args []string) *exec.Cmd {
+	c := exec.Command(args[0], args[1:]...)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	c.Env = env
+	return c
+}
+
+// naive: exec.Cmd with Credential only. The Go runtime never touches the inheritable or ambient sets for this.
+func launchNaive(uid, gid int, env []string, args ...string) (*exec.Cmd, error) {
+	c := base(env, args)
+	c.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: []uint32{}}}
+	return c, c.Start()
+}
+
+func launchSetpriv(uid, gid int, env []string, args ...string) (*exec.Cmd, error) {
+	a := append([]string{"setpriv", "--reuid=" + strconv.Itoa(uid), "--regid=" + strconv.Itoa(gid), "--clear-groups", "--inh-caps=-all", "--ambient-caps=-all"}, args...)
+	c := base(env, a)
+	return c, c.Start()
+}
+
+// locked: clear ambient and inheritable on a locked thread, fork from that thread with Credential, then let the thread die.
+func launchLocked(uid, gid int, env []string, args ...string) (*exec.Cmd, error) {
+	type res struct {
+		c   *exec.Cmd
+		err error
+	}
+	ch := make(chan res, 1)
+	go func() {
+		runtime.LockOSThread() // never unlocked: the runtime destroys the thread when this goroutine returns
+		if err := clearAmbientInheritableThisThread(); err != nil {
+			ch <- res{nil, err}
+			return
+		}
+		c := base(env, args)
+		c.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid), Groups: []uint32{}}}
+		err := c.Start()
+		ch <- res{c, err}
+	}()
+	r := <-ch
+	return r.c, r.err
+}
+
+// shim: re-exec self; the shim clears, switches, and execs, all on one locked thread.
+func launchShim(uid, gid int, env []string, args ...string) (*exec.Cmd, error) {
+	a := append([]string{self, "shim", strconv.Itoa(uid), strconv.Itoa(gid)}, args...)
+	c := base(env, a)
+	return c, c.Start()
+}
+
+func shim(a []string) {
+	runtime.LockOSThread()
+	uid, _ := strconv.Atoi(a[0])
+	gid, _ := strconv.Atoi(a[1])
+	die := func(s string, e error) { fmt.Fprintf(os.Stderr, "shim %s: %v\n", s, e); os.Exit(111) }
+	if err := clearAmbientInheritableThisThread(); err != nil {
+		die("clear", err)
+	}
+	if err := setgroupsThisThread(); err != nil {
+		die("setgroups", err)
+	}
+	if _, _, e := syscall.RawSyscall(syscall.SYS_SETGID, uintptr(gid), 0, 0); e != 0 {
+		die("setgid", e)
+	}
+	if _, _, e := syscall.RawSyscall(syscall.SYS_SETUID, uintptr(uid), 0, 0); e != 0 {
+		die("setuid", e)
+	}
+	p, err := exec.LookPath(a[2])
+	if err != nil {
+		die("lookpath", err)
+	}
+	die("exec", syscall.Exec(p, a[2:], os.Environ()))
+}
+
+// --- child probe
+
+func try(label string, f func() error) {
+	if err := f(); err != nil {
+		say("    %s: refused (%v)", label, err)
+	} else {
+		say("    %s: ALLOWED", label)
+	}
+}
+
+func runq(args ...string) error {
+	c := exec.Command(args[0], args[1:]...)
+	b, err := c.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(firstLine(string(b))))
+	}
+	return nil
+}
+func firstLine(s string) string { l, _, _ := strings.Cut(s, "\n"); return l }
+
+func childprobe(parentPid string) {
+	runtime.LockOSThread()
+	say("    child %s", capLine(statusFields("/proc/self/status")))
+	own, other := os.Getenv("OWN"), os.Getenv("OTHER")
+	try("write own store", func() error { return os.WriteFile(own+"/child-"+strconv.Itoa(os.Getuid()), []byte("x"), 0o660) })
+	try("write another store", func() error { return os.WriteFile(other+"/evil", []byte("x"), 0o660) })
+	try("list another store", func() error { _, err := os.ReadDir(other); return err })
+	try("read the Secret", func() error { _, err := os.ReadFile("/secret/key"); return err })
+	try("write root filesystem", func() error { return os.WriteFile("/evil", []byte("x"), 0o644) })
+	try("signal the parent", func() error { p, _ := strconv.Atoi(parentPid); return syscall.Kill(p, 0) })
+	try("setuid(0) raw", func() error {
+		if _, _, e := syscall.RawSyscall(syscall.SYS_SETUID, 0, 0, 0); e != 0 {
+			return e
+		}
+		return nil
+	})
+	try("setuid to a sibling fetch UID, raw", func() error {
+		if _, _, e := syscall.RawSyscall(syscall.SYS_SETUID, fetchBase+3, 0, 0); e != 0 {
+			return e
+		}
+		return nil
+	})
+	try("chown own file to 0", func() error { return os.Chown(own+"/child-"+strconv.Itoa(os.Getuid()), 0, -1) })
+	os.Remove(own + "/child-" + strconv.Itoa(os.Getuid()))
+}
+
+// --- /proc scan, sweep, and reaping
+
+// underUID lists pids with any of real, effective, saved, or fs UID equal to uid, with their state.
+func underUID(uid int) map[int]string {
+	out := map[int]string{}
+	d, _ := os.ReadDir("/proc")
+	for _, e := range d {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		m := statusFields("/proc/" + e.Name() + "/status")
+		for _, f := range strings.Fields(m["Uid"]) {
+			if f == strconv.Itoa(uid) {
+				out[pid] = m["State"] + " ppid=" + m["PPid"] + " " + m["Name"]
+				break
+			}
+		}
+	}
+	return out
+}
+
+// reapOrphans waits only for zombie children the parent did not start through os/exec, because a wait4(-1) reaper steals
+// statuses from exec.Cmd.Wait. See testReaperRace.
+func reapOrphans(known map[int]bool) int {
+	n := 0
+	d, _ := os.ReadDir("/proc")
+	me := strconv.Itoa(os.Getpid())
+	for _, e := range d {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil || known[pid] {
+			continue
+		}
+		m := statusFields("/proc/" + e.Name() + "/status")
+		if m["PPid"] == me && strings.HasPrefix(m["State"], "Z") {
+			var ws syscall.WaitStatus
+			if p, err := syscall.Wait4(pid, &ws, syscall.WNOHANG, nil); err == nil && p == pid {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+func killhelper() {
+	// kill(-1) excludes the caller and pid 1. Repeat until ESRCH, which means nothing was left to signal.
+	for i := 0; i < 1000; i++ {
+		if err := syscall.Kill(-1, syscall.SIGKILL); err == syscall.ESRCH {
+			fmt.Printf("    killhelper uid=%d: ESRCH after %d kill(-1) calls\n", os.Getuid(), i+1)
+			return
+		} else if err != nil {
+			fmt.Printf("    killhelper uid=%d: %v\n", os.Getuid(), err)
+			os.Exit(2)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	fmt.Println("    killhelper: gave up after 1000 calls")
+	os.Exit(3)
+}
+
+type pool struct {
+	mu    sync.Mutex
+	state map[int]string
+}
+
+func (p *pool) set(uid int, s string) {
+	p.mu.Lock()
+	p.state[uid] = s
+	p.mu.Unlock()
+	say("  pool: %d -> %s", uid, s)
+}
+
+func sweep(uid, gid int, l launcher, known map[int]bool, reap bool) bool {
+	t0 := time.Now()
+	c, err := l(uid, gid, os.Environ(), self, "killhelper")
+	if err != nil {
+		say("  sweep launch failed: %v", err)
+		return false
+	}
+	// kill(-1) keeps succeeding while a zombie remains under the UID, and the zombies are this parent's to reap,
+	// so the helper can see ESRCH only if the parent reaps while the helper runs.
+	skip := map[int]bool{c.Process.Pid: true}
+	for k := range known {
+		skip[k] = true
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for reap {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			reapOrphans(skip)
+			time.Sleep(2 * time.Millisecond)
+		}
+	}()
+	err = c.Wait()
+	close(stop)
+	<-done
+	say("  sweep helper exit: %v, after %v", err, time.Since(t0).Round(time.Millisecond))
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if reap {
+			reapOrphans(known)
+		}
+		left := underUID(uid)
+		if len(left) == 0 {
+			say("  sweep confirmed from /proc: nothing under %d after %v", uid, time.Since(t0).Round(time.Millisecond))
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	left := underUID(uid)
+	zs := 0
+	for _, v := range left {
+		if strings.HasPrefix(v, "Z") {
+			zs++
+		}
+	}
+	say("  sweep NOT confirmed: %d remain under %d, %d of them zombies", len(left), uid, zs)
+	return false
+}
+
+// --- the re-chown walk, through directory file descriptors, with the store group on this thread only
+
+type walkStats struct {
+	chowned          int
+	errs             []string
+	symlinksNotFollowed int
+}
+
+func chownWalk(dfd int, path string, owner int, st *walkStats) {
+	dup, err := syscall.Dup(dfd)
+	if err != nil {
+		st.errs = append(st.errs, path+": dup: "+err.Error())
+		return
+	}
+	f := os.NewFile(uintptr(dup), path)
+	ents, err := f.ReadDir(-1)
+	f.Close()
+	if err != nil {
+		st.errs = append(st.errs, path+": readdir: "+err.Error())
+	}
+	for _, e := range ents {
+		name := e.Name()
+		if e.Type()&os.ModeSymlink != 0 {
+			st.symlinksNotFollowed++
+		}
+		if e.IsDir() {
+			fd, err := syscall.Openat(dfd, name, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+			if err != nil {
+				st.errs = append(st.errs, path+"/"+name+": open: "+err.Error())
+			} else {
+				chownWalk(fd, path+"/"+name, owner, st)
+				syscall.Close(fd)
+			}
+		}
+		if err := syscall.Fchownat(dfd, name, owner, -1, 0x100 /*AT_SYMLINK_NOFOLLOW*/); err != nil {
+			st.errs = append(st.errs, path+"/"+name+": lchown: "+err.Error())
+		} else {
+			st.chowned++
+		}
+	}
+}
+
+func rechown(store string, owner int, gid uint32) walkStats {
+	ch := make(chan walkStats, 1)
+	go func() {
+		runtime.LockOSThread() // never unlocked, so the thread that holds the store group dies with this goroutine
+		var st walkStats
+		if err := setgroupsThisThread(uint32(fsGroup), gid); err != nil {
+			st.errs = append(st.errs, "setgroups: "+err.Error())
+			ch <- st
+			return
+		}
+		fd, err := syscall.Open(store, syscall.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+		if err != nil {
+			st.errs = append(st.errs, "open store: "+err.Error())
+			ch <- st
+			return
+		}
+		chownWalk(fd, store, owner, &st)
+		if err := syscall.Fchownat(fd, ".", owner, -1, 0); err != nil {
+			st.errs = append(st.errs, "store root: "+err.Error())
+		}
+		syscall.Close(fd)
+		ch <- st
+	}()
+	return <-ch
+}
+
+// --- POSIX ACL xattr, encoded by hand because the standard library has no ACL API
+
+func aclBytes(ents [][3]uint32) []byte {
+	b := make([]byte, 4, 4+8*len(ents))
+	binary.LittleEndian.PutUint32(b, 2)
+	for _, e := range ents {
+		x := make([]byte, 8)
+		binary.LittleEndian.PutUint16(x[0:], uint16(e[0]))
+		binary.LittleEndian.PutUint16(x[2:], uint16(e[1]))
+		binary.LittleEndian.PutUint32(x[4:], e[2])
+		b = append(b, x...)
+	}
+	return b
+}
+
+const undefined = 0xffffffff
+
+// storeACL grants the owner rwx, the store group rwx, a reader group r-x, a mask of rwx, and other the given bits.
+func storeACL(reader uint32, other uint32) []byte {
+	return aclBytes([][3]uint32{{1, 7, undefined}, {4, 7, undefined}, {8, 5, reader}, {16, 7, undefined}, {32, other, undefined}})
+}
+
+func setStoreACL(path string, reader uint32) error {
+	if err := syscall.Setxattr(path, "system.posix_acl_access", storeACL(reader, 0), 0); err != nil {
+		return fmt.Errorf("access ACL: %w", err)
+	}
+	if err := syscall.Setxattr(path, "system.posix_acl_default", storeACL(reader, 0), 0); err != nil {
+		return fmt.Errorf("default ACL: %w", err)
+	}
+	return nil
+}
+
+// --- scenario
+
+func sh(s string) string {
+	b, _ := exec.Command("sh", "-c", s).CombinedOutput()
+	return strings.TrimRight(string(b), "\n")
+}
+
+func indent(s string) string {
+	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
+}
+
+func gitEnv(extra ...string) []string {
+	return append([]string{"HOME=/tmp/h", "PATH=/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM=1", "OWN=/data/a", "OTHER=/data/b", "PARENT=" + strconv.Itoa(os.Getpid())}, extra...)
+}
+
+func waitq(c *exec.Cmd, err error) error {
+	if err != nil {
+		return err
+	}
+	return c.Wait()
+}
+
+func scenario() {
+	say("== 1. Parent state under the setpriv start")
+	say("  %s", capLine(statusFields("/proc/self/status")))
+	say("  uid_map: %s", strings.Join(strings.Fields(sh("cat /proc/self/uid_map")), " "))
+	const prSetChildSubreaper, prGetChildSubreaper = 36, 37
+	if _, _, e := syscall.RawSyscall(syscall.SYS_PRCTL, prSetChildSubreaper, 1, 0); e != 0 {
+		say("  PR_SET_CHILD_SUBREAPER failed: %v", e)
+	}
+	// force more threads, then read subreaper from a different one
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runtime.LockOSThread()
+			time.Sleep(50 * time.Millisecond)
+			runtime.UnlockOSThread()
+		}()
+	}
+	wg.Wait()
+	go func() {
+		runtime.LockOSThread()
+		var v int32
+		syscall.RawSyscall(syscall.SYS_PRCTL, prGetChildSubreaper, uintptr(unsafe.Pointer(&v)), 0)
+		say("  subreaper as read on another thread: %d", v)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	threadCaps("after spawning goroutines on new threads")
+	try("parent reads the 0440 Secret", func() error { _, err := os.ReadFile("/secret/key"); return err })
+
+	say("== 2. Stores: mkdir, then mode, then ACL, then owner, because a later ACL or chmod needs ownership or CAP_FOWNER")
+	mk := func(p string, mode uint32, gid int, reader uint32) {
+		if err := os.Mkdir(p, 0o770); err != nil && !os.IsExist(err) {
+			say("  mkdir %s: %v", p, err)
+		}
+		if err := syscall.Chmod(p, mode); err != nil {
+			say("  chmod %s: %v", p, err)
+		}
+		if reader != 0 {
+			if err := setStoreACL(p, reader); err != nil {
+				say("  setxattr ACL on %s failed: %v (errno %d)", p, err, err.(interface{ Unwrap() error }).Unwrap().(syscall.Errno))
+			} else {
+				say("  setxattr ACL on %s: ok", p)
+			}
+		}
+		if err := os.Chown(p, ownerUID, gid); err != nil {
+			say("  chown %s: %v", p, err)
+		}
+		if err := syscall.Chmod(p, mode); err != nil {
+			say("  chmod after chown %s, as a non-owner: %v", p, err)
+		}
+	}
+	mk("/data/a", 0o2770, storeA, readerA)
+	mk("/data/b", 0o2775, storeB, 0)
+	say("%s", indent(sh("ls -lnd /data /data/a /data/b; getfacl -n /data/a 2>&1 | grep -v '^$'; df -T /data | tail -1; mount | grep ' /data ' ")))
+	try("parent re-sets the ACL after it no longer owns the store", func() error { return setStoreACL("/data/a", readerA) })
+
+	say("== 3. Launch variants: capability state in the child, and its boundaries")
+	vs := []struct {
+		name string
+		l    launcher
+	}{{"naive exec.Cmd with Credential", launchNaive}, {"setpriv", launchSetpriv}, {"locked thread cleared, then exec.Cmd with Credential", launchLocked}, {"re-exec shim on one locked thread", launchShim}}
+	for i, v := range vs {
+		say("  -- %s", v.name)
+		err := waitq(v.l(fetchBase+i, storeA, gitEnv(), self, "childprobe", strconv.Itoa(os.Getpid())))
+		say("    exit: %v", err)
+		threadCaps("parent after this variant")
+	}
+
+	say("== 4. wait4(-1) against os/exec, because a subreaper must reap orphans")
+	{
+		c, err := launchSetpriv(fetchBase, storeA, gitEnv(), "true")
+		if err == nil {
+			var ws syscall.WaitStatus
+			time.Sleep(100 * time.Millisecond)
+			p, e := syscall.Wait4(-1, &ws, 0, nil)
+			say("  wait4(-1) took pid %d (cmd pid %d), err %v", p, c.Process.Pid, e)
+			say("  exec.Cmd.Wait then returns: %v", c.Wait())
+		}
+	}
+
+	say("== 5. A real fetch: git under a fetch UID, with one store group, into the store")
+	src := "/tmp/src"
+	say("%s", indent(sh("umask 022; mkdir -p /tmp/h "+src+" && cd "+src+" && git init -q . && git -c user.email=a@b -c user.name=a commit -q --allow-empty -m one && for i in 1 2 3; do head -c 2000 /dev/urandom | base64 > f$i; done; git add . && git -c user.email=a@b -c user.name=a commit -q -m two; export HOME=/tmp/h; printf '[safe]\\n\\tdirectory = *\\n' > /tmp/h/safe.gitconfig; git config --global --add safe.directory "+src+"; git config --global --add safe.directory "+src+"/.git; chmod -R a+rX /tmp/h "+src+" 2>&1; git log --oneline | wc -l")))
+	initCmd := "git init -q --bare --shared=group /data/a/repo.git && git -C /data/a/repo.git config uploadpack.allowFilter true && echo init-ok; ls -lnd /data/a/repo.git /data/a/repo.git/objects"
+	err := waitq(launchSetpriv(fetchBase, storeA, gitEnv(), "sh", "-c", initCmd))
+	say("  init under %d: %v", fetchBase, err)
+	fetch := func(uid int, safe bool, tag string) error {
+		g := "git"
+		if safe {
+			g = "git -c safe.directory=*"
+		}
+		return waitq(launchShim(uid, storeA, gitEnv(), "sh", "-c", g+" -C /data/a/repo.git -c core.hooksPath=/dev/null fetch -q file://"+src+" +refs/heads/*:refs/heads/* 2>&1; echo fetched-rc=$?; git -c safe.directory=* -C /data/a/repo.git log --oneline --all | wc -l"))
+	}
+	say("  fetch by the UID that created the repository (%d): %v", fetchBase, fetch(fetchBase, false, "a"))
+	known := map[int]bool{}
+	say("  sweep of the first fetch UID: confirmed=%v", sweep(fetchBase, storeA, launchShim, known, true))
+
+	say("== 6. Hostile fetch: planted symlinks, setuid, world-writable, a planted ACL, an unreadable directory, and detached descendants")
+	hostile := `cd /data/a
+ln -s /secret/key link-secret; ln -s /data/b link-otherstore; mkdir -p d/sub; echo x > d/sub/pack; ln -s /secret d/sub/dirlink
+echo x > suid; chmod 4755 suid; echo x > sgid; chmod 2755 sgid
+mkdir ww; chmod 0777 ww; echo x > ww/f; chmod 0666 ww/f
+mkdir private; echo x > private/f; chmod 0700 private
+echo x > aclplant; setfacl -m g:` + strconv.Itoa(readerA) + `:rwx aclplant
+setsid sleep 300 & 
+(setsid sh -c "sleep 301 &")
+nohup sleep 302 >/dev/null 2>&1 &
+sh -c 'while :; do sleep 0.05 & sleep 0.02; done' &
+ls -ln /data/a | head -20
+exit 0`
+	err = waitq(launchShim(fetchBase+1, storeA, gitEnv(), "sh", "-c", hostile))
+	say("  hostile fetch exit: %v", err)
+	time.Sleep(300 * time.Millisecond)
+	left := underUID(fetchBase + 1)
+	say("  under %d after the fetch exited: %d processes", fetchBase+1, len(left))
+	ks := []int{}
+	for k := range left {
+		ks = append(ks, k)
+	}
+	sort.Ints(ks)
+	for i, k := range ks {
+		if i < 6 {
+			say("    %d %s", k, left[k])
+		}
+	}
+
+	say("== 7. Sweep, with a pool that returns the UID only after a confirmed sweep and the re-chown")
+	p := &pool{state: map[int]string{fetchBase + 1: "busy"}}
+	say("  -- first a sweep that does not reap, to see whether zombies count as remaining")
+	ok := sweep(fetchBase+1, storeA, launchShim, known, false)
+	say("  confirmed without reaping: %v; states left: %v", ok, underUID(fetchBase+1))
+	if !ok {
+		p.set(fetchBase+1, "out of pool (unconfirmed sweep)")
+	}
+	say("  -- then a sweep that reaps orphans by pid")
+	ok = sweep(fetchBase+1, storeA, launchShim, known, true)
+	say("  confirmed with reaping: %v", ok)
+	alive := func() error { return syscall.Kill(os.Getpid(), 0) }
+	say("  parent alive after kill(-1) under fetch UID: %v", alive())
+
+	say("== 8. Re-chown through directory file descriptors with lchown, on a locked thread that holds the store group")
+	say("  -- control: the walk without the store group on this thread")
+	c := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		_, e := syscall.Open("/data/a", syscall.O_RDONLY|syscall.O_DIRECTORY, 0)
+		c <- e
+	}()
+	say("  open /data/a with no store group: %v", <-c)
+	var stopRead = make(chan struct{})
+	var readOK, readFail int
+	go func() {
+		for {
+			select {
+			case <-stopRead:
+				return
+			default:
+			}
+			if _, err := os.ReadFile("/secret/key"); err != nil {
+				readFail++
+			} else {
+				readOK++
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	st := rechown("/data/a", ownerUID, storeA)
+	close(stopRead)
+	say("  chowned=%d symlinks-seen=%d errors=%v", st.chowned, st.symlinksNotFollowed, st.errs)
+	say("  concurrent Secret reads on other threads during the walk: ok=%d failed=%d", readOK, readFail)
+	threadCaps("parent after the walk")
+	say("%s", indent(sh("setpriv --regid="+strconv.Itoa(storeA)+" --groups="+strconv.Itoa(storeA)+",65534 --inh-caps=+setuid,+setgid,+chown --ambient-caps=+setuid,+setgid,+chown ls -lnA /data/a | head -24; ls -lnL /secret/key; ls -lnd /data/b; ls -ln /data/b | head -4")))
+	say("  -- a fetch UID keeps any setuid or setgid file the walk refused, because chown of such a file also changes its mode, which needs ownership or CAP_FOWNER")
+	stripCmd := "find /data/a -xdev -uid " + strconv.Itoa(fetchBase+1) + " ! -type d -perm /6000 -exec chmod ug-s {} + ; echo strip-rc=$?"
+	say("  strip helper under the fetch UID: %v", waitq(launchShim(fetchBase+1, storeA, gitEnv(), "sh", "-c", stripCmd)))
+	st = rechown("/data/a", ownerUID, storeA)
+	say("  second walk: chowned=%d errors=%v", st.chowned, st.errs)
+	say("%s", indent(sh("setpriv --regid="+strconv.Itoa(storeA)+" --groups="+strconv.Itoa(storeA)+",65534 --inh-caps=+setuid,+setgid,+chown --ambient-caps=+setuid,+setgid,+chown ls -ln /data/a/suid /data/a/sgid")))
+	say("  sweep once more, because the strip helper ran under the UID: %v", sweep(fetchBase+1, storeA, launchShim, known, true))
+	if ok && len(st.errs) <= 1 {
+		p.set(fetchBase+1, "free")
+	}
+
+	say("== 9. Reuse: a second fetch under another UID, then the swept UID again. Git's ownership check applies.")
+	say("  fetch by a different fetch UID with no safe.directory: %v", fetch(fetchBase+2, false, "b"))
+	say("  fetch by a different fetch UID with safe.directory=*: %v", fetch(fetchBase+2, true, "b"))
+	say("  fetch by the reused UID %d with safe.directory=*: %v", fetchBase+1, fetch(fetchBase+1, true, "c"))
+	sweep(fetchBase+1, storeA, launchShim, known, true)
+	sweep(fetchBase+2, storeA, launchShim, known, true)
+	st = rechown("/data/a", ownerUID, storeA)
+	say("  re-chown: chowned=%d errors=%v", st.chowned, st.errs)
+
+	say("== 10. Reader: a per-store reader group through the ACL. Reader UID %d, group %d only.", readerUID, readerA)
+	rd := `id; P=/data/a/repo.git
+t(){ L=$1; shift; if "$@" >/tmp/rd.$$ 2>&1; then echo "  $L: ALLOWED"; else echo "  $L: refused ($(head -1 /tmp/rd.$$ | cut -c1-90))"; fi; }
+t "list the store root" ls /data/a
+t "read a ref" cat $P/HEAD
+t "read a pack or object" sh -c "find $P/objects -type f | head -1 | xargs cat >/dev/null"
+t "git ls-remote, no safe.directory" git ls-remote $P
+t "git ls-remote, safe.directory=* on the command line" git -c safe.directory=* ls-remote $P
+t "git upload-pack --advertise-refs, safe.directory=* on the command line" git -c safe.directory=* upload-pack --advertise-refs $P
+export GIT_CONFIG_GLOBAL=/tmp/h/safe.gitconfig
+t "git ls-remote, safe.directory=* in a global config" git ls-remote $P
+t "git clone through upload-pack, global config" git clone -q $P /tmp/rc.$$
+t "create a file in the store" sh -c "echo x > $P/evil"
+t "create an object directory" mkdir $P/objects/zz
+t "overwrite HEAD" sh -c "echo x > $P/HEAD"
+t "delete HEAD" rm -f $P/HEAD
+t "rename a ref dir" mv $P/refs $P/refs2
+t "chmod HEAD" chmod 777 $P/HEAD
+t "set an ACL" setfacl -m u:1:rwx $P/HEAD
+t "git push through receive-pack" sh -c "cd /tmp/rc.$$ && git -c user.email=a@b -c user.name=a commit -q --allow-empty -m evil && git push -q origin HEAD:refs/heads/evil"
+t "read another store" ls /data/b
+t "read the Secret" cat /secret/key
+echo "-- planted before the re-chown, by the hostile fetch:"
+t "write a file whose ACL the fetch planted" sh -c "echo y >> /data/a/aclplant"
+t "write a 0666 file in a 0777 directory the fetch planted" sh -c "echo y >> /data/a/ww/f"
+t "create in that 0777 directory" sh -c "echo y > /data/a/ww/new"
+true`
+	err = waitq(launchShim(readerUID, readerA, gitEnv(), "sh", "-c", rd))
+	say("  reader exit: %v", err)
+	say("%s", indent(sh("setpriv --regid="+strconv.Itoa(storeA)+" --groups="+strconv.Itoa(storeA)+" --inh-caps=+setuid,+setgid,+chown --ambient-caps=+setuid,+setgid,+chown sh -c 'getfacl -n /data/a/repo.git/HEAD /data/a/repo.git/objects 2>&1 | grep -v ^$; f=$(find /data/a/repo.git/objects -type f | head -1); ls -ln $f; getfacl -n $f 2>&1 | grep -v ^$' ")))
+	say("== 11. A public store: upload-pack with no group reads through the world bits, and writes nothing")
+	pubInit := "git init -q --bare --shared=group /data/b/repo.git && git -c safe.directory=* -C /data/b/repo.git fetch -q file://" + src + " +refs/heads/*:refs/heads/*; find /data/b/repo.git -maxdepth 1 | wc -l; ls -lnd /data/b/repo.git /data/b/repo.git/objects"
+	err = waitq(launchShim(fetchBase+3, storeB, gitEnv("OWN=/data/b"), "sh", "-c", pubInit))
+	say("  public init: %v", err)
+	sweep(fetchBase+3, storeB, launchShim, known, true)
+	st = rechown("/data/b", ownerUID, storeB)
+	say("  re-chown public store: chowned=%d errors=%v", st.chowned, st.errs)
+	pubRead := `id; P=/data/b/repo.git
+t(){ L=$1; shift; if "$@" >/tmp/rp.$$ 2>&1; then echo "  $L: ALLOWED"; else echo "  $L: refused ($(head -1 /tmp/rp.$$ | cut -c1-90))"; fi; }
+t "read public HEAD" cat $P/HEAD
+export GIT_CONFIG_GLOBAL=/tmp/h/safe.gitconfig
+t "git ls-remote, global config" git ls-remote $P
+t "git clone, global config" git clone -q $P /tmp/rp2.$$
+t "write public store" sh -c "echo x > $P/evil"
+true`
+	// no group: run under a UID with no supplementary and a GID that matches nothing
+	err = waitq(launchShim(readerUID+1, 64999, gitEnv(), "sh", "-c", pubRead))
+	say("  public reader exit: %v", err)
+	say("== 12. A world-writable directory planted in a public store survives the owner-only re-chown")
+	plant := "mkdir /data/b/ww && chmod 0777 /data/b/ww && echo x > /data/b/ww/f && chmod 0666 /data/b/ww/f; ls -ld /data/b/ww"
+	say("  plant under fetch UID, store group: %v", waitq(launchShim(fetchBase+3, storeB, gitEnv(), "sh", "-c", plant)))
+	sweep(fetchBase+3, storeB, launchShim, known, true)
+	st = rechown("/data/b", ownerUID, storeB)
+	say("  re-chown: chowned=%d errors=%v", st.chowned, st.errs)
+	check := "id -u; ls -ld /data/b/ww; t(){ L=$1; shift; if \"$@\" >/tmp/w.$$ 2>&1; then echo \"  $L: ALLOWED\"; else echo \"  $L: refused ($(head -1 /tmp/w.$$ | cut -c1-80))\"; fi; }; t \"write the planted file\" sh -c \"echo y >> /data/b/ww/f\"; t \"create in the planted directory\" sh -c \"echo y > /data/b/ww/new\""
+	say("  -- a public-store reader with no group:")
+	say("    exit %v", waitq(launchShim(readerUID+1, 64999, gitEnv(), "sh", "-c", check)))
+	say("  -- a fetch for another store (group %d):", storeA)
+	say("    exit %v", waitq(launchShim(fetchBase+2, storeA, gitEnv(), "sh", "-c", check)))
+	sweep(fetchBase+2, storeA, launchShim, known, true)
+	say("== end")
+}
+
+// stripped shows what happens when a thread with cleared capabilities goes back to the Go scheduler.
+func stripped() {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runtime.LockOSThread()
+		if err := clearAmbientInheritableThisThread(); err != nil {
+			say("clear: %v", err)
+		}
+		h := capHdr{0x20080522, 0}
+		var d [2]capData
+		syscall.RawSyscall(syscall.SYS_CAPSET, uintptr(unsafe.Pointer(&h)), uintptr(unsafe.Pointer(&d)), 0)
+		runtime.UnlockOSThread() // the defect under test: the stripped thread returns to the scheduler
+	}()
+	wg.Wait()
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			syscall.Getpid()
+			time.Sleep(20 * time.Millisecond)
+			var ts syscall.Timespec
+			syscall.Nanosleep(&syscall.Timespec{Nsec: 20e6}, &ts)
+		}()
+	}
+	wg.Wait()
+	threadCaps("stripped thread returned to the scheduler, then goroutines ran")
+	fails := 0
+	for i := 0; i < 200; i++ {
+		c := exec.Command("setpriv", "--reuid="+strconv.Itoa(fetchBase), "--regid="+strconv.Itoa(storeA), "--clear-groups", "--inh-caps=-all", "--ambient-caps=-all", "true")
+		if err := c.Run(); err != nil {
+			fails++
+		}
+	}
+	say("200 setpriv launches from a process with one stripped thread: %d failed", fails)
+	// Go's own all-thread setuid against mixed threads, which aborts or errors when a thread refuses
+	say("syscall.Setgroups (all-thread in Go) with a store group: %v", syscall.Setgroups([]int{fsGroup, storeA}))
+	threadCaps("after syscall.Setgroups")
+}
+
+func main() {
+	_ = filepath.Base
+	a := os.Args[1:]
+	switch a[0] {
+	case "scenario":
+		scenario()
+	case "childprobe":
+		childprobe(a[1])
+	case "shim":
+		shim(a[1:])
+	case "killhelper":
+		killhelper()
+	case "stripped":
+		stripped()
+	case "aclprobe":
+		// aclprobe PATH: the behaviour on a volume, ending in a read-back
+		p := a[1]
+		err := os.Mkdir(p+"/s", 0o2770)
+		say("mkdir: %v", err)
+		err = setStoreACL(p+"/s", readerA)
+		say("setxattr ACL: %v", err)
+		b := make([]byte, 256)
+		n, err := syscall.Getxattr(p+"/s", "system.posix_acl_default", b)
+		say("read back default ACL: %d bytes, %v", n, err)
+		say("%s", indent(sh("getfacl -n "+p+"/s 2>&1; setfacl -m g:"+strconv.Itoa(readerA)+":rx "+p+"/s 2>&1; echo setfacl-rc=$?; df -T "+p+" | tail -1; grep ' "+p+" ' /proc/mounts")))
+		c, err := launchShim(readerUID, readerA, []string{"PATH=/usr/bin:/bin"}, "sh", "-c", "ls "+p+"/s; echo reader-ls-rc=$?")
+		if err == nil {
+			err = c.Wait()
+		}
+		say("reader under its group only: %v", err)
+		os.Remove(p + "/s")
+	}
+}

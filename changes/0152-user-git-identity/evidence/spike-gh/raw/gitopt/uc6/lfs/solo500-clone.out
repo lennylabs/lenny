@@ -1,0 +1,9 @@
+### solo500-clone-clone rc=0
+$ (git clone -q https://gitlab.example.test/acme/lfsfail.git c 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+error: external filter 'git-lfs filter-process' failed
+fatal: o.bin: smudge filter lfs failed
+warning: Clone succeeded, but checkout failed.
+You can inspect what was checked out with 'git status'
+and retry with 'git restore --source=HEAD :/'
+
+git-exit=128

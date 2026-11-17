@@ -1,0 +1,12 @@
+   busy: n=190178 codes={'200': 180597, '403': 9581} p50=0.60 p90=1.08 p99=2.49 p99.9=11.3 max=119.4 ms
+   small: n=189820 codes={'200': 180531, '403': 9289} p50=0.61 p90=1.08 p99=2.51 p99.9=10.8 max=115.2 ms
+   elapsed 200s ticks=379993 broken=0
+   buffered: 0 0 after 10 s
+   batches starting at or below an earlier batch's last, per stream: 
+export: delivered=959890 parts skipped by index=0 cursor positions=10000 cursor bytes=736175 10.5s
+compact: groups=7500 skipped=0 failed=0 batches merged=37583 bytes=99172973 wall=11.22s par=8 groups/s=668.4 group ms p50=10.7 p99=30.7 max=71.2 cpu=9.16s
+export: delivered=959890 parts skipped by index=14334 cursor positions=10000 cursor bytes=738340 14.9s
+exportcheck: delivered lines=1919780 distinct=1919780 stored records=1919780 duplicates=0 not delivered=0 delivered but not stored=0
+gaps: positions=10000 records present=1919850, gaps a consumer sees=0 missing inside them=0 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=0 records in those tails=0; positions with nothing stored=0 records=0
+verify: rows=7500 objects=7500 batches=37583 records=1919780 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=7500 (compaction 7500) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 3.9s

@@ -1,0 +1,7 @@
+response keys: ["app","created_at","expires_at","fingerprint","hashed_token","id","installation","note","note_url","scopes","token","token_last_eight","updated_at","url","user"]
+response without token: {"expires_at":"2026-11-07T01:44:30.000Z","user":"lennylabsdev","installation":{"repository_selection":"selected","permissions":{"contents":"read","metadata":"read"},"repos":[]},"app":null,"hashed":true,"token_last_eight":null}
+write a ref on test-repo (contents:read child, expect refused): 403	{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com/rest/git/refs#create-a-reference","status":"403"}
+contents:write child on test-repo, write ref on test-repo (expect allowed): 201	{"ref":"refs/heads/spike/scope-ok","node_id":"REF_kwDOVlY8hblyZWZzL2hlYWRzL3NwaWtlL3Njb3BlLW9r",
+same child, write ref on test-repo-2 (expect refused): 403	{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com/rest/git/refs#create-a-reference","status":"403"}
+parent (not a child), write ref on test-repo-2 (control, expect allowed): 201	{"ref":"refs/heads/spike/scope-parent","node_id":"REF_kwDOVlc7K71yZWZzL2hlYWRzL3NwaWtlL3Njb3BlLX
+cleanup: 204 204

@@ -1,0 +1,72 @@
+// faultfe: TLS front for a real git host, with injected faults, standing inside the tunnel.
+//  :443 front; :9100 /set?mode=pass|status:NNN|hang|reset|v0only|fail-v2:NNN and /count.
+//  :8443 presents a certificate for another name, for a TLS verification failure.
+package main
+
+import (
+	"crypto/tls"
+	"fmt"
+	"log"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+)
+
+func main() {
+	up, _ := url.Parse(os.Args[1])
+	var mu sync.Mutex
+	mode := "pass"
+	var cnt atomic.Int64
+	rp := httputil.NewSingleHostReverseProxy(up)
+	d := rp.Director
+	rp.Director = func(r *http.Request) { h := r.Host; d(r); r.Host = h }
+	rp.Transport = &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, DisableKeepAlives: true}
+	rp.FlushInterval = -1
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cnt.Add(1)
+		mu.Lock()
+		m := mode
+		mu.Unlock()
+		switch {
+		case m == "pass":
+		case strings.HasPrefix(m, "status:"):
+			c, _ := strconv.Atoi(m[7:])
+			http.Error(w, "injected", c)
+			return
+		case m == "hang":
+			<-r.Context().Done()
+			return
+		case m == "reset":
+			c, _, _ := w.(http.Hijacker).Hijack()
+			c.Close()
+			return
+		case m == "v0only":
+			r.Header.Del("Git-Protocol")
+		case strings.HasPrefix(m, "fail-v2:"):
+			if r.Method == "POST" && strings.Contains(r.Header.Get("Git-Protocol"), "version=2") {
+				c, _ := strconv.Atoi(m[8:])
+				http.Error(w, "v2 refused", c)
+				return
+			}
+		}
+		rp.ServeHTTP(w, r)
+	})
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/set", func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			mode = r.URL.Query().Get("mode")
+			mu.Unlock()
+			fmt.Fprintln(w, "mode", r.URL.Query().Get("mode"))
+		})
+		m.HandleFunc("/count", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, cnt.Load()) })
+		log.Fatal(http.ListenAndServe(":9100", m))
+	}()
+	go func() { log.Fatal(http.ListenAndServeTLS(":8443", os.Args[4], os.Args[5], h)) }()
+	log.Fatal(http.ListenAndServeTLS(":443", os.Args[2], os.Args[3], h))
+}

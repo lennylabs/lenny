@@ -1,0 +1,28 @@
+== iso-a
+/var/run/secrets/lenny-egress/:
+total 4
+drwxrwxrwt    3 0        0              100 Nov  2 04:56 .
+drwxr-xr-x    3 0        0             4096 Nov  2 04:48 ..
+drwxr-xr-x    2 0        0               60 Nov  2 04:56 ..2026_11_02_04_56_18.1751063240
+lrwxrwxrwx    1 0        0               32 Nov  2 04:56 ..data -> ..2026_11_02_04_56_18.1751063240
+lrwxrwxrwx    1 0        0               12 Nov  2 04:48 token -> ..data/token
+
+/var/run/secrets/lenny-egress/..data/:
+total 4
+drwxr-xr-x    2 0        0               60 Nov  2 04:56 .
+drwxrwxrwt    3 0        0              100 Nov  2 04:56 ..
+-rw-r--r--    1 0        0             1090 Nov  2 04:56 token
+== iso-d
+/var/run/secrets/lenny-egress/:
+total 4
+drwxrwsrwt    3 0        65530          100 Nov  2 04:55 .
+drwxr-xr-x    3 0        0             4096 Nov  2 04:47 ..
+drwxr-sr-x    2 0        65530           60 Nov  2 04:55 ..2026_11_02_04_55_48.2500020700
+lrwxrwxrwx    1 0        65530           32 Nov  2 04:55 ..data -> ..2026_11_02_04_55_48.2500020700
+lrwxrwxrwx    1 0        65530           12 Nov  2 04:47 token -> ..data/token
+
+/var/run/secrets/lenny-egress/..data/:
+total 4
+drwxr-sr-x    2 0        65530           60 Nov  2 04:55 .
+drwxrwsrwt    3 0        65530          100 Nov  2 04:55 ..
+-rw-r-----    1 0        65530         1090 Nov  2 04:55 token

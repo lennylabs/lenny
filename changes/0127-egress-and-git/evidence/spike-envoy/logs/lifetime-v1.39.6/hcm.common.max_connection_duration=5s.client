@@ -1,0 +1,2 @@
+CONNECT status: 200 OK
+tunnel ended after 20.01s: read tcp 198.18.0.3:44030->198.18.0.10:3128: i/o timeout (last="")

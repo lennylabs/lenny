@@ -1,0 +1,25 @@
+flagcleared-clone-none                   rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-clone-helper                 rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-clone-url                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-clone-header                 rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-clone-other                  rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-none                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-helper                  rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-url                     rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-header                  rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-other                   rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-gh-helper               rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-main                    rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-main-other              rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-mixed                   rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-delete                  rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-option                  rc=0   identity=held-no-value          origin=ghes.example.test=-:401 refused=
+flagcleared-push-outside                 rc=0   identity=                       origin= refused=repository acme/secret is outside the session's writable set
+flagcleared-push-readonly                rc=0   identity=                       origin= refused=repository acme/lib is outside the session's writable set
+flagcleared-read-outside                 rc=0   identity=                       origin= refused=repository acme/secret is outside the session's readable set
+flagcleared-reflect                      rc=0   identity=held-no-value          origin=ghes.example.test=-:200 refused=
+flagcleared-redirect-in-scope            rc=0   identity=held-no-value          origin=ghes.example.test=-:301 ghes.example.test=-:401 refused=
+flagcleared-redirect-out-of-scope        rc=0   identity=held-no-value          origin=ghes.example.test=-:302 refused=redirect to https://other.example.test/pub/lib.git/info/refs?service=git-upload-
+flagcleared-github-push                  rc=0   identity=held-no-value          origin=github.com=-:401 refused=
+flagcleared-github-push-main             rc=0   identity=held-no-value          origin=github.com=-:401 refused=
+flagcleared-lfs-store-host               rc=2   identity=held-no-value          origin=ghes.example.test=-:401 refused=

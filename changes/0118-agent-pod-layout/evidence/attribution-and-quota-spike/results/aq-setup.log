@@ -1,0 +1,172 @@
+++ date +%s
++ t0=1794640289
++ dnf install -y -q xfsprogs git tar jq python3 zstd bzip2 sysstat iotop e2fsprogs
+++ findmnt -no SOURCE /
+++ sed 's/p[0-9]*$//'
++ ROOTDEV=/dev/nvme0n1
+++ lsblk -dpno NAME,TYPE
+++ awk '$2=="disk"{print $1}'
+++ grep -v '^/dev/nvme0n1$'
+++ head -1
++ DEV=/dev/nvme1n1
++ mkfs.xfs -f -m reflink=1 /dev/nvme1n1
+meta-data=/dev/nvme1n1           isize=512    agcount=8, agsize=1966080 blks
+         =                       sectsz=4096  attr=2, projid32bit=1
+         =                       crc=1        finobt=1, sparse=1, rmapbt=0
+         =                       reflink=1    bigtime=1 inobtcount=1 nrext64=0
+         =                       exchange=0  
+data     =                       bsize=4096   blocks=15728640, imaxpct=25
+         =                       sunit=0      swidth=0 blks
+naming   =version 2              bsize=4096   ascii-ci=0, ftype=1, parent=0
+log      =internal log           bsize=4096   blocks=16384, version=2
+         =                       sectsz=4096  sunit=1 blks, lazy-count=1
+realtime =none                   extsz=4096   blocks=0, rtextents=0
++ mkdir -p /data
++ mount -o noatime,prjquota /dev/nvme1n1 /data
++ findmnt -no OPTIONS /data
+rw,noatime,seclabel,attr2,inode64,logbufs=8,logbsize=32k,prjquota
++ for d in kubelet containerd rancher
++ mkdir -p /data/kubelet /var/lib/kubelet
++ mount --bind /data/kubelet /var/lib/kubelet
++ for d in kubelet containerd rancher
++ mkdir -p /data/containerd /var/lib/containerd
++ mount --bind /data/containerd /var/lib/containerd
++ for d in kubelet containerd rancher
++ mkdir -p /data/rancher /var/lib/rancher
++ mount --bind /data/rancher /var/lib/rancher
++ mkdir -p /data/ws /data/results /data/bin
++ xfs_info /data
++ grep -o 'reflink=[01]'
+reflink=1
++ curl -sSfL https://github.com/containerd/containerd/releases/download/v2.4.2/containerd-2.4.2-linux-amd64.tar.gz
++ tar xz -C /usr/local
++ curl -sSfL -o /usr/local/sbin/runc https://github.com/opencontainers/runc/releases/download/v1.5.3/runc.amd64
++ chmod 755 /usr/local/sbin/runc
++ curl -sSfL -o /etc/systemd/system/containerd.service https://raw.githubusercontent.com/containerd/containerd/v2.4.2/containerd.service
++ mkdir -p /etc/systemd/system/containerd.service.d
++ printf '[Service]\nLimitNOFILE=65535\n'
++ cd /root
++ curl -sSfLO https://github.com/google/gvisor/releases/download/release-20261109.0/gvisor-x86_64.tar.bz2
++ curl -sSfLO https://github.com/google/gvisor/releases/download/release-20261109.0/SHA512SUMS
++ grep gvisor-x86_64.tar.bz2 SHA512SUMS
++ sha512sum -c -
+gvisor-x86_64.tar.bz2: OK
++ mkdir -p gv
++ tar xjf gvisor-x86_64.tar.bz2 -C gv
++ cp gv/runsc gv/containerd-shim-runsc-v1 /usr/local/bin/
++ cp -r gv/gvisor-bin /usr/local/bin/
++ ls -la /usr/local/bin/gvisor-bin
+total 140876
+drwxr-xr-x. 2 root root      182 Nov 14 07:12 .
+drwxr-xr-x. 3 root root      154 Nov 14 07:12 ..
+-rwxr-xr-x. 1 root root 48803265 Nov 14 07:12 checkpointgofer
+-rwxr-xr-x. 1 root root     1280 Nov 14 07:12 gvisor-proc-umounter
+-rwxr-xr-x. 1 root root     1752 Nov 14 07:12 gvisor-sentry-prewarmer
+-rwxr-xr-x. 1 root root 55214627 Nov 14 07:12 gvisor_sentry
+-rwxr-xr-x. 1 root root     1320 Nov 14 07:12 runsc-fd-parking
+-rwxr-xr-x. 1 root root 21618726 Nov 14 07:12 runsc-metric-server
+-rwxr-xr-x. 1 root root 18597548 Nov 14 07:12 runsc-netgofer
++ runsc --version
+runsc version release-20261109.0
+spec: 1.2.1
++ mkdir -p /etc/containerd
++ printf '[runsc_config]\n'
++ printf '[runsc_config]\n  network = "host"\n'
++ curl -sSfL -o /root/kata.tar.zst https://github.com/kata-containers/kata-containers/releases/download/4.3.1/kata-static-4.3.1-amd64.tar.zst
++ tar --zstd -xf /root/kata.tar.zst -C /
++ rm -f /root/kata.tar.zst
++ ln -sf /opt/kata/bin/containerd-shim-kata-v2 /usr/local/bin/containerd-shim-kata-v2
++ ls /opt/kata/share/defaults/kata-containers/ /opt/kata/bin
+/opt/kata/bin:
+cloud-hypervisor
+openvmm
+qemu-system-x86_64
+qemu-system-x86_64-no-shared-fs
+qemu-system-x86_64-snp-experimental
+qemu-system-x86_64-tdx-experimental
+
+/opt/kata/share/defaults/kata-containers/:
+configuration.toml
+runtime-rs
++ KC=/opt/kata/share/defaults/kata-containers
++ cat
++ systemctl daemon-reload
++ systemctl enable --now containerd
+Created symlink /etc/systemd/system/multi-user.target.wants/containerd.service → /etc/systemd/system/containerd.service.
++ sleep 2
++ systemctl is-active containerd
+active
++ containerd --version
+containerd github.com/containerd/containerd/v2 v2.4.2 b7a25261e029d68978bbf290df0a62fc819b3c51
++ runc --version
++ head -1
+runc version 1.5.3
++ curl -sSfL -o /usr/local/bin/k3s https://github.com/k3s-io/k3s/releases/download/v1.37.2%2Bk3s1/k3s
++ chmod 755 /usr/local/bin/k3s
++ cat
++ systemctl daemon-reload
++ systemctl enable --now k3s
+Created symlink /etc/systemd/system/multi-user.target.wants/k3s.service → /etc/systemd/system/k3s.service.
+++ seq 1 60
++ for i in $(seq 1 60)
++ '[' -e /var/lib/rancher/k3s/data/current/bin/cni ']'
++ sleep 5
++ for i in $(seq 1 60)
++ '[' -e /var/lib/rancher/k3s/data/current/bin/cni ']'
++ break
++ ln -sfn /var/lib/rancher/k3s/data/current/bin /var/lib/rancher/k3s/data/cni
++ ln -sf /usr/local/bin/k3s /usr/local/bin/kubectl
+++ seq 1 60
++ for i in $(seq 1 60)
++ kubectl get nodes
++ grep -q ' Ready'
++ sleep 5
++ for i in $(seq 1 60)
++ grep -q ' Ready'
++ kubectl get nodes
++ break
++ kubectl get nodes -o wide
+NAME                                         STATUS   ROLES           AGE   VERSION        INTERNAL-IP    EXTERNAL-IP   OS-IMAGE                        KERNEL-VERSION                             CONTAINER-RUNTIME
+ip-172-31-43-83.us-west-2.compute.internal   Ready    control-plane   5s    v1.37.2+k3s1   172.31.43.83   <none>        Amazon Linux 2023.12.20261112   6.12.115-140.210.amzn2023.x86_64 (amd64)   containerd://2.4.2
++ aws s3 ls s3://lenny-spike-aq-780138804904-1794640217/bin/ready
++ aws s3 cp s3://lenny-spike-aq-780138804904-1794640217/bin/aq-img-amd64.tar /root/aq-img.tar
+Completed 26.8 MiB/26.8 MiB (107.1 MiB/s) with 1 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/bin/aq-img-amd64.tar to ./aq-img.tar
++ ctr -n k8s.io images import /root/aq-img.tar
+docker.io/library/aqspike:1             	saved	
+application/vnd.oci.image.index.v1+json sha256:34ea4b2e4c4394e9b9678930502928815b7feeb2ac96b37a0a8f2e4eced17ade
+Importing	elapsed: 0.7 s	total:   0.0 B	(0.0 B/s)	
++ rm -f /root/aq-img.tar
++ ctr -n k8s.io images ls -q
++ grep aqspike
+docker.io/library/aqspike:1
++ aws s3 cp s3://lenny-spike-aq-780138804904-1794640217/bin/aq-amd64 /usr/local/bin/aq
+Completed 4.0 MiB/4.0 MiB (18.0 MiB/s) with 1 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/bin/aq-amd64 to ../usr/local/bin/aq
++ chmod 755 /usr/local/bin/aq
++ aws s3 sync s3://lenny-spike-aq-780138804904-1794640217/scripts /data/scripts
+Completed 1.2 KiB/12.4 KiB (47.5 KiB/s) with 5 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/scripts/kata-config.sh to ../data/scripts/kata-config.sh
+Completed 1.2 KiB/12.4 KiB (47.5 KiB/s) with 4 file(s) remainingCompleted 1.7 KiB/12.4 KiB (67.0 KiB/s) with 4 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/scripts/ns.yaml to ../data/scripts/ns.yaml
+Completed 1.7 KiB/12.4 KiB (67.0 KiB/s) with 3 file(s) remainingCompleted 6.0 KiB/12.4 KiB (209.0 KiB/s) with 3 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/scripts/t1.sh to ../data/scripts/t1.sh
+Completed 6.0 KiB/12.4 KiB (209.0 KiB/s) with 2 file(s) remainingCompleted 6.4 KiB/12.4 KiB (210.1 KiB/s) with 2 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/scripts/boot.sh to ../data/scripts/boot.sh
+Completed 6.4 KiB/12.4 KiB (210.1 KiB/s) with 1 file(s) remainingCompleted 12.4 KiB/12.4 KiB (401.2 KiB/s) with 1 file(s) remainingdownload: s3://lenny-spike-aq-780138804904-1794640217/scripts/node-setup.sh to ../data/scripts/node-setup.sh
++ chmod +x /data/scripts/boot.sh /data/scripts/kata-config.sh /data/scripts/node-setup.sh /data/scripts/t1.sh
++ kubectl apply -f /data/scripts/ns.yaml
+namespace/aq created
+namespace/aqpriv created
+runtimeclass.node.k8s.io/gvisor created
+runtimeclass.node.k8s.io/gvisor-host created
+runtimeclass.node.k8s.io/kata created
+runtimeclass.node.k8s.io/kata-block created
+++ date +%s
++ echo 'setup done in 56s'
+setup done in 56s
++ touch /var/tmp/aq-setup-done
+20-  runtime_path = '/opt/kata/runtime-rs/bin/containerd-shim-kata-v2'
+24-  ConfigPath = '/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml'
+27-  runtime_path = '/opt/kata/runtime-rs/bin/containerd-shim-kata-v2'
+31-  ConfigPath = '/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-block-runtime-rs.toml'
+/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml:57:kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1 sysctl.fs.inotify.max_user_watches=1048576"
+/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-runtime-rs.toml:800:emptydir_mode = "shared-fs"
+/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-block-runtime-rs.toml:57:kernel_params = "cgroup_no_v1=all systemd.unified_cgroup_hierarchy=1 sysctl.fs.inotify.max_user_watches=1048576"
+/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-qemu-block-runtime-rs.toml:800:emptydir_mode = "block-plain"
+active
+boot done 2026-11-14T07:12:29Z

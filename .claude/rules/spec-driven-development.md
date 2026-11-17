@@ -10,7 +10,7 @@ All new code aligns to the spec. Every behavior in `pkg/`, `cmd/`, `sdks/`, `mig
 
 - Implement what the spec says. When code and spec disagree, the spec is right and the code is the defect, unless the spec itself is wrong (see below).
 - Cite the spec on spec-derived logic with `// spec: §X.Y` (see `code-best-practices.md`). A reviewer traces any behavior to its section through that citation.
-- Do not edit `spec/` ad hoc to match code you want to write. The guard hook blocks direct spec writes; spec changes go through the pipeline below.
+- Do not edit `spec/` ad hoc to match code you want to write. Spec changes go through the pipeline below.
 
 ## When the spec is silent, wrong, or contradictory
 

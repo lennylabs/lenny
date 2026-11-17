@@ -1,0 +1,19 @@
+168:### `approve`
+593:### `close`
+768:### `draft`
+1134:### `merge`
+1383:### `ready`
+1478:### `rebase`
+2092:### `submit_review`
+2172:### `target_branch`
+2298:### `unapprove`
+Quick actions:
+
+- Execute common actions without using the user interface.
+- Support working with issues, merge requests, epics, and commits.
+- Run automatically when you save descriptions or comments.
+- Respond to specific contexts and conditions.
+- Process multiple commands when entered on separate lines.
+The following quick actions are applicable to descriptions, discussions, and
+threads. Some quick actions might not be available to all subscription tiers.
+

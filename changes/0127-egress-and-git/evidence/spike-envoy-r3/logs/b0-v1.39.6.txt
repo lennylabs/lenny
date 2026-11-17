@@ -1,0 +1,26 @@
+## allow (good) https through tunnel
+hello from target, you are [2001:db8:1::10]:41116
+=> http=200 connect=200 time=0.015698s size=50
+## deny (bad)
+=> http=000 connect=403 time=0.001728s size=0
+## no credential
+## blocked host
+=> http=000 connect=403 time=0.000923s size=0
+## chain-a (http_11_proxy transport socket via proxy A)
+=> http=000 connect=200 time=0.106699s size=0
+## chain-b (forwarded CONNECT to proxy B, credential injected)
+hello from target, you are [2001:db8:1::4]:34526
+=> http=200 connect=200 time=0.006794s size=49
+## chain-o (ORIGINAL_DST from header)
+=> http=000 connect=503 time=0.001503s size=0
+## chain-m (ORIGINAL_DST from ext_authz dynamic metadata)
+hello from target, you are [2001:db8:1::4]:34530
+=> http=200 connect=200 time=0.004550s size=49
+## proxy B log (last 6)
+## fail-closed: authz stopped
+=> http=000 connect=503 time=1.006152s size=0
+## after authz restart
+hello from target, you are [2001:db8:1::10]:41124
+=> http=200 connect=200 time=0.012654s size=50
+## access log
+target.spike:443 200 - via_upstream up=[2001:db8:1::20]:443 dfp

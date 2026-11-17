@@ -1,0 +1,10 @@
+chromium https://allowed.oa.test/ OK rc=0 
+chromium https://denied.oa.test/ REFUSED rc=0 net::ERR_CERT_INVALID ssl_client_socket_impl.cc:916] handshake failed; returned -1, SSL error code 1, net_error -207 
+chromium https://sub.allowed.oa.test/ OK rc=0 
+chromium https://viaint.oa.test/ REFUSED rc=0 net::ERR_CERT_INVALID ssl_client_socket_impl.cc:916] handshake failed; returned -1, SSL error code 1, net_error -207 
+chromium https://198.19.50.20/ OK rc=0 
+chromium https://ctl.oa.test/ OK rc=0 
+chromium https://unk.oa.test/ REFUSED rc=0 net::ERR_CERT_AUTHORITY_INVALID ssl_client_socket_impl.cc:916] handshake failed; returned -1, SSL error code 1, net_error -202 
+chromium https://xallowed.oa.test/ OK rc=0 
+chromium https://xdenied.oa.test/ REFUSED rc=0 net::ERR_CERT_INVALID ssl_client_socket_impl.cc:916] handshake failed; returned -1, SSL error code 1, net_error -207 
+chromium https://198.19.50.20:8443/ REFUSED rc=0 net::ERR_CERT_INVALID ssl_client_socket_impl.cc:916] handshake failed; returned -1, SSL error code 1, net_error -207 

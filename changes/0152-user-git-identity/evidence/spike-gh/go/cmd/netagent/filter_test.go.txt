@@ -1,0 +1,49 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"os"
+	"testing"
+)
+
+func loadPolicy(b *testing.B, f, name string) *policy {
+	raw, err := os.ReadFile(f)
+	if err != nil {
+		b.Fatal(err)
+	}
+	var m map[string]*policy
+	if err := json.Unmarshal(raw, &m); err != nil {
+		b.Fatal(err)
+	}
+	p := m[name]
+	if err := p.compile(); err != nil {
+		b.Fatal(err)
+	}
+	return p
+}
+
+func BenchmarkCheck(b *testing.B) {
+	for _, pol := range []string{"strict", "canon"} {
+		p := loadPolicy(b, "/o/policy-"+pol+".json", "ghes")
+		for _, n := range []string{"create", "status", "largest", "body65k", "bound258k", "comment256k", "tokens256k"} {
+			body, err := os.ReadFile("/o/run/trust/body-" + n + ".json")
+			if err != nil {
+				b.Fatal(err)
+			}
+			b.Run(pol+"/"+n, func(b *testing.B) {
+				b.ReportAllocs()
+				b.SetBytes(int64(len(body)))
+				for i := 0; i < b.N; i++ {
+					r, _ := http.NewRequest("POST", "https://ghes.example.test/api/graphql", bytes.NewReader(body))
+					r.RequestURI = "/api/graphql"
+					r.Header.Set("Content-Type", "application/json")
+					if _, de := p.check(r); de != nil {
+						b.Fatal(de.reason)
+					}
+				}
+			})
+		}
+	}
+}

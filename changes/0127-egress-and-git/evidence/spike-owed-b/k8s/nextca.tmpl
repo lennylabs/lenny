@@ -1,0 +1,11 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata: {name: CANAME, namespace: lenny-system}
+spec:
+  isCA: true
+  commonName: CANAME
+  secretName: CANAME
+  duration: 87600h
+  renewBefore: 2160h
+  privateKey: {algorithm: ECDSA, size: 256, rotationPolicy: Never}
+  issuerRef: {name: lenny-egress-selfsign, kind: Issuer}

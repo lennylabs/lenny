@@ -1,0 +1,217 @@
+# Stand-ins for the design's egress NetworkPolicy test.
+# Namespaces: lenny-system (egress proxy, gateway), lenny-dns (proxied resolver),
+# lenny-agents (client, carries the policies), other (a pod the client must not reach).
+# Node placement: proxy and resolver on the control-plane node (cross-node from the client),
+# gateway, other-echo, hostnet-echo and the client on the worker node (same node).
+apiVersion: v1
+kind: Namespace
+metadata: {name: lenny-system}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: lenny-dns}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: lenny-agents}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: other}
+---
+# ---------- egress proxy (control-plane node) ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: lenny-egress, namespace: lenny-system}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: lenny-egress}}
+  template:
+    metadata: {labels: {app: lenny-egress}}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: proxy
+        image: spike-cni-net:v1
+        imagePullPolicy: Never
+        args: ["proxy"]
+        ports: [{containerPort: 3128}]
+        securityContext: {runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lenny-egress, namespace: lenny-system}
+spec:
+  clusterIP: 10.96.31.28
+  selector: {app: lenny-egress}
+  ports: [{port: 3128, targetPort: 3128}]
+---
+# ---------- gateway stand-in (worker node, same node as the client) ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: lenny-gateway, namespace: lenny-system}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: lenny-gateway}}
+  template:
+    metadata: {labels: {app: lenny-gateway}}
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector: {kubernetes.io/hostname: spike-cni-worker}
+      containers:
+      - name: echo
+        image: spike-cni-net:v1
+        imagePullPolicy: Never
+        args: ["echo", ":8443"]
+        env: [{name: NAME, value: gateway}]
+        ports: [{containerPort: 8443}]
+        securityContext: {runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lenny-gateway, namespace: lenny-system}
+spec:
+  clusterIP: 10.96.84.43
+  selector: {app: lenny-gateway}
+  ports: [{port: 8443, targetPort: 8443}]
+---
+# ---------- proxied resolver (control-plane node) ----------
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: lenny-dns-proxied, namespace: lenny-dns}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: spike-lenny-dns-proxied}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:coredns}
+subjects: [{kind: ServiceAccount, name: lenny-dns-proxied, namespace: lenny-dns}]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: lenny-dns-proxied, namespace: lenny-dns}
+data:
+  Corefile: |
+    cluster.local:53 in-addr.arpa:53 ip6.arpa:53 {
+        errors
+        log
+        kubernetes cluster.local in-addr.arpa ip6.arpa {
+            pods insecure
+            ttl 30
+        }
+        cache 30
+    }
+    .:53 {
+        errors
+        log
+        health :8080
+        ready :8181
+        template ANY ANY {
+            rcode NXDOMAIN
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: lenny-dns-proxied, namespace: lenny-dns}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: lenny-dns-proxied}}
+  template:
+    metadata: {labels: {app: lenny-dns-proxied}}
+    spec:
+      serviceAccountName: lenny-dns-proxied
+      nodeSelector: {node-role.kubernetes.io/control-plane: ""}
+      tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+      containers:
+      - name: coredns
+        image: registry.k8s.io/coredns/coredns:v1.13.1
+        args: ["-conf", "/etc/coredns/Corefile"]
+        ports: [{containerPort: 53, protocol: UDP, name: dns}, {containerPort: 53, protocol: TCP, name: dns-tcp}]
+        readinessProbe: {httpGet: {path: /ready, port: 8181}}
+        securityContext: {allowPrivilegeEscalation: false, capabilities: {add: [NET_BIND_SERVICE], drop: [ALL]}, readOnlyRootFilesystem: true}
+        volumeMounts: [{name: cfg, mountPath: /etc/coredns, readOnly: true}]
+      volumes: [{name: cfg, configMap: {name: lenny-dns-proxied}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: lenny-dns-proxied, namespace: lenny-dns}
+spec:
+  clusterIP: 10.96.53.53
+  selector: {app: lenny-dns-proxied}
+  ports: [{name: dns, port: 53, protocol: UDP}, {name: dns-tcp, port: 53, protocol: TCP}]
+---
+# ---------- a pod in another namespace, on the worker node (must be denied) ----------
+apiVersion: v1
+kind: Pod
+metadata: {name: other-echo, namespace: other, labels: {app: other-echo}}
+spec:
+  automountServiceAccountToken: false
+  nodeSelector: {kubernetes.io/hostname: spike-cni-worker}
+  containers:
+  - name: echo
+    image: spike-cni-net:v1
+    imagePullPolicy: Never
+    args: ["echo", ":8080"]
+    env: [{name: NAME, value: other-echo}]
+    securityContext: {runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: other-echo, namespace: other}
+spec:
+  clusterIP: 10.96.99.99
+  selector: {app: other-echo}
+  ports: [{port: 8080, targetPort: 8080}]
+---
+# ---------- hostNetwork pods on both nodes (must be denied) ----------
+apiVersion: v1
+kind: Pod
+metadata: {name: hostnet-echo-worker, namespace: other}
+spec:
+  hostNetwork: true
+  automountServiceAccountToken: false
+  nodeSelector: {kubernetes.io/hostname: spike-cni-worker}
+  containers:
+  - name: echo
+    image: spike-cni-net:v1
+    imagePullPolicy: Never
+    args: ["echo", ":9000"]
+    env: [{name: NAME, value: hostnet-worker}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: hostnet-echo-cp, namespace: other}
+spec:
+  hostNetwork: true
+  automountServiceAccountToken: false
+  nodeSelector: {node-role.kubernetes.io/control-plane: ""}
+  tolerations: [{key: node-role.kubernetes.io/control-plane, operator: Exists, effect: NoSchedule}]
+  containers:
+  - name: echo
+    image: spike-cni-net:v1
+    imagePullPolicy: Never
+    args: ["echo", ":9000"]
+    env: [{name: NAME, value: hostnet-cp}]
+---
+# ---------- the client, on the worker node, labelled for the proxied profile ----------
+apiVersion: v1
+kind: Pod
+metadata:
+  name: client
+  namespace: lenny-agents
+  labels: {lenny.dev/egress-profile: proxied}
+spec:
+  automountServiceAccountToken: false
+  nodeSelector: {kubernetes.io/hostname: spike-cni-worker}
+  dnsPolicy: None
+  dnsConfig:
+    nameservers: [10.96.53.53]
+    searches: [lenny-agents.svc.cluster.local, svc.cluster.local, cluster.local]
+    options: [{name: ndots, value: "5"}]
+  containers:
+  - name: client
+    image: spike-cni-client:v1
+    imagePullPolicy: Never
+    securityContext: {runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}

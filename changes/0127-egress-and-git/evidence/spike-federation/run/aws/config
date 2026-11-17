@@ -1,0 +1,5 @@
+[default]
+region = us-east-1
+role_arn = arn:aws:iam::111122223333:role/tenant-a-role
+web_identity_token_file = /var/run/netagent/aws/token
+role_session_name = netagent-tenant-a

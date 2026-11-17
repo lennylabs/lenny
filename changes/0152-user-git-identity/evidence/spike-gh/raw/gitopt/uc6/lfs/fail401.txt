@@ -1,0 +1,10 @@
+== stub answers 401 on the terminated transfer, reset on a new batch, as written
+f401-clone-asw-clone           rc=124  30.0s netagent={'lfs-download:allowed': 8, 'lfs-action-credential:held': 8, 'lfs-transfer-get:allowed': 32, 'lfs-transfer-get:refused': 8} stub={'gitlab.ex GET 401': 24}
+### f401-clone-asw-clone rc=124
+f401-push-asw-push             rc=124  30.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 8, 'lfs-action-credential:held': 8, 'lfs-transfer-put:allowed': 32, 'lfs-transfer-put:refused': 8} stub={'git
+### f401-push-asw-push rc=124
+== the same, a variant where a new batch does not reset
+f401-clone-keep-clone          rc=124  30.0s netagent={'lfs-download:allowed': 8, 'lfs-action-credential:held': 8, 'lfs-transfer-get:allowed': 11, 'lfs-transfer-get:refused': 8} stub={'gitlab.ex GET 401': 3}
+### f401-clone-keep-clone rc=124
+f401-push-keep-push            rc=124  30.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 8, 'lfs-action-credential:held': 8, 'lfs-transfer-put:allowed': 11, 'lfs-transfer-put:refused': 8} stub={'git
+### f401-push-keep-push rc=124

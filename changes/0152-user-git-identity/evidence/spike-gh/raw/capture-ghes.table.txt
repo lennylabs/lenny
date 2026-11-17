@@ -1,0 +1,273 @@
+### pr-create-basic (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL mutation PullRequestCreate: createPullRequest
+### pr-create-draft (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL mutation PullRequestCreate: createPullRequest
+### pr-create-reviewer (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL query UserCurrent: viewer
+  GQL query RepositoryAssignableUsers: repository
+  GQL query OrganizationTeamList: organization
+  GQL mutation PullRequestCreate: createPullRequest
+  GQL mutation PullRequestCreateRequestReviews: requestReviews
+### pr-create-label (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL query RepositoryLabelList: repository
+  GQL mutation PullRequestCreate: createPullRequest
+  GQL mutation PullRequestCreateMetadata: updatePullRequest
+### pr-create-assignee (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL query RepositoryAssignableUsers: repository
+  GQL mutation PullRequestCreate: createPullRequest
+  GQL mutation PullRequestCreateMetadata: updatePullRequest
+### pr-create-milestone (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL query RepositoryMilestoneList: repository
+  GQL mutation PullRequestCreate: createPullRequest
+  GQL mutation PullRequestCreateMetadata: updatePullRequest
+### pr-create-project (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL query UserProjectV2List: viewer
+  GQL query RepositoryProjectV2List: repository
+  GQL query OrganizationProjectV2List: organization
+  GQL mutation PullRequestCreate: createPullRequest
+  GQL mutation UpdateProjectV2Items: addProjectV2ItemById
+### pr-create-all (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL query UserCurrent: viewer
+  GQL query RepositoryLabelList: repository
+  GQL query RepositoryProjectV2List: repository
+  GQL query OrganizationProjectV2List: organization
+  GQL query OrganizationTeamList: organization
+  GQL query RepositoryMilestoneList: repository
+  GQL query RepositoryAssignableUsers: repository
+  GQL query UserProjectV2List: viewer
+  GQL mutation PullRequestCreate: createPullRequest
+  GQL mutation PullRequestCreateMetadata: updatePullRequest
+  GQL mutation PullRequestCreateRequestReviews: requestReviews
+  GQL mutation UpdateProjectV2Items: addProjectV2ItemById
+### pr-create-fork-head (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL mutation PullRequestCreate: createPullRequest
+### pr-create-nohead (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query PullRequestForBranch: repository
+  GQL mutation PullRequestCreate: createPullRequest
+### pr-view (rc=0)
+  GET /api/v3/meta [200]
+  GQL query PullRequestByNumber: repository
+  GQL query PullRequestProjectItems: repository
+### pr-view-cur (rc=0)
+  GET /api/v3/meta [200]
+  GQL query PullRequestForBranch: repository
+  GQL query PullRequestProjectItems: repository
+### pr-view-json-all (rc=0)
+  GET /api/v3/meta [200]
+  GQL query PullRequestByNumber: repository
+  GQL query PullRequestProjectItems: repository
+### pr-list (rc=0)
+  GQL query PullRequestList: repository
+### pr-list-filtered (rc=0)
+  GET /api/v3/meta [200]
+  GQL query SearchType_enumValues: __type
+  GQL query PullRequestSearch: search
+### pr-status (rc=0)
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequest_fields: __type
+  GQL query UserCurrent: viewer
+  GQL query PullRequestStatus: repository,search
+### pr-checks (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequest_fields: __type
+  GQL query PullRequestStatusChecks: node
+### pr-diff (rc=0)
+  GQL query PullRequestByNumber: repository
+  GET /api/v3/repos/acme/widgets/pulls/7 [200]
+### pr-comment (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL mutation CommentCreate: addComment
+### pr-edit-title (rc=0)
+  GQL query Issue_fields: __type
+  GET /api/v3/meta [200]
+  GQL query PullRequestByNumber: repository
+  GQL query PullRequestProjectItems: repository
+  GQL mutation PullRequestUpdate: updatePullRequest
+### pr-edit-meta (rc=0)
+  GQL query Issue_fields: __type
+  GET /api/v3/meta [200]
+  GQL query PullRequestByNumber: repository
+  GQL query PullRequestProjectItems: repository
+  GQL query RepositoryMilestoneList: repository
+  GQL query RepositoryAssignableUsers: repository
+  GQL query RepositoryLabelList: repository
+  GQL query OrganizationProjectV2List: organization
+  GQL query UserProjectV2List: viewer
+  GQL query RepositoryProjectV2List: repository
+  POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers [200]
+  GQL mutation PullRequestUpdate: updatePullRequest
+  GQL mutation LabelAdd: addLabelsToLabelable
+  GQL mutation UpdateProjectV2Items: addProjectV2ItemById
+### pr-ready (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestReadyForReview: markPullRequestReadyForReview
+### pr-close (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestClose: closePullRequest
+### pr-review-approve (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestReviewAdd: addPullRequestReview
+### pr-review-comment (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestReviewAdd: addPullRequestReview
+### pr-review-changes (rc=0)
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestReviewAdd: addPullRequestReview
+### pr-merge (rc=0)
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequest_fields: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestMerge: mergePullRequest
+### pr-merge-squash-del (rc=0)
+  GQL query PullRequest_fields: __type
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestMerge: mergePullRequest
+  GET /acme/widgets.git/info/refs?service=git-upload-pack [200]
+  DELETE /api/v3/repos/acme/widgets/git/refs/heads%2Ffeature [204]
+### pr-merge-rebase (rc=0)
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequest_fields: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestMerge: mergePullRequest
+### pr-merge-auto (rc=0)
+  GQL query PullRequest_fields: __type
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestMerge: mergePullRequest
+### pr-merge-admin (rc=0)
+  GQL query PullRequest_fields: __type
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestMerge: mergePullRequest
+### pr-merge-auto-blocked (rc=0)
+  GQL query PullRequest_fields: __type
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestAutoMerge: enablePullRequestAutoMerge
+### pr-merge-disable-auto (rc=0)
+  GQL query PullRequest_fields: __type
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestAutoMergeDisable: disablePullRequestAutoMerge
+### pr-merge-queue (rc=0)
+  GQL query PullRequest_fields: __type
+  GQL query PullRequest_fields2: __type
+  GQL query PullRequestByNumber: repository
+  GQL mutation PullRequestAutoMerge: enablePullRequestAutoMerge
+### repo-view (rc=0)
+  GQL query RepositoryInfo: repository
+  GET /api/v3/repos/acme/widgets/readme [200]
+### issue-view (rc=0)
+  GET /api/v3/meta [200]
+  GQL query Issue_fields: __type
+  GQL query IssueByNumber: repository
+  GQL query IssueProjectItems: repository
+### auth-status (rc=0)
+  GQL query UserCurrent: viewer
+  GET /api/v3/ [200]
+### api-rest-get (rc=0)
+  GET /api/v3/repos/acme/widgets [200]
+### api-rest-paginate (rc=0)
+  GET /api/v3/repos/acme/widgets/pulls?per_page=100 [200]
+### api-rest-post (rc=0)
+  POST /api/v3/repos/acme/widgets/pulls [201]
+### api-graphql (rc=0)
+  GQL query (anon): viewer
+### api-graphql-mut (rc=0)
+  GQL mutation (anon): addComment
+
+=== headers at the stub (count)
+  Accept: 176
+  Accept-Encoding: 176
+  Authorization: 176
+  User-Agent: 176
+  Content-Type: 175
+  X-Github-Api-Version: 175
+  Content-Length: 152
+  Graphql-Features: 148
+  X-Gh-Cache-Ttl: 51
+  Git-Protocol: 1
+  Pragma: 1
+=== Content-Encoding of requests: {'(none)': 176}
+=== protocols at the stub: {'HTTP/2.0': 176}
+=== largest GraphQL documents (doc bytes, body bytes, case, op)
+   (2302, 2388, 'pr-view-json-all', 'PullRequestByNumber')
+   (1856, 1979, 'pr-view-cur', 'PullRequestForBranch')
+   (1689, 1775, 'pr-view', 'PullRequestByNumber')
+   (1467, 1573, 'issue-view', 'IssueByNumber')
+   (1448, 1833, 'pr-status', 'PullRequestStatus')
+   (709, 942, 'pr-list', 'PullRequestList')
+   (557, 643, 'pr-edit-title', 'PullRequestByNumber')
+   (557, 643, 'pr-edit-meta', 'PullRequestByNumber')
+=== union of mutation fields
+  addComment ['api-graphql-mut', 'pr-comment']
+  addLabelsToLabelable ['pr-edit-meta']
+  addProjectV2ItemById ['pr-create-all', 'pr-create-project', 'pr-edit-meta']
+  addPullRequestReview ['pr-review-approve', 'pr-review-changes', 'pr-review-comment']
+  closePullRequest ['pr-close']
+  createPullRequest ['pr-create-all', 'pr-create-assignee', 'pr-create-basic', 'pr-create-draft', 'pr-create-fork-head', 'pr-create-label', 'pr-create-milestone', 'pr-create-nohead', 'pr-create-project', 'pr-create-reviewer']
+  disablePullRequestAutoMerge ['pr-merge-disable-auto']
+  enablePullRequestAutoMerge ['pr-merge-auto-blocked', 'pr-merge-queue']
+  markPullRequestReadyForReview ['pr-ready']
+  mergePullRequest ['pr-merge', 'pr-merge-admin', 'pr-merge-auto', 'pr-merge-rebase', 'pr-merge-squash-del']
+  requestReviews ['pr-create-all', 'pr-create-reviewer']
+  updatePullRequest ['pr-create-all', 'pr-create-assignee', 'pr-create-label', 'pr-create-milestone', 'pr-edit-meta', 'pr-edit-title']
+=== union of query fields
+  __type 24 cases
+  node 1 cases
+  organization 4 cases
+  repository 35 cases
+  search 2 cases
+  viewer 7 cases
+=== union of REST routes
+  DELETE /api/v3/repos/acme/widgets/git/refs/heads%2Ffeature ['pr-merge-squash-del']
+  GET /acme/widgets.git/info/refs?service=git-upload-pack ['pr-merge-squash-del']
+  GET /api/v3/ ['auth-status']
+  GET /api/v3/meta ['issue-view', 'pr-create-all', 'pr-create-assignee', 'pr-create-basic', 'pr-create-draft', 'pr-create-fork-head', 'pr-create-label', 'pr-create-milestone', 'pr-create-nohead', 'pr-create-project', 'pr-create-reviewer', 'pr-edit-meta', 'pr-edit-title', 'pr-list-filtered', 'pr-view', 'pr-view-cur', 'pr-view-json-all']
+  GET /api/v3/repos/acme/widgets ['api-rest-get']
+  GET /api/v3/repos/acme/widgets/pulls/7 ['pr-diff']
+  GET /api/v3/repos/acme/widgets/pulls?per_page=100 ['api-rest-paginate']
+  GET /api/v3/repos/acme/widgets/readme ['repo-view']
+  POST /api/v3/repos/acme/widgets/pulls ['api-rest-post']
+  POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers ['pr-edit-meta']

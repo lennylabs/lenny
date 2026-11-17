@@ -1,0 +1,13 @@
+package main
+
+import (
+	"context"
+	"net/http"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+)
+
+func oauth2Client(ctx context.Context, c *google.Credentials) *http.Client {
+	return oauth2.NewClient(ctx, c.TokenSource)
+}

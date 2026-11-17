@@ -1,0 +1,21 @@
+### plain 2000/s rerun, after idle, to explain dial errors
+envoy 59.62% 77.14MiB / 7.75GiB
+SUMMARY attempts=24000 map[200:24000] 200-latency p50=900µs p90=1.1ms p99=9.7ms max=64.3ms ticks=24000 broken=0 elapsed=12.6s
+### resumption actually used?
+listener.0.0.0.0_3128.ssl.handshake: 400
+listener.0.0.0.0_3128.ssl.session_reused: 398
+### bulk through a netagent stand-in, inner TLS: one curl, 1 GiB, netagent CPU limit varies
+netagent cpus=0     plain  640 MB/s ttfb=0.048s code=200
+netagent cpus=0     tls    636 MB/s ttfb=0.036s code=200
+netagent cpus=1     plain  641 MB/s ttfb=0.029s code=200
+netagent cpus=1     tls    648 MB/s ttfb=0.035s code=200
+netagent cpus=0.25  plain  610 MB/s ttfb=0.042s code=200
+netagent cpus=0.25  tls    497 MB/s ttfb=0.036s code=200
+netagent cpus=0.05  plain  329 MB/s ttfb=0.043s code=200
+netagent cpus=0.05  tls    34 MB/s ttfb=0.029s code=200
+### small requests through netagent at 0.05 CPU: 40 sequential new tunnels
+plain setup-to-inner-TLS p50=3ms p90=14ms max=68ms
+tls setup-to-inner-TLS p50=4ms p90=61ms max=81ms
+### 4 parallel 1 GiB at Envoy, no netagent limit
+plain 1306 MB/s total, envoy cpu 0.50%
+tls 1329 MB/s total, envoy cpu 2.97%

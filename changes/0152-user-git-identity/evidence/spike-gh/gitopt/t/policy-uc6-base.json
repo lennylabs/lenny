@@ -1,0 +1,1006 @@
+{
+ "ghes": {
+  "mode": "deny",
+  "matcher": "uc4",
+  "restPrefix": "/api/v3/",
+  "denyMutations": [
+   "addPullRequestReview",
+   "submitPullRequestReview",
+   "updatePullRequestReview",
+   "deletePullRequestReview",
+   "dismissPullRequestReview",
+   "mergePullRequest",
+   "enablePullRequestAutoMerge",
+   "disablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "dequeuePullRequest",
+   "mergeBranch",
+   "updatePullRequestBranch",
+   "revertPullRequest",
+   "createCommitOnBranch",
+   "createRef",
+   "updateRef",
+   "updateRefs",
+   "deleteRef",
+   "createLinkedBranch",
+   "approveDeployments",
+   "rejectDeployments",
+   "createEnvironment",
+   "updateEnvironment",
+   "deleteEnvironment",
+   "pinEnvironment",
+   "reorderEnvironment",
+   "createBranchProtectionRule",
+   "updateBranchProtectionRule",
+   "deleteBranchProtectionRule",
+   "createRepositoryRuleset",
+   "updateRepositoryRuleset",
+   "deleteRepositoryRuleset"
+  ],
+  "stripHeaders": [
+   "Authorization",
+   "Private-Token",
+   "Job-Token",
+   "Deploy-Token",
+   "X-Api-Key",
+   "Cookie",
+   "Proxy-Authorization"
+  ],
+  "uc4": {
+   "default": "allow",
+   "repoRoots": [
+    "/repos/*/*",
+    "/repositories/*"
+   ],
+   "rules": [
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/reviews/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/merge"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/merge-async"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/update-branch"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/merges"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/merge-upstream"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/contents/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/refs/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/commits"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/trees"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/tags"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/pending_deployments"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/approve"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/deployment_protection_rule"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/force-cancel"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/environments/*/deployment-branch-policies/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/environments/*/deployment_protection_rules/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/branches/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/rulesets/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/orgs/*/rulesets/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/permissions/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/gpg_keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/ssh_signing_keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "PUT",
+      "DELETE"
+     ],
+     "path": "{repo}/environments/*"
+    }
+   ],
+   "graphqlPaths": [
+    "/api/graphql"
+   ],
+   "writeNoQuery": true,
+   "writeJSONOnly": true,
+   "uploadsPath": "/api/uploads/repos/*/*/releases/*/assets",
+   "encodedSegments": [
+    {
+     "pattern": "**/contents/{enc*}"
+    },
+    {
+     "pattern": "**/branches/{enc}"
+    },
+    {
+     "pattern": "**/branches/{enc}/*"
+    },
+    {
+     "pattern": "**/branches/{enc}/*/*"
+    },
+    {
+     "pattern": "**/branches/{enc}/*/*/*"
+    },
+    {
+     "pattern": "**/labels/{enc}"
+    },
+    {
+     "pattern": "**/compare/{enc*}"
+    },
+    {
+     "pattern": "**/git/ref/{enc*}"
+    },
+    {
+     "pattern": "**/git/refs/{enc*}"
+    },
+    {
+     "pattern": "**/git/matching-refs/{enc*}"
+    },
+    {
+     "pattern": "**/releases/tags/{enc}"
+    },
+    {
+     "pattern": "**/commits/{enc}"
+    },
+    {
+     "pattern": "**/commits/{enc}/*"
+    },
+    {
+     "pattern": "**/commits/{enc}/*/*"
+    },
+    {
+     "pattern": "**/environments/{enc}"
+    },
+    {
+     "pattern": "**/environments/{enc}/*"
+    },
+    {
+     "pattern": "**/environments/{enc}/*/*"
+    },
+    {
+     "pattern": "**/environments/{enc}/*/*/*"
+    }
+   ],
+   "refuseFamilies": true,
+   "undecodableRefused": true
+  }
+ },
+ "ghcom": {
+  "mode": "deny",
+  "matcher": "uc4",
+  "restPrefix": "/",
+  "denyMutations": [
+   "addPullRequestReview",
+   "submitPullRequestReview",
+   "updatePullRequestReview",
+   "deletePullRequestReview",
+   "dismissPullRequestReview",
+   "mergePullRequest",
+   "enablePullRequestAutoMerge",
+   "disablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "dequeuePullRequest",
+   "mergeBranch",
+   "updatePullRequestBranch",
+   "revertPullRequest",
+   "createCommitOnBranch",
+   "createRef",
+   "updateRef",
+   "updateRefs",
+   "deleteRef",
+   "createLinkedBranch",
+   "approveDeployments",
+   "rejectDeployments",
+   "createEnvironment",
+   "updateEnvironment",
+   "deleteEnvironment",
+   "pinEnvironment",
+   "reorderEnvironment",
+   "createBranchProtectionRule",
+   "updateBranchProtectionRule",
+   "deleteBranchProtectionRule",
+   "createRepositoryRuleset",
+   "updateRepositoryRuleset",
+   "deleteRepositoryRuleset"
+  ],
+  "stripHeaders": [
+   "Authorization",
+   "Private-Token",
+   "Job-Token",
+   "Deploy-Token",
+   "X-Api-Key",
+   "Cookie",
+   "Proxy-Authorization"
+  ],
+  "uc4": {
+   "default": "allow",
+   "repoRoots": [
+    "/repos/*/*",
+    "/repositories/*"
+   ],
+   "rules": [
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/reviews/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/merge"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/merge-async"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/pulls/*/update-branch"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/merges"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/merge-upstream"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/contents/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/refs/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/commits"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/trees"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/git/tags"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/pending_deployments"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/approve"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/deployment_protection_rule"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/runs/*/force-cancel"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/environments/*/deployment-branch-policies/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/environments/*/deployment_protection_rules/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/branches/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/rulesets/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/orgs/*/rulesets/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/actions/permissions/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/gpg_keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/ssh_signing_keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "{repo}/keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "PUT",
+      "DELETE"
+     ],
+     "path": "{repo}/environments/*"
+    }
+   ],
+   "graphqlPaths": [
+    "/graphql"
+   ],
+   "writeNoQuery": true,
+   "writeJSONOnly": true,
+   "uploadsPath": "",
+   "encodedSegments": [
+    {
+     "pattern": "**/contents/{enc*}"
+    },
+    {
+     "pattern": "**/branches/{enc}"
+    },
+    {
+     "pattern": "**/branches/{enc}/*"
+    },
+    {
+     "pattern": "**/branches/{enc}/*/*"
+    },
+    {
+     "pattern": "**/branches/{enc}/*/*/*"
+    },
+    {
+     "pattern": "**/labels/{enc}"
+    },
+    {
+     "pattern": "**/compare/{enc*}"
+    },
+    {
+     "pattern": "**/git/ref/{enc*}"
+    },
+    {
+     "pattern": "**/git/refs/{enc*}"
+    },
+    {
+     "pattern": "**/git/matching-refs/{enc*}"
+    },
+    {
+     "pattern": "**/releases/tags/{enc}"
+    },
+    {
+     "pattern": "**/commits/{enc}"
+    },
+    {
+     "pattern": "**/commits/{enc}/*"
+    },
+    {
+     "pattern": "**/commits/{enc}/*/*"
+    },
+    {
+     "pattern": "**/environments/{enc}"
+    },
+    {
+     "pattern": "**/environments/{enc}/*"
+    },
+    {
+     "pattern": "**/environments/{enc}/*/*"
+    },
+    {
+     "pattern": "**/environments/{enc}/*/*/*"
+    }
+   ],
+   "refuseFamilies": true,
+   "undecodableRefused": true
+  }
+ },
+ "gitlab": {
+  "mode": "deny",
+  "matcher": "uc4",
+  "restPrefix": "/api/v4/",
+  "denyMutations": [
+   "mergeRequestAccept",
+   "commitCreate",
+   "branchCreate",
+   "branchDelete"
+  ],
+  "stripHeaders": [
+   "Authorization",
+   "Private-Token",
+   "Job-Token",
+   "Deploy-Token",
+   "X-Api-Key",
+   "Cookie",
+   "Proxy-Authorization",
+   "Sudo"
+  ],
+  "uc4": {
+   "default": "allow",
+   "rules": [
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/approve"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/unapprove"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/reset_approvals"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/approvals"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/approval_rules/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/approvals"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/approval_rules/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/merge"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/rebase"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/merge_requests/*/cancel_merge_when_pipeline_succeeds"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/repository/commits"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/repository/files/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/repository/branches"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/repository/branches/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/protected_branches/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/personal_access_tokens/self/rotate"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/user/keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/deploy_keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/deploy_keys/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/access_tokens/**"
+    },
+    {
+     "action": "deny",
+     "methods": [
+      "WRITE"
+     ],
+     "path": "/projects/*/deploy_tokens/**"
+    }
+   ],
+   "graphqlPaths": [
+    "/api/graphql"
+   ],
+   "writeNoQuery": true,
+   "writeJSONOnly": true,
+   "encodedSegments": [
+    {
+     "pattern": "api/v4/projects/{enc}",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/projects/{enc}/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/projects/{enc}/*/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/projects/{enc}/*/*/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/projects/{enc}/*/*/*/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/projects/{enc}/*/*/*/*/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/groups/{enc}",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/groups/{enc}/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "api/v4/groups/{enc}/*/*",
+     "refuseDecoded": [
+      "merge_requests",
+      "issues",
+      "repository",
+      "protected_branches",
+      "deploy_keys",
+      "approval_rules",
+      "approvals",
+      "pipelines",
+      "hooks",
+      "members"
+     ]
+    },
+    {
+     "pattern": "**/repository/branches/{enc}"
+    },
+    {
+     "pattern": "**/repository/branches/{enc}/*"
+    },
+    {
+     "pattern": "**/repository/files/{enc}"
+    },
+    {
+     "pattern": "**/repository/files/{enc}/*"
+    },
+    {
+     "pattern": "**/repository/tags/{enc}"
+    },
+    {
+     "pattern": "**/repository/commits/{enc}"
+    },
+    {
+     "pattern": "**/repository/commits/{enc}/*"
+    },
+    {
+     "pattern": "**/repository/tree/{enc}"
+    },
+    {
+     "pattern": "**/labels/{enc}"
+    },
+    {
+     "pattern": "**/wikis/{enc}"
+    }
+   ],
+   "refuseFamilies": true,
+   "denyBodyKeys": [
+    "merge_when_pipeline_succeeds",
+    "auto_merge"
+   ],
+   "undecodableRefused": true,
+   "bodyPatterns": [
+    "(?i)^\\s*/(approve|lgtm|unapprove|merge|rebase|submit_review|target_branch|run_pipeline)\\b"
+   ]
+  }
+ },
+ "generic": {
+  "mode": "deny",
+  "matcher": "uc4",
+  "restPrefix": "/",
+  "denyMutations": [
+   "addComment"
+  ],
+  "stripHeaders": [
+   "Authorization",
+   "Cookie"
+  ],
+  "uc4": {
+   "default": "allow",
+   "rules": [
+    {
+     "action": "deny",
+     "methods": [
+      "DELETE"
+     ],
+     "path": "/rest/api/*/issue/*"
+    }
+   ],
+   "graphqlPaths": [
+    "/graphql"
+   ]
+  }
+ },
+ "genericb": {
+  "mode": "deny",
+  "matcher": "uc4",
+  "restPrefix": "/",
+  "stripHeaders": [
+   "Authorization",
+   "Cookie"
+  ],
+  "uc4": {
+   "default": "allow",
+   "bodyPatterns": [
+    "(?i)^\\s*/(lgtm|approve)\\b"
+   ]
+  }
+ }
+}

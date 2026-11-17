@@ -1,0 +1,17 @@
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0001", "exp": "2026-11-02T06:38:36Z", "ua": "Go-http-client/1.1", "t": "06:35:36.638"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0002", "exp": "2026-11-02T06:38:51Z", "ua": "Go-http-client/1.1", "t": "06:35:51.663"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0003", "exp": "2026-11-02T06:39:06Z", "ua": "Go-http-client/1.1", "t": "06:36:06.693"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0004", "exp": "2026-11-02T06:39:21Z", "ua": "Go-http-client/1.1", "t": "06:36:21.726"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0005", "exp": "2026-11-02T06:39:36Z", "ua": "Go-http-client/1.1", "t": "06:36:36.743"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0006", "exp": "2026-11-02T06:39:51Z", "ua": "Go-http-client/1.1", "t": "06:36:51.774"}
+{"ev": "fetch", "path": "/creds", "auth": "tok1-go", "result": 200, "akid": "AKIDGO0007", "exp": "2026-11-02T06:40:06Z", "ua": "Go-http-client/1.1", "t": "06:37:06.788"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0008", "exp": "2026-11-02T06:40:21Z", "ua": "Go-http-client/1.1", "t": "06:37:21.815"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0009", "exp": "2026-11-02T06:40:36Z", "ua": "Go-http-client/1.1", "t": "06:37:36.847"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0010", "exp": "2026-11-02T06:40:51Z", "ua": "Go-http-client/1.1", "t": "06:37:51.873"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0011", "exp": "2026-11-02T06:41:06Z", "ua": "Go-http-client/1.1", "t": "06:38:06.896"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0012", "exp": "2026-11-02T06:41:21Z", "ua": "Go-http-client/1.1", "t": "06:38:21.916"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0013", "exp": "2026-11-02T06:41:36Z", "ua": "Go-http-client/1.1", "t": "06:38:36.944"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0014", "exp": "2026-11-02T06:41:51Z", "ua": "Go-http-client/1.1", "t": "06:38:51.958"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0015", "exp": "2026-11-02T06:42:06Z", "ua": "Go-http-client/1.1", "t": "06:39:06.976"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0016", "exp": "2026-11-02T06:42:21Z", "ua": "Go-http-client/1.1", "t": "06:39:21.993"}
+{"ev": "fetch", "path": "/creds", "auth": "tok2-go", "result": 200, "akid": "AKIDGO0017", "exp": "2026-11-02T06:42:37Z", "ua": "Go-http-client/1.1", "t": "06:39:37.023"}

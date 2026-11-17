@@ -1,0 +1,160 @@
+// verify: recompute digests against manifests and anchors; run an abuse-report query by destination source port and time.
+package main
+
+import (
+	"bufio"
+	"compress/gzip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"os"
+	"sort"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
+)
+
+func main() {
+	mode := flag.String("mode", "verify", "verify|seq|query|tamper|dropmanifest")
+	port := flag.Int("port", 0, "")
+	tenant := flag.String("tenant", "", "")
+	flag.Parse()
+	ctx := context.Background()
+	mc, err := minio.New(os.Getenv("MINIO"), &minio.Options{Creds: credentials.NewStaticV4("minioadmin", "minioadmin", "")})
+	if err != nil {
+		log.Fatal(err)
+	}
+	pg, err := pgxpool.New(ctx, os.Getenv("PG"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	type row struct{ id int64; t, k, d string; n int }
+	load := func() []row {
+		q := `select id,tenant,object_key,digest,records from manifest order by id`
+		rs, err := pg.Query(ctx, q)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var out []row
+		for rs.Next() {
+			var r row
+			rs.Scan(&r.id, &r.t, &r.k, &r.d, &r.n)
+			out = append(out, r)
+		}
+		return out
+	}
+	get := func(k string) ([]byte, error) {
+		o, err := mc.GetObject(ctx, "evidence", k, minio.GetObjectOptions{})
+		if err != nil {
+			return nil, err
+		}
+		defer o.Close()
+		return io.ReadAll(o)
+	}
+	switch *mode {
+	case "tamper":
+		rows := load()
+		r := rows[len(rows)/2]
+		b, _ := get(r.k)
+		b[len(b)/2] ^= 1
+		mc.PutObject(ctx, "evidence", r.k, bytes.NewReader(b), int64(len(b)), minio.PutObjectOptions{})
+		fmt.Println("flipped a byte in", r.k)
+	case "dropmanifest":
+		rows := load()
+		r := rows[0]
+		pg.Exec(ctx, `delete from manifest where id=$1`, r.id)
+		fmt.Println("deleted manifest row", r.id, "tenant", r.t)
+	case "verify":
+		rows := load()
+		bad, recs := 0, 0
+		t0 := time.Now()
+		for _, r := range rows {
+			b, err := get(r.k)
+			d := sha256.Sum256(b)
+			if err != nil || hex.EncodeToString(d[:]) != r.d {
+				bad++
+				fmt.Println("  DIGEST MISMATCH", r.k)
+			}
+			recs += r.n
+		}
+		var badA int
+		pg.QueryRow(ctx, `with a as (select tenant, upto, digest, coalesce(lag(upto) over (partition by tenant order by upto),0) prev from anchor)
+		  select count(*) from a where digest <> (select encode(sha256(string_agg(m.digest,'' order by m.id)::bytea),'hex') from manifest m where m.tenant=a.tenant and m.id>a.prev and m.id<=a.upto) or not exists (select 1 from manifest m where m.tenant=a.tenant and m.id>a.prev and m.id<=a.upto)`).Scan(&badA)
+		fmt.Printf("objects=%d records=%d digest mismatches=%d anchors that do not recompute=%d in %s\n", len(rows), recs, bad, badA, time.Since(t0).Round(time.Millisecond))
+	case "seq":
+		seen := map[string][]uint64{}
+		tot := 0
+		for _, r := range load() {
+			b, _ := get(r.k)
+			g, err := gzip.NewReader(bytes.NewReader(b))
+			if err != nil {
+				continue
+			}
+			s := bufio.NewScanner(g)
+			s.Buffer(make([]byte, 1<<20), 1<<20)
+			for s.Scan() {
+				var x struct{ Producer, Stream, TenantId string; Sequence uint64 }
+				json.Unmarshal(s.Bytes(), &x)
+				k := x.Producer + " " + x.TenantId + " " + x.Stream
+				seen[k] = append(seen[k], x.Sequence)
+				tot++
+			}
+		}
+		tg, tm, td := 0, uint64(0), 0
+		for _, v := range seen {
+			sort.Slice(v, func(i, j int) bool { return v[i] < v[j] })
+			gaps, missing, dup := 0, uint64(0), 0
+			for i := 1; i < len(v); i++ {
+				if v[i] == v[i-1] {
+					dup++
+				} else if v[i] != v[i-1]+1 {
+					gaps++
+					missing += v[i] - v[i-1] - 1
+				}
+			}
+			tg += gaps
+			tm += missing
+			td += dup
+		}
+		fmt.Printf("sequences=%d records=%d gaps=%d missing=%d duplicates=%d\n", len(seen), tot, tg, tm, td)
+	case "query":
+		// Abuse report: an egress source port. No tenant is known, so scan the hour's objects.
+		t0 := time.Now()
+		scanned, hits := 0, 0
+		for _, r := range load() {
+			if *tenant != "" && r.t != *tenant {
+				continue
+			}
+			scanned++
+			b, _ := get(r.k)
+			g, err := gzip.NewReader(bytes.NewReader(b))
+			if err != nil {
+				continue
+			}
+			s := bufio.NewScanner(g)
+			s.Buffer(make([]byte, 1<<20), 1<<20)
+			for s.Scan() {
+				var x struct {
+					Stream, TenantId string
+					Payload map[string]any
+				}
+				json.Unmarshal(s.Bytes(), &x)
+				if x.Stream == "egress.tunnel" && int(x.Payload["sourcePort"].(float64)) == *port {
+					hits++
+					if hits <= 3 {
+						fmt.Printf("  tenant=%s decision=%v source=%v:%v target=%v:%v start=%v\n", x.TenantId, x.Payload["decisionId"], x.Payload["sourceAddress"], x.Payload["sourcePort"], x.Payload["upstreamAddress"], x.Payload["upstreamPort"], x.Payload["start"])
+					}
+				}
+			}
+		}
+		fmt.Printf("scanned objects=%d hits=%d in %s\n", scanned, hits, time.Since(t0).Round(time.Millisecond))
+	}
+}

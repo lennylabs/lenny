@@ -1,0 +1,270 @@
+package main
+
+import (
+	"encoding/json"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+)
+
+var denyMode bool
+
+type oracleRest struct {
+	Method, Path string
+	re           *regexp.Regexp
+}
+
+var oracleM = map[string]bool{}
+var oracleR []oracleRest
+
+// loadOracle reads the preset's names. The check below is a separate reading: it decodes and folds the path the stub saw and searches it, rather than calling the filter's matcher.
+func loadOracle(f, fl string) {
+	b, err := os.ReadFile(f)
+	if err != nil {
+		panic(err)
+	}
+	var m map[string]struct {
+		DenyMutations []string `json:"denyMutations"`
+		DenyRest      []struct{ Method, Path string } `json:"denyRest"`
+	}
+	json.Unmarshal(b, &m)
+	k := "ghes"
+	if fl == "ghcom" || fl == "ghe" {
+		k = "ghcom"
+	}
+	for _, x := range m[k].DenyMutations {
+		oracleM[x] = true
+	}
+	for _, r := range m[k].DenyRest {
+		p := strings.TrimPrefix(r.Path, ".../")
+		p = strings.TrimSuffix(p, "/**")
+		q := regexp.QuoteMeta(p)
+		q = regexp.MustCompile(`\\\{[a-z]+\\\}`).ReplaceAllString(q, `[^/]+`)
+		end := "$"
+		if strings.HasSuffix(r.Path, "/**") {
+			end = "(/.*)?$"
+		}
+		oracleR = append(oracleR, oracleRest{r.Method, r.Path, regexp.MustCompile("(^|/)" + q + end)})
+	}
+}
+
+func oracleNorm(u string) string {
+	p, _, _ := strings.Cut(u, "?")
+	for i := 0; i < 3; i++ {
+		if d, err := url.PathUnescape(p); err == nil {
+			p = d
+		}
+	}
+	p = strings.ToLower(strings.ReplaceAll(p, "\\", "/"))
+	p = regexp.MustCompile(`;[^/]*`).ReplaceAllString(p, "")
+	p = regexp.MustCompile(`/+`).ReplaceAllString(p, "/")
+	for strings.Contains(p, "/./") {
+		p = strings.ReplaceAll(p, "/./", "/")
+	}
+	for {
+		n := regexp.MustCompile(`/[^/]+/\.\./`).ReplaceAllString(p, "/")
+		if n == p {
+			break
+		}
+		p = n
+	}
+	return strings.TrimRight(p, "/")
+}
+
+func deniedAt(x rec) string {
+	for _, g := range x.GQL {
+		for _, o := range g.Ops {
+			for _, f := range o.Fields {
+				if oracleM[f] {
+					return "gql:" + f
+				}
+			}
+		}
+		for _, o := range g.OpsB {
+			for _, f := range o.Fields {
+				if oracleM[f] {
+					return "gql:" + f
+				}
+			}
+		}
+	}
+	ms := map[string]bool{strings.ToUpper(x.Method): true}
+	for k, vs := range x.Headers {
+		if strings.EqualFold(k, "X-Http-Method-Override") || strings.EqualFold(k, "X-Http-Method") || strings.EqualFold(k, "X-Method-Override") {
+			for _, v := range vs {
+				ms[strings.ToUpper(v)] = true
+			}
+		}
+	}
+	u, _ := url.Parse(x.URI)
+	if u != nil {
+		for _, v := range u.Query()["_method"] {
+			ms[strings.ToUpper(v)] = true
+		}
+	}
+	if v, err := url.ParseQuery(x.Body); err == nil {
+		for _, m := range v["_method"] {
+			ms[strings.ToUpper(m)] = true
+		}
+	}
+	n := oracleNorm(x.URI)
+	for _, r := range oracleR {
+		if ms[strings.ToUpper(r.Method)] && r.re.MatchString(n) {
+			return "rest:" + r.Method + " " + r.Path
+		}
+	}
+	return ""
+}
+
+func judgeDeny(o result, k kase, expect string, r resp, recs []rec) result {
+	// keep the fields judge already filled by re-reading the stub records
+	var m struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal([]byte(r.body), &m) == nil && m.Message != "" {
+		o.Reason = m.Message
+	}
+	for _, x := range recs {
+		o.StubURI = x.Method + " " + x.URI
+		for _, v := range x.Headers {
+			for _, y := range v {
+				for _, t := range realTok {
+					if strings.Contains(y, t) {
+						o.RealCred = true
+					}
+				}
+				if strings.Contains(y, placeholder) {
+					o.Placeholder = true
+				}
+			}
+		}
+		for _, g := range x.GQL {
+			for _, op := range g.Ops {
+				o.StubFields = append(o.StubFields, op.Type+":"+strings.Join(op.Fields, ","))
+			}
+		}
+	}
+	o.StubN = len(recs)
+	act := ""
+	for _, x := range recs {
+		if d := deniedAt(x); d != "" {
+			act = d
+		}
+	}
+	switch {
+	case act != "" && o.RealCred:
+		o.Verdict = "REACHED-DENIED-ACTION"
+		o.Note = act
+	case act != "":
+		o.Verdict = "REACHED-denied-action-no-credential"
+		o.Note = act
+	case len(recs) > 0 && o.RealCred:
+		o.Verdict = "REACHED-not-denied"
+	case len(recs) > 0:
+		o.Verdict = "REACHED-no-credential"
+	case expect == "allow" || k.Group == "deny-allow":
+		o.Verdict = "PASS-no-stub-expected-allow"
+	case o.Err != "" && strings.Contains(o.Err, "dial tcp"):
+		o.Verdict = "INVALID-netagent-down"
+	default:
+		o.Verdict = "PASS-refused"
+	}
+	return o
+}
+
+func denyCases() []kase {
+	var K []kase
+	add := func(k ...kase) { K = append(K, k...) }
+	pr := "/repos/acme/widgets/pulls"
+	rp := "/repos/acme/widgets"
+	mb := []byte(`{"merge_method":"merge"}`)
+	for f := range oracleM {
+		inner := f + `(input:{}){clientMutationId}`
+		add(one("field "+f, "deny-field", "refuse", gql(gj(`mutation { `+inner+` }`))))
+		add(one("alias "+f, "deny-alias", "refuse", gql(gj(`mutation { createPullRequest: `+inner+` }`))))
+		add(one("fragment "+f, "deny-fragment", "refuse", gql(gj(`mutation { ...F } fragment F on Mutation { `+inner+` }`))))
+		add(one("inline "+f, "deny-fragment", "refuse", gql(gj(`mutation { ... on Mutation { `+inner+` } }`))))
+		add(one("two ops selecting the query, "+f, "deny-ops", "refuse", gql(gj(`query Good{viewer{login}} mutation Bad{`+inner+`}`, "operationName", "Good"))))
+		add(one("two ops selecting the mutation, "+f, "deny-ops", "refuse", gql(gj(`query Good{viewer{login}} mutation Bad{`+inner+`}`, "operationName", "Bad"))))
+		add(one("batch "+f, "deny-batch", "refuse", gql([]byte(`[{"query":"query{viewer{login}}"},{"query":"mutation{`+strings.ReplaceAll(inner, `"`, `\"`)+`}"}]`))))
+		add(one("GET "+f, "deny-get", "refuse", step{Method: "GET", Target: gqlP + "?query=" + url.QueryEscape(`mutation{`+inner+`}`)}))
+		add(one("form "+f, "deny-form", "refuse", step{Method: "POST", Target: gqlP, Body: []byte("query=" + url.QueryEscape(`mutation{`+inner+`}`)), Hdr: []string{"Content-Type: application/x-www-form-urlencoded"}}))
+		add(one("duplicate key "+f, "deny-dup", "refuse", gql([]byte(`{"query":"query{viewer{login}}","query":"mutation{`+strings.ReplaceAll(inner, `"`, `\"`)+`}"}`))))
+	}
+	routes := [][3]string{{"POST", pr + "/7/reviews", `{"event":"APPROVE"}`}, {"POST", pr + "/7/reviews/1/events", `{"event":"APPROVE"}`}, {"PUT", pr + "/7/merge", string(mb)}, {"PUT", pr + "/7/update-branch", `{}`}, {"POST", rp + "/merges", `{"base":"m","head":"f"}`}, {"POST", rp + "/git/refs", `{"ref":"refs/heads/x","sha":"a"}`}, {"PATCH", rp + "/git/refs/heads/main", `{"sha":"a"}`}, {"DELETE", rp + "/git/refs/heads/x", ``}}
+	spell := func(p string) [][2]string {
+		i := strings.LastIndexByte(p, '/')
+		h, t := p[:i], p[i+1:]
+		return [][2]string{
+			{"plain", p},
+			{"upper", strings.ToUpper(p)},
+			{"trailing slash", p + "/"},
+			{"double slash", h + "//" + t},
+			{"dot", h + "/./" + t},
+			{"dotdot", h + "/x/../" + t},
+			{"encoded slash", h + "%2F" + t},
+			{"lower encoded slash", h + "%2f" + t},
+			{"double encoded slash", h + "%252F" + t},
+			{"encoded letter", h + "/%" + strings.ToUpper(hexb(t[0])) + t[1:]},
+			{"semicolon", p + ";a=b"},
+			{"backslash", h + "\\" + t},
+			{"encoded backslash", h + "%5C" + t},
+			{"encoded NUL", p + "%00"},
+			{"encoded tab", p + "%09"},
+			{"query", p + "?x=1"},
+		}
+	}
+	for _, r := range routes {
+		for _, s := range spell(restP + r[1]) {
+			var b []byte
+			var hd []string
+			if r[2] != "" {
+				b, hd = []byte(r[2]), []string{"Content-Type: application/json"}
+			}
+			add(one(r[0]+" "+r[1]+" "+s[0], "deny-path", "refuse", step{Method: r[0], Target: s[1], Body: b, Hdr: hd}))
+		}
+	}
+	m := restP + pr + "/7/merge"
+	add(one("/repositories alias, merge", "deny-path", "refuse", step{Method: "PUT", Target: restP + "/repositories/123/pulls/7/merge", Body: mb, Hdr: []string{"Content-Type: application/json"}}))
+	add(one("/repositories alias, review", "deny-path", "refuse", step{Method: "POST", Target: restP + "/repositories/123/pulls/7/reviews", Body: mb, Hdr: []string{"Content-Type: application/json"}}))
+	add(one("lower-case method", "deny-override", "refuse", step{Method: "put", Target: m, Body: mb, Hdr: []string{"Content-Type: application/json"}}))
+	add(one("override header on POST", "deny-override", "refuse", step{Method: "POST", Target: m, Body: mb, Hdr: []string{"Content-Type: application/json", "X-HTTP-Method-Override: PUT"}}))
+	add(one("override header X-HTTP-Method", "deny-override", "refuse", step{Method: "POST", Target: m, Body: mb, Hdr: []string{"Content-Type: application/json", "X-HTTP-Method: PUT"}}))
+	add(one("override X-Method-Override", "deny-override", "refuse", step{Method: "POST", Target: m, Body: mb, Hdr: []string{"Content-Type: application/json", "X-Method-Override: PUT"}}))
+	add(one("override header lower-case value", "deny-override", "refuse", step{Method: "POST", Target: m, Body: mb, Hdr: []string{"Content-Type: application/json", "X-HTTP-Method-Override: put"}}))
+	add(one("_method in query", "deny-override", "refuse", step{Method: "POST", Target: m + "?_method=PUT", Body: mb, Hdr: []string{"Content-Type: application/json"}}))
+	add(one("_method in a form body", "deny-override", "refuse", step{Method: "POST", Target: m, Body: []byte("_method=PUT"), Hdr: []string{"Content-Type: application/x-www-form-urlencoded"}}))
+	add(one("X-Original-URL on an allowed route", "deny-override", "refuse", step{Method: "PUT", Target: restP + "/repos/acme/widgets/issues/7", Body: mb, Hdr: []string{"Content-Type: application/json", "X-Original-URL: " + m}}))
+	add(one("CR differential", "deny-differential", "refuse", gql(gj("# x\rquery{viewer(a:\"\"\"\nmutation{addPullRequestReview(input:{}){clientMutationId}} #\"\"\"){login}}"))))
+	add(one("U+2028 differential", "deny-differential", "refuse", gql(gj("query{viewer{login}} # x\u2028mutation B{addPullRequestReview(input:{}){clientMutationId}}"))))
+	add(one("block string differential", "deny-differential", "allow", gql(gj(`query Q($a:String="""\"""){viewer{login}} mutation B{addPullRequestReview(input:{}){clientMutationId}} #"""){viewer{login}}`)), "printed before forwarding, so the origin reads the filter's reading"))
+	// Preset neighbours: reach the stub by the owner's default-allow rule, and listed so the gap is visible.
+	for _, r := range [][3]string{{"PUT", pr + "/7/reviews/1", `{"body":"x"}`}, {"DELETE", pr + "/7/reviews/1", ``}, {"PUT", pr + "/7/reviews/1/dismissals", `{"message":"x"}`}, {"PATCH", pr + "/7", `{"state":"closed"}`}, {"PUT", rp + "/contents/f.txt", `{"message":"m","content":"eA=="}`}, {"POST", rp + "/git/commits", `{"message":"m","tree":"t"}`}, {"POST", rp + "/merge-upstream", `{"branch":"main"}`}, {"POST", rp + "/dispatches", `{"event_type":"e"}`}, {"DELETE", rp + "/branches/main/protection", ``}, {"PUT", rp + "/branches/main/protection", `{}`}, {"POST", rp + "/rulesets", `{}`}, {"PATCH", rp, `{"allow_auto_merge":true}`}, {"POST", rp + "/branches/main/rename", `{"new_name":"x"}`}, {"PUT", rp + "/actions/permissions", `{}`}, {"POST", rp + "/issues/7/comments", `{"body":"/lgtm"}`}} {
+		var b []byte
+		var hd []string
+		if r[2] != "" {
+			b, hd = []byte(r[2]), []string{"Content-Type: application/json"}
+		}
+		add(one(r[0]+" "+r[1], "deny-neighbour", "allow", step{Method: r[0], Target: restP + r[1], Body: b, Hdr: hd}))
+	}
+	for _, f := range []string{"addPullRequestReviewComment", "addPullRequestReviewThread", "updatePullRequest", "closePullRequest", "deleteBranchProtectionRule", "updateBranchProtectionRule", "createRepositoryRuleset", "updateRepository", "convertPullRequestToDraft"} {
+		add(one("field "+f, "deny-neighbour", "allow", gql(gj(`mutation { `+f+`(input:{}){clientMutationId} }`))))
+	}
+	// False positives and passes.
+	add(one("PUT a file whose path ends pulls/7/merge", "deny-falsepositive", "allow", step{Method: "PUT", Target: restP + rp + "/contents/pulls/7/merge", Body: []byte(`{"message":"m","content":"eA=="}`), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("GET pulls/7/merge", "deny-allow", "allow", step{Method: "GET", Target: restP + pr + "/7/merge"}))
+	add(one("GET git/refs", "deny-allow", "allow", step{Method: "GET", Target: restP + rp + "/git/refs/heads/main"}))
+	add(one("GET reviews", "deny-allow", "allow", step{Method: "GET", Target: restP + pr + "/7/reviews"}))
+	add(one("Time-Zone header", "deny-allow", "allow", step{Method: "GET", Target: restP + pr + "/7", Hdr: []string{"Time-Zone: America/New_York"}}))
+	add(one("a future header", "deny-allow", "allow", step{Method: "GET", Target: restP + pr + "/7", Hdr: []string{"X-Future: 1"}}))
+	add(one("client Authorization replaced", "deny-allow", "allow", step{Method: "GET", Target: restP + pr + "/7", Hdr: []string{"Authorization: Bearer AGENT-OWN"}}))
+	add(one("REST body of 1 MiB streams", "deny-allow", "allow", step{Method: "POST", Target: restP + rp + "/issues", Body: []byte(`{"body":"` + strings.Repeat("x", 1<<20) + `"}`), Hdr: []string{"Content-Type: application/json"}}))
+	add(one("graphql subscription", "deny-allow", "allow", gql(gj(`subscription { x { id } }`))))
+	return K
+}
+
+func hexb(b byte) string {
+	const h = "0123456789abcdef"
+	return string([]byte{h[b>>4], h[b&15]})
+}

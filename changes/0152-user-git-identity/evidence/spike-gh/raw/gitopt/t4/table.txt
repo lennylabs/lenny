@@ -1,0 +1,600 @@
+setup
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+proxy-unset
+   Tb-gh-cli  rc=128 na=- origin=- egress=-
+   Tb-gh-deb  rc=128 na=- origin=- egress=-
+   P-gh-cli   rc=128 na=- origin=- egress=-
+   P-gh-deb   rc=128 na=- origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+proxy-unset-curl-direct-ip
+   Tb-gh-cli  rc=7   na=- origin=- egress=-
+   Tb-gh-deb  rc=7   na=- origin=- egress=-
+   P-gh-cli   rc=7   na=- origin=- egress=-
+   P-gh-deb   rc=7   na=- origin=- egress=-
+   L-gh-cli   rc=7   na=- origin=- egress=-
+proxy-to-egress-reachable
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=- egress=-
+   P-gh-deb   rc=0   na=- origin=- egress=-
+   L-gh-cli   rc=0   na=- origin=- egress=-
+proxy-to-egress-no-cred
+   Tb-gh-cli  rc=128 na=- origin=- egress=407
+   Tb-gh-deb  rc=128 na=- origin=- egress=407
+   P-gh-cli   rc=128 na=- origin=- egress=405
+   P-gh-deb   rc=128 na=- origin=- egress=405
+   L-gh-cli   rc=128 na=- origin=- egress=405
+proxy-to-egress-bad-cred
+   Tb-gh-cli  rc=128 na=- origin=- egress=407
+   Tb-gh-deb  rc=128 na=- origin=- egress=407
+   P-gh-cli   rc=128 na=- origin=- egress=405
+   P-gh-deb   rc=128 na=- origin=- egress=405
+   L-gh-cli   rc=128 na=- origin=- egress=405
+sslverify-false-outside
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+sslverify-false-push-main
+   Tb-gh-cli  rc=1   na=AR origin=MINT-W-:200 egress=-
+   Tb-gh-deb  rc=1   na=AR origin=MINT-W-:200 egress=-
+   P-gh-cli   rc=1   na=AR origin=MINT-W-:200 egress=-
+   P-gh-deb   rc=1   na=AR origin=MINT-W-:200 egress=-
+   L-gh-cli   rc=1   na=AR origin=MINT-W-:200 egress=-
+git-ssl-no-verify-outside
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+extraheader-auth-outside
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+extraheader-auth-inside
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+extraheader-basic-push-main
+   Tb-gh-cli  rc=1   na=AR origin=MINT-W-:200 egress=-
+   Tb-gh-deb  rc=1   na=AR origin=MINT-W-:200 egress=-
+   P-gh-cli   rc=1   na=AR origin=MINT-W-:200 egress=-
+   P-gh-deb   rc=1   na=AR origin=MINT-W-:200 egress=-
+   L-gh-cli   rc=1   na=AR origin=MINT-W-:200 egress=-
+extraheader-privatetoken
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+extraheader-method-override
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+url-embedded-cred
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=- egress=-
+host-differs-other
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+host-differs-http11
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+listener-origin-form
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=- egress=-
+   P-gh-deb   rc=0   na=- origin=- egress=-
+   L-gh-cli   rc=0   na=- origin=- egress=-
+listener-absolute-outside
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+listener-absolute-receive-advert
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+remove-rewrite-ghes
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+remove-rewrite-github-private
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=- origin=-:401 egress=-
+   P-gh-deb   rc=0   na=- origin=-:401 egress=-
+   L-gh-cli   rc=0   na=- origin=-:401 egress=-
+remove-rewrite-github-public
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=-:200 egress=-
+   P-gh-deb   rc=0   na=- origin=-:200 egress=-
+   L-gh-cli   rc=0   na=- origin=-:200 egress=-
+remove-rewrite-github-own-token
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=AGENT-O:200 egress=-
+   P-gh-deb   rc=0   na=R origin=AGENT-O:200 egress=-
+   L-gh-cli   rc=0   na=R origin=AGENT-O:200 egress=-
+sslverify-false-github
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=-:200 egress=-
+   P-gh-deb   rc=0   na=- origin=-:200 egress=-
+   L-gh-cli   rc=0   na=- origin=-:200 egress=-
+plain-curl-3128-inside
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-3129-inside
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+plain-curl-3129-outside
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-3129-receive-readonly
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-host-differs
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=- egress=-
+   P-gh-deb   rc=0   na=- origin=- egress=-
+   L-gh-cli   rc=0   na=- origin=- egress=-
+plain-host-differs-reverse
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=- egress=-
+   P-gh-deb   rc=0   na=- origin=- egress=-
+   L-gh-cli   rc=0   na=- origin=- egress=-
+plain-userinfo-host
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=A origin=-:401 egress=-
+   P-gh-deb   rc=0   na=A origin=-:401 egress=-
+   L-gh-cli   rc=0   na=A origin=-:401 egress=-
+plain-upper-trailingdot
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-other-port
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=A origin=- egress=403
+   P-gh-deb   rc=0   na=A origin=- egress=403
+   L-gh-cli   rc=0   na=A origin=- egress=403
+plain-nongit-path
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=- origin=- egress=-
+   P-gh-deb   rc=0   na=- origin=- egress=-
+   L-gh-cli   rc=0   na=- origin=- egress=-
+plain-nongit-path-3128
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+loopback-origin-form-outside
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+loopback-origin-form-inside
+   Tb-gh-cli  rc=0   na=- origin=- egress=-
+   Tb-gh-deb  rc=0   na=- origin=- egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+pushurl-other-host
+   Tb-gh-cli  rc=0   na=- origin=- egress=403
+   Tb-gh-deb  rc=0   na=- origin=- egress=403
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+pushurl-outside-set
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+explicit-http-remote
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200 egress=-
+explicit-http-unbound
+   Tb-gh-cli  rc=0   na=- origin=- egress=403
+   Tb-gh-deb  rc=0   na=- origin=- egress=403
+   P-gh-cli   rc=0   na=A origin=-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=-:200 egress=-
+outside-clone
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+outside-push
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+readonly-push
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+path-case
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+path-no-dotgit
+   Tb-gh-cli  rc=128 na=R origin=- egress=-
+   Tb-gh-deb  rc=128 na=R origin=- egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+path-dotdot
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+path-encoded-dotdot
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+path-encoded-slash
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+path-double-slash
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-advert-outside
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-advert-inside
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-dumb-noquery
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-dumb-head
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-dumb-objects
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-two-services
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-case-service
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-get-post-path
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-ref-main
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-ref-mixed
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-delete
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-shallow-prefix
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-push-cert
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-dotdot-ref
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-extra-field
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-second-section
+   Tb-gh-cli  rc=0   na=A origin=MINT-W-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-W-:200 egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-gzip
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-chunked
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-post-ref-main
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-post-delete
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-post-outside
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-post-dotdot-ref
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-post-mixed
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+plain-curl-post-gzip
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-post-wrong-ct
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+curl-upload-pack-on-outside
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+lfs-upload-on-readonly
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+lfs-duplicate-operation
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+lfs-case-operation
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+lfs-outside
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+lfs-locks-on-readonly
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+token-trace
+   Tb-gh-cli  rc=1   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=1   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=1   na=A origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=1   na=A origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=1   na=A origin=MINT-R-:200 egress=-
+token-reflected
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200 egress=-
+   P-gh-cli   rc=1   na=R origin=- egress=-
+   P-gh-deb   rc=1   na=R origin=- egress=-
+   L-gh-cli   rc=1   na=R origin=- egress=-
+redirect-in-scope
+   Tb-gh-cli  rc=0   na=A origin=MINT-R-:200,MINT-R-:301 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-R-:200,MINT-R-:301 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-R-:200,MINT-R-:301 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-R-:200,MINT-R-:301 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-R-:200,MINT-R-:301 egress=-
+redirect-out-of-scope
+   Tb-gh-cli  rc=128 na=AR origin=MINT-R-:302 egress=-
+   Tb-gh-deb  rc=128 na=AR origin=MINT-R-:302 egress=-
+   P-gh-cli   rc=128 na=AR origin=MINT-R-:302 egress=-
+   P-gh-deb   rc=128 na=AR origin=MINT-R-:302 egress=-
+   L-gh-cli   rc=128 na=AR origin=MINT-R-:302 egress=-
+hostile-submodules
+   Tb-gh-cli  rc=1   na=AR origin=MINT-R-:200 egress=403
+   Tb-gh-deb  rc=1   na=AR origin=MINT-R-:200 egress=403
+   P-gh-cli   rc=1   na=AR origin=MINT-R-:200 egress=-
+   P-gh-deb   rc=1   na=AR origin=MINT-R-:200 egress=-
+   L-gh-cli   rc=1   na=AR origin=MINT-R-:200 egress=-
+hostile-lfsconfig
+   Tb-gh-cli  rc=0   na=- origin=-:401 egress=-
+   Tb-gh-deb  rc=0   na=- origin=-:401 egress=-
+   P-gh-cli   rc=0   na=- origin=- egress=-
+   P-gh-deb   rc=0   na=- origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+hook-first-push
+   Tb-gh-cli  rc=0   na=A origin=MINT-W-:200 egress=-
+   Tb-gh-deb  rc=0   na=A origin=MINT-W-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=MINT-W-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=MINT-W-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=MINT-W-:200 egress=-
+hook-next-fetch
+   Tb-gh-cli  rc=128 na=- origin=- egress=-
+   Tb-gh-deb  rc=128 na=- origin=- egress=-
+   P-gh-cli   rc=128 na=- origin=- egress=-
+   P-gh-deb   rc=128 na=- origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+hook-config-exfil-allowed-host
+   Tb-gh-cli  rc=128 na=- origin=-:401 egress=-
+   Tb-gh-deb  rc=128 na=- origin=-:401 egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=- origin=- egress=403
+attacker-direct
+   Tb-gh-cli  rc=128 na=- origin=- egress=403
+   Tb-gh-deb  rc=128 na=- origin=- egress=403
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+arb-host-public-clone
+   Tb-gh-cli  rc=0   na=- origin=-:200 egress=-
+   Tb-gh-deb  rc=0   na=- origin=-:200 egress=-
+   P-gh-cli   rc=0   na=A origin=-:200 egress=-
+   P-gh-deb   rc=0   na=A origin=-:200 egress=-
+   L-gh-cli   rc=0   na=A origin=-:200 egress=-
+arb-host-own-token-push
+   Tb-gh-cli  rc=1   na=- origin=AGENT-O:200 egress=-
+   Tb-gh-deb  rc=1   na=- origin=AGENT-O:200 egress=-
+   P-gh-cli   rc=128 na=R origin=- egress=-
+   P-gh-deb   rc=128 na=R origin=- egress=-
+   L-gh-cli   rc=128 na=R origin=- egress=-
+fronting-connect-unbound-host-ghes
+   Tb-gh-cli  rc=0   na=- origin=-:401 egress=-
+   Tb-gh-deb  rc=0   na=- origin=-:401 egress=-
+   P-gh-cli   rc=0   na=- origin=-:401 egress=-
+   P-gh-deb   rc=0   na=- origin=-:401 egress=-
+   L-gh-cli   rc=0   na=- origin=-:401 egress=-
+ip-literal-connect
+   Tb-gh-cli  rc=56  na=- origin=- egress=403
+   Tb-gh-deb  rc=56  na=- origin=- egress=403
+   P-gh-cli   rc=56  na=- origin=- egress=403
+   P-gh-deb   rc=56  na=- origin=- egress=403
+   L-gh-cli   rc=56  na=- origin=- egress=403
+connect-other-port
+   Tb-gh-cli  rc=56  na=- origin=- egress=403
+   Tb-gh-deb  rc=56  na=- origin=- egress=403
+   P-gh-cli   rc=56  na=- origin=- egress=403
+   P-gh-deb   rc=56  na=- origin=- egress=403
+   L-gh-cli   rc=56  na=- origin=- egress=403
+connect-case
+   Tb-gh-cli  rc=0   na=R origin=- egress=-
+   Tb-gh-deb  rc=0   na=R origin=- egress=-
+   P-gh-cli   rc=0   na=R origin=- egress=-
+   P-gh-deb   rc=0   na=R origin=- egress=-
+   L-gh-cli   rc=0   na=R origin=- egress=-
+git-protocol-scheme
+   Tb-gh-cli  rc=128 na=- origin=- egress=-
+   Tb-gh-deb  rc=128 na=- origin=- egress=-
+   P-gh-cli   rc=128 na=- origin=- egress=-
+   P-gh-deb   rc=128 na=- origin=- egress=-
+   L-gh-cli   rc=128 na=- origin=- egress=-
+gh-api-still-filtered
+   Tb-gh-cli  rc=1   na=R origin=- egress=-
+   Tb-gh-deb  rc=1   na=R origin=- egress=-
+   P-gh-cli   rc=1   na=R origin=- egress=-
+   P-gh-deb   rc=1   na=R origin=- egress=-
+   L-gh-cli   rc=1   na=R origin=- egress=-

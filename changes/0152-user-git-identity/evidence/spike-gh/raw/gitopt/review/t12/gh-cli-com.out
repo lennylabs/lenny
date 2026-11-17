@@ -1,0 +1,312 @@
+### com-pr-create rc=0
+$ gh pr create --title t --body b --draft --label bug --assignee bob --reviewer bob --milestone v1
+https://github.com/acme/widgets/pull/7
+### com-pr-edit-title rc=0
+$ gh pr edit 7 --title new --body nb --base main
+https://github.com/acme/widgets/pull/7
+### com-pr-edit-meta rc=0
+$ gh pr edit 7 --add-label bug --remove-label bug --add-assignee bob --add-reviewer bob --milestone v1
+https://github.com/acme/widgets/pull/7
+### com-pr-comment rc=0
+$ gh pr comment 7 --body hello
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-pr-close rc=0
+$ gh pr close 7 --comment bye
+✓ Closed pull request acme/widgets#7 (the title)
+### com-pr-reopen rc=0
+$ gh pr reopen 15
+✓ Reopened pull request acme/widgets#15 (the title)
+### com-pr-ready rc=0
+$ gh pr ready 8
+✓ Pull request acme/widgets#8 is marked as "ready for review"
+### com-pr-ready-undo rc=0
+$ gh pr ready 7 --undo
+✓ Pull request acme/widgets#7 is converted to "draft"
+### com-pr-lock rc=0
+$ gh pr lock 7
+
+### com-pr-unlock rc=0
+$ gh pr unlock 16
+
+### com-pr-checkout rc=0
+$ gh pr checkout 7; git checkout -q feature-com-1793733213
+branch 'feature' set up to track 'origin/feature'.
+Switched to a new branch 'feature'
+### com-D-pr-review-approve rc=1
+$ gh pr review 7 --approve
+failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addPullRequestReview\\\" is denied by the preset\"}"
+### com-D-pr-review-comment rc=1
+$ gh pr review 7 --comment --body c
+failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addPullRequestReview\\\" is denied by the preset\"}"
+### com-D-pr-review-changes rc=1
+$ gh pr review 7 --request-changes --body c
+failed to create review: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addPullRequestReview\\\" is denied by the preset\"}"
+### com-D-pr-merge rc=1
+$ gh pr merge 7 --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is denied by the preset\"}"
+### com-D-pr-merge-squash rc=1
+$ gh pr merge 7 --squash
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is denied by the preset\"}"
+### com-D-pr-merge-rebase rc=1
+$ gh pr merge 7 --rebase
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is denied by the preset\"}"
+### com-D-pr-merge-admin rc=1
+$ gh pr merge 7 --admin --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is denied by the preset\"}"
+### com-D-pr-merge-auto rc=1
+$ gh pr merge 11 --auto --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"enablePullRequestAutoMerge\\\" is denied by the preset\"}"
+### com-D-pr-merge-disable-auto rc=1
+$ gh pr merge 11 --disable-auto
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"disablePullRequestAutoMerge\\\" is denied by the preset\"}"
+### com-D-pr-merge-queue rc=1
+$ gh pr merge 12
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"enablePullRequestAutoMerge\\\" is denied by the preset\"}"
+### com-D-pr-update-branch rc=1
+$ gh pr update-branch 7
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"updatePullRequestBranch\\\" is denied by the preset\"}"
+### com-D-pr-revert rc=1
+$ gh pr revert 17 --title r
+X non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"revertPullRequest\\\" is denied by the preset\"}"
+API call failed: non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"revertPullRequest\\\" is denied by the preset\"}"
+### com-issue-create rc=0
+$ gh issue create --title t --body b --label bug --assignee bob
+https://github.com/acme/widgets/issues/9
+### com-issue-edit rc=0
+$ gh issue edit 9 --title n --add-label bug
+https://github.com/acme/widgets
+### com-issue-comment rc=0
+$ gh issue comment 9 --body c
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-issue-close rc=0
+$ gh issue close 9
+✓ Closed issue acme/widgets#9 (the title)
+### com-issue-reopen rc=0
+$ gh issue reopen 10
+✓ Reopened issue acme/widgets#10 (the title)
+### com-issue-lock rc=0
+$ gh issue lock 9
+
+### com-issue-unlock rc=0
+$ gh issue unlock 10
+
+### com-issue-pin rc=0
+$ gh issue pin 9
+✓ Pinned issue acme/widgets#9 (the title)
+### com-issue-unpin rc=0
+$ gh issue unpin 10
+✓ Unpinned issue acme/widgets#10 (the title)
+### com-issue-delete rc=0
+$ gh issue delete 9 --yes
+
+### com-issue-transfer rc=0
+$ gh issue transfer 9 acme/other
+https://github.com/acme/widgets/issues/9
+### com-issue-develop rc=0
+$ gh issue develop 9 --name dev-1793733213
+github.com/acme/widgets/tree/main
+### com-release-create rc=0
+$ gh release create v1 --title t --notes n
+https://github.com/acme/widgets/1
+### com-release-edit rc=0
+$ gh release edit v1 --title n
+https://github.com/acme/widgets/1
+### com-release-upload rc=0
+$ gh release upload v1 /tmp/asset.bin
+
+### com-release-delete-asset rc=0
+$ gh release delete-asset v1 existing.bin --yes
+
+### com-release-delete rc=0
+$ gh release delete v1 --yes
+
+### com-repo-create rc=0
+$ gh repo create acme/new-1793733213 --private
+https://github.com/acme/widgets
+### com-repo-edit rc=0
+$ gh repo edit --description d
+
+### com-repo-rename rc=0
+$ gh repo rename widgets2 --yes
+
+### com-repo-fork rc=0
+$ gh repo fork --remote=false
+alice/widgets already exists
+### com-repo-sync rc=0
+$ gh repo sync alice/widgets --source acme/widgets
+
+### com-repo-archive rc=0
+$ gh repo archive --yes
+
+### com-repo-unarchive rc=0
+$ gh repo unarchive acme/archived --yes
+
+### com-repo-deploy-key-add rc=0
+$ printf 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF x' > /tmp/k.pub; gh repo deploy-key add /tmp/k.pub --title k
+
+### com-repo-deploy-key-delete rc=0
+$ gh repo deploy-key delete 1
+
+### com-repo-autolink-create rc=0
+$ gh repo autolink create JIRA- https://x.example/\<num\>
+✓ Created repository autolink 1 on acme/widgets
+### com-repo-delete rc=0
+$ gh repo delete acme/old --yes
+
+### com-workflow-run rc=0
+$ gh workflow run ci.yml --ref main
+https://github.com/acme/widgets/1
+### com-workflow-enable rc=0
+$ gh workflow enable ci.yml
+
+### com-workflow-disable rc=0
+$ gh workflow disable ci.yml
+
+### com-run-cancel rc=0
+$ gh run cancel 1
+✓ Request to cancel workflow 1 submitted.
+### com-run-rerun rc=0
+$ gh run rerun 1
+
+### com-run-delete rc=0
+$ gh run delete 1
+✓ Request to delete workflow run submitted.
+### com-secret-set rc=0
+$ gh secret set S --body v
+
+### com-secret-delete rc=0
+$ gh secret delete S
+
+### com-variable-set rc=0
+$ gh variable set V --body v
+
+### com-variable-delete rc=0
+$ gh variable delete V
+
+### com-label-create rc=0
+$ gh label create new-1793733213 --color ff0000
+
+### com-label-edit rc=0
+$ gh label edit bug --description d
+
+### com-label-delete rc=0
+$ gh label delete bug --yes
+
+### com-label-clone rc=0
+$ gh label clone acme/other
+
+### com-gist-create rc=0
+$ gh gist create /tmp/f.txt
+✓ Created secret gist f.txt
+https://github.com/acme/widgets/1
+### com-gist-edit rc=0
+$ gh gist edit 1234 -a /tmp/f.txt
+
+### com-gist-rename rc=0
+$ gh gist rename 1234 f.txt g.txt
+
+### com-gist-delete rc=0
+$ gh gist delete 1234 --yes
+
+### com-project-create rc=1
+$ gh project create --owner acme --title p
+json: cannot unmarshal string into Go value of type bool
+### com-project-edit rc=1
+$ gh project edit 1 --owner acme --title q
+struct field for "id" doesn't exist in any of 5 places to unmarshal
+### com-project-item-add rc=1
+$ gh project item-add 1 --owner acme --url https://github.com/acme/widgets/issues/9
+struct field for "id" doesn't exist in any of 5 places to unmarshal
+### com-project-item-create rc=1
+$ gh project item-create 1 --owner acme --title i
+struct field for "id" doesn't exist in any of 5 places to unmarshal
+### com-project-field-create rc=1
+$ gh project field-create 1 --owner acme --name f --data-type TEXT
+struct field for "id" doesn't exist in any of 5 places to unmarshal
+### com-project-close rc=1
+$ gh project close 1 --owner acme
+struct field for "id" doesn't exist in any of 5 places to unmarshal
+### com-project-delete rc=1
+$ gh project delete 1 --owner acme
+struct field for "id" doesn't exist in any of 5 places to unmarshal
+### com-discussion-cli rc=0
+$ gh discussion --help | head -2
+Working with discussions in the GitHub CLI is in preview and subject to change without notice.
+### com-discussion-create rc=1
+$ gh discussion create --title t --body b --category General
+unknown category: "General"; must be one of: core
+### com-discussion-comment rc=0
+$ gh discussion comment 1 --body c
+https://github.com/acme/widgets/pull/7#issuecomment-1
+### com-discussion-edit rc=0
+$ gh discussion edit 1 --title n
+https://github.com/acme/widgets
+### com-discussion-api rc=0
+$ gh api graphql -f query='mutation{createDiscussion(input:{repositoryId:"R",categoryId:"C",title:"t",body:"b"}){discussion{id}}}'
+{"data":{"createDiscussion":{"discussion":{"id":"s-id"}}}}
+### com-cache-delete rc=0
+$ gh cache delete 1
+
+### com-cache-delete-all rc=0
+$ gh cache delete --all
+
+### com-ruleset-list rc=0
+$ gh ruleset list
+1	widgets	alice (unknown)	s-enforcement	1
+### com-api-post-issue rc=0
+$ gh api -X POST repos/acme/widgets/issues -f title=t
+[]
+### com-api-patch-pr rc=0
+$ gh api -X PATCH repos/acme/widgets/pulls/7 -f title=t
+{"base":{"ref":"main"},"body":"a description","head":{"ref":"feature","sha":"4b825dc6"},"html_url":"https://github.com/acme/widgets/pull/7","id":7,"node_id":"PR_x","number":7,"state":"open","title":"the title","user":{"login":"alice"}}
+### com-api-post-pr-comment rc=0
+$ gh api -X POST repos/acme/widgets/issues/7/comments -f body=c
+[]
+### com-api-put-contents rc=0
+$ gh api -X PUT repos/acme/widgets/contents/f.txt -f message=m -f content=eA==
+{"assets":[{"browser_download_url":"https://github.com/a","id":1,"name":"existing.bin","url":"https://github.com/a"}],"base_branch":"main","body":"b","clone_url":"https://github.com/acme/widgets.git","color":"ff0000","conclusion":"success","created_at":"2026-10-01T10:00:00Z","default_branch":"main",
+### com-api-delete-branch-protection rc=0
+$ gh api -X DELETE repos/acme/widgets/branches/main/protection
+
+### com-api-dispatch rc=0
+$ gh api -X POST repos/acme/widgets/dispatches -f event_type=e
+{"assets":[{"browser_download_url":"https://github.com/a","id":1,"name":"existing.bin","url":"https://github.com/a"}],"base_branch":"main","body":"b","clone_url":"https://github.com/acme/widgets.git","color":"ff0000","conclusion":"success","created_at":"2026-10-01T10:00:00Z","default_branch":"main",
+### com-api-gql-addcomment rc=0
+$ gh api graphql -f query='mutation{addComment(input:{subjectId:"P",body:"x"}){clientMutationId}}'
+{"data":{"addComment":{"clientMutationId":"s-clientMutationId"}}}
+### com-api-custom-header rc=0
+$ gh api -H 'X-Future: 1' repos/acme/widgets
+{"default_branch":"main","full_name":"acme/widgets","html_url":"https://github.com/acme/widgets","id":1,"name":"widgets","owner":{"login":"acme"},"permissions":{"push":true}}
+### com-D-api-post-review rc=1
+$ gh api -X POST repos/acme/widgets/pulls/7/reviews -f event=APPROVE
+{"message":"refused by the egress operation allowlist: POST .../pulls/{n}/reviews is denied by the preset"}gh: refused by the egress operation allowlist: POST .../pulls/{n}/reviews is denied by the preset (HTTP 403)
+### com-D-api-post-review-events rc=1
+$ gh api -X POST repos/acme/widgets/pulls/7/reviews/1/events -f event=APPROVE
+{"message":"refused by the egress operation allowlist: POST .../pulls/{n}/reviews/{id}/events is denied by the preset"}gh: refused by the egress operation allowlist: POST .../pulls/{n}/reviews/{id}/events is denied by the preset (HTTP 403)
+### com-D-api-put-merge rc=1
+$ gh api -X PUT repos/acme/widgets/pulls/7/merge
+{"message":"refused by the egress operation allowlist: PUT .../pulls/{n}/merge is denied by the preset"}gh: refused by the egress operation allowlist: PUT .../pulls/{n}/merge is denied by the preset (HTTP 403)
+### com-D-api-update-branch rc=1
+$ gh api -X PUT repos/acme/widgets/pulls/7/update-branch
+{"message":"refused by the egress operation allowlist: PUT .../pulls/{n}/update-branch is denied by the preset"}gh: refused by the egress operation allowlist: PUT .../pulls/{n}/update-branch is denied by the preset (HTTP 403)
+### com-D-api-post-merges rc=1
+$ gh api -X POST repos/acme/widgets/merges -f base=main -f head=x
+{"message":"refused by the egress operation allowlist: POST .../merges is denied by the preset"}gh: refused by the egress operation allowlist: POST .../merges is denied by the preset (HTTP 403)
+### com-D-api-post-ref rc=1
+$ gh api -X POST repos/acme/widgets/git/refs -f ref=refs/heads/x -f sha=abc
+{"message":"refused by the egress operation allowlist: POST .../git/refs/** is denied by the preset"}gh: refused by the egress operation allowlist: POST .../git/refs/** is denied by the preset (HTTP 403)
+### com-D-api-patch-ref rc=1
+$ gh api -X PATCH repos/acme/widgets/git/refs/heads/main -f sha=abc
+{"message":"refused by the egress operation allowlist: PATCH .../git/refs/** is denied by the preset"}gh: refused by the egress operation allowlist: PATCH .../git/refs/** is denied by the preset (HTTP 403)
+### com-D-api-delete-ref rc=1
+$ gh api -X DELETE repos/acme/widgets/git/refs/heads/x
+{"message":"refused by the egress operation allowlist: DELETE .../git/refs/** is denied by the preset"}gh: refused by the egress operation allowlist: DELETE .../git/refs/** is denied by the preset (HTTP 403)
+### com-D-api-gql-review rc=1
+$ gh api graphql -f query='mutation{addPullRequestReview(input:{pullRequestId:"P",event:APPROVE}){clientMutationId}}'
+{"message":"refused by the egress operation allowlist: mutation field \"addPullRequestReview\" is denied by the preset"}gh: refused by the egress operation allowlist: mutation field "addPullRequestReview" is denied by the preset (HTTP 403)
+### com-D-api-gql-merge rc=1
+$ gh api graphql -f query='mutation{x:mergePullRequest(input:{pullRequestId:"P"}){clientMutationId}}'
+{"message":"refused by the egress operation allowlist: mutation field \"mergePullRequest\" is denied by the preset"}gh: refused by the egress operation allowlist: mutation field "mergePullRequest" is denied by the preset (HTTP 403)
+### com-D-api-gql-commit rc=1
+$ gh api graphql -f query='mutation{createCommitOnBranch(input:{}){clientMutationId}}'
+{"message":"refused by the egress operation allowlist: mutation field \"createCommitOnBranch\" is denied by the preset"}gh: refused by the egress operation allowlist: mutation field "createCommitOnBranch" is denied by the preset (HTTP 403)

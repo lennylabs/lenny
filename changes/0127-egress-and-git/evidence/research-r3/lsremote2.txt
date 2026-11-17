@@ -1,0 +1,12 @@
+https://review.opendev.org/a/openstack/nova => error: unable to read askpass response from '/usr/bin/false' fatal: could not read Username for 'https://review.opendev.org': terminal prompts disabled 
+https://gitlab.gnome.org/GNOME/glib.git => e09400a9df066f4f0595c02be6ba039252886725	HEAD 
+https://ssh.gitlab.gnome.org/GNOME/glib.git => fatal: unable to access 'https://ssh.gitlab.gnome.org/GNOME/glib.git/': Failed to connect to ssh.gitlab.gnome.org port 443 after 75027 ms: Couldn't connect to server 
+https://gitlab.freedesktop.org/mesa/mesa.git => 759dedd64bd7a6572cd8d76aff39958262ae15d3	HEAD 
+https://ssh.gitlab.freedesktop.org/mesa/mesa.git => fatal: unable to access 'https://ssh.gitlab.freedesktop.org/mesa/mesa.git/': SSL: no alternative certificate subject name matches target host name 'ssh.gitlab.freedesktop
+https://invent.kde.org/plasma/kwin.git => 365e3bf5deb2fee84399840a7b5175143249bde6	HEAD 
+https://git.launchpad.net/ubuntu/+source/hello => c80e07d07e4ea27e0847ed731da7138b9e1df5d0	HEAD 
+https://dev.azure.com/dnceng-public/public/_git/dotnet-arcade => error: unable to read askpass response from '/usr/bin/false' fatal: could not read Username for 'https://dev.azure.com/dnceng-public/public/_git/dotnet-arcade': terminal 
+https://ssh.dev.azure.com/v3/dnceng-public/public/dotnet-arcade => fatal: repository 'https://ssh.dev.azure.com/v3/dnceng-public/public/dotnet-arcade/' not found 
+https://dev.azure.com/v3/dnceng-public/public/dotnet-arcade => fatal: repository 'https://dev.azure.com/v3/dnceng-public/public/dotnet-arcade/' not found 
+https://dev.azure.com/dnceng-public/public/dotnet-arcade => fatal: repository 'https://dev.azure.com/dnceng-public/public/dotnet-arcade/' not found 
+https://git-codecommit.us-east-1.amazonaws.com/v1/repos/nonexistent-demo => error: unable to read askpass response from '/usr/bin/false' fatal: could not read Username for 'https://git-codecommit.us-east-1.amazonaws.com': terminal prompts disable

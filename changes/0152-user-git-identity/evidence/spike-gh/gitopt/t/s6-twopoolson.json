@@ -1,0 +1,71 @@
+{
+ "ghes.example.test": {
+  "named": true,
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   },
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-CURRENT",
+  "handling": 2,
+  "routeDigest": {
+   "git": "gitdigest1",
+   "egress": "egressdigest1"
+  }
+ },
+ "github.com": {
+  "named": true,
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   },
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-CURRENT",
+  "handling": 2,
+  "routeDigest": {
+   "git": "gitdigest1",
+   "egress": "egressdigest1"
+  }
+ },
+ "gitlab.example.test": {
+  "named": true,
+  "pools": [
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   },
+   {
+    "prefix": "acme/",
+    "mode": "required",
+    "allowRuntimeHeldCredentials": true
+   }
+  ],
+  "released": true,
+  "suspended": false,
+  "current": "USER-FILE-CURRENT",
+  "handling": 2,
+  "routeDigest": {
+   "git": "gitdigest1",
+   "egress": "egressdigest1"
+  }
+ }
+}

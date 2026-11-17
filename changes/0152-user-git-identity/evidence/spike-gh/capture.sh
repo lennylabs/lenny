@@ -1,0 +1,87 @@
+#!/bin/bash
+# capture.sh <outdir> <flavour: ghes|ghcom> [attack]: runs each gh command through netagent against the stub. One file per case.
+O=$(cd "$(dirname "$0")" && pwd); cd "$O"
+OUT=raw/$1; FL=$2; mkdir -p $OUT
+if [ "$FL" = ghcom ]; then ENVV="GH_TOKEN=lenny-injected"; REPO=/tmp/repocom; P=x; else ENVV="GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected"; REPO=/tmp/repo; fi
+[ "$FL" = ghcom ] && docker exec gh-cli sh -c 'cp -r /work/repo /tmp/repocom; git -C /tmp/repocom remote set-url origin https://github.com/acme/widgets.git; git config --global --add safe.directory "*"'
+run(){ # label, shell command run from the repo
+ local l=$1; shift
+ case $l in pr-create*) m=0;; *) m=1;; esac
+ docker exec gh-cli sh -c "rm -rf /root/.cache/gh; curl -s http://gh-stub:9000/drain >/dev/null; curl -s 'http://gh-stub:9000/mode?existing=$m' >/dev/null"
+ docker exec gh-cli sh -c "cd $REPO && P=repos/acme/widgets/pulls && env $ENVV $*" >$OUT/$l.out 2>$OUT/$l.err; local rc=$?
+ docker exec gh-cli curl -s http://gh-stub:9000/drain >$OUT/$l.jsonl
+ echo "rc=$rc" >>$OUT/$l.out
+ printf '%-34s rc=%-3s reqs=%-3s %s\n' $l $rc $(wc -l <$OUT/$l.jsonl) "$(tail -1 $OUT/$l.err | cut -c1-110)"
+}
+H="--head feature --base main"
+if [ "${3:-}" = attack ]; then
+ P=repos/acme/widgets/pulls
+ run gh-review-approve   "gh pr review 7 --approve"
+ run gh-review-comment   "gh pr review 7 --comment --body looks"
+ run gh-review-changes   "gh pr review 7 --request-changes --body fix"
+ run gh-merge            "gh pr merge 7 --merge"
+ run gh-merge-squash     "gh pr merge 7 --squash"
+ run gh-merge-auto       "gh pr merge 11 --auto --merge"
+ run gh-merge-admin      "gh pr merge 7 --admin --merge"
+ run api-post-review     "gh api -X POST \$P/7/reviews -f event=APPROVE"
+ run api-post-review-ev  "gh api -X POST \$P/7/reviews/1/events -f event=APPROVE"
+ run api-put-review      "gh api -X PUT \$P/7/reviews/1 -f body=x"
+ run api-dismiss-review  "gh api -X PUT \$P/7/reviews/1/dismissals -f message=x"
+ run api-del-review      "gh api -X DELETE \$P/7/reviews/1"
+ run api-get-reviews     "gh api \$P/7/reviews"
+ run api-put-merge       "gh api -X PUT \$P/7/merge -f merge_method=merge"
+ run api-get-merge       "gh api \$P/7/merge"
+ run api-post-merges     "gh api -X POST repos/acme/widgets/merges -f base=main -f head=feature"
+ run api-update-branch   "gh api -X PUT \$P/7/update-branch"
+ run api-patch-pr        "gh api -X PATCH \$P/7 -f state=closed"
+ run api-patch-ref       "gh api -X PATCH repos/acme/widgets/git/refs/heads/main -f sha=abc -F force=true"
+ run api-override-hdr    "gh api -H 'X-HTTP-Method-Override: PUT' \$P/7"
+ run api-gql-review      "gh api graphql -f query='mutation { addPullRequestReview(input:{pullRequestId:\"P\",event:APPROVE}){clientMutationId} }'"
+ run api-gql-alias       "gh api graphql -f query='mutation { x: addPullRequestReview(input:{pullRequestId:\"P\",event:APPROVE}){clientMutationId} }'"
+ run api-gql-merge       "gh api graphql -f query='mutation { mergePullRequest(input:{pullRequestId:\"P\"}){clientMutationId} }'"
+ run api-gql-auto        "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input:{pullRequestId:\"P\"}){clientMutationId} }'"
+ run api-gql-allowed     "gh api graphql -f query='query { viewer { login } }'"
+ exit 0
+fi
+run pr-create-basic      "gh pr create --title t --body b $H"
+run pr-create-draft      "gh pr create --title t --body b --draft $H"
+run pr-create-reviewer   "gh pr create --title t --body b --reviewer bob,acme/core $H"
+run pr-create-label      "gh pr create --title t --body b --label bug $H"
+run pr-create-assignee   "gh pr create --title t --body b --assignee bob $H"
+run pr-create-milestone  "gh pr create --title t --body b --milestone v1 $H"
+run pr-create-project    "gh pr create --title t --body b --project board $H"
+run pr-create-all        "gh pr create --title t --body b --draft --reviewer bob,acme/core --label bug --assignee bob --milestone v1 --project board $H"
+run pr-create-fork-head  "gh pr create --title t --body b --head alice:feature --base main"
+run pr-create-nohead     "gh pr create --title t --body b"
+run pr-view              "gh pr view 7"
+run pr-view-cur          "gh pr view"
+run pr-view-json-all     "gh pr view 7 --json additions,assignees,author,autoMergeRequest,baseRefName,baseRefOid,body,changedFiles,closed,closedAt,closingIssuesReferences,comments,commits,createdAt,deletions,files,fullDatabaseId,headRefName,headRefOid,headRepository,headRepositoryOwner,id,isCrossRepository,isDraft,labels,latestReviews,maintainerCanModify,mergeCommit,mergeStateStatus,mergeable,mergedAt,mergedBy,milestone,number,potentialMergeCommit,projectCards,projectItems,reactionGroups,reviewDecision,reviewRequests,reviews,state,statusCheckRollup,title,updatedAt,url"
+run pr-list              "gh pr list"
+run pr-list-filtered     "gh pr list --search review:required --label bug --state all"
+run pr-status            "gh pr status"
+run pr-checks            "gh pr checks 7"
+run pr-diff              "gh pr diff 7"
+run pr-comment           "gh pr comment 7 --body hello"
+run pr-edit-title        "gh pr edit 7 --title new"
+run pr-edit-meta         "gh pr edit 7 --add-label bug --add-assignee bob --add-reviewer bob --milestone v1 --add-project board"
+run pr-ready             "gh pr ready 8"
+run pr-close             "gh pr close 7"
+run pr-review-approve    "gh pr review 7 --approve"
+run pr-review-comment    "gh pr review 7 --comment --body looks"
+run pr-review-changes    "gh pr review 7 --request-changes --body fix"
+run pr-merge             "gh pr merge 7 --merge"
+run pr-merge-squash-del  "gh pr merge 7 --squash --delete-branch"
+run pr-merge-rebase      "gh pr merge 7 --rebase"
+run pr-merge-auto        "gh pr merge 7 --auto --merge"
+run pr-merge-admin       "gh pr merge 7 --admin --merge"
+run pr-merge-auto-blocked "gh pr merge 11 --auto --merge"
+run pr-merge-disable-auto "gh pr merge 11 --disable-auto"
+run pr-merge-queue "gh pr merge 12"
+run repo-view            "gh repo view"
+run issue-view           "gh issue view 9"
+run auth-status          "gh auth status"
+run api-rest-get         "gh api repos/acme/widgets"
+run api-rest-paginate    "gh api --paginate repos/acme/widgets/pulls"
+run api-rest-post        "gh api -X POST repos/acme/widgets/pulls -f title=t -f head=feature -f base=main"
+run api-graphql          "gh api graphql -f query='query { viewer { login } }'"
+run api-graphql-mut      "gh api graphql -f query='mutation { addComment(input:{subjectId:\"PR_x\", body:\"x\"}) { clientMutationId } }'"

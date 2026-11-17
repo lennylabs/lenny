@@ -1,0 +1,22 @@
+t=  1.00s done=950  map[200:950] p50=52ms p99=97.6ms open=950 ticks=950 broken=0
+t=  2.00s done=998  map[200:998] p50=51.8ms p99=77ms open=998 ticks=2299 broken=0
+t=  3.00s done=1002 map[200:1002] p50=51.5ms p99=53.2ms open=1002 ticks=3661 broken=0
+t=  4.00s done=999  map[200:999] p50=51.7ms p99=53.3ms open=1001 ticks=4968 broken=0
+t=  5.00s done=999  map[200:999] p50=51.6ms p99=53.4ms open=1001 ticks=6253 broken=0
+t=  6.00s done=998  map[200:998] p50=51.7ms p99=53.5ms open=997 ticks=7559 broken=0
+t=  7.00s done=1003 map[200:1003] p50=51.7ms p99=54.6ms open=1003 ticks=8876 broken=0
+t=  8.00s done=999  map[200:999] p50=51.6ms p99=53.3ms open=999 ticks=10213 broken=0
+t=  9.00s done=1001 map[200:1001] p50=51.7ms p99=54.1ms open=1001 ticks=11505 broken=0
+t= 10.00s done=1000 map[200:1000] p50=51.6ms p99=53.6ms open=1001 ticks=12864 broken=0
+t= 11.00s done=997  map[200:997] p50=51.7ms p99=54.4ms open=997 ticks=14181 broken=0
+t= 12.00s done=1002 map[200:1002] p50=51.7ms p99=53.5ms open=1004 ticks=15520 broken=0
+t= 13.00s done=1001 map[200:1001] p50=51.6ms p99=53.2ms open=1002 ticks=16858 broken=0
+t= 14.00s done=999  map[200:999] p50=51.7ms p99=53.7ms open=1001 ticks=18163 broken=0
+t= 15.00s done=1000 map[200:1000] p50=51.6ms p99=54.1ms open=998 ticks=19510 broken=0
+t= 16.00s done=1002 map[200:1002] p50=51.7ms p99=53.5ms open=1002 ticks=20853 broken=0
+t= 17.00s done=999  map[200:999] p50=51.6ms p99=53.6ms open=999 ticks=22172 broken=0
+t= 18.00s done=1000 map[200:1000] p50=51.6ms p99=53.6ms open=1002 ticks=23474 broken=0
+t= 19.00s done=1000 map[200:1000] p50=51.7ms p99=53.5ms open=1001 ticks=24785 broken=0
+t= 20.00s done=1000 map[200:1000] p50=51.8ms p99=53.6ms open=999 ticks=26085 broken=0
+t= 21.00s done=51   map[200:51] p50=51.6ms p99=53.4ms open=51 ticks=26491 broken=0
+SUMMARY attempts=20000 map[200:20000] 200-latency p50=51.7ms p90=52.8ms p99=65.7ms max=103.4ms ticks=26505 broken=0 elapsed=21.1s

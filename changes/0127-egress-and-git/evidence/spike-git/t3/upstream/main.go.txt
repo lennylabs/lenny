@@ -1,0 +1,123 @@
+// upstream: a smart-HTTP git server for the spike.
+// -mode cgi    : net/http/cgi running `git http-backend`.
+// -mode direct : hand-rolled handler streaming `git upload-pack/receive-pack --stateless-rpc` with explicit flushes.
+// Basic auth (alice:s3cret) is required on every request. -redirect adds /moved/* -> 301/307 handlers.
+package main
+
+import (
+	"compress/gzip"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/http/cgi"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+var root string
+
+func pkt(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
+
+type flushWriter struct{ w http.ResponseWriter }
+
+func (f flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	f.w.(http.Flusher).Flush()
+	return n, err
+}
+
+func direct(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Path
+	var svc, repo string
+	switch {
+	case strings.HasSuffix(p, "/info/refs"):
+		svc = strings.TrimPrefix(r.URL.Query().Get("service"), "git-")
+		repo = strings.TrimSuffix(p, "/info/refs")
+	case strings.HasSuffix(p, "/git-upload-pack"):
+		svc, repo = "upload-pack", strings.TrimSuffix(p, "/git-upload-pack")
+	case strings.HasSuffix(p, "/git-receive-pack"):
+		svc, repo = "receive-pack", strings.TrimSuffix(p, "/git-receive-pack")
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	if svc != "upload-pack" && svc != "receive-pack" {
+		http.Error(w, "bad service", 403)
+		return
+	}
+	dir := filepath.Join(root, filepath.Clean("/"+repo))
+	cmd := exec.Command("git", svc, "--stateless-rpc")
+	cmd.Env = append(os.Environ(), "GIT_PROTOCOL="+r.Header.Get("Git-Protocol"))
+	cmd.Stderr = os.Stderr
+	if r.Method == "GET" {
+		cmd.Args = append(cmd.Args, "--http-backend-info-refs", dir)
+		w.Header().Set("Content-Type", "application/x-git-"+svc+"-advertisement")
+		w.Header().Set("Cache-Control", "no-cache")
+		if r.Header.Get("Git-Protocol") == "" {
+			io.WriteString(w, pkt("# service=git-"+svc+"\n")+"0000")
+		}
+	} else {
+		cmd.Args = append(cmd.Args, dir)
+		var body io.Reader = r.Body
+		if r.Header.Get("Content-Encoding") == "gzip" {
+			gz, err := gzip.NewReader(r.Body)
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			body = gz
+		}
+		cmd.Stdin = body
+		w.Header().Set("Content-Type", "application/x-git-"+svc+"-result")
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	cmd.Stdout = flushWriter{w}
+	if err := cmd.Run(); err != nil {
+		log.Printf("direct %s %s: %v", svc, dir, err)
+	}
+}
+
+func main() {
+	addr := flag.String("addr", "127.0.0.1:8080", "listen")
+	mode := flag.String("mode", "cgi", "cgi|direct")
+	flag.StringVar(&root, "root", "/srv/git", "project root")
+	flag.Parse()
+	var h http.Handler
+	if *mode == "cgi" {
+		h = &cgi.Handler{Path: "/usr/bin/git", Args: []string{"http-backend"}, Root: "/",
+			Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1"},
+			InheritEnv: []string{"GIT_CONFIG_GLOBAL", "HOME", "PATH"}}
+	} else {
+		h = http.HandlerFunc(direct)
+	}
+	mux := http.NewServeMux()
+	// Redirect fixtures: /moved301/<rest> and /moved307/<rest> -> /<rest> on this server; /tohub/<x> -> github.com
+	mux.HandleFunc("/moved301/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:8080"+strings.TrimPrefix(r.URL.RequestURI(), "/moved301"), 301)
+	})
+	mux.HandleFunc("/moved307/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://localhost:8080"+strings.TrimPrefix(r.URL.RequestURI(), "/moved307"), 307)
+	})
+	mux.HandleFunc("/tohub/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "https://github.com"+strings.TrimPrefix(r.URL.RequestURI(), "/tohub"), 301)
+	})
+	mux.Handle("/", h)
+	auth := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, p, ok := r.BasicAuth()
+		log.Printf("UP %s %s auth=%v cl=%d te=%v ce=%q gp=%q", r.Method, r.URL.RequestURI(), ok && u == "alice" && p == "s3cret", r.ContentLength, r.TransferEncoding, r.Header.Get("Content-Encoding"), r.Header.Get("Git-Protocol"))
+		if !(ok && u == "alice" && p == "s3cret") {
+			w.Header().Set("WWW-Authenticate", `Basic realm="up"`)
+			http.Error(w, "auth", 401)
+			return
+		}
+		t := time.Now()
+		mux.ServeHTTP(w, r)
+		log.Printf("UP done %s %s in %v", r.Method, r.URL.Path, time.Since(t).Round(time.Millisecond))
+	})
+	log.Fatal(http.ListenAndServe(*addr, auth))
+}

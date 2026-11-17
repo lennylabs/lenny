@@ -1,0 +1,69 @@
+## worker node: how Calico hooks workload egress (iptables mode)
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-P INPUT ACCEPT
+-A INPUT -m comment --comment "cali:Cz_u1IQiXIMmKD4c" -j cali-INPUT
+-A INPUT -m conntrack --ctstate NEW -m comment --comment "kubernetes load balancer firewall" -j KUBE-PROXY-FIREWALL
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-P FORWARD ACCEPT
+-A FORWARD -m comment --comment "cali:wUHhoiAYhphO9Mso" -j cali-FORWARD
+-A FORWARD -m conntrack --ctstate NEW -m comment --comment "kubernetes load balancer firewall" -j KUBE-PROXY-FIREWALL
+# cali-INPUT:
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-N cali-INPUT
+-A cali-INPUT -p ipencap -m comment --comment "cali:PajejrV4aFdkZojI" -m comment --comment "Allow IPIP packets from Calico hosts" -m set --match-set cali40all-hosts-net src -m addrtype --dst-type LOCAL -j ACCEPT
+-A cali-INPUT -p ipencap -m comment --comment "cali:_wjq-Yrma8Ly1Svo" -m comment --comment "Drop IPIP packets from non-Calico hosts" -j DROP
+-A cali-INPUT -i cali+ -m comment --comment "cali:8TZGxLWh_Eiz66wc" -g cali-wl-to-host
+-A cali-INPUT -m comment --comment "cali:6McIeIDvPdL6PE1T" -m mark --mark 0x10000/0x10000 -j ACCEPT
+-A cali-INPUT -m comment --comment "cali:FHoqwXIibih3FkAm" -j MARK --set-xmark 0x0/0x1b0000
+-A cali-INPUT -m comment --comment "cali:qZ1_fX7-OsFCh64q" -j cali-from-host-endpoint
+-A cali-INPUT -m comment --comment "cali:64so3UXgS7MtBy-m" -m comment --comment "Host endpoint policy accepted packet." -m mark --mark 0x10000/0x10000 -j ACCEPT
+# cali-wl-to-host:
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-N cali-wl-to-host
+-A cali-wl-to-host -m comment --comment "cali:Ee9Sbo10IpVujdIY" -j cali-from-wl-dispatch
+-A cali-wl-to-host -m comment --comment "cali:nSZbcOoG1xPONxb8" -m comment --comment "Configured DefaultEndpointToHostAction" -j ACCEPT
+# cali-from-wl-dispatch:
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-N cali-from-wl-dispatch
+-A cali-from-wl-dispatch -i cali1d3c30776fa -m comment --comment "cali:H52v0_K1Wepb-UK3" -g cali-fw-cali1d3c30776fa
+-A cali-from-wl-dispatch -i cali200a441712d -m comment --comment "cali:jrORpffwcBRLlXI2" -g cali-fw-cali200a441712d
+-A cali-from-wl-dispatch -i cali4+ -m comment --comment "cali:fNecQiGOavOCrFGq" -g cali-from-wl-dispatch-4
+-A cali-from-wl-dispatch -i cali74c092b7f34 -m comment --comment "cali:KbrW1F3vFAXOh90c" -g cali-fw-cali74c092b7f34
+-A cali-from-wl-dispatch -i cali9a62eb58743 -m comment --comment "cali:wZCj4FVDIFzf0Avv" -g cali-fw-cali9a62eb58743
+-A cali-from-wl-dispatch -i caliaa0cfb5b0f2 -m comment --comment "cali:67HPALZp3L-9WnNM" -g cali-fw-caliaa0cfb5b0f2
+-A cali-from-wl-dispatch -m comment --comment "cali:k3maq2l66dG3W690" -m comment --comment "Unknown interface" -j DROP
+# cali interfaces on worker: cali9a62eb58743 cali200a441712d cali74c092b7f34 caliaa0cfb5b0f2 cali4c4a0511d47 cali408c677da5e cali1d3c30776fa 
+# per-endpoint egress chain for client (cali-fw-*) and the policy chains it references:
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:YTpMPvC7s4ltTPJP" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:g2IzVz6jcQDI08OW" -m conntrack --ctstate INVALID -j DROP
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:jn17tMjvXAPOCDpr" -j MARK --set-xmark 0x0/0x30000
+-A cali-fw-cali1d3c30776fa -p udp -m comment --comment "cali:sLTfL3nAsqa0E81y" -m comment --comment "Drop VXLAN encapped packets originating in workloads" -m multiport --dports 4789 -j DROP
+-A cali-fw-cali1d3c30776fa -p ipencap -m comment --comment "cali:Y8mo_2tsag_IIMLe" -m comment --comment "Drop IPinIP encapped packets originating in workloads" -j DROP
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:3f76whvktsh3O1Sk" -m comment --comment "Start of tier default" -j MARK --set-xmark 0x0/0x20000
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:SAhv2Fz7WlcmOkC8" -m mark --mark 0x0/0x20000 -j cali-po-_FzPoD146e9qAZQjncjn
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:oOqofOHe1fRHAd4b" -m comment --comment "Return if policy accepted" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:mjltSVzL8ZKCj2b7" -m mark --mark 0x0/0x20000 -j cali-po-_CHT9q2VKCmb-TLqTWE2
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:6IfFPKc3M-Y_WkQZ" -m comment --comment "Return if policy accepted" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:Wao5RZD2ViJH6TKd" -m comment --comment "End of tier default. Drop if no policies passed packet" -m mark --mark 0x0/0x20000 -j DROP
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:Z8DXFJ7RhB9bNy5j" -j cali-pro-kns.lenny-agents
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:vOOvzz7Msa5uliE5" -m comment --comment "Return if profile accepted" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:w5okJGcp7IRiibee" -j cali-pro-_f7BkLUt__erzzYiIYc
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:kADCJZzYt3q-9yoX" -m comment --comment "Return if profile accepted" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-fw-cali1d3c30776fa -m comment --comment "cali:PyIVimyg50HoBjNY" -m comment --comment "Drop if no profiles matched" -j DROP
+-A cali-fw-cali200a441712d -m comment --comment "cali:yTLbJarL05BobqQW" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A cali-fw-cali200a441712d -m comment --comment "cali:EX-ifnmWN9Ej0g86" -m conntrack --ctstate INVALID -j DROP
+-A cali-fw-cali200a441712d -m comment --comment "cali:qFmIOARZiq56W2cv" -j MARK --set-xmark 0x0/0x30000
+-A cali-fw-cali200a441712d -p udp -m comment --comment "cali:p3dipvXPRGQe3yNZ" -m comment --comment "Drop VXLAN encapped packets originating in workloads" -m multiport --dports 4789 -j DROP
+# Warning: iptables-legacy tables present, use iptables-legacy to see them
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -p tcp -m comment --comment "cali:Lh5rxRbuefuVfxqj" -m comment --comment "KubernetesNetworkPolicy lenny-agents/egress-profile-proxied egress" -m set --match-set cali40s:sTe3EwXIGRDgiJapj-xnkLu dst -m multiport --dports 3128 -j MARK --set-xmark 0x10000/0x10000
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -m comment --comment "cali:YMPGKBXptpbWhbM7" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -p tcp -m comment --comment "cali:JO4I15B8HmY9UkYR" -m set --match-set cali40s:c8cVgGDBPjFuBN7SaUi1pXa dst -m multiport --dports 53 -j MARK --set-xmark 0x10000/0x10000
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -m comment --comment "cali:z1jtDfn9BjQ2ZPvi" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -p udp -m comment --comment "cali:wztQxTdTVZCS0HXr" -m set --match-set cali40s:c8cVgGDBPjFuBN7SaUi1pXa dst -m multiport --dports 53 -j MARK --set-xmark 0x10000/0x10000
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -m comment --comment "cali:in7VEt6Dx_lhxK9b" -m mark --mark 0x10000/0x10000 -j RETURN
+-A cali-po-_CHT9q2VKCmb-TLqTWE2 -p tcp -m comment --comment "cali:W6Q9vD1h8-b6NOC7" -m set --match-set cali40s:6JH6P24APLKj9HWH6265fpB dst -m multiport --dports 8443 -j MARK --set-xmark 0x10000/0x10000
+-A cali-po-_FzPoD146e9qAZQjncjn -m comment --comment "cali:x2O7KanLENjNmj6q" -m comment --comment "KubernetesNetworkPolicy lenny-agents/default-deny-egress egress"
+# ipsets referenced:
+sh: 1: ipset: not found
+sh: 1: ipset: not found

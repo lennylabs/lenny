@@ -1,0 +1,109 @@
+// mkca DIR: name-constrained per-pod CA stand-ins and leaves for the client matrix.
+//   nc   permits DNS allowed.oa.test only.
+//   ncx  permits DNS xallowed.oa.test and excludes every IP address.
+//   ctl  has no constraints; it is in the bundle so a refusal cannot be a trust-configuration error.
+//   unk  has no constraints and is not in the bundle.
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
+	"net"
+	"os"
+	"path/filepath"
+	"time"
+)
+
+var serial int64 = 1000
+
+type ca struct {
+	c *x509.Certificate
+	k *ecdsa.PrivateKey
+}
+
+func wr(p, typ string, b []byte) {
+	f, _ := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	defer f.Close()
+	pem.Encode(f, &pem.Block{Type: typ, Bytes: b})
+}
+func mkca(dir, n string, tune func(*x509.Certificate)) ca {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial++
+	t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "oa-" + n, Organization: []string{"spike"}}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign, NotBefore: time.Now().Add(-48 * time.Hour), NotAfter: time.Now().Add(365 * 24 * time.Hour)}
+	if tune != nil {
+		tune(t)
+	}
+	d, err := x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+	if err != nil {
+		panic(err)
+	}
+	c, _ := x509.ParseCertificate(d)
+	os.Remove(filepath.Join(dir, n+".pem"))
+	wr(filepath.Join(dir, n+".pem"), "CERTIFICATE", d)
+	return ca{c, k}
+}
+func leaf(dir, n string, p ca, chain []*x509.Certificate, dns []string, ips []net.IP) {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial++
+	t := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: n + " leaf"}, DNSNames: dns, IPAddresses: ips, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	d, err := x509.CreateCertificate(rand.Reader, t, p.c, &k.PublicKey, p.k)
+	if err != nil {
+		panic(err)
+	}
+	dd := filepath.Join(dir, n)
+	os.MkdirAll(dd, 0o755)
+	os.Remove(filepath.Join(dd, "tls.crt"))
+	os.Remove(filepath.Join(dd, "tls.key"))
+	wr(filepath.Join(dd, "tls.crt"), "CERTIFICATE", d)
+	for _, c := range chain {
+		wr(filepath.Join(dd, "tls.crt"), "CERTIFICATE", c.Raw)
+	}
+	b, _ := x509.MarshalPKCS8PrivateKey(k)
+	wr(filepath.Join(dd, "tls.key"), "PRIVATE KEY", b)
+}
+func main() {
+	dir := os.Args[1]
+	targetIP := net.ParseIP(os.Args[2])
+	nc := mkca(dir, "nc", func(t *x509.Certificate) {
+		t.PermittedDNSDomainsCritical = true
+		t.PermittedDNSDomains = []string{"allowed.oa.test"}
+	})
+	_, all4, _ := net.ParseCIDR("0.0.0.0/0")
+	_, all6, _ := net.ParseCIDR("::/0")
+	ncx := mkca(dir, "ncx", func(t *x509.Certificate) {
+		t.PermittedDNSDomainsCritical = true
+		t.PermittedDNSDomains = []string{"xallowed.oa.test"}
+		t.ExcludedIPRanges = []*net.IPNet{all4, all6}
+	})
+	ctl := mkca(dir, "ctl", nil)
+	unk := mkca(dir, "unk", nil)
+	leaf(dir, "allowed", nc, nil, []string{"allowed.oa.test"}, nil)
+	leaf(dir, "denied", nc, nil, []string{"denied.oa.test"}, nil)
+	leaf(dir, "sub", nc, nil, []string{"sub.allowed.oa.test"}, nil)
+	leaf(dir, "ip", nc, nil, nil, []net.IP{targetIP})
+	// An intermediate under the constrained root that carries no constraints of its own.
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	serial++
+	it := &x509.Certificate{SerialNumber: big.NewInt(serial), Subject: pkix.Name{CommonName: "oa-nc-intermediate"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour)}
+	d, err := x509.CreateCertificate(rand.Reader, it, nc.c, &k.PublicKey, nc.k)
+	if err != nil {
+		panic(err)
+	}
+	ic, _ := x509.ParseCertificate(d)
+	leaf(dir, "viaint", ca{ic, k}, []*x509.Certificate{ic}, []string{"viaint.oa.test"}, nil)
+	leaf(dir, "ctl", ctl, nil, []string{"ctl.oa.test"}, nil)
+	leaf(dir, "unk", unk, nil, []string{"unk.oa.test"}, nil)
+	leaf(dir, "xallowed", ncx, nil, []string{"xallowed.oa.test"}, nil)
+	leaf(dir, "xdenied", ncx, nil, []string{"xdenied.oa.test"}, nil)
+	leaf(dir, "xip", ncx, nil, nil, []net.IP{targetIP})
+	bundle := filepath.Join(dir, "bundle.pem")
+	os.Remove(bundle)
+	for _, c := range []*x509.Certificate{nc.c, ncx.c, ctl.c} {
+		wr(bundle, "CERTIFICATE", c.Raw)
+	}
+}

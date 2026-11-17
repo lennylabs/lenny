@@ -1,0 +1,68 @@
+===== code 422 repo acme/lfsother
+lfsother-422-clone             rc=0     0.1s netagent={'lfs-download:allowed': 2, 'lfs-action-credential:undeliverable': 2} stub={}
+lfsother-422-push              rc=0     0.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 1, 'lfs-action-credential:undeliverable': 1} stub={}
+### lfsother-422-clone rc=0
+error: external filter 'git-lfs filter-process' failed
+fatal: o.bin: smudge filter lfs failed
+warning: Clone succeeded, but checkout failed.
+You can inspect what was checked out with 'git status'
+and retry with 'git restore --source=HEAD :/'
+
+git-exit=128
+### lfsother-422-push rc=0
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsother.git/info/lfs.locksverify true
+[3787061019502a052d533890ab7e99e19638e3b493206fbc4c0efd19b47eec4b] the action names lfs-store.example.test, which netagent cannot deliver a credential to: [422] the actio
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsother.git'
+git-exit=1
+===== code 422 repo acme/lfsothera
+lfsothera-422-clone            rc=0     0.1s netagent={'lfs-download:allowed': 2, 'lfs-action-credential:undeliverable': 2} stub={}
+lfsothera-422-push             rc=0     0.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 1, 'lfs-action-credential:undeliverable': 1} stub={}
+### lfsothera-422-clone rc=0
+error: external filter 'git-lfs filter-process' failed
+fatal: o.bin: smudge filter lfs failed
+warning: Clone succeeded, but checkout failed.
+You can inspect what was checked out with 'git status'
+and retry with 'git restore --source=HEAD :/'
+
+git-exit=128
+### lfsothera-422-push rc=0
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsothera.git/info/lfs.locksverify true
+[e2e4a3ef03cb3c07e0ce1616e543acec60ebb0ff5ca545733bd75fc6cc2b81db] the action names lfs-store.example.test, which netagent cannot deliver a credential to: [422] the actio
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsothera.git'
+git-exit=1
+===== code 404 repo acme/lfsother
+lfsother-404-clone             rc=0     0.1s netagent={'lfs-download:allowed': 2, 'lfs-action-credential:undeliverable': 2} stub={}
+lfsother-404-push              rc=0     0.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 1, 'lfs-action-credential:undeliverable': 1} stub={}
+### lfsother-404-clone rc=0
+error: external filter 'git-lfs filter-process' failed
+fatal: o.bin: smudge filter lfs failed
+warning: Clone succeeded, but checkout failed.
+You can inspect what was checked out with 'git status'
+and retry with 'git restore --source=HEAD :/'
+
+git-exit=128
+### lfsother-404-push rc=0
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsother.git/info/lfs.locksverify true
+[a9dd20303a90ee9029ab2406cfece36606cb88ba68cf035e42f605a661485859] the action names lfs-store.example.test, which netagent cannot deliver a credential to: [404] the actio
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsother.git'
+git-exit=1
+===== code 500 repo acme/lfsother
+lfsother-500-clone             rc=0     0.1s netagent={'lfs-download:allowed': 2, 'lfs-action-credential:undeliverable': 2} stub={}
+lfsother-500-push              rc=0     0.0s netagent={'lfs-locks:allowed': 1, 'lfs-upload:allowed': 1, 'lfs-action-credential:undeliverable': 1} stub={}
+### lfsother-500-clone rc=0
+error: external filter 'git-lfs filter-process' failed
+fatal: o.bin: smudge filter lfs failed
+warning: Clone succeeded, but checkout failed.
+You can inspect what was checked out with 'git status'
+and retry with 'git restore --source=HEAD :/'
+
+git-exit=128
+### lfsother-500-push rc=0
+Locking support detected on remote "origin". Consider enabling it with:
+  $ git config lfs.https://gitlab.example.test/acme/lfsother.git/info/lfs.locksverify true
+[1b2c579f14bfb31e8882298d5b88513365601fcad76a1778f23f41419a3d73d1] the action names lfs-store.example.test, which netagent cannot deliver a credential to: [500] the actio
+error: failed to push some refs to 'https://gitlab.example.test/acme/lfsother.git'
+git-exit=1

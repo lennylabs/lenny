@@ -1,0 +1,28 @@
+### generate: 2,000 CONNECTs/s for an hour, 2,500 tenants, three records per tunnel, one batch per tenant-stream-minute, the running system's payload code
+gen: hour=2026110300 tenants=2500 rate=2000 records=21600314 raw=14827.5 MiB compressed=1195.7 MiB (8.1%) mean record=720 bytes objects=300000 manifest rows=300000 in 177s
+   rows=300000 table=119 MB  objects=300000  store=1.2GiB	300000 objects	evidence
+
+### scan, uncompacted hour, address + port + target + time
+scan hour=2026110300 par=1 prefilter=true: manifest read 306ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=60.2s cpu=52.4s throughput=239284 records/s
+scan hour=2026110300 par=4 prefilter=true: manifest read 237ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=23.5s cpu=44.8s throughput=613198 records/s
+scan hour=2026110300 par=8 prefilter=true: manifest read 234ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=17.1s cpu=46.0s throughput=841366 records/s
+scan hour=2026110300 par=4 prefilter=false: manifest read 270ms, objects=150000 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=14400277 hits=1 wall=40.1s cpu=106.4s throughput=359485 records/s
+
+### compaction of the busy hour
+compact: groups=5000 skipped=0 failed=0 batches merged=300000 bytes=1253784406 wall=65.37s par=8 groups/s=76.5 group ms p50=94.6 p99=204.3 max=850.0 cpu=55.55s
+   rows=5000 after vacuum: 42 MB  mean row=7401 bytes, parts jsonb text=19613 bytes, parts=60.0  objects=5000
+   chain events: compaction|5000|23 MB
+   object sizes: stream egress.decision p50=127 kB max=38 MB
+stream egress.tunnel p50=161 kB max=61 MB
+
+### verify after compaction
+verify: rows=5000 objects=5000 batches=300000 records=21600314 | object digest mismatches=0 part digest mismatches=0 record count mismatches=0 | chain events=5000 (compaction 5000) bad links=0 anchors not recomputing=0 anchored batches absent=0 | 16.7s
+
+### scan, compacted hour
+scan hour=2026110300 par=1 prefilter=true: manifest read 432ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=16.7s cpu=16.0s throughput=864290 records/s
+scan hour=2026110300 par=4 prefilter=true: manifest read 437ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=5.6s cpu=16.4s throughput=2580833 records/s
+scan hour=2026110300 par=8 prefilter=true: manifest read 431ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=5.3s cpu=16.2s throughput=2698384 records/s
+scan hour=2026110300 par=4 prefilter=false: manifest read 425ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=14400277 hits=1 wall=21.9s cpu=72.4s throughput=656767 records/s
+
+### the same query with only a port: reused ports
+scan hour=2026110300 par=4 prefilter=true: manifest read 432ms, objects=2500 compressed=698.1 MiB raw=9959.0 MiB records=14400277 decoded=0 hits=0 wall=5.6s cpu=16.3s throughput=2582721 records/s

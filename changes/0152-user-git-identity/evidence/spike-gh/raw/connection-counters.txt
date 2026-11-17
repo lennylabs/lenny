@@ -1,0 +1,1 @@
+{"active":0,"attached":13,"authorityMismatch":0,"connect":6,"dialErrors":0,"filterAllowed":0,"filterNanos":0,"filterRefused":0,"goroutines":6,"heapAlloc":2602368,"heapInuse":3465216,"heapSys":7995392,"numGC":0,"opaque":1,"plain":0,"refused":0,"requests":13,"scrubHits":0,"stackInuse":393216,"sys":12802312,"terminated":5}

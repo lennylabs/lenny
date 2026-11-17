@@ -1,0 +1,6 @@
+t=  60.0s open=2 ticks=0 (+0) ended=map[]
+t= 120.1s open=2 ticks=0 (+0) ended=map[]
+t= 180.0s open=2 ticks=0 (+0) ended=map[]
+t= 240.0s open=2 ticks=0 (+0) ended=map[]
+t= 300.0s open=2 ticks=0 (+0) ended=map[]
+SUMMARY n=2 codes=map[200:2] end_reasons=map[EOF (clean close):2] ticks_total=0 ticks_per_tunnel=[0..0] connect_lat p50=0s p99=0s lifetime min=5m0.1s p50=5m0.1s max=5m0.1s elapsed=300.6s

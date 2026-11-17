@@ -1,0 +1,41 @@
+{"port": 7077, "m": "GET", "path": "/https/github.com/org/lfsrepo/info/refs?service=git-upload-pack", "accept": "*/*", "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/locks/verify", "accept": "application/vnd.git-lfs+json", "auth": null, "op": null, "ref": {"name": "refs/heads/main"}}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/P/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "POST", "path": "/https/github.com/org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "download", "ref": {"name": "refs/heads/main"}}
+{"port": 7078, "m": "CONNECT", "path": "storage.example.com:443", "accept": null, "auth": null}
+{"port": 7077, "m": "GET", "path": "/scp/github.com:org/lfsrepo.git/info/refs?service=git-upload-pack", "accept": "*/*", "auth": null}
+{"port": 7077, "m": "POST", "path": "/scp/github.com:org/lfsrepo.git/info/lfs/locks/verify", "accept": "application/vnd.git-lfs+json", "auth": null, "op": null, "ref": {"name": "refs/heads/main"}}
+{"port": 7077, "m": "POST", "path": "/scp/github.com:org/lfsrepo.git/info/lfs/objects/batch", "accept": "application/vnd.git-lfs+json", "auth": null, "op": "upload", "ref": {"name": "refs/heads/main"}}

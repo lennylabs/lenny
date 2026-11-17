@@ -1,0 +1,104 @@
+ok-forwarded       rc=0   com-pr-create                            writes=createPullRequest,updatePullRequest,replaceActorsForAssignable,requestReviewsByLogin refused=
+ok-forwarded       rc=0   com-pr-edit-title                        writes=updatePullRequest refused=
+ok-forwarded       rc=0   com-pr-edit-meta                         writes=requestReviewsByLogin,replaceActorsForAssignable,addLabelsToLabelable,removeLabelsFromLabe refused=
+ok-forwarded       rc=0   com-pr-comment                           writes=addComment refused=
+ok-forwarded       rc=0   com-pr-close                             writes=addComment,closePullRequest refused=
+ok-forwarded       rc=0   com-pr-reopen                            writes=reopenPullRequest refused=
+ok-forwarded       rc=0   com-pr-ready                             writes=markPullRequestReadyForReview refused=
+ok-forwarded       rc=0   com-pr-ready-undo                        writes=convertPullRequestToDraft refused=
+ok-forwarded       rc=0   com-pr-lock                              writes=lockLockable refused=
+ok-forwarded       rc=0   com-pr-unlock                            writes=unlockLockable refused=
+no-write-at-stub   rc=0   com-pr-checkout                          writes= refused=
+ok-refused-denied  rc=1   com-D-pr-review-approve                  writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-review-comment                  writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-review-changes                  writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge                           writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge-squash                    writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge-rebase                    writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge-admin                     writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge-auto                      writes= refused=mutation field "enablePullRequestAutoMerge" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge-disable-auto              writes= refused=mutation field "disablePullRequestAutoMerge" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-merge-queue                     writes= refused=mutation field "enablePullRequestAutoMerge" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-update-branch                   writes= refused=mutation field "updatePullRequestBranch" is denied by the preset
+ok-refused-denied  rc=1   com-D-pr-revert                          writes= refused=mutation field "revertPullRequest" is denied by the preset
+ok-forwarded       rc=0   com-issue-create                         writes=createIssue,replaceActorsForAssignable refused=
+ok-forwarded       rc=0   com-issue-edit                           writes=addLabelsToLabelable,updateIssue refused=
+ok-forwarded       rc=0   com-issue-comment                        writes=addComment refused=
+ok-forwarded       rc=0   com-issue-close                          writes=closeIssue refused=
+ok-forwarded       rc=0   com-issue-reopen                         writes=reopenIssue refused=
+ok-forwarded       rc=0   com-issue-lock                           writes=lockLockable refused=
+ok-forwarded       rc=0   com-issue-unlock                         writes=unlockLockable refused=
+ok-forwarded       rc=0   com-issue-pin                            writes=pinIssue refused=
+ok-forwarded       rc=0   com-issue-unpin                          writes=unpinIssue refused=
+ok-forwarded       rc=0   com-issue-delete                         writes=deleteIssue refused=
+ok-forwarded       rc=0   com-issue-transfer                       writes=transferIssue refused=
+OVER               rc=1   com-issue-develop                        writes= refused=mutation field "createLinkedBranch" is denied by the preset
+ok-forwarded       rc=0   com-release-create                       writes=POST /repos/acme/widgets/releases refused=
+ok-forwarded       rc=0   com-release-edit                         writes=PATCH /repos/acme/widgets/releases/1 refused=
+ok-forwarded       rc=0   com-release-upload                       writes=POST /x refused=
+ok-forwarded       rc=0   com-release-delete-asset                 writes=DELETE /a refused=
+ok-forwarded       rc=0   com-release-delete                       writes=DELETE /x refused=
+ok-forwarded       rc=0   com-repo-create                          writes=createRepository refused=
+ok-forwarded       rc=0   com-repo-edit                            writes=PATCH /repos/acme/widgets refused=
+ok-forwarded       rc=0   com-repo-rename                          writes=PATCH /repos/acme/widgets refused=
+ok-forwarded       rc=0   com-repo-fork                            writes=POST /repos/acme/widgets/forks refused=
+OVER               rc=1   com-repo-sync                            writes= refused=POST {repo}/merge-upstream is denied by the preset
+ok-forwarded       rc=0   com-repo-archive                         writes=archiveRepository refused=
+ok-forwarded       rc=0   com-repo-unarchive                       writes=unarchiveRepository refused=
+OVER               rc=1   com-repo-deploy-key-add                  writes= refused=POST {repo}/keys is denied by the preset
+ok-forwarded       rc=0   com-repo-deploy-key-delete               writes=DELETE /repos/acme/widgets/keys/1 refused=
+ok-forwarded       rc=0   com-repo-autolink-create                 writes=POST /repos/acme/widgets/autolinks refused=
+ok-forwarded       rc=0   com-repo-delete                          writes=DELETE /repos/acme/old refused=
+ok-forwarded       rc=0   com-workflow-run                         writes=POST /repos/acme/widgets/actions/workflows/1/dispatches refused=
+ok-forwarded       rc=0   com-workflow-enable                      writes=PUT /repos/acme/widgets/actions/workflows/1/enable refused=
+ok-forwarded       rc=0   com-workflow-disable                     writes=PUT /repos/acme/widgets/actions/workflows/1/disable refused=
+ok-forwarded       rc=0   com-run-cancel                           writes=POST /repos/acme/widgets/actions/runs/1/cancel refused=
+ok-forwarded       rc=0   com-run-rerun                            writes=POST /repos/acme/widgets/actions/runs/1/rerun refused=
+ok-forwarded       rc=0   com-run-delete                           writes=DELETE /repos/acme/widgets/actions/runs/1 refused=
+ok-forwarded       rc=0   com-secret-set                           writes=PUT /repos/acme/widgets/actions/secrets/S refused=
+ok-forwarded       rc=0   com-secret-delete                        writes=DELETE /repos/acme/widgets/actions/secrets/S refused=
+ok-forwarded       rc=0   com-variable-set                         writes=POST /repos/acme/widgets/actions/variables refused=
+ok-forwarded       rc=0   com-variable-delete                      writes=DELETE /repos/acme/widgets/actions/variables/V refused=
+ok-forwarded       rc=0   com-label-create                         writes=POST /repos/acme/widgets/labels refused=
+ok-forwarded       rc=0   com-label-edit                           writes=PATCH /repos/acme/widgets/labels/bug refused=
+ok-forwarded       rc=0   com-label-delete                         writes=DELETE /repos/acme/widgets/labels/bug refused=
+ok-forwarded       rc=0   com-label-clone                          writes=POST /repos/acme/widgets/labels refused=
+ok-forwarded       rc=0   com-gist-create                          writes=POST /gists refused=
+ok-forwarded       rc=0   com-gist-edit                            writes=POST /gists/1234 refused=
+ok-forwarded       rc=0   com-gist-rename                          writes=POST /gists/1234 refused=
+ok-forwarded       rc=0   com-gist-delete                          writes=DELETE /gists/1234 refused=
+ok-forwarded       rc=1   com-project-create                       writes=createProjectV2 refused=
+no-write-at-stub   rc=1   com-project-edit                         writes= refused=
+no-write-at-stub   rc=1   com-project-item-add                     writes= refused=
+no-write-at-stub   rc=1   com-project-item-create                  writes= refused=
+no-write-at-stub   rc=1   com-project-field-create                 writes= refused=
+no-write-at-stub   rc=1   com-project-close                        writes= refused=
+no-write-at-stub   rc=1   com-project-delete                       writes= refused=
+no-write-at-stub   rc=0   com-discussion-cli                       writes= refused=
+no-write-at-stub   rc=1   com-discussion-create                    writes= refused=
+ok-forwarded       rc=0   com-discussion-comment                   writes=addDiscussionComment refused=
+ok-forwarded       rc=0   com-discussion-edit                      writes=updateDiscussion refused=
+ok-forwarded       rc=0   com-discussion-api                       writes=createDiscussion refused=
+ok-forwarded       rc=0   com-cache-delete                         writes=DELETE /repos/acme/widgets/actions/caches/1 refused=
+ok-forwarded       rc=0   com-cache-delete-all                     writes=DELETE /repos/acme/widgets/actions/caches/1 refused=
+no-write-at-stub   rc=0   com-ruleset-list                         writes= refused=
+ok-forwarded       rc=0   com-api-post-issue                       writes=POST /repos/acme/widgets/issues refused=
+ok-forwarded       rc=0   com-api-patch-pr                         writes=PATCH /repos/acme/widgets/pulls/7 refused=
+ok-forwarded       rc=0   com-api-post-pr-comment                  writes=POST /repos/acme/widgets/issues/7/comments refused=
+OVER               rc=1   com-api-put-contents                     writes= refused=PUT {repo}/contents/** is denied by the preset
+OVER               rc=1   com-api-delete-branch-protection         writes= refused=DELETE {repo}/branches/*/protection/** is denied by the preset
+ok-forwarded       rc=0   com-api-dispatch                         writes=POST /repos/acme/widgets/dispatches refused=
+ok-forwarded       rc=0   com-api-gql-addcomment                   writes=addComment refused=
+no-write-at-stub   rc=0   com-api-custom-header                    writes= refused=
+ok-refused-denied  rc=1   com-D-api-post-review                    writes= refused=POST {repo}/pulls/*/reviews/** is denied by the preset
+ok-refused-denied  rc=1   com-D-api-post-review-events             writes= refused=POST {repo}/pulls/*/reviews/** is denied by the preset
+ok-refused-denied  rc=1   com-D-api-put-merge                      writes= refused=PUT {repo}/pulls/*/merge is denied by the preset
+ok-refused-denied  rc=1   com-D-api-update-branch                  writes= refused=PUT {repo}/pulls/*/update-branch is denied by the preset
+ok-refused-denied  rc=1   com-D-api-post-merges                    writes= refused=POST {repo}/merges is denied by the preset
+ok-refused-denied  rc=1   com-D-api-post-ref                       writes= refused=POST {repo}/git/refs/** is denied by the preset
+ok-refused-denied  rc=1   com-D-api-patch-ref                      writes= refused=PATCH {repo}/git/refs/** is denied by the preset
+ok-refused-denied  rc=1   com-D-api-delete-ref                     writes= refused=DELETE {repo}/git/refs/** is denied by the preset
+ok-refused-denied  rc=1   com-D-api-gql-review                     writes= refused=mutation field "addPullRequestReview" is denied by the preset
+ok-refused-denied  rc=1   com-D-api-gql-merge                      writes= refused=mutation field "mergePullRequest" is denied by the preset
+ok-refused-denied  rc=1   com-D-api-gql-commit                     writes= refused=mutation field "createCommitOnBranch" is denied by the preset
+TOTAL 103 {'ok-forwarded': 64, 'ok-refused-denied': 23, 'OVER': 5, 'MISS': 0, 'no-write-at-stub': 11}

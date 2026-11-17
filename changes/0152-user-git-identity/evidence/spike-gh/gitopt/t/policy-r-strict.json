@@ -1,0 +1,290 @@
+{
+ "ghes": {
+  "mode": "deny",
+  "restPrefix": "/api/v3",
+  "graphqlPath": "/api/graphql",
+  "maxBody": 262144,
+  "lexStrict": true,
+  "canonicalForward": true,
+  "maxDepth": 64,
+  "maxTokens": 15000,
+  "denyMutations": [
+   "addPullRequestReview",
+   "submitPullRequestReview",
+   "updatePullRequestReview",
+   "deletePullRequestReview",
+   "dismissPullRequestReview",
+   "mergePullRequest",
+   "enablePullRequestAutoMerge",
+   "disablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "dequeuePullRequest",
+   "updatePullRequestBranch",
+   "revertPullRequest",
+   "mergeBranch",
+   "createCommitOnBranch",
+   "createRef",
+   "updateRef",
+   "updateRefs",
+   "deleteRef"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews/{id}/events"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/update-branch"
+   },
+   {
+    "method": "POST",
+    "path": ".../merges"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs"
+   }
+  ],
+  "stripHeaders": [
+   "Authorization"
+  ],
+  "matcher": "strict",
+  "apiPrefixes": [
+   "/api/v3",
+   "/api/graphql",
+   "/api/uploads"
+  ],
+  "encodedPaths": [
+   "**/contents/{enc}",
+   "**/branches/{enc}",
+   "**/branches/{enc}/*",
+   "**/labels/{enc}",
+   "**/compare/{enc}",
+   "**/git/ref/{enc}",
+   "**/git/refs/{enc}",
+   "**/git/matching-refs/{enc}",
+   "**/releases/tags/{enc}",
+   "**/commits/{enc}",
+   "**/commits/{enc}/*",
+   "**/environments/{enc}",
+   "**/environments/{enc}/*",
+   "**/secrets/{enc}",
+   "**/variables/{enc}",
+   "**/topics/{enc}"
+  ]
+ },
+ "ghcom": {
+  "mode": "deny",
+  "restPrefix": "",
+  "graphqlPath": "/graphql",
+  "maxBody": 262144,
+  "lexStrict": true,
+  "canonicalForward": true,
+  "maxDepth": 64,
+  "maxTokens": 15000,
+  "denyMutations": [
+   "addPullRequestReview",
+   "submitPullRequestReview",
+   "updatePullRequestReview",
+   "deletePullRequestReview",
+   "dismissPullRequestReview",
+   "mergePullRequest",
+   "enablePullRequestAutoMerge",
+   "disablePullRequestAutoMerge",
+   "enqueuePullRequest",
+   "dequeuePullRequest",
+   "updatePullRequestBranch",
+   "revertPullRequest",
+   "mergeBranch",
+   "createCommitOnBranch",
+   "createRef",
+   "updateRef",
+   "updateRefs",
+   "deleteRef"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews"
+   },
+   {
+    "method": "POST",
+    "path": ".../pulls/{n}/reviews/{id}/events"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../pulls/{n}/update-branch"
+   },
+   {
+    "method": "POST",
+    "path": ".../merges"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs/**"
+   },
+   {
+    "method": "POST",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "PATCH",
+    "path": ".../git/refs"
+   },
+   {
+    "method": "DELETE",
+    "path": ".../git/refs"
+   }
+  ],
+  "stripHeaders": [
+   "Authorization"
+  ],
+  "matcher": "strict",
+  "apiPrefixes": [],
+  "encodedPaths": [
+   "**/contents/{enc}",
+   "**/branches/{enc}",
+   "**/branches/{enc}/*",
+   "**/labels/{enc}",
+   "**/compare/{enc}",
+   "**/git/ref/{enc}",
+   "**/git/refs/{enc}",
+   "**/git/matching-refs/{enc}",
+   "**/releases/tags/{enc}",
+   "**/commits/{enc}",
+   "**/commits/{enc}/*",
+   "**/environments/{enc}",
+   "**/environments/{enc}/*",
+   "**/secrets/{enc}",
+   "**/variables/{enc}",
+   "**/topics/{enc}"
+  ]
+ },
+ "gitlab": {
+  "mode": "deny",
+  "restPrefix": "/api/v4",
+  "graphqlPath": "/api/graphql",
+  "maxBody": 262144,
+  "lexStrict": true,
+  "canonicalForward": true,
+  "maxDepth": 64,
+  "maxTokens": 15000,
+  "denyMutations": [
+   "mergeRequestAccept"
+  ],
+  "denyRest": [
+   {
+    "method": "POST",
+    "path": ".../merge_requests/{n}/approve"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge_requests/{n}/unapprove"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge_requests/{n}/merge"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge_requests/{n}/rebase"
+   },
+   {
+    "method": "PUT",
+    "path": ".../merge_requests/{n}/reset_approvals"
+   },
+   {
+    "method": "POST",
+    "path": ".../merge_requests/{n}/cancel_merge_when_pipeline_succeeds"
+   }
+  ],
+  "stripHeaders": [
+   "Authorization",
+   "Private-Token",
+   "Job-Token"
+  ],
+  "bodyRules": [
+   {
+    "path": ".../merge_requests",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   },
+   {
+    "path": ".../merge_requests/{n}",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   },
+   {
+    "path": ".../notes",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   },
+   {
+    "path": ".../discussions",
+    "regex": "(?:^|[\\r\\n\\x0b\\x0c\\x{85}\\x{2028}\\x{2029}])[ \\t]*/(?:approve|unapprove|merge|rebase)\\b"
+   }
+  ],
+  "matcher": "strict",
+  "apiPrefixes": [
+   "/api/v4",
+   "/api/graphql"
+  ],
+  "encodedPaths": [
+   "/api/v4/projects/{enc}",
+   "/api/v4/projects/{enc}/**",
+   "/api/v4/projects/{enc}/*",
+   "/api/v4/projects/{enc}/*/*",
+   "/api/v4/projects/{enc}/*/*/*",
+   "/api/v4/projects/{enc}/*/*/*/*",
+   "/api/v4/groups/{enc}",
+   "/api/v4/groups/{enc}/*",
+   "**/repository/branches/{enc}",
+   "**/repository/files/{enc}",
+   "**/repository/files/{enc}/*",
+   "**/repository/tags/{enc}",
+   "**/repository/commits/{enc}",
+   "**/repository/commits/{enc}/*",
+   "**/labels/{enc}",
+   "**/wikis/{enc}",
+   "**/repository/tree/{enc}"
+  ]
+ }
+}

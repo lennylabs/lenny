@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata: {name: egress-decider, namespace: spike}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: {name: spike-pod-reader}
+rules:
+- {apiGroups: [""], resources: [pods], verbs: [get, list, watch]}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: spike-decider-pods}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: spike-pod-reader}
+subjects: [{kind: ServiceAccount, name: egress-decider, namespace: spike}]
+---
+# TokenReview permission, for the comparison only
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: spike-decider-auth-delegator}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
+subjects: [{kind: ServiceAccount, name: egress-decider, namespace: spike}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: validator, namespace: spike}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: validator}}
+  template:
+    metadata: {labels: {app: validator}}
+    spec:
+      serviceAccountName: egress-decider
+      containers:
+      - name: validator
+        image: spike-validator:v1
+        imagePullPolicy: Never
+        ports: [{containerPort: 8080}]
+        securityContext: {runAsUser: 65534, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: validator, namespace: spike}
+spec:
+  selector: {app: validator}
+  ports: [{port: 8080, targetPort: 8080}]

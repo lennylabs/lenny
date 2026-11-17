@@ -1,0 +1,10 @@
+<class 'dict'> ['organization_api_insights', 'organization_administration', 'organization_agent_secrets', 'organization_agent_variables', 'organization_user_blocking', 'organization_campaigns']
+PATCH /repos/{owner}/{repo}/git/refs/{ref} -> Contents | write | additional: True |  {"additional-permissions": true}
+POST /repos/{owner}/{repo}/merges -> Contents | write | additional: False |  {"additional-permissions": false}
+PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge -> Contents | write | additional: False |  {"additional-permissions": false}
+POST /repos/{owner}/{repo}/pulls -> Pull requests | write | additional: False |  {"additional-permissions": false}
+PATCH /repos/{owner}/{repo}/pulls/{pull_number} -> Pull requests | write | additional: False |  {"additional-permissions": false}
+POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews -> Pull requests | write | additional: False |  {"additional-permissions": false}
+POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/events -> Pull requests | write | additional: False |  {"additional-permissions": false}
+PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch -> Pull requests | write | additional: False |  {"additional-permissions": false}
+PATCH /repos/{owner}/{repo}/git/refs/{ref} -> Workflows | write | additional: True |  {"additional-permissions": true}

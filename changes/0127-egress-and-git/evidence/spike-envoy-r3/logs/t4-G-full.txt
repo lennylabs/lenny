@@ -1,0 +1,30 @@
+   [delay -> 0ms at 21:10:46]
+   [delay -> 1000ms at 21:10:51]
+   [delay -> 0ms at 21:11:01]
+t=  1s done=200  map[200:200] p50=1.3ms p99=23.6ms open=200 ticks=200 broken=0
+t=  2s done=200  map[200:200] p50=1.8ms p99=27ms open=400 ticks=600 broken=0
+t=  3s done=200  map[200:200] p50=900µs p99=15.2ms open=600 ticks=1200 broken=0
+t=  4s done=200  map[200:200] p50=1.3ms p99=3.5ms open=600 ticks=1804 broken=0
+t=  5s done=100  map[200:97 503:3] p50=1.2ms p99=3.2ms open=496 ticks=2305 broken=0
+t=  6s done=200  map[200:100 503:100] p50=1.8ms p99=1.0057s open=397 ticks=2711 broken=0
+t=  7s done=201  map[200:100 503:101] p50=2.8ms p99=1.005s open=296 ticks=3018 broken=0
+t=  8s done=200  map[200:99 503:101] p50=2ms p99=1.0058s open=299 ticks=3319 broken=0
+t=  9s done=200  map[200:99 503:101] p50=1.9ms p99=1.0056s open=298 ticks=3622 broken=0
+t= 10s done=201  map[200:99 503:102] p50=2.1ms p99=1.0058s open=297 ticks=3923 broken=0
+t= 11s done=199  map[200:98 503:101] p50=1.8ms p99=1.0051s open=296 ticks=4220 broken=0
+t= 12s done=200  map[200:99 503:101] p50=2.2ms p99=1.005s open=295 ticks=4520 broken=0
+t= 13s done=200  map[200:99 503:101] p50=2.1ms p99=1.005s open=296 ticks=4818 broken=0
+t= 14s done=200  map[200:99 503:101] p50=2.1ms p99=1.0048s open=297 ticks=5118 broken=0
+t= 15s done=280  map[200:182 503:98] p50=1.4ms p99=1.0043s open=380 ticks=5500 broken=0
+t= 16s done=219  map[200:219] p50=1ms p99=1.0033s open=501 ticks=6005 broken=0
+t= 17s done=200  map[200:200] p50=900µs p99=3.7ms open=601 ticks=6611 broken=0
+t= 18s done=200  map[200:200] p50=900µs p99=3.8ms open=619 ticks=7236 broken=0
+t= 19s done=200  map[200:200] p50=900µs p99=3.4ms open=600 ticks=7837 broken=0
+t= 20s done=200  map[200:200] p50=900µs p99=3.5ms open=600 ticks=8443 broken=0
+t= 21s done=0    map[] p50=0s p99=0s open=400 ticks=8848 broken=0
+t= 22s done=0    map[] p50=0s p99=0s open=200 ticks=9055 broken=0
+t= 23s done=0    map[] p50=0s p99=0s open=0 ticks=9063 broken=0
+SUMMARY attempts=4000 map[200:2990 503:1010] 200-latency p50=2.2ms p90=1.0033s p99=1.005s max=1.0075s ticks=9063 broken=0 elapsed=23.0s
+## stats (envoy cpu, mem) min/max:
+16.91% 57.96MiB
+29.32% 52.43MiB

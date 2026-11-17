@@ -1,0 +1,26 @@
+# 2026-11-02T08:46:02Z label=calico-ebpf-policy
+# netpols in lenny-agents: networkpolicy.networking.k8s.io/default-deny-egress networkpolicy.networking.k8s.io/egress-profile-proxied 
+== client: client 10.244.136.199/32 WORKER_IP=172.18.0.3 CP_IP=172.18.0.2 OTHER_POD_IP=10.244.136.198 GW_POD_IP=10.244.136.197 EGRESS_POD_IP=10.244.107.65
+-- allowed paths
+[A1 egress ClusterIP 10.96.31.28:3128 CONNECT example.com] rc=0 0.09s :: 200 
+[A2 egress pod IP 10.244.107.65:3128 CONNECT example.com] rc=0 0.09s :: 200 
+[A3 proxied DNS ClusterIP 10.96.53.53 UDP (dig lenny-egress.lenny-system.svc)] rc=0 0.01s :: 10.96.31.28 
+[A4 proxied DNS ClusterIP 10.96.53.53 TCP (dig +tcp)] rc=0 0.00s :: 10.96.0.1 
+[A5 resolv.conf resolver (getent lenny-egress.lenny-system)] rc=0 0.01s :: 10.96.31.28       lenny-egress.lenny-system.svc.cluster.local  lenny-egress.lenny-system.svc.cluster.local lenny-egress.
+[A6 resolve egress by name via proxied resolver, then CONNECT example.com] rc=0 0.09s :: 200 
+[A7 gateway ClusterIP 10.96.84.43:8443 (backend on SAME node)] rc=0 0.00s :: 200 
+[A8 gateway pod IP 10.244.136.197:8443 (same node)] rc=0 0.00s :: 200 
+-- denied paths
+[D1 API server ClusterIP 10.96.0.1:443] rc=28 5.01s :: curl: (28) Connection timed out after 5003 milliseconds 000 
+[D2 control-plane node IP 172.18.0.2:6443 (API server hostNetwork)] rc=28 5.01s :: curl: (28) Connection timed out after 5002 milliseconds 000 
+[D3 worker (own node) IP 172.18.0.3:10250 kubelet] rc=28 5.01s :: curl: (28) Connection timed out after 5003 milliseconds 000 
+[D4 control-plane node IP 172.18.0.2:10250 kubelet] rc=28 5.00s :: curl: (28) Connection timed out after 5003 milliseconds 000 
+[D5 hostNetwork pod on SAME node 172.18.0.3:9000] rc=28 5.01s :: curl: (28) Connection timed out after 5002 milliseconds 000 
+[D6 hostNetwork pod on control-plane 172.18.0.2:9000] rc=28 5.01s :: curl: (28) Connection timed out after 5001 milliseconds 000 
+[D7 other-ns pod IP 10.244.136.198:8080 (same node)] rc=28 5.00s :: curl: (28) Connection timed out after 5001 milliseconds 000 
+[D8 other-ns Service ClusterIP 10.96.99.99:8080 (backend same node)] rc=28 5.01s :: curl: (28) Connection timed out after 5004 milliseconds 000 
+[D9 internet 1.1.1.1:443] rc=28 5.01s :: curl: (28) Connection timed out after 5004 milliseconds 000 
+[D10 default kube-dns 10.96.0.10 UDP] rc=9 2.01s :: ;; communications error to 10.96.0.10#53: timed out ;; no servers could be reached 
+[D11 default kube-dns 10.96.0.10 TCP] rc=9 2.03s :: ;; Connection to 10.96.0.10#53(10.96.0.10) for kubernetes.default.svc.cluster.local failed: timed out. ;; no servers cou
+[D12 egress pod IP 10.244.107.65 wrong port 3129] rc=28 5.02s :: curl: (28) Connection timed out after 5002 milliseconds 000 
+[D13 gateway pod IP 10.244.136.197 wrong port 8080] rc=28 5.01s :: curl: (28) Connection timed out after 5002 milliseconds 000 

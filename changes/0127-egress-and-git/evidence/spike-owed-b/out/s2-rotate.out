@@ -1,0 +1,53 @@
+MARK 1793664053666370958 start
+-- c1: 11 FAIL lines; last summary: 1793664031777586254 summary ok=4638 fail=11
+-- c2: 10 FAIL lines; last summary: 1793664031759780462 summary ok=4639 fail=10
+-- c3: 11 FAIL lines; last summary: 1793664031820610462 summary ok=4638 fail=11
+=== PHASE A: routine CA renewal, rotationPolicy Never, while leaves keep renewing
+MARK 1793664054090194333 A: renew CA
+Manually triggered issuance of Certificate lenny-system/lenny-egress-ca
+  CA serial serial=193333D58A8DF9152F2847AECE46EC196ABF15C6 -> serial=42A8E54E362C72683360BDFE4353993C5FBC9624; key hash 43a4bd0cca05 -> 43a4bd0cca05
+MARK 1793664255659518969 A: end
+-- c1: 11 FAIL lines; last summary: 1793664241779561962 summary ok=5688 fail=11
+-- c2: 10 FAIL lines; last summary: 1793664241761535170 summary ok=5689 fail=10
+-- c3: 11 FAIL lines; last summary: 1793664241817572295 summary ok=5688 fail=11
+--- bundles now
+1
+1793663067058725002 BUNDLE ns=lenny-system code=201 err=<nil> certs=[lenny-egress-ca#193333d5]
+1793664223264354593 BUNDLE ns=agents code=200 err=<nil> certs=[lenny-egress-ca#42a8e54e]
+1793664223270497509 BUNDLE ns=lenny-system code=200 err=<nil> certs=[lenny-egress-ca#42a8e54e]
+=== PHASE B: key rotation in the design's order, waiting for delivery at each step
+MARK 1793664256107117969 B0: new CA created, Helm value not yet set
+MARK 1793664256370790844 B1: Helm value carries outgoing and new
+  bundle [lenny-egress-ca lenny-egress-ca-2] at every holder after about 2 s
+MARK 1793664696805454048 B2: bundle delivered at every holder. Issuer switches.
+  all leaf Secrets issued by lenny-egress-ca-2 after about 43 s
+MARK 1793664745926986668 B3: every leaf Secret re-issued
+  leaves delivered and served under lenny-egress-ca-2 after about 56 s
+MARK 1793664811251405003 B4: every leaf delivered and served. Value cleared.
+  bundle [lenny-egress-ca-2] at every holder after about 68 s
+MARK 1793664887178637761 B5: outgoing CA gone from every holder
+MARK 1793665037426140719 B: end
+-- c1: 11 FAIL lines; last summary: 1793665021784868295 summary ok=9588 fail=11
+-- c2: 10 FAIL lines; last summary: 1793665021766131587 summary ok=9589 fail=10
+-- c3: 11 FAIL lines; last summary: 1793665021821931795 summary ok=9588 fail=11
+=== PHASE C: same order, but the value is cleared as soon as every leaf Secret has re-issued, without waiting for delivery
+MARK 1793665037774822511 C0
+  bundle [lenny-egress-ca-2 lenny-egress-ca-3] at every holder after about 80 s
+MARK 1793665126419950344 C2: bundle delivered. Issuer switches.
+  all leaf Secrets issued by lenny-egress-ca-3 after about 86 s
+MARK 1793665225547420917 C3: every leaf Secret re-issued. Value cleared at once.
+  bundle [lenny-egress-ca-3] at every holder after about 72 s
+MARK 1793665304379488843 C5: outgoing CA gone from every holder
+MARK 1793665454607267176 C: end
+-- c1: 285 FAIL lines; last summary: 1793665441774009670 summary ok=11414 fail=285
+-- c2: 281 FAIL lines; last summary: 1793665441752300962 summary ok=11418 fail=281
+-- c3: 283 FAIL lines; last summary: 1793665441811695795 summary ok=11416 fail=283
+=== PHASE D: wrong order on purpose: the Issuer switches with no bundle step, to prove the client can see a failure
+MARK 1793665454944405718 D0
+MARK 1793665455262412552 D1: Issuer switched
+  all leaf Secrets issued by lenny-egress-ca-4 after about 10 s
+MARK 1793665465918505334 D3: every leaf Secret re-issued
+MARK 1793665666181075927 D: end
+-- c1: 705 FAIL lines; last summary: 1793665651771822587 summary ok=12044 fail=705
+-- c2: 680 FAIL lines; last summary: 1793665651752865170 summary ok=12069 fail=680
+-- c3: 683 FAIL lines; last summary: 1793665651809270212 summary ok=12066 fail=683

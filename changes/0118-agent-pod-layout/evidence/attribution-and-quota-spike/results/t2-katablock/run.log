@@ -1,0 +1,35 @@
+=== t2 katablock  2026-11-14T07:35:52Z
+pod q-katablock uid 868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e rc=kata-block hostUsers=true podshare=no
+host ws: root:root 777 projid: projid = 0 flags: ----------------X /var/lib/kub
+total 4836
+drwxrwxrwx. 2 root root          22 Nov 14 07:35 .
+drwxr-xr-x. 4 root root          29 Nov 14 07:35 ..
+-rw-r--r--. 1 root root 64357400576 Nov 14 07:35 disk.img
+total 4836
+drwxrwxrwx. 2 root root          22 Nov 14 07:35 .
+drwxr-xr-x. 4 root root          29 Nov 14 07:35 ..
+-rw-r--r--. 1 root root 64357400576 Nov 14 07:35 disk.img
+/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws
+/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws/disk.img
+142 135 8:0 / /workspace rw,relatime - ext4 /dev/sda rw,discard
+{"getquota_err":"function not implemented","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/","source":"/dev/sda","super":"rw,discard"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"function not implemented","statfs":{"avail_b":64230543360,"bsize":4096,"ffree":399349,"files":399360,"size_b":64247345152,"type":"0xef53","used_b":24576},"uid":20000,"xflags":"0x0","xgetquota_err":"function not implemented"}
+{"file":"/workspace/f64","open_err":"open /workspace/f64: permission denied","uid":20000}
+total 6704
+   0 drwxrwxrwx. 2 root root          22 Nov 14 07:35 .
+   0 drwxr-xr-x. 4 root root          29 Nov 14 07:35 ..
+6704 -rw-r--r--. 1 root root 64357400576 Nov 14 07:35 disk.img
+64357400598	/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws
+{"after_projid":52997,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":134217728,"bsoft_b":0,"icount":1,"id":52997,"ihard":0}}
+host report proj 52997:  | du ws: 64357400598 B
+the image file existed before the assignment; new blocks of an existing file keep its old projid:
+/var/lib/kubelet/pods/868e0cd7-d5ab-4dd6-b9a4-6950d97c3e6e/volumes/kubernetes.io~empty-dir/ws/disk.img projid = 0
+{"file":"/workspace/f300","open_err":"open /workspace/f300: permission denied","uid":20000}
+[    2.006182] sd 0:0:0:0: [sda] Attached SCSI disk
+[    2.031974] EXT4-fs (sda): mounted filesystem f213de0c-4cdc-4ed6-9d2b-ccc5cceff543 r/w without journal. Quota mode: disabled.
+[    2.031980] ext4 filesystem being mounted at /run/kata-containers/sandbox/storage/MDow supports timestamps until 2038-01-19 (0x7fffffff)
+[    2.051234] EXT4-fs (sdb): mounted filesystem da8a5e0a-9e75-45f3-b02b-52f707cf67d9 r/w without journal. Quota mode: disabled.
+[    2.051240] ext4 filesystem being mounted at /run/kata-containers/sandbox/storage/MDox supports timestamps until 2038-01-19 (0x7fffffff)
+/dev/sda /workspace ext4 rw,relatime,discard 0 0
+host report proj 52997:  | du ws: 64357400598 B
+pod still Running/ after 20 s (not evicted)
+=== t2 katablock done 2026-11-14T07:36:18Z

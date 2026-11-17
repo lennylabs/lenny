@@ -1,0 +1,220 @@
+// authz2: spike decision service with both ext_authz transports.
+//
+//	:9000 gRPC envoy.service.auth.v3.Authorization
+//	:9001 HTTP (ext_authz http_service): 200 = allow, anything else = deny
+//	:9002 control: /delay?ms=N (added to every check), /count, /reset
+//
+// Decision table keyed on the Basic token in Proxy-Authorization:
+//
+//	good      -> allow, route direct
+//	chain-m   -> allow, forwarded CONNECT to proxy B (198.18.0.13, needs auth), credential injected
+//	chain-407 -> allow, forwarded CONNECT to proxy B with no credential (B answers 407)
+//	chain-403 -> allow, forwarded CONNECT to proxy D (198.18.0.15, answers 403 with a body)
+//	sni       -> allow, route sni-gate (internal listener compares SNI with authority)
+//	bad       -> deny 403
+//	(none)    -> deny 407 + Proxy-Authenticate
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+var (
+	delayMs  atomic.Int64
+	count    atomic.Int64
+	inflight atomic.Int64
+	logOn    = os.Getenv("LOG") != "0"
+)
+
+type decision struct {
+	Allow    bool
+	Code     int
+	Reason   string
+	Route    string
+	Tenant   string
+	Upstream string // host:port of the upstream proxy for forwarded CONNECT
+	Cred     string // replacement Proxy-Authorization for the upstream proxy
+	Extra    map[string]string
+}
+
+func decide(host, pa string) decision {
+	if strings.HasPrefix(host, "blocked.example.com") {
+		return decision{Code: 403, Reason: "host-not-allowed"}
+	}
+	if pa == "" {
+		return decision{Code: 407, Reason: "no-credential", Extra: map[string]string{"proxy-authenticate": `Basic realm="lenny-egress"`}}
+	}
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(pa, "Basic "))
+	_, token, _ := strings.Cut(string(raw), ":")
+	b64 := func(s string) string { return "Basic " + base64.StdEncoding.EncodeToString([]byte(s)) }
+	switch token {
+	case "good":
+		return decision{Allow: true, Route: "direct", Tenant: "acme"}
+	case "chain-m":
+		return decision{Allow: true, Route: "upstream-md", Tenant: "globex", Upstream: "198.18.0.13:3128", Cred: b64("tenant-globex:upstream-secret")}
+	case "chain-407":
+		return decision{Allow: true, Route: "upstream-md", Tenant: "globex", Upstream: "198.18.0.13:3128"}
+	case "chain-403":
+		return decision{Allow: true, Route: "upstream-md", Tenant: "initech", Upstream: "198.18.0.15:3128"}
+	case "sni":
+		return decision{Allow: true, Route: "sni-gate", Tenant: "acme"}
+	default:
+		return decision{Code: 403, Reason: "lease-invalid"}
+	}
+}
+
+func wait() {
+	if d := delayMs.Load(); d > 0 {
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
+}
+
+// ---------- gRPC ----------
+
+type server struct{ authv3.UnimplementedAuthorizationServer }
+
+func hdr(k, v string) *corev3.HeaderValueOption {
+	return &corev3.HeaderValueOption{Header: &corev3.HeaderValue{Key: k, Value: v},
+		AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD}
+}
+
+func (s *server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	n := count.Add(1)
+	inflight.Add(1)
+	defer inflight.Add(-1)
+	a := req.GetAttributes()
+	h := a.GetRequest().GetHttp()
+	if logOn {
+		b, _ := json.Marshal(map[string]any{"n": n, "source": a.GetSource().GetAddress().GetSocketAddress().GetAddress(),
+			"srcport": a.GetSource().GetAddress().GetSocketAddress().GetPortValue(), "method": h.GetMethod(), "host": h.GetHost(),
+			"path": h.GetPath(), "headers": h.GetHeaders()})
+		log.Printf("GRPC CHECK %s", b)
+	}
+	wait()
+	if ctx.Err() != nil {
+		log.Printf("GRPC n=%d caller gone: %v", n, ctx.Err())
+	}
+	d := decide(h.GetHost(), h.GetHeaders()["proxy-authorization"])
+	if !d.Allow {
+		md, _ := structpb.NewStruct(map[string]any{"decision": "deny", "reason": d.Reason})
+		hs := []*corev3.HeaderValueOption{hdr("x-lenny-deny-reason", d.Reason)}
+		for k, v := range d.Extra {
+			hs = append(hs, hdr(k, v))
+		}
+		return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, DynamicMetadata: md,
+			HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{
+				Status: &typev3.HttpStatus{Code: typev3.StatusCode(d.Code)}, Headers: hs, Body: "denied: " + d.Reason + "\n"}}}, nil
+	}
+	m := map[string]any{"decision": "allow", "tenant": d.Tenant, "route": d.Route}
+	if d.Upstream != "" {
+		m["upstream"] = d.Upstream
+	}
+	md, _ := structpb.NewStruct(m)
+	ok := &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", d.Route)}}
+	if d.Route == "sni-gate" {
+		// Expected TLS server name and port for the SNI gate (authority split by the decision service).
+		host, port, _ := net.SplitHostPort(h.GetHost())
+		ok.Headers = append(ok.Headers, hdr("x-lenny-host", host), hdr("x-lenny-port", port))
+	}
+	if d.Cred != "" {
+		ok.Headers = append(ok.Headers, hdr("proxy-authorization", d.Cred))
+	} else {
+		ok.HeadersToRemove = []string{"proxy-authorization"}
+	}
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md,
+		HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: ok}}, nil
+}
+
+// ---------- HTTP ----------
+
+func httpCheck(w http.ResponseWriter, r *http.Request) {
+	n := count.Add(1)
+	inflight.Add(1)
+	defer inflight.Add(-1)
+	if logOn {
+		b, _ := json.Marshal(map[string]any{"n": n, "peer": r.RemoteAddr, "method": r.Method, "uri": r.RequestURI,
+			"host": r.Host, "proto": r.Proto, "headers": r.Header})
+		log.Printf("HTTP CHECK %s", b)
+	}
+	wait()
+	// Authority of the original CONNECT: Envoy sends it as the Host of the check request.
+	d := decide(r.Host, r.Header.Get("Proxy-Authorization"))
+	if !d.Allow {
+		w.Header().Set("x-lenny-deny-reason", d.Reason)
+		for k, v := range d.Extra {
+			w.Header().Set(k, v)
+		}
+		w.WriteHeader(d.Code)
+		fmt.Fprintf(w, "denied: %s\n", d.Reason)
+		return
+	}
+	w.Header().Set("x-lenny-route", d.Route)
+	if d.Route == "sni-gate" {
+		h, p, _ := net.SplitHostPort(r.Host)
+		w.Header().Set("x-lenny-host", h)
+		w.Header().Set("x-lenny-port", p)
+	}
+	w.Header().Set("x-lenny-tenant", d.Tenant)
+	if d.Upstream != "" {
+		w.Header().Set("x-lenny-upstream", d.Upstream)
+	}
+	if d.Cred != "" {
+		w.Header().Set("proxy-authorization", d.Cred)
+	} else if os.Getenv("HTTP_NO_STRIP") == "" {
+		// No replacement credential: have Envoy drop the client's lease credential.
+		w.Header().Set("x-envoy-auth-headers-to-remove", "proxy-authorization")
+	}
+	w.WriteHeader(200)
+}
+
+func main() {
+	go func() {
+		l, err := net.Listen("tcp", ":9000")
+		if err != nil {
+			log.Fatal(err)
+		}
+		g := grpc.NewServer()
+		authv3.RegisterAuthorizationServer(g, &server{})
+		log.Fatal(g.Serve(l))
+	}()
+	go func() { log.Fatal(http.ListenAndServe(":9001", http.HandlerFunc(httpCheck))) }()
+	go func() {
+		// Same check handler over unencrypted HTTP/2 (h2c prior knowledge).
+		var pr http.Protocols
+		pr.SetUnencryptedHTTP2(true)
+		s := &http.Server{Addr: ":9003", Handler: http.HandlerFunc(httpCheck), Protocols: &pr}
+		log.Fatal(s.ListenAndServe())
+	}()
+	ctl := http.NewServeMux()
+	ctl.HandleFunc("/delay", func(w http.ResponseWriter, r *http.Request) {
+		v, _ := strconv.Atoi(r.URL.Query().Get("ms"))
+		delayMs.Store(int64(v))
+		log.Printf("CTL delay=%dms", v)
+		fmt.Fprintf(w, "delay=%dms\n", v)
+	})
+	ctl.HandleFunc("/count", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "count=%d inflight=%d delay=%dms\n", count.Load(), inflight.Load(), delayMs.Load())
+	})
+	ctl.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) { count.Store(0); fmt.Fprintln(w, "ok") })
+	log.Printf("authz2 grpc :9000 http :9001 ctl :9002 log=%v", logOn)
+	log.Fatal(http.ListenAndServe(":9002", ctl))
+}

@@ -1,0 +1,24 @@
+### terminate-public rc=0
+$ git ls-remote https://github.com/pub/lib.git 2>&1 | tail -1 | cut -c1-140
+fatal: unable to access 'https://github.com/pub/lib.git/': The requested URL returned error: 403
+### terminate-private rc=0
+$ git ls-remote https://github.com/acme/widgets.git 2>&1 | tail -1 | cut -c1-140
+fatal: unable to access 'https://github.com/acme/widgets.git/': The requested URL returned error: 403
+### terminate-outside rc=0
+$ git ls-remote https://github.com/acme/secret.git 2>&1 | tail -1 | cut -c1-140
+fatal: unable to access 'https://github.com/acme/secret.git/': The requested URL returned error: 403
+### terminate-sslverify-false rc=0
+$ git -c http.sslVerify=false ls-remote https://github.com/pub/lib.git 2>&1 | tail -1 | cut -c1-140
+fatal: unable to access 'https://github.com/pub/lib.git/': The requested URL returned error: 403
+### terminate-own-token-push-main rc=0
+$ git -c 'http.extraHeader=Authorization: Bearer AGENT-OWN-TOKEN' push -q https://github.com/agent/own.git HEAD:refs/heads/main 2>&1 | tail -1 | cut -c1-140
+fatal: unable to access 'https://github.com/agent/own.git/': The requested URL returned error: 403
+### terminate-release-download rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 https://github.com/acme/widgets/releases/download/v1/x 2>&1
+http=200
+### terminate-web-page rc=0
+$ curl -sS -m 8 -o /tmp/b -w http=%{http_code} --cacert /s/bundle.pem -x 127.0.0.1:3128 https://github.com/acme/widgets 2>&1
+http=200
+### terminate-gh-pr-list rc=0
+$ git init -q z; cd z; git remote add origin https://github.com/acme/widgets.git; GH_TOKEN=lenny-injected gh pr list 2>&1 | tail -1 | cut -c1-120
+

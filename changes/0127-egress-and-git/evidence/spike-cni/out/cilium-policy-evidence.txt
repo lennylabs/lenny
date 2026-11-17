@@ -1,0 +1,89 @@
+# endpoints on worker (client is 10.244.1.183):
+ENDPOINT   POLICY (ingress)   POLICY (egress)   IDENTITY   LABELS (source:key[=value])                                                         IPv6   IPv4           STATUS   
+1633       Disabled           Enabled           63610      k8s:io.cilium.k8s.namespace.labels.kubernetes.io/metadata.name=lenny-agents                10.244.1.183   ready   
+                                                           k8s:io.kubernetes.pod.namespace=lenny-agents                                                                      
+# client endpoint id: 
+Display endpoint information
+
+Usage:
+  cilium-dbg endpoint get ( <endpoint identifier> | -l <endpoint labels> )  [flags]
+
+Aliases:
+  get, inspect, show
+
+Examples:
+  cilium-dbg endpoint get 4598
+  cilium-dbg endpoint get pod-name:default:foobar
+  cilium-dbg endpoint get -l id.baz
+
+Flags:
+  -h, --help             help for get
+  -l, --labels strings   list of labels
+  -o, --output string    json| yaml| jsonpath='{}'
+
+Global Flags:
+      --config string        Config file (default is $HOME/.cilium.yaml)
+  -D, --debug                Enable debug messages
+  -H, --host string          URI to server-side API
+      --log-driver strings   Logging endpoints to use (example: syslog)
+      --log-opt map          Log driver options (example: format=json)
+# realized egress policy map for the client endpoint:
+Get contents of a policy BPF map
+
+Usage:
+  cilium-dbg bpf policy get [flags]
+
+Flags:
+      --all             Dump all policy maps
+  -h, --help            help for get
+  -n, --numeric         Do not resolve IDs
+  -o, --output string   json| yaml| jsonpath='{}'
+
+Global Flags:
+      --config string        Config file (default is $HOME/.cilium.yaml)
+  -D, --debug                Enable debug messages
+  -H, --host string          URI to server-side API
+      --log-driver strings   Logging endpoints to use (example: syslog)
+      --log-opt map          Log driver options (example: format=json)
+# hubble: last drops from the client (worker agent):
+ 2 08:50:44.784: lenny-agents/client:42866 (ID:63610) <> other/other-echo:8080 (ID:4181) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:44.784: lenny-agents/client:42866 (ID:63610) <> other/other-echo:8080 (ID:4181) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:45.808: lenny-agents/client:42866 (ID:63610) <> other/other-echo:8080 (ID:4181) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:45.808: lenny-agents/client:42866 (ID:63610) <> other/other-echo:8080 (ID:4181) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:46.726: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:46.726: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:47.728: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:47.728: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:48.752: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:48.752: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:49.776: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:49.776: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:50.800: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:50.800: lenny-agents/client:41470 (ID:63610) <> 1.1.1.1:443 (world) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:51.748: lenny-agents/client:50857 (ID:63610) <> kube-system/coredns-7d764666f9-hz77s:53 (ID:7703) Policy denied DROPPED (UDP)
+ 2 08:50:51.748: lenny-agents/client:50857 (ID:63610) <> kube-system/coredns-7d764666f9-hz77s:53 (ID:7703) policy-verdict:none EGRESS DENIED (UDP)
+ 2 08:50:53.768: lenny-agents/client:52092 (ID:63610) <> kube-system/coredns-7d764666f9-5t97r:53 (ID:7703) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:53.768: lenny-agents/client:52092 (ID:63610) <> kube-system/coredns-7d764666f9-5t97r:53 (ID:7703) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:54.832: lenny-agents/client:52092 (ID:63610) <> kube-system/coredns-7d764666f9-5t97r:53 (ID:7703) Policy denied DROPPED (TCP Flags: SYN)
+ 2 08:50:54.832: lenny-agents/client:52092 (ID:63610) <> kube-system/coredns-7d764666f9-5t97r:53 (ID:7703) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+# hubble: forwarded from client (policy verdicts):
+ 2 08:50:06.647: lenny-agents/client:37386 (ID:63610) -> lenny-system/lenny-gateway-7b8b65d66d-8gnh4:8443 (ID:13286) policy-verdict:L3-L4 EGRESS ALLOWED (TCP Flags: SYN)
+ 2 08:50:06.651: lenny-agents/client:37388 (ID:63610) -> lenny-system/lenny-gateway-7b8b65d66d-8gnh4:8443 (ID:13286) policy-verdict:L3-L4 EGRESS ALLOWED (TCP Flags: SYN)
+ 2 08:50:06.654: lenny-agents/client:34134 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:07.664: lenny-agents/client:34134 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:08.687: lenny-agents/client:34134 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:09.711: lenny-agents/client:34134 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:10.736: lenny-agents/client:34134 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:11.666: lenny-agents/client:34140 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:12.720: lenny-agents/client:34140 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:13.743: lenny-agents/client:34140 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:14.767: lenny-agents/client:34140 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:15.792: lenny-agents/client:34140 (ID:63610) <> 172.18.0.3:6443 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:16.674: lenny-agents/client:55292 (ID:63610) <> 172.18.0.2:10250 (host) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:17.712: lenny-agents/client:55292 (ID:63610) <> 172.18.0.2:10250 (host) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:18.737: lenny-agents/client:55292 (ID:63610) <> 172.18.0.2:10250 (host) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:19.759: lenny-agents/client:55292 (ID:63610) <> 172.18.0.2:10250 (host) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:20.783: lenny-agents/client:55292 (ID:63610) <> 172.18.0.2:10250 (host) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:21.680: lenny-agents/client:35690 (ID:63610) <> 172.18.0.3:10250 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:22.703: lenny-agents/client:35690 (ID:63610) <> 172.18.0.3:10250 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)
+ 2 08:50:23.727: lenny-agents/client:35690 (ID:63610) <> 172.18.0.3:10250 (kube-apiserver) policy-verdict:none EGRESS DENIED (TCP Flags: SYN)

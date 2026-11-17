@@ -1,0 +1,8 @@
+rails PUT /repos/a/b/pulls/1/merge                   200 merge
+rails PUT /repos/a/b/pulls/1/merge.json              200 merge
+rails PUT /repos/a/b/pulls/1/merge.json.json         404 Not Found
+rails PUT /repos/a/b/pulls/1/merge.foo               200 merge
+rails PUT /repos/a/b/pulls/1/merge.JSON              200 merge
+rails PUT /repos/a/b/branches/main%2Fprotection      404 Not Found
+rails PUT /repos/a/b/branches/a%2Fb/protection       200 merge
+rails PUT /repos/a/b/branches/a/b/protection         404 Not Found

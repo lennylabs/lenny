@@ -1,0 +1,4 @@
+    raise GitError(message)
+_pygit2.GitError: unexpected http status code: 502
+clone-dir-absent rc=0
+container-rc=0

@@ -1,0 +1,3 @@
+module spike/cni
+
+go 1.26

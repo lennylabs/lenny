@@ -1,0 +1,60 @@
+== https://github.com/org/repo
+fetch: fatal: repository 'http://127.0.0.1:7070/github.com/org/repo/' not found
+push : fatal: repository 'http://127.0.0.1:7070/github.com/org/repo/' not found
+== https://git.kernel.org/pub/scm/git/git.git
+fetch: fatal: repository 'http://127.0.0.1:7070/git.kernel.org/pub/scm/git/git.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/git.kernel.org/pub/scm/git/git.git/' not found
+== https://gitlab.example.com/group/sub/repo.git
+fetch: fatal: repository 'http://127.0.0.1:7070/gitlab.example.com/group/sub/repo.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/gitlab.example.com/group/sub/repo.git/' not found
+== https://host:8443/x.git
+fetch: fatal: repository 'http://127.0.0.1:7070/host:8443/x.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/host:8443/x.git/' not found
+== git@github.com:org/repo.git
+fetch: fatal: repository 'http://127.0.0.1:7070/scp/github.com:org/repo.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/scp/github.com:org/repo.git/' not found
+== ssh://git@host/a/b.git
+fetch: fatal: repository 'http://127.0.0.1:7070/ssh/git@host/a/b.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/ssh/git@host/a/b.git/' not found
+== ssh://git@host:2222/a/b.git
+fetch: fatal: repository 'http://127.0.0.1:7070/ssh/git@host:2222/a/b.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/ssh/git@host:2222/a/b.git/' not found
+== git@gitlab.example.com:group/sub/repo.git
+fetch: fatal: repository 'http://127.0.0.1:7070/scp/gitlab.example.com:group/sub/repo.git/' not found
+push : fatal: repository 'http://127.0.0.1:7070/scp/gitlab.example.com:group/sub/repo.git/' not found
+== resolved URLs (git config --get-urlmatch is not a rewrite; use remote get-url)
+https://host:8443/x.git -> http://127.0.0.1:7070/host:8443/x.git | push http://127.0.0.1:7070/host:8443/x.git
+git@github.com:org/repo.git -> http://127.0.0.1:7070/scp/github.com:org/repo.git | push http://127.0.0.1:7070/scp/github.com:org/repo.git
+ssh://git@host:2222/a/b.git -> http://127.0.0.1:7070/ssh/git@host:2222/a/b.git | push http://127.0.0.1:7070/ssh/git@host:2222/a/b.git
+== longest-prefix with a per-host block
+github -> http://127.0.0.1:7070/special-github/org/repo
+gitlab -> http://127.0.0.1:7070/gitlab.com/a/b
+reordered github -> http://127.0.0.1:7070/special-github/org/repo
+http -> http://example.com/a.git
+chain https://a/x -> https://b/x
+== recommended scheme-prefixed config
+https://github.com/org/repo -> http://127.0.0.1:7070/https/github.com/org/repo
+http://example.com/a.git -> http://127.0.0.1:7070/http/example.com/a.git
+http://127.0.0.1:7070/https/github.com/o/r -> http://127.0.0.1:7070/https/github.com/o/r
+ssh://host/a.git -> http://127.0.0.1:7070/ssh/host/a.git
+ssh://git@[::1]:22/a.git -> http://127.0.0.1:7070/ssh/git@[::1]:22/a.git
+git@[::1]:a.git -> http://127.0.0.1:7070/scp/[::1]:a.git
+alice@host:a.git -> alice@host:a.git
+host:a.git -> host:a.git
+== request log
+GET /github.com/org/repo/info/refs?service=git-upload-pack gp= version=2
+GET /github.com/org/repo/info/refs?service=git-receive-pack gp= None
+GET /git.kernel.org/pub/scm/git/git.git/info/refs?service=git-upload-pack gp= version=2
+GET /git.kernel.org/pub/scm/git/git.git/info/refs?service=git-receive-pack gp= None
+GET /gitlab.example.com/group/sub/repo.git/info/refs?service=git-upload-pack gp= version=2
+GET /gitlab.example.com/group/sub/repo.git/info/refs?service=git-receive-pack gp= None
+GET /host:8443/x.git/info/refs?service=git-upload-pack gp= version=2
+GET /host:8443/x.git/info/refs?service=git-receive-pack gp= None
+GET /scp/github.com:org/repo.git/info/refs?service=git-upload-pack gp= version=2
+GET /scp/github.com:org/repo.git/info/refs?service=git-receive-pack gp= None
+GET /ssh/git@host/a/b.git/info/refs?service=git-upload-pack gp= version=2
+GET /ssh/git@host/a/b.git/info/refs?service=git-receive-pack gp= None
+GET /ssh/git@host:2222/a/b.git/info/refs?service=git-upload-pack gp= version=2
+GET /ssh/git@host:2222/a/b.git/info/refs?service=git-receive-pack gp= None
+GET /scp/gitlab.example.com:group/sub/repo.git/info/refs?service=git-upload-pack gp= version=2
+GET /scp/gitlab.example.com:group/sub/repo.git/info/refs?service=git-receive-pack gp= None

@@ -1,0 +1,247 @@
+// hc: client for the ClientHello check. It CONNECTs through a proxy, then sends a chosen first flight.
+//   -case tls|nontls|silent|stall|dup-ext|two-names|big-record|huge-hello
+//   -sni NAME (empty means no extension), -tls 12|13|0, -split-tcp N (first flight in N-byte TCP segments, 20 ms apart),
+//   -split-rec N (first flight re-framed as TLS records of N bytes), -bench N for handshake latency percentiles
+package main
+
+import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/binary"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"sort"
+	"time"
+)
+
+var (
+	proxy    = flag.String("proxy", "", "")
+	auth     = flag.String("authority", "target.oa.test:443", "")
+	sni      = flag.String("sni", "target.oa.test", "")
+	caFile   = flag.String("ca", "/c/ca.pem", "")
+	ver      = flag.Int("tls", 0, "")
+	splitTCP = flag.Int("split-tcp", 0, "")
+	splitRec = flag.Int("split-rec", 0, "")
+	cas      = flag.String("case", "tls", "")
+	bench    = flag.Int("bench", 0, "")
+	gap      = flag.Duration("gap", 20*time.Millisecond, "")
+)
+
+// flightConn rewrites the first Write (the ClientHello flight).
+type flightConn struct {
+	net.Conn
+	done bool
+}
+
+func (f *flightConn) Write(p []byte) (int, error) {
+	if f.done {
+		return f.Conn.Write(p)
+	}
+	f.done = true
+	out := p
+	if *splitRec > 0 && len(p) > 5 && p[0] == 0x16 {
+		var b []byte
+		body := p[5:]
+		for len(body) > 0 {
+			n := *splitRec
+			if n > len(body) {
+				n = len(body)
+			}
+			b = append(b, 0x16, p[1], p[2], byte(n>>8), byte(n))
+			b = append(b, body[:n]...)
+			body = body[n:]
+		}
+		out = b
+	}
+	if *splitTCP > 0 {
+		for len(out) > 0 {
+			n := *splitTCP
+			if n > len(out) {
+				n = len(out)
+			}
+			if _, err := f.Conn.Write(out[:n]); err != nil {
+				return 0, err
+			}
+			out = out[n:]
+			if len(out) > 0 {
+				time.Sleep(*gap)
+			}
+		}
+		return len(p), nil
+	}
+	if _, err := f.Conn.Write(out); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
+func connect() (net.Conn, *bufio.Reader, time.Duration, error) {
+	t0 := time.Now()
+	c, err := net.DialTimeout("tcp", *proxy, 5*time.Second)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+	c.(*net.TCPConn).SetNoDelay(true)
+	fmt.Fprintf(c, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", *auth, *auth)
+	br := bufio.NewReader(c)
+	r, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		c.Close()
+		return nil, nil, 0, err
+	}
+	if r.StatusCode != 200 {
+		c.Close()
+		return nil, nil, 0, fmt.Errorf("CONNECT %d", r.StatusCode)
+	}
+	return c, br, time.Since(t0), nil
+}
+func tlsConfig() *tls.Config {
+	p := x509.NewCertPool()
+	b, _ := os.ReadFile(*caFile)
+	p.AppendCertsFromPEM(b)
+	cfg := &tls.Config{RootCAs: p, ServerName: *sni, NextProtos: []string{"http/1.1"}}
+	if *sni == "" {
+		cfg.InsecureSkipVerify = true
+	}
+	if *ver == 12 {
+		cfg.MaxVersion = tls.VersionTLS12
+	}
+	if *ver == 13 {
+		cfg.MinVersion = tls.VersionTLS13
+	}
+	return cfg
+}
+func hsOnce() (time.Duration, error) {
+	t0 := time.Now()
+	c, _, _, err := connect()
+	if err != nil {
+		return 0, err
+	}
+	defer c.Close()
+	t := tls.Client(&flightConn{Conn: c}, tlsConfig())
+	t.SetDeadline(time.Now().Add(8 * time.Second))
+	if err := t.Handshake(); err != nil {
+		return 0, err
+	}
+	return time.Since(t0), nil
+}
+
+// rawHello builds a ClientHello with the given extension bytes.
+func rawHello(exts []byte) []byte {
+	var b []byte
+	b = append(b, 3, 3)
+	b = append(b, make([]byte, 32)...)
+	b = append(b, 0)
+	b = append(b, 0, 2, 0xc0, 0x2f)
+	b = append(b, 1, 0)
+	e := make([]byte, 2)
+	binary.BigEndian.PutUint16(e, uint16(len(exts)))
+	b = append(b, e...)
+	b = append(b, exts...)
+	h := []byte{1, byte(len(b) >> 16), byte(len(b) >> 8), byte(len(b))}
+	h = append(h, b...)
+	r := []byte{0x16, 3, 1, byte(len(h) >> 8), byte(len(h))}
+	return append(r, h...)
+}
+func snExt(names ...string) []byte {
+	var l []byte
+	for _, n := range names {
+		l = append(l, 0, byte(len(n)>>8), byte(len(n)))
+		l = append(l, n...)
+	}
+	x := []byte{0, 0, byte((len(l) + 2) >> 8), byte(len(l) + 2), byte(len(l) >> 8), byte(len(l))}
+	return append(x, l...)
+}
+func awaitClose(c net.Conn, br *bufio.Reader, wait time.Duration) string {
+	c.SetReadDeadline(time.Now().Add(wait))
+	t0 := time.Now()
+	b := make([]byte, 64)
+	n, err := br.Read(b)
+	if n > 0 {
+		return fmt.Sprintf("server spoke %d bytes (0x%02x) after %s", n, b[0], time.Since(t0).Round(time.Millisecond))
+	}
+	if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		return fmt.Sprintf("still open after %s", wait)
+	}
+	return fmt.Sprintf("closed after %s (%v)", time.Since(t0).Round(time.Millisecond), err)
+}
+func main() {
+	flag.Parse()
+	if *bench > 0 {
+		ds := make([]time.Duration, 0, *bench)
+		fails := 0
+		for i := 0; i < *bench; i++ {
+			d, err := hsOnce()
+			if err != nil {
+				fails++
+				continue
+			}
+			ds = append(ds, d)
+		}
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		p := func(f float64) time.Duration { return ds[int(float64(len(ds)-1)*f)] }
+		fmt.Printf("n=%d fails=%d p50=%s p90=%s p99=%s\n", len(ds), fails, p(.5).Round(time.Microsecond), p(.9).Round(time.Microsecond), p(.99).Round(time.Microsecond))
+		return
+	}
+	switch *cas {
+	case "tls":
+		c, _, _, err := connect()
+		if err != nil {
+			fmt.Println("CONNECT failed:", err)
+			os.Exit(1)
+		}
+		defer c.Close()
+		t := tls.Client(&flightConn{Conn: c}, tlsConfig())
+		t.SetDeadline(time.Now().Add(8 * time.Second))
+		if err := t.Handshake(); err != nil {
+			fmt.Println("REFUSED handshake:", err)
+			os.Exit(2)
+		}
+		st := t.ConnectionState()
+		fmt.Fprintf(t, "GET / HTTP/1.0\r\nHost: %s\r\n\r\n", *auth)
+		b, _ := io.ReadAll(t)
+		i := len(b) - 60
+		if i < 0 {
+			i = 0
+		}
+		fmt.Printf("OK tls=%x body=%q\n", st.Version, b[i:])
+	default:
+		c, br, _, err := connect()
+		if err != nil {
+			fmt.Println("CONNECT failed:", err)
+			os.Exit(1)
+		}
+		defer c.Close()
+		switch *cas {
+		case "nontls":
+			fmt.Fprintf(c, "GET / HTTP/1.0\r\nHost: %s\r\n\r\n", *auth)
+		case "silent":
+		case "stall":
+			c.Write([]byte{0x16, 3, 1})
+		case "dup-ext":
+			c.Write(rawHello(append(snExt("target.oa.test"), snExt("other.oa.test")...)))
+		case "two-names":
+			c.Write(rawHello(snExt("target.oa.test", "other.oa.test")))
+		case "big-record":
+			c.Write([]byte{0x16, 3, 1, 0xff, 0xff})
+		case "huge-hello":
+			// A hello that declares 1 MiB and keeps sending full records.
+			rec := make([]byte, 16384+5)
+			copy(rec, []byte{0x16, 3, 1, 0x40, 0})
+			copy(rec[5:], []byte{1, 0x10, 0, 0})
+			for i := 0; i < 8; i++ {
+				if _, err := c.Write(rec); err != nil {
+					break
+				}
+				copy(rec[5:], []byte{0, 0, 0, 0})
+			}
+		case "v2-hello":
+			c.Write([]byte{0x80, 0x2e, 0x01, 0x00, 0x02, 0x00, 0x15, 0x00, 0x00, 0x00, 0x10})
+		}
+		fmt.Println(awaitClose(c, br, 7*time.Second))
+	}
+}

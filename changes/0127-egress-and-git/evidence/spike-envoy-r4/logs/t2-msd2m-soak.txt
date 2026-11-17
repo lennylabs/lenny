@@ -1,0 +1,3 @@
+t=  60.0s open=200 ticks=11664 (+11664) ended=map[]
+t= 120.0s open=200 ticks=23632 (+11968) ended=map[]
+SUMMARY n=200 codes=map[200:200] end_reasons=map[EOF (clean close):200] ticks_total=24000 ticks_per_tunnel=[120..120] connect_lat p50=0s p99=20ms lifetime min=2m0.1s p50=2m0.11s max=2m0.13s elapsed=124.1s

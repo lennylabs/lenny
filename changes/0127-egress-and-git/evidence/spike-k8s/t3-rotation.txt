@@ -1,0 +1,16 @@
+== iso-b
+obs 1793594844 mtime=1793594844 sha=5008a9a13bf4 iat 1793594844 exp 1793595444 ttl 600 prev_token_age_at_rewrite - jti 9e167c33
+obs 1793595325 mtime=1793595322 sha=e818c4fd06c1 iat 1793595322 exp 1793595922 ttl 600 prev_token_age_at_rewrite 478 jti 35149526
+last obs 1793595425
+== iso-c
+obs 1793594844 mtime=1793594844 sha=ae1d33dde586 iat 1793594844 exp 1793595444 ttl 600 prev_token_age_at_rewrite - jti a7dc489a
+obs 1793595375 mtime=1793595371 sha=e274e071a575 iat 1793595371 exp 1793595971 ttl 600 prev_token_age_at_rewrite 527 jti 4c8b1db2
+last obs 1793595425
+== iso-d
+obs 1793594844 mtime=1793594844 sha=0ad3ea08acb8 iat 1793594844 exp 1793595444 ttl 600 prev_token_age_at_rewrite - jti ccc3ea7b
+obs 1793595355 mtime=1793595348 sha=10f530d671e9 iat 1793595348 exp 1793595948 ttl 600 prev_token_age_at_rewrite 504 jti 9f5b1b17
+last obs 1793595425
+== iso-a
+obs 1793594882 mtime=1793594882 sha=627c2cc14038 iat 1793594882 exp 1793595482 ttl 600 prev_token_age_at_rewrite - jti e3f24f57
+obs 1793595382 mtime=1793595378 sha=3492892619eb iat 1793595378 exp 1793595978 ttl 600 prev_token_age_at_rewrite 496 jti 9c7ad273
+last obs 1793595422

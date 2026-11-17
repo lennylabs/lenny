@@ -1,0 +1,972 @@
+PASS                   h1    control / ctl-query                                              step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-query                                              step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-create                                             step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-create                                             step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-rest-get                                           step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-rest-get                                           step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-rest-list                                          step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-rest-list                                          step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-rest-create                                        step=0 exp=allow  status=201 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-rest-create                                        step=0 exp=allow  status=201 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-rest-owner-case                                    step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-rest-owner-case                                    step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-two-good-ops                                       step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-two-good-ops                                       step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-fragment-good                                      step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-fragment-good                                      step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-comment-ws                                         step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-comment-ws                                         step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-alias-good                                         step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-alias-good                                         step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-update-allowed-input                               step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-update-allowed-input                               step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    control / ctl-event-var-on-create                                step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    control / ctl-event-var-on-create                                step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/pulls/7/reviews       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/reviews is not on the allow
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/pulls/7/reviews       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/reviews is not on the allow
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/pulls/7/reviews/1/eve step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/reviews/1/events is not on 
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/pulls/7/reviews/1/eve step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/reviews/1/events is not on 
+PASS                   h1    rest-route / rest PUT /repos/acme/widgets/pulls/7/reviews/1      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/reviews/1 is not on the allo
+PASS                   h2    rest-route / rest PUT /repos/acme/widgets/pulls/7/reviews/1      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/reviews/1 is not on the allo
+PASS                   h1    rest-route / rest PUT /repos/acme/widgets/pulls/7/reviews/1/dism step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/reviews/1/dismissals is not 
+PASS                   h2    rest-route / rest PUT /repos/acme/widgets/pulls/7/reviews/1/dism step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/reviews/1/dismissals is not 
+PASS                   h1    rest-route / rest DELETE /repos/acme/widgets/pulls/7/reviews/1   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: DELETE /api/v3/repos/acme/widgets/pulls/7/reviews/1 is not on the a
+PASS                   h2    rest-route / rest DELETE /repos/acme/widgets/pulls/7/reviews/1   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: DELETE /api/v3/repos/acme/widgets/pulls/7/reviews/1 is not on the a
+PASS                   h1    rest-route / rest GET /repos/acme/widgets/pulls/7/reviews        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GET /api/v3/repos/acme/widgets/pulls/7/reviews is not on the allowl
+PASS                   h2    rest-route / rest GET /repos/acme/widgets/pulls/7/reviews        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GET /api/v3/repos/acme/widgets/pulls/7/reviews is not on the allowl
+PASS                   h1    rest-route / rest PUT /repos/acme/widgets/pulls/7/merge          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/merge is not on the allowlis
+PASS                   h2    rest-route / rest PUT /repos/acme/widgets/pulls/7/merge          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/merge is not on the allowlis
+PASS                   h1    rest-route / rest GET /repos/acme/widgets/pulls/7/merge          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GET /api/v3/repos/acme/widgets/pulls/7/merge is not on the allowlis
+PASS                   h2    rest-route / rest GET /repos/acme/widgets/pulls/7/merge          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GET /api/v3/repos/acme/widgets/pulls/7/merge is not on the allowlis
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/merges                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/merges is not on the allowlist
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/merges                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/merges is not on the allowlist
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/merge-upstream        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/merge-upstream is not on the allowl
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/merge-upstream        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/merge-upstream is not on the allowl
+PASS                   h1    rest-route / rest PUT /repos/acme/widgets/pulls/7/update-branch  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/update-branch is not on the 
+PASS                   h2    rest-route / rest PUT /repos/acme/widgets/pulls/7/update-branch  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/pulls/7/update-branch is not on the 
+PASS                   h1    rest-route / rest PATCH /repos/acme/widgets/pulls/7              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PATCH /api/v3/repos/acme/widgets/pulls/7 is not on the allowlist
+PASS                   h2    rest-route / rest PATCH /repos/acme/widgets/pulls/7              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PATCH /api/v3/repos/acme/widgets/pulls/7 is not on the allowlist
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/pulls/7/requested_rev step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not 
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/pulls/7/requested_rev step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/pulls/7/requested_reviewers is not 
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/issues/7/comments     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/issues/7/comments is not on the all
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/issues/7/comments     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/issues/7/comments is not on the all
+PASS                   h1    rest-route / rest PATCH /repos/acme/widgets/git/refs/heads/main  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PATCH /api/v3/repos/acme/widgets/git/refs/heads/main is not on the 
+PASS                   h2    rest-route / rest PATCH /repos/acme/widgets/git/refs/heads/main  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PATCH /api/v3/repos/acme/widgets/git/refs/heads/main is not on the 
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/git/refs              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/git/refs is not on the allowlist
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/git/refs              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/git/refs is not on the allowlist
+PASS                   h1    rest-route / rest DELETE /repos/acme/widgets/git/refs/heads/feat step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: DELETE /api/v3/repos/acme/widgets/git/refs/heads/feature is not on 
+PASS                   h2    rest-route / rest DELETE /repos/acme/widgets/git/refs/heads/feat step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: DELETE /api/v3/repos/acme/widgets/git/refs/heads/feature is not on 
+PASS                   h1    rest-route / rest PUT /repos/acme/widgets/contents/f             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/contents/f is not on the allowlist
+PASS                   h2    rest-route / rest PUT /repos/acme/widgets/contents/f             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: PUT /api/v3/repos/acme/widgets/contents/f is not on the allowlist
+PASS                   h1    rest-route / rest POST /repos/acme/widgets/forks                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/forks is not on the allowlist
+PASS                   h2    rest-route / rest POST /repos/acme/widgets/forks                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/repos/acme/widgets/forks is not on the allowlist
+PASS                   h1    rest-route / rest DELETE /repos/acme/widgets                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: DELETE /api/v3/repos/acme/widgets is not on the allowlist
+PASS                   h2    rest-route / rest DELETE /repos/acme/widgets                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: DELETE /api/v3/repos/acme/widgets is not on the allowlist
+PASS                   h1    rest-route / rest POST /graphql-not-here                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/graphql-not-here is not on the allowlist
+PASS                   h2    rest-route / rest POST /graphql-not-here                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: POST /api/v3/graphql-not-here is not on the allowlist
+PASS                   h1    gql-field / gql addPullRequestReview                             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-field / gql addPullRequestReview                             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-field / gql submitPullRequestReview                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "submitPullRequestReview" is not on the allowlist
+PASS                   h2    gql-field / gql submitPullRequestReview                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "submitPullRequestReview" is not on the allowlist
+PASS                   h1    gql-field / gql dismissPullRequestReview                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "dismissPullRequestReview" is not on the allowlist
+PASS                   h2    gql-field / gql dismissPullRequestReview                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "dismissPullRequestReview" is not on the allowlist
+PASS                   h1    gql-field / gql deletePullRequestReview                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "deletePullRequestReview" is not on the allowlist
+PASS                   h2    gql-field / gql deletePullRequestReview                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "deletePullRequestReview" is not on the allowlist
+PASS                   h1    gql-field / gql updatePullRequestReview                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updatePullRequestReview" is not on the allowlist
+PASS                   h2    gql-field / gql updatePullRequestReview                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updatePullRequestReview" is not on the allowlist
+PASS                   h1    gql-field / gql mergePullRequest                                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "mergePullRequest" is not on the allowlist
+PASS                   h2    gql-field / gql mergePullRequest                                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "mergePullRequest" is not on the allowlist
+PASS                   h1    gql-field / gql enablePullRequestAutoMerge                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "enablePullRequestAutoMerge" is not on the allowlist
+PASS                   h2    gql-field / gql enablePullRequestAutoMerge                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "enablePullRequestAutoMerge" is not on the allowlist
+PASS                   h1    gql-field / gql disablePullRequestAutoMerge                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "disablePullRequestAutoMerge" is not on the allowlis
+PASS                   h2    gql-field / gql disablePullRequestAutoMerge                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "disablePullRequestAutoMerge" is not on the allowlis
+PASS                   h1    gql-field / gql enqueuePullRequest                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "enqueuePullRequest" is not on the allowlist
+PASS                   h2    gql-field / gql enqueuePullRequest                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "enqueuePullRequest" is not on the allowlist
+PASS                   h1    gql-field / gql dequeuePullRequest                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "dequeuePullRequest" is not on the allowlist
+PASS                   h2    gql-field / gql dequeuePullRequest                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "dequeuePullRequest" is not on the allowlist
+PASS                   h1    gql-field / gql mergeBranch                                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "mergeBranch" is not on the allowlist
+PASS                   h2    gql-field / gql mergeBranch                                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "mergeBranch" is not on the allowlist
+PASS                   h1    gql-field / gql updatePullRequestBranch                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updatePullRequestBranch" is not on the allowlist
+PASS                   h2    gql-field / gql updatePullRequestBranch                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updatePullRequestBranch" is not on the allowlist
+PASS                   h1    gql-field / gql updateRef                                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updateRef" is not on the allowlist
+PASS                   h2    gql-field / gql updateRef                                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updateRef" is not on the allowlist
+PASS                   h1    gql-field / gql updateRefs                                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updateRefs" is not on the allowlist
+PASS                   h2    gql-field / gql updateRefs                                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "updateRefs" is not on the allowlist
+PASS                   h1    gql-field / gql createRef                                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "createRef" is not on the allowlist
+PASS                   h2    gql-field / gql createRef                                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "createRef" is not on the allowlist
+PASS                   h1    gql-field / gql deleteRef                                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "deleteRef" is not on the allowlist
+PASS                   h2    gql-field / gql deleteRef                                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "deleteRef" is not on the allowlist
+PASS                   h1    gql-field / gql createCommitOnBranch                             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "createCommitOnBranch" is not on the allowlist
+PASS                   h2    gql-field / gql createCommitOnBranch                             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "createCommitOnBranch" is not on the allowlist
+PASS                   h1    gql-field / gql closePullRequest                                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "closePullRequest" is not on the allowlist
+PASS                   h2    gql-field / gql closePullRequest                                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "closePullRequest" is not on the allowlist
+PASS                   h1    gql-field / gql reopenPullRequest                                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "reopenPullRequest" is not on the allowlist
+PASS                   h2    gql-field / gql reopenPullRequest                                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "reopenPullRequest" is not on the allowlist
+PASS                   h1    gql-field / gql addComment                                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addComment" is not on the allowlist
+PASS                   h2    gql-field / gql addComment                                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addComment" is not on the allowlist
+PASS                   h1    gql-field / gql convertPullRequestToDraft                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "convertPullRequestToDraft" is not on the allowlist
+PASS                   h2    gql-field / gql convertPullRequestToDraft                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "convertPullRequestToDraft" is not on the allowlist
+PASS                   h1    gql-field / gql markPullRequestReadyForReview                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "markPullRequestReadyForReview" is not on the allowl
+PASS                   h2    gql-field / gql markPullRequestReadyForReview                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "markPullRequestReadyForReview" is not on the allowl
+PASS                   h1    gql-field / gql revertPullRequest                                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "revertPullRequest" is not on the allowlist
+PASS                   h2    gql-field / gql revertPullRequest                                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "revertPullRequest" is not on the allowlist
+PASS                   h1    gql-field / gql-query-unlisted __schema                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "__schema" is not on the allowlist
+PASS                   h2    gql-field / gql-query-unlisted __schema                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "__schema" is not on the allowlist
+PASS                   h1    gql-field / gql-query-unlisted nodes                             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "nodes" is not on the allowlist
+PASS                   h2    gql-field / gql-query-unlisted nodes                             step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "nodes" is not on the allowlist
+PASS                   h1    gql-evasion / alias x                                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / alias x                                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / alias named as an allowed field                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / alias named as an allowed field                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / allowed alias on bad next to good                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / allowed alias on bad next to good                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / second field bad                                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / second field bad                                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / two ops opName selects bad                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / two ops opName selects bad                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / two ops opName selects good                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / two ops opName selects good                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / two ops no opName                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / two ops no opName                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / opName names nothing                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: operationName "Nope" names no operation in the document
+PASS                   h2    gql-evasion / opName names nothing                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: operationName "Nope" names no operation in the document
+PASS                   h1    gql-evasion / batch with bad                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: body must be one JSON object (a batch array is refused)
+PASS                   h2    gql-evasion / batch with bad                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: body must be one JSON object (a batch array is refused)
+PASS                   h1    gql-evasion / batch of good                                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: body must be one JSON object (a batch array is refused)
+PASS                   h2    gql-evasion / batch of good                                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: body must be one JSON object (a batch array is refused)
+PASS                   h1    gql-evasion / fragment spread                                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / fragment spread                                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / nested fragments                                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / nested fragments                                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / inline fragment typed                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / inline fragment typed                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / inline fragment untyped                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / inline fragment untyped                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / fragment with a good field beside                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / fragment with a good field beside                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / fragment cycle                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / fragment cycle                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / fragment unknown                                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: unknown fragment "Nope"
+PASS                   h2    gql-evasion / fragment unknown                                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: unknown fragment "Nope"
+PASS                   h1    gql-evasion / fragment unused on Mutation                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" in a fragment is not on the a
+PASS                   h2    gql-evasion / fragment unused on Mutation                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" in a fragment is not on the a
+PASS                   h1    gql-evasion / skip directive on bad                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / skip directive on bad                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / query op spreading Mutation fragment               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / query op spreading Mutation fragment               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / variables carry the event                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / variables carry the event                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / variables close via updatePullRequest              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: input field "state" on updatePullRequest is not on the allowlist
+PASS                   h2    gql-evasion / variables close via updatePullRequest              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: input field "state" on updatePullRequest is not on the allowlist
+PASS                   h1    gql-evasion / literal close via updatePullRequest                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: input field "state" on updatePullRequest is not on the allowlist
+PASS                   h2    gql-evasion / literal close via updatePullRequest                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: input field "state" on updatePullRequest is not on the allowlist
+PASS                   h1    gql-evasion / retarget via updatePullRequest                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: input field "baseRefName" on updatePullRequest is not on the allowl
+PASS                   h2    gql-evasion / retarget via updatePullRequest                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: input field "baseRefName" on updatePullRequest is not on the allowl
+PASS                   h1    gql-evasion / variable default holds the input                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: variable $i on updatePullRequest is not an object
+PASS                   h2    gql-evasion / variable default holds the input                   step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: variable $i on updatePullRequest is not an object
+PASS                   h1    gql-evasion / nested variable in the input                       step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    gql-evasion / nested variable in the input                       step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    gql-evasion / comment hides nothing                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / comment hides nothing                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / mutation after a comment line                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / mutation after a comment line                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / CR ends a comment                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: bare CR in the GraphQL document
+PASS                   h2    gql-evasion / CR ends a comment                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: bare CR in the GraphQL document
+PASS                   h1    gql-evasion / odd whitespace and commas                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    gql-evasion / odd whitespace and commas                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    gql-evasion / BOM at start                                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: control or separator character U+FEFF in the GraphQL document
+PASS                   h2    gql-evasion / BOM at start                                       step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: control or separator character U+FEFF in the GraphQL document
+PASS                   h1    gql-differential / U+2028 after a comment                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: control or separator character U+2028 in the GraphQL document
+PASS                   h2    gql-differential / U+2028 after a comment                        step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: control or separator character U+2028 in the GraphQL document
+PASS                   h1    gql-evasion / NBSP between ops                                   step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:27: Unexpected <Invalid>
+PASS                   h2    gql-evasion / NBSP between ops                                   step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:27: Unexpected <Invalid>
+PASS                   h1    gql-evasion / NUL in comment                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: control or separator character U+0000 in the GraphQL document
+PASS                   h2    gql-evasion / NUL in comment                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: control or separator character U+0000 in the GraphQL document
+PASS                   h1    gql-differential / block string escape then op                   step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    gql-differential / block string escape then op                   step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    gql-evasion / bare CR hides a mutation from one reader           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: bare CR in the GraphQL document
+PASS                   h2    gql-evasion / bare CR hides a mutation from one reader           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: bare CR in the GraphQL document
+PASS                   h1    gql-evasion / duplicate query good then bad                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: duplicate JSON key "query"
+PASS                   h2    gql-evasion / duplicate query good then bad                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: duplicate JSON key "query"
+PASS                   h1    gql-evasion / duplicate query bad then good                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: duplicate JSON key "query"
+PASS                   h2    gql-evasion / duplicate query bad then good                      step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: duplicate JSON key "query"
+PASS                   h1    gql-evasion / duplicate via case variant                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: top-level JSON key "QUERY" is not on the allowlist
+PASS                   h2    gql-evasion / duplicate via case variant                         step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: top-level JSON key "QUERY" is not on the allowlist
+PASS                   h1    gql-evasion / duplicate via escaped key                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: duplicate JSON key "query"
+PASS                   h2    gql-evasion / duplicate via escaped key                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: duplicate JSON key "query"
+PASS                   h1    gql-evasion / second JSON value after the object                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: data after the JSON object
+PASS                   h2    gql-evasion / second JSON value after the object                 step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: data after the JSON object
+PASS                   h1    gql-evasion / invalid UTF-8 in the body                          step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: body is not valid UTF-8
+PASS                   h2    gql-evasion / invalid UTF-8 in the body                          step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: body is not valid UTF-8
+PASS                   h1    gql-evasion / extensions key                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: top-level JSON key "extensions" is not on the allowlist
+PASS                   h2    gql-evasion / extensions key                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: top-level JSON key "extensions" is not on the allowlist
+PASS                   h1    gql-evasion / no query, persisted only                           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: top-level JSON key "extensions" is not on the allowlist
+PASS                   h2    gql-evasion / no query, persisted only                           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: top-level JSON key "extensions" is not on the allowlist
+PASS                   h1    gql-evasion / query not a string                                 step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: query is not a string
+PASS                   h2    gql-evasion / query not a string                                 step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: query is not a string
+PASS                   h1    gql-evasion / operationName not a string                         step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: operationName is not a string
+PASS                   h2    gql-evasion / operationName not a string                         step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: operationName is not a string
+PASS                   h1    gql-evasion / variables not an object                            step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: variables is not an object
+PASS                   h2    gql-evasion / variables not an object                            step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: variables is not an object
+PASS                   h1    gql-evasion / GET query param bad                                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL accepts POST only, got GET
+PASS                   h2    gql-evasion / GET query param bad                                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL accepts POST only, got GET
+PASS                   h1    gql-evasion / GET query param good                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL accepts POST only, got GET
+PASS                   h2    gql-evasion / GET query param good                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL accepts POST only, got GET
+PASS                   h1    gql-evasion / POST query param bad, good body                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses a URL query
+PASS                   h2    gql-evasion / POST query param bad, good body                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses a URL query
+PASS                   h1    gql-evasion / POST operationName param                           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses a URL query
+PASS                   h2    gql-evasion / POST operationName param                           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses a URL query
+PASS                   h1    gql-evasion / empty URL query on POST                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses a URL query
+PASS                   h2    gql-evasion / empty URL query on POST                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses a URL query
+PASS                   h1    gql-evasion / form body                                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "application/x-www-form-urlencoded"
+PASS                   h2    gql-evasion / form body                                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "application/x-www-form-urlencoded"
+PASS                   h1    gql-evasion / application/graphql body                           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "application/graphql"
+PASS                   h2    gql-evasion / application/graphql body                           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "application/graphql"
+PASS                   h1    gql-evasion / text/plain JSON body                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "text/plain"
+PASS                   h2    gql-evasion / text/plain JSON body                               step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "text/plain"
+PASS                   h1    gql-evasion / no Content-Type                                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL needs exactly one Content-Type
+PASS                   h2    gql-evasion / no Content-Type                                    step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL needs exactly one Content-Type
+PASS                   h1    gql-evasion / two Content-Types                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL needs exactly one Content-Type
+PASS                   h2    gql-evasion / two Content-Types                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL needs exactly one Content-Type
+PASS                   h1    gql-evasion / Content-Type list                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "application/json, application/graphql
+PASS                   h2    gql-evasion / Content-Type list                                  step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL refuses Content-Type "application/json, application/graphql
+PASS                   h1    gql-evasion / gzip body bad                                      step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h2    gql-evasion / gzip body bad                                      step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h1    gql-evasion / gzip body good                                     step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h2    gql-evasion / gzip body good                                     step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h1    gql-evasion / zstd body bad                                      step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h2    gql-evasion / zstd body bad                                      step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h1    gql-evasion / deflate body bad                                   step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h2    gql-evasion / deflate body bad                                   step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h1    gql-evasion / gzip stream, no header                             step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: body is not valid UTF-8
+PASS                   h2    gql-evasion / gzip stream, no header                             step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: body is not valid UTF-8
+PASS                   h1    gql-evasion / identity encoding header                           step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h2    gql-evasion / identity encoding header                           step=0 exp=refuse status=415 filter=refused stub=0 cred=false refused by the egress operation allowlist: compressed request body refused
+PASS                   h1    bound / body at the bound, good                                  step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h2    bound / body at the bound, good                                  step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    bound / body over the bound, good                                step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body of 262145 bytes is over the 262144 byte bound
+PASS                   h2    bound / body over the bound, good                                step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body of 262145 bytes is over the 262144 byte bound
+PASS                   h1    bound / body over the bound, bad past it                         step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body of 262145 bytes is over the 262144 byte bound
+PASS                   h2    bound / body over the bound, bad past it                         step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body of 262145 bytes is over the 262144 byte bound
+PASS                   h1    bound / 1 MiB body, bad                                          step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body of 1048576 bytes is over the 262144 byte bound
+PASS                   h2    bound / 1 MiB body, bad                                          step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body of 1048576 bytes is over the 262144 byte bound
+PASS                   h1    bound / chunked over the bound, no length                        step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body is over the 262144 byte bound
+PASS                   h1    bound / chunked at the bound, good                               step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    chunked / chunked good                                           step=0 exp=allow  status=200 filter=        stub=1 cred=true  
+PASS                   h1    chunked / chunked bad                                            step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h1    chunked / chunked bad split inside the field name                step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    chunked / h2 no content-length, bad                              step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: mutation field "addPullRequestReview" is not on the allowlist
+PASS                   h2    bound / h2 no content-length, over the bound                     step=0 exp=refuse status=413 filter=refused stub=0 cred=false refused by the egress operation allowlist: body is over the 262144 byte bound
+PASS                   h1    gql-malformed / malformed unterminated                           step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:33: Expected Name, found <EOF>
+PASS                   h2    gql-malformed / malformed unterminated                           step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:33: Expected Name, found <EOF>
+PASS                   h1    gql-malformed / malformed garbage                                step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:1: Unexpected Name "not"
+PASS                   h2    gql-malformed / malformed garbage                                step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:1: Unexpected Name "not"
+PASS                   h1    gql-malformed / empty query                                      step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: query is missing
+PASS                   h2    gql-malformed / empty query                                      step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: query is missing
+PASS                   h1    gql-malformed / malformed JSON                                   step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: malformed JSON
+PASS                   h2    gql-malformed / malformed JSON                                   step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: malformed JSON
+PASS                   h1    gql-malformed / empty body                                       step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: malformed JSON
+PASS                   h2    gql-malformed / empty body                                       step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: malformed JSON
+PASS                   h1    gql-malformed / schema definition document                       step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:1: Unexpected Name "type"
+PASS                   h2    gql-malformed / schema definition document                       step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:1: Unexpected Name "type"
+PASS                   h1    gql-malformed / operation case variant                           step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:1: Unexpected Name "MUTATION"
+PASS                   h2    gql-malformed / operation case variant                           step=0 exp=refuse status=400 filter=refused stub=0 cred=false refused by the egress operation allowlist: GraphQL parse error: input:1:1: Unexpected Name "MUTATION"
+PASS                   h1    gql-malformed / subscription                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: operation type subscription is refused
+PASS                   h2    gql-malformed / subscription                                     step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: operation type subscription is refused
+PASS                   h1    gql-malformed / subscription named as an allowed field           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: operation type subscription is refused
+PASS                   h2    gql-malformed / subscription named as an allowed field           step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: operation type subscription is refused
+PASS                   h1    gql-malformed / deep nesting 40k levels                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "a" is not on the allowlist
+PASS                   h2    gql-malformed / deep nesting 40k levels                          step=0 exp=refuse status=403 filter=refused stub=0 cred=false refused by the egress operation allowlist: query field "a" is not on the allowlist
+FAIL-not-allowed       h1    gql-malformed / deep nesting under a listed field                step=0 exp=allow  status=0   filter=        stub=0 cred=false no response: unexpected EOF
+FAIL-not-allowed       h2    gql-malformed / deep nesting under a listed field                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h1    rest-path / PUT double slash leading                             step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h2    rest-path / PUT double slash leading                             step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h1    rest-path / PUT double slash inside                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h2    rest-path / PUT double slash inside                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h1    rest-path / PUT encoded slash                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+PASS                   h2    rest-path / PUT encoded slash                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+PASS                   h1    rest-path / PUT encoded slash lower                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+PASS                   h2    rest-path / PUT encoded slash lower                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: server misbehaving
+PASS                   h1    rest-path / PUT double encoded slash                             step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57807->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56011->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57234->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT double encoded slash                             step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60636->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45897->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60733->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT dot dot                                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h2    rest-path / PUT dot dot                                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51487->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41779->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57452->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55400->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT encoded dot dot                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55789->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT encoded dot dot                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52409->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34144->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT dot segment                                      step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58420->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT dot segment                                      step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55453->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38126->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33684->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT trailing slash                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49544->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51584->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57521->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT trailing slash                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57554->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT case change literal                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57436->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT case change literal                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42035->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40807->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:32790->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT encoded letter                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38607->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52266->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT encoded letter                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46788->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45829->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT encoded NUL suffix                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55298->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45183->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT encoded NUL suffix                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56907->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35042->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT semicolon parameter                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55900->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44684->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT semicolon parameter                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50773->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39541->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / PUT backslash                                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35308->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56505->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / PUT backslash                                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53974->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53964->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST fits POST pulls via encoded tail                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40864->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57980->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST fits POST pulls via encoded tail                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35702->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55664->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST fits POST pulls via dotdot owner                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55152->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST fits POST pulls via dotdot owner                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33544->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40446->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47020->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST dotdot in template slots                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55119->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47790->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST dotdot in template slots                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36541->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56103->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST dot in template slot                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35074->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44747->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56375->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST dot in template slot                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38740->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST trailing slash on allowed                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42802->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43364->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST trailing slash on allowed                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37262->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST double slash on allowed                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53193->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38626->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST double slash on allowed                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37732->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33770->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST case change on allowed                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36861->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51184->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST case change on allowed                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38804->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52413->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56221->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST encoded slash on allowed                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42037->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST encoded slash on allowed                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57116->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49933->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / GET non-numeric PR number                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51562->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46409->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44094->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51065->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / GET non-numeric PR number                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h1    rest-path / GET encoded PR number                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56203->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35371->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48248->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / GET encoded PR number                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43983->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40025->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / POST _method in the query on allowed POST            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42509->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38968->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / POST _method in the query on allowed POST            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47932->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / GET _method in the query on allowed GET              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43318->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48029->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59590->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / GET _method in the query on allowed GET              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41615->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / GET unlisted query key                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55942->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35478->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45660->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / GET unlisted query key                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44305->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59245->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-path / GET fragment in the target                           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52328->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-path / GET fragment in the target                           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42911->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56769->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-HTTP-Method-Override on allowed POST           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49928->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60007->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56277->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-HTTP-Method-Override on allowed POST           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49119->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42475->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40074->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-HTTP-Method-Override on allowed GET            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51827->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49303->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-HTTP-Method-Override on allowed GET            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h1    rest-override / X-HTTP-Method on allowed POST                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39909->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44221->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50704->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-HTTP-Method on allowed POST                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52413->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56025->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-HTTP-Method on allowed GET                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35782->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58044->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-HTTP-Method on allowed GET                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41840->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33734->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-Method-Override on allowed POST                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42022->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48391->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-Method-Override on allowed POST                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41553->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60629->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-Method-Override on allowed GET                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51905->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-Method-Override on allowed GET                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39340->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40983->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-Original-URL on allowed POST                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33756->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56278->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54521->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-Original-URL on allowed POST                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40722->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53421->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-Original-URL on allowed GET                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55343->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60228->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-Original-URL on allowed GET                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50175->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-Rewrite-URL on allowed POST                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40603->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57418->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56534->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-Rewrite-URL on allowed POST                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41032->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / X-Rewrite-URL on allowed GET                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59068->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53975->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / X-Rewrite-URL on allowed GET                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36814->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60523->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / Connection names an allowed header               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44015->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38200->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / Connection names an allowed header               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49936->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57493->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36942->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / unlisted header                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47773->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55995->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / unlisted header                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55105->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37778->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / form body on allowed POST                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55673->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39919->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / form body on allowed POST                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43224->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / array body on allowed POST                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48964->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33939->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43512->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / array body on allowed POST                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53464->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58651->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / gzip body on allowed POST                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37831->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / gzip body on allowed POST                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57307->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60606->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-override / GET with a body                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45389->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37741->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-override / GET with a body                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35720->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35650->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / HEAD allowed path                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40800->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39307->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48797->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / HEAD allowed path                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54290->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / HEAD merge path                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36580->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40049->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33570->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / HEAD merge path                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36446->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / HEAD GraphQL path                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59735->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37034->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44132->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / HEAD GraphQL path                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50998->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / OPTIONS allowed path                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56164->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35562->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / OPTIONS allowed path                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:32991->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35693->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35499->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / OPTIONS merge path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45381->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / OPTIONS merge path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59201->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53627->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / OPTIONS GraphQL path                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36103->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55445->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42057->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / OPTIONS GraphQL path                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60994->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50526->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / TRACE allowed path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44275->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46021->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35800->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / TRACE allowed path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+PASS                   h1    rest-method / TRACE merge path                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55735->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38008->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / TRACE merge path                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52742->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35424->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37514->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / TRACE GraphQL path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40917->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56720->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / TRACE GraphQL path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58535->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / PATCH allowed path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52725->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36382->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / PATCH allowed path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45308->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41859->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / PATCH merge path                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54845->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54058->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / PATCH merge path                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55098->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53294->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51258->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / PATCH GraphQL path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41647->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / PATCH GraphQL path                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48886->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48357->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40563->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / DELETE allowed path                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35936->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / DELETE allowed path                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54519->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41942->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34576->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / DELETE merge path                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43851->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57909->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / DELETE merge path                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34338->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / DELETE GraphQL path                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48189->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45409->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / DELETE GraphQL path                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49873->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48444->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60029->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / lower-case method                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48680->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48792->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / lower-case method                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38960->127.0.0.11:53: read: connection refused
+PASS                   h1    rest-method / invented method                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57824->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37852->127.0.0.11:53: read: connection refused
+PASS                   h2    rest-method / invented method                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50174->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54568->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52388->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc double slash                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50809->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc double slash                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54505->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59316->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41053->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc trailing slash                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49969->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39766->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc trailing slash                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53208->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54790->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc case change                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59571->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40056->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc case change                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42418->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55129->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc encoded letter                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34032->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc encoded letter                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45174->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35147->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43388->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc dot segment                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37144->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55443->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc dot segment                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37866->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42282->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc dot dot                                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39087->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54261->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc dot dot                                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50862->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc semicolon                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45092->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48944->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc semicolon                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56455->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57687->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc suffix                                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53729->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56646->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc suffix                                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46914->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55497->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc other prefix                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:32790->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57149->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc other prefix                                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41824->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36707->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44866->127.0.0.11:53: read: connection refused
+PASS                   h1    gql-path / bad doc under the REST prefix                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35021->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42213->127.0.0.11:53: read: connection refused
+PASS                   h2    gql-path / bad doc under the REST prefix                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37021->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33303->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / absolute-form bad, same Host                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51909->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h1    transport / absolute-form good, same Host                        step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52787->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36577->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / absolute-form http scheme, bad                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44952->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33375->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / absolute-form, disagreeing Host                      step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54639->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34581->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / absolute-form merge route                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37922->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50083->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48173->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / two Host headers                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54227->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / HTTP/1.0 bad                                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:32833->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58761->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / HTTP/1.0 without Host                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37551->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:32807->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58974->127.0.0.11:53: read: connection refused
+PASS                   plain transport / absolute-form on the plain port, bad                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44296->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       plain transport / absolute-form on the plain port, good                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45723->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55605->127.0.0.11:53: read: connection refused
+PASS                   plain transport / absolute-form on the plain port, merge route         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59729->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47164->127.0.0.11:53: read: connection refused
+PASS                   plain transport / absolute-form https on the plain port, bad           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42805->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54533->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33864->127.0.0.11:53: read: connection refused
+PASS                   plain transport / origin-form on the plain port                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33096->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53736->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host other unbound, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60542->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host other unbound, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33210->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49086->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36991->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host other unbound, good                             step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38226->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host other unbound, good                             step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38018->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38921->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host another bound host                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46626->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55236->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38163->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host another bound host                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49267->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41559->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host with another port                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:45106->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host with another port                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49783->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40628->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:32919->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host in upper case, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34957->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50662->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host in upper case, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38099->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60333->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host with port 443, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52842->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58161->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host with port 443, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:53318->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49097->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / Host with trailing dot, bad                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48718->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47256->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43737->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / Host with trailing dot, bad                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56680->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h1    transport / Host in upper case, good                             step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50740->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    transport / Host in upper case, good                             step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42103->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50762->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / filtered host named inside an unfiltered bound conne step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54303->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50844->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49165->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / filtered host named inside an unfiltered bound conne step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39063->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34379->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h1    transport / filtered host named inside an unfiltered bound conne step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39762->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    transport / filtered host named inside an unfiltered bound conne step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42875->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36513->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46709->127.0.0.11:53: read: connection refused
+PASS                   plain transport / filtered host in the plain port's Host with an unfil step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52316->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56592->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / CONNECT upper case, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39118->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60433->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / CONNECT upper case, bad                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55171->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46166->127.0.0.11:53: read: connection refused
+PASS                   h1    transport / CONNECT trailing dot, bad                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56993->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33725->127.0.0.11:53: read: connection refused
+PASS                   h2    transport / CONNECT trailing dot, bad                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58949->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58823->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / :authority other, bad                                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47394->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54908->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / :authority another bound host                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60316->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39051->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / host header beside :authority                               step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57819->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:48611->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / no :authority, host header only, bad                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:40727->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:44846->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / no :authority, host header other                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42379->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / :scheme http, bad                                           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60310->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39283->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / :path absolute URL                                          step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35430->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56304->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59558->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / two :path                                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34175->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35406->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / two :method                                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35436->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / two content-type fields                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42401->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47363->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / content-length shorter than the body                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46200->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:35267->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41843->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / transfer-encoding header                                    step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58069->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50538->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / extended CONNECT                                            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43185->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46207->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / plain CONNECT inside                                        step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42177->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / upgrade header                                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36980->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60720->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    h2 / control for the trailer cases                               step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39145->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:54333->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    h2 / undeclared trailer carries a method override                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34027->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59268->127.0.0.11:53: read: connection refused
+PASS                   h2    h2 / declared trailer carries a method override                  step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60379->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38978->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47813->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h1    reuse / allowed then bad GraphQL                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38419->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    reuse / allowed then bad GraphQL                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56753->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60102->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42721->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h1    reuse / allowed then merge route                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39334->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51115->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    reuse / allowed then merge route                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36027->127.0.0.11:53: read: connection refused
+PASS                   h1    reuse / refused then allowed                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38145->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:33586->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:42693->127.0.0.11:53: read: connection refused
+PASS                   h2    reuse / refused then allowed                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39498->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h1    reuse / allowed, then another authority, then bad                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43065->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47359->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       h2    reuse / allowed, then another authority, then bad                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:47601->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58406->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60696->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       pipe  reuse / pipelined good then bad                                  step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46720->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55776->127.0.0.11:53: read: connection refused
+FAIL-not-allowed       framed h1-framing / second request after Content-Length                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56409->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:46743->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / Content-Length and chunked together                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:55507->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:51394->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / TE xchunked                                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37052->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:36106->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / TE chunked, identity                                step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43374->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / TE with a space                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:60100->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:34327->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43226->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / two differing Content-Lengths                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:49125->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57889->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / Content-Length 0 with a bad body after              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38860->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:52569->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / bare LF line endings, bad                           step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41526->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / folded header                                       step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39262->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39199->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / chunked with a trailer                              step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:43239->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38496->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56710->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / Upgrade websocket                                   step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:57434->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:39530->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / Upgrade h2c                                         step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37664->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / CONNECT inside the terminated connection            step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38716->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56874->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:56503->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / asterisk target                                     step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58832->127.0.0.11:53: read: connection refused
+PASS                   h1    h1-framing / Expect 100-continue                                 step=0 exp=refuse status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:37536->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38871->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:58121->127.0.0.11:53: read: connection refused
+PASS-did-not-reach     h1    around / bound host on another port, opaque tunnel               step=0 exp=nocred status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:50285->127.0.0.11:53: read: connection refused
+PASS-did-not-reach     h1    around / stub by IP, opaque tunnel, no credential                step=0 exp=nocred status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:59386->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:41308->127.0.0.11:53: read: connection refused
+drain: Get "http://gh-stub:9000/drain": dial tcp: lookup gh-stub on 127.0.0.11:53: read udp 127.0.0.1:38961->127.0.0.11:53: read: connection refused
+PASS-did-not-reach     h1    around / unbound name for the same origin, opaque tunnel         step=0 exp=nocred status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused
+
+=== totals
+FAIL-not-allowed: 18
+PASS: 485
+PASS-did-not-reach: 3
+
+=== not PASS
+FAIL-not-allowed       h1    gql-malformed / deep nesting under a listed field                step=0 exp=allow  status=0   filter=        stub=0 cred=false no response: unexpected EOF stubURI= fields=
+FAIL-not-allowed       h2    gql-malformed / deep nesting under a listed field                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h1    transport / absolute-form good, same Host                        step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       plain transport / absolute-form on the plain port, good                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h1    transport / Host in upper case, good                             step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    transport / Host in upper case, good                             step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h1    transport / filtered host named inside an unfiltered bound conne step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    transport / filtered host named inside an unfiltered bound conne step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    h2 / control for the trailer cases                               step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    h2 / undeclared trailer carries a method override                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h1    reuse / allowed then bad GraphQL                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    reuse / allowed then bad GraphQL                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h1    reuse / allowed then merge route                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    reuse / allowed then merge route                                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h1    reuse / allowed, then another authority, then bad                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       h2    reuse / allowed, then another authority, then bad                step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       pipe  reuse / pipelined good then bad                                  step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=
+FAIL-not-allowed       framed h1-framing / second request after Content-Length                 step=0 exp=allow  status=0   filter=        stub=0 cred=false dial tcp 127.0.0.1:3128: connect: connection refused stubURI= fields=

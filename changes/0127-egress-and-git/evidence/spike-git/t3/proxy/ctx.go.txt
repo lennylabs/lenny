@@ -1,0 +1,12 @@
+package main
+
+import (
+	"context"
+	"net/http"
+)
+
+type ctxKey struct{}
+
+func withTarget(r *http.Request, t target) context.Context {
+	return context.WithValue(r.Context(), ctxKey{}, t)
+}

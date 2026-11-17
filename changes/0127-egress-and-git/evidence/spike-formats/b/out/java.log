@@ -1,0 +1,13 @@
+openjdk version "21.0.13" 2026-10-20 LTS
+--- javahttp-home600
+401
+HttpURLConnection 401
+--- javahttp-home644
+401
+HttpURLConnection 401
+--- javahttp-env600
+401
+HttpURLConnection 401
+--- javahttp-env644
+401
+HttpURLConnection 401

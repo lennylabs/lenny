@@ -1,0 +1,20 @@
+/usr/lib/ruby/3.4.0/rubygems/specification.rb:2242:in 'Gem::Specification#raise_if_conflicts': Unable to activate actionpack-7.2.4, because activesupport-8.1.4 conflicts with activesupport (= 7.2.4) (Gem::ConflictError)
+	from /usr/lib/ruby/3.4.0/rubygems/specification.rb:1387:in 'Gem::Specification#activate'
+	from /usr/lib/ruby/3.4.0/rubygems.rb:215:in 'Gem.try_activate'
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:139:in 'block in Kernel#require'
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:139:in 'Monitor#synchronize'
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:139:in 'Kernel#require'
+	from /usr/lib/ruby/gems/3.4.0/gems/zeitwerk-2.8.3/lib/zeitwerk/core_ext/kernel.rb:34:in 'Kernel#require'
+	from /t/t16.rb:2:in '<main>'
+/usr/lib/ruby/3.4.0/rubygems/specification.rb:2242:in 'Gem::Specification#raise_if_conflicts': Unable to activate actionpack-7.2.4, because activesupport-8.1.4 conflicts with activesupport (= 7.2.4) (Gem::ConflictError)
+	from /usr/lib/ruby/3.4.0/rubygems/specification.rb:1387:in 'Gem::Specification#activate'
+	from /usr/lib/ruby/3.4.0/rubygems.rb:209:in 'Gem.try_activate'
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:139:in 'block in Kernel#require'
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:139:in 'Monitor#synchronize'
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:139:in 'Kernel#require'
+	from /usr/lib/ruby/gems/3.4.0/gems/zeitwerk-2.8.3/lib/zeitwerk/core_ext/kernel.rb:34:in 'Kernel#require'
+	from /t/t16.rb:2:in '<main>'
+<internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:136:in 'Kernel#require': cannot load such file -- action_dispatch (LoadError)
+	from <internal:/usr/lib/ruby/3.4.0/rubygems/core_ext/kernel_require.rb>:136:in 'Kernel#require'
+	from /usr/lib/ruby/gems/3.4.0/gems/zeitwerk-2.8.3/lib/zeitwerk/core_ext/kernel.rb:34:in 'Kernel#require'
+	from /t/t16.rb:2:in '<main>'

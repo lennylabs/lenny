@@ -1,0 +1,253 @@
+=================== iso-a / runtime
+-- whoami: uid=65533 gid=65533 groups=65533 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65533    sleep infinity
+   11 65533    sh
+   29 65533    ps -o pid,user,args
+   30 65533    head -20
+-- netagent pid in this ns: <not visible>
+=================== iso-a / adapter
+-- whoami: uid=65532 gid=65532 groups=65532 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65532    sleep infinity
+   11 65532    sh
+   29 65532    ps -o pid,user,args
+   30 65532    head -20
+-- netagent pid in this ns: <not visible>
+=================== iso-b / runtime
+-- whoami: uid=65533 gid=65533 groups=65533 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65535    /pause
+    7 65530    /bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/ while true; do   T=/var/run/secrets/lenny-egress/token   echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)"   sleep 10 done
+   27 65533    sleep infinity
+   37 65532    sleep infinity
+   81 65530    sleep 10
+   82 65533    sh
+  100 65533    ps -o pid,user,args
+  101 65533    head -20
+-- netagent pid in this ns: 7
+-- cat /proc/7/root/var/run/secrets/lenny-egress/token:
+cat: can't open '/proc/7/root/var/run/se
+-- ls /proc/7/root/:
+ls: /proc/7/root/: Permission denied
+-- cat /proc/7/environ:
+sh: can't open /proc/7/environ: Permission denied
+environ: cat: can't open '/proc/7/environ': Permission denied
+-- cat /proc/7/cmdline:
+/bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls 
+while true; do
+  T=/var/run/secrets/lenny-egress/token
+  echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(s
+  sleep 10
+done 
+
+-- ls /proc/7/fd:
+ls: can't open '/proc/7/fd': Permission denied
+-- /proc/7/mountinfo lines with lenny:
+1167 1146 0:286 / /run/secrets/lenny-egress ro,relatime - tmpfs tmpfs rw,size=8126396k,noswap
+=================== iso-b / adapter
+-- whoami: uid=65532 gid=65532 groups=65532 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65535    /pause
+    7 65530    /bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/ while true; do   T=/var/run/secrets/lenny-egress/token   echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)"   sleep 10 done
+   27 65533    sleep infinity
+   37 65532    sleep infinity
+   81 65530    sleep 10
+  124 65532    sh
+  142 65532    ps -o pid,user,args
+  143 65532    head -20
+-- netagent pid in this ns: 7
+-- cat /proc/7/root/var/run/secrets/lenny-egress/token:
+cat: can't open '/proc/7/root/var/run/se
+-- ls /proc/7/root/:
+ls: /proc/7/root/: Permission denied
+-- cat /proc/7/environ:
+sh: can't open /proc/7/environ: Permission denied
+environ: cat: can't open '/proc/7/environ': Permission denied
+-- cat /proc/7/cmdline:
+/bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls 
+while true; do
+  T=/var/run/secrets/lenny-egress/token
+  echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(s
+  sleep 10
+done 
+
+-- ls /proc/7/fd:
+ls: can't open '/proc/7/fd': Permission denied
+-- /proc/7/mountinfo lines with lenny:
+1167 1146 0:286 / /run/secrets/lenny-egress ro,relatime - tmpfs tmpfs rw,size=8126396k,noswap
+=================== iso-c / runtime
+-- whoami: uid=65530 gid=65530 groups=65530 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65535    /pause
+    7 65530    /bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/ while true; do   T=/var/run/secrets/lenny-egress/token   echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)"   sleep 10 done
+   27 65530    sleep infinity
+   37 65532    sleep infinity
+   81 65530    sleep 10
+   82 65530    sh
+  100 65530    ps -o pid,user,args
+  101 65530    head -20
+-- netagent pid in this ns: 7
+-- cat /proc/7/root/var/run/secrets/lenny-egress/token:
+eyJhbGciOiJSUzI1NiIsImtpZCI6Ii1WMTdEWVk4
+-- ls /proc/7/root/:
+bin
+dev
+etc
+-- cat /proc/7/environ:
+NETAGENT_SECRET_ENV=s3cr3t-in-environ
+-- cat /proc/7/cmdline:
+/bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls 
+while true; do
+  T=/var/run/secrets/lenny-egress/token
+  echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(s
+  sleep 10
+done 
+
+-- ls /proc/7/fd:
+0
+1
+2
+-- /proc/7/mountinfo lines with lenny:
+1483 1445 0:292 / /run/secrets/lenny-egress ro,relatime - tmpfs tmpfs rw,size=8126396k,noswap
+=================== iso-c / adapter
+-- whoami: uid=65532 gid=65532 groups=65532 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65535    /pause
+    7 65530    /bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/ while true; do   T=/var/run/secrets/lenny-egress/token   echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)"   sleep 10 done
+   27 65530    sleep infinity
+   37 65532    sleep infinity
+   81 65530    sleep 10
+  121 65532    sh
+  139 65532    ps -o pid,user,args
+  140 65532    head -20
+-- netagent pid in this ns: 7
+-- cat /proc/7/root/var/run/secrets/lenny-egress/token:
+cat: can't open '/proc/7/root/var/run/se
+-- ls /proc/7/root/:
+ls: /proc/7/root/: Permission denied
+-- cat /proc/7/environ:
+sh: can't open /proc/7/environ: Permission denied
+environ: cat: can't open '/proc/7/environ': Permission denied
+-- cat /proc/7/cmdline:
+/bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls 
+while true; do
+  T=/var/run/secrets/lenny-egress/token
+  echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(s
+  sleep 10
+done 
+
+-- ls /proc/7/fd:
+ls: can't open '/proc/7/fd': Permission denied
+-- /proc/7/mountinfo lines with lenny:
+1483 1445 0:292 / /run/secrets/lenny-egress ro,relatime - tmpfs tmpfs rw,size=8126396k,noswap
+=================== iso-d / runtime
+-- whoami: uid=65533 gid=65533 groups=65533 65530 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65535    /pause
+    7 65530    /bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/ while true; do   T=/var/run/secrets/lenny-egress/token   echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)"   sleep 10 done
+   26 65533    sleep infinity
+   36 65532    sleep infinity
+   80 65530    sleep 10
+   81 65533    sh
+   99 65533    ps -o pid,user,args
+  100 65533    head -20
+-- netagent pid in this ns: 7
+-- cat /proc/7/root/var/run/secrets/lenny-egress/token:
+cat: can't open '/proc/7/root/var/run/se
+-- ls /proc/7/root/:
+ls: /proc/7/root/: Permission denied
+-- cat /proc/7/environ:
+sh: can't open /proc/7/environ: Permission denied
+environ: cat: can't open '/proc/7/environ': Permission denied
+-- cat /proc/7/cmdline:
+/bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls 
+while true; do
+  T=/var/run/secrets/lenny-egress/token
+  echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(s
+  sleep 10
+done 
+
+-- ls /proc/7/fd:
+ls: can't open '/proc/7/fd': Permission denied
+-- /proc/7/mountinfo lines with lenny:
+1469 1449 0:285 / /run/secrets/lenny-egress ro,relatime - tmpfs tmpfs rw,size=8126396k,noswap
+=================== iso-d / adapter
+-- whoami: uid=65532 gid=65532 groups=65532 65530 CapEff=0000000000000000
+-- ls /var/run/secrets:
+ls: /var/run/secrets: No such file or directory
+-- token-ish files: 
+-- mounts mentioning secrets:
+(none)
+-- processes visible:
+PID   USER     COMMAND
+    1 65535    /pause
+    7 65530    /bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls -lan /var/run/secrets/lenny-egress/ /var/run/secrets/lenny-egress/..data/ while true; do   T=/var/run/secrets/lenny-egress/token   echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(sha1sum $T | cut -c1-12) payload=$(cut -d. -f2 $T)"   sleep 10 done
+   26 65533    sleep infinity
+   36 65532    sleep infinity
+   80 65530    sleep 10
+  123 65532    sh
+  141 65532    ps -o pid,user,args
+  142 65532    head -20
+-- netagent pid in this ns: 7
+-- cat /proc/7/root/var/run/secrets/lenny-egress/token:
+cat: can't open '/proc/7/root/var/run/se
+-- ls /proc/7/root/:
+ls: /proc/7/root/: Permission denied
+-- cat /proc/7/environ:
+sh: can't open /proc/7/environ: Permission denied
+environ: cat: can't open '/proc/7/environ': Permission denied
+-- cat /proc/7/cmdline:
+/bin/sh -c echo "netagent uid=$(id -u) groups=$(id -G)"; ls 
+while true; do
+  T=/var/run/secrets/lenny-egress/token
+  echo "TOK $(date -u +%s) mtime=$(stat -L -c %Y $T) sha=$(s
+  sleep 10
+done 
+
+-- ls /proc/7/fd:
+ls: can't open '/proc/7/fd': Permission denied
+-- /proc/7/mountinfo lines with lenny:
+1469 1449 0:285 / /run/secrets/lenny-egress ro,relatime - tmpfs tmpfs rw,size=8126396k,noswap

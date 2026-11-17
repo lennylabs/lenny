@@ -1,0 +1,37 @@
+gh version 2.72.0 (2025-04-30)
+### ghes-2.72.0-allow-pr-create-rev-assign rc=1
+$ gh pr create --title t --body b --reviewer bob --assignee bob
+HTTP 403: refused by the egress operation allowlist: query field "user" is not on the allowlist (https://ghes.example.test/api/graphql)
+### ghes-2.72.0-allow-pr-edit-title rc=1
+$ gh pr edit 7 --title new
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: input field \\\"title\\\" on updatePullRequest is not on the allowlist\"}"
+### ghes-2.72.0-allow-pr-edit-meta rc=1
+$ gh pr edit 7 --add-label bug --add-assignee bob --add-reviewer bob
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addLabelsToLabelable\\\" is not on the allowlist\"}"
+### ghes-2.72.0-allow-pr-comment rc=1
+$ gh pr comment 7 --body hello
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addComment\\\" is not on the allowlist\"}"
+### ghes-2.72.0-allow-pr-view rc=0
+$ gh pr view 7 --json number
+{"number":7}
+### ghes-2.72.0-allow-pr-merge rc=1
+$ gh pr merge 7 --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is not on the allowlist\"}"
+### com-2.72.0-allow-pr-create-rev-assign rc=1
+$ gh pr create --title t --body b --reviewer bob --assignee bob
+HTTP 403: refused by the egress operation allowlist: query field "user" is not on the allowlist (https://api.github.com/graphql)
+### com-2.72.0-allow-pr-edit-title rc=1
+$ gh pr edit 7 --title new
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: input field \\\"title\\\" on updatePullRequest is not on the allowlist\"}"
+### com-2.72.0-allow-pr-edit-meta rc=1
+$ gh pr edit 7 --add-label bug --add-assignee bob --add-reviewer bob
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addLabelsToLabelable\\\" is not on the allowlist\"}"
+### com-2.72.0-allow-pr-comment rc=1
+$ gh pr comment 7 --body hello
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"addComment\\\" is not on the allowlist\"}"
+### com-2.72.0-allow-pr-view rc=0
+$ gh pr view 7 --json number
+{"number":7}
+### com-2.72.0-allow-pr-merge rc=1
+$ gh pr merge 7 --merge
+non-200 OK status code: 403 Forbidden body: "{\"message\":\"refused by the egress operation allowlist: mutation field \\\"mergePullRequest\\\" is not on the allowlist\"}"

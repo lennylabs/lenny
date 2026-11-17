@@ -1,0 +1,2 @@
+{"check":"tls","detail":"proxy TLS: tls: failed to verify certificate: x509: certificate is valid for unk.oa.test, not lenny-egress.lenny-system.svc","pass":false,"target":"198.19.50.50:3128"}
+{"verdict":"FAIL","passed":0,"failed":1}

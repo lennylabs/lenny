@@ -1,0 +1,910 @@
+// decsvc: decision service stand-in and evidence producer, to revision 42 of the design's "Evidence streams".
+// ext_authz on :9000, Envoy's access log service on :9003, control on :9002, netagent's reports on :9004 (I7 stand-in).
+// It numbers records per position, hashes tenants to live ingest replicas, tracks each replica's durable sequence, and
+// writes a gap record through another replica for what a lost replica held. REHASH=0 and REPORT=0 give the earlier behaviour.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"math/rand/v2"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"owedc/ev"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	alsv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"golang.org/x/net/http2"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+func envDur(k string, d time.Duration) time.Duration {
+	if x, err := time.ParseDuration(os.Getenv(k)); err == nil {
+		return x
+	}
+	return d
+}
+func envInt(k string, d int) int {
+	if x, err := strconv.Atoi(os.Getenv(k)); err == nil {
+		return x
+	}
+	return d
+}
+
+const producerShort = "authz"
+
+var (
+	off        = os.Getenv("EVIDENCE") == "off"
+	regAll     = os.Getenv("REG_ALL") != ""
+	regMod     = envInt("REG_MOD", 0) // a tenant number divisible by this is regulated
+	bound      = envDur("BOUND", 150*time.Millisecond)
+	prodBound  = int64(envInt("PROD_BOUND", 8<<20))
+	privAddr   = os.Getenv("PRIV")
+	rehash     = os.Getenv("REHASH") != "0"
+	report     = os.Getenv("REPORT") != "0"
+	seqAtomic  = os.Getenv("SEQ_ATOMIC") != "0" // numbering and enqueue under one lock. 0 is the earlier race.
+	perSession = os.Getenv("SEQ_PER_SESSION") != "0"
+	unsettled  = os.Getenv("UNSETTLED_GAP") == "1" // the producer names every refusal it cannot settle, accepting a false gap
+	sendEvery  = envDur("SEND_EVERY", 100*time.Millisecond)
+	inc        = ev.NewIncarnation("d")
+	replicas   []string
+	client     *http.Client
+	longClient *http.Client
+
+	nDecisions, nDenied, nTunnels, nEmitted, nProdDropped, nSent, nSendFail, nRefused, nCommitOK, nAls, nGapRecs, nGapSeqs, nLocal, nLocalRej, nDupAck atomic.Int64
+)
+
+// ---- numbering. On a stream encrypted per session the sequence is per session.
+type posKey struct{ stream, tenant, session string }
+
+var (
+	seqMu sync.Mutex
+	seqs  = map[posKey]uint64{}
+)
+
+func nextSeqLocked(k posKey) uint64 {
+	seqs[k]++
+	return seqs[k]
+}
+func nextSeq(stream, tenant string) uint64 {
+	seqMu.Lock()
+	defer seqMu.Unlock()
+	return nextSeqLocked(posKey{stream, tenant, ""})
+}
+
+// ---- the producer's queue. A tenant's records go to the live replica its hash selects at send time.
+type ent struct {
+	line   []byte
+	stream string
+	first  uint64
+	last   uint64
+}
+type tq struct {
+	recs     []ent
+	bytes    int64
+	drop     map[string]*[2]uint64
+	inflight bool
+	nIn      int
+}
+
+var (
+	qmu sync.Mutex
+	q   = map[string]*tq{}
+)
+
+// replica state
+type rstate struct {
+	mu        sync.Mutex
+	alive     bool
+	everAlive bool
+	draining  bool
+	tenureEnd bool // the loss has been accounted, until the replica returns
+	sent      map[string]uint64
+	firstSent map[string]uint64
+	dur       map[string]uint64
+	lostAt    time.Time
+	movedAck  bool
+	tenure    int64
+}
+
+var rs []*rstate
+
+// owner returns the replica for a tenant: its home if alive, else the next live one.
+func owner(tenant string) int {
+	home := ev.Replica(tenant, len(replicas))
+	if !rehash {
+		return home
+	}
+	for i := 0; i < len(replicas); i++ {
+		j := (home + i) % len(replicas)
+		rs[j].mu.Lock()
+		a := rs[j].alive
+		rs[j].mu.Unlock()
+		if a {
+			return j
+		}
+	}
+	return home
+}
+
+func enqueue(tenant string, e ent, front bool) {
+	qmu.Lock()
+	defer qmu.Unlock()
+	t := q[tenant]
+	if t == nil {
+		t = &tq{drop: map[string]*[2]uint64{}}
+		q[tenant] = t
+	}
+	if !front && t.bytes >= prodBound && !strings.Contains(string(e.line[:min(len(e.line), 400)]), `"kind":"gap"`) {
+		nProdDropped.Add(1)
+		d := t.drop[e.stream]
+		if d == nil {
+			d = &[2]uint64{e.first, e.last}
+			t.drop[e.stream] = d
+		}
+		d[1] = e.last
+		return
+	}
+	t.bytes += int64(len(e.line))
+	if front {
+		// gap records go ahead of what is queued but behind what is in flight
+		n := t.nIn
+		t.recs = append(t.recs[:n:n], append([]ent{e}, t.recs[n:]...)...)
+	} else {
+		t.recs = append(t.recs, e)
+	}
+}
+
+// emit numbers a record and enqueues it. Under the lock, so a position's sequence order is its send order.
+func emit(stream, tenant, session string, build func(seq uint64) *ev.Rec) {
+	if off {
+		return
+	}
+	k := posKey{stream, tenant, ""}
+	if perSession && session != "" {
+		k.session = session
+	}
+	if seqAtomic {
+		seqMu.Lock()
+		seq := nextSeqLocked(k)
+		r := build(seq)
+		line, _ := json.Marshal(r)
+		enqueue(tenant, ent{append(line, '\n'), stream, seq, seq}, false)
+		seqMu.Unlock()
+		nEmitted.Add(1)
+		return
+	}
+	seqMu.Lock()
+	seq := nextSeqLocked(k)
+	seqMu.Unlock()
+	r := build(seq)
+	line, _ := json.Marshal(r)
+	enqueue(tenant, ent{append(line, '\n'), stream, seq, seq}, false)
+	nEmitted.Add(1)
+}
+
+func gapEnt(tenant, stream string, from, to uint64, reason string) ent {
+	nGapRecs.Add(1)
+	nGapSeqs.Add(int64(to - from + 1))
+	pl, _ := json.Marshal(map[string]any{"from": from, "to": to, "reason": reason})
+	r := ev.Rec{Stream: stream, SchemaVersion: 1, Incarnation: inc, Sequence: from, SequenceEnd: to, Kind: "gap", ObservedAt: time.Now().UTC(), TenantId: tenant, Provenance: "enforced", Payload: pl}
+	b, _ := json.Marshal(&r)
+	return ent{append(b, '\n'), stream, from, to}
+}
+
+// sender drains the tenants this replica currently owns, round robin, one request at a time per tenant.
+func sender(i int) {
+	url := replicas[i] + "/v1/records"
+	const maxBody = 4 << 20
+	for {
+		time.Sleep(sendEvery)
+		if rehash {
+			rs[i].mu.Lock()
+			a := rs[i].alive
+			rs[i].mu.Unlock()
+			if !a {
+				continue
+			}
+		}
+		var body bytes.Buffer
+		took := map[string]int{}
+		var sentNow []struct {
+			t string
+			e ent
+		}
+		qmu.Lock()
+		for tn, t := range q {
+			if t.inflight {
+				continue
+			}
+			if owner(tn) != i {
+				continue
+			}
+			for k, d := range t.drop {
+				e := gapEnt(tn, k, d[0], d[1], "producer_tenant_bound")
+				t.recs = append(t.recs, e)
+				t.bytes += int64(len(e.line))
+				delete(t.drop, k)
+			}
+			n := 0
+			for n < len(t.recs) && n < 4000 && body.Len() < maxBody {
+				body.Write(t.recs[n].line)
+				sentNow = append(sentNow, struct {
+					t string
+					e ent
+				}{tn, t.recs[n]})
+				n++
+			}
+			if n > 0 {
+				took[tn] = n
+				t.inflight = true
+				t.nIn = n
+			}
+			if body.Len() >= maxBody {
+				break
+			}
+		}
+		qmu.Unlock()
+		if body.Len() == 0 {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body.Bytes()))
+		resp, err := client.Do(req)
+		ok := false
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			ok = resp.StatusCode == 200
+		}
+		cancel()
+		if !ok {
+			nSendFail.Add(1)
+		} else {
+			nSent.Add(1)
+		}
+		qmu.Lock()
+		for tn, n := range took {
+			t := q[tn]
+			t.inflight = false
+			t.nIn = 0
+			if !ok {
+				continue
+			}
+			for _, e := range t.recs[:n] {
+				t.bytes -= int64(len(e.line))
+			}
+			t.recs = t.recs[n:]
+			if len(t.recs) == 0 && len(t.drop) == 0 {
+				delete(q, tn)
+			}
+		}
+		qmu.Unlock()
+		if ok {
+			ackSent(i, sentNow)
+		}
+	}
+}
+
+func ackSent(i int, items []struct {
+	t string
+	e ent
+}) {
+	r := rs[i]
+	r.mu.Lock()
+	var late []ent
+	var lateT []string
+	first := false
+	if !r.lostAt.IsZero() && !r.movedAck {
+		first = true
+	}
+	for _, x := range items {
+		k := x.t + " " + x.e.stream
+		if r.tenureEnd { // acknowledged by a replica whose loss was already accounted
+			late = append(late, gapEnt(x.t, x.e.stream, x.e.first, x.e.last, "replica_lost_late_ack"))
+			lateT = append(lateT, x.t)
+			continue
+		}
+		if r.firstSent[k] == 0 {
+			r.firstSent[k] = x.e.first
+		}
+		if x.e.last > r.sent[k] {
+			r.sent[k] = x.e.last
+		}
+	}
+	_ = first
+	r.mu.Unlock()
+	for j, e := range late {
+		enqueue(lateT[j], e, true)
+	}
+	if len(items) > 0 {
+		noteAck(i)
+	}
+}
+
+// ---- timeline, for the rehash measurement
+var (
+	tlMu sync.Mutex
+	tl   []string
+	lostPending = map[int]time.Time{}
+)
+
+func event(f string, a ...any) {
+	s := fmt.Sprintf("%.3f ", float64(time.Now().UnixMilli())/1000) + fmt.Sprintf(f, a...)
+	tlMu.Lock()
+	tl = append(tl, s)
+	tlMu.Unlock()
+	log.Print(s)
+}
+
+// noteAck records the first acknowledgement after a loss from any replica other than the lost one.
+func noteAck(i int) {
+	tlMu.Lock()
+	defer tlMu.Unlock()
+	for lost, at := range lostPending {
+		if lost != i {
+			tl = append(tl, fmt.Sprintf("%.3f first ack from replica %d after losing %d: %d ms after detection", float64(time.Now().UnixMilli())/1000, i, lost, time.Since(at).Milliseconds()))
+			delete(lostPending, lost)
+		}
+	}
+}
+
+// markLost ends a replica's tenure: every record sent and not reported durable becomes a gap record through another replica.
+func markLost(i int, why string, keepAlive bool) {
+	r := rs[i]
+	r.mu.Lock()
+	if !rehash {
+		r.mu.Unlock()
+		return
+	}
+	wasAlive := r.alive
+	if !keepAlive {
+		r.alive = false
+	}
+	if r.tenureEnd || !r.everAlive {
+		r.mu.Unlock()
+		return
+	}
+	r.tenureEnd = true
+	r.lostAt = time.Now()
+	type g struct {
+		t, s string
+		f, l uint64
+	}
+	var gs []g
+	var tail int64
+	if report {
+		for k, s := range r.sent {
+			d := r.dur[k]
+			if f := r.firstSent[k]; f > d+1 {
+				d = f - 1
+			}
+			if s > d {
+				p := strings.SplitN(k, " ", 2)
+				gs = append(gs, g{p[0], p[1], d + 1, s})
+				tail += int64(s - d)
+			}
+		}
+	}
+	r.sent, r.firstSent, r.dur = map[string]uint64{}, map[string]uint64{}, map[string]uint64{}
+	r.mu.Unlock()
+	for _, x := range gs {
+		enqueue(x.t, gapEnt(x.t, x.s, x.f, x.l, "replica_lost"), true)
+	}
+	tlMu.Lock()
+	lostPending[i] = time.Now()
+	tlMu.Unlock()
+	event("replica %d lost (%s, wasAlive=%v): %d positions with a tail, %d sequence numbers in gap records", i, why, wasAlive, len(gs), tail)
+}
+
+func healthLoop(i int) {
+	fails := 0
+	url := replicas[i] + "/healthz"
+	for range time.Tick(500 * time.Millisecond) {
+		ctx, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+		req, _ := http.NewRequestWithContext(ctx, "GET", url, nil)
+		resp, err := client.Do(req)
+		st := 0
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			st = resp.StatusCode
+		}
+		cancel()
+		r := rs[i]
+		switch {
+		case st == 200:
+			fails = 0
+			r.mu.Lock()
+			came := !r.alive
+			r.alive = true
+			r.everAlive = true
+			r.draining = false
+			if came {
+				r.tenureEnd = false
+				r.movedAck = false
+				r.tenure++
+			}
+			r.mu.Unlock()
+			if came {
+				event("replica %d live", i)
+			}
+		case st == 503:
+			// draining: stop sending now, and account the tail when its durable stream closes or after a bound
+			r.mu.Lock()
+			first := r.alive
+			r.alive = false
+			r.draining = true
+			tn := r.tenure
+			r.mu.Unlock()
+			if first {
+				event("replica %d draining", i)
+				go func() {
+					time.Sleep(30 * time.Second)
+					r.mu.Lock()
+					same := r.tenure == tn
+					r.mu.Unlock()
+					if same {
+						markLost(i, "drain bound", false)
+					}
+				}()
+			}
+		default:
+			fails++
+			if fails == 2 {
+				markLost(i, "health checks failed", false)
+			}
+		}
+	}
+}
+
+func durableLoop(i int) {
+	url := replicas[i] + "/v1/durable?incarnation=" + inc
+	for {
+		req, _ := http.NewRequest("GET", url, nil)
+		resp, err := longClient.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		br := bufio.NewReader(resp.Body)
+		clean := false
+		for {
+			l, err := br.ReadBytes('\n')
+			if err != nil {
+				break
+			}
+			var m struct {
+				Durable map[string]uint64 `json:"durable"`
+				Closing bool              `json:"closing"`
+			}
+			if json.Unmarshal(l, &m) != nil {
+				continue
+			}
+			if m.Closing {
+				clean = true
+				break
+			}
+			if len(m.Durable) > 0 {
+				r := rs[i]
+				r.mu.Lock()
+				for k, v := range m.Durable {
+					if v > r.dur[k] {
+						r.dur[k] = v
+					}
+				}
+				r.mu.Unlock()
+			}
+		}
+		resp.Body.Close()
+		if clean {
+			markLost(i, "durable stream closed cleanly", false)
+		} else {
+			markLost(i, "durable stream broken", false)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// ---- commit latency
+var (
+	latMu sync.Mutex
+	lat   []int64 // microseconds, successful and failed commits alike
+	over  atomic.Int64
+)
+
+func commit(tenant string, r *ev.Rec) error {
+	b, _ := json.Marshal(r)
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	t0 := time.Now()
+	req, _ := http.NewRequestWithContext(ctx, "POST", replicas[owner(tenant)]+"/v1/commit", bytes.NewReader(b))
+	resp, err := client.Do(req)
+	d := time.Since(t0)
+	latMu.Lock()
+	lat = append(lat, d.Microseconds())
+	latMu.Unlock()
+	if err != nil {
+		over.Add(1)
+		// If our bound passed, ingest settles it. If the replica is gone, nothing there can, so the producer names the refusal.
+		if ctx.Err() == nil && report && rehash {
+			enqueue(tenant, gapEnt(tenant, r.Stream, r.Sequence, r.Sequence, "refused_replica_lost"), true)
+		} else if unsettled {
+			enqueue(tenant, gapEnt(tenant, r.Stream, r.Sequence, r.Sequence, "refused_unsettled"), true)
+		}
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode == 503 && resp.Header.Get("X-Lenny-Draining") != "" && report && rehash {
+		enqueue(tenant, gapEnt(tenant, r.Stream, r.Sequence, r.Sequence, "refused_replica_draining"), true)
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+type az struct {
+	authv3.UnimplementedAuthorizationServer
+}
+
+func hdr(k, v string) *corev3.HeaderValueOption {
+	return &corev3.HeaderValueOption{Header: &corev3.HeaderValue{Key: k, Value: v}, AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD}
+}
+
+func denied(code int, msg string, hs ...*corev3.HeaderValueOption) *authv3.CheckResponse {
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{Status: &typev3.HttpStatus{Code: typev3.StatusCode(code)}, Body: msg, Headers: hs}}}
+}
+
+func isRegulated(tenant string) bool {
+	if regAll {
+		return true
+	}
+	if regMod > 0 {
+		n, err := strconv.Atoi(strings.TrimPrefix(tenant, "t"))
+		return err == nil && n%regMod == 0
+	}
+	return false
+}
+
+func (s *az) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	nDecisions.Add(1)
+	h := req.GetAttributes().GetRequest().GetHttp()
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(h.GetHeaders()["proxy-authorization"], "Basic "))
+	_, tenant, _ := strings.Cut(string(raw), ":")
+	if tenant == "" {
+		tenant = "none"
+	}
+	authority := h.GetHost()
+	host := authority
+	if i := strings.LastIndexByte(host, ':'); i > 0 {
+		host = host[:i]
+	}
+	r := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	outcome := "allow"
+	if strings.HasPrefix(host, "deny-") {
+		outcome = "deny"
+		nDenied.Add(1)
+	}
+	did := ""
+	if !off {
+		sess, pod, pool, trace := ev.Session(tenant, r.IntN(4))
+		peer := req.GetAttributes().GetSource().GetAddress().GetSocketAddress().GetAddress()
+		build := func(seq uint64) *ev.Rec {
+			did = ev.DecisionID(producerShort, inc, seq)
+			return &ev.Rec{Stream: "egress.decision", SchemaVersion: 1, Incarnation: inc, Sequence: seq, ObservedAt: time.Now().UTC(), TenantId: tenant, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced",
+				Payload: ev.DecisionPayload(r, did, host, peer, outcome)}
+		}
+		if isRegulated(tenant) {
+			rec := build(nextSeq("egress.decision", tenant))
+			if err := commit(tenant, rec); err != nil {
+				nRefused.Add(1)
+				return denied(503, "evidence unavailable\n", hdr("x-lenny-reason", "evidence_commit_timeout"), hdr("x-lenny-decision", did)), nil
+			}
+			nCommitOK.Add(1)
+		} else {
+			emit("egress.decision", tenant, "", build)
+		}
+	} else {
+		did = ev.RandHex(r, 32)
+	}
+	if outcome == "deny" {
+		return denied(403, "denied by policy\n", hdr("x-lenny-decision", did)), nil
+	}
+	md, _ := structpb.NewStruct(map[string]any{"decision_id": did, "tenant": tenant, "private_addr": privAddr})
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md, HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", "private")}, HeadersToRemove: []string{"proxy-authorization"}}}}, nil
+}
+
+type als struct {
+	alsv3.UnimplementedAccessLogServiceServer
+}
+
+func (s *als) StreamAccessLogs(st grpc.ClientStreamingServer[alsv3.StreamAccessLogsMessage, alsv3.StreamAccessLogsResponse]) error {
+	r := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	for {
+		m, err := st.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		for _, e := range m.GetHttpLogs().GetLogEntry() {
+			nAls.Add(1)
+			cp := e.GetCommonProperties()
+			fm := cp.GetMetadata().GetFilterMetadata()["envoy.filters.http.ext_authz"].GetFields()
+			did := fm["decision_id"].GetStringValue()
+			tn := fm["tenant"].GetStringValue()
+			if tn == "" {
+				continue // a denied CONNECT has no tunnel
+			}
+			lt := cp.GetAccessLogType().String()
+			if lt == "DownstreamEnd" || lt == "NotSet" {
+				nTunnels.Add(1)
+			}
+			start := cp.GetStartTime().AsTime()
+			end := start.Add(cp.GetTimeToLastDownstreamTxByte().AsDuration())
+			sess, pod, pool, trace := ev.Session(tn, r.IntN(4))
+			up := cp.GetUpstreamRemoteAddress().GetSocketAddress()
+			src := cp.GetUpstreamLocalAddress().GetSocketAddress()
+			emit("egress.tunnel", tn, "", func(seq uint64) *ev.Rec {
+				return &ev.Rec{Stream: "egress.tunnel", SchemaVersion: 1, Incarnation: inc, Sequence: seq, ObservedAt: time.Now().UTC(), TenantId: tn, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced",
+					Payload: ev.TunnelPayload(did, up.GetAddress(), src.GetAddress(), src.GetPortValue(), start, end, cp.GetUpstreamWireBytesSent(), cp.GetUpstreamWireBytesReceived(), lt)}
+			})
+		}
+	}
+}
+
+func pct(v []int64, p float64) int64 {
+	if len(v) == 0 {
+		return 0
+	}
+	return v[int(float64(len(v)-1)*p)]
+}
+
+func flood(tenant string, rate int, d time.Duration, unique bool) {
+	r := rand.New(rand.NewPCG(1, 2))
+	end := time.Now().Add(d)
+	iv := time.Second / time.Duration(rate/100)
+	sess, pod, pool, trace := ev.Session(tenant, 0)
+	for time.Now().Before(end) {
+		for i := 0; i < 100; i++ {
+			host := "deny-fixed.attacker.example"
+			if unique {
+				host = "deny-" + ev.RandHex(r, 24) + ".attacker.example"
+			}
+			emit("egress.decision", tenant, "", func(seq uint64) *ev.Rec {
+				return &ev.Rec{Stream: "egress.decision", SchemaVersion: 1, Incarnation: inc, Sequence: seq, ObservedAt: time.Now().UTC(), TenantId: tenant, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced", Payload: ev.DecisionPayload(r, ev.DecisionID(producerShort, inc, seq), host, "10.1.2.3", "deny")}
+			})
+		}
+		time.Sleep(iv)
+	}
+}
+
+// localReport is netagent's report on I7. The token here stands in for the verified pod identity, and the binding is derived from it.
+// Tenant, pool, pod, and session are overwritten from the binding, provenance is forced, and a session the binding does not name is refused.
+func localReport(w http.ResponseWriter, r *http.Request) {
+	tok := r.Header.Get("Authorization")
+	tn, slot, ok := strings.Cut(strings.TrimPrefix(tok, "Bearer "), "/")
+	if !ok {
+		http.Error(w, "no identity", 401)
+		return
+	}
+	n, _ := strconv.Atoi(slot)
+	sess, pod, pool, trace := ev.Session(tn, n)
+	var in []struct {
+		Stream    string          `json:"stream"`
+		TenantId  string          `json:"tenantId"`
+		SessionId string          `json:"sessionId"`
+		PodUid    string          `json:"podUid"`
+		Prov      string          `json:"provenance"`
+		Payload   json.RawMessage `json:"payload"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "bad", 400)
+		return
+	}
+	refused := 0
+	for _, x := range in {
+		if x.SessionId != "" && x.SessionId != sess {
+			refused++
+			nLocalRej.Add(1)
+			continue
+		}
+		if x.Stream != "egress.local" && x.Stream != "git.operation" {
+			refused++
+			nLocalRej.Add(1)
+			continue
+		}
+		nLocal.Add(1)
+		pl := x.Payload
+		emit(x.Stream, tn, "", func(seq uint64) *ev.Rec {
+			return &ev.Rec{Stream: x.Stream, SchemaVersion: 1, Incarnation: inc, Sequence: seq, ObservedAt: time.Now().UTC(), TenantId: tn, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "self_reported", Payload: pl}
+		})
+	}
+	fmt.Fprintf(w, "accepted %d refused %d\n", len(in)-refused, refused)
+}
+
+// closeIncarnation writes a closing record per position, so a consumer can tell this incarnation lost nothing it had numbered.
+func closeIncarnation() {
+	seqMu.Lock()
+	ks := make([]posKey, 0, len(seqs))
+	for k := range seqs {
+		ks = append(ks, k)
+	}
+	for _, k := range ks {
+		seq := nextSeqLocked(k)
+		pl, _ := json.Marshal(map[string]any{"last": seq})
+		r := ev.Rec{Stream: k.stream, SchemaVersion: 1, Incarnation: inc, Sequence: seq, Kind: "incarnation_close", ObservedAt: time.Now().UTC(), TenantId: k.tenant, SessionId: k.session, Provenance: "enforced", Payload: pl}
+		line, _ := json.Marshal(&r)
+		enqueue(k.tenant, ent{append(line, '\n'), k.stream, seq, seq}, false)
+	}
+	seqMu.Unlock()
+	end := time.Now().Add(20 * time.Second)
+	for time.Now().Before(end) {
+		qmu.Lock()
+		n := len(q)
+		qmu.Unlock()
+		if n == 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	event("incarnation closed: %d positions", len(ks))
+}
+
+func main() {
+	log.SetFlags(log.Lmicroseconds)
+	replicas = strings.Split(os.Getenv("REPLICAS"), ",")
+	for range replicas {
+		rs = append(rs, &rstate{alive: !rehash, everAlive: !rehash, sent: map[string]uint64{}, firstSent: map[string]uint64{}, dur: map[string]uint64{}})
+	}
+	if !off {
+		cfg := ev.ClientTLS(os.Getenv("LEAF"), os.Getenv("CA"), "lenny-evidence.lenny-system.svc")
+		client = &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg, ReadIdleTimeout: 2 * time.Second, PingTimeout: time.Second, StrictMaxConcurrentStreams: false}}
+		longClient = &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg.Clone(), ReadIdleTimeout: 2 * time.Second, PingTimeout: time.Second}}
+		for i := range replicas {
+			go sender(i)
+			if rehash {
+				go healthLoop(i)
+			}
+			if rehash && report {
+				go durableLoop(i)
+			}
+		}
+	}
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			var qb int64
+			qmu.Lock()
+			for _, t := range q {
+				qb += t.bytes
+			}
+			nq := len(q)
+			qmu.Unlock()
+			latMu.Lock()
+			x := append([]int64(nil), lat...)
+			latMu.Unlock()
+			sort.Slice(x, func(i, j int) bool { return x[i] < x[j] })
+			n150 := 0
+			for _, v := range x {
+				if v >= bound.Microseconds() {
+					n150++
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"incarnation": inc, "decisions": nDecisions.Load(), "denied": nDenied.Load(), "tunnelEnds": nTunnels.Load(), "alsEntries": nAls.Load(), "emitted": nEmitted.Load(), "prodDropped": nProdDropped.Load(), "sends": nSent.Load(), "sendFail": nSendFail.Load(), "queuedBytes": qb, "queuedTenants": nq, "refused": nRefused.Load(), "commitOK": nCommitOK.Load(), "gapRecords": nGapRecs.Load(), "gapSeqs": nGapSeqs.Load(), "local": nLocal.Load(), "localRefused": nLocalRej.Load(),
+				"commits": len(x), "commitP50us": pct(x, .5), "commitP95us": pct(x, .95), "commitP99us": pct(x, .99), "commitP999us": pct(x, .999), "commitMaxUs": pct(x, 1), "commitsOverBound": n150, "heapInuse": ms.HeapInuse})
+		})
+		m.HandleFunc("/timeline", func(w http.ResponseWriter, r *http.Request) {
+			tlMu.Lock()
+			defer tlMu.Unlock()
+			for _, l := range tl {
+				fmt.Fprintln(w, l)
+			}
+		})
+		m.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
+			latMu.Lock()
+			lat = lat[:0]
+			latMu.Unlock()
+			over.Store(0)
+			nRefused.Store(0)
+			nCommitOK.Store(0)
+			fmt.Fprintln(w, "ok")
+		})
+		m.HandleFunc("/positions", func(w http.ResponseWriter, r *http.Request) {
+			seqMu.Lock()
+			defer seqMu.Unlock()
+			out := map[string]uint64{}
+			for k, v := range seqs {
+				key := k.tenant + " " + k.stream
+				if k.session != "" {
+					key += " " + k.session
+				}
+				out[key] = v
+			}
+			json.NewEncoder(w).Encode(map[string]any{"incarnation": inc, "positions": out})
+		})
+		m.HandleFunc("/flood", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			rate, _ := strconv.Atoi(q.Get("rate"))
+			d, _ := time.ParseDuration(q.Get("for"))
+			go flood(q.Get("tenant"), rate, d, q.Get("unique") != "")
+			fmt.Fprintln(w, "started")
+		})
+		// /activity sends a test stream with sensitive payloads. Comma-separated sessions interleave.
+		m.HandleFunc("/activity", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			tn := q.Get("tenant")
+			n, _ := strconv.Atoi(q.Get("n"))
+			rr := rand.New(rand.NewPCG(rand.Uint64(), 3))
+			mix := strings.Split(q.Get("session"), ",")
+			for i := 0; i < n; i++ {
+				sess := mix[i%len(mix)]
+				pl, _ := json.Marshal(map[string]any{"command": fmt.Sprintf("curl -H 'Authorization: Bearer %s' https://%s/v1/export?page=%d", ev.RandHex(rr, 40), ev.Host(rr), i), "cwd": "/workspace/repo-" + ev.RandHex(rr, 6), "uid": 1000})
+				emit("agent.activity", tn, sess, func(seq uint64) *ev.Rec {
+					return &ev.Rec{Stream: "agent.activity", SchemaVersion: 1, Incarnation: inc, Sequence: seq, ObservedAt: time.Now().UTC(), TenantId: tn, SessionId: sess, Provenance: "self_reported", Payload: pl}
+				})
+			}
+			fmt.Fprintln(w, "sent", n)
+		})
+		log.Fatal(http.ListenAndServe(":9002", m))
+	}()
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/v1/report", localReport)
+		log.Fatal(http.ListenAndServe(":9004", m))
+	}()
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, syscall.SIGTERM)
+	go func() {
+		<-sig
+		closeIncarnation()
+		os.Exit(0)
+	}()
+	go func() {
+		l, err := net.Listen("tcp", ":9003")
+		if err != nil {
+			log.Fatal(err)
+		}
+		g := grpc.NewServer()
+		alsv3.RegisterAccessLogServiceServer(g, &als{})
+		log.Fatal(g.Serve(l))
+	}()
+	l, err := net.Listen("tcp", ":9000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	g := grpc.NewServer()
+	authv3.RegisterAuthorizationServer(g, &az{})
+	log.Printf("decsvc incarnation=%s off=%v replicas=%v regAll=%v regMod=%d bound=%s rehash=%v report=%v", inc, off, replicas, regAll, regMod, bound, rehash, report)
+	log.Fatal(g.Serve(l))
+}

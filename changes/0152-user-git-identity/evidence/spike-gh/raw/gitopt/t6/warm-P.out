@@ -1,0 +1,18 @@
+### warm-P-bound-host rc=0
+$ git ls-remote https://ghes.example.test/acme/widgets.git 2>&1 | head -1
+fatal: could not read Username for 'http://ghes.example.test': terminal prompts disabled
+### warm-P-github-host rc=0
+$ git ls-remote https://github.com/acme/widgets.git 2>&1 | head -1
+fatal: could not read Username for 'http://github.com': terminal prompts disabled
+### warm-P-arbitrary-public rc=0
+$ git ls-remote https://other.example.test/pub/lib.git 2>&1 | head -1
+a35554173b51fcc953fd0f3b40652cc064c01711	HEAD
+### warm-P-arbitrary-private rc=0
+$ git ls-remote https://other.example.test/acme/secret.git 2>&1 | head -1
+fatal: could not read Username for 'http://other.example.test': terminal prompts disabled
+### warm-P-arbitrary-push rc=128
+$ git init -q p; cd p; git commit -q --allow-empty -m x; git push -q https://other.example.test/pub/lib.git HEAD:refs/heads/x 2>&1
+fatal: unable to access 'http://other.example.test/pub/lib.git/': The requested URL returned error: 403
+### warm-P-gh rc=0
+$ cd /tmp; rm -rf g6warm-P; git init -q g6warm-P; cd g6warm-P; git remote add origin https://ghes.example.test/acme/widgets.git; env GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=lenny-injected gh pr list 2>&1
+

@@ -1,0 +1,67 @@
+// tokensvc: a stand-in for the Token Service's write mint (I8). It refuses a mint for a session and host that qualify under allowRuntimeHeldCredentials.
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+type held struct {
+	Pools []struct {
+		Flag bool `json:"allowRuntimeHeldCredentials"`
+	} `json:"pools"`
+	Named     bool `json:"named"`
+	Released  bool `json:"released"`
+	Suspended bool `json:"suspended"`
+}
+
+func qualifies(path, host string) bool {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var m map[string]*held
+	if json.Unmarshal(b, &m) != nil {
+		return false
+	}
+	h := m[strings.ToLower(host)]
+	return h != nil && h.Named
+}
+
+func main() {
+	path := os.Getenv("SESSION")
+	lf, _ := os.OpenFile(os.Getenv("TS_LOG"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	var mu sync.Mutex
+	http.HandleFunc("/mint", func(w http.ResponseWriter, r *http.Request) {
+		var q struct {
+			Host, Repo string
+			Write      bool
+		}
+		json.NewDecoder(r.Body).Decode(&q)
+		out := map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "host": q.Host, "repo": q.Repo, "write": q.Write}
+		defer func() {
+			b, _ := json.Marshal(out)
+			mu.Lock()
+			lf.Write(append(b, 10))
+			mu.Unlock()
+		}()
+		if qualifies(path, q.Host) {
+			out["decision"] = "refused"
+			w.WriteHeader(403)
+			json.NewEncoder(w).Encode(map[string]string{"error": "session qualifies under allowRuntimeHeldCredentials on this host"})
+			return
+		}
+		k := "MINT-R-"
+		if q.Write {
+			k = "MINT-W-"
+		}
+		out["decision"] = "minted"
+		json.NewEncoder(w).Encode(map[string]string{"token": k + strings.ReplaceAll(q.Repo, "/", "_")})
+	})
+	log.Fatal(http.ListenAndServe(":8200", nil))
+}

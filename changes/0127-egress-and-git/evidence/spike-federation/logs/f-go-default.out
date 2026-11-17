@@ -1,0 +1,6 @@
+### TEST f-go-default  23:25:47
+### docker run --network spikefed-net -e IDENTITY_ENDPOINT=http://msi.azure.test:8080/msi/token -e IDENTITY_HEADER=s3cr3t-identity-header -e MODE=default spikefed-go:t go run ./cmd/azmsi
+token: az-msi-at-1793604347 expires: 2026-11-02 07:26:07 +0000 UTC
+### exit 0
+### server log:
+{"ts": "07:25:47", "port": 8080, "peer": "172.20.0.6", "kind": "az-msi", "method": "GET", "path": "/msi/token?api-version=2019-08-01&resource=https%3A%2F%2Fmanagement.azure.com", "headers": {"Host": "msi.azure.test:8080", "User-Agent": "azsdk-go-azidentity/v1.15.0 (go1.26.7; linux)", "X-Identity-Header": "s3cr3t-identity-header"}, "query": {"api-version": ["2019-08-01"], "resource": ["https://management.azure.com"]}, "header_ok": true}

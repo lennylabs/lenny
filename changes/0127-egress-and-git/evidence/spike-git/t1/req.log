@@ -1,0 +1,16 @@
+{"m": "GET", "path": "/github.com/org/repo/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/github.com/org/repo/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/git.kernel.org/pub/scm/git/git.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/git.kernel.org/pub/scm/git/git.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/gitlab.example.com/group/sub/repo.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/gitlab.example.com/group/sub/repo.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/host:8443/x.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/host:8443/x.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/scp/github.com:org/repo.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/scp/github.com:org/repo.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/ssh/git@host/a/b.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/ssh/git@host/a/b.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/ssh/git@host:2222/a/b.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/ssh/git@host:2222/a/b.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}
+{"m": "GET", "path": "/scp/gitlab.example.com:group/sub/repo.git/info/refs?service=git-upload-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": "version=2", "auth": null, "body": ""}
+{"m": "GET", "path": "/scp/gitlab.example.com:group/sub/repo.git/info/refs?service=git-receive-pack", "ua": "git/2.49.1", "accept": "*/*", "gp": null, "auth": null, "body": ""}

@@ -1,0 +1,202 @@
+
+### S1 [earlier behaviour: no report, no rehash]: SIGKILL at t=70 s, the load ends 5 s later, restart at t=85 s. 2,000/s, 2,500 tenants, 25 regulated
+   killed at 1793686802.691: "buffered":20998028 "records":222528
+   busy: n=74143 codes={'200': 70530, '403': 3613, '503': 1001} p50=0.55 p90=1.34 p99=4.75 p99.9=22.8 max=65.7 ms
+   small: n=74768 codes={'200': 71015, '403': 3753, '503': 18} p50=0.48 p90=0.94 p99=3.28 p99.9=17.3 max=97.4 ms
+   elapsed 75s broken=0 refusedFirst=667 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+  unannounced hole t1665 egress.decision lenny-egress-authz.lenny-system.svc d1a1a00f746f-676bc2: 21..23 (0 announced)
+  unannounced hole t471 egress.decision lenny-egress-authz.lenny-system.svc d1a1a00f746f-676bc2: 34..35 (0 announced)
+  unannounced hole t338 egress.decision lenny-egress-authz.lenny-system.svc d1a1a00f746f-676bc2: 22..23 (0 announced)
+audit: positions=7493 records present=687469 duplicates=0 | holes between records: missing=25946 announced=0 unannounced=25946 | tails against truth: missing=2438 announced=0 unannounced=2438 in 314 positions | positions with nothing stored=7 (257 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[]; record kinds: map[:687469]; positions with a closing record: 0
+   producer: decisions=149930 emitted=417238 prodDropped=0 sendFail=16 gapRecords=0 gapSeqs=0 queued=0 commitOK=14763 refused=1019
+   replica 0: records=478393 batches=9908 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=365 walFail=0 lateLanded=0 lateLost=0 commitTx=365 manifestTx=0 groupP50=1 groupUsP50=554 groupUsP99=6009
+   replica 1: records=15646 batches=2165 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   stored records: 687469 in 14536 rows
+   incarnation rows: 0|f 1|f 1|f 
+
+### S1 [revision 42]: SIGKILL at t=70 s, the load ends 5 s later, restart at t=85 s. 2,000/s, 2,500 tenants, 25 regulated
+   killed at 1793686920.056: "buffered":41293194 "records":354185
+   busy: n=74720 codes={'200': 71012, '403': 3708, '503': 88} p50=0.60 p90=1.45 p99=8.49 p99.9=93.6 max=152.8 ms
+   small: n=75121 codes={'200': 71420, '403': 3701, '503': 2} p50=0.52 p90=1.05 p99=6.12 p99.9=93.4 max=152.4 ms
+   elapsed 75s broken=0 refusedFirst=90 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+audit: positions=9602 records present=652690 duplicates=0 | holes between records: missing=25838 announced=25838 unannounced=0 | tails against truth: missing=1878 announced=1878 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[refused_replica_lost:2 replica_lost:27714]; record kinds: map[:652689 denial_aggregate:1 gap:2311]; positions with a closing record: 0
+   producer: decisions=149931 emitted=419051 prodDropped=0 sendFail=0 gapRecords=2311 gapSeqs=27716 queued=0 commitOK=15654 refused=90
+   replica 0: records=366900 batches=12114 droppedTenant=0 aggIn=1 aggOut=1 gapRecords=0 walOK=1442 walFail=0 lateLanded=88 lateLost=0 commitTx=1295 manifestTx=0 groupP50=1 groupUsP50=506 groupUsP99=3801
+   replica 1: records=2305 batches=12 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   stored records: 655001 in 16668 rows
+   incarnation rows: 0|f 1|f 1|f 
+   1793686847.257 replica 1 live
+   1793686847.257 replica 0 live
+   1793686920.159 replica 1 lost (durable stream broken, wasAlive=true): 2309 positions with a tail, 27714 sequence numbers in gap records
+   1793686920.201 first ack from replica 0 after losing 1: 41 ms after detection
+   1793686936.791 replica 1 live
+  incarnation w0-1a1a0113beb-fc4cf5 replica 0 started 06:20:46.454, last flush 06:22:38.416, NO CLOSING ROW
+  incarnation w1-1a1a0113c81-8cf59f replica 1 started 06:20:46.602, last flush 06:21:59.901, NO CLOSING ROW
+  incarnation w1-1a1a0129b62-27ac0b replica 1 started 06:22:16.428, last flush 06:22:24.730, NO CLOSING ROW
+windows: egress.tunnel entries=266237 egress.accesslog entries=245611, tunnel entries with no access log entry=1273: inside a window (last flush to next start) 3, within 5s of one 121, outside every w
+    06:21:30 333
+    06:21:40 621
+    06:21:50 318
+    06:22:00 1
+
+### S1 [revision 42, second run]: SIGKILL at t=70 s, the load ends 5 s later, restart at t=85 s. 2,000/s, 2,500 tenants, 25 regulated
+   killed at 1793687045.531: "buffered":20940053 "records":222837
+   busy: n=74717 codes={'200': 70944, '403': 3773, '503': 88} p50=0.58 p90=1.32 p99=4.46 p99.9=39.4 max=154.4 ms
+   small: n=75117 codes={'200': 71264, '403': 3853, '503': 5} p50=0.50 p90=0.94 p99=2.90 p99.9=25.7 max=85.7 ms
+   elapsed 75s broken=0 refusedFirst=93 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+audit: positions=7500 records present=691622 duplicates=0 | holes between records: missing=25505 announced=25505 unannounced=0 | tails against truth: missing=1632 announced=1632 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[refused_replica_lost:2 replica_lost:27135]; record kinds: map[:691622 gap:2278]; positions with a closing record: 0
+   producer: decisions=149927 emitted=418478 prodDropped=0 sendFail=0 gapRecords=2278 gapSeqs=27137 queued=0 commitOK=15772 refused=93
+   replica 0: records=497431 batches=12354 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=1411 walFail=0 lateLanded=91 lateLost=0 commitTx=1264 manifestTx=0 groupP50=1 groupUsP50=484 groupUsP99=5846
+   replica 1: records=2518 batches=11 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=0 walFail=0 lateLanded=0 lateLost=0 commitTx=0 manifestTx=0 groupP50=0 groupUsP50=0 groupUsP99=0
+   stored records: 693900 in 14809 rows
+   incarnation rows: 0|f 1|f 1|f 
+   1793686972.709 replica 0 live
+   1793686972.710 replica 1 live
+   1793687045.639 replica 1 lost (durable stream broken, wasAlive=true): 2276 positions with a tail, 27135 sequence numbers in gap records
+   1793687045.726 first ack from replica 0 after losing 1: 87 ms after detection
+   1793687062.242 replica 1 live
+  incarnation w0-1a1a01325f3-64fdb0 replica 0 started 06:22:51.901, last flush 06:24:43.980, NO CLOSING ROW
+  incarnation w1-1a1a013268b-eee903 replica 1 started 06:22:52.054, last flush 06:24:05.602, NO CLOSING ROW
+  incarnation w1-1a1a014856b-c8f3bc replica 1 started 06:24:21.876, last flush 06:24:30.183, NO CLOSING ROW
+windows: egress.tunnel entries=266119 egress.accesslog entries=284416, tunnel entries with no access log entry=0: inside a window (last flush to next start) 0, within 5s of one 0, outside every window
+
+### S2 [revision 42]: SIGKILL at t=120 s, restart at t=140 s, load to t=240 s
+   killed at 1793687220.923: "buffered":119169478
+   busy: n=239184 codes={'200': 227228, '403': 11956, '503': 138} p50=0.56 p90=1.29 p99=3.95 p99.9=87.9 max=174.8 ms
+   small: n=240599 codes={'200': 228785, '403': 11814, '503': 6} p50=0.49 p90=0.92 p99=2.46 p99.9=43.9 max=186.9 ms
+   elapsed 240s broken=0 refusedFirst=144 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+audit: positions=10000 records present=2120737 duplicates=0 | holes between records: missing=99462 announced=99462 unannounced=0 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[refused_replica_lost:4 replica_lost:99458]; record kinds: map[:2120736 denial_aggregate:1 gap:2491]; positions with a closing record: 0
+   producer: decisions=479927 emitted=1341422 prodDropped=0 sendFail=0 gapRecords=2491 gapSeqs=99462 queued=0 commitOK=50387 refused=144
+   replica 0: records=1381051 batches=22595 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=5631 walFail=0 lateLanded=36 lateLost=0 commitTx=5434 manifestTx=0 groupP50=1 groupUsP50=483 groupUsP99=3726
+   replica 1: records=322077 batches=5046 droppedTenant=0 aggIn=1 aggOut=1 gapRecords=0 walOK=20342 walFail=0 lateLanded=79 lateLost=0 commitTx=19815 manifestTx=0 groupP50=1 groupUsP50=472 groupUsP99=2061
+   stored records: 2123228 in 32672 rows
+   incarnation rows: 0|f 1|f 1|f 
+   1793687098.111 replica 0 live
+   1793687098.111 replica 1 live
+   1793687221.045 replica 1 lost (durable stream broken, wasAlive=true): 2487 positions with a tail, 99458 sequence numbers in gap records
+   1793687221.155 first ack from replica 0 after losing 1: 109 ms after detection
+   1793687242.422 replica 1 live
+  incarnation w0-1a1a0150fba-429a81 replica 0 started 06:24:57.285, last flush 06:29:11.588, NO CLOSING ROW
+  incarnation w1-1a1a0151058-3935de replica 1 started 06:24:57.441, last flush 06:26:58.010, NO CLOSING ROW
+  incarnation w1-1a1a0174593-9b81c9 replica 1 started 06:27:22.143, last flush 06:29:06.439, NO CLOSING ROW
+windows: egress.tunnel entries=842512 egress.accesslog entries=828246, tunnel entries with no access log entry=1767: inside a window (last flush to next start) 85, within 5s of one 109, outside every 
+    06:26:20 103
+    06:26:30 792
+    06:26:40 610
+    06:26:50 237
+    06:27:00 25
+
+### S3 [revision 42]: SIGTERM at t=70 s, restart at t=80 s, load to t=120 s
+   SIGTERM at 1793687444.852
+06:30:49.714346 closed buffered=0 in 4.841s row err=<nil>
+   busy: n=119916 codes={'200': 114140, '403': 5776, '503': 48} p50=0.60 p90=1.41 p99=4.69 p99.9=81.3 max=151.2 ms
+   small: n=119958 codes={'200': 113968, '403': 5990, '503': 2} p50=0.53 p90=1.00 p99=3.16 p99.9=42.7 max=145.0 ms
+   elapsed 120s broken=0 refusedFirst=50 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+  unannounced hole t0 egress.decision lenny-egress-authz.lenny-system.svc d1a1a0193f19-752104: 14173..14200 (0 announced)
+audit: positions=7500 records present=1152328 duplicates=0 | holes between records: missing=28 announced=0 unannounced=28 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=44977
+  gap sequence numbers by reason: map[replica_lost:44977]; record kinds: map[:1152328 gap:2485]; positions with a closing record: 0
+   producer: decisions=239924 emitted=670677 prodDropped=0 sendFail=2 gapRecords=2485 gapSeqs=44977 queued=0 commitOK=25413 refused=50
+   replica 0: records=803150 batches=12586 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=2569 walFail=0 lateLanded=20 lateLost=0 commitTx=2423 manifestTx=0 groupP50=1 groupUsP50=529 groupUsP99=3170
+   replica 1: records=129722 batches=2517 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=8318 walFail=0 lateLanded=0 lateLost=0 commitTx=8118 manifestTx=0 groupP50=1 groupUsP50=546 groupUsP99=1670
+   stored records: 1154813 in 19835 rows
+   incarnation rows: 0|f 1|t 1|f 
+   1793687372.055 replica 1 live
+   1793687372.055 replica 0 live
+   1793687445.050 replica 1 draining
+   1793687449.413 replica 1 lost (durable stream closed cleanly, wasAlive=false): 0 positions with a tail, 0 sequence numbers in gap records
+   1793687449.459 first ack from replica 0 after losing 1: 45 ms after detection
+   1793687454.054 replica 1 live
+   1793687475.057 replica 1 lost (drain bound, wasAlive=true): 2485 positions with a tail, 44977 sequence numbers in gap records
+   1793687475.140 first ack from replica 0 after losing 1: 83 ms after detection
+   1793687475.550 replica 1 live
+  incarnation w0-1a1a0193dbc-836a9b replica 0 started 06:29:31.205, last flush 06:31:49.762, NO CLOSING ROW
+  incarnation w1-1a1a0193e72-bc79c2 replica 1 started 06:29:31.389, last flush 06:30:49.240, closed 06:30:49.413
+  incarnation w1-1a1a01a80cc-976c3e replica 1 started 06:30:53.907, last flush 06:31:40.454, NO CLOSING ROW
+windows: egress.tunnel entries=456216 egress.accesslog entries=456216, tunnel entries with no access log entry=0: inside a window (last flush to next start) 0, within 5s of one 0, outside every window
+
+### S4 [revision 42]: a replica frozen for 30 s at t=60 s, then released: the producer has written it off, and its buffers flush
+   frozen at 1793687588.316
+   released at 1793687618.413
+   busy: n=119580 codes={'200': 113611, '403': 5969, '503': 423} p50=0.57 p90=1.33 p99=3.67 p99.9=26.2 max=147.1 ms
+   small: n=119912 codes={'200': 113969, '403': 5943, '503': 11} p50=0.50 p90=0.95 p99=2.57 p99.9=9.7 max=132.7 ms
+   elapsed 120s broken=0 refusedFirst=314 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+  unannounced hole t0 egress.decision lenny-egress-authz.lenny-system.svc d1a1a01b9670-72affd: 12030..12158 (0 announced)
+  unannounced hole t1100 egress.decision lenny-egress-authz.lenny-system.svc d1a1a01b9670-72affd: 26..26 (0 announced)
+audit: positions=7500 records present=1150116 duplicates=311 | holes between records: missing=130 announced=0 unannounced=130 | tails against truth: missing=0 announced=0 unannounced=0 in 0 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=102708
+  gap sequence numbers by reason: map[replica_lost:102708]; record kinds: map[:1150427 gap:2487]; positions with a closing record: 0
+   producer: decisions=239926 emitted=670140 prodDropped=0 sendFail=1 gapRecords=2487 gapSeqs=102708 queued=0 commitOK=24512 refused=434
+   replica 0: records=866332 batches=12556 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=6472 walFail=0 lateLanded=0 lateLost=0 commitTx=6314 manifestTx=0 groupP50=1 groupUsP50=495 groupUsP99=3232
+   replica 1: records=286582 batches=5028 droppedTenant=0 aggIn=0 aggOut=0 gapRecords=0 walOK=18344 walFail=0 lateLanded=304 lateLost=0 commitTx=17665 manifestTx=0 groupP50=1 groupUsP50=487 groupUsP99=1676
+   stored records: 1152914 in 17584 rows
+   incarnation rows: 0|f 1|f 
+   1793687525.485 replica 1 live
+   1793687525.485 replica 0 live
+   1793687590.090 replica 1 lost (health checks failed, wasAlive=true): 2487 positions with a tail, 102708 sequence numbers in gap records
+   1793687590.226 first ack from replica 0 after losing 1: 135 ms after detection
+   1793687618.435 replica 1 live
+
+### S5: restart against the 8 MiB buffer, 2,000/s, no regulated tenants, SIGKILL at t=30 s
+--- REHASH=0 REPORT=0 restart after 20 s
+   killed at 1793687707.951
+   queued at mid-outage: "queuedBytes":22149205 "queuedTenants":1254
+   restarted at 1793687728.642
+   busy: n=65008 codes={'200': 61734, '403': 3274} p50=0.54 p90=0.94 p99=2.65 p99.9=68.3 max=117.0 ms
+   small: n=64933 codes={'200': 61700, '403': 3233} p50=0.53 p90=0.94 p99=2.77 p99.9=68.8 max=117.4 ms
+   elapsed 65s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=129941 emitted=376809 prodDropped=912 sendFail=7 gapRecords=8 gapSeqs=912 queued=0 commitOK=0 refused=0
+audit: positions=5116 records present=408879 duplicates=0 | holes between records: missing=36690 announced=912 unannounced=35778 | tails against truth: missing=12798 announced=0 unannounced=12798 in 1264 positions | positions with nothing stored=1676 (72236 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[producer_tenant_bound:912]; record kinds: map[:408879 gap:8]; positions with a closing record: 0
+--- REHASH=0 REPORT=0 restart after 40 s
+   killed at 1793687783.500
+   queued at mid-outage: "queuedBytes":44477372 "queuedTenants":1328
+   restarted at 1793687824.647
+   busy: n=84919 codes={'200': 80704, '403': 4215} p50=0.55 p90=0.97 p99=2.47 p99.9=25.1 max=50.4 ms
+   small: n=85003 codes={'200': 80705, '403': 4298} p50=0.55 p90=0.97 p99=2.44 p99.9=23.0 max=50.4 ms
+   elapsed 85s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=169922 emitted=492740 prodDropped=37843 sendFail=11 gapRecords=16 gapSeqs=37843 queued=0 commitOK=0 refused=0
+audit: positions=6331 records present=540631 duplicates=0 | holes between records: missing=74601 announced=37843 unannounced=36758 | tails against truth: missing=47124 announced=0 unannounced=47124 in 2165 positions | positions with nothing stored=1154 (67044 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[producer_tenant_bound:37843]; record kinds: map[:540631 gap:16]; positions with a closing record: 0
+--- REHASH=0 REPORT=0 restart after 90 s
+   killed at 1793687879.913
+   queued at mid-outage: "queuedBytes":70161620 "queuedTenants":1338
+   restarted at 1793687970.700
+   busy: n=134873 codes={'200': 128016, '403': 6857} p50=0.56 p90=0.96 p99=2.14 p99.9=21.1 max=55.5 ms
+   small: n=135051 codes={'200': 128305, '403': 6746} p50=0.56 p90=0.96 p99=2.14 p99.9=22.5 max=59.9 ms
+   elapsed 135s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=269924 emitted=782566 prodDropped=122883 sendFail=26 gapRecords=22 gapSeqs=122883 queued=0 commitOK=0 refused=0
+audit: positions=6155 records present=960771 duplicates=0 | holes between records: missing=156186 announced=122883 unannounced=33303 | tails against truth: missing=36174 announced=0 unannounced=36174 in 2172 positions | positions with nothing stored=1345 (122170 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[producer_tenant_bound:122883]; record kinds: map[:960771 gap:22]; positions with a closing record: 0
+--- revision 42 restart after 40 s
+   killed at 1793688027.531
+   queued at mid-outage: "queuedBytes":306901 "queuedTenants":47
+   restarted at 1793688068.728
+   busy: n=85061 codes={'200': 80771, '403': 4290} p50=0.58 p90=1.05 p99=3.40 p99.9=34.8 max=73.1 ms
+   small: n=84872 codes={'200': 80498, '403': 4374} p50=0.58 p90=1.05 p99=3.42 p99.9=38.2 max=77.0 ms
+   elapsed 85s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=169933 emitted=492471 prodDropped=0 sendFail=0 gapRecords=2500 gapSeqs=65741 queued=0 commitOK=0 refused=0
+   1793687994.709 replica 0 live
+   1793687994.710 replica 1 live
+   1793688027.571 replica 1 lost (durable stream broken, wasAlive=true): 2500 positions with a tail, 65741 sequence numbers in gap records
+   1793688027.627 first ack from replica 0 after losing 1: 56 ms after detection
+   1793688069.209 replica 1 live
+audit: positions=6340 records present=511799 duplicates=0 | holes between records: missing=73126 announced=25490 unannounced=47636 | tails against truth: missing=71214 announced=0 unannounced=71214 in 2214 positions | positions with nothing stored=1139 (66917 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[replica_lost:25490]; record kinds: map[:511799 gap:163]; positions with a closing record: 0
+--- revision 42 restart after 90 s
+   killed at 1793688124.689
+   queued at mid-outage: "queuedBytes":333110 "queuedTenants":58
+   restarted at 1793688215.432
+   busy: n=134820 codes={'200': 128088, '403': 6732} p50=0.56 p90=1.02 p99=2.69 p99.9=36.6 max=92.5 ms
+   small: n=135114 codes={'200': 128299, '403': 6815} p50=0.56 p90=1.01 p99=2.66 p99.9=38.2 max=93.0 ms
+   elapsed 135s broken=0 refusedFirst=0 retried=0 retryPassed=0 retryRefused=0 retryOther=0
+   producer: decisions=269934 emitted=782708 prodDropped=0 sendFail=1 gapRecords=2500 gapSeqs=65691 queued=0 commitOK=0 refused=0
+   1793688091.820 replica 1 live
+   1793688091.820 replica 0 live
+   1793688124.727 replica 1 lost (durable stream broken, wasAlive=true): 2500 positions with a tail, 65691 sequence numbers in gap records
+   1793688124.844 first ack from replica 0 after losing 1: 116 ms after detection
+   1793688215.804 replica 1 live
+audit: positions=7500 records present=1034023 duplicates=0 | holes between records: missing=91483 announced=65691 unannounced=25792 | tails against truth: missing=77300 announced=0 unannounced=77300 in 3222 positions | positions with nothing stored=0 (0 records) | sequence numbers both stored and in a gap record=0
+  gap sequence numbers by reason: map[replica_lost:65691]; record kinds: map[:1034023 gap:2500]; positions with a closing record: 0

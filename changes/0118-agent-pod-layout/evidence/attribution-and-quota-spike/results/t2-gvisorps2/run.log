@@ -1,0 +1,72 @@
+=== t3 gvisorps2 2026-11-14T07:40:57Z
+pod q-gvisorps2 uid f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef rc=gvisor hostUsers=true podshare=yes
+host ws: root:root 777 projid: xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/ws': No such file or directory
+xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/0f03ddf0-f4be-4993-aae8-bd74a120acf9/volumes/kubernetes.io~empty-dir/other': No such file or directory
+xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/7f64ec92-ef09-40e9-9ce7-78476698a4fb/volumes/kubernetes.io~empty-dir/other': No such file or directory
+xfs_io: cannot find mount point for path `/var/lib/kubelet/pods/7f64ec92-ef09-40e9-9ce7-78476698a4fb/volumes/kubernetes.io~empty-dir/ws': No such file or directory
+projid = 0 flags: xfs_io: cannot find mount poin
+xfs_io: cannot find mount poin
+xfs_io: cannot find mount poin
+xfs_io: cannot find mount poin
+----------------X /var/lib/kub
+total 0
+drwxrwxrwx. 2 root root 96 Nov 14 07:40 .
+drwxr-xr-x. 4 root root 29 Nov 14 07:40 ..
+-rw-r--r--. 1 root root  0 Nov 14 07:40 .gvisor.filestore.1120b6b158b94ffd94f829041f8ef2fb52ded9a528d26351aa420c0f2d0de272
+{"after_projid":55001,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":1,"id":55001,"ihard":0}}
+{"after_projid":55001,"after_xflags":"0x80000000","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef/volumes/kubernetes.io~empty-dir/ws/.gvisor.filestore.1120b6b158b94ffd94f829041f8ef2fb52ded9a528d26351aa420c0f2d0de272","quota":{"bcount_b":0,"bhard_b":268435456,"bsoft_b":0,"icount":2,"id":55001,"ihard":0}}
+host report proj 55001:  | du ws: 96 B
+total 0
+0 drwxrwxrwx. 2 root root 96 Nov 14 07:40 .
+0 drwxr-xr-x. 4 root root 29 Nov 14 07:40 ..
+0 -rw-r--r--. 1 root root  0 Nov 14 07:40 .gvisor.filestore.1120b6b158b94ffd94f829041f8ef2fb52ded9a528d26351aa420c0f2d0de272
+{"acked_b":209715200,"close_err":"","err":"","file":"/workspace/a200","final_fsync_err":"","secs":0.025795619,"st_blocks_b":209715200,"st_size":209715200,"uid":20000,"where":""}
+host report proj 55001: /dev/nvme1n1 204800 0 262144 00 [--------] /data | du ws: 1073741920 B
+{"acked_b":58720256,"close_err":"","err":"write /workspace/b400: no space left on device","errno":"28","file":"/workspace/b400","final_fsync_err":"","secs":1.063774136,"st_blocks_b":58720256,"st_size":58720256,"uid":20000,"where":"write"}
+host report proj 55001: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 1073741920 B
+{"acked_b":0,"close_err":"","err":"write /workspace/c100: no space left on device","errno":"28","file":"/workspace/c100","final_fsync_err":"","secs":0.000669933,"st_blocks_b":0,"st_size":0,"uid":20000,"where":"write"}
+host report proj 55001: /dev/nvme1n1 262144 0 262144 00 [--------] /data | du ws: 1073741920 B
+total 262144
+drwxrwxrwt 2 root  root        100 Nov 14 07:40 .
+drwxr-xr-x 1 root  root         80 Nov 14 07:40 ..
+-rw-r--r-- 1 20000 20000 209715200 Nov 14 07:40 a200
+-rw-r--r-- 1 20000 20000  58720256 Nov 14 07:40 b400
+-rw-r--r-- 1 20000 20000         0 Nov 14 07:40 c100
+a200 tail:
+ 01 08 0f 16 1d 24 2b 32 39 40 47 4e 55 5c 63 6a
+b400 tail:
+ 01 08 0f 16 1d 24 2b 32 39 40 47 4e 55 5c 63 6a
+c100 tail:
+d142d845bbe841c3be758580c758208e  /workspace/b400
+{"fsgetxattr_err":"inappropriate ioctl for device","mount":{"fstype":"tmpfs","mountpoint":"/workspace","opts":"rw","root":"/","source":"none","super":"rw"},"path":"/workspace","qstatv_err":"function not implemented","statfs":{"avail_b":9223372036584239104,"bsize":4096,"ffree":0,"files":0,"size_b":9223372036854771712,"type":"0x1021994","used_b":270532608},"uid":20000}
+NAME          READY   STATUS    RESTARTS   AGE   IP           NODE                                         NOMINATED NODE   READINESS GATES
+q-gvisorps2   2/2     Running   0          2s    10.42.0.29   ip-172-31-43-83.us-west-2.compute.internal   <none>           <none>
+pod still Running/ after 20 s (not evicted)
+Nov 14 07:40:57 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:40:57.693389   65021 reconciler_common.go:251] "operationExecutor.VerifyControllerAttachedVolume started for volume \"kube-api-access-qpvh2\" (UniqueName: \"kubernetes.io/projected/f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef-kube-api-access-qpvh2\") pod \"q-gvisorps2\" (UID: \"f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef\") " pod="aq/q-gvisorps2"
+Nov 14 07:40:57 ip-172-31-43-83.us-west-2.compute.internal containerd[29199]: time="2026-11-14T07:40:57.942079557Z" level=info msg="RunPodSandbox for name:\"q-gvisorps2\"  uid:\"f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef\"  namespace:\"aq\""
+Nov 14 07:40:57 ip-172-31-43-83.us-west-2.compute.internal containerd[29199]: time="2026-11-14T07:40:57.988430722Z" level=info msg="Setting size of volume \"gvisorinternaldevshm\" to 67108864 bytes, matching host tmpfs \"/run/containerd/io.containerd.grpc.v1.cri/sandboxes/1120b6b158b94ffd94f829041f8ef2fb52ded9a528d26351aa420c0f2d0de272/shm\""
+Nov 14 07:40:58 ip-172-31-43-83.us-west-2.compute.internal containerd[29199]: time="2026-11-14T07:40:58.013721659Z" level=info msg="RunPodSandbox for name:\"q-gvisorps2\"  uid:\"f6e3fb41-d78c-40eb-9ddd-2f8100bf45ef\"  namespace:\"aq\" returns sandbox id \"1120b6b158b94ffd94f829041f8ef2fb52ded9a528d26351aa420c0f2d0de272\""
+Nov 14 07:40:58 ip-172-31-43-83.us-west-2.compute.internal k3s[65021]: I1114 07:40:58.130321   65021 pod_startup_latency_tracker.go:144] "Observed pod startup duration" pod="aq/q-gvisorps2" podStartSLOduration=1.130312239 podStartE2EDuration="1.130312239s" totalImagesPullingTime="0s" totalInitContainerRuntime="0s" isStatefulPod=false podCreationTimestamp="2026-11-14 07:40:57 +0000 UTC" imagePullSessionsCount=0 imagePullSessionsStartsCount=0 observedRunningTime="2026-11-14 07:40:58.130269563 +0000 UTC m=+274.151208766" watchObservedRunningTime="2026-11-14 07:40:58.130312239 +0000 UTC m=+274.151251449"
+=== t3 katablock2 (fsGroup 29000, disk.img moved into a 128 MiB project) 2026-11-14T07:41:21Z
+4:  name: q-katablock2
+7:  runtimeClassName: kata-block
+9:  securityContext: {fsGroup: 29000}
+total 4836
+   0 drwxrwsrwx. 2 root 29000          22 Nov 14 07:41 .
+   0 drwxr-xr-x. 4 root root           29 Nov 14 07:41 ..
+4836 -rw-r--r--. 1 root 29000 64357400576 Nov 14 07:41 disk.img
+{"getquota_err":"function not implemented","mount":{"fstype":"ext4","mountpoint":"/workspace","opts":"rw,relatime","root":"/","source":"/dev/sda","super":"rw,discard"},"path":"/workspace","projid":0,"projinherit":false,"qstatv_err":"function not implemented","statfs":{"avail_b":64230543360,"bsize":4096,"ffree":399349,"files":399360,"size_b":64247345152,"type":"0xef53","used_b":24576},"uid":20000,"xflags":"0x0","xgetquota_err":"function not implemented"}
+{"after_projid":55002,"after_xflags":"0x80000200","before_projid":0,"before_xflags":"0x80000000","path":"/var/lib/kubelet/pods/2b78099d-2bb2-48b2-b8cb-f78b8ead0959/volumes/kubernetes.io~empty-dir/ws","quota":{"bcount_b":0,"bhard_b":134217728,"bsoft_b":0,"icount":1,"id":55002,"ihard":0}}
+{"after_projid":55002,"after_xflags":"0x80000002","before_projid":0,"before_xflags":"0x80000002","path":"/var/lib/kubelet/pods/2b78099d-2bb2-48b2-b8cb-f78b8ead0959/volumes/kubernetes.io~empty-dir/ws/disk.img","quota":{"bcount_b":4952064,"bhard_b":134217728,"bsoft_b":0,"icount":2,"id":55002,"ihard":0}}
+host report proj 55002: /dev/nvme1n1 4836 0 131072 00 [--------] /data | du ws: 64357400598 B
+{"acked_b":67108864,"close_err":"","err":"","file":"/workspace/a64","final_fsync_err":"","secs":0.332670379,"st_blocks_b":67108864,"st_size":67108864,"uid":20000,"where":""}
+host report proj 55002: /dev/nvme1n1 70372 0 131072 00 [--------] /data | du ws: 64357400598 B
+error: Internal error occurred: Internal error occurred: error executing command in container: failed to exec in container: failed while waiting for exec "beb608d7ba2a15a90d0bd7a62264175ad5f0dda6231b482f255de80dde31f19e": rpc error: code = Unknown desc = ttrpc: closed
+host report proj 55002: /dev/nvme1n1 130788 0 131072 00 [--------] /data | du ws: 64357400598 B
+error: Internal error occurred: Internal error occurred: error executing command in container: failed to exec in container: failed to load task: no running task found: task a05f7c7334f0f19744fb796b241d816553bd9ee80e4b1cec8d373d0e15aaabe2 not found
+error: Internal error occurred: Internal error occurred: error executing command in container: failed to exec in container: failed to load task: no running task found: task a05f7c7334f0f19744fb796b241d816553bd9ee80e4b1cec8d373d0e15aaabe2 not found
+pod phase Failed/ after 6 s
+Started     Container started
+Killing     Stopping container slot
+Killing     Stopping container adapter
+=== t3 done

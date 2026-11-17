@@ -1,0 +1,15 @@
+[url "http://127.0.0.1:7070/"]
+    insteadOf = https://
+[url "http://127.0.0.1:7070/ssh/"]
+    insteadOf = ssh://
+[url "http://127.0.0.1:7070/scp/"]
+    insteadOf = git@
+[user]
+    name = alice
+    email = alice@acme.com
+[credential]
+    helper =
+[protocol]
+    version = 2
+[url "http://127.0.0.1:7070/special-github/"]
+    insteadOf = https://github.com/

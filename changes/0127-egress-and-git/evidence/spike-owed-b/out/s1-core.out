@@ -1,0 +1,34 @@
+configmap/envoy-boot created
+configmap/envoy-sds created
+serviceaccount/ob created
+clusterrolebinding.rbac.authorization.k8s.io/ob-admin created
+service/lenny-egress created
+service/lenny-egress-authz created
+service/target created
+pod/target created
+pod/watcher created
+pod/ctrl created
+pod/authz created
+pod/envoy created
+pod/authz condition met
+pod/ctrl condition met
+pod/envoy condition met
+pod/target condition met
+pod/watcher condition met
+NAME      READY   STATUS    RESTARTS   AGE   IP            NODE                   NOMINATED NODE   READINESS GATES
+authz     1/1     Running   0          2s    10.244.0.11   ob-pki-control-plane   <none>           <none>
+ctrl      1/1     Running   0          2s    10.244.0.10   ob-pki-control-plane   <none>           <none>
+envoy     2/2     Running   0          2s    10.244.0.12   ob-pki-control-plane   <none>           <none>
+target    1/1     Running   0          2s    10.244.0.8    ob-pki-control-plane   <none>           <none>
+watcher   2/2     Running   0          2s    10.244.0.9    ob-pki-control-plane   <none>           <none>
+1793663067053320168 BUNDLE ns=agents code=201 err=<nil> certs=[lenny-egress-ca#193333d5]
+1793663067058725002 BUNDLE ns=lenny-system code=201 err=<nil> certs=[lenny-egress-ca#193333d5]
+[2026-11-02 23:44:27.711][1][info][main] [source/server/server.cc:467]   envoy.tls.certificate_selectors: envoy.tls.certificate_selectors.on_demand_secret
+[2026-11-02 23:44:27.711][1][info][main] [source/server/server.cc:467]   envoy.tls.upstream_certificate_selectors: envoy.tls.certificate_selectors.on_demand_secret
+[2026-11-02 23:44:27.711][1][info][main] [source/server/server.cc:467]   envoy.formatter: envoy.formatter.cel, envoy.formatter.dynamic_modules, envoy.formatter.file_content, envoy.formatter.generic_secret, envoy.formatte
+[2026-11-02 23:44:27.717][1][info][config] [source/server/configuration_impl.cc:132] loading 0 static secret(s)
+[2026-11-02 23:44:27.720][1][warning][main] [source/server/server.cc:961] Usage of the deprecated runtime key overload.global_downstream_max_connections, consider switching to `envoy.resource_monitors.global_downstream_m
+[2026-11-02 23:44:27.721][1][warning][main] [source/server/server.cc:1059] There is no configured limit to the number of allowed active downstream connections. Configure a limit in `envoy.resource_monitors.global_downstr
+If you don't see a command prompt, try pressing enter.
+SUMMARY attempts=10 map[200:10] 200-latency p50=1.7ms p90=2.3ms p99=2.3ms max=5.2ms ticks=10 broken=0 elapsed=1.2s
+pod "oneoff" deleted from lenny-system namespace

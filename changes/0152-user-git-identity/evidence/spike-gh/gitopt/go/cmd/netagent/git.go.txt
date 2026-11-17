@@ -1,0 +1,835 @@
+// git.go: the local endpoint's git enforcement, callable from three entry points.
+//
+//	T: a terminated connection on the egress endpoint (the option under test).
+//	L: origin-form on the git listener, /https/<host>/<path>, as the design has it today.
+//	P: absolute-form on the git listener, http://<host>/<path>: git uses the listener as an HTTP proxy for a rewritten http:// remote.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"mime"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type vcsHost struct {
+	Host        string   `json:"host"`
+	Readable    []string `json:"readable"`
+	Writable    []string `json:"writable"`
+	RefPatterns []string `json:"refPatterns"`
+	AllowDelete bool     `json:"allowDelete"`
+	User        string   `json:"user"`
+	NoPool      bool     `json:"noPool,omitempty"` // covered with no pool, such as a formula host on a restricted pool: fetch carries nothing, push refused
+	FetchVia    string   `json:"fetchVia"` // route fetches to this git service, as the mirror route does
+	SSHForm     bool     `json:"sshForm"`  // host data: the SSH form maps to https with the same host and path
+	Level       string   `json:"level,omitempty"`        // mint-scoped, mint-coarse, or stored
+	LFSLive     bool     `json:"lfsLiveRunPassed,omitempty"` // info/lfs is refused on other levels until this holds
+	LFSTransfer bool     `json:"lfsTransferDeclared,omitempty"` // the host declares <repo>.git/gitlab-lfs/objects/<oid> as a transfer path
+	r, w        map[string]bool
+}
+
+func (a *agent) loadVCS(p string) []string {
+	if p == "" {
+		return nil
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var hs []*vcsHost
+	if err := json.Unmarshal(b, &hs); err != nil {
+		log.Fatal(err)
+	}
+	a.vcs = map[string]*vcsHost{}
+	var names []string
+	for _, h := range hs {
+		h.r, h.w = set(h.Readable, true), set(h.Writable, true)
+		k, err := canon(h.Host, "443")
+		if err != nil {
+			log.Fatal(err)
+		}
+		a.vcs[k] = h
+		names = append(names, strings.ToLower(h.Host))
+	}
+	return names
+}
+
+var (
+	gitPath   = regexp.MustCompile(`^/((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+?)(?:\.git)?/(info/refs|git-upload-pack|git-receive-pack|info/lfs/objects/batch|info/lfs/locks|info/lfs/locks/verify)$`)
+	zeroOID   = regexp.MustCompile(`^0+$`)
+	gitMarker = []string{"info/refs", "git-upload-pack", "git-receive-pack", "info/lfs", ".git/", "gitlab-lfs/objects"}
+	lfsXfer   = regexp.MustCompile(`^/((?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+?)\.git/gitlab-lfs/objects/([0-9a-f]{64})(?:/([0-9]+))?$`)
+)
+
+// looksGit reads the path through two rounds of percent-decoding and case-folding, so a spelled-around path still takes the strict route and fails there.
+func looksGit(raw string) bool {
+	s := raw
+	for i := 0; i < 2; i++ {
+		if d, err := url.PathUnescape(s); err == nil {
+			s = d
+		}
+	}
+	s = strings.ToLower(s)
+	for _, m := range gitMarker {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+type refCmd struct {
+	Old, New, Ref string
+}
+
+// readCommands reads receive-pack's command section. What it read is returned for replay, and the rest of the body streams on untouched.
+func readCommands(br *bufio.Reader, max int) ([]refCmd, []byte, *deny) {
+	var seen bytes.Buffer
+	var out []refCmd
+	for {
+		h := make([]byte, 4)
+		if _, err := io.ReadFull(br, h); err != nil {
+			return nil, nil, no(400, "receive-pack body ended inside the command section")
+		}
+		seen.Write(h)
+		n, err := strconv.ParseUint(string(h), 16, 16)
+		if err != nil {
+			return nil, nil, no(403, "receive-pack body is not pkt-line")
+		}
+		if n == 0 {
+			return out, seen.Bytes(), nil
+		}
+		if n < 4 {
+			return nil, nil, no(403, "receive-pack special packet %d in the command section", n)
+		}
+		p := make([]byte, n-4)
+		if _, err := io.ReadFull(br, p); err != nil {
+			return nil, nil, no(400, "receive-pack body ended inside a command")
+		}
+		seen.Write(p)
+		if seen.Len() > max {
+			return nil, nil, no(413, "receive-pack command section is over %d bytes", max)
+		}
+		line := string(p)
+		if i := strings.IndexByte(line, 0); i >= 0 {
+			for _, c := range strings.Fields(line[i+1:]) {
+				if c == "push-options" {
+					return nil, nil, no(403, "push options are refused")
+				}
+			}
+			line = line[:i]
+		}
+		line = strings.TrimRight(line, "\n")
+		switch {
+		case strings.HasPrefix(line, "shallow "):
+			continue
+		case strings.HasPrefix(line, "push-cert"):
+			return nil, nil, no(403, "signed push refused: its commands sit inside a certificate")
+		}
+		f := strings.Split(line, " ")
+		if len(f) != 3 {
+			return nil, nil, no(403, "receive-pack command is malformed")
+		}
+		if _, err := hex.DecodeString(f[0]); err != nil {
+			return nil, nil, no(403, "receive-pack command is malformed")
+		}
+		if strings.Contains(f[2], "..") || strings.Contains(f[2], "//") || strings.HasSuffix(f[2], "/") || strings.HasSuffix(f[2], ".lock") || strings.ContainsAny(f[2], "\\~^:?*[") {
+			return nil, nil, no(403, "ref name %q refused", f[2])
+		}
+		out = append(out, refCmd{f[0], f[1], f[2]})
+	}
+}
+
+func refOK(pats []string, ref string) bool {
+	for _, p := range pats {
+		if strings.HasSuffix(p, "*") {
+			if strings.HasPrefix(ref, strings.TrimSuffix(p, "*")) {
+				return true
+			}
+		} else if p == ref {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *agent) gitLog(entry, host, repo, op, dec, reason string, refs []refCmd, wire ...string) {
+	if a.reqLog == nil {
+		return
+	}
+	e, _ := json.Marshal(map[string]any{"t": time.Now().UTC().Format(time.RFC3339Nano), "gitOperation": true, "entry": entry, "host": host, "repo": repo, "op": op, "decision": dec, "reason": reason, "refs": refs, "wire": wire})
+	a.logMu.Lock()
+	a.reqLog.Write(append(e, 10))
+	a.logMu.Unlock()
+}
+
+var gitHeaders = map[string]bool{"Accept": true, "Accept-Encoding": true, "Accept-Language": true, "Content-Type": true, "Content-Encoding": true, "User-Agent": true, "Git-Protocol": true, "Pragma": true, "Cache-Control": true}
+
+// gitForward is the one enforcement path. key is canonical host:port, path and query are as sent.
+func (a *agent) gitForward(w http.ResponseWriter, r *http.Request, entry, key, path, query string) {
+	host, _, _ := net.SplitHostPort(key)
+	v := a.vcs[key]
+	if v != nil && v.NoPool {
+		v = nil
+	}
+	refuse := func(repo, op string, d *deny) {
+		a.gitLog(entry, host, repo, op, "refused", d.reason, nil)
+		if h, ok := w.(*h1w); ok && d.code == 413 {
+			h.closeAfter = true
+			h.hdr.Set("Connection", "close")
+		}
+		a.refuseF(w, d.code, d.reason)
+	}
+	for k := range r.Header {
+		switch http.CanonicalHeaderKey(k) {
+		case "X-Http-Method-Override", "X-Http-Method", "X-Method-Override", "X-Original-Method", "X-Original-Url", "X-Rewrite-Url", "X-Forwarded-Path", "X-Forwarded-Prefix", "X-Forwarded-Uri", "X-Envoy-Original-Path", "Upgrade", "Http2-Settings", "Sec-Websocket-Key":
+			refuse("", "", no(403, "header %s refused on a git path", k))
+			return
+		}
+	}
+	m := gitPath.FindStringSubmatch(path)
+	if m == nil && v != nil && v.LFSTransfer {
+		if x := lfsXfer.FindStringSubmatch(path); x != nil {
+			m = []string{path, x[1], "lfs-transfer"}
+		}
+	}
+	if m == nil || strings.Contains(path, "%") || strings.Contains(path, "/./") || strings.Contains(path, "/../") {
+		refuse("", "", no(403, "path %q is not a canonical git path", path))
+		return
+	}
+	repo, kind := strings.ToLower(m[1]), m[2]
+	if (strings.HasPrefix(kind, "info/lfs") || kind == "lfs-transfer") && v != nil && v.Level != "" && v.Level != "mint-scoped" && !v.LFSLive {
+		refuse(repo, kind, no(403, "info/lfs is refused on a %s provider until a live run passes", v.Level))
+		return
+	}
+	for _, seg := range strings.Split(repo, "/") {
+		if seg == "." || seg == ".." {
+			refuse(repo, "", no(403, "dot segment in the repository path"))
+			return
+		}
+	}
+	// Operation from the service name, the path, and the LFS batch body.
+	write, op := false, kind
+	var replay []byte
+	var cmds []refCmd
+	body := io.Reader(r.Body)
+	switch kind {
+	case "info/refs":
+		if r.Method != "GET" {
+			refuse(repo, op, no(403, "info/refs is GET only"))
+			return
+		}
+		switch query {
+		case "service=git-upload-pack":
+			op = "upload-pack-advert"
+		case "service=git-receive-pack":
+			op, write = "receive-pack-advert", true
+		default:
+			refuse(repo, op, no(403, "info/refs query %q refused: smart HTTP with one service only", query))
+			return
+		}
+	case "git-upload-pack", "git-receive-pack":
+		if r.Method != "POST" || query != "" {
+			refuse(repo, op, no(403, "%s is POST with no query", kind))
+			return
+		}
+		mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if mt != "application/x-"+kind+"-request" {
+			refuse(repo, op, no(403, "%s refuses Content-Type %q", kind, r.Header.Get("Content-Type")))
+			return
+		}
+		if kind == "git-receive-pack" {
+			write = true
+			if r.Header.Get("Content-Encoding") != "" {
+				refuse(repo, op, no(415, "compressed receive-pack body refused: commands must be readable"))
+				return
+			}
+		}
+	case "info/lfs/objects/batch":
+		if r.Method != "POST" {
+			refuse(repo, op, no(403, "LFS batch is POST"))
+			return
+		}
+		lim := int64(256 << 10)
+		b, err := io.ReadAll(io.LimitReader(r.Body, lim+1))
+		if err != nil || int64(len(b)) > lim {
+			refuse(repo, op, no(413, "LFS batch body over %d bytes", lim))
+			return
+		}
+		obj, de := strictObject(b)
+		if de != nil {
+			refuse(repo, op, de)
+			return
+		}
+		for k := range obj {
+			if k != "operation" && strings.EqualFold(k, "operation") {
+				refuse(repo, op, no(403, "LFS batch key %q refused", k))
+				return
+			}
+		}
+		var o string
+		if json.Unmarshal(obj["operation"], &o) != nil || (o != "upload" && o != "download") {
+			refuse(repo, op, no(403, "LFS batch operation %q refused", string(obj["operation"])))
+			return
+		}
+		op, write = "lfs-"+o, o == "upload"
+		body = bytes.NewReader(b)
+		r.ContentLength = int64(len(b))
+	case "lfs-transfer":
+		switch r.Method {
+		case "GET", "HEAD":
+			op = "lfs-transfer-get"
+		case "PUT":
+			op, write = "lfs-transfer-put", true
+		default:
+			refuse(repo, op, no(403, "an LFS transfer is GET or PUT"))
+			return
+		}
+	default: // info/lfs/locks*
+		write = true
+		op = "lfs-locks"
+	}
+	// Set checks.
+	if v != nil {
+		if write && !v.w[repo] {
+			refuse(repo, op, no(403, "repository %s is outside the session's writable set", repo))
+			return
+		}
+		if !write && !v.w[repo] && !v.r[repo] {
+			refuse(repo, op, no(403, "repository %s is outside the session's readable set", repo))
+			return
+		}
+	} else if write {
+		refuse(repo, op, no(403, "push to a host no VCS pool covers is refused"))
+		return
+	}
+	// Ref patterns.
+	if kind == "git-receive-pack" {
+		br := bufio.NewReaderSize(r.Body, 64<<10)
+		c, seen, de := readCommands(br, 256<<10)
+		if de != nil {
+			refuse(repo, op, de)
+			return
+		}
+		for _, x := range c {
+			if !refOK(v.RefPatterns, x.Ref) {
+				refuse(repo, op, no(403, "ref %s is outside allowedRefPatterns; the whole push is refused", x.Ref))
+				return
+			}
+			if zeroOID.MatchString(x.New) && !v.AllowDelete {
+				refuse(repo, op, no(403, "ref deletion of %s refused", x.Ref))
+				return
+			}
+		}
+		cmds, replay = c, seen
+		body = io.MultiReader(bytes.NewReader(replay), br)
+	}
+	// The request to the upstream.
+	uh, up := key, path
+	if h, p, _ := net.SplitHostPort(key); p == "443" {
+		uh = h
+	}
+	var token string
+	var xferHdr map[string]string
+	identity := "none"
+	switch {
+	case kind == "lfs-transfer":
+		// A transfer carries the credential headers its batch response named, and nothing else.
+		xferHdr = a.lfsTake(r.Method, host, path)
+		identity = "lfs-none"
+		if len(xferHdr) > 0 {
+			identity = "lfs-action"
+		}
+	case v != nil && v.FetchVia != "" && !write:
+		up = "/" + host + path
+		uh = v.FetchVia
+		token, identity = "MIRROR-SA", "mirror"
+	case v != nil:
+		if hc := a.heldFor(host); hc != nil {
+			if hc.Handling > a.handling {
+				refuse(repo, op, no(403, "the release's handling %d is newer than this image's %d", hc.Handling, a.handling))
+				return
+			}
+			// A qualifying session gets the current value. With none, nothing attaches, and no mint is used.
+			if val := hc.value(); val != "" {
+				token, identity = val, "held"
+			} else {
+				identity = "held-no-value"
+			}
+		} else {
+			t, err := a.mintFor(host, write, repo)
+			if err != nil {
+				refuse(repo, op, no(403, "the Token Service refused a mint: %v", err))
+				return
+			}
+			token, identity = t, "mint"
+		}
+	}
+	target := "https://" + uh + up
+	if query != "" {
+		target += "?" + query
+	}
+	u, err := url.Parse(target)
+	if err != nil {
+		refuse(repo, op, no(403, "bad target"))
+		return
+	}
+	out := &http.Request{Method: r.Method, URL: u, Host: uh, Header: http.Header{}, ContentLength: r.ContentLength, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1}
+	out = out.WithContext(r.Context())
+	if r.Method == "POST" || r.Method == "PUT" {
+		out.Body = io.NopCloser(body)
+	} else {
+		out.ContentLength = 0
+	}
+	for k, vs := range r.Header {
+		ck := http.CanonicalHeaderKey(k)
+		if gitHeaders[ck] {
+			out.Header[ck] = vs
+		}
+	}
+	if out.Header.Get("Accept-Encoding") != "" {
+		out.Header.Set("Accept-Encoding", "gzip, deflate")
+	}
+	var scr *scrubber
+	if token != "" {
+		user := "x-access-token"
+		if v != nil && v.User != "" {
+			user = v.User
+		}
+		val := "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+token))
+		out.Header.Set("Authorization", val)
+		scr = a.newScrubber(&binding{Secret: token, Value: val})
+	}
+	for hk, hv := range xferHdr {
+		out.Header.Set(hk, hv)
+		sec := hv
+		if b, e := base64.StdEncoding.DecodeString(strings.TrimPrefix(hv, "Basic ")); e == nil {
+			if _, p, ok := strings.Cut(string(b), ":"); ok {
+				sec = p
+			}
+		}
+		if scr == nil || strings.EqualFold(hk, "Authorization") {
+			scr = a.newScrubber(&binding{Secret: sec, Value: hv})
+		}
+	}
+	a.gitLog(entry, host, repo, op, "allowed", identity, cmds, r.Proto, fmt.Sprint(r.TransferEncoding), fmt.Sprint(r.ContentLength))
+	var fkey string
+	if kind == "lfs-transfer" {
+		m := r.Method
+		if m == "HEAD" {
+			m = "GET"
+		}
+		fkey = m + " " + strings.ToLower(host) + path
+		a.lfsMu.Lock()
+		f := a.lfsFails[fkey]
+		a.lfsMu.Unlock()
+		if f >= 3 {
+			refuse(repo, op, no(403, "this transfer failed 3 consecutive times; a new batch response is needed"))
+			return
+		}
+	}
+	resp, err := a.trGit.RoundTrip(out)
+	if err != nil {
+		log.Printf("git upstream %s: %v", uh, err)
+		a.refuseF(w, 502, "upstream failure")
+		return
+	}
+	defer resp.Body.Close()
+	if fkey != "" {
+		a.lfsMu.Lock()
+		if a.lfsFails == nil {
+			a.lfsFails = map[string]int{}
+		}
+		if resp.StatusCode >= 400 {
+			a.lfsFails[fkey]++
+		} else {
+			delete(a.lfsFails, fkey)
+		}
+		a.lfsMu.Unlock()
+	}
+	// Redirects: in scope (same host, https, a repository in the sets) passes in this entry's own form, and anything else is refused.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		loc := resp.Header.Get("Location")
+		lu, err := url.Parse(loc)
+		ok := err == nil && lu.Scheme == "https" && strings.EqualFold(lu.Host, uh)
+		if ok && v != nil {
+			mm := gitPath.FindStringSubmatch(lu.Path)
+			ok = mm != nil && (v.r[strings.ToLower(mm[1])] || v.w[strings.ToLower(mm[1])])
+		}
+		if !ok {
+			a.gitLog(entry, host, repo, op, "refused", "redirect to "+loc, nil)
+			a.refuseF(w, 403, "redirect refused")
+			return
+		}
+		switch entry {
+		case "L":
+			resp.Header.Set("Location", "http://127.0.0.1:3129/https/"+lu.Host+lu.RequestURI())
+		case "P":
+			resp.Header.Set("Location", "http://"+lu.Host+lu.RequestURI())
+		}
+	}
+	stripHop(resp.Header)
+	var rd io.Reader = resp.Body
+	switch strings.ToLower(resp.Header.Get("Content-Encoding")) {
+	case "":
+	case "gzip", "x-gzip":
+		gr, err := gzip.NewReader(resp.Body)
+		if err != nil {
+			a.refuseF(w, 502, "bad compressed body")
+			return
+		}
+		rd = gr
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("Content-Length")
+	default:
+		a.refuseF(w, 502, "response encoding cannot be scrubbed")
+		return
+	}
+	if kind == "info/lfs/objects/batch" && resp.StatusCode == 200 {
+		raw, err := io.ReadAll(io.LimitReader(rd, 16<<20))
+		if err != nil {
+			a.refuseF(w, 502, "LFS batch response read failed")
+			return
+		}
+		nb, de := a.lfsStrip(raw, entry, host, uh, repo)
+		if de != nil {
+			a.refuseF(w, de.code, de.reason)
+			return
+		}
+		rd = bytes.NewReader(nb)
+		resp.Header.Set("Content-Length", strconv.Itoa(len(nb)))
+	}
+	if scr != nil {
+		for k, vs := range resp.Header {
+			for i := range vs {
+				vs[i] = scr.line(vs[i])
+			}
+			resp.Header[k] = vs
+		}
+	}
+	dst := w.Header()
+	for k, vs := range resp.Header {
+		dst[k] = vs
+	}
+	w.WriteHeader(resp.StatusCode)
+	fl, _ := w.(http.Flusher)
+	bp := a.getBuf()
+	defer bufPool.Put(bp)
+	buf := *bp
+	for {
+		n, rerr := rd.Read(buf)
+		if n > 0 {
+			p := buf[:n]
+			if scr != nil {
+				p = scr.write(p)
+			}
+			if len(p) > 0 {
+				if _, werr := w.Write(p); werr != nil {
+					return
+				}
+			}
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		if rerr != nil {
+			if scr != nil {
+				if p := scr.finish(); len(p) > 0 {
+					w.Write(p)
+				}
+			}
+			if rerr != io.EOF {
+				panic(http.ErrAbortHandler)
+			}
+			return
+		}
+	}
+}
+
+func mint(write bool, repo string) string {
+	k := "MINT-R-"
+	if write {
+		k = "MINT-W-"
+	}
+	return k + strings.ReplaceAll(repo, "/", "_")
+}
+
+// gitERR answers a discovery request with a git ERR packet, as the design's SSH rule has it.
+func gitERR(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(200)
+	p := "ERR " + msg + "\n"
+	fmt.Fprintf(w, "%04x%s", len(p)+4, p)
+}
+
+// gitEndpoint serves the git listener: origin-form is L, absolute-form is P.
+func (a *agent) gitEndpoint(w http.ResponseWriter, r *http.Request, rc reqCtx) {
+	path, q, _, de := rawPathQuery(r)
+	if de != nil {
+		a.refuseF(w, de.code, de.reason)
+		return
+	}
+	if r.URL.IsAbs() && r.URL.Host != "" { // P
+		if len(rc.h.hosts) == 1 {
+			x, e1 := canon(r.URL.Host, "80")
+			y, e2 := canon(rc.h.hosts[0], "80")
+			if e1 != nil || e2 != nil || x != y {
+				a.refuseF(w, 400, "Host disagrees with the request target")
+				return
+			}
+		}
+		key, err := canon(r.URL.Host, "80")
+		if err != nil {
+			a.refuseF(w, 400, "bad authority")
+			return
+		}
+		if h, p, _ := net.SplitHostPort(key); p == "80" {
+			key = net.JoinHostPort(h, "443")
+		}
+		if !looksGit(path) {
+			a.refuseF(w, 403, "this listener serves smart HTTP only")
+			return
+		}
+		a.gitForward(w, r, "P", key, path, q)
+		return
+	}
+	// L: /https/<host>/<path>, /http/<host>/<path>, /ssh/[git@]<host>/<path>, /scp/<host>:<path>
+	parts := strings.SplitN(strings.TrimPrefix(path, "/"), "/", 3)
+	if len(parts) < 2 {
+		a.refuseF(w, 403, "not a local git endpoint path")
+		return
+	}
+	switch parts[0] {
+	case "https", "http":
+		if len(parts) < 3 {
+			a.refuseF(w, 403, "not a local git endpoint path")
+			return
+		}
+		key, err := canon(parts[1], "443")
+		if err != nil {
+			a.refuseF(w, 400, "bad authority")
+			return
+		}
+		a.gitForward(w, r, "L", key, "/"+parts[2], q)
+	case "ssh", "scp":
+		rest := strings.TrimPrefix(path, "/"+parts[0]+"/")
+		rest = strings.TrimPrefix(rest, "git@")
+		var h, p string
+		if parts[0] == "scp" {
+			h, p, _ = strings.Cut(rest, ":")
+		} else {
+			h, p, _ = strings.Cut(rest, "/")
+		}
+		key, err := canon(h, "443")
+		if err != nil {
+			a.refuseF(w, 400, "bad authority")
+			return
+		}
+		if v := a.vcs[key]; v == nil || !v.SSHForm {
+			gitERR(w, "SSH remotes are not supported for "+h+"; use the HTTPS clone URL")
+			return
+		}
+		a.gitForward(w, r, "L", key, "/"+strings.TrimPrefix(p, "/"), q)
+	default:
+		a.refuseF(w, 403, "not a local git endpoint path")
+	}
+}
+
+// heldCfg is what I8 would return about one host for this session. The rule lives in user-credential-delivery-design.md, "allowRuntimeHeldCredentials".
+type heldCfg struct {
+	Pools []struct {
+		Prefix string `json:"prefix"`
+		Mode   string `json:"mode"`
+		Flag   bool   `json:"allowRuntimeHeldCredentials"`
+	} `json:"pools"`
+	Named       bool              `json:"named"`     // the session names a file binding whose type hosts include this host
+	Released    bool              `json:"released"`  // it has received a release of that binding
+	Suspended   bool              `json:"suspended"` // the binding's suspension
+	Current     string            `json:"current"`   // the current value netagent holds
+	Handling    int               `json:"handling"`  // the evaluator version the release names
+	RouteDigest map[string]string `json:"routeDigest,omitempty"`
+}
+
+// value is what attaches: the current value, or nothing in a state that holds none.
+func (h *heldCfg) value() string {
+	if !h.Released || h.Suspended || len(h.Pools) == 0 || h.Current == "" {
+		return ""
+	}
+	for _, p := range h.Pools {
+		if !p.Flag {
+			return ""
+		}
+	}
+	return h.Current
+}
+
+func (a *agent) sessionFor(host string) *heldCfg {
+	if a.sessionPath == "" {
+		return nil
+	}
+	if st, err := os.Stat(a.sessionPath); err == nil {
+		a.sessMu.Lock()
+		if !st.ModTime().Equal(a.sessMod) || st.Size() != a.sessSize {
+			if b, err := os.ReadFile(a.sessionPath); err == nil {
+				var m map[string]*heldCfg
+				if json.Unmarshal(b, &m) == nil {
+					a.session, a.sessMod, a.sessSize = m, st.ModTime(), st.Size()
+				}
+			}
+		}
+		a.sessMu.Unlock()
+	}
+	a.sessMu.Lock()
+	defer a.sessMu.Unlock()
+	return a.session[strings.ToLower(host)]
+}
+
+// heldFor answers whether a session qualifies: it names a file binding on the host, whatever the release or suspension state.
+func (a *agent) heldFor(host string) *heldCfg {
+	if !a.heldRule {
+		return nil
+	}
+	h := a.sessionFor(host)
+	if h == nil || !h.Named {
+		return nil
+	}
+	return h
+}
+
+// mintFor asks the Token Service stand-in when one is configured, and otherwise mints locally as the earlier runs did.
+func (a *agent) mintFor(host string, write bool, repo string) (string, error) {
+	if a.tsURL == "" {
+		return mint(write, repo), nil
+	}
+	b, _ := json.Marshal(map[string]any{"host": host, "repo": repo, "write": write})
+	c := http.Client{Timeout: 5 * time.Second}
+	resp, err := c.Post(a.tsURL+"/mint", "application/json", bytes.NewReader(b))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var o struct {
+		Token string `json:"token"`
+		Error string `json:"error"`
+	}
+	json.NewDecoder(resp.Body).Decode(&o)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("%s", o.Error)
+	}
+	return o.Token, nil
+}
+
+type lfsHeld struct {
+	hdr map[string]string
+	exp time.Time
+}
+
+func (a *agent) lfsTake(method, host, path string) map[string]string {
+	if method == "HEAD" {
+		method = "GET"
+	}
+	k := method + " " + strings.ToLower(host) + path
+	a.lfsMu.Lock()
+	defer a.lfsMu.Unlock()
+	h, ok := a.lfsActions[k]
+	if !ok || time.Now().After(h.exp) {
+		delete(a.lfsActions, k)
+		return nil
+	}
+	return h.hdr
+}
+
+var lfsCredHeaders = map[string]bool{"authorization": true, "private-token": true, "job-token": true, "deploy-token": true, "x-api-key": true, "cookie": true, "proxy-authorization": true}
+
+// lfsStrip removes every credential header from each action. It holds what belongs to a declared transfer path of the same repository on the same host. An action with a credential on a host netagent does not terminate cannot be delivered, so the object gets the batch API's per-object error.
+func (a *agent) lfsStrip(raw []byte, entry, host, uh, repo string) ([]byte, *deny) {
+	var doc map[string]any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
+		return nil, no(502, "an LFS batch response that does not parse is refused")
+	}
+	objs, _ := doc["objects"].([]any)
+	for _, oa := range objs {
+		o, _ := oa.(map[string]any)
+		badHost := ""
+		for _, set := range []string{"actions", "_links"} {
+			acts, _ := o[set].(map[string]any)
+			for name, x := range acts {
+				act, _ := x.(map[string]any)
+				hd, _ := act["header"].(map[string]any)
+				held := map[string]string{}
+				for k, hv := range hd {
+					if lfsCredHeaders[strings.ToLower(k)] {
+						delete(hd, k)
+						if v, _ := hv.(string); v != "" {
+							held[http.CanonicalHeaderKey(k)] = v
+						}
+					}
+				}
+				if len(held) == 0 {
+					continue
+				}
+				method := map[string]string{"download": "GET", "upload": "PUT", "verify": "POST"}[name]
+				href, _ := act["href"].(string)
+				u, err := url.Parse(href)
+				d := "dropped"
+				if err == nil {
+					ah, ok := canon(u.Host, "443")
+					if ok != nil || (a.vcs[ah] == nil && a.bind[ah] == nil) {
+						badHost = u.Host
+						d = "undeliverable"
+					} else if method != "" && strings.EqualFold(u.Host, uh) {
+						if m := lfsXfer.FindStringSubmatch(u.Path); m != nil && strings.EqualFold(m[1], repo) {
+							ttl := 7200 * time.Second
+							if n, ok := act["expires_in"].(json.Number); ok {
+								if s, e := n.Int64(); e == nil && s > 0 && time.Duration(s)*time.Second < ttl {
+									ttl = time.Duration(s) * time.Second
+								}
+							}
+							key := method + " " + strings.ToLower(host) + u.Path
+							a.lfsMu.Lock()
+							if a.lfsActions == nil || len(a.lfsActions) > 4096 {
+								a.lfsActions = map[string]lfsHeld{}
+							}
+							a.lfsActions[key] = lfsHeld{held, time.Now().Add(ttl)}
+							if !a.lfsFailKeep {
+								delete(a.lfsFails, key)
+							}
+							a.lfsMu.Unlock()
+							d = "held"
+						}
+					}
+				}
+				a.gitLog(entry, host, repo, "lfs-action-credential", d, name+" "+u.Host, nil)
+			}
+		}
+		if badHost != "" {
+			delete(o, "actions")
+			delete(o, "_links")
+			o["error"] = map[string]any{"code": a.lfsErrCode, "message": "the action names " + badHost + ", which netagent cannot deliver a credential to"}
+		}
+	}
+	var o bytes.Buffer
+	en := json.NewEncoder(&o)
+	en.SetEscapeHTML(false)
+	if err := en.Encode(doc); err != nil {
+		return nil, no(502, "re-encoding an LFS batch response failed")
+	}
+	return o.Bytes(), nil
+}

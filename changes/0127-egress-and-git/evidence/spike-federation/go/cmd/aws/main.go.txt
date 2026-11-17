@@ -1,0 +1,34 @@
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
+
+	"spikefed/cmd/swaplib"
+)
+
+func main() {
+	ctx := context.Background()
+	swaplib.Swap("/var/run/netagent/aws", 1)
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("region:", cfg.Region)
+	c := dynamodb.NewFromConfig(cfg)
+	call := func() {
+		out, err := c.ListTables(ctx, &dynamodb.ListTablesInput{})
+		if err != nil {
+			fmt.Println("ERR:", err)
+			return
+		}
+		fmt.Println("ListTables ->", out.TableNames)
+	}
+	call()
+	swaplib.Swap("/var/run/netagent/aws", 2)
+	swaplib.Sleep()
+	call()
+}

@@ -1,0 +1,3 @@
+module spikeinject
+
+go 1.26

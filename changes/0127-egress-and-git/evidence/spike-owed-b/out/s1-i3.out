@@ -1,0 +1,29 @@
+earlier writer writes: 13
+pod/writer2 created
+pod/envoy condition met
+cluster.authz.ssl.connection_error: 0
+cluster.authz.ssl.fail_verify_cert_hash: 0
+cluster.authz.ssl.fail_verify_error: 0
+cluster.authz.ssl.fail_verify_no_cert: 0
+cluster.authz.ssl.fail_verify_san: 0
+cluster.authz.ssl.handshake: 44
+cluster.authz.ssl.no_certificate: 0
+cluster.authz.ssl.session_reused: 41
+cluster.authz.upstream_cx_connect_fail: 0
+cluster.authz.upstream_cx_destroy_local: 42
+cluster.authz.upstream_cx_destroy_local_with_active_rq: 0
+cluster.authz.upstream_cx_total: 44
+listener.0.0.0.0_3128.ssl.no_certificate: 4944
+listener.0.0.0.0_3128.ssl.session_reused: 0
+listener.0.0.0.0_3443.ssl.no_certificate: 166
+listener.0.0.0.0_3443.ssl.session_reused: 0
+sds.egress-ca.update_attempt: 1
+sds.egress-ca.update_success: 1
+sds.server.update_attempt: 1
+sds.server.update_success: 1
+### client serials at the decision service, in time order, and the times Envoy's file changed
+2026/11/02 23:44:29 I3PEER ts=1793663069083891628 san=lenny-egress.lenny-system.svc serial=6a8a01de50e77a09a107b7ba107e5503368229ce issuer=lenny-egress-ca notAfter=2026-11-03T23:44:25Z
+I3PEER lines: 4
+1793663674088722005 change sha=e0fd6200 certs=[lenny-egress.lenny-system.svc#6e6999ed] hea
+1793663836878722553 change sha=d90fee2a certs=[lenny-egress.lenny-system.svc#4f1a02d1] hea
+1793663923825513093 change sha=ae176251 certs=[lenny-egress.lenny-system.svc#475871c2] hea

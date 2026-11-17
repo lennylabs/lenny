@@ -1,0 +1,25 @@
+api.acme.ghe.com API             other:token GHE-REAL-44bb03 747
+api.example.test API             other:Bearer ACME-REAL-9f2c71 6
+api.github.com API               GHCOM-REAL         1700
+ghes.example.test                mint-read          196
+ghes.example.test                mint-write         262
+ghes.example.test                other:USER-FILE-TOKEN 124
+ghes.example.test API            GH-REAL            1406
+ghes.example.test API            other:token USER-FILE-TOKEN 60
+github.com                       mint-read          58
+github.com                       mint-write         61
+github.com                       other:USER-FILE-TOKEN 15
+github.com API                   placeholder        4
+gitlab.example.test              mint-read          3
+gitlab.example.test              mint-write         2
+gitlab.example.test API          GL-REAL            78
+nossh.example.test API           other:Bearer NOSSH-REAL-22ff06 6
+other.example.test API           other:Bearer OTHER-REAL-11ee05 16
+uploads.github.com API           placeholder        2
+findings: 6
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')
+('placeholder at the API', 'uploads.github.com', '/x?label=&name=asset.bin')
+('placeholder at the API', 'github.com', '/a')
+('placeholder at the API', 'github.com', '/x')

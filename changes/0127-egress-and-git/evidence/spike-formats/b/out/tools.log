@@ -1,0 +1,69 @@
+user=root HOME=/root
+curl 8.14.1 (aarch64-alpine-linux-musl) libcurl/8.14.1 OpenSSL/3.5.9 zlib/1.3.2 brotli/1.1.1 zstd/1.5.7 c-ares/1.34.9 libidn2/2.3.7 libpsl/0.21.5 nghttp2/1.69.0
+GNU Wget 1.25.0 built on linux-musl.
+BusyBox v1.37.0 (2025-11-21 22:40:56 UTC) multi-call binary.
+git version 2.49.1
+--- curl-noflag-home600
+401
+--- curl-netrc-home600
+200
+--- curl-netrcopt-home600
+200
+--- curl-netrcfile-home600
+000
+--- bbwget-home600
+wget: server returned error: HTTP/1.0 401 Unauthorized
+exit 1
+--- gnuwget-home600
+exit 0
+--- git-home600
+1111111111111111111111111111111111111111	refs/heads/main
+exit 0
+--- curl-noflag-home644
+401
+--- curl-netrc-home644
+200
+--- curl-netrcopt-home644
+200
+--- curl-netrcfile-home644
+000
+--- bbwget-home644
+wget: server returned error: HTTP/1.0 401 Unauthorized
+exit 1
+--- gnuwget-home644
+exit 0
+--- git-home644
+1111111111111111111111111111111111111111	refs/heads/main
+exit 0
+--- curl-noflag-env600
+401
+--- curl-netrc-env600
+000
+--- curl-netrcopt-env600
+401
+--- curl-netrcfile-env600
+200
+--- bbwget-env600
+wget: server returned error: HTTP/1.0 401 Unauthorized
+exit 1
+--- gnuwget-env600
+exit 6
+--- git-env600
+fatal: could not read Username for 'http://fake.test': terminal prompts disabled
+exit 128
+--- curl-noflag-env644
+401
+--- curl-netrc-env644
+000
+--- curl-netrcopt-env644
+401
+--- curl-netrcfile-env644
+200
+--- bbwget-env644
+wget: server returned error: HTTP/1.0 401 Unauthorized
+exit 1
+--- gnuwget-env644
+exit 6
+--- git-env644
+fatal: could not read Username for 'http://fake.test': terminal prompts disabled
+exit 128

@@ -1,0 +1,46 @@
+### 3b. 64 MiB, http.version=HTTP/1.1: a chunked POST on the wire
+push rc=0
+      1 Send header: Content-Length: 4
+      1 Send header: Transfer-Encoding: chunked
+1898578deed654d28c089dc53dc390d14045024b
+POST /mid11.git/git-receive-pack proto=HTTP/1.1 status=200 cl=4 te=[] ce="" gitproto="" reqbytes=4 respbytes=0 dur=4ms err=<nil>
+POST /mid11.git/git-receive-pack proto=HTTP/1.1 status=200 cl=-1 te=[chunked] ce="" gitproto="" reqbytes=67129715 respbytes=50 dur=2.46s err=<nil>
+### 5b. 1 GiB, HTTP/1.1 chunked, through the tunnel
+rc=0
+tunnel seconds 23.8
+envoy memory.peak before=26460160 after=30568448
+a966b2b8231da1ff0f54e3cded8336042826eec8
+POST /big11.git/git-receive-pack proto=HTTP/1.1 status=200 cl=-1 te=[chunked] ce="" gitproto="" reqbytes=1073906039 respbytes=50 dur=23.657s err=<nil>
+cluster.origin_md.upstream_cx_rx_bytes_total: 6476
+cluster.origin_md.upstream_cx_total: 2
+cluster.origin_md.upstream_cx_tx_bytes_total: 1144883862
+http.egress.downstream_cx_length_ms: P0(nan,3950) P25(nan,3950) P50(nan,3950) P75(nan,3950) P90(nan,3950) P95(nan,3950) 
+### 10b. max_stream_duration 5 s: exit code and access log
+send-pack: unexpected disconnect while reading sideband packet
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+push rc=1
+seconds until the client returned 7.4
+server ref: [none]
+{"authority":"git.internal.oa.test:443","authz":"authz1","code":200,"conn_term":null,"details":"max_duration_timeout","dur_ms":5002,"flags":"-","peer":"198.19.50.30:54014","rx":234821797,"t":"2026-11-02T23:57:41.319Z","tx":2821,"type":"DownstreamEnd","up_host":"172.30.50.21:443"}
+### 11b. silent hook against stream_idle_timeout 10 s, exit codes
+To https://git.internal.oa.test/sl1.git
+ * [new branch]      main -> main
+sl1 push rc=0
+sl1 seconds 25.2
+sl1 server ref at client return: [f91938b]
+fatal: the remote end hung up unexpectedly
+Everything up-to-date
+sl2 push rc=1
+sl2 seconds 20.4
+sl2 server ref at client return: [none]
+sl2 server ref after hook ended: [f91938b]
+POST /sl2.git/git-receive-pack proto=HTTP/1.1 status=200 cl=371 te=[] ce="" gitproto="" reqbytes=371 respbytes=143 dur=25.014s err=<nil>
+### 12b. proxy hop over TLS (I2), 64 MiB HTTP/1.1 chunked, then 1 GiB
+rc=0
+1898578deed654d28c089dc53dc390d14045024b
+POST /midt2.git/git-receive-pack proto=HTTP/1.1 status=200 cl=-1 te=[chunked] ce="" gitproto="" reqbytes=67129715 respbytes=50 dur=1.484s err=<nil>
+rc=0
+TLS hop seconds 23.9
+a966b2b8231da1ff0f54e3cded8336042826eec8
+POST /bigt2.git/git-receive-pack proto=HTTP/1.1 status=200 cl=-1 te=[chunked] ce="" gitproto="" reqbytes=1073906039 respbytes=50 dur=23.794s err=<nil>

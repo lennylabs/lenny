@@ -1,0 +1,23 @@
+Tue Nov  3 10:24:53 PST 2026
+--- docker top gh-c5
+PID                 PPID                ELAPSED             STAT                WCHAN               COMMAND
+2919535             2919512             08:44:19            Ss                  do_wai              sh /t/t5client.sh Tb pygit2-proxy-auto
+2919551             2919535             08:44:19            S                   do_sys              python3 -I -c import pygit2 r=pygit2.clone_repository('https://ghes.example.test/acme/widgets.git','/tmp/tmp.yny9Z8G5qK/
+2919552             2919535             08:44:19            S                   pipe_r              tail -2
+2919553             2919535             08:44:19            S                   pipe_r              cut -c1-260
+--- python inside: wchan, fds, sockets
+sh: 1: pgrep: not found
+total 12
+drwxr-xr-x 3 1000 root 4096 Nov  3 09:40 .
+drwx------ 3 1000 root 4096 Nov  3 09:40 ..
+drwxr-xr-x 6 1000 root 4096 Nov  3 09:40 .git
+--- netagent
+{"active":0,"attached":0,"authorityMismatch":0,"connect":14,"dialErrors":0,"filterAllowed":0,"filterNanos":0,"filterRefused":0,"goroutines":4,"heapAlloc":1217912,"heapInuse":2097152,"heapSys":8028160,"numGC":0,"opaque":6,"plain":0,"refused":0,"requests":0,"scrubHits":0,"stackInuse":360448,"sys":12540168,"terminated":8}
+09:40:32.686953 http2: server: error reading preface from client 127.0.0.1:60282: read tcp 127.0.0.1:3128->127.0.0.1:60282: read: connection reset by peer
+09:40:32.711860 http2: server: error reading preface from client 127.0.0.1:60296: read tcp 127.0.0.1:3128->127.0.0.1:60296: read: connection reset by peer
+09:40:32.719099 opaque CONNECT other.example.test:443
+09:40:32.747467 opaque CONNECT other.example.test:443
+09:40:32.776604 opaque CONNECT other.example.test:443
+--- go-git in same state
+clone error: Get "https://ghes.example.test/acme/widgets.git/info/refs?service=git-upload-pack": tls: failed to verify certificate: x509: a root or intermediate certificate is not authorized to sign for this name: DNS name "ghes.example.test" is not permitted 
+clone-dir-absent rc=0

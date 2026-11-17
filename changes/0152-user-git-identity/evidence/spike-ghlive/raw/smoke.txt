@@ -1,0 +1,58 @@
+== 1. App identity (JWT signed with the private key)
+{
+  "id": 5645468,
+  "slug": "lenny-spike-test-app",
+  "name": "lenny-spike-test-app",
+  "owner": "lenny-test",
+  "permissions": {
+    "contents": "write",
+    "emails": "read",
+    "metadata": "read",
+    "pull_requests": "write"
+  },
+  "events": []
+}
+OK: App ID matches github.env
+== 2. Installations
+[
+  {
+    "id": 179336784,
+    "account": "lenny-test",
+    "repository_selection": "all",
+    "permissions": {
+      "contents": "write",
+      "metadata": "read",
+      "pull_requests": "write"
+    }
+  }
+]
+OK: installed on lenny-test
+== 3. Installation token (value not printed)
+OK: installation token issued
+== 4. Repositories the installation covers
+{
+  "total_count": 1,
+  "repos": [
+    {
+      "full_name": "lenny-test/test-repo",
+      "private": false
+    }
+  ]
+}
+== 5. Can the App create a repository in the org? (needs Administration; checked without creating: permission listing above)
+== 6. Test accounts exist
+{"login":"lennylabsdev","id":353446916,"type":"User","created_at":"2026-11-06T17:13:42Z"}
+{"login":"itsfivepastnine","id":353446532,"type":"User","created_at":"2026-11-06T17:12:32Z"}
+== 7. Public org membership (private membership reads 404 without Members permission)
+lennylabsdev public_member: 404
+itsfivepastnine public_member: 404
+== 8. Client secret valid (checking a dummy token: 404 = credentials accepted, 401 = rejected)
+check-token status: 404
+== 9. Device flow enabled (requests a code and discards it)
+{
+  "has_device_code": true,
+  "verification_uri": "https://github.com/login/device",
+  "expires_in": 899,
+  "error": null,
+  "error_description": null
+}

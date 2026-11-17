@@ -1,0 +1,278 @@
+README|conventions|README.md|Root map: what Lenny is in one paragraph, the capability areas, and reading paths by task.|mine
+CONV|conventions|conventions.md|Page types, the placement procedure, normative language, the identifier scheme, the gloss rule, and the definition-block format.|mine
+OVW|overview|overview/index.md|Lists the overview pages: purpose and context, principles and non-goals, the architecture, the capability and interface maps, and the walkthroughs.|mine
+CTX|overview|overview/purpose-and-context.md|States what Lenny is for, the actors that use it (clients, tenant admins, platform operators, runtime authors, and DevOps agents), and the external systems it depends on.|mine
+PRIN|overview|overview/principles-and-non-goals.md|States the design principles, the goals, the non-goals, and the decisions Lenny leaves to deployers.|mine
+ARCH|overview|overview/architecture.md|Maps the components, the namespaces they run in, the stores they use, and the links between them, with one line per component and a link to its page.|mine
+CAPMAP|overview|overview/capability-map.md|Maps each capability area and capability to the components that carry it out and the interfaces that expose it.|mine
+IFMAP|overview|overview/interface-map.md|Maps each interface to the parties on each side, its transport, and its owning pages, and states that the client contract is REST alone.|mine
+WALK|overview|overview/walkthroughs/index.md|Lists the non-normative walkthroughs that trace one scenario across components and channels, and states the trace notation.|mine
+WKSTART|overview|overview/walkthroughs/session-start.md|Traces a session from the create request through pod claim, materialization, and the first message.|mine
+WKMSG|overview|overview/walkthroughs/interactive-message.md|Traces one client message through delivery, the runtime's turn, and the streamed output.|mine
+WKSTOP|overview|overview/walkthroughs/interrupt-terminate-delete.md|Traces an interrupt, a terminate, and a delete through the gateway, the adapter, and the pod.|mine
+WKCKPT|overview|overview/walkthroughs/checkpoint-capture.md|Traces a checkpoint from its trigger through quiesce, capture passes, and upload.|mine
+WKRESUME|overview|overview/walkthroughs/restore-and-resume.md|Traces a resume after pod loss, from the failure through a new claim and restore.|mine
+WKDRAIN|overview|overview/walkthroughs/gateway-drain.md|Traces a gateway replica drain with its checkpoint barrier and session handoff.|mine
+WKHANDOFF|overview|overview/walkthroughs/coordinator-handoff.md|Traces a coordinator handoff and a crash takeover between gateway replicas.|mine
+WKEVICT|overview|overview/walkthroughs/pod-eviction.md|Traces the eviction of an agent pod that holds an active session.|mine
+WKCOTEN|overview|overview/walkthroughs/shared-pod-co-tenancy.md|Traces two sessions on one pod with several slots.|mine
+WKOPS|overview|overview/walkthroughs/ops-remediation.md|Traces a DevOps agent observing an operational event, diagnosing it, taking a remediation lock, and verifying recovery.|mine
+CAPS|capability|capabilities/index.md|Lists the capability areas with their summaries and the capabilities in each.|mine
+RTPOOL|capability|capabilities/runtimes-and-pools/index.md|Lists the capabilities that decide which runtimes Lenny runs, on which pods, and how those pods are kept warm, claimed, reused, and retired.|slice
+RUNTIME|capability|capabilities/runtimes-and-pools/runtime-registry.md|Registers runtimes, states the runtime fields and their rules, operator-derived runtimes and the merge of derived fields, and published metadata.|mine
+REV|capability|capabilities/runtimes-and-pools/runtime-revisions.md|Records each change to a runtime's versioned fields as a revision, selects a revision per session, and moves traffic between revisions in a rollout.|mine
+DERIVED|capability|capabilities/runtimes-and-pools/tenant-derived-runtimes.md|Lets a granted tenant derive its own runtime from a platform base, with an owned pool, a pod budget, and capacity reservations.|mine
+ROUTE|capability|capabilities/runtimes-and-pools/runtime-routes.md|Chooses the runtime for a session from routing labels and runtime routes, which replace experiment variants.|mine
+RCLASS|capability|capabilities/runtimes-and-pools/resource-classes.md|Defines resource classes in configuration, how a pool's class maps to container requests and limits, and the checks at load, write, and reconcile.|mine
+PLACE|capability|capabilities/runtimes-and-pools/placement.md|Assigns each pool a node class, an offering, a region, and a tenancy, renders them into each pod, and checks that pods land where their placement says.|mine
+ISO|capability|capabilities/runtimes-and-pools/isolation-profiles.md|Defines the isolation profiles a pool can run under, what each profile isolates, and the acknowledgements a weaker profile requires.|mine
+POOL|capability|capabilities/runtimes-and-pools/warm-pools.md|Defines pools and pod sets, keeps warm inventory between its targets, and protects warm pods from voluntary disruption.|slice
+CLAIM|capability|capabilities/runtimes-and-pools/pod-claims.md|Acquires an idle pod for a session through a per-pod claim, holds a recycled pod for its tenant, and recovers orphaned claims.|slice
+APOD|capability|capabilities/runtimes-and-pools/agent-pod-lifecycle.md|Defines the agent pod and its states and how a pod is created, becomes ready, is recycled, drained, quarantined, and deleted.|slice
+SESAREA|capability|capabilities/sessions/index.md|Lists the capabilities that govern a session from creation to its end, including suspension, resume, checkpoints, derive, and isolation between sessions on one pod.|mine
+SESLC|capability|capabilities/sessions/session-lifecycle/index.md|Lists the pages of the session lifecycle: states, creation, suspension and dormancy, the end of a session, and timeouts.|mine
+SESS|capability|capabilities/sessions/session-lifecycle/session-states.md|Defines the session object, its identity, its states and transitions, its failure class, and the mapping of internal states to the states clients see.|mine
+SCREATE|capability|capabilities/sessions/session-lifecycle/session-creation.md|States the creation flow from request to a bound pod, its atomicity, the checks at the post-chain point, and the isolation level reported to the client.|mine
+SUSP|capability|capabilities/sessions/session-lifecycle/suspension-and-dormancy.md|States when a session suspends, what happens to its slot and pod, dormancy of idle sessions, and suspension of a delegation tree.|mine
+SEND|capability|capabilities/sessions/session-lifecycle/session-end.md|States how a session closes, the seal against further delivery, the terminal pipeline, and the window after a terminal state.|mine
+TIMEOUT|capability|capabilities/sessions/session-lifecycle/timeouts.md|Defines every session timer and watchdog, which states pause each one, and cancellation.|mine
+RESUME|capability|capabilities/sessions/retry-and-resume.md|States the retry policy after a pod failure, session generations, the resume flow, and the states a session takes when retries run out.|mine
+CKIDX|capability|capabilities/sessions/checkpoints/index.md|Lists the checkpoint pages: capture, storage and retention, and restore.|mine
+CKPT|capability|capabilities/sessions/checkpoints/checkpoint-capture.md|States when a checkpoint is taken, how capture runs in passes, quiesce and abort, size limits and drain budgets, and the checkpoint capability model.|mine
+CKSTORE|capability|capabilities/sessions/checkpoints/checkpoint-storage.md|States the checkpoint catalog, reference closure, quota, retention, garbage collection, and the behavior when the object store fails.|mine
+RESTORE|capability|capabilities/sessions/checkpoints/restore.md|States how a checkpoint is restored into a slot for resume, derive, and download, and how a restore is sealed.|mine
+SDERIVE|capability|capabilities/sessions/derive.md|Starts a session from an earlier one at its start or at its latest checkpoint, with the copy and restore rules and the options a derive takes.|mine
+SETUP|capability|capabilities/sessions/setup-commands.md|States the setup commands a runtime and a plan declare, their policy, ordering, limits, and failure.|mine
+SLOT|capability|capabilities/sessions/session-isolation.md|States the isolation between sessions that share a pod: slots, slot identity, slot release, the per-slot resource and credential scope, and slot failure.|mine
+SCRUB|capability|capabilities/sessions/pod-reuse-and-scrub.md|States when a pod may serve another session, the scrub that runs between sessions, the reuse prohibitions, and the acknowledgements weak reuse requires.|mine
+MSGAREA|capability|capabilities/messaging/index.md|Lists the capabilities that carry messages into a session and output out of it: delivery, inboxes, inter-session messages, the event stream, input requests, and client tools.|mine
+MSG|capability|capabilities/messaging/message-delivery.md|States the delivery intents, the delivery paths, turn accounting, and the executor that delivers one message at a time to the runtime.|mine
+INBOX|capability|capabilities/messaging/inbox-and-custody.md|States the session inbox, its states and custody, durability, expiry, retraction, dead-lettering, and delivery receipts.|mine
+IMSG|capability|capabilities/messaging/inter-session-messaging.md|States how one session messages another: scope, the configuration hierarchy, rate limits, content policy, and threading.|mine
+STREAM|capability|capabilities/messaging/event-stream.md|States the session event stream: event kinds and their order, activity, output and reasoning streaming, turn and usage events, resume after a gap, and back-pressure.|mine
+INPUT|capability|capabilities/messaging/input-requests.md|States how a runtime asks the client for input, the elicitation chain through delegation, harness approvals, and the session's input policy.|mine
+CTOOL|capability|capabilities/messaging/client-tools.md|Lets a client supply tools a runtime calls, with admission, response validation, pending calls, and continuation.|mine
+WSAREA|capability|capabilities/workspaces-and-files/index.md|Lists the capabilities that build a session's workspace and move files in and out of it.|mine
+WSPLAN|capability|capabilities/workspaces-and-files/workspace-plan.md|States what a workspace plan means: its sources, when it binds, its defaults, and the rules Lenny applies to each member.|mine
+MATER|capability|capabilities/workspaces-and-files/materialization.md|States how the adapter and the helper build a workspace from a plan inside the slot, the ordering and collision rules, atomicity, and the validation of results.|mine
+UPLOAD|capability|capabilities/workspaces-and-files/uploads.md|States upload authorization, the upload token, size caps, archive handling, and mid-session uploads.|mine
+FILEMSG|capability|capabilities/workspaces-and-files/files-in-messages.md|States how files travel with messages and output, including files a child returns to its parent.|mine
+FILEX|capability|capabilities/workspaces-and-files/file-export.md|States the file export model between sessions and to clients, export limits, and scanning of exported files.|mine
+ARTIFACT|capability|capabilities/workspaces-and-files/artifacts.md|States what Lenny keeps as session artifacts, transcripts, blob resolution, deduplication, and artifact retention.|mine
+REPO|capability|capabilities/workspaces-and-files/repository-stores.md|States the shared repository stores on a pod, the warm list, repository folders, and the warm-up checkout.|mine
+CLONE|capability|capabilities/workspaces-and-files/default-clones.md|States the default git clones a tenant-derived runtime declares and how they reach a session's workspace.|mine
+DLGAREA|capability|capabilities/delegation/index.md|Lists the capabilities that let a session start child sessions and govern the resulting tree.|mine
+DLG|capability|capabilities/delegation/delegation.md|States the delegation mechanism, approval modes, the task tree, task records and results, and what a parent sees of its children.|mine
+DPOL|capability|capabilities/delegation/delegation-policy.md|Defines the delegation policy resource, tag evaluation, the session-level policy cap, content policy, and the scanning of exported files.|mine
+LEASE|capability|capabilities/delegation/delegation-lease.md|Defines the delegation lease, its fields and inheritance, tree-wide limits, isolation monotonicity, and lease extension.|mine
+DAVAIL|capability|capabilities/delegation/delegation-availability.md|States the delegation levels, how a session's level is resolved, the refusal when delegation is unavailable, and the tool list a runtime receives.|mine
+DTREE|capability|capabilities/delegation/tree-recovery-and-cascade.md|States how a delegation tree recovers, cascades on a parent's end, cleans up orphans, and how parents watch children's streams.|mine
+TENAREA|capability|capabilities/tenancy-and-access/index.md|Lists the capabilities that define tenants, environments, and principals and decide who may do what.|mine
+TENANT|capability|capabilities/tenancy-and-access/tenants.md|Defines the tenant object and its lifecycle from creation to deletion.|mine
+TSET|capability|capabilities/tenancy-and-access/tenant-settings.md|Defines the tenant settings model, templates, the tenant key, compliance profiles, and how a setting changes on a live tenant.|mine
+ENV|capability|capabilities/tenancy-and-access/environments.md|Defines environments, how runtimes are selected into them, the environment context of a session, and cross-environment rules.|mine
+PRINC|capability|capabilities/tenancy-and-access/principals.md|Defines users, service accounts, and subjects, and how each is identified within a tenant.|mine
+AUTHN|capability|capabilities/tenancy-and-access/authentication.md|States how callers authenticate: OIDC, API keys, development mode, the token claims Lenny reads, key rotation, user invalidation, and the playground's session.|mine
+TOKX|capability|capabilities/tenancy-and-access/token-exchange.md|States the token exchange Lenny runs, scope narrowing, impersonation, write-before-issue, rotation, and revocation of issued tokens.|mine
+AUTHZ|capability|capabilities/tenancy-and-access/authorization.md|Defines the roles, the permission matrix, custom roles, scopes, session ownership, security roles, and delegated approvers.|mine
+CREDAREA|capability|capabilities/credentials/index.md|Lists the capabilities that hold credentials and deliver them to sessions and pods.|mine
+CPOOL|capability|capabilities/credentials/credential-pools.md|Defines credential pools for VCS providers, their secret topology, leases, governance boundaries, emergency revocation, and secret lifecycle.|mine
+UCRED|capability|capabilities/credentials/user-credentials.md|Defines user credential types, the registered source, the user credential binding, and request rules and presets.|mine
+LINK|capability|capabilities/credentials/account-links.md|States how a user links an account through OAuth, the link prompt, and the link check before a session needs the account.|mine
+SACRED|capability|capabilities/credentials/service-account-credentials.md|Lets a service account own credentials through the client credentials and issuer exchange sources.|mine
+CDELIV|capability|capabilities/credentials/credential-delivery.md|States how credentials reach a runtime: delivery modes, file delivery, and what a runtime may read.|mine
+REPOAUTH|capability|capabilities/credentials/repository-authorization.md|States which repositories a session may reach under a user's VCS identity and how that authorization is decided.|mine
+PRAUTH|capability|capabilities/credentials/pull-request-authoring.md|States how a session authors pull and merge requests under a user's identity and the independent approval check.|mine
+ADDON|capability|capabilities/credentials/credential-add-ons.md|Defines the credential add-ons for GitHub and GitLab, their kinds, and their deny presets.|mine
+NETAREA|capability|capabilities/network-and-egress/index.md|Lists the capabilities that decide what network traffic agent pods may send and how it is attributed.|mine
+NETISO|capability|capabilities/network-and-egress/network-isolation.md|States the default-deny baseline and the allow-lists that apply to agent pods and to the platform namespace.|mine
+EGRESS|capability|capabilities/network-and-egress/egress-policy.md|States the egress policy model: scopes, the effective policy, defaults, replacement and augmentation, exfiltration controls, and TLS interception.|mine
+EGDEC|capability|capabilities/network-and-egress/egress-decisions.md|States how each outbound connection is attributed to a slot, decided against the effective policy, and recorded in the evidence streams.|mine
+DNS|capability|capabilities/network-and-egress/dns.md|States the DNS resolution agent pods get and the mitigations against DNS exfiltration.|mine
+LLMUP|capability|capabilities/network-and-egress/llm-upstreams.md|Defines LLM upstreams, their assignment to sessions, the metering proxy's routing rules, cache isolation, calls outside the proxy, and forwarded attribution.|mine
+GIT|capability|capabilities/network-and-egress/git-access.md|States how a pod reaches git hosts: covered hosts, the git mirror, and the git configuration injected into a slot.|mine
+OPSVC|capability|capabilities/network-and-egress/operator-services.md|States how a runtime reaches operator services through egress, the identity assertion attached to those requests, and the egress halt at suspension.|mine
+OUTCONN|capability|capabilities/network-and-egress/outbound-connector.md|Lets a tenant reach hosts on its private network through an agent it runs, with registration, identity, liveness, rotation, and revocation.|mine
+POLAREA|capability|capabilities/policy-and-controls/index.md|Lists the capabilities that admit, shape, and refuse requests.|mine
+ADMIT|capability|capabilities/policy-and-controls/admission-and-fairness.md|States the policy engine, the admission checks and their order, and fairness between tenants.|mine
+INTCPT|capability|capabilities/policy-and-controls/request-interceptors.md|States where request interceptors run, how their verdicts apply, their failure policy, and in-cluster and tenant-scoped interceptors.|mine
+QUOTA|capability|capabilities/policy-and-controls/quotas-and-rate-limits.md|States the quota hierarchy, storage quotas, rate limits, counter recovery, and the fail-open budgets during a store outage.|mine
+BREAKER|capability|capabilities/policy-and-controls/circuit-breakers.md|States the operator-managed circuit breakers, their storage and propagation, and their effect on admission.|mine
+BILLAREA|capability|capabilities/billing-and-usage/index.md|Lists the capabilities that meter usage, enforce budgets, and emit billing events.|mine
+BUDGET|capability|capabilities/billing-and-usage/budgets.md|Defines credit budgets, budget inheritance, and the delegation budget counters.|mine
+RATE|capability|capabilities/billing-and-usage/rate-cards.md|Defines rate cards and how a usage record is priced against them.|mine
+USAGE|capability|capabilities/billing-and-usage/usage-records.md|Defines usage records for LLM calls and resources and the usage the client API reports.|mine
+BILLEV|capability|capabilities/billing-and-usage/billing-events.md|States the billing event stream: what emits each event, delivery sinks, immutability, and corrections.|mine
+ATTR|capability|capabilities/billing-and-usage/resource-attribution.md|Attributes pod time, idle pods, stored bytes, and dedicated nodes to tenants, with reconciliation against the object store.|mine
+OPSAREA|capability|capabilities/observability-and-operations/index.md|Lists the capabilities that let operators and DevOps agents observe, diagnose, and remediate the platform.|mine
+OPSEV|capability|capabilities/observability-and-operations/operational-events.md|States which state changes emit operational events, buffering in the gateway, and delivery by stream, polling, and webhook.|mine
+DIAG|capability|capabilities/observability-and-operations/health-and-diagnostics.md|States how platform health and capacity recommendations are derived, the diagnostic operations, and automatic remediation.|mine
+REMED|capability|capabilities/observability-and-operations/remediation-and-escalation.md|States remediation locks, their consistency, stealing and long holds, the operations inventory, and escalation.|mine
+RUNBOOK|capability|capabilities/observability-and-operations/runbooks.md|States the machine-readable runbook format and how runbooks are discovered from health results and alerts.|mine
+DRIFT|capability|capabilities/observability-and-operations/configuration-drift.md|States how drift between the declared and the running configuration is detected and reconciled.|mine
+SLO|capability|capabilities/observability-and-operations/alerting-and-slos.md|States the SLO targets, burn-rate alerting, the bundled alert set and its operator customization, and SLO export.|mine
+SECAREA|capability|capabilities/security-and-compliance/index.md|Lists the capabilities that record evidence, oversee security, and meet data obligations.|mine
+AUDIT|capability|capabilities/security-and-compliance/audit-log.md|States what is audited, the integrity of the audit log, tenant validation at write, and audit queries.|mine
+SIEM|capability|capabilities/security-and-compliance/siem-export.md|States how audit records reach a SIEM, the OCSF mapping, per-tenant destinations, dead-lettering, and the erasure boundary.|mine
+SECOV|capability|capabilities/security-and-compliance/security-oversight.md|States the tenant security record and posture, operator access transparency, and the rights of the operability service.|mine
+FORENSIC|capability|capabilities/security-and-compliance/quarantine-and-evidence.md|States pod quarantine for evidence, the reconciler that ends it, the capture workflow, and security incident response.|mine
+ACTSTR|capability|capabilities/security-and-compliance/agent-activity-streams.md|States the agent activity streams recorded for forensics and their retention.|mine
+HOLD|capability|capabilities/security-and-compliance/legal-hold.md|States legal and platform-only holds, their effect on retention and checkpoint rotation, and the hold reconciler.|mine
+ERASE|capability|capabilities/security-and-compliance/erasure.md|States user-level erasure: the erasure job, its order of deletion, pseudonymization, receipts, processing restriction, and erasure of backups and external sinks.|mine
+RESID|capability|capabilities/security-and-compliance/data-residency.md|States data residency, its admission control, key and backup residency, and the multi-region consistency model.|mine
+DEPAREA|capability|capabilities/deployment-and-lifecycle/index.md|Lists the capabilities that install, size, upgrade, back up, and restore a Lenny deployment.|mine
+INSTALL|capability|capabilities/deployment-and-lifecycle/installation.md|States what installation creates, the bootstrap seed, namespace quotas, image registries and air-gapped installs.|mine
+LOCALDEV|capability|capabilities/deployment-and-lifecycle/local-development.md|States the local development modes, the embedded stack, its backends, and its guard rails.|mine
+UPGRADE|capability|capabilities/deployment-and-lifecycle/platform-upgrades.md|States the platform upgrade state machine, upgrade checks and release channels, schema migration, CRD upgrades, and configuration diff and apply.|mine
+BACKUP|capability|capabilities/deployment-and-lifecycle/backup-and-restore.md|States backup creation, scheduling, retention, verification, restore with its safety checks, and disaster recovery targets.|mine
+TIER|capability|capabilities/deployment-and-lifecycle/capacity-tiers.md|Defines the capacity tiers, the scale each tier targets, and the workload assumptions behind them.|mine
+COMPS|component|components/index.md|Lists the components with their summaries, grouped as Lenny processes, agent pod containers, and external dependencies.|mine
+GW|component|components/gateway/index.md|The gateway as a unit: responsibilities, the subsystem list, replicas, disruption budget, probes, ServiceAccount, RBAC, NetworkPolicy, process settings, and metrics. The slice wrote a stub that lists subsystems.|slice
+GWCOORD|component|components/gateway/session-coordination.md|How gateway replicas coordinate a session: the coordination lease, handoff, hold state, stale replicas, and behavior when both stores fail.|mine
+GWDRAIN|component|components/gateway/drain.md|The preStop drain of a gateway replica: its stages, deadlines, and terminal pipelines at process exit.|mine
+GWBARRIER|component|components/gateway/checkpoint-barrier.md|The checkpoint barrier the gateway fans out to pods during a rolling update.|mine
+GWCLAIM|component|components/gateway/pod-claimer.md|The gateway's pod claimer: candidate selection, claim creation, and the Postgres fallback path.|slice
+GWLLM|component|components/gateway/metering-proxy.md|The gateway's metering proxy listener for LLM upstream calls: routes, limits, process settings, and metrics.|mine
+GWOPS|component|components/gateway/ops-endpoints.md|The gateway-side operability parts: the health service, capacity recommendations, the event buffer, and the in-process alert tracker.|mine
+TOKSVC|component|components/token-service.md|The Token Service Deployment: its KMS access, secret reads, signing, upgrade and key rotation, and metrics.|mine
+WPC|component|components/warm-pool-controller.md|The WarmPoolController: pod creation and status, leader election, failover, API and etcd load, and metrics.|slice
+PSC|component|components/pool-scaling-controller.md|The PoolScalingController: reconciliation from Postgres, scaling computation, leader election, and metrics.|slice
+WEBHOOK|component|components/admission-webhooks.md|The admission webhook server and admission policies: what is rendered, availability, failure modes, and metrics.|slice
+LOPS|component|components/lenny-ops/index.md|The lenny-ops Deployment: purpose, Helm values, Kubernetes resources, RBAC, NetworkPolicy, leader election, startup, self-monitoring, and TLS.|mine
+LOPSAGG|component|components/lenny-ops/gateway-fan-out.md|How lenny-ops calls every gateway replica, sources metrics with and without Prometheus, and aggregates health and recommendations.|mine
+BKJOB|component|components/lenny-ops/backup-jobs.md|The lenny-backup Jobs that lenny-ops creates: pod specification, ServiceAccount, NetworkPolicy, and bucket policy.|mine
+POD|component|components/agent-pod/index.md|The agent pod as a unit: its containers in start order, volumes and size limits, project quotas, security context, and pod-level metrics.|mine
+ADAPTER|component|components/agent-pod/adapter.md|The adapter container: startup sequence, the slot registry, gateway and runtime connections, health checks, process settings, and metrics.|mine
+SUPV|component|components/agent-pod/runtime-supervisor.md|The slot containers and the runtime supervisor that runs as PID 1 in each: process launch and end, the sweep, the file-descriptor broker, and the materialization helper.|mine
+NETAGENT|component|components/agent-pod/netagent.md|The netagent sidecar: the local egress endpoint, per-slot attribution, git on covered hosts, and per-slot credential files.|mine
+PODINIT|component|components/agent-pod/init-and-support-containers.md|The init containers that stage platform binaries and fill repository stores, and the keepalive container.|mine
+EGPROXY|component|components/egress-proxy.md|The central egress proxy (lenny-egress): deployment, transport security, and metrics.|mine
+EGAUTHZ|component|components/egress-decision-service.md|The egress decision service (lenny-egress-authz): pod identification, policy reads, deployment, and metrics.|mine
+GITMIR|component|components/git-mirror.md|The git mirror (lenny-git-mirror): storage, fetch scheduling, holds, deployment, and metrics.|mine
+AGDNS|component|components/agent-dns.md|The dedicated CoreDNS instances for agent pods, including the resolver for proxied pods.|mine
+OUTGW|component|components/outbound-gateway.md|The outbound gateway Deployment that tenant agents dial, its replica groups, and metrics.|mine
+OUTAGT|component|components/outbound-agent.md|The outbound agent a tenant runs on its own network: packaging, keys, and attestations.|mine
+PLAY|component|components/web-playground.md|The web playground: placement and gating, cookie session handling, UI surface, asset serving and CSP, cleanup, and metrics.|mine
+PREFLT|component|components/preflight-job.md|The lenny-preflight Job and the checks it runs, each linked to the requirement it verifies.|mine
+EXTIDX|component|components/external/index.md|Lists the external dependencies and the requirements Lenny places on each.|mine
+PG|component|components/external/postgres.md|Postgres and its pooler: topology, HA, connection pooling, write classification, failover behavior, encryption, and backups.|mine
+REDIS|component|components/external/redis.md|Redis: topology, logical separation, failure modes per use, scalability ceilings, and TLS.|mine
+OBJ|component|components/external/object-store.md|The object store: backends, HA, versioning, replication, lifecycle rules, encryption, and outage handling.|mine
+KUBE|component|components/external/kubernetes.md|The Kubernetes API server, etcd, and the CNI: version floor, API rate limits, etcd tuning, and network policy enforcement.|mine
+CERTM|component|components/external/cert-manager.md|cert-manager: the certificates Lenny requests, CA rotation, and failure modes.|mine
+KMS|component|components/external/kms.md|The KMS: keys Lenny uses, who may call them, rotation, and failure behavior.|mine
+PROM|component|components/external/prometheus.md|Prometheus: when it is required, scrape targets, rule rendering, evaluation cost, and the bring-your-own model.|mine
+IFS|interface|interfaces/index.md|Lists the interfaces, the parties on each side, and the page that owns each.|mine
+CAPI|interface|interfaces/client-api/index.md|The client REST API: authentication, versioning, and the resource groups, with links to the shared API conventions and error model.|mine
+CAPISES|interface|interfaces/client-api/sessions.md|Session operations: create, start, get, list, interrupt, terminate, delete, derive, and the states and errors each returns.|mine
+CAPIMSG|interface|interfaces/client-api/messages.md|Message operations: send, retract, list, respond to input requests, and client tool results.|mine
+CAPIEVT|interface|interfaces/client-api/event-stream.md|The session event stream endpoint, the event kind registry, resume parameters, and keepalive.|mine
+CAPIFILE|interface|interfaces/client-api/files-and-artifacts.md|Upload, artifact, blob, and export operations.|mine
+CAPICRED|interface|interfaces/client-api/credentials-and-links.md|User credential and account link operations.|mine
+CAPIDISC|interface|interfaces/client-api/discovery-and-usage.md|Runtime discovery, published metadata, and usage reporting.|mine
+ADMIN|interface|interfaces/admin-api/index.md|The admin REST API under /v1/admin: the conventions its operation pages rely on and the list of operation pages.|slice
+ADMRT|interface|interfaces/admin-api/runtimes.md|Runtime, revision, route, and resource class operations.|mine
+APOOLS|interface|interfaces/admin-api/pools.md|Pool operations.|slice
+ADMTEN|interface|interfaces/admin-api/tenants-and-environments.md|Tenant, tenant setting, environment, and outbound connector operations.|mine
+ADMIAM|interface|interfaces/admin-api/identity-and-access.md|User, service account, role, and token operations.|mine
+ADMCRED|interface|interfaces/admin-api/credentials-and-upstreams.md|Credential pool, LLM upstream, and revocation operations.|mine
+ADMPOL|interface|interfaces/admin-api/policies.md|Delegation policy, interceptor, quota, and circuit breaker operations.|mine
+ADMBILL|interface|interfaces/admin-api/billing.md|Rate card, budget, billing correction, and usage operations.|mine
+ADMCOMP|interface|interfaces/admin-api/compliance.md|Legal hold, erasure job, residency, and tenant deletion operations.|mine
+OPSAPI|interface|interfaces/ops-api/index.md|The ops API served by the gateway and lenny-ops: terminology, envelopes, pagination, rate limits, and the operation groups.|mine
+OPSHEALTH|interface|interfaces/ops-api/health-and-diagnostics.md|Health, recommendation, diagnostic, and runbook operations.|mine
+OPSEVT|interface|interfaces/ops-api/events-and-webhooks.md|Operational event stream, polling, buffer, and webhook subscription operations.|mine
+OPSREM|interface|interfaces/ops-api/remediation-and-operations.md|Remediation lock, escalation, and operations inventory operations.|mine
+OPSAUD|interface|interfaces/ops-api/audit-and-drift.md|Audit query and configuration drift operations.|mine
+OPSLIFE|interface|interfaces/ops-api/backup-and-upgrades.md|Backup, restore, version, upgrade, and configuration apply operations.|mine
+OPSME|interface|interfaces/ops-api/caller-identity.md|The caller identity and capability discovery operations.|mine
+OPSMCP|interface|interfaces/ops-api/mcp-management.md|The management MCP server of lenny-ops: tools, schemas, capability negotiation, and headers.|mine
+RTP|interface|interfaces/runtime-protocol/index.md|The runtime protocol between the adapter and a runtime: transports, capabilities in place of integration levels, versioning, and the frame families.|mine
+RTPHAND|interface|interfaces/runtime-protocol/handshake-and-capabilities.md|The handshake frames, the capabilities a runtime declares, and their dependencies.|mine
+RTPMSG|interface|interfaces/runtime-protocol/messages.md|The message socket frames, the MessagePart format, tool and frame names, exit codes, and leniency rules.|mine
+RTPOPS|interface|interfaces/runtime-protocol/runtime-ops.md|The runtime-ops channel frames: quiesce, interrupt acknowledgement, and the remaining rotation frames.|mine
+RTPTOOL|interface|interfaces/runtime-protocol/platform-tools.md|The platform tools a runtime calls, through frames or the reference MCP bridge, with schemas including the delegation tools and the task result.|mine
+RTPFS|interface|interfaces/runtime-protocol/filesystem-and-environment.md|The paths, environment variables, and injected configuration a runtime sees in its slot.|mine
+RTPCONF|interface|interfaces/runtime-protocol/conformance.md|The conformance suite by capability, how it is packaged, and how failures are categorized.|mine
+RTPSDK|interface|interfaces/runtime-protocol/runtime-sdks.md|The runtime author SDKs: packages, what each adds to the protocol, and what each leaves to the runtime.|mine
+ADMAN|interface|interfaces/adapter-manifest.md|The adapter manifest a runtime reads at startup, with every field.|mine
+INTCPTIF|interface|interfaces/interceptor-protocol.md|The protocol between the gateway and a request interceptor: phases, payloads, verdicts, and authentication.|mine
+CHAN|interface|interfaces/channels/index.md|The gateway-to-pod channels and registers: classes, axes, the contract card format, the exclusivity model, and the wire-contract artifacts.|mine
+CHGWPOD|interface|interfaces/channels/gateway-to-pod.md|The gateway-to-pod link and its channels, with the adapter RPC operations and request scope rules.|mine
+CHPODGW|interface|interfaces/channels/pod-to-gateway.md|The pod-to-gateway link and the adapter events channel.|mine
+CHINTRA|interface|interfaces/channels/intra-pod.md|The intra-pod channels between Lenny's own processes, including the supervision channel; the runtime-facing channels point to the runtime protocol.|mine
+CHEGRESS|interface|interfaces/channels/pod-egress.md|The pod-egress channels to the metering proxy and the object store.|mine
+CHREPLICA|interface|interfaces/channels/inter-replica.md|The channel that forwards off-holder session requests between gateway replicas.|mine
+CHSTORE|interface|interfaces/channels/gateway-to-store.md|The gateway-to-store channels and the registers that mediate replicas through Redis, Postgres, and the Kubernetes API.|mine
+CHCTRL|interface|interfaces/channels/control-plane.md|The control-plane channel for drain-readiness admission.|mine
+K8S|interface|interfaces/kubernetes/index.md|Lenny's Kubernetes API conventions: the API group and version, the shipped CRDs and their schema version, field ownership, validation, and how an admission refusal reaches a client.|slice
+KPSET|interface|interfaces/kubernetes/podset.md|The PodSet kind.|slice
+KAPOD|interface|interfaces/kubernetes/agentpod.md|The AgentPod kind.|slice
+KPCLAIM|interface|interfaces/kubernetes/podclaim.md|The PodClaim kind.|slice
+KLABEL|interface|interfaces/kubernetes/labels-and-annotations.md|Every label and annotation key, with its writer and readers.|slice
+KRUNTIME|interface|interfaces/kubernetes/runtime.md|The Runtime kind.|mine
+KADMIT|interface|interfaces/kubernetes/admission.md|The writes Lenny's admission webhooks and policies refuse, with the refusal each returns.|mine
+CLI|interface|interfaces/cli/index.md|lenny-ctl: global flags, server discovery and routing, output formats, and the command groups.|mine
+CLIINST|interface|interfaces/cli/install-and-local.md|Install, bootstrap, preflight, the installation wizard, the local stack, and image commands.|mine
+CLIADM|interface|interfaces/cli/admin-commands.md|Runtime, pool, credential, quota, breaker, user, tenant, erasure, policy, and session commands.|mine
+CLIOPS|interface|interfaces/cli/ops-commands.md|Operability commands: diagnose, events, audit, drift, locks, escalations, backups, upgrades, migrations, and MCP management.|mine
+CLISCAF|interface|interfaces/cli/runtime-scaffolding.md|The runtime scaffolding commands.|mine
+EVT|interface|interfaces/events/index.md|The CloudEvents envelope and the transports that carry Lenny's events.|mine
+EVTOPS|interface|interfaces/events/operational-events.md|The operational event types and their data schemas.|mine
+EVTBILL|interface|interfaces/events/billing-events.md|The billing event types, their schemas, and the null-field contract.|mine
+EVTAUD|interface|interfaces/events/audit-records.md|The audit record schema and the audit event types.|mine
+EVTHOOK|interface|interfaces/events/session-webhooks.md|The session callback webhooks and their signing.|mine
+WSPLANIF|interface|interfaces/workspace-plan.md|The WorkspacePlan schema with every field, and its versioning.|mine
+STOR|interface|interfaces/stored-schemas/index.md|The stored schemas that must stay compatible across versions, and the compatibility rules for each store.|mine
+STORPG|interface|interfaces/stored-schemas/postgres.md|The Postgres tables other versions read: sessions, tasks, pod state, billing, audit, and operations tables.|mine
+STOROBJ|interface|interfaces/stored-schemas/object-store-layout.md|The object key layout and the checkpoint pack format.|mine
+STORREDIS|interface|interfaces/stored-schemas/redis-keys.md|The Redis key patterns and their tenant prefixing.|mine
+DCFG|interface|interfaces/deployment-configuration/index.md|The deployment configuration: the Helm values structure, the values schema, chart-rendered resources, and feature gates.|mine
+DCFGANS|interface|interfaces/deployment-configuration/answer-files.md|Answer files: composition dimensions and the catalog of answer files.|mine
+DCFGTIER|interface|interfaces/deployment-configuration/tier-presets.md|The tier preset files and the values each tier sets.|mine
+DCFGSEED|interface|interfaces/deployment-configuration/bootstrap-seed.md|The bootstrap seed format that installs runtimes, pools, and tenants before the admin API is reachable.|mine
+EXT|interface|interfaces/extension-points.md|The Go extension points a deployer can replace: storage backends, the pool manager, and the cluster registry.|mine
+XC|cross-cutting|cross-cutting/index.md|Lists the properties every capability and component upholds, with the pages that carry each.|mine
+SECMODEL|cross-cutting|cross-cutting/security-model.md|Trust boundaries, the threat model, the adapter-to-runtime boundary, and image supply chain controls.|mine
+TENISO|cross-cutting|cross-cutting/tenant-isolation.md|The tenant isolation property: tenant identifiers on every record, row-level security, key and object prefixes, and the query rules that keep tenants apart.|mine
+PKI|cross-cutting|cross-cutting/mtls-and-pki.md|The certificate authority, certificate lifecycle, and the peer validation every mTLS link performs.|mine
+AVAIL|cross-cutting|cross-cutting/availability-and-degradation.md|Availability principles, fail-open and fail-closed rules, dependency outage behavior, and total-outage recovery.|mine
+COMPAT|cross-cutting|cross-cutting/upgrade-and-compatibility.md|The compatibility policy: API versioning, expand-contract migrations, CRD versioning, wire-contract versions, and version skew.|mine
+OBSCONV|cross-cutting|cross-cutting/observability-conventions.md|Metric and attribute naming, labels, log format, trace propagation, and the single source of alert rules.|mine
+ERR|cross-cutting|cross-cutting/error-model.md|The error envelope, the error codes shared across interfaces, validation errors, the degradation envelope, and the refusal of removed fields.|mine
+APICONV|cross-cutting|cross-cutting/api-conventions.md|Conventions shared by the client, admin, and ops APIs: idempotency, ETags, pagination, dry-run, correlation headers, and rate-limit headers.|mine
+DATACLASS|cross-cutting|cross-cutting/data-classification-and-retention.md|Data classes, the controls each class requires, encryption at rest, and retention defaults.|mine
+NAMING|cross-cutting|cross-cutting/naming.md|The channel naming law, resource name rules, and the naming table of retired spellings.|mine
+CAT-INDEX|catalog|catalogs/index.md|Lists the generated catalogs.|slice
+CAT-SETTINGS|catalog|catalogs/settings.md|Every setting with its default, range, and owner.|slice
+CAT-LIMITS|catalog|catalogs/limits.md|Every limit with its value and owner.|slice
+CAT-ERRORS|catalog|catalogs/errors.md|Every error code with its interface and owner.|slice
+CAT-METRICS|catalog|catalogs/metrics.md|Every metric with its emitting component.|slice
+CAT-ALERTS|catalog|catalogs/alerts.md|Every alert with the requirement it detects a breach of.|slice
+CAT-EVENTS|catalog|catalogs/events.md|Every event type with its carrying interface.|slice
+CAT-LABELS|catalog|catalogs/labels.md|Every label and annotation key.|slice
+CAT-CRDS|catalog|catalogs/custom-resources.md|Every custom resource kind.|slice
+CAT-OPS|catalog|catalogs/api-operations.md|Every API operation across the client, admin, and ops APIs.|slice
+CAT-REQS|catalog|catalogs/requirements.md|Every requirement identifier with its page.|slice
+CAT-GLOSSARY|catalog|catalogs/glossary.md|Every owned term with its owner page.|slice
+CAT-CHANNELS|catalog|catalogs/channels.md|Proposed: every link, channel, and register with its endpoints and degradation, generated from the channel pages.|proposed
+CAT-STATES|catalog|catalogs/state-machines.md|Proposed: every state machine, generated from the model blocks of the owning capabilities.|proposed
+GWSCALE|component|components/gateway/scaling-and-capacity.md|Gateway autoscaling: HPA and KEDA metric roles, the per-replica session budget, the minimum-replica formula, and subsystem extraction thresholds.|mine
+LOPSK8S|component|components/lenny-ops/kubernetes-resources.md|The Kubernetes resources the chart renders for lenny-ops: Helm values, Services, ServiceAccount and RBAC, NetworkPolicies, and the disruption budget.|mine
+LOPSSVC|component|components/lenny-ops/hosted-services.md|The internal parts of the services lenny-ops hosts: storage tiers, implementation notes, and metrics for events, diagnostics, locks, escalations, audit queries, drift, backups, and upgrades.|mine
+CKPASS|capability|capabilities/sessions/checkpoints/capture-passes.md|States how a checkpoint is captured in passes, the change tracker, and the size limits and drain budgets that bound a capture.|mine
+EGDEF|capability|capabilities/network-and-egress/egress-defaults.md|States the default egress policy, how a scope replaces or augments it, exfiltration controls, and TLS interception.|mine
+RTPPART|interface|interfaces/runtime-protocol/message-parts.md|The MessagePart format, the message envelope fields, binary input and output, and the mapping from MCP content blocks.|mine
+SLOTOPS|capability|capabilities/sessions/slot-assignment-and-failure.md|States how a session is assigned a slot atomically, slot liveness and release, slot failure and retry, and the rehydration of slots after recovery.|mine
+CREQ|capability|capabilities/credentials/credential-request-rules.md|States the request rules and presets that decide which credentials a session may request and receive.|mine
+SECROLE|capability|capabilities/tenancy-and-access/security-roles-and-approvers.md|Defines the security roles and the delegated approvers who confirm security-weakening changes.|mine
+LEASEXT|capability|capabilities/delegation/lease-extension.md|States how a delegation lease is extended, the configuration layering, and the extension approval modes.|mine
+PODVOL|component|components/agent-pod/volumes-and-quotas.md|The agent pod's volumes, their size limits and eviction behavior, and the project quotas on slot volumes.|mine
+OWNPOOL|capability|capabilities/runtimes-and-pools/owned-pools-and-reservations.md|States the pools a tenant owns for its derived runtimes, the pod budget, and capacity reservations.|mine
+BROWSER|capability|capabilities/tenancy-and-access/browser-sessions.md|States the cookie session a browser holds for the web playground and the token mint rules behind it.|mine
+PSEUDO|capability|capabilities/security-and-compliance/pseudonymization-and-receipts.md|States the pseudonymization of retained records at erasure, the erasure salt, billing erasure policy, and erasure receipts.|mine
+SCRUBPROC|capability|capabilities/sessions/scrub-procedure.md|States the scrub procedure step by step, the supervised scrub sequence, what the scrub reaches, the sweep, and the Kata variant.|mine
+GWTOOLS|component|components/gateway/platform-tools.md|The platform tools seam (§4.1 MCP Fabric): platform tool calls from pods, delegation orchestration, and the elicitation chain.|seams-v2
+GWSTREAM|component|components/gateway/stream-proxy.md|The stream proxy seam: session attachment, event relay, and reconnection for SSE readers.|seams-v2
+GWUPLOAD|component|components/gateway/upload-handler.md|The upload handler seam: upload proxying, validation, and staging.|seams-v2
+GWSEAM|interface|interfaces/gateway-seams.md|The boundary between each gateway seam and the session core.|seams-v2

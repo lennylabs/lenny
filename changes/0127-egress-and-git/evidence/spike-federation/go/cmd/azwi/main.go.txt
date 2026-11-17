@@ -1,0 +1,57 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
+
+	"spikefed/cmd/swaplib"
+)
+
+func main() {
+	ctx := context.Background()
+	swaplib.Swap("/var/run/netagent/azure", 1)
+	var cred azcore.TokenCredential
+	var err error
+	disable := os.Getenv("DISABLE_ID") != "0"
+	switch os.Getenv("MODE") {
+	case "default":
+		cred, err = azidentity.NewDefaultAzureCredential(&azidentity.DefaultAzureCredentialOptions{DisableInstanceDiscovery: disable})
+	case "args":
+		cred, err = azidentity.NewWorkloadIdentityCredential(&azidentity.WorkloadIdentityCredentialOptions{
+			ClientID: os.Getenv("X_CLIENT_ID"), TenantID: os.Getenv("X_TENANT_ID"),
+			TokenFilePath: "/var/run/netagent/azure/token", DisableInstanceDiscovery: disable})
+	default:
+		cred, err = azidentity.NewWorkloadIdentityCredential(&azidentity.WorkloadIdentityCredentialOptions{DisableInstanceDiscovery: disable})
+	}
+	if err != nil {
+		fmt.Println("ERR ctor:", err)
+		return
+	}
+	call := func() {
+		t, err := cred.GetToken(ctx, policy.TokenRequestOptions{Scopes: []string{"https://management.azure.com/.default"}})
+		if err != nil {
+			fmt.Println("ERR token:", err)
+			return
+		}
+		req, _ := http.NewRequest("GET", os.Getenv("API_URL"), nil)
+		req.Header.Set("Authorization", "Bearer "+t.Token)
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Println("ERR api:", err)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		fmt.Println("api ->", string(b))
+	}
+	call()
+	swaplib.Swap("/var/run/netagent/azure", 2)
+	swaplib.Sleep()
+	call()
+}

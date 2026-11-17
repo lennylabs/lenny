@@ -1,0 +1,6 @@
+### route-T-clone rc=0
+$ git clone -q https://ghes.example.test/acme/widgets.git c 2>&1; git -C c log --oneline 2>/dev/null | wc -l
+6
+### route-T-push rc=0
+$ git push -q origin HEAD 2>&1
+

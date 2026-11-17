@@ -1,0 +1,626 @@
+package main
+
+// Slot attribution probes: a netagent-like listener that resolves each accepted
+// loopback connection's owner UID through NETLINK_SOCK_DIAG and /proc/net/tcp{,6},
+// and slot-side clients that open connections, pass sockets, and race closes.
+
+import (
+	"bufio"
+	"encoding/binary"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net"
+	"net/netip"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"golang.org/x/sys/unix"
+)
+
+const sockDiagByFamily = 20
+
+var nlPool = sync.Pool{New: func() any {
+	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, unix.NETLINK_SOCK_DIAG)
+	if err != nil {
+		return err
+	}
+	return fd
+}}
+
+var nlSeq uint32
+
+func putAddr(b []byte, a netip.Addr) {
+	if a.Is4() {
+		x := a.As4()
+		copy(b, x[:])
+	} else {
+		x := a.As16()
+		copy(b, x[:])
+	}
+}
+
+// diagLookup asks for one socket by its 4-tuple (no dump). src is the connecting
+// socket's local address, dst the listener's.
+func diagLookup(src, dst netip.AddrPort) (uid, state int, err error) {
+	v := nlPool.Get()
+	if e, ok := v.(error); ok {
+		return -1, 0, e
+	}
+	fd := v.(int)
+	defer nlPool.Put(fd)
+	fam := unix.AF_INET
+	if src.Addr().Is6() {
+		fam = unix.AF_INET6
+	}
+	b := make([]byte, 72)
+	binary.LittleEndian.PutUint32(b[0:], 72)
+	binary.LittleEndian.PutUint16(b[4:], sockDiagByFamily)
+	binary.LittleEndian.PutUint16(b[6:], unix.NLM_F_REQUEST)
+	binary.LittleEndian.PutUint32(b[8:], atomic.AddUint32(&nlSeq, 1))
+	b[16] = byte(fam)
+	b[17] = unix.IPPROTO_TCP
+	binary.LittleEndian.PutUint32(b[20:], 0xffffffff)
+	binary.BigEndian.PutUint16(b[24:], src.Port())
+	binary.BigEndian.PutUint16(b[26:], dst.Port())
+	putAddr(b[28:44], src.Addr())
+	putAddr(b[44:60], dst.Addr())
+	binary.LittleEndian.PutUint32(b[64:], 0xffffffff)
+	binary.LittleEndian.PutUint32(b[68:], 0xffffffff)
+	if err := unix.Sendto(fd, b, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
+		return -1, 0, err
+	}
+	r := make([]byte, 4096)
+	n, _, err := unix.Recvfrom(fd, r, 0)
+	if err != nil {
+		return -1, 0, err
+	}
+	if n < 16 {
+		return -1, 0, fmt.Errorf("short %d", n)
+	}
+	typ := binary.LittleEndian.Uint16(r[4:])
+	switch typ {
+	case unix.NLMSG_ERROR:
+		e := -int32(binary.LittleEndian.Uint32(r[16:]))
+		return -1, 0, unix.Errno(e)
+	case sockDiagByFamily:
+		if n < 16+72 {
+			return -1, 0, fmt.Errorf("short msg %d", n)
+		}
+		return int(binary.LittleEndian.Uint32(r[16+64:])), int(r[17]), nil
+	}
+	return -1, 0, fmt.Errorf("type %d", typ)
+}
+
+// diagDump dumps every TCP socket of a family and returns the count and the time.
+func diagDump(fam int) (int, error) {
+	fd, err := unix.Socket(unix.AF_NETLINK, unix.SOCK_DGRAM|unix.SOCK_CLOEXEC, unix.NETLINK_SOCK_DIAG)
+	if err != nil {
+		return 0, err
+	}
+	defer unix.Close(fd)
+	b := make([]byte, 72)
+	binary.LittleEndian.PutUint32(b[0:], 72)
+	binary.LittleEndian.PutUint16(b[4:], sockDiagByFamily)
+	binary.LittleEndian.PutUint16(b[6:], unix.NLM_F_REQUEST|unix.NLM_F_DUMP)
+	b[16] = byte(fam)
+	b[17] = unix.IPPROTO_TCP
+	binary.LittleEndian.PutUint32(b[20:], 0xffffffff)
+	if err := unix.Sendto(fd, b, 0, &unix.SockaddrNetlink{Family: unix.AF_NETLINK}); err != nil {
+		return 0, err
+	}
+	r := make([]byte, 1<<16)
+	cnt := 0
+	for {
+		n, _, err := unix.Recvfrom(fd, r, 0)
+		if err != nil {
+			return cnt, err
+		}
+		off := 0
+		for off+16 <= n {
+			l := int(binary.LittleEndian.Uint32(r[off:]))
+			t := binary.LittleEndian.Uint16(r[off+4:])
+			if t == unix.NLMSG_DONE {
+				return cnt, nil
+			}
+			if t == unix.NLMSG_ERROR {
+				return cnt, unix.Errno(-int32(binary.LittleEndian.Uint32(r[off+16:])))
+			}
+			cnt++
+			if l < 16 {
+				return cnt, fmt.Errorf("bad len")
+			}
+			off += (l + 3) &^ 3
+		}
+	}
+}
+
+func procFmt(a netip.AddrPort) string {
+	if a.Addr().Is4() {
+		x := a.Addr().As4()
+		return fmt.Sprintf("%08X:%04X", binary.LittleEndian.Uint32(x[:]), a.Port())
+	}
+	x := a.Addr().As16()
+	s := ""
+	for i := 0; i < 16; i += 4 {
+		s += fmt.Sprintf("%08X", binary.LittleEndian.Uint32(x[i:]))
+	}
+	return fmt.Sprintf("%s:%04X", s, a.Port())
+}
+
+func procLookup(src, dst netip.AddrPort) (uid int, state int, rows int, err error) {
+	f := "/proc/net/tcp"
+	if src.Addr().Is6() {
+		f = "/proc/net/tcp6"
+	}
+	data, err := os.ReadFile(f)
+	if err != nil {
+		return -1, 0, 0, err
+	}
+	ls, rs := procFmt(src), procFmt(dst)
+	lines := strings.Split(string(data), "\n")
+	for _, ln := range lines[1:] {
+		fs := strings.Fields(ln)
+		if len(fs) < 10 {
+			continue
+		}
+		rows++
+		if strings.EqualFold(fs[1], ls) && strings.EqualFold(fs[2], rs) {
+			u, e := strconv.Atoi(fs[7])
+			st, _ := strconv.ParseInt(fs[3], 16, 32)
+			if e != nil {
+				return -1, int(st), rows, e
+			}
+			return u, int(st), rows, nil
+		}
+	}
+	return -1, 0, rows, fmt.Errorf("not found in %d rows", rows)
+}
+
+type rec struct {
+	Label    string `json:"label"`
+	ClaimUID int    `json:"claim_uid"`
+	Fam      string `json:"fam"`
+	RPort    int    `json:"rport"`
+	DiagUID  int    `json:"diag_uid"`
+	DiagSt   int    `json:"diag_state"`
+	DiagErr  string `json:"diag_err,omitempty"`
+	DiagNs   int64  `json:"diag_ns"`
+	ProcUID  int    `json:"proc_uid"`
+	ProcSt   int    `json:"proc_state"`
+	ProcErr  string `json:"proc_err,omitempty"`
+	ProcNs   int64  `json:"proc_ns"`
+	ProcRows int    `json:"proc_rows"`
+}
+
+type held struct{ src, dst netip.AddrPort }
+
+var (
+	mu      sync.Mutex
+	recs    []rec
+	conns   = map[*net.TCPConn]held{}
+	delayMs atomic.Int64
+	readers atomic.Int64 // 1 diag, 2 proc, 3 both (0 = both)
+	outF    *os.File
+)
+
+func errs(e error) string {
+	if e == nil {
+		return ""
+	}
+	return e.Error()
+}
+
+func addrPort(a net.Addr) netip.AddrPort {
+	t := a.(*net.TCPAddr).AddrPort()
+	return netip.AddrPortFrom(t.Addr().Unmap(), t.Port())
+}
+
+func handle(c *net.TCPConn) {
+	src, dst := addrPort(c.RemoteAddr()), addrPort(c.LocalAddr())
+	if d := delayMs.Load(); d > 0 {
+		time.Sleep(time.Duration(d) * time.Millisecond)
+	}
+	r := rec{Fam: "4", RPort: int(src.Port())}
+	if src.Addr().Is6() {
+		r.Fam = "6"
+	}
+	rd := readers.Load()
+	if rd == 0 {
+		rd = 3
+	}
+	var e error
+	if rd&1 != 0 {
+		t0 := time.Now()
+		r.DiagUID, r.DiagSt, e = diagLookup(src, dst)
+		r.DiagNs = time.Since(t0).Nanoseconds()
+		r.DiagErr = errs(e)
+	} else {
+		r.DiagErr = "skipped"
+	}
+	if rd&2 != 0 {
+		t1 := time.Now()
+		r.ProcUID, r.ProcSt, r.ProcRows, e = procLookup(src, dst)
+		r.ProcNs = time.Since(t1).Nanoseconds()
+		r.ProcErr = errs(e)
+	} else {
+		r.ProcErr = "skipped"
+	}
+	mu.Lock()
+	conns[c] = held{src, dst}
+	mu.Unlock()
+	c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	br := bufio.NewReader(c)
+	line, _ := br.ReadString('\n')
+	fs := strings.Fields(line)
+	r.Label, r.ClaimUID = "noclaim", -1
+	if len(fs) >= 2 {
+		r.Label = fs[0]
+		r.ClaimUID, _ = strconv.Atoi(fs[1])
+	}
+	mu.Lock()
+	recs = append(recs, r)
+	if outF != nil {
+		j, _ := json.Marshal(r)
+		outF.Write(append(j, '\n'))
+	}
+	mu.Unlock()
+	c.SetReadDeadline(time.Time{})
+	buf := make([]byte, 256)
+	for {
+		if _, err := br.Read(buf); err != nil {
+			break
+		}
+	}
+	mu.Lock()
+	delete(conns, c)
+	mu.Unlock()
+	c.Close()
+}
+
+func pct(v []int64, p float64) float64 {
+	if len(v) == 0 {
+		return 0
+	}
+	s := append([]int64(nil), v...)
+	sort.Slice(s, func(i, j int) bool { return s[i] < s[j] })
+	i := int(float64(len(s)-1) * p)
+	return float64(s[i]) / 1000.0 // microseconds
+}
+
+func latStats(v []int64) map[string]float64 {
+	return map[string]float64{"n": float64(len(v)), "p50_us": pct(v, .5), "p99_us": pct(v, .99), "max_us": pct(v, 1)}
+}
+
+func summary() any {
+	mu.Lock()
+	defer mu.Unlock()
+	type agg struct {
+		N, DiagOK, ProcOK, DiagMismatch, ProcMismatch int
+		DiagUIDs, ProcUIDs                             map[string]int
+		DiagErrs, ProcErrs                             map[string]int
+		DiagLat, ProcLat                               map[string]float64
+		ProcRowsMax                                    int
+	}
+	out := map[string]*agg{}
+	dl, pl := map[string][]int64{}, map[string][]int64{}
+	for _, r := range recs {
+		k := r.Label + "/v" + r.Fam
+		a := out[k]
+		if a == nil {
+			a = &agg{DiagUIDs: map[string]int{}, ProcUIDs: map[string]int{}, DiagErrs: map[string]int{}, ProcErrs: map[string]int{}}
+			out[k] = a
+		}
+		a.N++
+		if r.DiagErr == "" {
+			a.DiagOK++
+			a.DiagUIDs[strconv.Itoa(r.DiagUID)+"/st"+strconv.Itoa(r.DiagSt)]++
+			if r.DiagUID != r.ClaimUID {
+				a.DiagMismatch++
+			}
+		} else {
+			a.DiagErrs[r.DiagErr]++
+		}
+		if r.ProcErr == "" {
+			a.ProcOK++
+			a.ProcUIDs[strconv.Itoa(r.ProcUID)+"/st"+strconv.Itoa(r.ProcSt)]++
+			if r.ProcUID != r.ClaimUID {
+				a.ProcMismatch++
+			}
+		} else {
+			e := r.ProcErr
+			if strings.HasPrefix(e, "not found") {
+				e = "not found"
+			}
+			a.ProcErrs[e]++
+		}
+		if r.ProcRows > a.ProcRowsMax {
+			a.ProcRowsMax = r.ProcRows
+		}
+		dl[k] = append(dl[k], r.DiagNs)
+		pl[k] = append(pl[k], r.ProcNs)
+	}
+	for k, a := range out {
+		a.DiagLat, a.ProcLat = latStats(dl[k]), latStats(pl[k])
+	}
+	return out
+}
+
+// bench re-resolves every held connection, sequentially and with 8 workers.
+func bench() any {
+	mu.Lock()
+	hs := make([]held, 0, len(conns))
+	for _, h := range conns {
+		hs = append(hs, h)
+	}
+	mu.Unlock()
+	res := map[string]any{"held": len(hs)}
+	var dlat, plat []int64
+	uids := map[string]int{}
+	derr, perr := 0, 0
+	for _, h := range hs {
+		t0 := time.Now()
+		u, _, e := diagLookup(h.src, h.dst)
+		dlat = append(dlat, time.Since(t0).Nanoseconds())
+		if e != nil {
+			derr++
+		} else {
+			uids["diag:"+strconv.Itoa(u)]++
+		}
+		t1 := time.Now()
+		pu, _, _, e2 := procLookup(h.src, h.dst)
+		plat = append(plat, time.Since(t1).Nanoseconds())
+		if e2 != nil {
+			perr++
+		} else {
+			uids["proc:"+strconv.Itoa(pu)]++
+		}
+	}
+	res["seq_diag"], res["seq_proc"] = latStats(dlat), latStats(plat)
+	res["diag_err"], res["proc_err"], res["uids"] = derr, perr, uids
+	// parallel diag lookups: throughput
+	for _, which := range []string{"diag", "proc"} {
+		var wg sync.WaitGroup
+		var next atomic.Int64
+		t0 := time.Now()
+		for w := 0; w < 8; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for {
+					i := next.Add(1) - 1
+					if int(i) >= len(hs) {
+						return
+					}
+					if which == "diag" {
+						diagLookup(hs[i].src, hs[i].dst)
+					} else {
+						procLookup(hs[i].src, hs[i].dst)
+					}
+				}
+			}()
+		}
+		wg.Wait()
+		el := time.Since(t0)
+		res["par8_"+which+"_total_ms"] = float64(el.Microseconds()) / 1000
+	}
+	for _, f := range []int{unix.AF_INET, unix.AF_INET6} {
+		t0 := time.Now()
+		n, e := diagDump(f)
+		res[fmt.Sprintf("dump_af%d", f)] = map[string]any{"rows": n, "ms": float64(time.Since(t0).Microseconds()) / 1000, "err": errs(e)}
+	}
+	return res
+}
+
+func cmdListen(args []string) {
+	fs := flag.NewFlagSet("listen", flag.ExitOnError)
+	addrs := fs.String("addrs", "127.0.0.1:9000,[::1]:9000", "")
+	ctlAddr := fs.String("ctl", "127.0.0.1:9100", "")
+	out := fs.String("out", "", "jsonl file")
+	fs.Parse(args)
+	if *out != "" {
+		outF, _ = os.OpenFile(*out, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	}
+	for _, a := range strings.Split(*addrs, ",") {
+		l, err := net.Listen("tcp", a)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "listen", a, err)
+			continue
+		}
+		fmt.Fprintln(os.Stderr, "listening", a)
+		go func() {
+			for {
+				c, err := l.Accept()
+				if err != nil {
+					continue
+				}
+				go handle(c.(*net.TCPConn))
+			}
+		}()
+	}
+	cl, err := net.Listen("tcp", *ctlAddr)
+	if err != nil {
+		panic(err)
+	}
+	for {
+		c, err := cl.Accept()
+		if err != nil {
+			continue
+		}
+		go func() {
+			defer c.Close()
+			line, _ := bufio.NewReader(c).ReadString('\n')
+			fs := strings.Fields(line)
+			var res any
+			switch {
+			case len(fs) == 0:
+				res = "empty"
+			case fs[0] == "summary":
+				res = summary()
+			case fs[0] == "bench":
+				res = bench()
+			case fs[0] == "reset":
+				mu.Lock()
+				recs = nil
+				mu.Unlock()
+				res = "ok"
+			case fs[0] == "delay" && len(fs) > 1:
+				d, _ := strconv.Atoi(fs[1])
+				delayMs.Store(int64(d))
+				res = "ok"
+			case fs[0] == "readers" && len(fs) > 1:
+				readers.Store(map[string]int64{"diag": 1, "proc": 2, "both": 3}[fs[1]])
+				res = "ok"
+			case fs[0] == "held":
+				mu.Lock()
+				res = len(conns)
+				mu.Unlock()
+			default:
+				res = "unknown"
+			}
+			j, _ := json.Marshal(res)
+			c.Write(append(j, '\n'))
+		}()
+	}
+}
+
+func cmdCtl(args []string) {
+	addr := "127.0.0.1:9100"
+	c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		fmt.Println(`{"ctl_err":"` + err.Error() + `"}`)
+		os.Exit(1)
+	}
+	fmt.Fprintln(c, strings.Join(args, " "))
+	c.SetReadDeadline(time.Now().Add(120 * time.Second))
+	line, _ := bufio.NewReader(c).ReadString('\n')
+	fmt.Print(line)
+}
+
+func cmdConn(args []string) {
+	fs := flag.NewFlagSet("conn", flag.ExitOnError)
+	addr := fs.String("addr", "127.0.0.1:9000", "")
+	n := fs.Int("n", 1, "")
+	par := fs.Int("par", 64, "")
+	label := fs.String("label", "x", "")
+	hold := fs.Duration("hold", 2*time.Second, "")
+	mode := fs.String("mode", "normal", "normal|close|rst")
+	fs.Parse(args)
+	uid := os.Getuid()
+	var ok, fail atomic.Int64
+	errm := sync.Map{}
+	var lat []int64
+	var lmu sync.Mutex
+	sem := make(chan struct{}, *par)
+	var wg sync.WaitGroup
+	var keep []net.Conn
+	var kmu sync.Mutex
+	for i := 0; i < *n; i++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			t0 := time.Now()
+			c, err := net.DialTimeout("tcp", *addr, 10*time.Second)
+			if err != nil {
+				fail.Add(1)
+				errm.Store(err.Error(), true)
+				return
+			}
+			lmu.Lock()
+			lat = append(lat, time.Since(t0).Nanoseconds())
+			lmu.Unlock()
+			fmt.Fprintf(c, "%s %d\n", *label, uid)
+			ok.Add(1)
+			switch *mode {
+			case "close":
+				c.Close()
+				return
+			case "rst":
+				c.(*net.TCPConn).SetLinger(0)
+				c.Close()
+				return
+			}
+			kmu.Lock()
+			keep = append(keep, c)
+			kmu.Unlock()
+		}()
+	}
+	wg.Wait()
+	es := []string{}
+	errm.Range(func(k, _ any) bool { es = append(es, k.(string)); return true })
+	j, _ := json.Marshal(map[string]any{"label": *label, "uid": uid, "ok": ok.Load(), "fail": fail.Load(), "errs": es, "connect": latStats(lat)})
+	fmt.Println(string(j))
+	time.Sleep(*hold)
+	for _, c := range keep {
+		c.Close()
+	}
+}
+
+// passcli creates a TCP socket (optionally connected) and passes it over an abstract Unix socket.
+func cmdPassCli(args []string) {
+	fs := flag.NewFlagSet("passcli", flag.ExitOnError)
+	name := fs.String("name", "aqpass", "")
+	addr := fs.String("addr", "127.0.0.1:9000", "")
+	connected := fs.Bool("connected", false, "")
+	fs.Parse(args)
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_STREAM, 0)
+	if err != nil {
+		panic(err)
+	}
+	if *connected {
+		ap := netip.MustParseAddrPort(*addr)
+		if err := unix.Connect(fd, &unix.SockaddrInet4{Port: int(ap.Port()), Addr: ap.Addr().As4()}); err != nil {
+			panic(err)
+		}
+	}
+	c, err := net.Dial("unix", "@"+*name)
+	if err != nil {
+		fmt.Println(`{"passcli_err":"` + err.Error() + `"}`)
+		os.Exit(1)
+	}
+	_, _, err = c.(*net.UnixConn).WriteMsgUnix([]byte("x"), unix.UnixRights(fd), nil)
+	unix.Close(fd)
+	b := make([]byte, 16)
+	c.Read(b)
+	fmt.Printf(`{"passcli":"sent","uid":%d,"connected":%v,"err":%q}`+"\n", os.Getuid(), *connected, errs(err))
+}
+
+func cmdPassSrv(args []string) {
+	fs := flag.NewFlagSet("passsrv", flag.ExitOnError)
+	name := fs.String("name", "aqpass", "")
+	addr := fs.String("addr", "127.0.0.1:9000", "")
+	label := fs.String("label", "passed", "")
+	hold := fs.Duration("hold", 5*time.Second, "")
+	fs.Parse(args)
+	l, err := net.Listen("unix", "@"+*name)
+	if err != nil {
+		panic(err)
+	}
+	c, err := l.Accept()
+	if err != nil {
+		panic(err)
+	}
+	b, oob := make([]byte, 16), make([]byte, 64)
+	_, oobn, _, _, err := c.(*net.UnixConn).ReadMsgUnix(b, oob)
+	if err != nil {
+		panic(err)
+	}
+	msgs, _ := unix.ParseSocketControlMessage(oob[:oobn])
+	fds, _ := unix.ParseUnixRights(&msgs[0])
+	fd := fds[0]
+	c.Write([]byte("ok"))
+	c.Close()
+	ap := netip.MustParseAddrPort(*addr)
+	cerr := unix.Connect(fd, &unix.SockaddrInet4{Port: int(ap.Port()), Addr: ap.Addr().As4()})
+	_, werr := unix.Write(fd, []byte(fmt.Sprintf("%s %d\n", *label, os.Getuid())))
+	fmt.Printf(`{"passsrv":"used","uid":%d,"connect_err":%q,"write_err":%q}`+"\n", os.Getuid(), errs(cerr), errs(werr))
+	time.Sleep(*hold)
+	unix.Close(fd)
+}

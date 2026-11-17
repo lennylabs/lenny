@@ -1,0 +1,140 @@
+=== cases: the same client with the check and without it
+match, TLS 1.3                               check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1493,"reads":3,"records":1,"check_us":6,"parse_us":0.625}
+                                             no check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+match, TLS 1.2                               check: OK tls=303 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=303\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":245,"reads":3,"records":1,"check_us":8,"parse_us":0.75}
+                                             no check: OK tls=303 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=303\n"
+mismatch, TLS 1.3                            check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"server name differs from authority","sni":"other.oa.test","hello_bytes":1492,"reads":3,"records":1,"check_us":7,"parse_us":0.541}
+                                             no check: OK tls=304 body="f-8\r\n\r\nok host=target.oa.test:443 sni=other.oa.test tls=304\n"
+mismatch, TLS 1.2                            check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"server name differs from authority","sni":"other.oa.test","hello_bytes":244,"reads":3,"records":1,"check_us":2,"parse_us":0.5}
+                                             no check: OK tls=303 body="f-8\r\n\r\nok host=target.oa.test:443 sni=other.oa.test tls=303\n"
+no SNI                                       check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"no server name","sni":"","hello_bytes":1498,"reads":3,"records":1,"check_us":6,"parse_us":0.417}
+                                             no check: OK tls=304 body="n; charset=utf-8\r\n\r\nok host=target.oa.test:443 sni= tls=304\n"
+non-TLS first byte (plain HTTP)              check: closed after 0s (read tcp 198.19.50.31:47504->198.19.50.70:3128: read: connection reset by peer)
+                                             agent: {"result":"closed","reason":"not a TLS handshake record: first byte 0x47","sni":null,"hello_bytes":1,"reads":1,"records":0,"check_us":2,"parse_us":null}
+                                             no check: server spoke 64 bytes (0x48) after 0s
+SSLv2-format hello                           check: closed after 0s (read tcp 198.19.50.31:47514->198.19.50.70:3128: read: connection reset by peer)
+                                             agent: {"result":"closed","reason":"not a TLS handshake record: first byte 0x80","sni":null,"hello_bytes":1,"reads":1,"records":0,"check_us":2,"parse_us":null}
+                                             no check: server spoke 7 bytes (0x15) after 0s
+split: first flight in 1-byte TCP segments   check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1521,"reads":1521,"records":1,"check_us":2984235,"parse_us":3}
+                                             no check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+split: 5-byte TCP segments, 20 ms apart      check: REFUSED handshake: write tcp 198.19.50.31:32892->198.19.50.70:3128: write: broken pipe
+                                             agent: {"result":"closed","reason":"short record: read tcp 198.19.50.70:3128->198.19.50.31:32892: i/o timeout","sni":null,"hello_bytes":1175,"reads":236,"records":0,"check_us":5001126,"parse_us":null}
+                                             no check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+split: mismatch, 40-byte TCP segments        check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"server name differs from authority","sni":"other.oa.test","hello_bytes":1520,"reads":40,"records":1,"check_us":224232,"parse_us":3.667}
+                                             no check: OK tls=304 body="f-8\r\n\r\nok host=target.oa.test:443 sni=other.oa.test tls=304\n"
+split: hello across TLS records (64 bytes)   check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1636,"reads":72,"records":24,"check_us":63,"parse_us":0.875}
+                                             no check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+split: mismatch across TLS records (64)      check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"server name differs from authority","sni":"other.oa.test","hello_bytes":1635,"reads":72,"records":24,"check_us":49,"parse_us":0.75}
+                                             no check: OK tls=304 body="f-8\r\n\r\nok host=target.oa.test:443 sni=other.oa.test tls=304\n"
+split: records of 1 byte                     check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":9096,"reads":4548,"records":1516,"check_us":1198,"parse_us":0.583}
+                                             no check: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+client silent after the 200                  check: closed after 5.005s (EOF)
+                                             agent: {"result":"closed","reason":"no first byte: read tcp 198.19.50.70:3128->198.19.50.31:55064: i/o timeout","sni":null,"hello_bytes":0,"reads":0,"records":0,"check_us":null,"parse_us":null}
+                                             no check: still open after 7s
+3 bytes then a stall                         check: closed after 5.004s (EOF)
+                                             agent: {"result":"closed","reason":"short record header: read tcp 198.19.50.70:3128->198.19.50.31:38330: i/o timeout","sni":null,"hello_bytes":3,"reads":2,"records":0,"check_us":5003737,"parse_us":null}
+                                             no check: still open after 7s
+two server_name extensions                   check: closed after 0s (EOF)
+                                             agent: {"result":"closed","reason":"duplicate server_name extension","sni":"","hello_bytes":97,"reads":3,"records":1,"check_us":7,"parse_us":0.625}
+                                             no check: server spoke 7 bytes (0x15) after 0s
+two names in the list                        check: closed after 0s (EOF)
+                                             agent: {"result":"closed","reason":"server_name list does not hold one name","sni":"","hello_bytes":91,"reads":3,"records":1,"check_us":2,"parse_us":0.5}
+                                             no check: server spoke 7 bytes (0x15) after 0s
+record length 65535                          check: closed after 0s (EOF)
+                                             agent: {"result":"closed","reason":"bad record length 65535","sni":null,"hello_bytes":5,"reads":2,"records":0,"check_us":3,"parse_us":null}
+                                             no check: server spoke 7 bytes (0x15) after 0s
+hello declares 1 MiB across records          check: closed after 0s (read tcp 198.19.50.31:34248->198.19.50.70:3128: read: connection reset by peer)
+                                             agent: {"result":"closed","reason":"hello above the cap","sni":null,"hello_bytes":16389,"reads":3,"records":1,"check_us":33,"parse_us":null}
+                                             no check: server spoke 7 bytes (0x15) after 0s
+authority is an IP literal, no SNI           check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"no server name","sni":"","hello_bytes":1498,"reads":3,"records":1,"check_us":7,"parse_us":0.417}
+                                             no check: OK tls=304 body="ain; charset=utf-8\r\n\r\nok host=198.19.50.20:443 sni= tls=304\n"
+authority is an IP literal, SNI names a host check: REFUSED handshake: EOF
+                                             agent: {"result":"closed","reason":"server name differs from authority","sni":"target.oa.test","hello_bytes":1521,"reads":3,"records":1,"check_us":8,"parse_us":0.458}
+                                             no check: OK tls=304 body="tf-8\r\n\r\nok host=198.19.50.20:443 sni=target.oa.test tls=304\n"
+authority upper case                         check: OK tls=304 body="-8\r\n\r\nok host=TARGET.OA.TEST:443 sni=target.oa.test tls=304\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1521,"reads":3,"records":1,"check_us":4,"parse_us":0.541}
+                                             no check: OK tls=304 body="-8\r\n\r\nok host=TARGET.OA.TEST:443 sni=target.oa.test tls=304\n"
+authority with trailing dot                  check: OK tls=304 body="8\r\n\r\nok host=target.oa.test.:443 sni=target.oa.test tls=304\n"
+                                             agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1521,"reads":3,"records":1,"check_us":9,"parse_us":0.541}
+                                             no check: OK tls=304 body="8\r\n\r\nok host=target.oa.test.:443 sni=target.oa.test tls=304\n"
+=== first-record-only variant: the hello split across TLS records
+match, records of 64 bytes: REFUSED handshake: read tcp 198.19.50.31:46624->198.19.50.72:3128: read: connection reset by peer
+{"result":"closed","reason":"hello does not fit the first record"}
+mismatch, records of 64 bytes: REFUSED handshake: read tcp 198.19.50.31:46640->198.19.50.72:3128: read: connection reset by peer
+{"result":"closed","reason":"hello does not fit the first record"}
+match, unsplit: OK tls=304 body="-8\r\n\r\nok host=target.oa.test:443 sni=target.oa.test tls=304\n"
+{"result":"pass","reason":null,"hello_bytes":1521,"reads":3}
+=== real clients through the check, TLS 1.2 and 1.3, with the hello they actually send
+curl OpenSSL default                     http=200 tls=0
+                                         agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1565,"reads":3,"records":1,"check_us":23,"parse_us":1.792}
+curl --tls-max 1.2                       http=200
+                                         agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":228,"reads":3,"records":1,"check_us":7,"parse_us":0.584}
+curl --tlsv1.3                           http=200
+                                         agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1492,"reads":3,"records":1,"check_us":12,"parse_us":0.958}
+curl uppercase URL host                  http=200
+                                         agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1565,"reads":3,"records":1,"check_us":6,"parse_us":0.875}
+curl trailing dot URL host               http=200
+                                         agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1565,"reads":3,"records":1,"check_us":5,"parse_us":0.709}
+curl --connect-to mismatch               curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+                                         agent: {"result":"closed","reason":"server name differs from authority","sni":"other.oa.test","hello_bytes":1564,"reads":3,"records":1,"check_us":15,"parse_us":0.625}
+curl by IP, no SNI                       curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading
+                                         agent: {"result":"closed","reason":"no server name","sni":"","hello_bytes":1542,"reads":3,"records":1,"check_us":5,"parse_us":0.375}
+git OpenSSL ls-remote (expects no repo)  fatal: https://target.oa.test//x.git/info/refs not valid: is this a git repository?
+                                         agent: {"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1565,"reads":3,"records":1,"check_us":13,"parse_us":0.708}
+New, TLSv1.2, Cipher is ECDHE-ECDSA-AES128-GCM-SHA256
+New, TLSv1.3, Cipher is TLS_AES_128_GCM_SHA256
+CONNECTED(00000003)
+no peer certificate available
+New, (NONE), Cipher is (NONE)
+{"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":214,"reads":3}
+{"result":"pass","reason":null,"sni":"target.oa.test","hello_bytes":1474,"reads":3}
+{"result":"closed","reason":"server name differs from authority","sni":"other.oa.test","hello_bytes":1546,"reads":3}
+requests 200
+httpx 200
+{"result":"pass","sni":"target.oa.test","hello_bytes":1545,"reads":3}
+{"result":"pass","sni":"target.oa.test","hello_bytes":1545,"reads":3}
+node fetch 200
+{"result":"pass","sni":"target.oa.test","hello_bytes":1606,"reads":3}
+java-httpclient https://target.oa.test/ OK 200 HTTP_1_1
+{"result":"pass","sni":"target.oa.test","hello_bytes":463,"reads":3}
+=== added latency: CONNECT plus TLS handshake, same client, check and no check alternating, 5 x 1000 each, TLS 1.3 and 1.2
+tls13 check    n=1000 fails=0 p50=1.009ms p90=1.512ms p99=2.917ms
+tls13 nocheck  n=1000 fails=0 p50=938µs p90=1.244ms p99=1.804ms
+tls13 check    n=1000 fails=0 p50=988µs p90=1.382ms p99=2.69ms
+tls13 nocheck  n=1000 fails=0 p50=973µs p90=1.41ms p99=2.644ms
+tls13 check    n=1000 fails=0 p50=988µs p90=1.359ms p99=2.218ms
+tls13 nocheck  n=1000 fails=0 p50=898µs p90=1.002ms p99=2.036ms
+tls13 check    n=1000 fails=0 p50=874µs p90=971µs p99=2.086ms
+tls13 nocheck  n=1000 fails=0 p50=915µs p90=1.097ms p99=1.788ms
+tls13 check    n=1000 fails=0 p50=977µs p90=1.401ms p99=3.061ms
+tls13 nocheck  n=1000 fails=0 p50=1.028ms p90=1.386ms p99=2.333ms
+tls12 check    n=1000 fails=0 p50=821µs p90=890µs p99=1.374ms
+tls12 nocheck  n=1000 fails=0 p50=838µs p90=1.01ms p99=1.663ms
+tls12 check    n=1000 fails=0 p50=832µs p90=926µs p99=1.22ms
+tls12 nocheck  n=1000 fails=0 p50=837µs p90=932µs p99=2.18ms
+tls12 check    n=1000 fails=0 p50=848µs p90=1.021ms p99=1.56ms
+tls12 nocheck  n=1000 fails=0 p50=850µs p90=1.057ms p99=2.881ms
+tls12 check    n=1000 fails=0 p50=864µs p90=1.013ms p99=1.338ms
+tls12 nocheck  n=1000 fails=0 p50=826µs p90=900µs p99=1.226ms
+tls12 check    n=1000 fails=0 p50=847µs p90=948µs p99=1.199ms
+tls12 nocheck  n=1000 fails=0 p50=840µs p90=951µs p99=1.468ms
+=== the check's own time, from the agent's log (all passing tunnels so far)
+Traceback (most recent call last):
+  File "<string>", line 5, in <module>
+    print('tunnels',len(r),'single-read tunnels',len(c),'read+parse us p50',c[len(c)//2],'p99',c[int(len(c)*.99)],'parser alone us p50',p[len(p)//2],'p99',p[int(len(p)*.99)])
+                                                                            ~^^^^^^^^^^^
+IndexError: list index out of range
+=== memory after the run
+oa-agent 15.82MiB / 128MiB
+oa-agentn 10.68MiB / 128MiB

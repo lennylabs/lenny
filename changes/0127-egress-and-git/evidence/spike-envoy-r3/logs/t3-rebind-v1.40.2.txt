@@ -1,0 +1,53 @@
+## phase 1: rebind.spike -> public 198.18.0.20 (TTL 1)
+   [21:00:25] dnsd: rebind.spike A=198.18.0.20 AAAA= ttl=1
+   [21:00:26] GET http://rebind.spike/ -> hello from target, you are 198.18.0.10:49162 => http=200 connect=200 time=0.020047s size=45 
+## phase 2: rebind.spike -> 2001:db8:1::20 (public v6, TTL 1): proves refresh is applied
+   [21:00:27] dnsd: rebind.spike A= AAAA=2001:db8:1::20 ttl=1
+   [21:00:30] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:33760 => http=200 connect=200 time=0.004341s size=50 
+## phase 3: rebind.spike -> 10.99.0.5 (private, reachable from Envoy) TTL 1
+   [21:00:30] dnsd: rebind.spike A=10.99.0.5 AAAA= ttl=1
+   [21:00:33] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:33770 => http=200 connect=200 time=0.002263s size=50 
+dns_cache.egress_dns.dns_address_filter_out: 2 dns_cache.egress_dns.dns_query_attempt: 12 dns_cache.egress_dns.dns_query_success: 12 dns_cache.egress_dns.host_address_changed: 4 dns_cache.egress_dns.host_removed: 0 dns_cache.egress_dns.num_hosts: 2 
+## phase 4: rebind.spike -> fd00:99::5 (ULA, reachable) TTL 0
+   [21:00:33] dnsd: rebind.spike A= AAAA=fd00:99::5 ttl=0
+   [21:00:36] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:33780 => http=200 connect=200 time=0.016546s size=50 
+dns_cache.egress_dns.dns_address_filter_out: 2 dns_cache.egress_dns.dns_query_attempt: 12 dns_cache.egress_dns.dns_query_success: 12 dns_cache.egress_dns.host_address_changed: 4 dns_cache.egress_dns.host_removed: 0 dns_cache.egress_dns.num_hosts: 2 
+## phase 5: mixed answer A=10.99.0.5,198.18.0.20
+   [21:00:36] dnsd: rebind.spike A=10.99.0.5,198.18.0.20 AAAA= ttl=1
+   [21:00:39] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:38744 => http=200 connect=200 time=0.002422s size=50 
+   [21:00:40] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:38760 => http=200 connect=200 time=0.002317s size=50 
+   [21:00:40] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:38772 => http=200 connect=200 time=0.001928s size=50 
+dns_cache.egress_dns.dns_address_filter_out: 2 dns_cache.egress_dns.dns_query_attempt: 12 dns_cache.egress_dns.dns_query_success: 12 dns_cache.egress_dns.host_address_changed: 4 dns_cache.egress_dns.host_removed: 0 dns_cache.egress_dns.num_hosts: 2 
+## phase 6: back to private only, then fresh name never resolved before
+   [21:00:40] dnsd: rebind.spike A=10.99.0.5 AAAA= ttl=1
+   [21:00:40] dnsd: fresh.spike A=10.99.0.5 AAAA= ttl=1
+   [21:00:43] GET http://rebind.spike/ -> hello from target, you are [2001:db8:1::10]:38780 => http=200 connect=200 time=0.001724s size=50 
+   [21:00:43] GET http://fresh.spike/ -> => http=000 connect=503 time=0.002005s size=0 
+dns_cache.egress_dns.dns_address_filter_out: 3 dns_cache.egress_dns.dns_query_attempt: 13 dns_cache.egress_dns.dns_query_success: 13 dns_cache.egress_dns.host_address_changed: 4 dns_cache.egress_dns.host_removed: 0 dns_cache.egress_dns.num_hosts: 3 
+## dnsd queries for rebind.spike (refresh cadence)
+0.700s TypeA -> [198.18.0.20];0.700s TypeAAAA -> [];0.900s TypeA -> [198.18.0.20];0.900s TypeAAAA -> [];1.702s TypeA -> [198.18.0.20];1.702s TypeAAAA -> [];1.900s TypeA -> [];1.900s TypeAAAA -> [2001:
+db8:1::20];2.704s TypeA -> [];2.705s TypeAAAA -> [2001:db8:1::20];2.902s TypeA -> [];2.902s TypeAAAA -> [2001:db8:1::20];3.706s TypeA -> [];3.707s TypeAAAA -> [2001:db8:1::20];3.903s TypeA -> [];3.903
+s TypeAAAA -> [2001:db8:1::20];4.708s TypeA -> [];4.708s TypeAAAA -> [2001:db8:1::20];4.904s TypeA -> [];4.904s TypeAAAA -> [2001:db8:1::20];5.710s TypeA -> [10.99.0.5];5.711s TypeAAAA -> [];5.907s Ty
+peA -> [10.99.0.5];5.908s TypeAAAA -> [];
+## long tunnel opened in phase 1 (target :7000 ticks once per second)
+CONNECT status: 200 OK
+tunnel ended after 25.00s: read tcp 198.18.0.2:52368->198.18.0.10:3128: i/o timeout (last="tick 24.1")
+rebind.spike:80 200 - via_upstream 198.18.0.20:80 14
+rebind.spike:80 200 DC downstream_remote_disconnect 198.18.0.20:80 19
+rebind.spike:7000 200 - via_upstream 198.18.0.20:7000 17
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 2
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 3
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 1
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 1
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 13
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 16
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 1
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 2
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 1
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 2
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 1
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 1
+rebind.spike:80 200 - via_upstream [2001:db8:1::20]:80 1
+rebind.spike:80 200 DC downstream_remote_disconnect [2001:db8:1::20]:80 1
+fresh.spike:80 503 DF dns_resolution_failure{address_denied} None 1
+rebind.spike:7000 200 DC downstream_remote_disconnect 198.18.0.20:7000 25024

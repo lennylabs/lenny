@@ -1,0 +1,42 @@
+=== direct call to the Token Service, qualifying session (as an old image or a client would)
+{"error":"session qualifies under allowRuntimeHeldCredentials on this host"}
+ http=403
+{"token":"MINT-W-acme_widgets"}
+ http=200
+=== qualifying session through netagent: mint requests during a clone and a push
+cloned
+push-done
+Token Service requests: 0
+8
+=== image without the attach rule (-held-rule=false), qualifying session
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+Token Service requests: 1    1 "decision":"refused" 
+"reason":""
+=== image older than the release handling (-handling 1), qualifying session
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+Token Service requests: 0
+"reason":""
+=== mirror route, qualifying session: a fetch takes the mirror token, a push takes the held value
+cloned
+push-done
+"host":"ghes.example.test" "kind":"info/refs" "repo":"acme/widgets" "status":200 "token":"MINT-W-acme_widgets" "host":"ghes.example.test" "kind":"git-receive-pack" "repo":"acme/widgets" "status":200 "token":"MINT-W-acme_widgets" "host":"ghes.example.test" "kind":"info/refs" "repo":"acme/widgets" "status":200 "token":"USER-FILE-CURRENT" "host":"ghes.example.test" "kind":"git-receive-pack" "repo":"acme/widgets" "status":200 "token":"USER-FILE-CURRENT" "host":"ghes.example.test" "kind":"info/refs" 
+=== non-qualifying session, no record
+cloned
+push-done
+Token Service requests: 5    5 "decision":"minted" 
+=== mirror
+cloned
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+push-done
+   2 netagent git-upload-pack allowed mirror
+   1 netagent receive-pack-advert allowed held
+   1 netagent upload-pack-advert allowed mirror
+   1 origin ghes.example.test info/refs acme/widgets 200 USER-FILE-CURRENT /acme/widgets.git/info/refs?service=git-receive-pack
+   2 origin mirror.example.test git-upload-pack acme/widgets 200 MIRROR-SA /ghes.example.test/acme/widgets.git/git-upload-pack
+   1 origin mirror.example.test info/refs acme/widgets 200 MIRROR-SA /ghes.example.test/acme/widgets.git/info/refs?service=git-up
+=== held-rule-false
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+   1 netagent upload-pack-advert refused the Token Service refused a mint: session qualifies under allowRuntimeHeldCredentials on t
+=== handling-1
+fatal: unable to access 'https://ghes.example.test/acme/widgets.git/': The requested URL returned error: 403
+   1 netagent upload-pack-advert refused the release's handling 2 is newer than this image's 1

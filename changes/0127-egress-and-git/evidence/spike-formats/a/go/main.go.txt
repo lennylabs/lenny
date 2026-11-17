@@ -1,0 +1,41 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+)
+
+func main() {
+	ctx := context.Background()
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion("us-east-1"))
+	if err != nil {
+		fmt.Println("CFGERR", err)
+		os.Exit(1)
+	}
+	c := s3.NewFromConfig(cfg, func(o *s3.Options) { o.UsePathStyle = true })
+	dur, _ := strconv.Atoi(os.Getenv("LOOP_SECONDS"))
+	iv, _ := strconv.Atoi(os.Getenv("INTERVAL"))
+	if iv == 0 {
+		iv = 15
+	}
+	start := time.Now()
+	for {
+		t := time.Now().UTC().Format("15:04:05")
+		r, err := c.ListBuckets(ctx, &s3.ListBucketsInput{})
+		if err != nil {
+			fmt.Println(t, "ERR", err)
+		} else {
+			fmt.Println(t, "OK", *r.Buckets[0].Name)
+		}
+		if time.Since(start)+time.Duration(iv)*time.Second > time.Duration(dur)*time.Second {
+			break
+		}
+		time.Sleep(time.Duration(iv) * time.Second)
+	}
+}

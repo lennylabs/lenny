@@ -1,0 +1,78 @@
+// nas: netagent stand-in for I1 and I2. A loopback CONNECT listener; each tunnel dials the central proxy (plain or TLS), authenticates, and copies bytes.
+package main
+
+import (
+	"bufio"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"flag"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+)
+
+func main() {
+	l := flag.String("listen", "127.0.0.1:3128", "")
+	proxy := flag.String("proxy", "", "")
+	cred := flag.String("cred", "agent:good", "")
+	useTLS := flag.Bool("tls", false, "")
+	caf := flag.String("ca", "", "")
+	sni := flag.String("sni", "lenny-egress.lenny-system.svc", "")
+	flag.Parse()
+	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(*cred))
+	var cfg *tls.Config
+	if *useTLS {
+		p := x509.NewCertPool()
+		b, err := os.ReadFile(*caf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		p.AppendCertsFromPEM(b)
+		cfg = &tls.Config{RootCAs: p, ServerName: *sni, NextProtos: []string{"http/1.1"}, ClientSessionCache: tls.NewLRUClientSessionCache(32)}
+	}
+	ln, err := net.Listen("tcp", *l)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			continue
+		}
+		go func() {
+			defer c.Close()
+			br := bufio.NewReader(c)
+			req, err := http.ReadRequest(br)
+			if err != nil || req.Method != "CONNECT" {
+				return
+			}
+			var up net.Conn
+			if cfg != nil {
+				up, err = tls.Dial("tcp", *proxy, cfg)
+			} else {
+				up, err = net.Dial("tcp", *proxy)
+			}
+			if err != nil {
+				fmt.Fprintf(c, "HTTP/1.1 503 upstream\r\n\r\n")
+				return
+			}
+			defer up.Close()
+			fmt.Fprintf(up, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: %s\r\n\r\n", req.Host, req.Host, auth)
+			ur := bufio.NewReader(up)
+			resp, err := http.ReadResponse(ur, &http.Request{Method: "CONNECT"})
+			if err != nil || resp.StatusCode != 200 {
+				fmt.Fprintf(c, "HTTP/1.1 502 refused\r\n\r\n")
+				return
+			}
+			fmt.Fprintf(c, "HTTP/1.1 200 OK\r\n\r\n")
+			done := make(chan struct{}, 2)
+			go func() { io.Copy(up, br); done <- struct{}{} }()
+			go func() { io.Copy(c, ur); done <- struct{}{} }()
+			<-done
+		}()
+	}
+}

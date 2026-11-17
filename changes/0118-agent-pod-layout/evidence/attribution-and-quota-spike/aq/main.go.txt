@@ -1,0 +1,48 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: aq listen|ctl|conn|passcli|passsrv|probe|qset|escape|fill|hide|ids|sleep")
+		os.Exit(2)
+	}
+	a := os.Args[2:]
+	switch os.Args[1] {
+	case "listen":
+		cmdListen(a)
+	case "ctl":
+		cmdCtl(a)
+	case "conn":
+		cmdConn(a)
+	case "passcli":
+		cmdPassCli(a)
+	case "passsrv":
+		cmdPassSrv(a)
+	case "probe":
+		cmdProbe(a)
+	case "qset":
+		cmdQset(a)
+	case "escape":
+		cmdEscape(a)
+	case "fill":
+		cmdFill(a)
+	case "hide":
+		cmdHide(a)
+	case "ids":
+		m, _ := os.ReadFile("/proc/self/uid_map")
+		g, _ := os.Getgroups()
+		fmt.Printf("{\"uid\":%d,\"gid\":%d,\"groups\":%v,\"uid_map\":%q}\n", os.Getuid(), os.Getgid(), g, string(m))
+	case "sleep":
+		for {
+			time.Sleep(time.Hour)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "unknown")
+		os.Exit(2)
+	}
+}

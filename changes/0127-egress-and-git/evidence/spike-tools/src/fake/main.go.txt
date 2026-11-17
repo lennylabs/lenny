@@ -1,0 +1,101 @@
+// Fake GHE / GitLab / npm / PyPI server for the spike. Logs auth headers.
+// Usage: fake gencerts <dir> | fake serve <dir>
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"log"
+	"math/big"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+var hosts = []string{"ghe.example.test", "gitlab.example.test", "npm.example.test", "pypi.example.test"}
+
+func writePEM(path, typ string, b []byte) {
+	f, err := os.Create(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	pem.Encode(f, &pem.Block{Type: typ, Bytes: b})
+	f.Close()
+}
+
+func gencerts(dir string) {
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caT := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "Spike Test CA"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(30 * 24 * time.Hour),
+		IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign}
+	caDER, _ := x509.CreateCertificate(rand.Reader, caT, caT, &caKey.PublicKey, caKey)
+	ca, _ := x509.ParseCertificate(caDER)
+	writePEM(filepath.Join(dir, "ca.pem"), "CERTIFICATE", caDER)
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: hosts[0]}, DNSNames: hosts,
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(30 * 24 * time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, _ := x509.CreateCertificate(rand.Reader, t, ca, &k.PublicKey, caKey)
+	writePEM(filepath.Join(dir, "server.pem"), "CERTIFICATE", der)
+	kb, _ := x509.MarshalECPrivateKey(k)
+	writePEM(filepath.Join(dir, "server.key"), "EC PRIVATE KEY", kb)
+}
+
+func handler(scheme string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s %s%s auth=%q private-token=%q job-token=%q ua=%q", scheme, r.Method, r.Host, r.URL.RequestURI(),
+			r.Header.Get("Authorization"), r.Header.Get("Private-Token"), r.Header.Get("Job-Token"), r.Header.Get("User-Agent"))
+		host := r.Host
+		if i := strings.IndexByte(host, ':'); i >= 0 {
+			host = host[:i]
+		}
+		w.Header().Set("Content-Type", "application/json")
+		p := r.URL.Path
+		switch {
+		case strings.HasPrefix(host, "ghe"):
+			w.Header().Set("X-GitHub-Media-Type", "github.v3")
+			w.Header().Set("X-Oauth-Scopes", "repo, read:org")
+			if strings.HasSuffix(p, "/graphql") {
+				fmt.Fprint(w, `{"data":{"viewer":{"login":"alice"}}}`)
+				return
+			}
+			fmt.Fprint(w, `{"login":"alice","id":1,"echo_auth":`+fmt.Sprintf("%q", r.Header.Get("Authorization"))+`}`)
+		case strings.HasPrefix(host, "gitlab"):
+			fmt.Fprint(w, `{"id":1,"username":"alice","name":"Alice","echo_token":`+fmt.Sprintf("%q", r.Header.Get("Private-Token")+r.Header.Get("Authorization"))+`}`)
+		case strings.HasPrefix(host, "npm"):
+			name := strings.TrimPrefix(p, "/")
+			fmt.Fprintf(w, `{"name":%q,"dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":%q,"version":"1.0.0","dist":{"tarball":"https://npm.example.test/%s/-/x-1.0.0.tgz","shasum":"0000000000000000000000000000000000000000"}}}}`, name, name, name)
+		case strings.HasPrefix(host, "pypi"):
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprint(w, `<!DOCTYPE html><html><body></body></html>`)
+		default:
+			fmt.Fprint(w, `{}`)
+		}
+	})
+}
+
+func main() {
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.LstdFlags | log.Lmicroseconds)
+	if os.Args[1] == "gencerts" {
+		gencerts(os.Args[2])
+		return
+	}
+	dir := os.Args[2]
+	cert, err := tls.LoadX509KeyPair(filepath.Join(dir, "server.pem"), filepath.Join(dir, "server.key"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	go func() { log.Fatal(http.ListenAndServe(":80", handler("http"))) }()
+	srv := &http.Server{Addr: ":443", Handler: handler("https"), TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}}}
+	log.Printf("fake serving :80 and :443")
+	log.Fatal(srv.ListenAndServeTLS("", ""))
+}

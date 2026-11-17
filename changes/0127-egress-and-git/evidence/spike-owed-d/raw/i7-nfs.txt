@@ -1,0 +1,221 @@
+kernel: 6.12.76-linuxkit
+nodev nfs;nodev nfs4;nodev nfsd;# CONFIG_NFS_V3_ACL is not set;CONFIG_NFS_V4=y;CONFIG_NFS_V4_1=y;CONFIG_NFS_V4_2=y;# CONFIG_NFSD_V3_ACL is not set;CONFIG_NFSD_V4=y;
+sha256:5241024aae2f3d50b5e061bab1a72b72690c66355c76badffb8ef6a79fb66ec6
+mount nfsd rc=0
+rpc_pipefs rc=0
+rpcbind rc=0
+exportfs rc=0
+rpc.nfsd: knfsd is currently down
+rpc.nfsd: Writing version string to kernel: -2 +3 +4 +4.1 +4.2
+rpc.nfsd: Created AF_INET TCP socket.
+rpc.nfsd: Created AF_INET6 TCP socket.
+rpc.nfsd rc=0
+rpc.mountd rc=0
++3 +4 +4.1 +4.2
+/dev/vda1 /export ext4 rw,relatime,discard 0 0
+   program vers proto   port  service
+    100000    4   tcp    111  portmapper
+    100000    3   tcp    111  portmapper
+    100000    2   tcp    111  portmapper
+    100000    4   udp    111  portmapper
+    100000    3   udp    111  portmapper
+    100000    2   udp    111  portmapper
+    100003    3   tcp   2049  nfs
+    100003    4   tcp   2049  nfs
+    100021    1   udp  55158  nlockmgr
+    100021    3   udp  55158  nlockmgr
+    100021    4   udp  55158  nlockmgr
+/export       	<world>(sync,wdelay,hide,no_subtree_check,fsid=0,sec=sys,rw,insecure,no_root_squash,no_all_squash)
+READY
+
+=========== client vers=4.2
+mount -t nfs vers=4.2 rc=0
+198.19.70.10:/ /mnt/n nfs4 rw,relatime,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,soft,proto=tcp,timeo=30,retrans=2,sec=sys,clientaddr=198.19.70.2,local_lock=none,addr=198.19.70.10 0 0
+--- what the mirror parent does: setxattr of the access and default ACL, through setfacl
+setfacl: /mnt/n/s-v4.2: Operation not supported
+setfacl rc=1
+getfacl: Removing leading '/' from absolute path names # file: mnt/n/s-v4.2 # owner: 0 # group: 0 # flags: -s- user::rwx group::rwx other::--- 
+getfattr: Removing leading '/' from absolute path names
+# file: mnt/n/s-v4.2
+system.nfs4_acl=0sAAAAAwAAAAAAAAAAABYB5wAAAAZPV05FUkAAAAAAAAAAAAAAABIA5wAAAAZHUk9VUEAAAAAAAAAAAAAAABIAgAAAAAlFVkVSWU9ORUAAAAA=
+
+nfs4_getfacl: A::OWNER@:rwaDxtTcCy A::GROUP@:rwaDxtcy A::EVERYONE@:tcy 
+--- the same grant through NFSv4 ACL tools, inheriting
+allow rc=0
+inherit rc=0
+after: A::OWNER@:rwaDxtTcCy A::GROUP@:rwaDxtcy A:g:63001:rxtcy A::EVERYONE@:tcy A:fdi:OWNER@:rwaDxtTcCy A:fdi:GROUP@:rwaDxtcy A:fdig:63001:rxtcy A:fdi:EVERYONE@:tcy 
+--- a fetch under UID 61002, group 62001, creates a directory and a file, a reader under group 63001 reads
+/mnt/n/s-v4.2:
+-rw-rw----+ 1 61002 62001    2 Nov  3 05:35 g
+drwxrws---+ 2 61002 62001 4096 Nov  3 05:35 sub
+
+/mnt/n/s-v4.2/sub:
+-rw-rw----+ 1 61002 62001 2 Nov  3 05:35 f
+new file: A::OWNER@:rwatTcCy A::GROUP@:rwatcy A:g:63001:rtcy A::EVERYONE@:tcy 
+reader-list rc=0
+reader-read rc=0
+reader-read-sub rc=0
+reader-create rc=2
+sh: 1: cannot create /mnt/n/s-v4.2/evil: Permission denied
+sh: 1: cannot create /mnt/n/s-v4.2/g: Permission denied
+reader-overwrite rc=2
+other-store-list rc=2
+--- the parent's order, as a non-root owner: a store with the mode and ACL set before its chown; a hostile setuid plant, and the chown
+prw-rw----+ 1 61002 62001  0 Nov  3 05:35 /mnt/n/s-v4.2/fifo
+lrwxrwxrwx  1 61002 62001 11 Nov  3 05:35 /mnt/n/s-v4.2/link -> /etc/passwd
+-rwsr-xr-x+ 1 61002 62001  2 Nov  3 05:35 /mnt/n/s-v4.2/suid
+chown of the setuid file as root with CAP_CHOWN: rc=0 mode now 755
+lchown of the symlink rc=0 target owner 0
+
+=========== client vers=4.1
+mount -t nfs vers=4.1 rc=0
+198.19.70.10:/ /mnt/n nfs4 rw,relatime,vers=4.1,rsize=1048576,wsize=1048576,namlen=255,soft,proto=tcp,timeo=30,retrans=2,sec=sys,clientaddr=198.19.70.2,local_lock=none,addr=198.19.70.10 0 0
+--- what the mirror parent does: setxattr of the access and default ACL, through setfacl
+setfacl: /mnt/n/s-v4.1: Operation not supported
+setfacl rc=1
+getfacl: Removing leading '/' from absolute path names # file: mnt/n/s-v4.1 # owner: 0 # group: 0 # flags: -s- user::rwx group::rwx other::--- 
+getfattr: Removing leading '/' from absolute path names
+# file: mnt/n/s-v4.1
+system.nfs4_acl=0sAAAAAwAAAAAAAAAAABYB5wAAAAZPV05FUkAAAAAAAAAAAAAAABIA5wAAAAZHUk9VUEAAAAAAAAAAAAAAABIAgAAAAAlFVkVSWU9ORUAAAAA=
+
+nfs4_getfacl: A::OWNER@:rwaDxtTcCy A::GROUP@:rwaDxtcy A::EVERYONE@:tcy 
+--- the same grant through NFSv4 ACL tools, inheriting
+allow rc=0
+inherit rc=0
+after: A::OWNER@:rwaDxtTcCy A::GROUP@:rwaDxtcy A:g:63001:rxtcy A::EVERYONE@:tcy A:fdi:OWNER@:rwaDxtTcCy A:fdi:GROUP@:rwaDxtcy A:fdig:63001:rxtcy A:fdi:EVERYONE@:tcy 
+--- a fetch under UID 61002, group 62001, creates a directory and a file, a reader under group 63001 reads
+/mnt/n/s-v4.1:
+-rw-rw----+ 1 61002 62001    2 Nov  3 05:35 g
+drwxrws---+ 2 61002 62001 4096 Nov  3 05:35 sub
+
+/mnt/n/s-v4.1/sub:
+-rw-rw----+ 1 61002 62001 2 Nov  3 05:35 f
+new file: A::OWNER@:rwatTcCy A::GROUP@:rwatcy A:g:63001:rtcy A::EVERYONE@:tcy 
+reader-list rc=0
+reader-read rc=0
+reader-read-sub rc=0
+sh: 1: cannot create /mnt/n/s-v4.1/evil: Permission denied
+reader-create rc=2
+sh: 1: cannot create /mnt/n/s-v4.1/g: Permission denied
+reader-overwrite rc=2
+other-store-list rc=2
+--- the parent's order, as a non-root owner: a store with the mode and ACL set before its chown; a hostile setuid plant, and the chown
+prw-r-----+ 1 61002 62001  0 Nov  3 05:35 /mnt/n/s-v4.1/fifo
+lrwxrwxrwx  1 61002 62001 11 Nov  3 05:35 /mnt/n/s-v4.1/link -> /etc/passwd
+-rwsr-xr-x+ 1 61002 62001  2 Nov  3 05:35 /mnt/n/s-v4.1/suid
+chown of the setuid file as root with CAP_CHOWN: rc=0 mode now 755
+lchown of the symlink rc=0 target owner 0
+
+=========== client vers=3
+mount -t nfs vers=3 rc=0
+198.19.70.10:/export /mnt/n nfs rw,relatime,vers=3,rsize=1048576,wsize=1048576,namlen=255,soft,nolock,proto=tcp,timeo=30,retrans=2,sec=sys,mountaddr=198.19.70.10,mountvers=3,mountport=40601,mountproto
+--- what the mirror parent does: setxattr of the access and default ACL, through setfacl
+setfacl: /mnt/n/s-v3: Operation not supported
+setfacl rc=1
+getfacl: Removing leading '/' from absolute path names # file: mnt/n/s-v3 # owner: 0 # group: 0 # flags: -s- user::rwx group::rwx other::--- 
+nfs4_getfacl: Operation to request attribute not supported: /mnt/n/s-v3 
+--- the same grant through NFSv4 ACL tools, inheriting
+Failed to instantiate ACL.
+allow rc=0
+Failed to instantiate ACL.
+inherit rc=1
+after: Operation to request attribute not supported: /mnt/n/s-v3 
+--- a fetch under UID 61002, group 62001, creates a directory and a file, a reader under group 63001 reads
+/mnt/n/s-v3:
+-rw-rw---- 1 61002 62001    2 Nov  3 05:35 g
+drwxrws--- 2 61002 62001 4096 Nov  3 05:35 sub
+
+/mnt/n/s-v3/sub:
+-rw-rw---- 1 61002 62001 2 Nov  3 05:35 f
+new file: Operation to request attribute not supported: /mnt/n/s-v3/g 
+reader-list rc=2
+reader-read rc=1
+reader-read-sub rc=1
+reader-create rc=2
+reader-overwrite rc=2
+sh: 1: cannot create /mnt/n/s-v3/evil: Permission denied
+sh: 1: cannot create /mnt/n/s-v3/g: Permission denied
+other-store-list rc=2
+--- the parent's order, as a non-root owner: a store with the mode and ACL set before its chown; a hostile setuid plant, and the chown
+prw-r--r-- 1 61002 62001  0 Nov  3 05:35 /mnt/n/s-v3/fifo
+lrwxrwxrwx 1 61002 62001 11 Nov  3 05:35 /mnt/n/s-v3/link -> /etc/passwd
+-rwsr-xr-x 1 61002 62001  2 Nov  3 05:35 /mnt/n/s-v3/suid
+chown of the setuid file as root with CAP_CHOWN: rc=0 mode now 755
+lchown of the symlink rc=0 target owner 0
+
+=========== server side: what the export holds
+/export/s-v3
+getfacl: Removing leading '/' from absolute path names # file: export/s-v3 # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx other::--- 
+getfacl: Removing leading '/' from absolute path names # file: export/s-v3/g # owner: 61002 # group: 62001 user::rw- group::rw- other::--- 
+/export/s-v4.1
+getfacl: Removing leading '/' from absolute path names # file: export/s-v4.1 # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx group:63001:r-x mask::rwx other::--- default:user::rwx default:group::rwx default:group:63001:r-x default:mask::rwx default:other::--- 
+getfacl: Removing leading '/' from absolute path names # file: export/s-v4.1/g # owner: 61002 # group: 62001 user::rw- group::rwx	#effective:rw- group:63001:r-x	#effective:r-- mask::rw- other::--- 
+/export/s-v4.2
+getfacl: Removing leading '/' from absolute path names # file: export/s-v4.2 # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx group:63001:r-x mask::rwx other::--- default:user::rwx default:group::rwx default:group:63001:r-x default:mask::rwx default:other::--- 
+getfacl: Removing leading '/' from absolute path names # file: export/s-v4.2/g # owner: 61002 # group: 62001 user::rw- group::rwx	#effective:rw- group:63001:r-x	#effective:r-- mask::rw- other::--- 
+
+=========== an ACL set on the server, through a mount: v3 and v4.2
+getfacl: Removing leading '/' from absolute path names
+# file: export/srv # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx group:63001:r-x mask::rwx other::--- default:user::rwx default:group::rwx default:group:63001:r-x default:mask::rwx default:other::--- 
+vers=4.2 mount rc=0
+getfacl: Removing leading '/' from absolute path names # file: m # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx other::--- 
+A::OWNER@:rwaDxtTcCy A::GROUP@:rwaDxtcy A:g:63001:rxtcy A::EVERYONE@:tcy A:fdi:OWNER@:rwaDxtTcCy A:fdi:GROUP@:rwaDxtcy A:fdig:63001:rxtcy A:fdi:EVERYONE@:tcy 
+
+reader-list rc=0
+reader-read rc=0
+reader-read-sub rc=0
+sh: 1: cannot create /m/evil4.2: Permission denied
+reader-create rc=2
+vers=3 mount rc=0
+getfacl: Removing leading '/' from absolute path names # file: m # owner: 60000 # group: 62001 # flags: -s- user::rwx group::rwx other::--- 
+Operation to request attribute not supported: /m 
+
+reader-list rc=0
+reader-read rc=0
+reader-read-sub rc=0
+sh: 1: cannot create /m/evil3: Permission denied
+reader-create rc=2
+/export/srv/d3: user::rwx group::rwx group:63001:r-x mask::rwx other::--- default:user::rwx default:group::rwx default:group:63001:r-x default:mask::rwx default:other::--- 
+/export/srv/d4.2: user::rwx group::rwx group:63001:r-x mask::rwx other::--- default:user::rwx default:group::rwx default:group:63001:r-x default:mask::rwx default:other::--- 
+/export/srv/f3: user::rw- group::rwx	#effective:rw- group:63001:r-x	#effective:r-- mask::rw- other::--- 
+/export/srv/f4.2: user::rw- group::rwx	#effective:rw- group:63001:r-x	#effective:r-- mask::rw- other::--- 
+
+##### second run: the non-root parent's chown and the helper, Mon Nov  2 21:36:27 PST 2026
+=========== vers=4.2, export no_root_squash
+mount vers=4.2 rc=0
+--- the fetch writes under UID 61002, group 62001
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 pack
+drwxrws--- 2 61002 62001 4096 Nov  3 05:38 sub
+--- the parent, non-root at UID 65532 with ambient CAP_CHOWN and the store group: the re-chown walk
+CapEff: 0000000000000001 CapAmb: 0000000000000001 
+rechown /mnt/n/p-v4.2: chowned=0 symlinks-not-followed=0 errors=3 in 1ms [/mnt/n/p-v4.2/sub/f lchown: operation not permitted /mnt/n/p-v4.2/sub lchown: operation not permitted /mnt/n/p-v4.2/pack lchown: operation not permitted]
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 pack
+drwxrws--- 2 61002 62001 4096 Nov  3 05:38 sub
+--- the same walk on a local ext4 volume, as the control
+rechown /tmp/l: chowned=1 symlinks-not-followed=0 errors=0 in 0s []
+--- the helper under the fetch UID: with the reader ACL, then without
+normalize uid=61002 /mnt/n/p-v4.2: dirs=1 files=3 modes-changed=1 symlinks-removed=1 special-files-removed=1 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=4 not-owned=0 not-owned-with-a-wrong-mode=0 errors=9 in 3ms [/mnt/n/p-v4.2/sub remove system.nfs4_acl: invalid argument /mnt/n/p-v4.2/sub access ACL: operation not supported /mnt/n/p-v4.2/sub default ACL: operation not supported /mnt/n/p-v4.2/sub/f re
+normalize uid=61002 /mnt/n/p-v4.2: dirs=1 files=4 modes-changed=1 symlinks-removed=0 special-files-removed=1 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=5 not-owned=0 not-owned-with-a-wrong-mode=0 errors=5 in 3ms [/mnt/n/p-v4.2/sub remove system.nfs4_acl: invalid argument /mnt/n/p-v4.2/sub/f remove system.nfs4_acl: invalid argument /mnt/n/p-v4.2/h2 remove system.nfs4_acl: invalid argument /mnt/n/p-v4.
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 h
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 h2
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 pack
+drwxrws--- 2 61002 62001 4096 Nov  3 05:38 sub
+=========== vers=3, export no_root_squash
+mount vers=3 rc=0
+--- the fetch writes under UID 61002, group 62001
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 pack
+drwxrws--- 2 61002 62001 4096 Nov  3 05:38 sub
+--- the parent, non-root at UID 65532 with ambient CAP_CHOWN and the store group: the re-chown walk
+CapEff: 0000000000000001 CapAmb: 0000000000000001 
+rechown /mnt/n/p-v3: chowned=0 symlinks-not-followed=0 errors=3 in 1ms [/mnt/n/p-v3/sub/f lchown: operation not permitted /mnt/n/p-v3/sub lchown: operation not permitted /mnt/n/p-v3/pack lchown: operation not permitted]
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 pack
+drwxrws--- 2 61002 62001 4096 Nov  3 05:38 sub
+--- the same walk on a local ext4 volume, as the control
+rechown /tmp/l: chowned=1 symlinks-not-followed=0 errors=0 in 0s []
+--- the helper under the fetch UID: with the reader ACL, then without
+normalize uid=61002 /mnt/n/p-v3: dirs=1 files=3 modes-changed=1 symlinks-removed=1 special-files-removed=1 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=0 not-owned=0 not-owned-with-a-wrong-mode=0 errors=5 in 3ms [/mnt/n/p-v3/sub access ACL: operation not supported /mnt/n/p-v3/sub default ACL: operation not supported /mnt/n/p-v3/sub/f access ACL: operation not supported /mnt/n/p-v3/h access ACL: operati
+normalize uid=61002 /mnt/n/p-v3: dirs=1 files=4 modes-changed=1 symlinks-removed=0 special-files-removed=1 hard-links-seen=0 acl-xattrs-removed=0 other-xattrs-removed=0 not-owned=0 not-owned-with-a-wrong-mode=0 errors=0 in 16ms []
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 h
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 h2
+-rw-rw---- 1 61002 62001    2 Nov  3 05:38 pack
+drwxrws--- 2 61002 62001 4096 Nov  3 05:38 sub

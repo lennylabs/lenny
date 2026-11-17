@@ -1,0 +1,1 @@
+containers: 0  networks: 0  volumes: 0  images: 0

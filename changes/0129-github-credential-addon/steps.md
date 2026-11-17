@@ -1,0 +1,50 @@
+# Steps: 0129 GitHub credential add-on
+
+## Steps
+
+### 0129.S1 The github and github-enterprise kinds
+- status: Planned
+- aliases: [GH-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0152.S1, 0152.S2, 0151.S7]
+
+The design is in [GH-1](change.md#gh-1-the-github-and-github-enterprise-kinds), which covers the kinds and the repository check. The dependencies cover the VCS kind rules, the release check, and the kind registry.
+
+### 0129.S2 Pull request authoring on GitHub
+- status: Planned
+- aliases: [GH-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0129.S1, 0152.S3, 0151.S2]
+
+The design is in [GH-2](change.md#gh-2-pull-request-authoring-on-github). The dependencies cover the template, the attach rule, and the child tokens. The spikes S1, S2, S3, S3c, and S15 under ["Validation owed"](#validation-owed) must pass before the step starts.
+
+### 0129.S3 The github-deny preset
+- status: Planned
+- aliases: [GH-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0151.S4, 0152.S3]
+
+The design is in [GH-3](change.md#gh-3-the-github-deny-preset). The dependencies cover the rule evaluator, the preset format, and the default preset on a VCS pool's API host.
+
+## Validation owed
+
+Live spikes S1, S2, S3, S5, S6, S15, and S16 ran on 2026-11-06 against a test organization, under `evidence/user-git-identity-design/spike-ghlive/`. The capture answered what a client sends and what the allowlist did with it, on plain remotes. S1, S2, S3, S3c, and S15 must resolve before GH-2 starts.
+
+| Spike | Question | Decides | State |
+| :-- | :-- | :-- | :-- |
+| S1 | Does a child survive a refresh of its parent, and what sets `expires_at`? | `reauth-on-401` and `cacheUntil` caps | **Done, live** **[measured]**: a child survives its parent's refresh, the old parent answers 401 after a refresh, and a child's `expires_at` is 8 hours from its own creation (`evidence/user-git-identity-design/spike-ghlive/`). |
+| S2 | Does the ten-token and ten-per-hour rule apply to GitHub App user tokens and to the scoped endpoint, and what happens past it with no browser? Does the scoped endpoint count toward the 2,000 per hour? | [Decision 1](decisions.md#decisions): per-session children with no Lenny limit | **Done, live** **[measured]**: no per-user cap on children. 50 children of one parent in one hour stayed valid, with no revocation and no re-authorization prompt, and the endpoint counts against the `core` rate limit. The 2,000-per-hour App limit was not reached. |
+| S3 | With `require_last_push_approval`, what does GitHub treat as the pusher, across a push from an App token, a user token, and a scoped child, each with author and approver combinations? Can a pull request's author approve when the App pushed? Can a scoped user token push? | [`0152-user-git-identity` decision 10](../0152-user-git-identity/decisions.md#decisions): the VCS pool's `pushIdentity: user` by default, with no branch namespace | **Done, live** **[measured]**: an installation-token push leaves the approver unseen as pusher (`CLEAN` after the pusher-requester approves), while a push by the person's user token or by its scoped child makes GitHub treat that person as the pusher (`BLOCKED`). A scoped child can push. `require_extra_approval_for_unattributed_changes` did not change the App case. |
+| S3c | Does a child with `contents: write` alone push, and does GitHub count the user as pusher when the committer is the commit identity the VCS pool sets for agent commits rather than the user? Does GHES behave as `github.com` does for S3? Does a git child's push fail as soon as its user loses access? Is a push refused when the branch merges in a workflow file change someone else made? | The git child of [`0152-user-git-identity` decision 10](../0152-user-git-identity/decisions.md#decisions) and its commit identity | Open, live. Needs a new device-flow authorization on the test organization, and GHES for the last question. |
+| S4 | SAML-enforced organizations: does a user token need an active SAML session, does a child inherit that, and what does expiry of that session look like to the check? GitHub says to "start an active SAML session" before reauthorizing **[documented]**. | The `sso_required` handling | Open, live |
+| S5 | Does deleting a child leave its parent and siblings valid? | Child revocation | **Done, live** **[measured]**: revoking one child leaves the parent and siblings valid. |
+| S6 | What do `permissions` fields report for an App user token with a restricted App? Do org base permissions and teams appear? Which App permission reads `GET /user/emails`, and can one verified email sit on two accounts? | The check, and `verifiedEmail` | **Done, live** **[measured]**: the repository `permissions` object reports the user's role, including a base permission, for a metadata-only child too, so it does not reflect narrowing. The collaborator permission endpoint answers for a metadata-only child. `GET /user/emails` answers for every child, whatever its permissions, on an App holding the email addresses permission. The two-account email question was not tested. |
+| S8 | What does `gh` send? | Preset tests | **Done for `gh` 2.103.3 on GHES and github.com** **[captured]**, and for `ghe.com`, 7 versions, and both clients **[measured]**. The history of 68 releases is **[source]**, names only. Owed: `__type` answers per GHES version, since the stub selects `gh`'s newest code paths. |
+| S14 | The oldest GHES release with the scoped endpoint and each endpoint this design uses. | The support statement | Open, live |
+| S15 | With a provider-issued token against a scratch repository: does a child approve, and does `pull_requests: write` alone merge, through REST and GraphQL? Does the child's repository limit bind node-ID mutations? Does GitHub honour batches, GET queries, form bodies, or method overrides? What is the true PR body limit? Which fields fail under a narrow child on `gh pr view`? What does the host do with an empty repository list, which this design never sends? Do bots see `performed_via_github_app`? Does an App token's or child's push trigger `pull_request` workflows, with which secrets? | Whether request rules have a second layer at the host, and the CI residual | **Done in part, live** **[measured]**: a `pull_requests: write` child approves and cannot merge through REST or GraphQL; the repository limit binds node-ID mutations; batches, form bodies, and method overrides are refused or ignored, and `GET /graphql` returns the schema; a 4 MiB body was accepted; `performed_via_github_app` names the App; an empty repository list is refused. `gh pr view` and workflow triggering were not run. |
+| S16 | Does GitHub keep approvals when a pull request's base changes? | How serious `baseRefName` passing is, and whether a tenant should add a pattern for it | **Done, live** **[measured]**: an approval survives a base change to an unprotected branch, and a change back to a branch whose rules require review dismisses it. |
+| S19 | The attack table and bypass analysis under `requestRules.default: allow`, spellings, literals, REST twins, `gh` and `glab` under the presets, and override headers | [UR-5](../0152-user-git-identity/change.md#personas-and-requirements)'s "any command" within the token, [UR-6](../0152-user-git-identity/change.md#personas-and-requirements), and whether deny mode needs more refusals | **Closed on the stub [measured].** Under the final preset, 1,230 rows on each host type: 1,069 refused, 160 reached with no denied action, 0 denied actions with the credential, and 1 with no credential through an opaque tunnel. 3,033 of 3,045 predicted rows matched, and the 12 were harness errors. **The stub proves forwarding only.** Host decoding has evidence for GitLab's framework alone: Grape routed `appr%6Fve`, a trailing slash, `//`, and `approve.json` to the handler and answered 404 for `merge.foo`, and a generic Rails router routed a trailing slash, `//`, `.json`, and `merge.foo`. GitHub's stack is unknown. Owed: every provider's behaviour. |
+| V1 | The attack table under deny mode, with alternative path spellings, inline GraphQL literals, REST routes that do what a refused mutation does, and method override headers | The claims under [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) | **Closed on the stub [measured]** for this table, as "Evidence for `github-deny`" lists: 3,033 of 3,045 predicted rows, and 1,230 attack rows on each host type with 0 denied actions with the credential. A later run matched 403 of 403 rows on the stem's direction, the carried names, the routing list, and the GitLab token tails, with the attack and command numbers unchanged. **Owed:** how GitHub, GHES, and GitLab decode each spelling, and the refusal of a suffixed listed GraphQL path on any method. |
+| V2 | `gh` and `glab` under the presets | "`gh` works" | **Closed on the stub [measured].** The commands table, 7 versions with 0 other refusals, and `gh release upload` on GHES and the `--env` commands passing. `glab` passed `mr create`, `view`, `list`, `note`, `update`, and `close`, and `issue create`, with `%2F` paths. **Owed:** `gh release upload` on a GHES host, amd64, macOS, Windows, the .NET SDK image, and a `glab` branch with `%2F`. |
+| V6 | S1, S2, S5, and S15 on a live GitHub host, for `github-scoped` and `github-deny` | The template, the child count, and whether the host's limit binds | **Done, live** **[measured]** on `github.com`, 2026-11-06: a child survives its parent's refresh and lasts 8 hours, no per-user limit on children appeared at 50 in an hour, revoking one child leaves the rest valid, a `pull_requests: write` child approves and cannot merge, and the repository limit binds node-ID mutations. The repository `permissions` field reports the user's role rather than the child's, and `GET /user/emails` answers for every child. GHES is owed. |
+| V7 | A bot's view of `performed_via_github_app` | The recommendation for bot owners | Partly **[measured]**: over REST the field names the App on a child's write. A bot's view through a webhook has not run. |

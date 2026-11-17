@@ -1,0 +1,128 @@
+// Spike target server.
+//
+//	:443  TLS (self-signed): /            hello
+//	                         /stream?s=N  one line per second for N seconds
+//	                         /idle?s=N    headers, then silence for N seconds, then one line
+//	                         /big?mb=N    N MiB of zeros
+//	:80   same handlers in plaintext
+//	:7000 TCP: writes "tick <t>" every second until closed (active tunnel)
+//	:7001 TCP: accepts and stays silent (idle tunnel)
+package main
+
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"fmt"
+	"io"
+	"log"
+	"math/big"
+	"net"
+	"net/http"
+	"strconv"
+	"time"
+)
+
+func selfSigned() tls.Certificate {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	t := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "target"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(24 * time.Hour),
+		DNSNames: []string{"target.spike", "*.spike", "localhost"},
+	}
+	d, _ := x509.CreateCertificate(rand.Reader, t, t, &k.PublicKey, k)
+	return tls.Certificate{Certificate: [][]byte{d}, PrivateKey: k}
+}
+
+func num(r *http.Request, k string, def int) int {
+	if v, err := strconv.Atoi(r.URL.Query().Get(k)); err == nil {
+		return v
+	}
+	return def
+}
+
+func mux() *http.ServeMux {
+	m := http.NewServeMux()
+	m.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("HTTP %s %s from %s host=%s", r.Method, r.URL, r.RemoteAddr, r.Host)
+		fmt.Fprintf(w, "hello from target, you are %s\n", r.RemoteAddr)
+	})
+	m.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		n := num(r, "s", 60)
+		f := w.(http.Flusher)
+		for i := 0; i < n; i++ {
+			fmt.Fprintf(w, "line %d %s\n", i, time.Now().Format(time.RFC3339))
+			f.Flush()
+			select {
+			case <-r.Context().Done():
+				log.Printf("stream client gone after %d", i)
+				return
+			case <-time.After(time.Second):
+			}
+		}
+	})
+	m.HandleFunc("/idle", func(w http.ResponseWriter, r *http.Request) {
+		n := num(r, "s", 60)
+		w.WriteHeader(200)
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+			log.Printf("idle client gone")
+			return
+		case <-time.After(time.Duration(n) * time.Second):
+		}
+		fmt.Fprintf(w, "woke after %ds\n", n)
+	})
+	m.HandleFunc("/big", func(w http.ResponseWriter, r *http.Request) {
+		n := num(r, "mb", 100)
+		w.Header().Set("Content-Length", strconv.Itoa(n<<20))
+		buf := make([]byte, 1<<20)
+		for i := 0; i < n; i++ {
+			if _, err := w.Write(buf); err != nil {
+				return
+			}
+		}
+	})
+	return m
+}
+
+func tcpTick(addr string, tick bool) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			return
+		}
+		go func(c net.Conn) {
+			defer c.Close()
+			start := time.Now()
+			log.Printf("TCP %s accepted from %s", addr, c.RemoteAddr())
+			if !tick {
+				io.Copy(io.Discard, c)
+				log.Printf("TCP %s closed by peer after %s", addr, time.Since(start).Round(time.Millisecond))
+				return
+			}
+			for {
+				if _, err := fmt.Fprintf(c, "tick %.1f\n", time.Since(start).Seconds()); err != nil {
+					log.Printf("TCP %s write failed after %s: %v", addr, time.Since(start).Round(time.Millisecond), err)
+					return
+				}
+				time.Sleep(time.Second)
+			}
+		}(c)
+	}
+}
+
+func main() {
+	go tcpTick(":7000", true)
+	go tcpTick(":7001", false)
+	go func() { log.Fatal(http.ListenAndServe(":80", mux())) }()
+	s := &http.Server{Addr: ":443", Handler: mux(), TLSConfig: &tls.Config{Certificates: []tls.Certificate{selfSigned()}}}
+	log.Fatal(s.ListenAndServeTLS("", ""))
+}

@@ -1,0 +1,124 @@
+
+### Through PgBouncer, 500/s: 500 decisions/s for 180s, all tenants regulated, 2,500 tenants
+   window 30s: commits=14993 p50=0.6 p95=1.0 p99=3.0 p99.9=12.6 max=22.4 ms over150=0 refused=0 wal rows=15069
+   window 60s: commits=15092 p50=0.6 p95=0.9 p99=1.7 p99.9=5.9 max=13.2 ms over150=0 refused=0 wal rows=30204
+   window 90s: commits=15114 p50=0.5 p95=2.4 p99=7.5 p99.9=30.8 max=69.5 ms over150=0 refused=0 wal rows=13272
+   window 120s: commits=15090 p50=0.6 p95=1.0 p99=3.9 p99.9=76.1 max=106.3 ms over150=0 refused=0 wal rows=27296
+   window 150s: commits=15087 p50=0.5 p95=2.2 p99=11.0 p99.9=150.2 max=151.5 ms over150=19 refused=19 wal rows=12154
+   busy: n=42504 codes={'200': 40420, '403': 2084, '503': 8} p50=1.02 p90=1.56 p99=6.77 p99.9=72.8 max=139.8 ms
+   small: n=42477 codes={'200': 40304, '403': 2173, '503': 11} p50=1.02 p90=1.56 p99=6.97 p99.9=77.7 max=150.6 ms
+   elapsed 180s ticks=85476 broken=0
+   window 180s: commits=14488 p50=0.6 p95=1.1 p99=4.8 p99.9=72.6 max=92.6 ms over150=0 refused=0 wal rows=22690
+   oc-envoy: 215m CPU, memory 35 MiB, peak 37 MiB
+   oc-dec: 147m CPU, memory 31 MiB, peak 32 MiB
+   oc-ev1: 79m CPU, memory 127 MiB, peak 166 MiB
+   oc-ev2: 127m CPU, memory 306 MiB, peak 329 MiB
+   oc-pg: 105m CPU, memory 347 MiB, peak 415 MiB
+   oc-pgb: 24m CPU, memory 3 MiB, peak 12 MiB
+   oc-minio: 133m CPU, memory 1232 MiB, peak 1655 MiB
+   replica 0 groups=40102 size p50=1 p99=1 commit us p50=383 p99=2016 walOK=40351 walFail=0 drained=40351 batches=4958
+   replica 1 groups=49205 size p50=1 p99=1 commit us p50=380 p99=2077 walOK=49634 walFail=0 drained=49634 batches=9927
+   pgbouncer SHOW STATS (database total_xact total_query recv sent xact_time query_time wait_time ...): postgres 132601 132601 320460 301759407 938227904 139656739 118579728 211556 492 492 520 611568 453407 427 392
+   checkpoints: timed=2 req=9 write_ms=403411 sync_ms=189
+
+### Through PgBouncer, 2,000/s: 2000 decisions/s for 390s, all tenants regulated, 2,500 tenants
+   window 30s: commits=59942 p50=0.4 p95=1.2 p99=5.0 p99.9=15.7 max=48.9 ms over150=0 refused=0 wal rows=60244
+   window 60s: commits=60359 p50=0.4 p95=0.9 p99=3.1 p99.9=22.5 max=46.9 ms over150=0 refused=0 wal rows=91479
+   window 90s: commits=60485 p50=0.5 p95=5.7 p99=74.5 p99.9=151.0 max=152.2 ms over150=297 refused=296 wal rows=57904
+   window 120s: commits=60720 p50=0.5 p95=1.6 p99=27.3 p99.9=150.1 max=151.7 ms over150=95 refused=95 wal rows=71873
+   window 150s: commits=60520 p50=0.5 p95=8.7 p99=141.0 p99.9=151.3 max=152.5 ms over150=521 refused=511 wal rows=25466
+   window 180s: commits=60734 p50=0.5 p95=1.9 p99=12.3 p99.9=84.4 max=124.5 ms over150=0 refused=0 wal rows=57005
+   window 210s: commits=60576 p50=0.5 p95=4.2 p99=16.6 p99.9=79.7 max=108.9 ms over150=0 refused=0 wal rows=22463
+   window 240s: commits=60578 p50=0.5 p95=2.5 p99=150.2 p99.9=151.4 max=152.1 ms over150=823 refused=821 wal rows=53734
+   window 270s: commits=60429 p50=0.5 p95=4.9 p99=34.6 p99.9=150.2 max=152.2 ms over150=92 refused=89 wal rows=21358
+   window 300s: commits=60571 p50=0.5 p95=2.6 p99=104.4 p99.9=151.2 max=153.5 ms over150=498 refused=498 wal rows=50856
+   window 330s: commits=60469 p50=0.5 p95=6.1 p99=40.8 p99.9=150.2 max=152.2 ms over150=88 refused=88 wal rows=26022
+   window 360s: commits=60476 p50=0.5 p95=2.5 p99=72.7 p99.9=150.8 max=151.8 ms over150=258 refused=258 wal rows=47457
+   busy: n=378932 codes={'200': 359911, '403': 19021, '503': 1522} p50=0.89 p90=2.96 p99=32.38 p99.9=139.7 max=167.5 ms
+   small: n=378054 codes={'200': 359049, '403': 19005, '503': 1491} p50=0.89 p90=3.00 p99=33.64 p99.9=139.2 max=169.4 ms
+   elapsed 390s ticks=737906 broken=0
+   window 390s: commits=52543 p50=0.5 p95=6.8 p99=125.5 p99.9=151.3 max=152.2 ms over150=358 refused=357 wal rows=37770
+   oc-envoy: 611m CPU, memory 62 MiB, peak 69 MiB
+   oc-dec: 391m CPU, memory 41 MiB, peak 54 MiB
+   oc-ev1: 257m CPU, memory 515 MiB, peak 600 MiB
+   oc-ev2: 286m CPU, memory 506 MiB, peak 607 MiB
+   oc-pg: 292m CPU, memory 1378 MiB, peak 1380 MiB
+   oc-pgb: 73m CPU, memory 7 MiB, peak 12 MiB
+   oc-minio: 204m CPU, memory 1562 MiB, peak 1655 MiB
+   replica 0 groups=323158 size p50=1 p99=3 commit us p50=296 p99=2437 walOK=350863 walFail=0 drained=350863 batches=28592
+   replica 1 groups=389974 size p50=1 p99=3 commit us p50=289 p99=2256 walOK=429075 walFail=0 drained=429075 batches=28731
+   pgbouncer SHOW STATS (database total_xact total_query recv sent xact_time query_time wait_time ...): postgres 849056 849056 1047196 1214678010 1642640549 394910628 367781212 215599 1699 1699 1730 2227165 1824067 392 375
+   checkpoints: timed=2 req=11 write_ms=403414 sync_ms=204
+
+
+### Direct to Postgres, no pooler, 2,000/s (the pooler's share): 2000 decisions/s for 120s, all tenants regulated, 2,500 tenants
+   window 30s: commits=59988 p50=0.4 p95=0.9 p99=2.7 p99.9=12.1 max=21.3 ms over150=0 refused=0 wal rows=60330
+   window 60s: commits=60438 p50=0.4 p95=1.4 p99=10.7 p99.9=45.7 max=72.1 ms over150=0 refused=0 wal rows=91533
+   window 90s: commits=60724 p50=0.4 p95=12.2 p99=150.3 p99.9=151.5 max=153.4 ms over150=1070 refused=1059 wal rows=46484
+   busy: n=109476 codes={'200': 103998, '403': 5478, '503': 523} p50=0.80 p90=1.91 p99=29.54 p99.9=145.7 max=191.6 ms
+   small: n=109465 codes={'200': 104086, '403': 5379, '503': 536} p50=0.80 p90=1.91 p99=30.26 p99.9=147.1 max=196.0 ms
+   elapsed 120s ticks=226988 broken=0
+   window 120s: commits=58398 p50=0.4 p95=1.3 p99=8.1 p99.9=67.2 max=95.0 ms over150=0 refused=0 wal rows=57559
+   oc-envoy: 588m CPU, memory 63 MiB, peak 71 MiB
+   oc-dec: 382m CPU, memory 45 MiB, peak 54 MiB
+   oc-ev1: 232m CPU, memory 541 MiB, peak 558 MiB
+   oc-ev2: 262m CPU, memory 561 MiB, peak 563 MiB
+   oc-pg: 268m CPU, memory 1377 MiB, peak 1380 MiB
+   oc-pgb: 0m CPU, memory 8 MiB, peak 12 MiB
+   oc-minio: 162m CPU, memory 1306 MiB, peak 1655 MiB
+   replica 0 groups=101943 size p50=1 p99=2 commit us p50=241 p99=1813 walOK=108099 walFail=0 drained=108099 batches=5608
+   replica 1 groups=123183 size p50=1 p99=3 commit us p50=239 p99=1675 walOK=131840 walFail=0 drained=131840 batches=5602
+   pgbouncer SHOW STATS (database total_xact total_query recv sent xact_time query_time wait_time ...): postgres 849058 849058 1047204 1214706656 1642640862 394916553 367787866 215599 0 0 0 0 0 0 0
+   checkpoints: timed=2 req=12 write_ms=575187 sync_ms=233
+
+### Through PgBouncer, 2,000/s, one transaction per tenant with SET LOCAL semantics (RLS with a concrete tenant): 2000 decisions/s for 90s, all tenants regulated, 2,500 tenants
+   window 30s: commits=59968 p50=0.4 p95=1.4 p99=11.0 p99.9=85.2 max=110.0 ms over150=0 refused=0 wal rows=60297
+   window 60s: commits=60414 p50=0.4 p95=1.1 p99=5.3 p99.9=37.0 max=51.3 ms over150=0 refused=0 wal rows=91511
+   busy: n=79913 codes={'200': 75896, '403': 4017, '503': 65} p50=0.85 p90=2.09 p99=22.32 p99.9=108.9 max=160.9 ms
+   small: n=79965 codes={'200': 76000, '403': 3965, '503': 57} p50=0.85 p90=2.06 p99=22.07 p99.9=108.2 max=162.5 ms
+   elapsed 90s ticks=170845 broken=0
+   window 90s: commits=59295 p50=0.5 p95=7.8 p99=40.8 p99.9=150.6 max=151.8 ms over150=123 refused=122 wal rows=44026
+   oc-envoy: 593m CPU, memory 61 MiB, peak 69 MiB
+   oc-dec: 381m CPU, memory 39 MiB, peak 44 MiB
+   oc-ev1: 201m CPU, memory 236 MiB, peak 269 MiB
+   oc-ev2: 305m CPU, memory 514 MiB, peak 535 MiB
+   oc-pg: 310m CPU, memory 1396 MiB, peak 1403 MiB
+   oc-pgb: 77m CPU, memory 8 MiB, peak 12 MiB
+   oc-minio: 128m CPU, memory 1293 MiB, peak 1655 MiB
+   replica 0 groups=76740 size p50=1 p99=3 commit us p50=301 p99=2249 walOK=81459 walFail=0 drained=81459 batches=2512
+   replica 1 groups=91318 size p50=1 p99=3 commit us p50=294 p99=2129 walOK=98471 walFail=0 drained=98471 batches=5033
+   pgbouncer SHOW STATS (database total_xact total_query recv sent xact_time query_time wait_time ...): postgres 1026978 1026978 1226352 1424719926 1803975746 469411646 441144728 1548378 1792 1792 1805 2116363 1625817 418 409
+   checkpoints: timed=2 req=13 write_ms=575191 sync_ms=255
+
+### Through PgBouncer, 500/s, one transaction per tenant: 500 decisions/s for 90s, all tenants regulated, 2,500 tenants
+   window 30s: commits=14992 p50=0.6 p95=1.1 p99=2.9 p99.9=25.7 max=45.7 ms over150=0 refused=0 wal rows=15074
+   window 60s: commits=15086 p50=0.6 p95=1.1 p99=1.9 p99.9=6.4 max=14.2 ms over150=0 refused=0 wal rows=30188
+   busy: n=20061 codes={'200': 19067, '403': 994} p50=1.08 p90=1.75 p99=7.13 p99.9=60.5 max=94.8 ms
+   small: n=19939 codes={'200': 18950, '403': 989} p50=1.09 p90=1.77 p99=7.01 p99.9=42.3 max=91.2 ms
+   elapsed 90s ticks=42746 broken=0
+   window 90s: commits=14855 p50=0.6 p95=2.7 p99=12.6 p99.9=67.5 max=93.2 ms over150=0 refused=0 wal rows=12845
+   oc-envoy: 217m CPU, memory 32 MiB, peak 33 MiB
+   oc-dec: 152m CPU, memory 30 MiB, peak 31 MiB
+   oc-ev1: 116m CPU, memory 230 MiB, peak 257 MiB
+   oc-ev2: 97m CPU, memory 139 MiB, peak 153 MiB
+   oc-pg: 112m CPU, memory 1280 MiB, peak 1403 MiB
+   oc-pgb: 26m CPU, memory 8 MiB, peak 12 MiB
+   oc-minio: 122m CPU, memory 1321 MiB, peak 1655 MiB
+   replica 0 groups=19912 size p50=1 p99=1 commit us p50=412 p99=2365 walOK=20090 walFail=0 drained=20090 batches=4764
+   replica 1 groups=24655 size p50=1 p99=1 commit us p50=409 p99=2121 walOK=24895 walFail=0 drained=24895 batches=2389
+   pgbouncer SHOW STATS (database total_xact total_query recv sent xact_time query_time wait_time ...): postgres 1072402 1072402 1273121 1479325102 1844401563 489364955 460662270 1562986 491 491 508 595446 449010 443 418
+   checkpoints: timed=2 req=14 write_ms=575193 sync_ms=270
+
+### Fail closed: 500/s, the pooler paused for 5 s at t=40; allowed against stored
+   busy: n=21032 codes={'200': 19963, '403': 1069, '503': 1264} p50=1.03 p90=1.58 p99=9.02 p99.9=87.4 max=150.7 ms
+   small: n=21472 codes={'200': 20436, '403': 1036, '503': 1214} p50=1.03 p90=1.57 p99=8.39 p99.9=90.1 max=153.0 ms
+   elapsed 90s ticks=40399 broken=0
+   commitOK="commitOK":42504 refused="refused":2478 stored decisions in manifest+wal: 43982|0
+
+### Fail closed: 500/s, one replica killed at t=30 and restarted at t=40; allowed against stored
+   busy: n=18366 codes={'200': 17433, '403': 933, '503': 1562} p50=1.07 p90=1.73 p99=7.27 p99.9=34.9 max=61.1 ms
+   small: n=18756 codes={'200': 17786, '403': 970, '503': 1298} p50=1.07 p90=1.75 p99=8.35 p99.9=31.6 max=54.6 ms
+   elapsed 80s ticks=35219 broken=0
+   commitOK="commitOK":37122 refused="refused":2860 stored decisions in manifest+wal: 37122|0
+gaps: positions=7464 records present=148544, gaps a consumer sees=1952 missing inside them=18055 (announced by a gap record: 0), duplicates=0
+  against the producer's own high-water marks, which no consumer has: positions with a lost tail=14 records in those tails=23; positions with nothing stored=28 records=174

@@ -1,0 +1,46 @@
+POST 1 github.com mozilla/DeepSpeech batch, no credential
+HTTP/2 200 
+content-type: application/json; charset=utf-8
+{
+
+POST 2 gitlab.com gitlab-org/gitlab-test batch, no credential
+HTTP/2 200 
+content-type: application/vnd.git-lfs+json; charset=utf-8
+{"objects":[{"oid":"91eff75a492a3ed0dfcb544d7f31326bc4014c8551849c192fd1e48d4dd2c897","size":1575078,"error":{"code":404,"message":"Object does not exist on the server or you don't have permissions to access it"}}]}
+POST 3 github.com mozilla/DeepSpeech batch, no credential (POST 1 output was lost to a filter in my pipeline)
+HTTP/2 200 
+access-control-allow-origin: *
+access-control-expose-headers: ETag, Link, Location, Retry-After, X-GitHub-OTP, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Used, X-RateLimit-Resource, X-RateLimit-Reset, X-OAuth-Scopes, X-Accepted-OAuth-Scopes, X-Poll-Interval, X-GitHub-Media-Type, X-GitHub-SSO, X-GitHub-Request-Id, Deprecation, Sunset, Warning
+content-type: application/json; charset=utf-8
+
+{
+  "objects": [
+    {
+      "oid": "a24953ce3f013bbf5f4a1c9f5a0e5482bc56eaa81638276de522f39e62ff3a56",
+      "size": 945699324,
+      "error": {
+        "code": 410,
+        "message": "Object does not exist on the server"
+      }
+    }
+  ]
+}
+POST 4 github.com onnx/models batch, no credential
+HTTP/2 200 
+content-type: application/json; charset=utf-8
+
+{
+  "objects": [
+    {
+      "oid": "5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd",
+      "size": 26143,
+      "actions": {
+        "download": {
+          "href": "https://github-cloud.githubusercontent.com/alambic/media/158171734/5c/68/5c688690f8bacf667d4c2074af5ad0646ca328d7ab03eccf944a65b320171bdd?<signed query redacted>",
+          "expires_at": "2026-11-03T22:10:24Z",
+          "expires_in": 3600
+        }
+      }
+    }
+  ]
+}

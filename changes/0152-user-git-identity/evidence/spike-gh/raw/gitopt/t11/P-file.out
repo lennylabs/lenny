@@ -1,0 +1,45 @@
+### setup rc=0
+$ git clone -q https://ghes.example.test/acme/widgets.git c 2>&1; cd c; git checkout -q -b lenny/f-1793731291; git commit -q --allow-empty -m e; git log --oneline | wc -l
+7
+### cred-store-push rc=0
+$ git -c credential.helper=store push -q origin HEAD 2>&1 | tail -1
+
+### extraheader-push rc=0
+$ git commit -q --allow-empty -m e; git -c 'http.extraHeader=Authorization: Bearer USER-FILE-TOKEN' push -q origin HEAD 2>&1 | tail -1
+
+### url-token-push rc=0
+$ git commit -q --allow-empty -m e; git push -q https://x:USER-FILE-TOKEN@ghes.example.test/acme/widgets.git HEAD 2>&1 | tail -1
+
+### gh-credential-helper-push rc=0
+$ git commit -q --allow-empty -m e; GH_ENTERPRISE_TOKEN=USER-FILE-TOKEN GH_HOST=ghes.example.test git -c 'credential.helper=!gh auth git-credential' push -q origin HEAD 2>&1 | tail -1
+
+### push-main-with-own-token rc=0
+$ git -c 'http.extraHeader=Authorization: Bearer USER-FILE-TOKEN' -c credential.helper=store push -q origin HEAD:refs/heads/main 2>&1 | tail -1
+fatal: the remote end hung up unexpectedly
+### push-outside-with-own-token rc=0
+$ git -c 'http.extraHeader=Authorization: Bearer USER-FILE-TOKEN' -c credential.helper=store push -q https://ghes.example.test/acme/secret.git HEAD:refs/heads/lenny/x 2>&1 | tail -1
+fatal: unable to access 'http://ghes.example.test/acme/secret.git/': The requested URL returned error: 403
+### no-rewrite-push-main rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_CAINFO=/s/bundle.pem git -c user.email=a@b -c 'http.extraHeader=Authorization: Bearer USER-FILE-TOKEN' push -q https://ghes.example.test/acme/widgets.git HEAD:refs/heads/main 2>&1 | tail -1
+
+### no-rewrite-push-main-github rc=0
+$ GIT_CONFIG_GLOBAL=/dev/null GIT_SSL_CAINFO=/s/bundle.pem git -c 'http.extraHeader=Authorization: Bearer USER-FILE-TOKEN' push -q https://github.com/acme/widgets.git HEAD:refs/heads/main 2>&1 | tail -1
+
+### gh-list-ghes rc=0
+$ GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=USER-FILE-TOKEN gh pr list 2>&1 | tail -1
+
+### gh-create-ghes rc=0
+$ git push -q origin HEAD 2>&1; GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=USER-FILE-TOKEN gh pr create --title t --body b 2>&1 | tail -1
+https://ghes.example.test/acme/widgets/pull/7
+### gh-merge-ghes rc=0
+$ GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=USER-FILE-TOKEN gh pr merge 7 --merge 2>&1 | tail -1 | cut -c1-150
+
+### gh-api-merge-ghes rc=0
+$ GH_HOST=ghes.example.test GH_ENTERPRISE_TOKEN=USER-FILE-TOKEN gh api -X PUT repos/acme/widgets/pulls/7/merge 2>&1 | tail -1 | cut -c1-150
+{"merged":true,"message":"merged","sha":"abc"}
+### gh-list-com rc=0
+$ GH_TOKEN=USER-FILE-TOKEN gh pr list 2>&1 | tail -1
+
+### gh-merge-com rc=0
+$ GH_TOKEN=USER-FILE-TOKEN gh pr merge 7 --merge 2>&1 | tail -1 | cut -c1-150
+

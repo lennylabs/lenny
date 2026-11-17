@@ -1,0 +1,27 @@
+### A: single insteadOf, remote with pushurl
+  fetch=http://127.0.0.1:7071/https/github.com/x/y  push=http://127.0.0.1:7071/https/github.com/x/y
+fatal: repository 'http://127.0.0.1:7071/https/github.com/x/y/' not found
+### A2: pushurl pointing at a different host
+  fetch=http://127.0.0.1:7071/https/github.com/x/y  push=http://127.0.0.1:7071/https/evil.example.com/x/y
+fatal: repository 'http://127.0.0.1:7071/https/evil.example.com/x/y/' not found
+### B: insteadOf (fetch) + pushInsteadOf (push to a different endpoint), remote WITHOUT pushurl
+  fetch=http://127.0.0.1:7071/F/github.com/x/y  push=http://127.0.0.1:7071/P/github.com/x/y
+### B2: same config, remote WITH pushurl -> pushInsteadOf ignored, insteadOf applies
+  fetch=http://127.0.0.1:7071/F/github.com/x/y  push=http://127.0.0.1:7071/F/github.com/x/y
+fatal: repository 'http://127.0.0.1:7071/F/github.com/x/y/' not found
+### C: explicit URL push and ls-remote (config A)
+fatal: repository 'http://127.0.0.1:7071/https/github.com/x/explicit/' not found
+fatal: repository 'http://127.0.0.1:7071/https/github.com/x/lsremote/' not found
+### C2: explicit URL push with config B (pushInsteadOf applies to explicit URL?)
+fatal: repository 'http://127.0.0.1:7071/P/github.com/x/explicitB/' not found
+### C3: GIT_TRACE_CURL excerpt for a push
+21:48:09.577001 http.c:877              == Info: Connected to 127.0.0.1 (127.0.0.1) port 7071
+21:48:09.577022 http.c:836              => Send header: GET /https/github.com/x/trace/info/refs?service=git-receive-pack HTTP/1.1
+== request log
+GET /https/github.com/x/y/info/refs?service=git-receive-pack
+GET /https/evil.example.com/x/y/info/refs?service=git-receive-pack
+GET /F/github.com/x/y/info/refs?service=git-receive-pack
+GET /https/github.com/x/explicit/info/refs?service=git-receive-pack
+GET /https/github.com/x/lsremote/info/refs?service=git-upload-pack
+GET /P/github.com/x/explicitB/info/refs?service=git-receive-pack
+GET /https/github.com/x/trace/info/refs?service=git-receive-pack

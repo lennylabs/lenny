@@ -1,0 +1,481 @@
+// deny.go: default-allow mode. The rules are data: REST method and path patterns, GraphQL mutation field names, and body text patterns.
+package main
+
+import (
+	"encoding/json"
+	"io"
+	"mime"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strings"
+
+	"github.com/vektah/gqlparser/v2/ast"
+)
+
+type denyRest struct {
+	Method string `json:"method"`
+	Path   string `json:"path"` // a leading ".../" matches any prefix; "{x}" is one segment; a trailing "/**" is any tail
+	anchor bool
+	tail   bool
+	segs   []string
+}
+
+type bodyRule struct {
+	Path  string `json:"path"`
+	Regex string `json:"regex"`
+	re    *regexp.Regexp
+	segs  []string
+}
+
+func splitPat(p string) (segs []string, anchor, tail bool) {
+	anchor = !strings.HasPrefix(p, ".../")
+	p = strings.TrimPrefix(strings.TrimPrefix(p, ".../"), "/")
+	if strings.HasSuffix(p, "/**") {
+		tail = true
+		p = strings.TrimSuffix(p, "/**")
+	}
+	return strings.Split(strings.ToLower(p), "/"), anchor, tail
+}
+
+func (p *policy) compileDeny() error {
+	p.denyM = set(p.DenyMutations, false)
+	for _, d := range p.DenyRest {
+		d.segs, d.anchor, d.tail = splitPat(d.Path)
+		d.Method = strings.ToUpper(d.Method)
+	}
+	for _, b := range p.BodyRules {
+		re, err := regexp.Compile(b.Regex)
+		if err != nil {
+			return err
+		}
+		b.re = re
+		b.segs, _, _ = splitPat(b.Path)
+	}
+	return nil
+}
+
+// normPath is the reading a lenient origin could give a path: percent-decoded until stable, backslash as slash, parameters and dot segments removed, case folded.
+func normPath(raw string) string {
+	s := raw
+	for i := 0; i < 3; i++ {
+		d, err := url.PathUnescape(s)
+		if err != nil || d == s {
+			break
+		}
+		s = d
+	}
+	s = strings.ReplaceAll(s, "\\", "/")
+	var out []string
+	for _, seg := range strings.Split(s, "/") {
+		if i := strings.IndexByte(seg, ';'); i >= 0 {
+			seg = seg[:i]
+		}
+		seg = strings.TrimFunc(seg, func(r rune) bool { return r <= 0x20 || r == 0x7f })
+		switch seg {
+		case "", ".":
+		case "..":
+			if len(out) > 0 {
+				out = out[:len(out)-1]
+			}
+		default:
+			out = append(out, strings.ToLower(seg))
+		}
+	}
+	return "/" + strings.Join(out, "/")
+}
+
+func segsMatch(pat, got []string) bool {
+	if len(pat) != len(got) {
+		return false
+	}
+	for i, t := range pat {
+		if !strings.HasPrefix(t, "{") && t != got[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func matchPat(segs []string, anchor, tail bool, path string) bool {
+	got := strings.Split(strings.TrimPrefix(path, "/"), "/")
+	if anchor {
+		if tail {
+			return len(got) >= len(segs) && segsMatch(segs, got[:len(segs)])
+		}
+		return segsMatch(segs, got)
+	}
+	for i := 0; i+len(segs) <= len(got); i++ {
+		if segsMatch(segs, got[i:i+len(segs)]) && (tail || i+len(segs) == len(got)) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkDeny returns the bytes to forward when it had to read the body, keep=true when the body streams through untouched, or a refusal.
+func (p *policy) checkDeny(r *http.Request) (fb []byte, keep bool, d *deny) {
+	if r.Header.Get("Upgrade") != "" {
+		return nil, false, no(403, "upgrade refused on a filtered host")
+	}
+	for _, h := range []string{"X-Original-Url", "X-Rewrite-Url", "X-Forwarded-Path", "X-Forwarded-Uri", "X-Envoy-Original-Path"} {
+		if r.Header.Get(h) != "" {
+			return nil, false, no(403, "URL override header %s refused", h)
+		}
+	}
+	uri := r.RequestURI
+	if uri == "" {
+		uri = r.URL.RequestURI()
+	}
+	if !strings.HasPrefix(uri, "/") {
+		i := strings.Index(uri, "://")
+		if i < 0 {
+			return nil, false, no(400, "request target is neither origin-form nor absolute-form")
+		}
+		rest := uri[i+3:]
+		j := strings.IndexByte(rest, '/')
+		if j < 0 {
+			return nil, false, no(400, "absolute-form target without a path")
+		}
+		uri = rest[j:]
+	}
+	rawPath, rawq, hasq := strings.Cut(uri, "?")
+	if i := strings.IndexByte(rawq, '#'); i >= 0 {
+		rawq = rawq[:i]
+	}
+	var np string
+	switch p.Matcher {
+	case "literal": // the control: the path as sent, no decoding and no folding
+		np = rawPath
+		if rawPath == p.GraphQLPath {
+			b, e := p.checkGraphQL(r, rawq, hasq)
+			return b, false, e
+		}
+	case "strict":
+		canon, e := p.canonPath(rawPath)
+		if e != nil {
+			return nil, false, e
+		}
+		if canon != rawPath {
+			dec, err := url.PathUnescape(canon)
+			if err != nil {
+				return nil, false, no(403, "path does not decode")
+			}
+			r.URL.Path, r.URL.RawPath = dec, canon
+			r.RequestURI = canon
+			if hasq {
+				r.RequestURI += "?" + rawq
+			}
+			rawPath = canon
+		}
+		np = normPath(canon)
+		if e := p.unmatchedAPI(rawPath, np); e != nil {
+			return nil, false, e
+		}
+		fallthrough
+	default:
+		if np == "" {
+			np = normPath(rawPath)
+		}
+		gql := strings.ToLower(p.GraphQLPath)
+		lastSeg := np[strings.LastIndexByte(np, '/')+1:]
+		if np == gql || strings.Contains(lastSeg, "graphql") {
+			if rawPath != p.GraphQLPath {
+				return nil, false, no(403, "a GraphQL path in another spelling is refused: %s", rawPath)
+			}
+			b, e := p.checkGraphQL(r, rawq, hasq)
+			return b, false, e
+		}
+	}
+	// Effective methods: the request's own and any it asks an origin to substitute.
+	q, _ := url.ParseQuery(rawq)
+	methods := map[string]bool{strings.ToUpper(r.Method): true}
+	for _, h := range []string{"X-Http-Method-Override", "X-Http-Method", "X-Method-Override", "X-Original-Method"} {
+		for _, v := range r.Header[h] {
+			methods[strings.ToUpper(strings.TrimSpace(v))] = true
+		}
+	}
+	for _, v := range q["_method"] {
+		methods[strings.ToUpper(v)] = true
+	}
+	nowrap := strings.TrimPrefix(np, strings.ToLower(p.RestPrefix))
+	targets := []string{nowrap, np}
+	if p.Matcher == "strict" { // a format suffix selects a rendering of the same route on frameworks that have one
+		for _, x := range []string{".json", ".xml", ".txt", ".html", ".atom", ".yaml", ".yml"} {
+			if strings.HasSuffix(nowrap, x) {
+				targets = append(targets, strings.TrimSuffix(nowrap, x), strings.TrimSuffix(np, x))
+			}
+		}
+	}
+	hit := func(meth bool) *denyRest {
+		for _, dr := range p.DenyRest {
+			if meth && !methods[dr.Method] {
+				continue
+			}
+			for _, t := range targets {
+				if matchPat(dr.segs, dr.anchor, dr.tail, t) {
+					return dr
+				}
+			}
+		}
+		return nil
+	}
+	if dr := hit(true); dr != nil {
+		return nil, false, no(403, "%s %s is denied by the preset", dr.Method, dr.Path)
+	}
+	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	var body []byte
+	read := false
+	readBody := func() *deny {
+		if read {
+			return nil
+		}
+		b, e := p.readBody(r)
+		if e != nil {
+			return e
+		}
+		body, read = b, true
+		return nil
+	}
+	// A form body on a denied path can carry _method.
+	if mt == "application/x-www-form-urlencoded" && hit(false) != nil {
+		if e := readBody(); e != nil {
+			return nil, false, e
+		}
+		if f, err := url.ParseQuery(string(body)); err == nil {
+			for _, v := range f["_method"] {
+				methods[strings.ToUpper(v)] = true
+			}
+		}
+		if dr := hit(true); dr != nil {
+			return nil, false, no(403, "%s %s is denied by the preset (form _method)", dr.Method, dr.Path)
+		}
+	}
+	// Text commands: a separate rule over decoded strings on named paths.
+	for _, br := range p.BodyRules {
+		if !matchPat(br.segs, false, false, nowrap) {
+			continue
+		}
+		if p.Matcher == "literal" { // the control: the pattern runs over the bytes as sent
+			if r.Method == "GET" || r.Method == "HEAD" {
+				continue
+			}
+			if e := readBody(); e != nil {
+				return nil, false, e
+			}
+			if m := br.re.Find(body); m != nil {
+				return nil, false, no(403, "the raw body matches a denied text pattern: %q", string(m))
+			}
+			continue
+		}
+		for _, vs := range q {
+			for _, v := range vs {
+				if m := br.re.FindString(v); m != "" {
+					return nil, false, no(403, "a query value matches a denied text pattern: %q", m)
+				}
+			}
+		}
+		if r.Method == "GET" || r.Method == "HEAD" {
+			continue
+		}
+		if r.Header.Get("Content-Encoding") != "" {
+			return nil, false, no(415, "compressed body refused on a path with a text rule")
+		}
+		if e := readBody(); e != nil {
+			return nil, false, e
+		}
+		switch mt {
+		case "application/json", "":
+			var v any
+			if json.Unmarshal(body, &v) == nil {
+				if m := textHit(br.re, v); m != "" {
+					return nil, false, no(403, "a string in the body matches a denied text pattern: %q", m)
+				}
+				continue
+			}
+			if m := br.re.Find(body); m != nil {
+				return nil, false, no(403, "the body matches a denied text pattern: %q", string(m))
+			}
+		case "application/x-www-form-urlencoded":
+			f, _ := url.ParseQuery(string(body))
+			for _, vs := range f {
+				for _, v := range vs {
+					if m := br.re.FindString(v); m != "" {
+						return nil, false, no(403, "a form value matches a denied text pattern: %q", m)
+					}
+				}
+			}
+		default:
+			if m := br.re.Find(body); m != nil {
+				return nil, false, no(403, "the body matches a denied text pattern: %q", string(m))
+			}
+		}
+	}
+	if read {
+		return body, false, nil
+	}
+	return nil, true, nil
+}
+
+func textHit(re *regexp.Regexp, v any) string {
+	switch x := v.(type) {
+	case string:
+		return re.FindString(x)
+	case []any:
+		for _, y := range x {
+			if m := textHit(re, y); m != "" {
+				return m
+			}
+		}
+	case map[string]any:
+		for _, y := range x {
+			if m := textHit(re, y); m != "" {
+				return m
+			}
+		}
+	}
+	return ""
+}
+
+// valueText walks literal strings in a GraphQL argument.
+func valueText(v *ast.Value, re *regexp.Regexp) string {
+	if v == nil {
+		return ""
+	}
+	if v.Kind == ast.StringValue || v.Kind == ast.BlockValue {
+		if m := re.FindString(v.Raw); m != "" {
+			return m
+		}
+	}
+	for _, c := range v.Children {
+		if m := valueText(c.Value, re); m != "" {
+			return m
+		}
+	}
+	return ""
+}
+
+var _ = io.EOF
+
+// canonPath is the fixed matcher's first step: dot segments, parameters, and backslashes are refused, an escape outside a declared
+// encoded segment is refused, empty segments and a trailing slash are dropped, and the result is what is forwarded.
+func (p *policy) canonPath(raw string) (string, *deny) {
+	if strings.ContainsAny(raw, "\\;") {
+		return "", no(403, "path holds a backslash or a parameter")
+	}
+	var segs []string
+	for _, x := range strings.Split(strings.TrimPrefix(raw, "/"), "/") {
+		switch x {
+		case "":
+		case ".", "..":
+			return "", no(403, "path holds a dot segment")
+		default:
+			segs = append(segs, x)
+		}
+	}
+	for i, x := range segs {
+		if !strings.Contains(x, "%") {
+			continue
+		}
+		if !p.encodedAllowed(segs, i) {
+			return "", no(403, "percent escape outside a declared encoded segment: %s", x)
+		}
+		d, err := url.PathUnescape(x)
+		if err != nil || strings.Contains(d, "%") {
+			return "", no(403, "a declared encoded segment does not decode once: %s", x)
+		}
+		for _, part := range strings.Split(d, "/") {
+			if part == "." || part == ".." {
+				return "", no(403, "a declared encoded segment holds a dot segment")
+			}
+		}
+	}
+	return "/" + strings.Join(segs, "/"), nil
+}
+
+// encodedAllowed reads the declared patterns: "{enc}" is the encoded segment, "*" one literal segment, and a leading "**" any prefix.
+func (p *policy) encodedAllowed(segs []string, i int) bool {
+	for _, pat := range p.EncodedPaths {
+		toks := strings.Split(strings.TrimPrefix(pat, "/"), "/")
+		any := toks[0] == "**"
+		if any {
+			toks = toks[1:]
+		}
+		e := -1
+		for k, t := range toks {
+			if t == "{enc}" {
+				e = k
+			}
+		}
+		if e < 0 {
+			continue
+		}
+		start := i - e
+		if start < 0 || start+len(toks) > len(segs) || (!any && start != 0) {
+			continue
+		}
+		ok := true
+		for k, t := range toks {
+			if t != "{enc}" && t != "*" && !strings.EqualFold(t, segs[start+k]) {
+				ok = false
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// unmatchedAPI refuses a path under /api or /graphql that no declared API prefix owns, on a host that has a preset.
+func (p *policy) unmatchedAPI(raw, np string) *deny {
+	first := strings.SplitN(strings.TrimPrefix(np, "/"), "/", 2)[0]
+	if strings.HasPrefix(first, "graphql") && np != strings.ToLower(p.GraphQLPath) {
+		return no(403, "path %s is under /graphql and no preset route owns it", raw)
+	}
+	if first == "api" {
+		for _, x := range p.APIPrefixes {
+			if np == strings.ToLower(x) || strings.HasPrefix(np, strings.ToLower(x)+"/") {
+				return nil
+			}
+		}
+		return no(403, "path %s is under /api and no preset route owns it", raw)
+	}
+	return nil
+}
+
+// walkText is the fixed matcher's second step: every string and block string in the parsed document, per decoded line.
+func walkText(ss ast.SelectionSet, d *ast.QueryDocument, re *regexp.Regexp, seen map[string]bool) string {
+	for _, s := range ss {
+		switch x := s.(type) {
+		case *ast.Field:
+			for _, a := range x.Arguments {
+				if m := valueText(a.Value, re); m != "" {
+					return m
+				}
+			}
+			for _, dv := range x.Directives {
+				for _, a := range dv.Arguments {
+					if m := valueText(a.Value, re); m != "" {
+						return m
+					}
+				}
+			}
+			if m := walkText(x.SelectionSet, d, re, seen); m != "" {
+				return m
+			}
+		case *ast.InlineFragment:
+			if m := walkText(x.SelectionSet, d, re, seen); m != "" {
+				return m
+			}
+		case *ast.FragmentSpread:
+			if f := d.Fragments.ForName(x.Name); f != nil && !seen[x.Name] {
+				seen[x.Name] = true
+				if m := walkText(f.SelectionSet, d, re, seen); m != "" {
+					return m
+				}
+			}
+		}
+	}
+	return ""
+}

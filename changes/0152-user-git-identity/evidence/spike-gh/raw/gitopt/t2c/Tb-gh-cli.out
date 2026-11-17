@@ -1,0 +1,23 @@
+### cross-maintainer rc=0
+$ gh pr checkout 14 2>&1; git rev-parse --abbrev-ref HEAD; git config --get-regexp '^branch\.cross-branch\.'
+From https://ghes.example.test/acme/widgets
+ * [new ref]         refs/pull/14/head -> cross-branch
+Switched to branch 'cross-branch'
+cross-branch
+branch.cross-branch.remote https://ghes.example.test/alice/widgets.git
+branch.cross-branch.pushremote https://ghes.example.test/alice/widgets.git
+branch.cross-branch.merge refs/heads/cross-branch
+### cross-maintainer-remote-v rc=0
+$ git remote -v
+origin	https://ghes.example.test/acme/widgets.git (fetch)
+origin	https://ghes.example.test/acme/widgets.git (push)
+### cross-maintainer-pull rc=0
+$ git pull 2>&1 | tail -2
+hint: invocation.
+fatal: Need to specify how to reconcile divergent branches.
+### cross-maintainer-push rc=0
+$ git commit -q --allow-empty -m m; git push origin HEAD:refs/heads/feature-m-$$ 2>&1 | tail -1; git push 2>&1 | tail -2
+ * [new branch]      HEAD -> feature-m-84
+hint: use 'git pull' before pushing again.
+hint: See the 'Note about fast-forwards' in 'git push --help' for details.
+script-rc=0

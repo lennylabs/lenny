@@ -1,0 +1,6 @@
+hosts:
+    other.example.test:
+        token: tok-X
+        api_host: other.example.test
+        api_protocol: https
+check_update: false

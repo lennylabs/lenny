@@ -1,0 +1,30 @@
+     0.0 s  start
+     0.4 s  A: renew CA
+   202.0 s  A: end
+   202.4 s  B0: new CA created, Helm value not yet set
+   202.7 s  B1: Helm value carries outgoing and new
+   643.1 s  B2: bundle delivered at every holder. Issuer switches.
+   692.3 s  B3: every leaf Secret re-issued
+   757.6 s  B4: every leaf delivered and served. Value cleared.
+   833.5 s  B5: outgoing CA gone from every holder
+   983.8 s  B: end
+   984.1 s  C0
+  1072.8 s  C2: bundle delivered. Issuer switches.
+  1171.9 s  C3: every leaf Secret re-issued. Value cleared at once.
+  1250.7 s  C5: outgoing CA gone from every holder
+  1400.9 s  C: end
+  1401.3 s  D0
+  1401.6 s  D1: Issuer switched
+  1412.3 s  D3: every leaf Secret re-issued
+  1612.5 s  D: end
+--- failures by the step they fell in
+after [before]: 32 failures from -380.7 s to -376.6 s by {'c1': 11, 'c3': 11, 'c2': 10}
+     17 tls: dial tcp ADDR: connect: connection refused
+     15 tls: dial tcp ADDR: i/o timeout
+after [C3: every leaf Secret re-issued. Value cleared at once.]: 817 failures from 1177.7 s to 1233.1 s by {'c1': 274, 'c2': 271, 'c3': 272}
+     817 connect: HTTP/1.1 503 Service Unavailable
+after [D3: every leaf Secret re-issued]: 1219 failures from 1480.1 s to 1564.1 s by {'c3': 400, 'c2': 399, 'c1': 420}
+     975 tls: tls: failed to verify certificate: x509: certificate signed by un
+     244 connect: HTTP/1.1 503 Service Unavailable
+total failures 2068
+['1793665651771822587 summary ok=12044 fail=705', '1793665651752865170 summary ok=12069 fail=680', '1793665651809270212 summary ok=12066 fail=683']

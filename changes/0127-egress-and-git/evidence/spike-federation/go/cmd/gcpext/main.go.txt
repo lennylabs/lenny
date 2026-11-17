@@ -1,0 +1,50 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os"
+
+	"golang.org/x/oauth2/google"
+
+	"spikefed/cmd/swaplib"
+)
+
+func main() {
+	ctx := context.Background()
+	if os.Getenv("NOSWAP") == "" {
+		swaplib.Swap("/var/run/netagent/gcp", 1)
+	}
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("project:", creds.ProjectID)
+	cl := &httpClient{creds: creds}
+	cl.get(ctx)
+	if os.Getenv("NOSWAP") == "" {
+		swaplib.Swap("/var/run/netagent/gcp", 2)
+	}
+	swaplib.Sleep()
+	cl.get(ctx)
+}
+
+type httpClient struct{ creds *google.Credentials }
+
+func (h *httpClient) get(ctx context.Context) {
+	tok, err := h.creds.TokenSource.Token()
+	if err != nil {
+		fmt.Println("ERR token:", err)
+		return
+	}
+	fmt.Println("token:", tok.AccessToken, "expiry:", tok.Expiry)
+	c := oauth2Client(ctx, h.creds)
+	r, err := c.Get(os.Getenv("API_URL"))
+	if err != nil {
+		fmt.Println("ERR api:", err)
+		return
+	}
+	b, _ := io.ReadAll(r.Body)
+	fmt.Println("api ->", r.StatusCode, string(b))
+}

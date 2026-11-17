@@ -1,0 +1,16 @@
+### TEST e-node-h  23:25:04
+### docker run --network container:spikefed-srv -e GCE_METADATA_HOST=127.0.0.1:8080 -e API_URL=http://127.0.0.1/api/whoami -w /napp spikefed-node:t node gce.js
+client: Compute
+projectId: proj-a
+email: tenant-a@proj-a.iam.gserviceaccount.com
+call1 -> {"ok":true,"saw":"Bearer gce-md-at-1793604304"}
+call2 -> {"ok":true,"saw":"Bearer gce-md-at-1793604304"}
+### exit 0
+### server log:
+{"ts": "07:25:04", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "127.0.0.1:8080"}}
+{"ts": "07:25:04", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/project/project-id", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "127.0.0.1:8080"}}
+{"ts": "07:25:04", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/email", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "127.0.0.1:8080"}}
+{"ts": "07:25:04", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "127.0.0.1:8080"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:04", "port": 80, "peer": "127.0.0.1", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"authorization": "Bearer gce-md-at-1793604304", "user-agent": "google-api-nodejs-client/11.3.2", "x-goog-api-client": "gl-node/24.22.2", "Host": "127.0.0.1"}, "authorization": "Bearer gce-md-at-1793604304"}
+{"ts": "07:25:04", "port": 8080, "peer": "127.0.0.1", "kind": "gce-md-token", "method": "GET", "path": "/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform", "headers": {"metadata-flavor": "Google", "user-agent": "node-fetch", "Host": "127.0.0.1:8080"}, "query": {"scopes": ["https://www.googleapis.com/auth/cloud-platform"]}}
+{"ts": "07:25:04", "port": 80, "peer": "127.0.0.1", "kind": "api", "method": "GET", "path": "/api/whoami", "headers": {"authorization": "Bearer gce-md-at-1793604304", "user-agent": "google-api-nodejs-client/11.3.2", "x-goog-api-client": "gl-node/24.22.2", "Host": "127.0.0.1"}, "authorization": "Bearer gce-md-at-1793604304"}

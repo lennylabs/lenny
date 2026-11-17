@@ -1,0 +1,47 @@
+# reach under final, refused under earlier strict
+gql-evasion / extensions key
+gql-evasion / fragment unused on Mutation
+gql-evasion / query op spreading Mutation fragment
+gql-path / bad doc under the REST prefix
+# reach under earlier strict, refused under final
+bound / body at the bound, good
+bound / chunked at the bound, good
+control / ctl-fragment-good
+control / ctl-two-good-ops
+deny-allow / graphql subscription
+deny-neighbour / DELETE /repos/acme/widgets/branches/main/protec
+deny-neighbour / DELETE /repos/acme/widgets/pulls/7/reviews/1
+deny-neighbour / POST /repos/acme/widgets/branches/main/rename
+deny-neighbour / POST /repos/acme/widgets/git/commits
+deny-neighbour / POST /repos/acme/widgets/merge-upstream
+deny-neighbour / POST /repos/acme/widgets/rulesets
+deny-neighbour / PUT /repos/acme/widgets/actions/permissions
+deny-neighbour / PUT /repos/acme/widgets/branches/main/protectio
+deny-neighbour / PUT /repos/acme/widgets/contents/f.txt
+deny-neighbour / PUT /repos/acme/widgets/pulls/7/reviews/1
+deny-neighbour / PUT /repos/acme/widgets/pulls/7/reviews/1/dismi
+deny-neighbour / field createRepositoryRuleset
+deny-neighbour / field deleteBranchProtectionRule
+deny-neighbour / field updateBranchProtectionRule
+gql-malformed / subscription
+gql-malformed / subscription named as an allowed field
+rest-method / DELETE merge path
+rest-method / PATCH merge path
+rest-method / TRACE merge path
+rest-method / invented method
+rest-override / X-HTTP-Method on allowed GET
+rest-override / X-HTTP-Method on allowed POST
+rest-override / X-HTTP-Method-Override on allowed GET
+rest-override / X-HTTP-Method-Override on allowed POST
+rest-override / X-Method-Override on allowed GET
+rest-override / X-Method-Override on allowed POST
+rest-override / form body on allowed POST
+rest-path / GET _method in the query on allowed GET
+rest-path / POST _method in the query on allowed POST
+rest-route / rest DELETE /repos/acme/widgets/pulls/7/reviews/1
+rest-route / rest POST /repos/acme/widgets/merge-upstream
+rest-route / rest PUT /repos/acme/widgets/contents/f
+rest-route / rest PUT /repos/acme/widgets/pulls/7/reviews/1
+rest-route / rest PUT /repos/acme/widgets/pulls/7/reviews/1/dism
+transport / absolute-form merge route
+transport / absolute-form on the plain port, merge route

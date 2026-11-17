@@ -1,0 +1,91 @@
+### TEST b-py-nocrm  23:17:13
+### docker run --network spikefed-net --add-host cloudresourcemanager.googleapis.com:127.0.0.1 -e GOOGLE_APPLICATION_CREDENTIALS=/var/run/netagent/gcp/ea-http.json -e API_URL=http://api.gcp.test/api/whoami -e SLEEP=1 spikefed-py:t python gcp_ext.py
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connection.py", line 239, in _new_conn
+    sock = connection.create_connection(
+        (self._dns_host, self.port),
+    ...<2 lines>...
+        socket_options=self.socket_options,
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/util/connection.py", line 85, in create_connection
+    raise err
+  File "/usr/local/lib/python3.13/site-packages/urllib3/util/connection.py", line 73, in create_connection
+    sock.connect(sa)
+    ~~~~~~~~~~~~^^^^
+ConnectionRefusedError: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 793, in urlopen
+    response = self._make_request(
+        conn,
+    ...<10 lines>...
+        **response_kw,
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 494, in _make_request
+    raise new_e
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 470, in _make_request
+    self._validate_conn(conn)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 1125, in _validate_conn
+    conn.connect()
+    ~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connection.py", line 827, in connect
+    self.sock = sock = self._new_conn()
+                       ~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connection.py", line 254, in _new_conn
+    raise NewConnectionError(
+        self, f"Failed to establish a new connection: {e}"
+    ) from e
+urllib3.exceptions.NewConnectionError: HTTPSConnection(host='cloudresourcemanager.googleapis.com', port=443): Failed to establish a new connection: [Errno 111] Connection refused
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/requests/adapters.py", line 696, in send
+    resp = conn.urlopen(
+        method=request.method,
+    ...<9 lines>...
+        chunked=chunked,
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/connectionpool.py", line 847, in urlopen
+    retries = retries.increment(
+        method, url, error=new_e, _pool=self, _stacktrace=sys.exc_info()[2]
+    )
+  File "/usr/local/lib/python3.13/site-packages/urllib3/util/retry.py", line 555, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='cloudresourcemanager.googleapis.com', port=443): Max retries exceeded with url: /v1/projects/123456789 (Caused by NewConnectionError("HTTPSConnection(host='cloudresourcemanager.googleapis.com', port=443): Failed to establish a new connection: [Errno 111] Connection refused"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/google/auth/transport/requests.py", line 273, in __call__
+    response = self.session.request(
+        method, url, data=body, headers=headers, timeout=timeout, **kwargs
+    )
+  File "/usr/local/lib/python3.13/site-packages/requests/sessions.py", line 651, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/usr/local/lib/python3.13/site-packages/requests/sessions.py", line 784, in send
+    r = adapter.send(request, **kwargs)
+  File "/usr/local/lib/python3.13/site-packages/requests/adapters.py", line 729, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='cloudresourcemanager.googleapis.com', port=443): Max retries exceeded with url: /v1/projects/123456789 (Caused by NewConnectionError("HTTPSConnection(host='cloudresourcemanager.googleapis.com', port=443): Failed to establish a new connection: [Errno 111] Connection refused"))
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/app/gcp_ext.py", line 5, in <module>
+    creds, proj = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                  ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/google/auth/_default.py", line 734, in default
+    effective_project_id = credentials.get_project_id(request=request)
+  File "/usr/local/lib/python3.13/site-packages/google/auth/external_account.py", line 423, in get_project_id
+    response = request(url=url, method="GET", headers=headers)
+  File "/usr/local/lib/python3.13/site-packages/google/auth/transport/requests.py", line 280, in __call__
+    raise new_exc from caught_exc
+google.auth.exceptions.TransportError: HTTPSConnectionPool(host='cloudresourcemanager.googleapis.com', port=443): Max retries exceeded with url: /v1/projects/123456789 (Caused by NewConnectionError("HTTPSConnection(host='cloudresourcemanager.googleapis.com', port=443): Failed to establish a new connection: [Errno 111] Connection refused"))
+### exit 1
+### server log:
+{"ts": "07:17:13", "port": 80, "peer": "172.20.0.3", "kind": "gcp-sts", "method": "POST", "path": "/v1/token", "headers": {"Host": "sts.gcp.test", "User-Agent": "python-requests/2.34.2", "Content-Type": "application/x-www-form-urlencoded", "x-goog-api-client": "gl-python/3.13.18 auth/2.62.0 google-byoid-sdk sa-impersonation/false config-lifetime/false source/file"}, "audience": "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/netagent-pool/providers/netagent", "subject_token_type": "urn:ietf:params:oauth:token-type:jwt", "scope": "https://www.googleapis.com/auth/cloud-platform", "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange", "options": null, "token_tag": "v1-6fcfaf", "token_claims": {"iss": "https://issuer.netagent.test", "sub": "tenant-a:session-123", "aud": "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/netagent-pool/providers/netagent", "iat": 1793603407, "nbf": 1793603407, "exp": 1793689807, "ver": 1}}

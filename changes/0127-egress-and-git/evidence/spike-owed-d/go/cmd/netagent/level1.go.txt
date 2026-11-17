@@ -1,0 +1,489 @@
+package main
+
+// Level 1: per "Level 1 replacement". For each CONNECT netagent asks the decision service on I7 and dials the proxy only on an
+// allow. The proxy gets a generation credential from I8 over TLS it verifies. netagent reads the ClientHello of each opaque tunnel,
+// enforces the tunnel lifetime, closes tunnels when the binding changes, and reports opens and closes on I7.
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+)
+
+type level1 struct {
+	a           *agent
+	i7          string
+	client      *http.Client
+	subClient   *http.Client
+	token       string
+	sniCheck    bool
+	tunnelMax   time.Duration
+	grace       time.Duration
+	refresh403  bool
+	noDecide    bool
+	mu          sync.Mutex
+	user, pass  string
+	gen         int64
+	tmu         sync.Mutex
+	tunnels     map[*l1Conn]struct{}
+	nDecide, nAllow, nDeny, nDecideErr, nProxy403, nProxy407, nRefreshed, nSNIClosed, nDirect, nLifetime, nBindClosed, nOpens, nCloses, nReportFail, nGraceClosed atomic.Int64
+}
+
+type decision struct {
+	Outcome    string `json:"outcome"`
+	DecisionID string `json:"decisionId"`
+	Addr       string `json:"addr"`
+	Reason     string `json:"reason"`
+}
+
+func (l *level1) post(ctx context.Context, path string, in, out any) error {
+	b, _ := json.Marshal(in)
+	req, _ := http.NewRequestWithContext(ctx, "POST", l.i7+path, bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+l.token)
+	r, err := l.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		io.Copy(io.Discard, r.Body)
+		return fmt.Errorf("status %d", r.StatusCode)
+	}
+	if out != nil {
+		return json.NewDecoder(r.Body).Decode(out)
+	}
+	io.Copy(io.Discard, r.Body)
+	return nil
+}
+
+func (l *level1) decide(ctx context.Context, authority string) (*decision, error) {
+	l.nDecide.Add(1)
+	c, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var d decision
+	if err := l.post(c, "/v1/decide", map[string]string{"authority": authority}, &d); err != nil {
+		l.nDecideErr.Add(1)
+		return nil, err
+	}
+	return &d, nil
+}
+
+// credential returns the held credential, fetching it from I8 when none is held. It is kept in memory only.
+func (l *level1) credential(ctx context.Context, force bool) (string, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.user != "" && !force {
+		return l.user + ":" + l.pass, nil
+	}
+	c, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(c, "GET", l.i7+"/v1/credential", nil)
+	req.Header.Set("Authorization", "Bearer "+l.token)
+	r, err := l.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer r.Body.Close()
+	if r.StatusCode != 200 {
+		return "", fmt.Errorf("credential status %d", r.StatusCode)
+	}
+	var x struct{ User, Pass string }
+	if err := json.NewDecoder(r.Body).Decode(&x); err != nil {
+		return "", err
+	}
+	l.user, l.pass = x.User, x.Pass
+	return x.User + ":" + x.Pass, nil
+}
+
+// proxyConnect opens TLS to the proxy, verified against the deployer's CA, and sends CONNECT with the credential.
+func (a *agent) proxyConnect(ctx context.Context, addr, cred string) (net.Conn, int, error) {
+	d := net.Dialer{Timeout: 5 * time.Second}
+	raw, err := d.DialContext(ctx, "tcp", a.proxy)
+	if err != nil {
+		a.nDialErr.Add(1)
+		return nil, 0, err
+	}
+	a.tune(raw)
+	tc := tls.Client(raw, a.proxyTLS)
+	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	err = tc.HandshakeContext(hctx)
+	cancel()
+	if err != nil {
+		raw.Close()
+		a.nDialErr.Add(1)
+		return nil, 0, fmt.Errorf("proxy tls: %w", err)
+	}
+	fmt.Fprintf(tc, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", addr, addr, base64.StdEncoding.EncodeToString([]byte(cred)))
+	br := bufio.NewReaderSize(tc, 1024)
+	resp, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		tc.Close()
+		a.nDialErr.Add(1)
+		return nil, 0, fmt.Errorf("proxy connect: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		tc.Close()
+		return nil, resp.StatusCode, nil
+	}
+	if br.Buffered() > 0 {
+		return &bufConn{tc, br}, 200, nil
+	}
+	return tc, 200, nil
+}
+
+func (a *agent) l1Dial(ctx context.Context, addr string) (net.Conn, error) {
+	l := a.l1
+	var d *decision
+	if l.noDecide {
+		d = &decision{Outcome: "allow"}
+	} else {
+		var err error
+		d, err = l.decide(ctx, addr)
+		if err != nil {
+			log.Printf("decision unavailable for %s: %v", addr, err)
+			return nil, &refused{code: 503, msg: "decision_unavailable"} // P6
+		}
+	}
+	if d.Outcome != "allow" {
+		l.nDeny.Add(1)
+		return nil, &refused{code: 403, msg: "egress_denied"}
+	}
+	l.nAllow.Add(1)
+	if d.Addr != "" { // a private destination at level 1: netagent dials the address the decision returns
+		l.nDirect.Add(1)
+		c, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp", d.Addr)
+		if err != nil {
+			return nil, &refused{code: 502, msg: "private_dial_failed"}
+		}
+		return l.track(c), nil
+	}
+	cred, err := l.credential(ctx, false)
+	if err != nil {
+		return nil, &refused{code: 503, msg: "credential_unavailable"}
+	}
+	for attempt := 0; ; attempt++ {
+		c, st, err := a.proxyConnect(ctx, addr, cred)
+		if err != nil {
+			log.Printf("proxy: %s: %v", addr, err)
+			return nil, &refused{code: 503, msg: "proxy_unavailable"}
+		}
+		if st == 200 {
+			return l.track(c), nil
+		}
+		if st == 407 {
+			l.nProxy407.Add(1)
+		} else {
+			l.nProxy403.Add(1)
+		}
+		if attempt == 0 && (st == 407 || (st == 403 && l.refresh403)) {
+			l.nRefreshed.Add(1)
+			cred, err = l.credential(ctx, true)
+			if err != nil {
+				return nil, &refused{code: 503, msg: "credential_unavailable"}
+			}
+			continue
+		}
+		// allowed by the decision and refused by the proxy: sync lag or a contract failure, retryable, with an alert
+		return nil, &refused{code: 503, msg: fmt.Sprintf("level1_proxy_refused_allowed_destination status=%d", st)}
+	}
+}
+
+// l1Conn counts a tunnel's close and enforces its lifetime.
+type l1Conn struct {
+	net.Conn
+	l    *level1
+	once sync.Once
+	t    *time.Timer
+}
+
+func (c *l1Conn) Close() error {
+	c.once.Do(func() {
+		c.l.nCloses.Add(1)
+		c.l.tmu.Lock()
+		delete(c.l.tunnels, c)
+		c.l.tmu.Unlock()
+		if c.t != nil {
+			c.t.Stop()
+		}
+	})
+	return c.Conn.Close()
+}
+
+func (l *level1) track(c net.Conn) net.Conn {
+	x := &l1Conn{Conn: c, l: l}
+	l.nOpens.Add(1)
+	l.tmu.Lock()
+	l.tunnels[x] = struct{}{}
+	l.tmu.Unlock()
+	if l.tunnelMax > 0 {
+		x.t = time.AfterFunc(l.tunnelMax, func() { l.nLifetime.Add(1); x.Close() })
+	}
+	return x
+}
+
+func (l *level1) closeAll(ctr *atomic.Int64) {
+	l.tmu.Lock()
+	all := make([]*l1Conn, 0, len(l.tunnels))
+	for c := range l.tunnels {
+		all = append(all, c)
+	}
+	l.tmu.Unlock()
+	for _, c := range all {
+		ctr.Add(1)
+		c.Close()
+	}
+}
+
+// subscribe: a binding change closes every tunnel and flushes the credential. A lost subscription keeps tunnels for the grace, then closes them.
+func (l *level1) subscribe() {
+	var lostAt time.Time
+	gen := int64(-1)
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("%s/v1/subscribe?gen=%d", l.i7, gen), nil)
+		req.Header.Set("Authorization", "Bearer "+l.token)
+		r, err := l.subClient.Do(req)
+		if err == nil && r.StatusCode != 200 {
+			r.Body.Close()
+			err = errors.New("status")
+		}
+		if err != nil {
+			cancel()
+			if lostAt.IsZero() {
+				lostAt = time.Now()
+			}
+			if time.Since(lostAt) > l.grace {
+				l.closeAll(&l.nGraceClosed)
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		lostAt = time.Time{}
+		var x struct {
+			Gen int64 `json:"gen"`
+		}
+		json.NewDecoder(r.Body).Decode(&x)
+		r.Body.Close()
+		cancel()
+		if gen >= 0 && x.Gen != gen {
+			log.Printf("binding changed, generation %d to %d: closing tunnels", gen, x.Gen)
+			l.closeAll(&l.nBindClosed)
+			l.mu.Lock()
+			l.user, l.pass = "", ""
+			l.mu.Unlock()
+		}
+		gen = x.Gen
+	}
+}
+
+func (l *level1) reporter() {
+	var so, sc int64
+	for range time.Tick(time.Second) {
+		o, c := l.nOpens.Load(), l.nCloses.Load()
+		if o == so && c == sc {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		err := l.post(ctx, "/v1/report", map[string]int64{"opens": o - so, "closes": c - sc, "sniClosed": l.nSNIClosed.Load()}, nil)
+		cancel()
+		if err != nil {
+			l.nReportFail.Add(1)
+			continue
+		}
+		so, sc = o, c
+	}
+}
+
+// ---- the ClientHello check, from the earlier spike's sniagent
+const maxHello = 64 * 1024
+
+func readHello(r io.Reader) (raw []byte, hello []byte, err error) {
+	var hs []byte
+	need := -1
+	for {
+		h := make([]byte, 5)
+		n, e := io.ReadFull(r, h)
+		raw = append(raw, h[:n]...)
+		if e != nil {
+			return raw, nil, errors.New("no complete record header")
+		}
+		if h[0] != 0x16 || h[1] != 3 {
+			return raw, nil, errors.New("not a TLS handshake record")
+		}
+		l := int(binary.BigEndian.Uint16(h[3:5]))
+		if l == 0 || l > 16384+256 {
+			return raw, nil, errors.New("bad record length")
+		}
+		b := make([]byte, l)
+		n, e = io.ReadFull(r, b)
+		raw = append(raw, b[:n]...)
+		if e != nil {
+			return raw, nil, errors.New("short record")
+		}
+		hs = append(hs, b...)
+		if len(hs) > maxHello {
+			return raw, nil, errors.New("hello above the cap")
+		}
+		if need < 0 && len(hs) >= 4 {
+			if hs[0] != 1 {
+				return raw, nil, errors.New("not a ClientHello")
+			}
+			need = 4 + (int(hs[1])<<16 | int(hs[2])<<8 | int(hs[3]))
+			if need > maxHello {
+				return raw, nil, errors.New("hello above the cap")
+			}
+		}
+		if need >= 0 && len(hs) >= need {
+			return raw, hs[:need], nil
+		}
+	}
+}
+
+func serverName(h []byte) (string, bool, error) {
+	bad := errors.New("malformed ClientHello")
+	p := h[4:]
+	if len(p) < 34 {
+		return "", false, bad
+	}
+	p = p[34:]
+	take8 := func() ([]byte, bool) {
+		if len(p) < 1 || len(p) < 1+int(p[0]) {
+			return nil, false
+		}
+		v := p[1 : 1+int(p[0])]
+		p = p[1+int(p[0]):]
+		return v, true
+	}
+	take16 := func(q *[]byte) ([]byte, bool) {
+		b := *q
+		if len(b) < 2 {
+			return nil, false
+		}
+		l := int(binary.BigEndian.Uint16(b))
+		if len(b) < 2+l {
+			return nil, false
+		}
+		v := b[2 : 2+l]
+		*q = b[2+l:]
+		return v, true
+	}
+	if _, ok := take8(); !ok {
+		return "", false, bad
+	}
+	if _, ok := take16(&p); !ok {
+		return "", false, bad
+	}
+	if _, ok := take8(); !ok {
+		return "", false, bad
+	}
+	if len(p) == 0 {
+		return "", false, nil
+	}
+	exts, ok := take16(&p)
+	if !ok {
+		return "", false, bad
+	}
+	name, found := "", false
+	for len(exts) > 0 {
+		if len(exts) < 2 {
+			return "", false, bad
+		}
+		t := binary.BigEndian.Uint16(exts)
+		exts = exts[2:]
+		d, ok := take16(&exts)
+		if !ok {
+			return "", false, bad
+		}
+		if t != 0 {
+			continue
+		}
+		if found {
+			return "", false, errors.New("duplicate server_name")
+		}
+		list, ok := take16(&d)
+		if !ok {
+			return "", false, bad
+		}
+		cnt := 0
+		for len(list) > 0 {
+			if len(list) < 1 {
+				return "", false, bad
+			}
+			nt := list[0]
+			list = list[1:]
+			v, ok := take16(&list)
+			if !ok {
+				return "", false, bad
+			}
+			if nt == 0 {
+				cnt++
+				name = string(v)
+			}
+		}
+		if cnt != 1 {
+			return "", false, errors.New("server_name list does not hold one name")
+		}
+		found = true
+	}
+	return name, found, nil
+}
+
+func normName(s string) string { return strings.TrimSuffix(strings.ToLower(s), ".") }
+
+// checkHello reads the client's hello before a byte reaches the upstream, and returns the bytes to forward.
+func (l *level1) checkHello(c net.Conn, key string) ([]byte, error) {
+	host, _, _ := net.SplitHostPort(key)
+	c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer c.SetReadDeadline(time.Time{})
+	raw, hello, err := readHello(c)
+	if err != nil {
+		return nil, err
+	}
+	name, found, err := serverName(hello)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, errors.New("no server name")
+	}
+	if normName(name) != normName(host) {
+		return nil, fmt.Errorf("server name %q differs from authority %q", name, host)
+	}
+	return raw, nil
+}
+
+func newLevel1(a *agent, i7, i7ca, i7sni, token string, sni bool, max, grace time.Duration, refresh403, noDecide bool) *level1 {
+	b, err := os.ReadFile(i7ca)
+	if err != nil {
+		log.Fatal(err)
+	}
+	p := x509.NewCertPool()
+	p.AppendCertsFromPEM(b)
+	cfg := &tls.Config{RootCAs: p, ServerName: i7sni, MinVersion: tls.VersionTLS12}
+	return &level1{a: a, i7: i7, token: token, sniCheck: sni, tunnelMax: max, grace: grace, refresh403: refresh403, noDecide: noDecide, tunnels: map[*l1Conn]struct{}{},
+		client:    &http.Client{Transport: &http.Transport{TLSClientConfig: cfg, ForceAttemptHTTP2: true, MaxIdleConnsPerHost: 8, IdleConnTimeout: 60 * time.Second}},
+		subClient: &http.Client{Transport: &http.Transport{TLSClientConfig: cfg.Clone(), ForceAttemptHTTP2: true}}}
+}
+
+func (l *level1) stats() map[string]any {
+	l.tmu.Lock()
+	open := len(l.tunnels)
+	l.tmu.Unlock()
+	return map[string]any{"decide": l.nDecide.Load(), "allow": l.nAllow.Load(), "deny": l.nDeny.Load(), "decideErr": l.nDecideErr.Load(), "proxy403": l.nProxy403.Load(), "proxy407": l.nProxy407.Load(), "refreshed": l.nRefreshed.Load(), "sniClosed": l.nSNIClosed.Load(), "direct": l.nDirect.Load(), "lifetimeClosed": l.nLifetime.Load(), "bindingClosed": l.nBindClosed.Load(), "graceClosed": l.nGraceClosed.Load(), "opens": l.nOpens.Load(), "closes": l.nCloses.Load(), "openTunnels": open}
+}

@@ -1,0 +1,63 @@
+// Stand-in decision service: HTTP ext_authz over h2c on :9001.
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"log"
+	"net/http"
+	"os"
+	"strings"
+	"sync"
+	"time"
+)
+
+var gw = map[string]string{"ok": "198.20.0.21:8443", "wrongsan": "198.20.0.22:8443", "foreign": "198.20.0.23:8443", "plainport": "198.20.0.21:8080"}
+var mu sync.Mutex
+
+func main() {
+	f, _ := os.OpenFile("/raw/authz.jsonl", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		name := strings.Split(host, ":")[0]
+		label := strings.Split(name, ".")[0]
+		mu.Lock()
+		json.NewEncoder(f).Encode(map[string]any{"t": time.Now().Format(time.RFC3339Nano), "method": r.Method, "proto": r.Proto, "host": host, "pod_proxy_auth": r.Header.Get("Proxy-Authorization")})
+		mu.Unlock()
+		switch label {
+		case "deny503":
+			w.Header().Set("x-lenny-deny-reason", "no_live_agent")
+			w.WriteHeader(503)
+			w.Write([]byte("no attested live replica\n"))
+			return
+		case "deny403":
+			w.Header().Set("x-lenny-deny-reason", "reserved_host")
+			w.WriteHeader(403)
+			w.Write([]byte("reserved\n"))
+			return
+		}
+		route, addr := "outbound", gw["ok"]
+		if a, ok := gw[label]; ok {
+			addr = a
+		}
+		switch label {
+		case "tsm":
+			route = "outbound-tsm"
+		case "plain", "plainport":
+			route = "outbound-plain"
+		}
+		w.Header().Set("x-lenny-route", route)
+		w.Header().Set("x-lenny-upstream", addr)
+		if label == "nogrant" {
+			w.Header().Set("x-envoy-auth-headers-to-remove", "proxy-authorization")
+		} else {
+			w.Header().Set("proxy-authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("grant:signed-grant-for-"+name)))
+		}
+		w.WriteHeader(200)
+	})
+	var p http.Protocols
+	p.SetHTTP1(true)
+	p.SetUnencryptedHTTP2(true)
+	s := &http.Server{Addr: ":9001", Handler: h, Protocols: &p}
+	log.Fatal(s.ListenAndServe())
+}

@@ -1,0 +1,6 @@
+### lfsfail-422-clone rc=124
+$ (git clone -q https://gitlab.example.test/acme/lfsfail.git c 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+
+### lfsfail-422-push rc=124
+$ (git push origin HEAD:refs/heads/lenny/lfsfail-422-13 2>&1; echo git-exit=$?) | tail -7 | cut -c1-200
+

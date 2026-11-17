@@ -1,0 +1,68 @@
+### Firefox again, reading the error code from the page
+{"policies": {"Certificates": {"Install": ["/i3/certs/ca-nc.pem", "/i3/certs/ca-ncp.pem", "/i3/certs/ca-ncdns.pem", "/i3/certs/ca-ctl.pem"]}}}
+session: 153.6.0 None
+{"url": "https://perm.nc.test:8441/", "result": "served permitted", "code": "", "info": "{\"uri\":\"https://perm.nc.test:8441/\",\"title\":\"\"}", "error": "", "landing": "https://perm.nc.test:8441/", "secs": 0.65}
+{"url": "https://denied.other.test:8442/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//denied.other.test%3A8442/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://denied.other.test:8442/", "secs": 0.58}
+{"url": "https://sub.perm.nc.test:8443/", "result": "served subdomain", "code": "", "info": "{\"uri\":\"https://sub.perm.nc.test:8443/\",\"title\":\"\"}", "error": "", "landing": "https://sub.perm.nc.test:8443/", "secs": 0.54}
+{"url": "https://198.19.60.20:8444/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//198.19.60.20%3A8444/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://198.19.60.20:8444/", "secs": 0.61}
+{"url": "https://denied.other.test:8445/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//denied.other.test%3A8445/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://denied.other.test:8445/", "secs": 0.58}
+{"url": "https://denied.other.test:8446/", "result": "served control-unconstrained", "code": "", "info": "{\"uri\":\"https://denied.other.test:8446/\",\"title\":\"\"}", "error": "", "landing": "https://denied.other.test:8446/", "secs": 0.52}
+{"url": "https://perm.nc.test:8447/", "result": "NOT SERVED", "code": "SEC_ERROR_UNKNOWN_ISSUER", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//perm.nc.test%3A8447/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_UNKNOWN_ISSUER\"}", "error": "", "landing": "https://perm.nc.test:8447/", "secs": 0.61}
+{"url": "https://198.19.60.20:8448/", "result": "served ip-dnsonly", "code": "", "info": "{\"uri\":\"https://198.19.60.20:8448/\",\"title\":\"\"}", "error": "", "landing": "https://198.19.60.20:8448/", "secs": 0.56}
+{"url": "https://denied.other.test:8449/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//denied.other.test%3A8449/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://denied.other.test:8449/", "secs": 0.58}
+{"url": "https://x.nc.test:8450/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//x.nc.test%3A8450/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://x.nc.test:8450/", "secs": 0.6}
+--- NSS
+
+Certificate Nickname                                         Trust Attributes
+                                                             SSL,S/MIME,JAR/XPI
+
+ca-nc.pem                                                    C,,  
+ca-ncp.pem                                                   C,,  
+ca-ncdns.pem                                                 C,,  
+ca-ctl.pem                                                   C,,  
+session: 153.6.0 None
+{"url": "https://perm.nc.test:8441/", "result": "served permitted", "code": "", "info": "{\"uri\":\"https://perm.nc.test:8441/\",\"title\":\"\"}", "error": "", "landing": "https://perm.nc.test:8441/", "secs": 0.57}
+{"url": "https://denied.other.test:8442/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//denied.other.test%3A8442/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://denied.other.test:8442/", "secs": 0.6}
+{"url": "https://sub.perm.nc.test:8443/", "result": "served subdomain", "code": "", "info": "{\"uri\":\"https://sub.perm.nc.test:8443/\",\"title\":\"\"}", "error": "", "landing": "https://sub.perm.nc.test:8443/", "secs": 0.53}
+{"url": "https://198.19.60.20:8444/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//198.19.60.20%3A8444/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://198.19.60.20:8444/", "secs": 0.59}
+{"url": "https://denied.other.test:8445/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//denied.other.test%3A8445/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://denied.other.test:8445/", "secs": 0.56}
+{"url": "https://denied.other.test:8446/", "result": "served control-unconstrained", "code": "", "info": "{\"uri\":\"https://denied.other.test:8446/\",\"title\":\"\"}", "error": "", "landing": "https://denied.other.test:8446/", "secs": 0.53}
+{"url": "https://perm.nc.test:8447/", "result": "NOT SERVED", "code": "SEC_ERROR_UNKNOWN_ISSUER", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//perm.nc.test%3A8447/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_UNKNOWN_ISSUER\"}", "error": "", "landing": "https://perm.nc.test:8447/", "secs": 0.62}
+{"url": "https://198.19.60.20:8448/", "result": "served ip-dnsonly", "code": "", "info": "{\"uri\":\"https://198.19.60.20:8448/\",\"title\":\"\"}", "error": "", "landing": "https://198.19.60.20:8448/", "secs": 0.55}
+{"url": "https://denied.other.test:8449/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//denied.other.test%3A8449/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://denied.other.test:8449/", "secs": 0.57}
+{"url": "https://x.nc.test:8450/", "result": "NOT SERVED", "code": "SEC_ERROR_CERT_NOT_IN_NAME_SPACE", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//x.nc.test%3A8450/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_CERT_NOT_IN_NAME_SPACE\"}", "error": "", "landing": "https://x.nc.test:8450/", "secs": 0.58}
+--- SSL_CERT_FILE only
+session: 153.6.0 None
+{"url": "https://perm.nc.test:8441/", "result": "NOT SERVED", "code": "SEC_ERROR_UNKNOWN_ISSUER", "info": "{\"uri\":\"about:certerror?e=nssBadCert&u=https%3A//perm.nc.test%3A8441/&c=UTF-8&d=%20&a=\",\"title\":\"Warning: Security Risk\",\"cert\":\"SEC_ERROR_UNKNOWN_ISSUER\"}", "error": "", "landing": "https://perm.nc.test:8441/", "secs": 0.63}
+--- server's view of refused handshakes
+   4 ip tlserr: http: TLS handshake errorremote error: tls: bad certificate
+   4 outside tlserr: http: TLS handshake errorremote error: tls: bad certificate
+   4 outside-dnsonly tlserr: http: TLS handshake errorremote error: tls: bad certificate
+   4 outside-via-int tlserr: http: TLS handshake errorremote error: tls: bad certificate
+   2 permitted tlserr: http: TLS handshake errorremote error: tls: unknown certificate authority
+   4 unknown-ca tlserr: http: TLS handshake errorremote error: tls: unknown certificate authority
+   4 wildcard-parent tlserr: http: TLS handshake errorremote error: tls: bad certificate
+--- .NET 8.0, the handler's defaults, no callback, SSL_CERT_FILE at a bundle
+runtime=.NET 8.0.33 SSL_CERT_FILE=/tmp/bundle.pem SSL_CERT_DIR= HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+{"url":"https://sub.perm.nc.test:8443/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved subdomain\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://198.19.60.20:8444/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasExcludedNameConstraint","chain":""}
+{"url":"https://denied.other.test:8445/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+{"url":"https://denied.other.test:8446/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved control-unconstrained\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://perm.nc.test:8447/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: PartialChain","chain":""}
+{"url":"https://198.19.60.20:8448/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved ip-dnsonly\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://denied.other.test:8449/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+{"url":"https://x.nc.test:8450/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+--- .NET 10.0, the handler's defaults, no callback, SSL_CERT_FILE at a bundle
+runtime=.NET 10.0.14 SSL_CERT_FILE=/tmp/bundle.pem SSL_CERT_DIR= HTTPS_PROXY=
+{"url":"https://perm.nc.test:8441/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved permitted\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://denied.other.test:8442/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+{"url":"https://sub.perm.nc.test:8443/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved subdomain\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://198.19.60.20:8444/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasExcludedNameConstraint","chain":""}
+{"url":"https://denied.other.test:8445/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+{"url":"https://denied.other.test:8446/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved control-unconstrained\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://perm.nc.test:8447/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: PartialChain","chain":""}
+{"url":"https://198.19.60.20:8448/","result":"HTTP 200 \u003Chtml\u003E\u003Cbody\u003Eserved ip-dnsonly\u003C/body\u003E\u003C/html\u003E","chain":""}
+{"url":"https://denied.other.test:8449/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}
+{"url":"https://x.nc.test:8450/","result":"REFUSED","error":"The SSL connection could not be established, see inner exception. | The remote certificate is invalid because of errors in the certificate chain: HasNotPermittedNameConstraint","chain":""}

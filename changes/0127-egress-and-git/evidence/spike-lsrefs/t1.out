@@ -1,0 +1,56 @@
+== https://github.com/git/git master  truth=ebdc087dc99d68bb340c282b2ba5f722def28d19
+  direct   {"bytes":67,"class":"ok","err":"","ms":296,"proto":"v2","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+  envoy    {"bytes":67,"class":"ok","err":"","ms":327,"proto":"v2","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+  envoy v0 {"bytes":229410,"class":"ok","err":"","ms":450,"proto":"v0","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+== https://github.com/git/git v2.49.0  truth=683c54c999c301c2cd6f715c411407c413b1d84e
+  direct   {"bytes":460,"class":"ok","err":"","ms":311,"proto":"v2","sha":"683c54c999c301c2cd6f715c411407c413b1d84e"}
+  envoy    {"bytes":460,"class":"ok","err":"","ms":715,"proto":"v2","sha":"683c54c999c301c2cd6f715c411407c413b1d84e"}
+  envoy v0 {"bytes":355377,"class":"ok","err":"","ms":518,"proto":"v0","sha":"683c54c999c301c2cd6f715c411407c413b1d84e"}
+== https://github.com/kubernetes/kubernetes master  truth=de06dce3c02d5731a0dc4161861b9c34b1444280
+  direct   {"bytes":67,"class":"ok","err":"","ms":209,"proto":"v2","sha":"de06dce3c02d5731a0dc4161861b9c34b1444280"}
+  envoy    {"bytes":67,"class":"ok","err":"","ms":188,"proto":"v2","sha":"de06dce3c02d5731a0dc4161861b9c34b1444280"}
+  envoy v0 {"bytes":1048576,"class":"ok","err":"matched before cap","ms":413,"proto":"v0","sha":"de06dce3c02d5731a0dc4161861b9c34b1444280"}
+== https://github.com/kubernetes/kubernetes v1.30.0  truth=7c48c2bd72b9bf5c44d21d7338cc7bea77d0ad2a
+  direct   {"bytes":1057,"class":"ok","err":"","ms":189,"proto":"v2","sha":"7c48c2bd72b9bf5c44d21d7338cc7bea77d0ad2a"}
+  envoy    {"bytes":1057,"class":"ok","err":"","ms":230,"proto":"v2","sha":"7c48c2bd72b9bf5c44d21d7338cc7bea77d0ad2a"}
+  envoy v0 {"bytes":1048576,"class":"bounded","err":"byte cap","ms":523,"proto":"v0","sha":""}
+== https://github.com/git/git no-such-ref-xyz  truth=
+  direct   {"bytes":4,"class":"unresolvable","err":"ref absent","ms":304,"proto":"v2","sha":""}
+  envoy    {"bytes":4,"class":"unresolvable","err":"ref absent","ms":353,"proto":"v2","sha":""}
+  envoy v0 {"bytes":229410,"class":"unresolvable","err":"ref absent","ms":480,"proto":"v0","sha":""}
+== https://github.com/lennylabs-does-not-exist/nope master  truth=fatal: could not read Username for 'http
+  direct   {"bytes":0,"class":"unresolvable","err":"host 401","ms":342,"proto":"v0","sha":""}
+  envoy    {"bytes":0,"class":"unresolvable","err":"host 401","ms":400,"proto":"v0","sha":""}
+  envoy v0 {"bytes":0,"class":"unresolvable","err":"host 401","ms":192,"proto":"v0","sha":""}
+== https://gitlab.com/gitlab-org/gitlab-runner main  truth=d6f30dcf9b9fb390ed86425d96153ddf028ba8e9
+  direct   {"bytes":0,"class":"unresolvable","err":"redirect refused (301)","ms":493,"proto":"v0","sha":""}
+  envoy    {"bytes":0,"class":"unresolvable","err":"redirect refused (301)","ms":514,"proto":"v0","sha":""}
+  envoy v0 {"bytes":0,"class":"unresolvable","err":"redirect refused (301)","ms":231,"proto":"v0","sha":""}
+== https://codeberg.org/forgejo/forgejo forgejo  truth=a00f3fdf2029236b11b9342b9d5e641b341d4f89
+  direct   {"bytes":68,"class":"ok","err":"","ms":711,"proto":"v2","sha":"a00f3fdf2029236b11b9342b9d5e641b341d4f89"}
+  envoy    {"bytes":68,"class":"ok","err":"","ms":617,"proto":"v2","sha":"a00f3fdf2029236b11b9342b9d5e641b341d4f89"}
+  envoy v0 {"bytes":877680,"class":"ok","err":"","ms":1620,"proto":"v0","sha":"a00f3fdf2029236b11b9342b9d5e641b341d4f89"}
+== https://gitea.com/gitea/tea main  truth=397e6300ec93937b7745ebcc19b95ca9cb30568b
+  direct   {"bytes":65,"class":"ok","err":"","ms":184,"proto":"v2","sha":"397e6300ec93937b7745ebcc19b95ca9cb30568b"}
+  envoy    {"bytes":65,"class":"ok","err":"","ms":262,"proto":"v2","sha":"397e6300ec93937b7745ebcc19b95ca9cb30568b"}
+  envoy v0 {"bytes":71897,"class":"ok","err":"","ms":299,"proto":"v0","sha":"397e6300ec93937b7745ebcc19b95ca9cb30568b"}
+== https://bitbucket.org/atlassian/aui master  truth=a9ab4388cad15d800efea0895518c5404b49882e
+  direct   {"bytes":67,"class":"ok","err":"","ms":414,"proto":"v2","sha":"a9ab4388cad15d800efea0895518c5404b49882e"}
+  envoy    {"bytes":67,"class":"ok","err":"","ms":406,"proto":"v2","sha":"a9ab4388cad15d800efea0895518c5404b49882e"}
+  envoy v0 {"bytes":233505,"class":"ok","err":"","ms":636,"proto":"v0","sha":"a9ab4388cad15d800efea0895518c5404b49882e"}
+== https://bitbucket.org/snakeyaml/snakeyaml master  truth=7b8b171c0dbfa8af665c24a63d91f2b185b8701b
+  direct   {"bytes":67,"class":"ok","err":"","ms":433,"proto":"v2","sha":"7b8b171c0dbfa8af665c24a63d91f2b185b8701b"}
+  envoy    {"bytes":67,"class":"ok","err":"","ms":373,"proto":"v2","sha":"7b8b171c0dbfa8af665c24a63d91f2b185b8701b"}
+  envoy v0 {"bytes":2890,"class":"ok","err":"","ms":526,"proto":"v0","sha":"7b8b171c0dbfa8af665c24a63d91f2b185b8701b"}
+== https://git.kernel.org/pub/scm/git/git.git master  truth=ebdc087dc99d68bb340c282b2ba5f722def28d19
+  direct   {"bytes":67,"class":"ok","err":"","ms":187,"proto":"v2","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+  envoy    {"bytes":67,"class":"ok","err":"","ms":218,"proto":"v2","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+  envoy v0 {"bytes":8226,"class":"ok","err":"","ms":183,"proto":"v0","sha":"ebdc087dc99d68bb340c282b2ba5f722def28d19"}
+== https://git.sr.ht/~sircmpwn/scdoc master  truth=24be30ef17d5ca0162f11b35258c8fa2413d556a
+  direct   {"bytes":67,"class":"ok","err":"","ms":512,"proto":"v2","sha":"24be30ef17d5ca0162f11b35258c8fa2413d556a"}
+  envoy    {"bytes":67,"class":"ok","err":"","ms":516,"proto":"v2","sha":"24be30ef17d5ca0162f11b35258c8fa2413d556a"}
+  envoy v0 {"bytes":5267,"class":"ok","err":"","ms":517,"proto":"v0","sha":"24be30ef17d5ca0162f11b35258c8fa2413d556a"}
+== https://dev.azure.com/dnceng-public/public/_git/public main  truth=fatal: could not read Username for 'http
+  direct   {"bytes":0,"class":"unresolvable","err":"host 401","ms":451,"proto":"v0","sha":""}
+  envoy    {"bytes":0,"class":"unresolvable","err":"host 401","ms":511,"proto":"v0","sha":""}
+  envoy v0 {"bytes":0,"class":"unresolvable","err":"host 401","ms":205,"proto":"v0","sha":""}

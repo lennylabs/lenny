@@ -1,0 +1,12 @@
+=== no contents family: the merge rule alone on the false positive row
+http=200 {"merged":true,"message":"merged","sha":"abc"}
+
+"method":"PUT","uri":"/repos/acme/widgets/contents/pulls/7/merge"
+http=403 {"message":"refused by the egress operation allowlist: PUT {repo}/pulls/*/merge is denied by the preset"}
+
+=== check budget set to 1 us
+http=503 {"message":"refused by the egress operation allowlist: the check went past its budget of 1 us"}
+
+=== head deadline 10 s
+partial head answer b'HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-' after 10.0 s
+bare LF head answer b'HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-' after 10.0 s

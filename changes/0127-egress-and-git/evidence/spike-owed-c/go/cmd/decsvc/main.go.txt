@@ -1,0 +1,445 @@
+// decsvc: decision service stand-in and evidence producer. ext_authz on :9000, Envoy's access log service on :9003, control on :9002.
+// It sends records to lenny-evidence over mTLS, hashing tenants to replicas, with a per-tenant bound of its own.
+// A regulated tenant's decision goes to /v1/commit and the CONNECT waits, refused with 503 past BOUND.
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"math/rand/v2"
+	"net"
+	"net/http"
+	"os"
+	"runtime"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"owedc/ev"
+
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	alsv3 "github.com/envoyproxy/go-control-plane/envoy/service/accesslog/v3"
+	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"golang.org/x/net/http2"
+	"google.golang.org/genproto/googleapis/rpc/status"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
+)
+
+func envDur(k string, d time.Duration) time.Duration {
+	if x, err := time.ParseDuration(os.Getenv(k)); err == nil {
+		return x
+	}
+	return d
+}
+func envInt(k string, d int) int {
+	if x, err := strconv.Atoi(os.Getenv(k)); err == nil {
+		return x
+	}
+	return d
+}
+
+var (
+	off       = os.Getenv("EVIDENCE") == "off"
+	regAll    = os.Getenv("REG_ALL") != ""
+	regMod    = envInt("REG_MOD", 0) // a tenant number divisible by this is regulated
+	bound     = envDur("BOUND", 150*time.Millisecond)
+	prodBound = int64(envInt("PROD_BOUND", 8<<20))
+	privAddr  = os.Getenv("PRIV")
+	inc       = fmt.Sprintf("d%x", time.Now().UnixMilli())
+	replicas  []string
+	client    *http.Client
+
+	nDecisions, nDenied, nTunnels, nEmitted, nProdDropped, nSent, nSendFail, nRefused, nCommitOK, nAls atomic.Int64
+)
+
+type posKey struct{ stream, tenant string }
+
+var (
+	seqMu sync.Mutex
+	seqs  = map[posKey]uint64{}
+)
+
+func nextSeq(stream, tenant string) uint64 {
+	seqMu.Lock()
+	defer seqMu.Unlock()
+	k := posKey{stream, tenant}
+	seqs[k]++
+	return seqs[k]
+}
+
+type tq struct {
+	recs  [][]byte
+	bytes int64
+	drop  map[string]*[2]uint64
+}
+type rq struct {
+	mu sync.Mutex
+	q  map[string]*tq
+}
+
+var queues []*rq
+
+func emit(r *ev.Rec) {
+	if off {
+		return
+	}
+	line, _ := json.Marshal(r)
+	line = append(line, '\n')
+	nEmitted.Add(1)
+	q := queues[ev.Replica(r.TenantId, len(replicas))]
+	q.mu.Lock()
+	t := q.q[r.TenantId]
+	if t == nil {
+		t = &tq{drop: map[string]*[2]uint64{}}
+		q.q[r.TenantId] = t
+	}
+	if t.bytes >= prodBound {
+		nProdDropped.Add(1)
+		d := t.drop[r.Stream]
+		if d == nil {
+			d = &[2]uint64{r.Sequence, r.Sequence}
+			t.drop[r.Stream] = d
+		}
+		d[1] = r.Sequence
+		q.mu.Unlock()
+		return
+	}
+	t.recs = append(t.recs, line)
+	t.bytes += int64(len(line))
+	q.mu.Unlock()
+}
+
+// sender drains tenants round robin, so one tenant's backlog cannot fill the request.
+func sender(i int) {
+	q := queues[i]
+	url := replicas[i] + "/v1/records"
+	const maxBody = 4 << 20
+	for {
+		time.Sleep(100 * time.Millisecond)
+		var body bytes.Buffer
+		took := map[string]int{}
+		q.mu.Lock()
+		for tn, t := range q.q {
+			for k, d := range t.drop { // the producer's own gap record
+				pl, _ := json.Marshal(map[string]any{"from": d[0], "to": d[1], "reason": "producer_tenant_bound"})
+				r := ev.Rec{Stream: k, SchemaVersion: 1, Incarnation: inc, Sequence: d[0], SequenceEnd: d[1], Kind: "gap", ObservedAt: time.Now().UTC(), TenantId: tn, Provenance: "enforced", Payload: pl}
+				b, _ := json.Marshal(&r)
+				t.recs = append(t.recs, append(b, '\n'))
+				delete(t.drop, k)
+			}
+			n := 0
+			for n < len(t.recs) && n < 4000 && body.Len() < maxBody {
+				body.Write(t.recs[n])
+				n++
+			}
+			if n > 0 {
+				took[tn] = n
+			}
+			if body.Len() >= maxBody {
+				break
+			}
+		}
+		q.mu.Unlock()
+		if body.Len() == 0 {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body.Bytes()))
+		resp, err := client.Do(req)
+		ok := false
+		if err == nil {
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			ok = resp.StatusCode == 200
+		}
+		cancel()
+		if !ok {
+			nSendFail.Add(1)
+			continue // kept, retried, and bounded per tenant
+		}
+		nSent.Add(1)
+		q.mu.Lock()
+		for tn, n := range took {
+			t := q.q[tn]
+			for _, l := range t.recs[:n] {
+				t.bytes -= int64(len(l))
+			}
+			t.recs = t.recs[n:]
+			if len(t.recs) == 0 {
+				if len(t.drop) == 0 {
+					delete(q.q, tn)
+				} else {
+					t.recs = nil
+				}
+			}
+		}
+		q.mu.Unlock()
+	}
+}
+
+// ---- commit latency
+var (
+	latMu sync.Mutex
+	lat   []int64 // microseconds, successful and failed commits alike
+	over  atomic.Int64
+)
+
+func commit(tenant string, r *ev.Rec) error {
+	b, _ := json.Marshal(r)
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
+	t0 := time.Now()
+	req, _ := http.NewRequestWithContext(ctx, "POST", replicas[ev.Replica(tenant, len(replicas))]+"/v1/commit", bytes.NewReader(b))
+	resp, err := client.Do(req)
+	d := time.Since(t0)
+	latMu.Lock()
+	lat = append(lat, d.Microseconds())
+	latMu.Unlock()
+	if err != nil {
+		over.Add(1)
+		return err
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
+}
+
+type az struct {
+	authv3.UnimplementedAuthorizationServer
+}
+
+func hdr(k, v string) *corev3.HeaderValueOption {
+	return &corev3.HeaderValueOption{Header: &corev3.HeaderValue{Key: k, Value: v}, AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD}
+}
+
+func denied(code int, msg string) *authv3.CheckResponse {
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.PermissionDenied)}, HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{Status: &typev3.HttpStatus{Code: typev3.StatusCode(code)}, Body: msg}}}
+}
+
+func isRegulated(tenant string) bool {
+	if regAll {
+		return true
+	}
+	if regMod > 0 {
+		n, err := strconv.Atoi(strings.TrimPrefix(tenant, "t"))
+		return err == nil && n%regMod == 0
+	}
+	return false
+}
+
+func (s *az) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.CheckResponse, error) {
+	nDecisions.Add(1)
+	h := req.GetAttributes().GetRequest().GetHttp()
+	raw, _ := base64.StdEncoding.DecodeString(strings.TrimPrefix(h.GetHeaders()["proxy-authorization"], "Basic "))
+	_, tenant, _ := strings.Cut(string(raw), ":")
+	if tenant == "" {
+		tenant = "none"
+	}
+	authority := h.GetHost()
+	host := authority
+	if i := strings.LastIndexByte(host, ':'); i > 0 {
+		host = host[:i]
+	}
+	r := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	did := ev.RandHex(r, 32)
+	outcome := "allow"
+	if strings.HasPrefix(host, "deny-") {
+		outcome = "deny"
+		nDenied.Add(1)
+	}
+	if !off {
+		sess, pod, pool, trace := ev.Session(tenant, r.IntN(4))
+		rec := &ev.Rec{Stream: "egress.decision", SchemaVersion: 1, Incarnation: inc, Sequence: nextSeq("egress.decision", tenant), ObservedAt: time.Now().UTC(), TenantId: tenant, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced",
+			Payload: ev.DecisionPayload(r, did, host, req.GetAttributes().GetSource().GetAddress().GetSocketAddress().GetAddress(), outcome)}
+		if isRegulated(tenant) {
+			if err := commit(tenant, rec); err != nil {
+				nRefused.Add(1)
+				return denied(503, "evidence unavailable\n"), nil
+			}
+			nCommitOK.Add(1)
+		} else {
+			emit(rec)
+		}
+	}
+	if outcome == "deny" {
+		return denied(403, "denied by policy\n"), nil
+	}
+	md, _ := structpb.NewStruct(map[string]any{"decision_id": did, "tenant": tenant, "private_addr": privAddr})
+	return &authv3.CheckResponse{Status: &status.Status{Code: int32(codes.OK)}, DynamicMetadata: md, HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{Headers: []*corev3.HeaderValueOption{hdr("x-lenny-route", "private")}, HeadersToRemove: []string{"proxy-authorization"}}}}, nil
+}
+
+type als struct {
+	alsv3.UnimplementedAccessLogServiceServer
+}
+
+func (s *als) StreamAccessLogs(st grpc.ClientStreamingServer[alsv3.StreamAccessLogsMessage, alsv3.StreamAccessLogsResponse]) error {
+	r := rand.New(rand.NewPCG(rand.Uint64(), rand.Uint64()))
+	for {
+		m, err := st.Recv()
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		for _, e := range m.GetHttpLogs().GetLogEntry() {
+			nAls.Add(1)
+			cp := e.GetCommonProperties()
+			fm := cp.GetMetadata().GetFilterMetadata()["envoy.filters.http.ext_authz"].GetFields()
+			did := fm["decision_id"].GetStringValue()
+			tn := fm["tenant"].GetStringValue()
+			if tn == "" {
+				continue // a denied CONNECT has no tunnel
+			}
+			lt := cp.GetAccessLogType().String()
+			if lt == "DownstreamEnd" || lt == "NotSet" {
+				nTunnels.Add(1)
+			}
+			start := cp.GetStartTime().AsTime()
+			end := start.Add(cp.GetTimeToLastDownstreamTxByte().AsDuration())
+			sess, pod, pool, trace := ev.Session(tn, r.IntN(4))
+			up := cp.GetUpstreamRemoteAddress().GetSocketAddress()
+			src := cp.GetUpstreamLocalAddress().GetSocketAddress()
+			emit(&ev.Rec{Stream: "egress.tunnel", SchemaVersion: 1, Incarnation: inc, Sequence: nextSeq("egress.tunnel", tn), ObservedAt: time.Now().UTC(), TenantId: tn, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced",
+				Payload: ev.TunnelPayload(did, up.GetAddress(), src.GetAddress(), src.GetPortValue(), start, end, cp.GetUpstreamWireBytesSent(), cp.GetUpstreamWireBytesReceived(), lt)})
+		}
+	}
+}
+
+func pct(v []int64, p float64) int64 {
+	if len(v) == 0 {
+		return 0
+	}
+	return v[int(float64(len(v)-1)*p)]
+}
+
+func flood(tenant string, rate int, d time.Duration, unique bool) {
+	r := rand.New(rand.NewPCG(1, 2))
+	end := time.Now().Add(d)
+	iv := time.Second / time.Duration(rate/100)
+	sess, pod, pool, trace := ev.Session(tenant, 0)
+	for time.Now().Before(end) {
+		for i := 0; i < 100; i++ {
+			host := "deny-fixed.attacker.example"
+			if unique {
+				host = "deny-" + ev.RandHex(r, 24) + ".attacker.example"
+			}
+			emit(&ev.Rec{Stream: "egress.decision", SchemaVersion: 1, Incarnation: inc, Sequence: nextSeq("egress.decision", tenant), ObservedAt: time.Now().UTC(), TenantId: tenant, PoolId: pool, PodUid: pod, SessionId: sess, TraceId: trace, Environment: "production", Provenance: "enforced", Payload: ev.DecisionPayload(r, ev.RandHex(r, 32), host, "10.1.2.3", "deny")})
+		}
+		time.Sleep(iv)
+	}
+}
+
+func main() {
+	log.SetFlags(log.Lmicroseconds)
+	replicas = strings.Split(os.Getenv("REPLICAS"), ",")
+	for range replicas {
+		queues = append(queues, &rq{q: map[string]*tq{}})
+	}
+	if !off {
+		cfg := ev.ClientTLS(os.Getenv("LEAF"), os.Getenv("CA"), "lenny-evidence.lenny-system.svc")
+		client = &http.Client{Transport: &http2.Transport{TLSClientConfig: cfg, ReadIdleTimeout: 2 * time.Second, PingTimeout: time.Second, StrictMaxConcurrentStreams: false}}
+		for i := range replicas {
+			go sender(i)
+		}
+	}
+	go func() {
+		m := http.NewServeMux()
+		m.HandleFunc("/stats", func(w http.ResponseWriter, r *http.Request) {
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			var qb int64
+			for _, q := range queues {
+				q.mu.Lock()
+				for _, t := range q.q {
+					qb += t.bytes
+				}
+				q.mu.Unlock()
+			}
+			latMu.Lock()
+			x := append([]int64(nil), lat...)
+			latMu.Unlock()
+			sort.Slice(x, func(i, j int) bool { return x[i] < x[j] })
+			n150 := 0
+			for _, v := range x {
+				if v >= bound.Microseconds() {
+					n150++
+				}
+			}
+			json.NewEncoder(w).Encode(map[string]any{"incarnation": inc, "decisions": nDecisions.Load(), "denied": nDenied.Load(), "tunnelEnds": nTunnels.Load(), "alsEntries": nAls.Load(), "emitted": nEmitted.Load(), "prodDropped": nProdDropped.Load(), "sends": nSent.Load(), "sendFail": nSendFail.Load(), "queuedBytes": qb, "refused": nRefused.Load(), "commitOK": nCommitOK.Load(),
+				"commits": len(x), "commitP50us": pct(x, .5), "commitP95us": pct(x, .95), "commitP99us": pct(x, .99), "commitP999us": pct(x, .999), "commitMaxUs": pct(x, 1), "commitsOverBound": n150, "heapInuse": ms.HeapInuse})
+		})
+		m.HandleFunc("/reset", func(w http.ResponseWriter, r *http.Request) {
+			latMu.Lock()
+			lat = lat[:0]
+			latMu.Unlock()
+			over.Store(0)
+			nRefused.Store(0)
+			nCommitOK.Store(0)
+			fmt.Fprintln(w, "ok")
+		})
+		// /lat?from=&to= returns the commit latency percentiles of the samples taken so far, for a time series
+		m.HandleFunc("/positions", func(w http.ResponseWriter, r *http.Request) {
+			seqMu.Lock()
+			defer seqMu.Unlock()
+			out := map[string]uint64{}
+			for k, v := range seqs {
+				out[k.tenant+" "+k.stream] = v
+			}
+			json.NewEncoder(w).Encode(map[string]any{"incarnation": inc, "positions": out})
+		})
+		m.HandleFunc("/flood", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			rate, _ := strconv.Atoi(q.Get("rate"))
+			d, _ := time.ParseDuration(q.Get("for"))
+			go flood(q.Get("tenant"), rate, d, q.Get("unique") != "")
+			fmt.Fprintln(w, "started")
+		})
+		// /activity sends a test stream with sensitive payloads.
+		m.HandleFunc("/activity", func(w http.ResponseWriter, r *http.Request) {
+			q := r.URL.Query()
+			tn := q.Get("tenant")
+			n, _ := strconv.Atoi(q.Get("n"))
+			rr := rand.New(rand.NewPCG(rand.Uint64(), 3))
+			mix := strings.Split(q.Get("session"), ",")
+			for i := 0; i < n; i++ {
+				sess := mix[i%len(mix)] // comma-separated sessions interleave within the tenant's one sequence
+				pl, _ := json.Marshal(map[string]any{"command": fmt.Sprintf("curl -H 'Authorization: Bearer %s' https://%s/v1/export?page=%d", ev.RandHex(rr, 40), ev.Host(rr), i), "cwd": "/workspace/repo-" + ev.RandHex(rr, 6), "uid": 1000})
+				emit(&ev.Rec{Stream: "agent.activity", SchemaVersion: 1, Incarnation: inc, Sequence: nextSeq("agent.activity", tn), ObservedAt: time.Now().UTC(), TenantId: tn, SessionId: sess, Provenance: "self_reported", Payload: pl})
+			}
+			fmt.Fprintln(w, "sent", n)
+		})
+		log.Fatal(http.ListenAndServe(":9002", m))
+	}()
+	go func() {
+		l, err := net.Listen("tcp", ":9003")
+		if err != nil {
+			log.Fatal(err)
+		}
+		g := grpc.NewServer()
+		alsv3.RegisterAccessLogServiceServer(g, &als{})
+		log.Fatal(g.Serve(l))
+	}()
+	l, err := net.Listen("tcp", ":9000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	g := grpc.NewServer()
+	authv3.RegisterAuthorizationServer(g, &az{})
+	log.Printf("decsvc incarnation=%s off=%v replicas=%v regAll=%v regMod=%d bound=%s", inc, off, replicas, regAll, regMod, bound)
+	log.Fatal(g.Serve(l))
+}

@@ -1,0 +1,243 @@
+// Spike: a Lenny-style central CONNECT egress proxy built on Stripe Smokescreen as a library.
+// R1 Basic Proxy-Authorization lease, R2 per-connection decision call, R3 Smokescreen IP policy,
+// R4 max tunnel lifetime and kill-by-lease, R5 per-connection upstream proxy with a per-tenant credential.
+package main
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"net"
+	"net/http"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/stripe/goproxy"
+	"github.com/sirupsen/logrus"
+	"github.com/stripe/smokescreen/pkg/smokescreen"
+	acl "github.com/stripe/smokescreen/pkg/smokescreen/acl/v1"
+)
+
+// decision is the I3 HTTP JSON response from the decision service.
+type decision struct {
+	Allow            bool              `json:"allow"`
+	Reason           string            `json:"reason"`
+	Route            string            `json:"route"`
+	Tags             map[string]string `json:"tags"`
+	UpstreamUser     string            `json:"upstream_user"`
+	UpstreamPassword string            `json:"upstream_password"`
+}
+
+// reqState carries per-CONNECT state between the Smokescreen hooks, keyed by the role string.
+type reqState struct {
+	token, peer string
+	d           decision
+}
+
+var (
+	authzURL  = flag.String("authz", "http://spike-authz:8080/v1/decide", "decision service URL")
+	upstreams = map[string]string{"upA": "http://spike-up-a:3128", "upB": "http://spike-up-b:3128"}
+	maxLife   = flag.Duration("max-tunnel", 30*time.Second, "maximum tunnel lifetime")
+	labTarget = flag.String("lab-target", "", "lab-only hostname exempt from the IP filter")
+	bypass    = []string{"spike-up-a", "spike-up-b"}
+	states    sync.Map // role -> *reqState
+	seq       atomic.Uint64
+	tunnels   = newRegistry()
+	httpc     = &http.Client{Timeout: 2 * time.Second}
+)
+
+func leaseToken(r *http.Request) (string, bool) {
+	h := r.Header.Get("Proxy-Authorization")
+	if !strings.HasPrefix(h, "Basic ") {
+		return "", false
+	}
+	raw, err := base64.StdEncoding.DecodeString(h[6:])
+	if err != nil {
+		return "", false
+	}
+	_, pass, ok := strings.Cut(string(raw), ":")
+	return pass, ok && pass != ""
+}
+
+// roleFromRequest (R1): the role is a non-secret lease fingerprint plus a request sequence number.
+func roleFromRequest(r *http.Request) (string, error) {
+	r.Header.Del("X-Upstream-Https-Proxy") // never let the client pick an upstream proxy
+	tok, ok := leaseToken(r)
+	r.Header.Del("Proxy-Authorization")
+	if !ok {
+		return "", smokescreen.MissingRoleError("missing or malformed Proxy-Authorization")
+	}
+	sum := sha256.Sum256([]byte(tok))
+	role := fmt.Sprintf("lease-%s#%d", hex.EncodeToString(sum[:4]), seq.Add(1))
+	states.Store(role, &reqState{token: tok, peer: r.RemoteAddr})
+	tunnels.bind(r.RemoteAddr, tok)
+	return role, nil
+}
+
+// decider (R2) calls the decision service once per CONNECT.
+type decider struct{}
+
+func (decider) Decide(a acl.DecideArgs) (acl.Decision, error) {
+	v, ok := states.Load(a.Service)
+	if !ok {
+		return acl.Decision{Result: acl.Deny, Reason: "no state"}, nil
+	}
+	st := v.(*reqState)
+	// Smokescreen captures a client X-Upstream-Https-Proxy header before RoleFromRequest runs,
+	// and uses it whenever the selector returns "" (direct). Refuse such requests outright.
+	if a.ConnectProxyHost != "" {
+		return acl.Decision{Result: acl.Deny, Reason: "client-selected upstream proxy refused"}, nil
+	}
+	host, port, _ := net.SplitHostPort(a.Req.Host)
+	// Upstream proxy hosts bypass the IP filter (they may be private); never allow them as targets.
+	for _, b := range bypass {
+		if strings.EqualFold(host, b) {
+			return acl.Decision{Result: acl.Deny, Reason: "upstream proxy host is not a target"}, nil
+		}
+	}
+	body, _ := json.Marshal(map[string]string{"authority": a.Req.Host, "host": host, "port": port, "peer": st.peer, "token": st.token})
+	resp, err := httpc.Post(*authzURL, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return acl.Decision{Result: acl.Deny, Reason: "decision service unavailable"}, nil // fail closed
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&st.d); err != nil {
+		return acl.Decision{Result: acl.Deny, Reason: "bad decision response"}, nil
+	}
+	if st.d.Route != "" && st.d.Route != "direct" && upstreams[st.d.Route] == "" {
+		return acl.Decision{Result: acl.Deny, Reason: "unknown route " + st.d.Route}, nil
+	}
+	tags := fmt.Sprintf("tenant=%s session=%s rule=%s route=%s", st.d.Tags["tenant"], st.d.Tags["session"], st.d.Tags["rule"], st.d.Route)
+	if !st.d.Allow {
+		return acl.Decision{Result: acl.Deny, Reason: "lenny deny: " + st.d.Reason + " " + tags, Project: st.d.Tags["tenant"]}, nil
+	}
+	return acl.Decision{Result: acl.Allow, Reason: "lenny allow: " + tags, Project: st.d.Tags["tenant"]}, nil
+}
+
+// selectUpstream (R5) returns the tenant's upstream proxy URL, or "" for direct.
+func selectUpstream(_ *smokescreen.SmokescreenContext, d *smokescreen.ACLDecision) string {
+	if v, ok := states.Load(d.Role); ok {
+		return upstreams[v.(*reqState).d.Route]
+	}
+	return ""
+}
+
+// upstreamConnect (R5) presents the tenant's credential to the upstream proxy.
+func upstreamConnect(pctx *goproxy.ProxyCtx, req *http.Request) error {
+	sctx, ok := pctx.UserData.(*smokescreen.SmokescreenContext)
+	if !ok || sctx.Decision == nil {
+		return fmt.Errorf("no context")
+	}
+	v, ok := states.Load(sctx.Decision.Role)
+	if !ok {
+		return fmt.Errorf("no state")
+	}
+	st := v.(*reqState)
+	req.Header.Del("Proxy-Authorization")
+	if st.d.UpstreamUser != "" {
+		req.SetBasicAuth(st.d.UpstreamUser, st.d.UpstreamPassword)
+		req.Header.Set("Proxy-Authorization", req.Header.Get("Authorization"))
+		req.Header.Del("Authorization")
+	}
+	return nil
+}
+
+// registry (R4) tracks client connections so a tunnel can be capped and killed by lease.
+type registry struct {
+	mu     sync.Mutex
+	conns  map[string]net.Conn // remote addr -> client conn
+	leases map[string]string   // remote addr -> lease token
+}
+
+func newRegistry() *registry {
+	return &registry{conns: map[string]net.Conn{}, leases: map[string]string{}}
+}
+func (g *registry) add(c net.Conn) {
+	g.mu.Lock()
+	g.conns[c.RemoteAddr().String()] = c
+	g.mu.Unlock()
+}
+func (g *registry) remove(c net.Conn) {
+	g.mu.Lock()
+	delete(g.conns, c.RemoteAddr().String())
+	delete(g.leases, c.RemoteAddr().String())
+	g.mu.Unlock()
+}
+func (g *registry) bind(addr, tok string) { g.mu.Lock(); g.leases[addr] = tok; g.mu.Unlock() }
+func (g *registry) kill(tok string) (n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for a, t := range g.leases {
+		if t == tok {
+			if c := g.conns[a]; c != nil {
+				c.Close()
+				n++
+			}
+		}
+	}
+	return n
+}
+
+type trackedConn struct {
+	net.Conn
+	once sync.Once
+}
+
+func (c *trackedConn) Close() error {
+	c.once.Do(func() { tunnels.remove(c.Conn) })
+	return c.Conn.Close()
+}
+
+type cappedListener struct{ net.Listener }
+
+func (l cappedListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tc := &trackedConn{Conn: c}
+	tunnels.add(c)
+	time.AfterFunc(*maxLife, func() { tc.Close() }) // hard lifetime cap, idle or not
+	return tc, nil
+}
+
+func main() {
+	flag.Parse()
+	conf := smokescreen.NewConfig()
+	conf.Port = 3128
+	// Upstream proxies are dialed through the same IP filter as targets; exempt their hostnames.
+	if err := conf.SetIPFilterBypassedDomains(bypass); err != nil {
+		panic(err)
+	}
+	if *labTarget != "" { // lab-only: lets the R4 tests reach a target on the private Docker network
+		if err := conf.SetIPFilterBypassedDomains(append(bypass, *labTarget)); err != nil {
+			panic(err)
+		}
+	}
+	conf.ConnectTimeout = 10 * time.Second
+	conf.ExitTimeout = 5 * time.Second
+	conf.IdleTimeout = 20 * time.Second
+	conf.RoleFromRequest = roleFromRequest
+	conf.EgressACL = decider{}
+	conf.UpstreamProxySelector = selectUpstream
+	conf.UpstreamProxyConnectReqHandler = upstreamConnect
+	conf.Log.SetFormatter(&logrus.JSONFormatter{})
+	ln, err := net.Listen("tcp", ":3128")
+	if err != nil {
+		panic(err)
+	}
+	conf.Listener = cappedListener{ln}
+	go func() { // admin: kill all tunnels of a lease
+		http.HandleFunc("/kill", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "killed=%d\n", tunnels.kill(r.URL.Query().Get("lease")))
+		})
+		http.ListenAndServe(":9090", nil)
+	}()
+	smokescreen.StartWithConfig(conf, nil)
+}

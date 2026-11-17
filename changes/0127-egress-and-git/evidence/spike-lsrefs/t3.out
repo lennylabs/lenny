@@ -1,0 +1,17 @@
+### baseline 10 s
+total=250 failed=0 retried=0 p50=6.1ms p99=9.4ms max=13.4ms errs=map[]
+### all decision endpoints stopped: every call fails fast and closed
+  one call no retry: {"bytes":0,"class":"transient","err":"Post \"https://git.spike/fast.git/git-upload-pack\": Service Unavailable","ms":505,"proto":"v2","sha":""}
+  one call one retry: {"bytes":0,"class":"transient","err":"Post \"https://git.spike/fast.git/git-upload-pack\": Service Unavailable","ms":1005,"proto":"v2","sha":""}
+  after restart: {"bytes":65,"class":"ok","err":"","ms":21,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}
+### one decision endpoint killed during load
+total=375 failed=0 retried=0 p50=6.3ms p99=13.4ms max=411.2ms errs=map[]
+### one Envoy stopped during load, no retry
+total=300 failed=88 retried=0 p50=6.5ms p99=1.005s max=1.0052s errs=map[bounded: time cap:33 transient: Post "https://git.spike/fast.git/git-upload-pack": proxyconnect tcp: dial tcp 198.19.0.42:3128: connect: connection refused:3 transient: Post "https://git.spike/fast.git/git-upload-pack": proxyconnect tcp: dial tcp 198.19.0.42:3128: i/o timeout:52]
+### one Envoy stopped during load, one retry
+total=300 failed=30 retried=58 p50=6.7ms p99=1.01s max=1.0116s errs=map[bounded: time cap:30]
+### one Envoy frozen (black hole), one retry, dial 1 s
+total=300 failed=88 retried=0 p50=6.6ms p99=3.0034s max=3.0054s errs=map[bounded: time cap:88]
+### both Envoys stopped: egress path down
+  one call one retry: {"bytes":0,"class":"bounded","err":"time cap","ms":1003,"proto":"v2","sha":""}
+  after restart: {"bytes":65,"class":"ok","err":"","ms":14,"proto":"v2","sha":"0123456789abcdef0123456789abcdef01234567"}

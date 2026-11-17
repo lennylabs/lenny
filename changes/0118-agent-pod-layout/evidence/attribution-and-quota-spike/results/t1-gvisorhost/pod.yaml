@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: Pod
+metadata: {name: t1-gvisorhost, namespace: aq}
+spec:
+  runtimeClassName: gvisor-host
+  hostUsers: true
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: netagent
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","listen","-out","/tmp/l.jsonl"]
+    securityContext: {runAsUser: 10001, runAsGroup: 10001, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 512Mi}}
+  - name: adapter
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","sleep"]
+    securityContext: {runAsUser: 10000, runAsGroup: 10000, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 512Mi}}
+  - name: slot0
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","sleep"]
+    securityContext: {runAsUser: 20000, runAsGroup: 20000, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 512Mi}}
+  - name: slot1
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","sleep"]
+    securityContext: {runAsUser: 20001, runAsGroup: 20001, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 512Mi}}
+  - name: slot2
+    image: docker.io/library/aqspike:1
+    imagePullPolicy: Never
+    command: ["aq","sleep"]
+    securityContext: {runAsUser: 20002, runAsGroup: 20002, runAsNonRoot: true, allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}, seccompProfile: {type: RuntimeDefault}}
+    resources: {requests: {cpu: 50m, memory: 32Mi}, limits: {memory: 512Mi}}

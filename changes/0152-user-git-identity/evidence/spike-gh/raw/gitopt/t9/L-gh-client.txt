@@ -1,0 +1,20 @@
+gh version 2.103.3 (2026-10-26)
+glab 1.127.0 (2e352a17e)
+== gh, github.com, rewrite
+none of the git remotes configured for this repository point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`
+== gh, github.com, no rewrite
+Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== gh, GH_REPO, rewrite
+Post "https://api.github.com/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== gh, GHES, rewrite
+none of the git remotes configured for this repository correspond to the GH_HOST environment variable. Try adding a matching remote or unsetting the variable
+== gh, GHES, no rewrite
+Post "https://ghes.acme.internal/api/graphql": proxyconnect tcp: dial tcp 127.0.0.1:9: connect: connection refused
+== glab, rewrite
+Could not create recovery file: none of the git remotes configured for this repository correspond to the GITLAB_HOST environment variable. Try adding a matching remote or unsetting the variable.
+
+GITLAB_HOST is currently set to gitlab.initech.internal
+== glab, no rewrite
+Failed to create merge request. Created recovery file: /tmp/h/.config/glab-cli/recover/initech/web/mr.json
+Run the command again with the '--recover' option to retry.
+          

@@ -1,0 +1,420 @@
+// ob: multi-call stand-ins for the owed validation spikes. Standard library only.
+//
+//	ob now                                        print time in ns
+//	ob watchfile PATH                             log each content change of PATH with a ns timestamp and its certificates
+//	ob watchk8s PATH(api list path)               log each change the API watch reports for a resource path
+//	ob writecm NS NAME KEY N MINGAP MAXGAP        write a counter N times, log each write time
+//	ob tlsprobe -addr -sni -ca [-connect] [-rate] log each failed connection, each serial change, and a summary
+//	ob controller -leaf -value -ns ...            stand-in for the controller's bundle writer
+//	ob serve ADDR                                 TCP listener that accepts and closes
+//	ob probe ADDR                                 connect prober: new socket every 20 ms, 100 ms timeout; log state changes
+//	ob stamp NS POD LABEL=VALUE                   PATCH a label, log call start and return
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
+	"flag"
+	"fmt"
+	"io"
+	"math/rand"
+	"net"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+)
+
+func ts() int64 { return time.Now().UnixNano() }
+
+func certSummary(b []byte) string {
+	var out []string
+	for {
+		var bl *pem.Block
+		bl, b = pem.Decode(b)
+		if bl == nil {
+			break
+		}
+		c, err := x509.ParseCertificate(bl.Bytes)
+		if err != nil {
+			out = append(out, "unparseable")
+			continue
+		}
+		s := c.SerialNumber.Text(16)
+		if len(s) > 8 {
+			s = s[:8]
+		}
+		out = append(out, c.Subject.CommonName+"#"+s)
+	}
+	return strings.Join(out, ",")
+}
+
+func watchfile(path string) {
+	var last [32]byte
+	first := true
+	for {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Printf("%d readerr %v\n", ts(), err)
+			time.Sleep(time.Second)
+			continue
+		}
+		h := sha256.Sum256(b)
+		if first || h != last {
+			fmt.Printf("%d change sha=%x certs=[%s] head=%q\n", ts(), h[:4], certSummary(b), head(b))
+			last, first = h, false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func head(b []byte) string {
+	if len(b) > 24 {
+		b = b[:24]
+	}
+	return string(b)
+}
+
+func apiClient() (*http.Client, string, string) {
+	tok, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
+	if err != nil {
+		panic(err)
+	}
+	ca, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+	if err != nil {
+		panic(err)
+	}
+	p := x509.NewCertPool()
+	p.AppendCertsFromPEM(ca)
+	c := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: p}}}
+	return c, "https://" + os.Getenv("KUBERNETES_SERVICE_HOST") + ":" + os.Getenv("KUBERNETES_SERVICE_PORT"), string(tok)
+}
+
+func api(method, path, ctype string, body []byte) (int, []byte, error) {
+	c, base, tok := apiClient()
+	r, _ := http.NewRequest(method, base+path, bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+tok)
+	if ctype != "" {
+		r.Header.Set("Content-Type", ctype)
+	}
+	resp, err := c.Do(r)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, b, nil
+}
+
+// putCM creates or replaces one key of a ConfigMap.
+func putCM(ns, name string, data map[string]string) (int, error) {
+	cm, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": name, "namespace": ns}, "data": data})
+	code, b, err := api("PUT", "/api/v1/namespaces/"+ns+"/configmaps/"+name, "application/json", cm)
+	if err != nil {
+		return code, err
+	}
+	if code == 404 {
+		code, b, err = api("POST", "/api/v1/namespaces/"+ns+"/configmaps", "application/json", cm)
+	}
+	if code >= 300 {
+		return code, fmt.Errorf("%s", head(b))
+	}
+	return code, err
+}
+
+func watchk8s(path string) {
+	for {
+		c, base, tok := apiClient()
+		r, _ := http.NewRequest("GET", base+path+"?watch=true", nil)
+		r.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := c.Do(r)
+		if err != nil {
+			fmt.Printf("%d watcherr %v\n", ts(), err)
+			time.Sleep(time.Second)
+			continue
+		}
+		sc := bufio.NewScanner(resp.Body)
+		sc.Buffer(make([]byte, 1<<20), 1<<24)
+		for sc.Scan() {
+			var ev struct {
+				Type   string
+				Object struct {
+					Metadata struct {
+						Name, Namespace, ResourceVersion string
+					}
+					Data map[string]string
+				}
+			}
+			_ = json.Unmarshal(sc.Bytes(), &ev)
+			detail := ""
+			if v, ok := ev.Object.Data["tls.crt"]; ok {
+				d, _ := base64.StdEncoding.DecodeString(v)
+				detail = certSummary(d)
+			}
+			if v, ok := ev.Object.Data["ca.crt"]; ok {
+				if d, err := base64.StdEncoding.DecodeString(v); err == nil {
+					detail += " ca=" + certSummary(d)
+				} else {
+					detail += " ca=" + certSummary([]byte(v))
+				}
+			}
+			fmt.Printf("%d %s %s/%s rv=%s %s\n", ts(), ev.Type, ev.Object.Metadata.Namespace, ev.Object.Metadata.Name, ev.Object.Metadata.ResourceVersion, detail)
+		}
+		resp.Body.Close()
+	}
+}
+
+func writecm(ns, name, key string, n int, min, max time.Duration) {
+	for i := 0; i < n; i++ {
+		v := fmt.Sprintf("%06d", i)
+		t0 := ts()
+		code, err := putCM(ns, name, map[string]string{key: v})
+		fmt.Printf("WRITE %s start=%d end=%d code=%d err=%v\n", v, t0, ts(), code, err)
+		time.Sleep(min + time.Duration(rand.Int63n(int64(max-min)+1)))
+	}
+}
+
+func tlsprobe(args []string) {
+	fs := flag.NewFlagSet("tlsprobe", flag.ExitOnError)
+	addr := fs.String("addr", "", "")
+	sni := fs.String("sni", "lenny-egress.lenny-system.svc", "")
+	ca := fs.String("ca", "/ca/ca.crt", "bundle, read for each new connection")
+	target := fs.String("connect", "", "CONNECT target through the proxy after the handshake")
+	cred := fs.String("cred", "agent:good", "")
+	rate := fs.Int("rate", 5, "connections per second")
+	fs.Parse(args)
+	var mu sync.Mutex
+	okN, failN := 0, 0
+	lastSerial := ""
+	go func() {
+		for range time.Tick(30 * time.Second) {
+			mu.Lock()
+			fmt.Printf("%d summary ok=%d fail=%d\n", ts(), okN, failN)
+			mu.Unlock()
+		}
+	}()
+	one := func() {
+		var fail string
+		defer func() {
+			mu.Lock()
+			defer mu.Unlock()
+			if fail == "" {
+				okN++
+			} else {
+				failN++
+				fmt.Printf("%d FAIL %s\n", ts(), fail)
+			}
+		}()
+		b, err := os.ReadFile(*ca)
+		if err != nil {
+			fail = "bundle: " + err.Error()
+			return
+		}
+		p := x509.NewCertPool()
+		p.AppendCertsFromPEM(b)
+		d := tls.Dialer{NetDialer: &net.Dialer{Timeout: 3 * time.Second}, Config: &tls.Config{RootCAs: p, ServerName: *sni, NextProtos: []string{"http/1.1"}}}
+		ctx, c := context.WithTimeout(context.Background(), 4*time.Second)
+		defer c()
+		cn, err := d.DialContext(ctx, "tcp", *addr)
+		if err != nil {
+			fail = "tls: " + err.Error()
+			return
+		}
+		defer cn.Close()
+		cs := cn.(*tls.Conn).ConnectionState()
+		leaf := cs.PeerCertificates[0]
+		s := leaf.SerialNumber.Text(16)[:8] + "/" + leaf.Issuer.CommonName
+		mu.Lock()
+		if s != lastSerial {
+			fmt.Printf("%d serial %s bundle=[%s]\n", ts(), s, certSummary(b))
+			lastSerial = s
+		}
+		mu.Unlock()
+		if *target == "" {
+			return
+		}
+		cn.SetDeadline(time.Now().Add(4 * time.Second))
+		fmt.Fprintf(cn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", *target, *target, base64.StdEncoding.EncodeToString([]byte(*cred)))
+		st, err := bufio.NewReader(cn).ReadString('\n')
+		if err != nil {
+			fail = "connect read: " + err.Error()
+			return
+		}
+		if !strings.Contains(st, " 200 ") {
+			fail = "connect: " + strings.TrimSpace(st)
+		}
+	}
+	for range time.Tick(time.Second / time.Duration(*rate)) {
+		go one()
+	}
+}
+
+func controller(args []string) {
+	fs := flag.NewFlagSet("controller", flag.ExitOnError)
+	leaf := fs.String("leaf", "/leaf/ca.crt", "the public ca.crt from the controller's own leaf")
+	value := fs.String("value", "/value/extra.pem", "the Helm value carrying both CAs during a rotation")
+	nss := fs.String("ns", "agents,lenny-system", "")
+	fs.Parse(args)
+	last := ""
+	for {
+		var all []byte
+		seen := map[string]bool{}
+		for _, f := range []string{*leaf, *value} {
+			b, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			for {
+				var bl *pem.Block
+				bl, b = pem.Decode(b)
+				if bl == nil {
+					break
+				}
+				k := string(bl.Bytes)
+				if !seen[k] {
+					seen[k] = true
+					all = append(all, pem.EncodeToMemory(bl)...)
+				}
+			}
+		}
+		if len(all) > 0 && string(all) != last {
+			for _, ns := range strings.Split(*nss, ",") {
+				code, err := putCM(ns, "lenny-egress-ca", map[string]string{"ca.crt": string(all)})
+				fmt.Printf("%d BUNDLE ns=%s code=%d err=%v certs=[%s]\n", ts(), ns, code, err, certSummary(all))
+			}
+			last = string(all)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+func serve(addr string) {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		panic(err)
+	}
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			continue
+		}
+		c.Close()
+	}
+}
+
+// probe starts a new socket every 20 ms with a 100 ms timeout, independent of earlier sockets, so the first success is
+// within about 20 ms of the path opening and does not depend on TCP retransmission. Every 2 s it also starts one blocking
+// dial with a 60 s timeout, which shows what a client with a single socket sees: the SYN retransmission schedule.
+// It runs for the given duration so that a run ends by itself.
+func probe(addr string, dur, every time.Duration) {
+	var mu sync.Mutex
+	state := ""
+	var lastOpenStart int64
+	end := time.Now().Add(dur)
+	go func() {
+		for ; time.Now().Before(end); time.Sleep(2 * time.Second) {
+			go func() {
+				t0 := ts()
+				c, err := net.DialTimeout("tcp", addr, 60*time.Second)
+				if err == nil {
+					c.Close()
+					fmt.Printf("%d BLOCKING_DIAL started=%d ok_after=%.3f\n", ts(), t0, float64(ts()-t0)/1e9)
+				} else {
+					fmt.Printf("%d BLOCKING_DIAL started=%d err=%v\n", ts(), t0, err)
+				}
+			}()
+		}
+	}()
+	for time.Now().Before(end) {
+		go func() {
+			t0 := ts()
+			c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			t1 := ts()
+			mu.Lock()
+			defer mu.Unlock()
+			if err == nil {
+				c.Close()
+				if state != "open" {
+					fmt.Printf("%d STATE open started=%d\n", t1, t0)
+				}
+				state = "open"
+				if t0 > lastOpenStart {
+					lastOpenStart = t0
+				}
+				return
+			}
+			s := "dropped"
+			if !strings.Contains(err.Error(), "timeout") {
+				s = "err:" + err.Error()
+			}
+			if s == "dropped" && state == "open" && t0 > lastOpenStart {
+				fmt.Printf("%d REGRESS dropped started=%d after open\n", t1, t0)
+				return
+			}
+			if s != state && state != "open" {
+				fmt.Printf("%d STATE %s started=%d\n", t1, s, t0)
+				state = s
+			}
+		}()
+		time.Sleep(every)
+	}
+	time.Sleep(200 * time.Millisecond)
+}
+
+func stamp(ns, pod, kv string) {
+	p := strings.SplitN(kv, "=", 2)
+	body := fmt.Sprintf(`{"metadata":{"labels":{%q:%q}}}`, p[0], p[1])
+	t0 := ts()
+	code, b, err := api("PATCH", "/api/v1/namespaces/"+ns+"/pods/"+pod, "application/merge-patch+json", []byte(body))
+	t1 := ts()
+	fmt.Printf("STAMP %s/%s start=%d end=%d code=%d err=%v", ns, pod, t0, t1, code, err)
+	if code >= 300 {
+		fmt.Printf(" body=%s", string(b))
+	}
+	fmt.Println()
+}
+
+func main() {
+	a := os.Args[1:]
+	switch a[0] {
+	case "now":
+		fmt.Println(ts())
+	case "watchfile":
+		watchfile(a[1])
+	case "watchk8s":
+		watchk8s(a[1])
+	case "writecm":
+		n, _ := strconv.Atoi(a[4])
+		min, _ := time.ParseDuration(a[5])
+		max, _ := time.ParseDuration(a[6])
+		writecm(a[1], a[2], a[3], n, min, max)
+	case "tlsprobe":
+		tlsprobe(a[1:])
+	case "controller":
+		controller(a[1:])
+	case "serve":
+		serve(a[1])
+	case "probe":
+		d, _ := time.ParseDuration(a[2])
+		every := 20 * time.Millisecond
+		if len(a) > 3 {
+			every, _ = time.ParseDuration(a[3])
+		}
+		probe(a[1], d, every)
+	case "stamp":
+		stamp(a[1], a[2], a[3])
+	case "sleep":
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+}

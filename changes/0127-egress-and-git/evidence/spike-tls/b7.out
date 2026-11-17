@@ -1,0 +1,4 @@
+cpus=1 plain killed pid 7 at t=7: lowest live=0, all 2000 back after 3s, retries=0, reconnect cpu=0.4s
+cpus=1 tls killed pid 7 at t=8: lowest live=0, all 2000 back after 2s, retries=0, reconnect cpu=0.7s
+cpus=0.25 plain killed pid 6 at t=7: lowest live=0, all 2000 back after 5s, retries=0, reconnect cpu=0.6s
+cpus=0.25 tls killed pid 7 at t=8: lowest live=0, all 2000 back after 9s, retries=0, reconnect cpu=1.9s

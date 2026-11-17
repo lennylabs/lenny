@@ -1,0 +1,22 @@
+t=  1.00s done=849  map[200:460 503:389] p50=160.3ms p99=182ms open=460 ticks=460 broken=0
+t=  2.00s done=1029 map[200:479 503:550] p50=161.6ms p99=179.1ms open=479 ticks=1115 broken=0
+t=  3.00s done=997  map[200:504 503:493] p50=162ms p99=179.4ms open=504 ticks=1828 broken=0
+t=  4.00s done=986  map[200:484 503:502] p50=161.3ms p99=180.1ms open=484 ticks=2558 broken=0
+t=  5.00s done=1021 map[200:512 503:509] p50=161.2ms p99=179.8ms open=512 ticks=3272 broken=0
+t=  6.00s done=987  map[200:509 503:478] p50=160.7ms p99=179.7ms open=509 ticks=3936 broken=0
+t=  7.00s done=991  map[200:493 503:498] p50=161.5ms p99=179.9ms open=493 ticks=4645 broken=0
+t=  8.00s done=999  map[200:523 503:476] p50=161.5ms p99=180.6ms open=523 ticks=5337 broken=0
+t=  9.00s done=990  map[200:501 503:489] p50=161.9ms p99=179.9ms open=501 ticks=6090 broken=0
+t= 10.00s done=1014 map[200:518 503:496] p50=161.2ms p99=179.8ms open=518 ticks=6810 broken=0
+t= 11.00s done=1012 map[200:443 503:569] p50=162.3ms p99=180.1ms open=446 ticks=7455 broken=0
+t= 12.00s done=1002 map[200:563 503:439] p50=159.3ms p99=180.4ms open=563 ticks=8203 broken=0
+t= 13.00s done=983  map[200:418 503:565] p50=162.3ms p99=180.1ms open=418 ticks=8813 broken=0
+t= 14.00s done=1004 map[200:508 503:496] p50=161.6ms p99=179ms open=508 ticks=9496 broken=0
+t= 15.00s done=1003 map[200:432 503:571] p50=162.5ms p99=179.6ms open=432 ticks=10164 broken=0
+t= 16.00s done=997  map[200:457 503:540] p50=161.3ms p99=180.2ms open=458 ticks=10786 broken=0
+t= 17.00s done=996  map[200:460 503:536] p50=162.1ms p99=179.5ms open=460 ticks=11448 broken=0
+t= 18.00s done=1014 map[200:544 503:470] p50=161.4ms p99=179.8ms open=544 ticks=12166 broken=0
+t= 19.00s done=996  map[200:540 503:456] p50=160.5ms p99=179.9ms open=540 ticks=12926 broken=0
+t= 20.00s done=988  map[200:481 503:507] p50=162ms p99=179.4ms open=481 ticks=13623 broken=0
+t= 21.00s done=141  map[200:59 503:82] p50=165.5ms p99=178.1ms open=57 ticks=13796 broken=0
+SUMMARY attempts=19999 map[200:9888 503:10111] 200-latency p50=106.9ms p90=170.7ms p99=179.3ms max=189.6ms ticks=13815 broken=0 elapsed=21.2s

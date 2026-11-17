@@ -1,0 +1,249 @@
+// l1probe: the level 1 probe as a program, per "Level 1 replacement" in the design.
+//  -mode preflight: TLS against the configured CA, and a 407 for no credential and for an invented one.
+//  -mode full: authentication, positive control, separation, address rule, and sync health through probe identities.
+// Credentials and canary state come from -source (a stand-in for the Token Service on I8). One JSON line per check, then a verdict; exit 0 only on a pass.
+//  -addr-control      also proves the address identity's list admits the names, with a wildcard's public and private siblings.
+//  -canary-rule       settled: the newest rotation older than the apply window must be in effect. literal: the newest rotation must be, whatever its age.
+//  -status-only       the positive control trusts a CONNECT 200 and does not handshake through the tunnel.
+package main
+
+import (
+	"bufio"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"time"
+)
+
+var (
+	mode       = flag.String("mode", "full", "")
+	proxy      = flag.String("proxy", "", "")
+	sni        = flag.String("sni", "lenny-egress.lenny-system.svc", "")
+	caFile     = flag.String("ca", "/c/ca.pem", "")
+	source     = flag.String("source", "http://198.19.50.51:8080/probe", "")
+	allowed    = flag.String("allowed", "public.oa.test:443", "")
+	otherHost  = flag.String("other", "other.oa.test:443", "")
+	addrs      = flag.String("addrs", "127.0.0.1:443,169.254.169.254:443,rebind.oa.test:443", "")
+	window     = flag.Duration("window", 15*time.Second, "")
+	addrCtl    = flag.Bool("addr-control", false, "")
+	canaryRule = flag.String("canary-rule", "settled", "")
+	statusOnly = flag.Bool("status-only", false, "")
+	stepTO     = flag.Duration("step-timeout", 6*time.Second, "")
+	pool       *x509.CertPool
+	failed     int
+	passed     int
+)
+
+type cred struct{ User, Password string }
+
+func report(check, target string, ok bool, detail string) {
+	if ok {
+		passed++
+	} else {
+		failed++
+	}
+	json.NewEncoder(os.Stdout).Encode(map[string]any{"check": check, "target": target, "pass": ok, "detail": detail})
+}
+
+// connect returns the CONNECT status, or an error for a TLS failure, a timeout, or no reply. A status of 200 leaves the conn open.
+func connect(target string, c *cred) (int, net.Conn, error) {
+	d := &net.Dialer{Timeout: *stepTO}
+	raw, err := d.Dial("tcp", *proxy)
+	if err != nil {
+		return 0, nil, fmt.Errorf("dial: %w", err)
+	}
+	raw.SetDeadline(time.Now().Add(*stepTO))
+	t := tls.Client(raw, &tls.Config{RootCAs: pool, ServerName: *sni})
+	if err := t.Handshake(); err != nil {
+		raw.Close()
+		return 0, nil, fmt.Errorf("proxy TLS: %w", err)
+	}
+	h := ""
+	if c != nil {
+		h = "Proxy-Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte(c.User+":"+c.Password)) + "\r\n"
+	}
+	fmt.Fprintf(t, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", target, target, h)
+	br := bufio.NewReader(t)
+	r, err := http.ReadResponse(br, &http.Request{Method: "CONNECT"})
+	if err != nil {
+		t.Close()
+		return 0, nil, fmt.Errorf("no CONNECT reply: %w", err)
+	}
+	if r.StatusCode != 200 {
+		t.Close()
+		return r.StatusCode, nil, nil
+	}
+	return 200, &bufConn{Conn: t, r: br}, nil
+}
+
+type bufConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (b *bufConn) Read(p []byte) (int, error) { return b.r.Read(p) }
+
+func want(check, target string, c *cred, codes ...int) {
+	st, conn, err := connect(target, c)
+	if conn != nil {
+		conn.Close()
+	}
+	if err != nil {
+		report(check, target, false, err.Error())
+		return
+	}
+	for _, k := range codes {
+		if st == k {
+			report(check, target, true, fmt.Sprintf("status %d", st))
+			return
+		}
+	}
+	report(check, target, false, fmt.Sprintf("status %d, wanted %v", st, codes))
+}
+func rnd() string { b := make([]byte, 8); rand.Read(b); return hex.EncodeToString(b) }
+
+type source_ struct {
+	Fixed  map[string]cred `json:"fixed"`
+	Canary []struct {
+		N        int     `json:"n"`
+		At       float64 `json:"at"`
+		User     string  `json:"user"`
+		Password string  `json:"password"`
+		Host     string  `json:"host"`
+		Retired  *cred   `json:"retired"`
+	} `json:"canary"`
+	Now    float64 `json:"now"`
+	Period float64 `json:"periodSeconds"`
+}
+
+func main() {
+	flag.Parse()
+	b, err := os.ReadFile(*caFile)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(3)
+	}
+	pool = x509.NewCertPool()
+	pool.AppendCertsFromPEM(b)
+	defer func() {
+		v := "PASS"
+		if failed > 0 {
+			v = "FAIL"
+		}
+		fmt.Printf("{\"verdict\":%q,\"passed\":%d,\"failed\":%d}\n", v, passed, failed)
+		if failed > 0 {
+			os.Exit(1)
+		}
+	}()
+	// TLS first: every later check needs it, and a plaintext fallback would send credentials in the clear.
+	if _, _, err := connect(*allowed, nil); err != nil {
+		report("tls", *proxy, false, err.Error())
+		return
+	}
+	report("tls", *proxy, true, "verified against the configured CA")
+	want("auth.no-credential", *allowed, nil, 407)
+	want("auth.invented-credential", *allowed, &cred{"invented-" + rnd(), rnd()}, 407)
+	if *mode == "preflight" {
+		return
+	}
+	var src source_
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Get(*source)
+	if err != nil {
+		report("source", *source, false, err.Error())
+		return
+	}
+	json.NewDecoder(resp.Body).Decode(&src)
+	resp.Body.Close()
+	pa := src.Fixed["probe-a"]
+	want("auth.wrong-password", *allowed, &cred{pa.User, "wrong-" + rnd()}, 407)
+	want("auth.retired-never-cached", *allowed, &cred{"probe-a.g1", "probe-a-pw-1"}, 403, 407)
+	// Positive control.
+	st, conn, err := connect(*allowed, &pa)
+	switch {
+	case err != nil:
+		report("positive", *allowed, false, err.Error())
+	case st != 200:
+		report("positive", *allowed, false, fmt.Sprintf("status %d", st))
+	case *statusOnly:
+		conn.Close()
+		report("positive", *allowed, true, "status 200")
+	default:
+		host, _, _ := net.SplitHostPort(*allowed)
+		t := tls.Client(conn, &tls.Config{RootCAs: pool, ServerName: host})
+		t.SetDeadline(time.Now().Add(*stepTO))
+		if err := t.Handshake(); err != nil {
+			report("positive", *allowed, false, "status 200 and then no TLS through the tunnel: "+err.Error())
+		} else {
+			report("positive", *allowed, true, "status 200 and a verified handshake through the tunnel")
+		}
+		conn.Close()
+	}
+	// Separation.
+	want("separation.a-to-b-host", *otherHost, &pa, 403)
+	pb := src.Fixed["probe-b"]
+	want("separation.b-own-host", *otherHost, &pb, 200)
+	want("separation.b-to-a-host", *allowed, &pb, 403)
+	// Address rule.
+	ad := src.Fixed["probe-addr"]
+	if *addrCtl {
+		want("address.control-public-sibling", "pub.wild.oa.test:443", &ad, 200)
+		want("address.private-sibling", "priv.wild.oa.test:443", &ad, 403)
+		want("address.loopback-sibling", "loop.wild.oa.test:443", &ad, 403)
+		want("address.metadata-sibling", "meta.wild.oa.test:443", &ad, 403)
+	}
+	for _, t := range splitList(*addrs) {
+		want("address.refused", t, &ad, 403)
+	}
+	// Sync health.
+	age := func(at float64) time.Duration { return time.Duration((src.Now - at) * float64(time.Second)) }
+	idx := -1
+	for i := len(src.Canary) - 1; i >= 0; i-- {
+		if *canaryRule == "literal" || age(src.Canary[i].At) >= *window {
+			idx = i
+			break
+		}
+	}
+	if newest := src.Canary[len(src.Canary)-1]; age(newest.At) > time.Duration(2*src.Period*float64(time.Second)) {
+		report("sync.canary-rotating", fmt.Sprint(newest.N), false, fmt.Sprintf("the newest canary is %s old", age(newest.At).Round(time.Second)))
+	} else {
+		report("sync.canary-rotating", fmt.Sprint(newest.N), true, fmt.Sprintf("the newest canary is %s old", age(newest.At).Round(time.Second)))
+	}
+	if idx < 0 {
+		report("sync.no-settled-canary", "", true, "no rotation is older than the apply window yet")
+		return
+	}
+	c := src.Canary[idx]
+	note := fmt.Sprintf("rotation %d, age %s", c.N, age(c.At).Round(time.Second))
+	want("sync.canary-host-added ("+note+")", c.Host, &cred{c.User, c.Password}, 200)
+	if c.Retired != nil {
+		// Asked against a host the retired generation could reach, so a refusal cannot come from the host list alone.
+		rh := c.Host
+		if idx > 0 {
+			rh = src.Canary[idx-1].Host
+		}
+		want("sync.canary-generation-retired ("+note+")", rh, c.Retired, 403, 407)
+	}
+	_ = io.EOF
+}
+func splitList(s string) []string {
+	var out []string
+	cur := ""
+	for _, r := range s {
+		if r == ',' {
+			out = append(out, cur)
+			cur = ""
+			continue
+		}
+		cur += string(r)
+	}
+	return append(out, cur)
+}

@@ -1,0 +1,36 @@
+golang:1.26 git=2.47.3 tls=gnutls libssl  cand=T clone-rc=0 
+golang:1.26 git=2.47.3 tls=gnutls libssl  cand=Tb clone-rc=0 
+node:20 git=2.39.5 tls=gnutls  cand=T clone-rc=0 
+node:20 git=2.39.5 tls=gnutls  cand=Tb clone-rc=0 
+maven:3.9-eclipse-temurin-21 git=2.43.0 tls=gnutls  cand=T clone-rc=0 
+maven:3.9-eclipse-temurin-21 git=2.43.0 tls=gnutls  cand=Tb clone-rc=0 
+gradle:9-jdk21 git=2.53.0 tls=gnutls libssl  cand=T clone-rc=0 
+gradle:9-jdk21 git=2.53.0 tls=gnutls libssl  cand=Tb clone-rc=0 
+gh-client git=2.49.1 tls=libssl  cand=T clone-rc=0 
+gh-client git=2.49.1 tls=libssl  cand=Tb clone-rc=0 
+gh-deb git=2.47.3 tls=gnutls libssl  cand=T clone-rc=0 
+gh-deb git=2.47.3 tls=gnutls libssl  cand=Tb clone-rc=0 
+eclipse-temurin:21-jdk: no git in the image
+python:3.13-slim: no git in the image
+node:24-slim: no git in the image
+rust:1-slim-bookworm: no git in the image
+golang:1.26 git=2.47.3 tls=gnutls libssl  cand=P clone-rc=0 
+node:20 git=2.39.5 tls=gnutls  cand=P clone-rc=0 
+maven:3.9-eclipse-temurin-21 git=2.43.0 tls=gnutls  cand=P clone-rc=0 
+gradle:9-jdk21 git=2.53.0 tls=gnutls libssl  cand=P clone-rc=0 
+gh-client git=2.49.1 tls=libssl  cand=P clone-rc=0 
+gh-deb git=2.47.3 tls=gnutls libssl  cand=P clone-rc=0 
+eclipse-temurin:21-jdk: no git in the image
+python:3.13-slim: no git in the image
+node:24-slim: no git in the image
+rust:1-slim-bookworm: no git in the image
+golang:1.26 git=2.47.3 tls=gnutls libssl  cand=L clone-rc=0 
+node:20 git=2.39.5 tls=gnutls  cand=L clone-rc=0 
+maven:3.9-eclipse-temurin-21 git=2.43.0 tls=gnutls  cand=L clone-rc=0 
+gradle:9-jdk21 git=2.53.0 tls=gnutls libssl  cand=L clone-rc=0 
+gh-client git=2.49.1 tls=libssl  cand=L clone-rc=0 
+gh-deb git=2.47.3 tls=gnutls libssl  cand=L clone-rc=0 
+eclipse-temurin:21-jdk: no git in the image
+python:3.13-slim: no git in the image
+node:24-slim: no git in the image
+rust:1-slim-bookworm: no git in the image
