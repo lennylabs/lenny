@@ -229,7 +229,11 @@ lenny/
     │   # cmd/lenny-test/ (cmd_validate.go validate-diagnosis,
     │   # verdict.go) rather than as separate testinfra packages;
     │   # both are exposed through the harness's subcommands.
-    ├── static/
+    ├── static/                    # The static tier's Go test packages
+    │   ├── build/                 # Build and generated-artifact drift
+    │   ├── chart/                 # Chart render and deployment boundary
+    │   ├── lint/                  # Code invariants and test hygiene
+    │   └── structure/             # Specification structure, migration gates, maps
     ├── tier1_unit/                # Index only; unit tests live with their packages under pkg/.
     │   └── helm/                  # Helm chart-rendering units (no obvious source-tree home)
     ├── component/
@@ -899,7 +903,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 2. `go vet -tags=contract ./tests/contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
 3. `buf lint` over the proto sources under `schemas/`.
 4. `buf breaking` against `.git#branch=main`. Off `main` the findings are reported as advisory, because a long-lived feature branch evolves the proto deliberately; on `main` the check hard-fails.
-5. `gofumpt -l .` — formatting. The walk from the repository root also reaches directories outside the checkout under test, such as other git worktrees under `.claude/worktrees/` and git-ignored scratch trees. The harness therefore judges only the Go files that `git ls-files --cached --others --exclude-standard` lists, and it keeps the whole report when git is unavailable.
+5. `gofumpt -l .` — formatting. The walk from the repository root also reaches directories outside the commit under test, such as other git worktrees under `.claude/worktrees/` and untracked scratch trees. The harness therefore judges only the Go files git tracks, which `git ls-files --cached` lists, so an untracked scratch folder in a checkout does not fail the gate. It keeps the whole report when git is unavailable.
 6. `goimports -l -local github.com/lennylabs/lenny .` — import ordering, scoped to the same files as `gofumpt`.
 7. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
 8. `scripts/lint-schema.sh` — every tenant-scoped table has `tenant_id` as the leading index column (R-01).
@@ -914,13 +918,45 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 17. `scripts/lint-determinism.sh` — §17.4 determinism rules across the test surface. Findings are reported without failing the tier while the pre-existing violations are migrated to `testinfra`.
 18. `scripts/lint-test-conventions.sh` — §17.6 and §17.7 test-authoring conventions. Findings are reported without failing the tier.
 19. `scripts/check-markdown-links.sh` — `markdown-link-check` over `docs/` and `spec/`. Findings are reported without failing the tier, because many internal links resolve only in the rendered site; the PR workflow keeps a hard gate against the rendered site.
-20. `go test ./tests/static/...` — the static-tier Go tests. They cover the license header on every Go source file, the CRD and JSON Schema inventories, the change-graph selection tables, and the generated-code no-drift check for `pkg/proto/`. The no-drift test reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
+20. The static-tier Go tests, one check per package, run concurrently with the other checks. Each package has a time budget, and the tier message names a package that exceeds it; the overrun does not change the package's result. The packages and their budgets are in "Static-tier packages" below.
+    - `go test ./tests/static/build/...` — build and generated-artifact drift: the license header on every source file, the CRD and JSON Schema inventories, the migration numbering, the supervisor binary, the workflow tool staging, the change records, and the generated-code no-drift checks for `pkg/proto/` and the API code.
+    - `go test ./tests/static/chart/...` — the Helm chart render and the deployment boundary: flags the chart renders parse against their binaries, the profiles, RBAC, the adapter inputs, and the chart's agreement with the specification's ops RBAC block and OpenSLO fragment.
+    - `go test ./tests/static/lint/...` — code-invariant lints over Go source and test-hygiene lints: the coordinator-hold allowlist, Redis cluster safety, the erasure writers, the production-mode carrier, dead code, retired symbols, proto addressing, ephemeral ports, temp roots, and provider coverage.
+    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the claim register, the skip-reason classifier, the gates of the specification tree, and the self-tests of the spec map and the change graph.
+
+    The no-drift test in the build package reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
 21. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
 22. `lenny-test validate-maps` — spec-map and change-graph integrity.
 
 **Gate.** Every check must pass. A check that reaches no conclusion reports `unverified`, and the tier carries that status rather than `pass`. No retries.
 
-**Wall-clock target.** Under 30 seconds on a laptop.
+**Static-tier packages.** The Go tests of the static tier are four packages under `tests/static/`, sorted by what they guard. A budget is the wall time the package is expected to finish within on a developer machine with a warm build cache.
+
+| Package | Guards | Budget |
+|:--|:--|:--|
+| `tests/static/build` | Build and generated-artifact drift | 30 s |
+| `tests/static/chart` | The chart render, the deployment boundary, and the chart's agreement with the specification | 30 s |
+| `tests/static/lint` | Code invariants and test hygiene | 30 s |
+| `tests/static/structure` | The specification's structure, the migration gates, and the maps | 60 s |
+
+The structure package carries the gates of the channel-naming and line-citation migration, which read the numbered specification files. Each of them stays until a gate of the specification structure covers what it checks, and the table below names, for each, the gate of change 0115 that covers it or the reason none does. The reference gate (`specshift ref check`, run by `TestSpecReferencesResolve`) checks links into the new specification tree only, and states that links into the numbered files keep the rules of these gates.
+
+| Gate | What it checks | Covered by a change 0115 gate |
+|:--|:--|:--|
+| `TestSpecCitationResolutionCertifiesTheTree` | A section citation resolves inside the numbered section it names | No. The reference gate does not read citations of numbered sections. Kept. |
+| `TestEveryCitationNamesADocumentAReaderCanReach` | A section number names a document that declares it | No. The annotation lint resolves identifiers, not section numbers. Kept. |
+| `TestLineCitationRatchetCertifiesTheTree` | The population of line citations does not grow | No. Kept until the line citations reach zero. |
+| `TestFragmentLinkGateCertifiesTheTree` | A fragment link in `spec/` and `docs/` addresses a heading that exists | In part. The reference gate checks fragments into the new tree; links into the numbered files and within `docs/` are this gate's alone. Kept. |
+| `TestEverySpecificationHeadingCarriesAnIndexEntry` | Every numbered heading has an index entry and a spec-map key | No. The generated indexes cover the new tree's pages, not the numbered headings. Kept. |
+| `TestIdentifierResolutionCertifiesTheTree` | One live spelling per channel identifier | No. Channel identifiers are not page identifiers. Kept. |
+| `TestNamingLintReportsNoBareReservedNounPhraseInTheTree` | The reserved phrases of the naming law | No. Kept. |
+| `TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister` | The degradation matrix matches the channel register | No. Kept. |
+| `TestResidualGateCertifiesTheTree` | Every member of a migration class is classified | No. Kept until the migration registers retire. |
+| `TestEveryMigrationGateIsRegisteredAtTierZero` | Every migration gate is still hard-gated | No. Kept while the gates it lists remain. |
+| `TestClaimRegisterSaysWhatTheSpecificationRequires`, `TestClaimRegisterIsReproducibleFromItsGenerator`, and `TestClaimRegisterAgreesWithTheAdapterProto` | The claim register's form, its generator, and its agreement with the adapter proto | No. The claim register becomes issues under change 0116. Kept. |
+| `TestComplianceFullChecksNamedForTheirChannel` | The compliance checks carry their channel's identifier | No. Kept. |
+
+**Wall-clock target.** Under 30 seconds on a laptop for each check other than the structure package, which has the budget above.
 
 ### 12.1 Unit (`unit`)
 

@@ -18,13 +18,15 @@ Test infrastructure for Lenny. The architecture and conventions are defined in [
 Each tier has its own directory and build tag (see TESTING.md §4 for the canonical layout). Phase 0 ships the skeleton; subsequent phases populate each tier.
 
 - `testinfra/` — shared infrastructure (containers, Kind, fixtures, mocks, assertions, verdict producer, time and randomness control)
-- `static/` — lint, schema validation, traceability validation
+- `static/` — the static tier's Go test packages: `build/` (build and generated-artifact drift), `chart/` (the chart render and the deployment boundary), `lint/` (code invariants and test hygiene), and `structure/` (the specification's structure, the migration gates, and the maps)
 - `component/` — single component plus real backing services
 - `contract/` — wire-format equivalence across surfaces
 - `integration/` — multi-component flows via compose
 - `e2e_kind/` — full deployment on Kind
 - `e2e_cloud/` — full deployment on GKE, EKS, AKS
-- `load_kind/` — performance and SLO scenarios
+- `load_local/` — in-process load and concurrency scenarios
+- `load_kind/` — performance and SLO scenarios on Kind
+- `load_cloud/` — cloud-scale load scenarios
 - `chaos/` — failure injection
 - `security/` — security controls and adversarial scenarios
 - `conformance/` — runtime adapter conformance

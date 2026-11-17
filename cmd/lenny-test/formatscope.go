@@ -24,21 +24,22 @@ import (
 // in-progress edit, and a rerun after that agent had formatted its files
 // passed, so the verdict depended on state outside the tree the gate
 // claims to judge. scopeFormatterOutput restricts the formatter output to
-// the files git tracks or would track, which is the tree a commit from
-// this checkout can contain.
+// the files git tracks. An untracked file is not part of any commit the
+// gate judges, so an untracked scratch folder in the checkout, ignored or
+// not, does not fail the gate; a new source file fails it once it is
+// added to the index, which happens before the commit the gate runs on.
 
 // repoGoFiles returns the slash-separated, root-relative paths of the Go
-// files git tracks under root, plus the untracked Go files .gitignore does
-// not exclude, so a new source file that is not yet committed is still
-// judged. git does not descend into a nested worktree or repository, so
-// none of its files are listed. It returns nil when git is unavailable or
+// files git tracks under root, which are the files in the index. git does
+// not descend into a nested worktree or repository, so none of its files
+// are listed. It returns nil when git is unavailable or
 // root is not a git checkout; the caller then keeps the formatter output
 // whole, so the check stays as strict as an unscoped walk.
 func repoGoFiles(root string) map[string]bool {
 	if _, err := exec.LookPath("git"); err != nil {
 		return nil
 	}
-	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.go")
+	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--", "*.go")
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {

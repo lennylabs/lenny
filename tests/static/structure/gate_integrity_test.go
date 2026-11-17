@@ -116,7 +116,9 @@ var validateCheck = regexp.MustCompile(`\b(validate\w+)\(`)
 // channel the repository hard-gates.
 var scriptInvocation = regexp.MustCompile(`\.sh\b`)
 
-// tierZeroPackage is the static-tier Go test package, relative to a tree root.
+// tierZeroPackage is the directory of the static tier's Go test packages,
+// relative to a tree root. The tier is split into the build, chart, lint, and
+// structure packages below it, so the enumeration walks the directory.
 var tierZeroPackage = filepath.Join("tests", "static")
 
 // validateMapsFile is the file that carries runValidateMaps, relative to a
@@ -124,38 +126,72 @@ var tierZeroPackage = filepath.Join("tests", "static")
 const validateMapsFile = "cmd/lenny-test/cmd_validate.go"
 
 // gateFilePath resolves a gate's File to a path under root. A name with no
-// separator is a file in the static-tier package; a slash-separated name is
-// relative to the root, which is how the runValidateMaps channel is named.
+// separator is a file in one of the static tier's packages, found by walking
+// them; a slash-separated name is relative to the root, which is how the
+// runValidateMaps channel is named. A name no package holds resolves to a
+// path that does not exist.
 func gateFilePath(root string, g tierZeroGate) string {
 	if strings.Contains(g.File, "/") {
 		return filepath.Join(root, filepath.FromSlash(g.File))
 	}
-	return filepath.Join(root, tierZeroPackage, g.File)
+	found := filepath.Join(root, tierZeroPackage, g.File)
+	_ = walkTierZeroTests(root, func(path, name string) error {
+		if name == g.File {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// walkTierZeroTests calls fn with the path and the base name of every
+// _test.go file in the static tier's packages under root, leaving out the
+// fixture trees under testdata/. It fails when the directory is absent, so a
+// tree with no static tier is not read as one with no gates.
+func walkTierZeroTests(root string, fn func(path, name string) error) error {
+	dir := filepath.Join(root, tierZeroPackage)
+	if _, err := os.Stat(dir); err != nil {
+		return err
+	}
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		return fn(path, d.Name())
+	})
 }
 
 // hardGatedGates enumerates every gate the two channels the repository
 // hard-gates carry under root, mapped to the file that carries it: a Go test
-// declared in the static-tier package, and a check invoked inside runValidateMaps.
+// declared in one of the static tier's packages, and a check invoked inside
+// runValidateMaps.
 // It takes a root and returns the enumeration so that the meta-gate's own
 // cases can drive it over a fixture tree rather than over the live repository.
 func hardGatedGates(root string) (map[string]string, error) {
 	declared := map[string]string{}
 
-	entries, err := os.ReadDir(filepath.Join(root, tierZeroPackage))
-	if err != nil {
-		return nil, fmt.Errorf("read the static-tier package: %w", err)
-	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(root, tierZeroPackage, e.Name()))
+	err := walkTierZeroTests(root, func(path, name string) error {
+		body, err := os.ReadFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", e.Name(), err)
+			return fmt.Errorf("read %s: %w", name, err)
 		}
 		for _, m := range goTestFunc.FindAllStringSubmatch(string(body), -1) {
-			declared[m[1]] = e.Name()
+			declared[m[1]] = name
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("read the static-tier packages: %w", err)
 	}
 
 	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(validateMapsFile)))

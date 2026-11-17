@@ -1203,8 +1203,14 @@ packages:
       count: 547
     - package: tests/security/pentest
       count: 6
-    - package: tests/static
-      count: 320
+    - package: tests/static/build
+      count: 39
+    - package: tests/static/chart
+      count: 99
+    - package: tests/static/lint
+      count: 18
+    - package: tests/static/structure
+      count: 164
     - package: tests/testinfra/ackruntime
       count: 2
     - package: tests/testinfra/admission

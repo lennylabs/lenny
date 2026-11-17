@@ -92,19 +92,21 @@ Per TESTING.md §17.10 every test must pass 50 consecutive runs. Investigate via
 ## Where each tier lives
 
 | Tier | Directory | Build tag |
-|:----:|:----------|:----------|
-| 0 | `tests/static/` | _(none)_ |
-| 1 | `pkg/<area>/*_test.go` and `tests/tier1_unit/` | _(none)_ |
-| 2 | `tests/component/<subsystem>/` | `component` |
-| 3 | `tests/contract/<surface>/` | `contract` |
-| 4 | `tests/integration/` | `integration` |
-| 5 | `tests/e2e_kind/` | `e2e_kind` |
-| 6 | `tests/e2e_cloud/` | `e2e_cloud` |
-| 7 | `tests/load_kind/scenarios/<name>/` | `load` |
-| 8 | `tests/chaos/` | `chaos` |
-| 9 | `tests/security/` | `security` |
-| 10 | `tests/conformance/` | `conformance` |
-| 11 | `tests/docs/` | _(none)_ |
+|:-----|:----------|:----------|
+| `static` | `tests/static/build/`, `tests/static/chart/`, `tests/static/lint/`, and `tests/static/structure/` | _(none)_ |
+| `unit` | `pkg/<area>/*_test.go` and `tests/tier1_unit/` | _(none)_ |
+| `component` | `tests/component/<subsystem>/` | `component` |
+| `contract` | `tests/contract/<surface>/` | `contract` |
+| `integration` | `tests/integration/` | `integration` |
+| `e2e_kind` | `tests/e2e_kind/` | `e2e_kind` |
+| `e2e_cloud` | `tests/e2e_cloud/` | `e2e_cloud` |
+| `load_local` | `tests/load_local/` | `load_local` |
+| `load_kind` | `tests/load_kind/scenarios/<name>/` | `load_kind` |
+| `chaos` | `tests/chaos/` | `chaos` |
+| `security` | `tests/security/` | `security` |
+| `conformance` | `tests/conformance/` | `conformance` |
+| `docs` | `tests/docs/` | _(none)_ |
+| `load_cloud` | `tests/load_cloud/` | `load_cloud` |
 
 ## Test infrastructure helpers
 

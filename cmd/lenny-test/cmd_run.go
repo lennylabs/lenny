@@ -590,6 +590,41 @@ type staticCheck struct {
 	name     string
 	run      func() (string, error)
 	classify func(out string) (status string, detail string)
+	// budget is the wall time the check is expected to finish within.
+	// A check that takes longer still reports its own result, and the
+	// tier message names the overrun, so a slow gate is visible as a
+	// defect to fix. Zero means the check has no budget.
+	budget time.Duration
+}
+
+// staticPackageChecks returns one check per Go test package of the static
+// tier, so the packages run concurrently and each reports its own result
+// and its own time against its budget. A budget is the wall time the
+// package is expected to finish within on a developer machine with a warm
+// build cache (TESTING.md, "Static (`static`)"). The structure package
+// carries the specification migration gates, and its budget is the larger
+// while those gates remain. Each entry names its package literally, so the
+// documentation test that reconciles TESTING.md with this table reads it.
+func staticPackageChecks() []staticCheck {
+	return []staticCheck{
+		{name: "go test ./tests/static/build/...", run: goTestCheck("./tests/static/build/..."), classify: classifyUnverified, budget: 30 * time.Second},
+		{name: "go test ./tests/static/chart/...", run: goTestCheck("./tests/static/chart/..."), classify: classifyUnverified, budget: 30 * time.Second},
+		{name: "go test ./tests/static/lint/...", run: goTestCheck("./tests/static/lint/..."), classify: classifyUnverified, budget: 30 * time.Second},
+		{name: "go test ./tests/static/structure/...", run: goTestCheck("./tests/static/structure/..."), classify: classifyUnverified, budget: 60 * time.Second},
+	}
+}
+
+// goTestCheck returns a check body that runs the static-tier Go tests of
+// pattern. A static-tier test that ran but could not reach a conclusion (a
+// generator it needs is absent, for example) passes and writes the
+// unverified marker to stdout, and the check's classifier, classifyUnverified,
+// reads it, so such a test reports "proved nothing" rather than a green run
+// that proved nothing silently.
+func goTestCheck(pattern string) func() (string, error) {
+	return func() (string, error) {
+		out, err := exec.Command("go", goTestArgs(pattern)...).CombinedOutput()
+		return string(out), err
+	}
 }
 
 // runStaticTier runs the static-tier check table. The checks are
@@ -669,8 +704,8 @@ func runStaticTier() (string, string, *tierResult) {
 			out, err := cmd.CombinedOutput()
 			// gofumpt walks every directory under the root, including
 			// other agents' worktrees under .claude/worktrees/ and
-			// git-ignored scratch trees, so judge only the files of this
-			// checkout (see formatscope.go). An error whose output names
+			// untracked scratch trees, so judge only the files this
+			// checkout tracks (see formatscope.go). An error whose output names
 			// only out-of-tree files is the same walk and is dropped; an
 			// error with no output at all still fails.
 			body := scopeFormatterOutput(string(out), cmd.Dir)
@@ -846,20 +881,6 @@ func runStaticTier() (string, string, *tierResult) {
 			}
 			return string(out), nil
 		}},
-		{
-			name: "go test ./tests/static/...",
-			run: func() (string, error) {
-				out, err := exec.Command("go", goTestArgs("./tests/static/...")...).CombinedOutput()
-				return string(out), err
-			},
-			// A static-tier test that ran but could not reach a
-			// conclusion (a generator it needs is absent, for
-			// example) passes and writes the unverified marker to
-			// stdout. Parsing it here is what lets such a test
-			// report "proved nothing" rather than a green run that
-			// proved nothing silently.
-			classify: classifyUnverified,
-		},
 		{name: "validate-diagnosis", run: func() (string, error) {
 			// Re-invoke this very binary's `validate-diagnosis`
 			// subcommand. The subcommand walks every component-and-later
@@ -886,6 +907,7 @@ func runStaticTier() (string, string, *tierResult) {
 		}},
 	}
 
+	checks = append(checks, staticPackageChecks()...)
 	outcomes := runStaticChecks(checks)
 	status, msg := reduceStaticOutcomes(outcomes)
 	return status, msg, staticTierResult(outcomes)
@@ -927,6 +949,7 @@ type staticOutcome struct {
 	out      string
 	err      error
 	duration time.Duration
+	budget   time.Duration
 	// status and detail are the classifier's normalized report. They
 	// are empty when the check errored or carries no classifier.
 	status string
@@ -964,7 +987,7 @@ func runStaticChecks(checks []staticCheck) []staticOutcome {
 func runStaticCheck(c staticCheck) staticOutcome {
 	start := time.Now()
 	out, err := c.run()
-	o := staticOutcome{name: c.name, out: out, err: err, duration: time.Since(start)}
+	o := staticOutcome{name: c.name, out: out, err: err, duration: time.Since(start), budget: c.budget}
 	if err == nil && c.classify != nil {
 		o.status, o.detail = normalizeCheckStatus(c.classify(out))
 	}
@@ -982,6 +1005,9 @@ func reduceStaticOutcomes(outcomes []staticOutcome) (string, string) {
 	var failed, notes []string
 	status := verdictstatus.Pass
 	for _, o := range outcomes {
+		if note := budgetNote(o); note != "" {
+			notes = append(notes, note)
+		}
 		if o.err != nil {
 			failed = append(failed, fmt.Sprintf("%s failed:\n%s", o.name, o.out))
 			continue
@@ -1002,6 +1028,18 @@ func reduceStaticOutcomes(outcomes []staticOutcome) (string, string) {
 		return verdictstatus.Fail, strings.Join(append(failed, notes...), "\n")
 	}
 	return status, strings.Join(notes, "\n")
+}
+
+// budgetNote names a check that took longer than its budget, or returns ""
+// when the check has no budget or kept within it. The overrun does not
+// change the check's status: the tier reports it so the slow package is
+// split or sped up.
+func budgetNote(o staticOutcome) string {
+	if o.budget <= 0 || o.duration <= o.budget {
+		return ""
+	}
+	return fmt.Sprintf("%s exceeded its time budget: %s, budget %s",
+		o.name, o.duration.Round(time.Second), o.budget)
 }
 
 // staticTierResult converts the outcomes into the per-check counts and
