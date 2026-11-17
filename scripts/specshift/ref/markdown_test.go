@@ -12,22 +12,6 @@ import (
 // migration tooling rather than a platform behavior, so they carry no
 // spec-section annotation.
 
-func TestBlockSlug(t *testing.T) {
-	cases := map[string]string{
-		"gateway.claimHoldTTLSeconds":   "gateway-claimholdttlseconds",
-		"lenny.dev/tenant-id":           "lenny-dev-tenant-id",
-		"lenny_pod_claim_duration_secs": "lenny-pod-claim-duration-secs",
-		"WARM_POOL_EXHAUSTED":           "warm-pool-exhausted",
-		"  PodClaim  ":                  "podclaim",
-		"--":                            "",
-	}
-	for in, want := range cases {
-		if got := blockSlug(in); got != want {
-			t.Errorf("blockSlug(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestNaturalLess(t *testing.T) {
 	if !naturalLess("POOL-R2", "POOL-R10") || naturalLess("POOL-R10", "POOL-R2") {
 		t.Error("digit runs are not compared as numbers")
@@ -61,20 +45,6 @@ func TestLinksReadsEveryRelativeLinkOutsideExampleText(t *testing.T) {
 	want := "x.md#one@1 y.md#@1 #here@2 t.md#@6 n.md#@6 r.md#frag@7"
 	if strings.Join(got, " ") != want {
 		t.Errorf("links = %q, want %q", strings.Join(got, " "), want)
-	}
-}
-
-func TestFencesNestAndCloseOnTheirOwnDelimiter(t *testing.T) {
-	content := "````markdown\n```lenny-def\nkind: setting\nname: inner\n```\n````\n\n~~~lenny-def\nkind: metric\nname: outer\n~~~\n\n```lenny-def\nkind: alert\n"
-	blocks := defBlocks(content)
-	if len(blocks) != 2 {
-		t.Fatalf("blocks = %+v", blocks)
-	}
-	if blocks[0].name != "outer" || blocks[0].line != 8 {
-		t.Errorf("first block = %+v", blocks[0])
-	}
-	if blocks[1].kind != "alert" || blocks[1].name != "" {
-		t.Errorf("an unclosed block = %+v", blocks[1])
 	}
 }
 

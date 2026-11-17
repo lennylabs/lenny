@@ -313,66 +313,6 @@ func headingAnchors(content string) map[string]bool {
 	return out
 }
 
-// blockSlug returns the anchor slug of a definition block's name, as the
-// conventions define it: letters and digits kept in lower case, every other
-// run collapsed to one hyphen, and leading and trailing hyphens trimmed.
-func blockSlug(name string) string {
-	var b strings.Builder
-	pending := false
-	for _, r := range strings.ToLower(name) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			if pending && b.Len() > 0 {
-				b.WriteByte('-')
-			}
-			pending = false
-			b.WriteRune(r)
-			continue
-		}
-		pending = true
-	}
-	return b.String()
-}
-
-// defBlock is the part of a `lenny-def` block the registry reads.
-type defBlock struct {
-	kind, name string
-	line       int
-}
-
-// defBlocks returns the `lenny-def` blocks of a document with their
-// `kind:` and `name:` lines. A block that names its subject with `key:`
-// rather than `name:`, as the label and annotation blocks of the migration
-// spike do, is read by its key. The full block grammar belongs to the block
-// parser; the registry needs only the two fields its anchor derives from.
-func defBlocks(content string) []defBlock {
-	var out []defBlock
-	for _, f := range fences(content) {
-		if f.info != "lenny-def" {
-			continue
-		}
-		b := defBlock{line: f.line}
-		key := ""
-		for _, l := range strings.Split(f.body, "\n") {
-			if k, v, ok := strings.Cut(l, ":"); ok && !strings.HasPrefix(l, " ") && !strings.HasPrefix(l, "\t") {
-				v = strings.Trim(strings.TrimSpace(v), `"'`)
-				switch strings.TrimSpace(k) {
-				case "kind":
-					b.kind = v
-				case "name":
-					b.name = v
-				case "key":
-					key = v
-				}
-			}
-		}
-		if b.name == "" {
-			b.name = key
-		}
-		out = append(out, b)
-	}
-	return out
-}
-
 // rewriteSpans replaces byte spans of content, given as [lo, hi) with
 // their replacement, in one pass. The spans do not overlap.
 func rewriteSpans(content string, edits []edit) string {

@@ -273,7 +273,7 @@ func TestCheckReportsEveryPlantedError(t *testing.T) {
 		pools + ":17: anchor #reserved-hold is also registered at spec/pages/pod-claims.md:12",
 		pools + ":29: link #claim-r1: the identifier is registered on spec/pages/pod-claims.md",
 		pools + ":36: anchor #setting-pool-minwarm is also registered at " + pools + ":31",
-		pools + ":41: definition block has no kind: or name: line",
+		pools + ":41: definition block has no kind: line",
 		pools + ":27: requirement POOL-R4 has no explicit anchor",
 		pools + ":7: retired identifier POOL-R8 names successor CLAIM-R99, which is not registered",
 		pools + ":8: retired identifier POOL-R9 has no successor or removed record",
