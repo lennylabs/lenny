@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Commands over the changes/ records: the `change` and `board` helpers.
 
 Run from the repository root:

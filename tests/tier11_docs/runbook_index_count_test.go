@@ -67,6 +67,6 @@ func TestRunbookIndexSpecProseCountMatchesShippedSet(t *testing.T) {
 
 	if statedCount != shipped {
 		t.Errorf("spec/25_agent-operability.md states %q but docs/runbooks/ ships %d runbook files; "+
-			"remove the stale count through the change-proposal pipeline", string(m[0]), shipped)
+			"remove the stale count through a change under changes/", string(m[0]), shipped)
 	}
 }

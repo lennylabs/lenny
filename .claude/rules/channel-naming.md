@@ -63,4 +63,4 @@ None of these phrases is a name. Each one names a conversation without saying wh
 
 ## Maintenance
 
-When a naming defect surfaces that these rules do not cover, state the rule in the specification's naming law through the proposal pipeline first, then restate it here. The naming law in the specification is the normative text and this file follows it. When a reserved word is added or removed, update the table above in the same change as the naming lint's matcher, so the specimens and the matcher stay one statement of the prohibition.
+When a naming defect surfaces that these rules do not cover, state the rule in the specification's naming law through a change under `changes/` first, then restate it here. The naming law in the specification is the normative text and this file follows it. When a reserved word is added or removed, update the table above in the same change as the naming lint's matcher, so the specimens and the matcher stay one statement of the prohibition.

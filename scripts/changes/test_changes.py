@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Tests for scripts/changes/changes.py. Run: python3 -m unittest discover -s scripts/changes"""
 import io
 import os

@@ -10,17 +10,21 @@ All new code aligns to the spec. Every behavior in `pkg/`, `cmd/`, `sdks/`, `mig
 
 - Implement what the spec says. When code and spec disagree, the spec is right and the code is the defect, unless the spec itself is wrong (see below).
 - Cite the spec on spec-derived logic with `// spec: §X.Y` (see `code-best-practices.md`). A reviewer traces any behavior to its section through that citation.
-- Do not edit `spec/` ad hoc to match code you want to write. Spec changes go through the pipeline below.
+- Do not edit `spec/` ad hoc to match code you want to write. A specification change goes through a change, as below.
 
 ## When the spec is silent, wrong, or contradictory
 
-Change the spec first, through the proposal pipeline, then write the code:
+Change the spec first, through a change folder under `changes/`, then write the code. `changes/README.md` describes the records, the workflow, and the helpers:
 
-1. `change-proposal` writes and adversarially converges a proposal under `proposals/` that stages the spec edits.
-2. A human approves it.
-3. `implement-proposal` lands the staged spec edits in `spec/`, verifies them, and then implements the code against the now-current spec.
+1. **Frame.** The change states the problem, the scope, and the open decisions, with evidence from the tree.
+2. **Decide.** The owner settles the open decisions in the change's `decisions.md`.
+3. **Build.** Each step lands on its own branch: the specification edits first, then the code and the tests against the specification as edited, then the documentation.
 
-Never let code lead the spec. A spec change lands and is verified before the code that depends on it is written.
+Never let code lead the spec. On a step's branch, the specification edit is committed before the code that depends on it.
+
+An edit that changes no requirement, no defined value, and no operation, such as a typo, a gloss, a link, or a documentation page brought in line with the current specification, needs no change folder and lands as a plain commit with the gates green.
+
+When the change belongs to a program under `changes/programs/`, read the program's "Reading the program" section before working on it: it states how the program's changes are read together and how a conflict between them is raised.
 
 ## Test-driven
 
@@ -28,53 +32,23 @@ Never let code lead the spec. A spec change lands and is verified before the cod
 - A behavior is not done until a test pins it to its spec section and that test passes. Run the tests; writing them is half the work.
 - Tests are first-class spec artifacts. Every test carries a `// spec:` annotation mapping it to the sections it verifies, and every behavioral spec section has at least one test. The harness maps tests to sections through that annotation.
 
-## A proposal is a directory
+## A finished record is not edited
 
-A proposal is a directory under `proposals/` holding its problem statement,
-summary, status, implementation checklist, spec changes, non-spec changes,
-review log, and deviations, each prefixed with the directory's own name. A
-proposal written before that layout is a single markdown file, and it migrates
-the first time `change-proposal` or `implement-proposal` touches it. There is no
-batch migration: a proposal nobody is working on stays as it is.
+An archived change under `changes/archive/`, and a proposal under `proposals/` whose status records it as implemented, are historical records of what was decided and done at the time. They are not edited afterwards, and that includes adding a pointer recording that a later change retired or reverted part of what they delivered. The one exception is a link inside them that a later move rewrites so it still resolves.
 
-Read and write the status with `.claude/tools/proposal-status.mjs`, never by
-parsing prose. The four states are Draft, Reviewed, Approved, and Implemented.
-Progress through an implementation is recorded per deliverable, by the ticked
-boxes in the implementation checklist, rather than as a state the proposal is
-in.
+The codebase evolves, and a change that landed may be undone by a later one. The earlier record keeps the words it was written with, because its value is as evidence of what was true when it landed. Amending it to track later reversals turns it into a running summary of current state, which `spec/` and the tree already are. A change that reverts or retires part of an earlier one records that in its own text, and lands it in `spec/`, in the code, and in the issues it closes.
 
-## A landed proposal is not edited
-
-A proposal whose status records it as implemented is a historical record of
-what was decided and done at the time. That applies to every file in its
-directory, and it is why an implemented proposal never migrates: splitting one
-into role-scoped files is an edit. It is not edited afterwards, and that
-includes adding a pointer recording that a later proposal retired or reverted
-part of its deliverable.
-
-The codebase evolves, and a change proposal 0001 landed may be undone by
-proposal 0100. That is expected. The earlier proposal keeps the words it was
-written with, because its value is as evidence of what was true when it
-landed. Amending it to track later reversals turns it into a running summary
-of current state, which `spec/` and the tree already are.
-
-A proposal that reverts or retires part of an earlier implemented proposal's
-deliverable records that in its own text, and lands it in `spec/`, in the
-code, and in `BUILD-GAPS.md`. Do not stage an edit to the earlier proposal
-file, and do not list it under "Files touched on application".
-
-A proposal that has not landed is different. A draft is still being written,
-so editing it, or dropping a section a later proposal supersedes, is fine.
+A change that has not finished is different: it is still being written or built, so editing it is expected, and each revision is recorded in its `review-history.md`.
 
 ## Where this rule applies
 
 - All Go under `pkg/`, `cmd/`, `sdks/`, and `migrations/`, the chart under `charts/`, and the tests under `tests/`.
-- It governs the proposal pipeline skills (`change-proposal`, `implement-proposal`) and the build loop (`close-build-gaps.sh`), which exist to keep code and spec in lockstep.
+- It governs the helpers under `.claude/skills/` that edit the specification or the code, `build` in particular, which exist to keep code and spec in lockstep.
 
 ## How to apply when implementing a change
 
-1. Find the spec section the change implements. If none exists or it is wrong, stop and take it through the proposal pipeline before writing code.
-2. Land and verify any spec change first; implement the code against the committed spec.
+1. Find the spec section the change implements. If none exists or it is wrong, stop and raise it as a change, or as an open decision on the change you are building.
+2. Land the spec edit first on the step's branch; implement the code against the edited spec.
 3. Write the tests that encode the spec's behavior for every tier the change reaches, with the `// spec:` annotation, and run them to green.
 4. Cite the spec section in the code and the tests.
 

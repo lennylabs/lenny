@@ -35,7 +35,7 @@ The `tidy`, `fact-check`, `ask`, and `change` skills, and the helpers table in `
 The `build` skill: the branch name, the order of the lanes, `lenny-test --changed`, the step status, the hand-written digest, and the stop on an unsettled choice.
 
 ### 0114.S5 Retire the proposal pipeline and rewrite the governing rule
-- status: Planned
+- status: Building
 - lanes: [non-specification]
 - depends-on: [0114.S2, 0114.S3, 0114.S4]
 

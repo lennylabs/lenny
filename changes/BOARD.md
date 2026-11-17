@@ -8,9 +8,9 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 4 |
+| Building | 5 |
 | Waiting on decisions | 40 |
-| Blocked | 133 |
+| Blocked | 132 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -23,7 +23,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0114.S2](0114-helpers/steps.md#0114s2-generic-skills) | Generic skills | Building |  |
 | [0114.S3](0114-helpers/steps.md#0114s3-the-review-skill) | The review skill | Building |  |
 | [0114.S4](0114-helpers/steps.md#0114s4-the-build-skill) | The build skill | Building |  |
-| [0114.S5](0114-helpers/steps.md#0114s5-retire-the-proposal-pipeline-and-rewrite-the-governing-rule) | Retire the proposal pipeline and rewrite the governing rule | Blocked | 0114.S2, 0114.S3, 0114.S4 |
+| [0114.S5](0114-helpers/steps.md#0114s5-retire-the-proposal-pipeline-and-rewrite-the-governing-rule) | Retire the proposal pipeline and rewrite the governing rule | Building |  |
 
 ### M1: Specification structure foundation
 
