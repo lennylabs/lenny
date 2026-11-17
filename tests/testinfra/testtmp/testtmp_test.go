@@ -90,3 +90,38 @@ func TestEnvNamesBothGoTempVariables(t *testing.T) {
 		t.Fatalf("Env() = %v, want %v", got, want)
 	}
 }
+
+// TestSharedDirFollowsTheGateSharedRoot pins where a fixture the Docker
+// daemon bind-mounts lives. Under LENNY_TEST_SHARED_TMPDIR, which the
+// merge gate sets to a host directory mounted at its own path, SharedDir
+// creates the directory there and removes it at cleanup; without it,
+// SharedDir returns the test's own temporary directory. The helper is
+// test tooling with no specification section, so the test carries no
+// spec annotation.
+func TestSharedDirFollowsTheGateSharedRoot(t *testing.T) {
+	shared := t.TempDir()
+	t.Setenv(testtmp.EnvShared, shared)
+	var dir string
+	t.Run("under the shared root", func(t *testing.T) {
+		d, err := testtmp.SharedDir(t, "cm-")
+		if err != nil {
+			t.Fatalf("SharedDir: %v", err)
+		}
+		if !strings.HasPrefix(d, shared+"/cm-") {
+			t.Fatalf("SharedDir created %q, want a directory under %q", d, shared)
+		}
+		dir = d
+	})
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("SharedDir left %q after the test's cleanup: %v", dir, err)
+	}
+
+	t.Setenv(testtmp.EnvShared, "")
+	d, err := testtmp.SharedDir(t, "cm-")
+	if err != nil {
+		t.Fatalf("SharedDir: %v", err)
+	}
+	if fi, err := os.Stat(d); err != nil || !fi.IsDir() || strings.HasPrefix(d, shared) {
+		t.Errorf("SharedDir without a shared root = %q (%v), want the test's own temporary directory", d, err)
+	}
+}

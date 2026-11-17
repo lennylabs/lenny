@@ -142,9 +142,18 @@ static int fuzz_parser(long iterations)
 		/* The line reader over the same bytes, split at a random point. */
 		memset(&lb, 0, sizeof(lb));
 		size_t first = n ? rnd((unsigned)n) : 0;
-		memcpy(lb.buf, buf, first < sizeof(lb.buf) ? first : sizeof(lb.buf));
-		lb.len = first;
+		size_t held = first < sizeof(lb.buf) ? first : sizeof(lb.buf);
+		memcpy(lb.buf, buf, held);
 		const char *line;
+		/*
+		 * sv_line_take scans no further than one maximal line and its
+		 * terminator, which is the buffer's size, even when len claims
+		 * more bytes than the buffer holds.
+		 */
+		lb.len = first;
+		sv_line_take(&lb, &line);
+		/* The loop runs on what sv_line_fill could have read: never more than the buffer. */
+		lb.len = held;
 		for (;;) {
 			long t = sv_line_take(&lb, &line);
 			if (t < 0)

@@ -28,7 +28,9 @@
 #
 # The Python base image is Debian bookworm with the buildpack toolchain,
 # which supplies git, make, curl, and the C toolchain (gcc and binutils)
-# that the cgo, race-detector, and runtime supervisor checks need.
+# that the cgo, race-detector, and runtime supervisor checks need, and
+# useradd and setpriv, which the gate uses to run as the worktree's owner
+# rather than as root. GOCACHE lies outside /root for that user.
 
 FROM golang:1.25.0-bookworm@sha256:81dc45d05a7444ead8c92a389621fafabc8e40f8fd1a19d7e5df14e61e98bc1a AS go
 
@@ -47,7 +49,7 @@ COPY --from=go /usr/local/go /usr/local/go
 COPY --from=docker /usr/local/bin/docker /usr/local/bin/docker
 
 ENV GOPATH=/go \
-    GOCACHE=/root/.cache/go-build \
+    GOCACHE=/var/cache/go-build \
     GOTOOLCHAIN=local \
     PATH=/go/bin:/usr/local/go/bin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     KUBEBUILDER_ASSETS=/usr/local/kubebuilder/bin

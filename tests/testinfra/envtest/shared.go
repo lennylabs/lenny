@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -20,8 +19,6 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	crenvtest "sigs.k8s.io/controller-runtime/pkg/envtest"
-
-	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // Shared is one envtest control plane that every test in a package binary
@@ -71,11 +68,7 @@ func (s *Shared) Start(t testing.TB) *Environment {
 		// Pre-set the error so a Goexit out of RepoRoot leaves the value
 		// in a failed state rather than a nil config.
 		s.err = errors.New("shared control plane start did not complete")
-		env := &crenvtest.Environment{
-			CRDDirectoryPaths:     []string{filepath.Join(schematest.RepoRoot(t), "charts", "lenny", "crds")},
-			ErrorIfCRDPathMissing: true,
-			BinaryAssetsDirectory: assets,
-		}
+		env := newEnvironment(t, assets)
 		cfg, err := env.Start()
 		if err != nil {
 			s.err = fmt.Errorf("start API server: %w", err)

@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/helm"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 )
 
 // renderedPgBouncer is what the test reads from one render: the
@@ -101,7 +102,12 @@ func decode(t *testing.T, m helm.Manifest, into any) {
 // the container's network namespace as it joins the pod's.
 func startRenderedPgBouncer(t *testing.T, r renderedPgBouncer, databaseURL string, extraPorts ...string) (string, testcontainers.Container) {
 	t.Helper()
-	cmDir := t.TempDir()
+	// The Docker daemon bind-mounts this directory, so it has to be a
+	// path the daemon resolves, inside the merge gate's container too.
+	cmDir, err := testtmp.SharedDir(t, "pgbouncer-cm-")
+	if err != nil {
+		t.Fatalf("configmap directory: %v", err)
+	}
 	if err := os.Chmod(cmDir, 0o755); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}
