@@ -21,3 +21,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 6 (2026-11-16)
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). The owner accepted a new step, 0137.S5, which carries the kind renames, the `PodSet` merge, and the Go type renames with no dependency, so they run in M1 of the v1 program (D13). 0137.S3 is cancelled, and 0137.S1 and 0137.S2 depend on 0137.S5 and keep the fields and label rules that need other changes. Until 0137.S2 lands, a `PodSet` is named after its pool.
+
+## Owner ruling on 0137.S5 (2026-11-16)
+
+The owner ruled that 0137.S5, the kind renames and the `PodSet` merge, may be built while the rest of 0137 waits for the owner's cross-review, because S5 changes names only and no decision of 0137 is open. The rest of the change stays `Draft`.

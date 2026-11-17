@@ -131,6 +131,16 @@ class BoardTest(Fixture):
         self.assertIn('| [0101.S1](0101-beta/steps.md#0101s1-uno) | Uno | Waiting on decisions | 0101 is `Draft`; a part waits on 0100.S2 |', board)
         self.assertIn('| [0101](0101-beta/change.md) | Beta | `Draft` | 0 of 1 | 1 |', board)
 
+    def test_a_ruled_ready_step_of_a_draft_change_is_ready(self):
+        p = os.path.join(self.root, 'changes', '0101-beta', 'steps.md')
+        C.write(p, C.read(p).replace('- lanes: [specification, code]', '- lanes: [specification, code]\n- ruled-ready: 2026-02-03, names only'))
+        self.assertEqual(self.problems()[0], [])
+        self.run_cli('board')
+        board = C.read(os.path.join(self.root, 'changes', 'BOARD.md'))
+        self.assertIn('| Uno | Ready | a part waits on 0100.S2 |', board)
+        C.write(p, C.read(p).replace('ruled-ready: 2026-02-03, names only', 'ruled-ready: soon'))
+        self.assertTrue(any('ruled-ready must start with the date' in e for e in self.problems()[0]))
+
     def test_board_check_detects_a_stale_board(self):
         self.run_cli('board')
         self.assertEqual(self.run_cli('board', '--check')[0], 0)
