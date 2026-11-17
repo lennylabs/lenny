@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
@@ -78,8 +80,9 @@ func (i *Instance) Port() uint32 {
 // loopback interface and returns it. The listener is closed before the
 // port is returned so the embedded Postgres process can bind it; this is
 // the free-port pattern adapted to a numeric port the embedded library
-// requires up front.
-func freePort() (uint32, error) {
+// requires up front. It is a variable so a test can hand Start a port
+// another listener holds.
+var freePort = func() (uint32, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, fmt.Errorf("reserve ephemeral port: %w", err)
@@ -98,23 +101,54 @@ func (i *Instance) DSN() string {
 		i.cfg.Username, i.cfg.Password, i.cfg.Port, i.cfg.Database)
 }
 
+// startAttempts is the number of ephemeral ports Start tries when the
+// Config asked for one. A collision needs another bind to land on the
+// chosen port between freePort and the postmaster's bind, so a second
+// attempt almost always succeeds.
+const startAttempts = 5
+
 // Start downloads the PostgreSQL bundle when absent and starts the
 // instance. Start is idempotent within a process: a second call on an
 // already-started Instance is a no-op.
+//
+// The postmaster listens on 127.0.0.1 only, the address DSN names. With
+// the default listen address it binds both loopback families and starts
+// when either bind succeeds, so a process that took the IPv4 port
+// between freePort and the bind left the instance serving ::1 alone while
+// DSN reached the other process. Listening on 127.0.0.1 alone makes that
+// collision a start failure instead. When the Config asked for an
+// ephemeral port, Start then removes the half-initialized data directory
+// and tries again on a fresh port.
 func (i *Instance) Start() error {
 	if i.started {
 		return nil
 	}
-	if i.cfg.Port == 0 {
-		port, err := freePort()
-		if err != nil {
-			return fmt.Errorf("embedded postgres: %w", err)
+	if i.cfg.Port != 0 {
+		return i.startOn(i.cfg.Port)
+	}
+	var err error
+	for attempt := 1; attempt <= startAttempts; attempt++ {
+		port, perr := freePort()
+		if perr != nil {
+			return fmt.Errorf("embedded postgres: %w", perr)
 		}
 		i.cfg.Port = port
+		if err = i.startOn(port); err == nil || !lostPort(err) {
+			return err
+		}
+		if rerr := os.RemoveAll(i.dataPath()); rerr != nil {
+			return fmt.Errorf("embedded postgres: remove the data directory after a lost port: %w", rerr)
+		}
 	}
+	i.cfg.Port = 0
+	return err
+}
+
+// startOn starts the instance on port.
+func (i *Instance) startOn(port uint32) error {
 	cfg := embeddedpostgres.DefaultConfig().
 		Version(embeddedpostgres.V16).
-		Port(i.cfg.Port).
+		Port(port).
 		Database(i.cfg.Database).
 		Username(i.cfg.Username).
 		Password(i.cfg.Password).
@@ -124,7 +158,8 @@ func (i *Instance) Start() error {
 		// directory removal.
 		RuntimePath(filepath.Join(i.cfg.DataDir, "runtime")).
 		BinariesPath(filepath.Join(i.cfg.DataDir, "bin")).
-		DataPath(filepath.Join(i.cfg.DataDir, "data")).
+		DataPath(i.dataPath()).
+		StartParameters(map[string]string{"listen_addresses": "127.0.0.1"}).
 		StartTimeout(i.cfg.StartTimeout)
 	db := embeddedpostgres.NewDatabase(cfg)
 	if err := db.Start(); err != nil {
@@ -133,6 +168,19 @@ func (i *Instance) Start() error {
 	i.db = db
 	i.started = true
 	return nil
+}
+
+// dataPath is the PostgreSQL data directory under DataDir.
+func (i *Instance) dataPath() string {
+	return filepath.Join(i.cfg.DataDir, "data")
+}
+
+// lostPort reports whether a start failed because another process held
+// the port: the postmaster's log, which the start error carries, records
+// a bind refusal.
+func lostPort(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "Address already in use") || strings.Contains(msg, "process already listening on port")
 }
 
 // Stop terminates the instance. The data directory is left in place so
