@@ -215,12 +215,12 @@ func (r *recordingExecutor) Send(ctx context.Context, sessionID string, messages
 	return r.Executor.Send(ctx, sessionID, messages)
 }
 
-// slotFailNamespace is the agent namespace the slot-failure fixture's warm
-// pool, template, and AgentPod live in.
+// slotFailNamespace is the agent namespace the slot-failure fixture's
+// PodSet and AgentPod live in.
 const slotFailNamespace = "lenny-agents"
 
 // slotFailCluster boots an envtest control plane holding a
-// concurrent-session warm pool, its template, and one idle AgentPod, so the
+// concurrent-session pool's PodSet and one idle AgentPod, so the
 // §5.2 slot reservation the /start route drives is a real one. The
 // controller-runtime fake client cannot serve the SSA Apply the slot
 // claimer's binding-state write needs, so the reservation half of this
@@ -249,13 +249,11 @@ func slotFailCluster(t *testing.T) client.Client {
 	objs := []client.Object{
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: slotFailNamespace},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: slotFailNamespace},
 			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:       "echo",
 				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
 			},
 		},
 	}

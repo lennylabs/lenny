@@ -32,19 +32,11 @@ spec:
 apiVersion: lenny.dev/v1alpha1
 kind: PodSet
 metadata:
-  name: load-preconnect-template-gvisor
+  name: load-preconnect-pool-gvisor
   namespace: lenny-agents
 spec:
   runtimeRef: load-preconnect-runtime-gvisor
   isolationProfile: sandboxed
   executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: PodSet
-metadata:
-  name: load-preconnect-pool-gvisor
-  namespace: lenny-agents
-spec:
-  templateRef: load-preconnect-template-gvisor
   minWarm: ${LOAD_SESSION_MIN}
   maxWarm: ${LOAD_SESSION_MAX}

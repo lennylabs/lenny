@@ -487,7 +487,7 @@ const customRuntimeName = "my-agent"
 // `lenny up` does not seed), then `lenny-ctl runtime publish --skip-push`
 // writes the registry record through the gateway admin API (authenticated with
 // the dev bearer the gateway trusts), then `lenny runtime apply` materializes
-// the runtime's Runtime, PodSet, and PodSet CRD set (the
+// the runtime's Runtime and PodSet CRDs (the
 // no-Postgres pool-materialization path), then `lenny session new` places a
 // session, and finally the placed agent pod is inspected through the embedded
 // kubeconfig for the stamped "adapter" container.

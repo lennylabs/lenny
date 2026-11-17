@@ -44,7 +44,7 @@ func TestOccupancyReconcileSwallowsAgentPodNotFound(t *testing.T) {
 }
 
 // TestOccupancyReconcileSkipsDeletingAgentPod covers the deletion-timestamp
-// guard: a AgentPod being torn down is the AgentPod-to-Pod reconciler's to drive
+// guard: an AgentPod being torn down is the AgentPod-to-Pod reconciler's to drive
 // to terminated, so the occupancy projection leaves it untouched rather than
 // fighting the teardown.
 //

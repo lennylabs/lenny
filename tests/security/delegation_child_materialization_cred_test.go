@@ -78,8 +78,6 @@ const (
 
 	matCredControlPool     = "control-pool"
 	matCredRacePool        = "race-pool"
-	matCredControlTmpl     = "control-tmpl"
-	matCredRaceTmpl        = "race-tmpl"
 	matCredControlAgentPod = "sbx-mat-control"
 	matCredRaceAgentPod    = "sbx-mat-race"
 )
@@ -409,29 +407,28 @@ func materializeCredCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: deliveryGateNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	seedMaterializeCredPool(t, c, matCredControlPool, matCredControlTmpl, matCredControlRuntime)
+	seedMaterializeCredPool(t, c, matCredControlPool, matCredControlRuntime)
 	seedMaterializeCredAgentPod(t, c, matCredControlAgentPod, matCredControlPool, "10.244.5.21")
-	seedMaterializeCredPool(t, c, matCredRacePool, matCredRaceTmpl, matCredRaceRuntime)
+	seedMaterializeCredPool(t, c, matCredRacePool, matCredRaceRuntime)
 	seedMaterializeCredAgentPod(t, c, matCredRaceAgentPod, matCredRacePool, "10.244.5.22")
 	return c
 }
 
 // seedMaterializeCredPool creates a PodSet for
 // the given runtime under the sandboxed §5.3 profile.
-func seedMaterializeCredPool(t *testing.T, c client.Client, pool, tmpl, runtimeRef string) {
+func seedMaterializeCredPool(t *testing.T, c client.Client, pool, runtimeRef string) {
 	t.Helper()
 	ctx := context.Background()
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: deliveryGateNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool %s: %v", pool, err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: deliveryGateNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template %s: %v", tmpl, err)
+		t.Fatalf("create pod set %s: %v", pool, err)
 	}
 }
 

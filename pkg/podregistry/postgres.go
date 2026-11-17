@@ -24,8 +24,8 @@ import (
 // PoolManager delegate to.
 //
 // v1 deployments wire the CRDPodRegistry; this implementation exists so
-// the §12.6 "the swap is a configuration-only change at the store-router
-// level — no callers change" guarantee holds structurally rather than
+// the §12.6 guarantee, that swapping the store changes only the
+// store-router configuration and no caller, holds structurally rather than
 // requiring a from-scratch build at Tier 4. The interface is satisfied
 // in full; the optimistic-locking CAS uses the agent_pod_state
 // resource_version column rather than a CRD generation.

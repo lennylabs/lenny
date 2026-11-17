@@ -52,7 +52,7 @@ func securityDegradedCondition(t *testing.T, tm lennyv1.PodSet) (metav1.Conditio
 func TestSecurityDegradedAcknowledgedNonceOnlyPool(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10),
+	c := newClient(t, s, pool(ns, 2, 10),
 		nonceOnlyIdleAgentPod(ns, "sb-a"), nonceOnlyIdleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
@@ -60,9 +60,9 @@ func TestSecurityDegradedAcknowledgedNonceOnlyPool(t *testing.T) {
 
 	reconcile(t, c, s)
 
-	cond, ok := securityDegradedCondition(t, getTemplate(t, c))
+	cond, ok := securityDegradedCondition(t, getPool(t, c))
 	if !ok {
-		t.Fatalf("template carries no SecurityDegradedMode condition")
+		t.Fatalf("PodSet carries no SecurityDegradedMode condition")
 	}
 	if cond.Status != metav1.ConditionTrue {
 		t.Errorf("SecurityDegradedMode = %s, want True", cond.Status)
@@ -86,7 +86,7 @@ func TestSecurityDegradedUnacknowledgedPoolNoCondition(t *testing.T) {
 	// Members carry no nonce-only signal: the unacknowledged render path
 	// (and a CR-applied runtime flip without a pool acknowledgment) leaves
 	// the carrier nil and writes no SOPeercredDisabled condition.
-	c := newClient(t, s, template(ns), pool(ns, 2, 10),
+	c := newClient(t, s, pool(ns, 2, 10),
 		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
@@ -96,8 +96,8 @@ func TestSecurityDegradedUnacknowledgedPoolNoCondition(t *testing.T) {
 
 	// A pool that never rendered a nonce-only pod gets no SecurityDegradedMode
 	// condition at all; the gauge (0) is the only clean-pool signal.
-	if _, ok := securityDegradedCondition(t, getTemplate(t, c)); ok {
-		t.Errorf("template carries a SecurityDegradedMode condition; want none for an unacknowledged pool")
+	if _, ok := securityDegradedCondition(t, getPool(t, c)); ok {
+		t.Errorf("PodSet carries a SecurityDegradedMode condition; want none for an unacknowledged pool")
 	}
 	if g := warmpool.SecurityDegradedGaugeForTest(testPool); g != 0 {
 		t.Errorf("lenny_pool_security_degraded gauge = %v, want 0", g)
@@ -117,7 +117,7 @@ func TestSecurityDegradedEmbeddedRuntimePoolNoCondition(t *testing.T) {
 	// An embedded runtime never sets the carrier or condition even when the
 	// pool is acknowledged, so its member AgentPods look exactly like an
 	// enforcing pool's. The pool runs zero nonce-only pods.
-	c := newClient(t, s, template(ns), pool(ns, 2, 10),
+	c := newClient(t, s, pool(ns, 2, 10),
 		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
@@ -127,8 +127,8 @@ func TestSecurityDegradedEmbeddedRuntimePoolNoCondition(t *testing.T) {
 
 	// The embedded runtime never sets the carrier or condition, so the pool
 	// runs zero nonce-only pods and gets no SecurityDegradedMode condition.
-	if _, ok := securityDegradedCondition(t, getTemplate(t, c)); ok {
-		t.Errorf("template carries a SecurityDegradedMode condition; want none for an embedded-runtime pool")
+	if _, ok := securityDegradedCondition(t, getPool(t, c)); ok {
+		t.Errorf("PodSet carries a SecurityDegradedMode condition; want none for an embedded-runtime pool")
 	}
 	if g := warmpool.SecurityDegradedGaugeForTest(testPool); g != 0 {
 		t.Errorf("lenny_pool_security_degraded gauge = %v, want 0", g)
@@ -148,7 +148,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 	// minWarm 1: a single nonce-only pod plus a fresh enforcing pod that a
 	// post-revert reconcile would create. The latch must hold while the
 	// pre-revert pod survives.
-	c := newClient(t, s, template(ns), pool(ns, 1, 10),
+	c := newClient(t, s, pool(ns, 1, 10),
 		nonceOnlyIdleAgentPod(ns, "sb-nonce"), idleAgentPod(ns, "sb-fresh"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
@@ -156,7 +156,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 
 	reconcile(t, c, s)
 
-	cond, ok := securityDegradedCondition(t, getTemplate(t, c))
+	cond, ok := securityDegradedCondition(t, getPool(t, c))
 	if !ok || cond.Status != metav1.ConditionTrue {
 		t.Fatalf("SecurityDegradedMode = %+v, want True while a nonce-only pod remains", cond)
 	}
@@ -178,7 +178,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 	// True: the live PodSet carried SecurityDegradedMode, so the
 	// recovery transition fires. A pool that was never degraded would get no
 	// condition at all (TestSecurityDegradedUnacknowledgedPoolNoCondition).
-	cond, ok = securityDegradedCondition(t, getTemplate(t, c))
+	cond, ok = securityDegradedCondition(t, getPool(t, c))
 	if !ok || cond.Status != metav1.ConditionFalse {
 		t.Fatalf("SecurityDegradedMode = %+v, want explicit False after the last nonce-only pod is replaced", cond)
 	}
@@ -200,7 +200,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 func TestSecurityDegradedGaugePublishedEveryReconcile(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10),
+	c := newClient(t, s, pool(ns, 2, 10),
 		nonceOnlyIdleAgentPod(ns, "sb-a"), nonceOnlyIdleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)

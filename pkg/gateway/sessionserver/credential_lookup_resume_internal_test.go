@@ -49,14 +49,12 @@ func newResumeCredFixture(t *testing.T) *resumeCredFixture {
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
 			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:       "svc-runtime",
 				IsolationProfile: string(isolation.ProfileSandboxed),
 				ExecutionMode:    string(runtimestore.ExecutionModeService),
+				MinWarm:          1,
+				MaxWarm:          5,
 			},
 		},
 	).Build()

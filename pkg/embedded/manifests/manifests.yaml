@@ -2615,8 +2615,8 @@ data:
               labels:
                 severity: warning
               annotations:
-                description: A AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
-                summary: A AgentPod pod finalizer is stuck
+                description: An AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
+                summary: An AgentPod pod finalizer is stuck
             - alert: DedicatedDNSDegraded
               expr: kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} > 0 and kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} < scalar(lenny_agent_dns_min_replicas)
               labels:
@@ -3029,7 +3029,7 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets", "podsets"]
+    resources: ["podsets"]
     verbs: ["get", "list", "watch"]
   # Runtimes: the §5.1 RuntimeReconciler watches Runtime resources and
   # mirrors them into the gateway runtime registry. It manages a
@@ -3068,7 +3068,7 @@ rules:
     resources: ["podclaims"]
     verbs: ["get", "list", "watch", "delete"]
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets/status", "podsets/status", "agentpods/status", "runtimes/status"]
+    resources: ["podsets/status", "agentpods/status", "runtimes/status"]
     verbs: ["get", "update", "patch"]
   # PodDisruptionBudgets: the §4.6.1 per-PodSet warm-pod PDB
   # management owns one PDB per pool (maxUnavailable: 1) and tears it
@@ -3149,7 +3149,7 @@ rules:
   # sole writer of AgentPod.status and projects occupancy from claim
   # existence, so the gateway holds only read access on AgentPod.
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets", "podsets", "runtimes"]
+    resources: ["podsets", "runtimes"]
     verbs: ["get", "list", "watch"]
   # AgentPods: read-only for pod selection during claim (§4.6.3). The
   # gateway holds no `patch` or `watch` verb on the main resource and
@@ -3245,7 +3245,7 @@ rules:
   # assigns the PSC create/update/delete on both CRDs (it reconciles the
   # full derived spec from Postgres).
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets", "podsets"]
+    resources: ["podsets"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
   # PodSet status: SSA writes to the PSC-owned
   # status.sdkWarmCircuitBreaker carve-out require get (read current) and

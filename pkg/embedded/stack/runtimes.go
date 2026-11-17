@@ -211,7 +211,7 @@ type seedUser struct {
 // An empty echoImageRef leaves the echo seed on its sentinel placeholder.
 //
 // The seed carries no pool. The echo warm pool is materialized directly as a
-// PodSet pair (ApplyEchoPoolFromConfig) because the
+// PodSet (ApplyEchoPoolFromConfig) because the
 // no-Postgres development profile registers no PoolScalingController to project
 // a poolstore row into the CRD. spec: §4.6.2, §17.4.
 func buildBootstrapSeed(echoImageRef string) bootstrapSeed {

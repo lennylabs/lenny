@@ -37,7 +37,7 @@ import (
 //     (testNodePort), because NodePorts are allocated cluster-wide.
 //   - Where the product code fixes the namespace and the object name (the
 //     control-plane Deployments and Secrets in "default", the echo
-//     PodSet in "lenny-agents", and the runtime-apply pool pair),
+//     PodSet in "lenny-agents", and the runtime-apply PodSet),
 //     exactly one test owns each such object, and claimFixedObjects fails a
 //     second test that claims it and deletes a copy an earlier iteration
 //     left, so the owner starts from an absent object.

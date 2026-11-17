@@ -83,7 +83,7 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["podsets/status", "podsets/status", "agentpods/status", "runtimes/status"]
+            resources: ["podsets/status", "agentpods/status", "runtimes/status"]
             verbs: ["get", "update", "patch"]
 
   - it: grants PodDisruptionBudget management for per-pool warm-pod PDBs (§4.6.1)
@@ -179,5 +179,5 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["podsets", "podsets"]
+            resources: ["podsets"]
             verbs: ["get", "list", "watch"]

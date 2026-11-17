@@ -21,11 +21,10 @@ import (
 )
 
 const (
-	supNS       = "lenny-agents"
-	supPool     = "pool-a"
-	supTemplate = "tmpl-a"
-	supRuntime  = "agent-rt"
-	supImage    = "ghcr.io/lennylabs/lenny-supervisor@sha256:aaaa"
+	supNS      = "lenny-agents"
+	supPool    = "pool-a"
+	supRuntime = "agent-rt"
+	supImage   = "ghcr.io/lennylabs/lenny-supervisor@sha256:aaaa"
 )
 
 // supRuntimeCR is a sidecar type: agent session-mode runtime with a command
@@ -46,22 +45,15 @@ func supRuntimeCR(mut func(*lennyv1.RuntimeSpec)) *lennyv1.Runtime {
 	return rt
 }
 
-func supTemplateCR(runtimeProcess string) *lennyv1.PodSet {
+func supPodSetCR(runtimeProcess string, sdkWarmDisabled bool) *lennyv1.PodSet {
 	t := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: supTemplate, Namespace: supNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: supRuntime},
+		ObjectMeta: metav1.ObjectMeta{Name: supPool, Namespace: supNS},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: supRuntime, SDKWarmDisabled: sdkWarmDisabled},
 	}
 	if runtimeProcess != "" {
 		t.Spec.SessionPolicy = &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{RuntimeProcess: runtimeProcess}}
 	}
 	return t
-}
-
-func supPoolCR(sdkWarmDisabled bool) *lennyv1.PodSet {
-	return &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: supPool, Namespace: supNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: supTemplate, SDKWarmDisabled: sdkWarmDisabled},
-	}
 }
 
 func supAgentPod(executionMode string) *lennyv1.AgentPod {
@@ -129,7 +121,7 @@ func TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2(t *testing.T) {
 	}
 	for name, mut := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := supCreate(t, supAgentPod(""), nil, supRuntimeCR(mut), supPoolCR(false), supTemplateCR("restart"))
+			_, err := supCreate(t, supAgentPod(""), nil, supRuntimeCR(mut), supPodSetCR("restart", false))
 			if !errors.Is(err, errRestartNotRestartable) {
 				t.Fatalf("createPod err = %v, want errRestartNotRestartable", err)
 			}
@@ -140,7 +132,7 @@ func TestCreatePodRefusesRestartOnNonRestartableRuntime_spec_5_2(t *testing.T) {
 // spec: 5.1 (command), 4.7.10 (Runtime supervisor)
 func TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1(t *testing.T) {
 	rt := supRuntimeCR(func(s *lennyv1.RuntimeSpec) { s.Command, s.Env = nil, nil })
-	_, err := supCreate(t, supAgentPod(""), nil, rt, supPoolCR(false), supTemplateCR(""))
+	_, err := supCreate(t, supAgentPod(""), nil, rt, supPodSetCR("", false))
 	if !errors.Is(err, errAgentSidecarWithoutCommand) {
 		t.Fatalf("createPod err = %v, want errAgentSidecarWithoutCommand", err)
 	}
@@ -148,7 +140,7 @@ func TestCreatePodRefusesAgentSidecarRuntimeWithoutCommand_spec_5_1(t *testing.T
 
 // spec: 5.2 (Runtime-process lifetime), 4.7.10 (Runtime supervisor; Runtime supervisor, Environment), 17.2 (item 5)
 func TestCreatePodRendersSupervisedRestartPodForRestartableRuntime_spec_5_2(t *testing.T) {
-	pod, err := supCreate(t, supAgentPod(""), nil, supRuntimeCR(nil), supPoolCR(false), supTemplateCR("restart"))
+	pod, err := supCreate(t, supAgentPod(""), nil, supRuntimeCR(nil), supPodSetCR("restart", false))
 	if err != nil {
 		t.Fatalf("createPod: %v", err)
 	}
@@ -198,7 +190,7 @@ func TestCreatePodLaunchModeFromExecutionModePreConnectAndBreaker_spec_4_7_10(t 
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			pod, err := supCreate(t, supAgentPod(c.sbMode), nil, supRuntimeCR(c.mut), supPoolCR(c.disabled), supTemplateCR(""))
+			pod, err := supCreate(t, supAgentPod(c.sbMode), nil, supRuntimeCR(c.mut), supPodSetCR("", c.disabled))
 			if err != nil {
 				t.Fatalf("createPod: %v", err)
 			}
@@ -227,7 +219,7 @@ func TestCreatePodFailedPoolReadOnPreConnectCreatesNoPod_spec_6_1(t *testing.T) 
 		}
 		return c.Get(ctx, key, obj, opts...)
 	}}
-	if _, err := supCreate(t, supAgentPod(""), funcs, preConnect, supPoolCR(false), supTemplateCR("")); !errors.Is(err, boom) {
+	if _, err := supCreate(t, supAgentPod(""), funcs, preConnect, supPodSetCR("", false)); !errors.Is(err, boom) {
 		t.Errorf("err = %v, want the pool read error", err)
 	}
 }
@@ -241,8 +233,8 @@ func TestCreatePodLifetimeReadFailsClosedOnTransientError_spec_5_2(t *testing.T)
 		}
 		return c.Get(ctx, key, obj, opts...)
 	}}
-	if _, err := supCreate(t, supAgentPod(""), funcs, supRuntimeCR(nil), supPoolCR(false), supTemplateCR("restart")); !errors.Is(err, boom) {
-		t.Errorf("err = %v, want the template read error", err)
+	if _, err := supCreate(t, supAgentPod(""), funcs, supRuntimeCR(nil), supPodSetCR("restart", false)); !errors.Is(err, boom) {
+		t.Errorf("err = %v, want the PodSet read error", err)
 	}
 	// A pool that is gone reads as a pool without the field: a keep pod.
 	pod, err := supCreate(t, supAgentPod(""), nil, supRuntimeCR(nil))
@@ -264,7 +256,7 @@ func TestCreatePodUnsupervisedRuntimesCarryOnlyTheLifetimeLabel_spec_4_7_10(t *t
 	}
 	for name, rt := range cases {
 		t.Run(name, func(t *testing.T) {
-			pod, err := supCreate(t, supAgentPod(""), nil, rt, supPoolCR(false), supTemplateCR("keep"))
+			pod, err := supCreate(t, supAgentPod(""), nil, rt, supPodSetCR("keep", false))
 			if err != nil {
 				t.Fatalf("createPod: %v", err)
 			}
@@ -281,7 +273,7 @@ func TestCreatePodUnsupervisedRuntimesCarryOnlyTheLifetimeLabel_spec_4_7_10(t *t
 // spec: 4.7.10 (Runtime supervisor), 13.1 (Runtime supervisor volume)
 func TestCreatePodSupervisedWithoutSupervisorImageCreatesNoPod_spec_4_7_10(t *testing.T) {
 	scheme := sdkWarmScheme(t)
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(supRuntimeCR(nil), supPoolCR(false), supTemplateCR(""), supAgentPod("")).Build()
+	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(supRuntimeCR(nil), supPodSetCR("", false), supAgentPod("")).Build()
 	r := &Reconciler{Client: cl, Scheme: scheme, AdapterImage: "ghcr.io/lennylabs/lenny-adapter:v1"}
 	if err := r.createPod(context.Background(), supAgentPod("")); err == nil {
 		t.Fatal("createPod rendered a supervised pod with no supervisor image")

@@ -43,10 +43,9 @@ func assertCRDEstablished(t *testing.T, c *kind.Cluster, crd string) {
 
 // spec: 13.6
 // diagnosis: the TESTING.md §13.6 warm-pool CRD plane is not installed. The test
-// asserts the podsets.lenny.dev and podsets.lenny.dev
-// CRDs are Established and that the lenny-pool-config-validator
-// admission webhook gating warm-pool writes is scoped to both
-// resources. Pool scaling to a warm floor is exercised by the Warm
+// asserts the podsets.lenny.dev CRD is Established and that the
+// lenny-pool-config-validator admission webhook gating warm-pool writes
+// is scoped to the podsets resource. Pool scaling to a warm floor is exercised by the Warm
 // Pool Controller against live agent pods; that workload is not part
 // of the control-plane-only dev install, so the running-pool half is
 // covered by the tier-2/3 component suites.
@@ -54,16 +53,13 @@ func TestWarmPool(t *testing.T) {
 	c := kind.InstallLenny(t)
 
 	assertCRDEstablished(t, c, "podsets.lenny.dev")
-	assertCRDEstablished(t, c, "podsets.lenny.dev")
 
 	// The pool-config-validator webhook is the §4.6.3 admission gate
-	// for warm-pool writes; it must cover both warm pools and the
-	// templates they reference.
+	// for warm-pool writes; it must cover the PodSet that carries a
+	// pool's settings and warm targets.
 	rule := webhookRule(t, c, "lenny-pool-config-validator")
-	for _, res := range []string{"podsets", "podsets"} {
-		if !rule.coversResource(res) {
-			t.Errorf("lenny-pool-config-validator does not gate the %q resource (scope: %v)", res, rule.resources)
-		}
+	if !rule.coversResource("podsets") {
+		t.Errorf("lenny-pool-config-validator does not gate the podsets resource (scope: %v)", rule.resources)
 	}
 	t.Logf("warm-pool CRD plane established; pool-config-validator scope: %v", rule.resources)
 }
@@ -108,8 +104,8 @@ func TestPodClaim(t *testing.T) {
 // upgrade is an UPDATE to a PodSet spec;
 // the lenny-pool-config-validator webhook must gate that UPDATE so an
 // upgrade cannot move the pool into an invalid budget. The test
-// confirms the webhook intercepts the UPDATE operation on both
-// resources. Rolling the warm pods through a template change is
+// confirms the webhook intercepts the UPDATE operation on the podsets
+// resource. Rolling the warm pods through a PodSet change is
 // performed by the live Warm Pool Controller, which the dev-mode
 // control-plane install does not run; that rollout is covered by the
 // tier-2/3 component suites.

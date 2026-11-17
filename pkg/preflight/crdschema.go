@@ -42,7 +42,6 @@ var LennyCRDNames = []string{
 	"podclaims.lenny.dev",
 	"agentpods.lenny.dev",
 	"podsets.lenny.dev",
-	"podsets.lenny.dev",
 }
 
 // CRDSchemaVersionCheck runs the §10 preflight comparison:

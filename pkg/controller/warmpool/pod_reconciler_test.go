@@ -236,7 +236,7 @@ func TestPodReconcileCertExpirySkipsClaimedPod_spec_4_6(t *testing.T) {
 	}
 }
 
-// warmingAgentPod returns a AgentPod in the §4.6.1 warming (pre-idle) phase
+// warmingAgentPod returns an AgentPod in the §4.6.1 warming (pre-idle) phase
 // so the §10.3 issuance-grace drain has a live object to patch.
 func warmingAgentPod(ns, name string) *lennyv1.AgentPod {
 	return &lennyv1.AgentPod{

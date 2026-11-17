@@ -185,7 +185,7 @@ rules:
   # sole writer of AgentPod.status and projects occupancy from claim
   # existence, so the gateway holds only read access on AgentPod.
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets", "podsets", "runtimes"]
+    resources: ["podsets", "runtimes"]
     verbs: ["get", "list", "watch"]
   # AgentPods: read-only for pod selection during claim (§4.6.3). The
   # gateway holds no `patch` or `watch` verb on the main resource and

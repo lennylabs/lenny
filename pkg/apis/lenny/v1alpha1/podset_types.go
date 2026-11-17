@@ -202,10 +202,11 @@ type SDKWarmCircuitBreakerStatus struct {
 	MinOpenUntil *metav1.Time `json:"minOpenUntil,omitempty"`
 }
 
-// PodSetSpec is the desired state of a PodSet — the
-// §5.2 declaration of one warmable pool. Per §4.6.3 the
-// PoolScalingController owns spec.*, reconciling it from the Postgres
-// pool definitions that the admin API treats as the source of truth.
+// PodSetSpec is the desired state of a PodSet: the §5.2 pool settings the
+// controllers and the webhooks read, and the §4.6.2 warm targets. Per
+// §4.6.3 the PoolScalingController owns spec.*, reconciling it in one
+// apply from the Postgres pool definitions that the admin API treats as
+// the source of truth.
 type PodSetSpec struct {
 	// RuntimeRef names the lenny.dev/v1alpha1 Runtime this pool warms.
 	// +kubebuilder:validation:Required
@@ -396,10 +397,12 @@ type PodSetSpec struct {
 	SDKWarmDisabled bool `json:"sdkWarmDisabled,omitempty"`
 }
 
-// PodSetStatus is the observed state of a PodSet.
-// Per §4.6.3 the WarmPoolController owns status.*: it records pool
-// health conditions, including the §5.2 PoolWarmingUp bootstrap
-// condition, and the observed generation.
+// PodSetStatus is the observed state of a PodSet. Per §4.6.3 the
+// WarmPoolController owns status.*: it records the warm and ready counts,
+// the pool health conditions, including the §5.2 PoolWarmingUp bootstrap
+// condition, and the observed generation. The PoolScalingController owns
+// the SDKWarmCircuitBreaker carve-out and writes ScalingMode and
+// BootstrapHoursOfData.
 type PodSetStatus struct {
 	// WarmCount is the current number of unclaimed pods that are warming or
 	// idle, counting only pods that are not pinned to a tenant. An idle pod
@@ -474,9 +477,12 @@ type PodSetStatus struct {
 // +kubebuilder:printcolumn:name="Warm",type=integer,JSONPath=`.status.warmCount`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyCount`
 
-// PodSet is the lenny.dev/v1alpha1 declaration of one warmable pool
-// (§5.2). The PoolScalingController reconciles it from the Postgres
-// pool definitions; the WarmPoolController warms pods against it.
+// PodSet is the lenny.dev/v1alpha1 record of one pod set of a pool (§5.2):
+// the pool settings, the warm targets, and the observed counts and
+// conditions. A pool has one PodSet, named after the pool. The
+// PoolScalingController reconciles it from the Postgres pool definitions;
+// the WarmPoolController warms pods against it and is the controller owner
+// of each of its AgentPods.
 type PodSet struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

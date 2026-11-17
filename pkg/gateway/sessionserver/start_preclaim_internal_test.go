@@ -641,17 +641,15 @@ func TestClaimAtCreateServiceModeClaimless(t *testing.T) {
 	const ns = "lenny-agents"
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "svc-runtime",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 	s := &Server{podBinder: &podsession.Binder{Client: c, Namespace: ns}, agentNamespace: ns}
 
 	out, err := s.claimAtCreate(context.Background(), sessionstore.Session{
@@ -710,13 +708,14 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "claude-code",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 	s := &Server{
 		podBinder:      &podsession.Binder{Client: c, Namespace: ns},
 		agentNamespace: ns,
@@ -737,7 +736,7 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 // concurrentClaimServer builds a Server whose resolved pool is a
 // concurrent-workspace pool (sessionPolicy.maxConcurrentSessions = 4), with
 // the §4.9 credential stores and a miniredis-backed §5.2 slot counter wired.
-// The CRD pair and the poolstore mirror share the pool name "conc-pool" so
+// The PodSet and the poolstore mirror share the pool name "conc-pool" so
 // ResolvePool folds in MaxConcurrentSessions > 1. The pool holds no idle pod,
 // so a create-time slot reservation surfaces ErrNoIdlePod (the fake client
 // cannot serve the SSA Apply a successful slot reservation needs; a
@@ -751,13 +750,14 @@ func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolsto
 
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "claude-code",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 
 	pools := poolstore.NewMemory()
 	if err := pools.Create(ctx, poolstore.Pool{
@@ -836,17 +836,15 @@ func TestLaunchOnPodServiceModeClaimless(t *testing.T) {
 	const ns = "lenny-agents"
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "svc-runtime",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 	s := &Server{podBinder: &podsession.Binder{Client: c, Namespace: ns}, agentNamespace: ns}
 
 	result, err := s.launchOnPod(context.Background(), sessionstore.Session{

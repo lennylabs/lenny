@@ -142,24 +142,22 @@ func agentPodCR(t *testing.T, phase string) *lennyv1.AgentPod {
 }
 
 // TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1 confirms the
-// reconciler resolves the AgentPod's pool and template and clamps the
-// created pod's terminationGracePeriodSeconds to the template's
+// reconciler resolves the PodSet the AgentPod names and clamps the created
+// pod's terminationGracePeriodSeconds to the PodSet's
 // maxTerminationGracePeriodSeconds ceiling.
 func TestReconcileClampsPodGraceToTemplateCeiling_spec_4_6_1(t *testing.T) {
 	s := newScheme(t)
 	ceiling := int64(45)
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
+	pool := &lennyv1.PodSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:                       testRuntime(t),
 			MaxTerminationGracePeriodSeconds: &ceiling,
+			MinWarm:                          1,
+			MaxWarm:                          3,
 		},
 	}
-	pool := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
-	}
-	c := newClient(t, s, agentPodCR(t, ""), runtimeCR(t), tmpl, pool)
+	c := newClient(t, s, agentPodCR(t, ""), runtimeCR(t), pool)
 
 	if err := reconcile(t, c, s); err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -225,7 +223,7 @@ func getAgentPod(t *testing.T, c client.Client) lennyv1.AgentPod {
 	return sb
 }
 
-// TestReconcileDevModeDefaultsPodToRunc_spec_5_3 verifies the §5.3 pod-fallback default: a AgentPod that omits an isolation profile
+// TestReconcileDevModeDefaultsPodToRunc_spec_5_3 verifies the §5.3 pod-fallback default: an AgentPod that omits an isolation profile
 // stamps runtimeClassName=runc under dev mode (so a gVisor-less cluster
 // can launch the pod), and gvisor without dev mode.
 //

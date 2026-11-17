@@ -321,7 +321,7 @@ func livePodField(t *testing.T, c *kind.Cluster, pod, jsonpath string) (string, 
 // status.podName names the given pod.
 func agentPodPhaseForPod(t *testing.T, c *kind.Cluster, pod string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox",
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "agentpod",
 		"-o", "jsonpath={range .items[?(@.status.podName==\""+pod+"\")]}{.status.phase}{end}")
 	if err != nil {
 		t.Fatalf("reading the AgentPod phase for pod %s: %v\n%s", pod, err, out)

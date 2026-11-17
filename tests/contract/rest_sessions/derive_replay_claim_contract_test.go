@@ -40,7 +40,7 @@ import (
 const claimContractNS = "lenny-agents"
 
 // claimContractCluster returns a fake cluster holding objs. Pool resolution
-// reads pools and templates with List and Get only, so the fake client
+// reads PodSets with List and Get only, so the fake client
 // serves it.
 func claimContractCluster(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
@@ -51,23 +51,24 @@ func claimContractCluster(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 }
 
-// echoPool returns the `echo` runtime's pool and template. A warming
-// template carries the PoolWarmingUp condition the gateway reads.
+// echoPool returns the `echo` runtime's PodSet. A warming PodSet carries
+// the PoolWarmingUp condition the gateway reads.
 func echoPool(warming bool) []client.Object {
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: claimContractNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
+	pool := &lennyv1.PodSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: claimContractNS},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "echo",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
 	if warming {
-		tmpl.Status.Conditions = []metav1.Condition{{
+		pool.Status.Conditions = []metav1.Condition{{
 			Type: "PoolWarmingUp", Status: metav1.ConditionTrue, Reason: "Warming", LastTransitionTime: metav1.Now(),
 		}}
 	}
-	pool := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: claimContractNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	return []client.Object{pool, tmpl}
+	return []client.Object{pool}
 }
 
 // spec: §7.1 (Normal Flow: Atomicity of session creation (steps 2–8), Derive session semantics), §15.1 (REST API: Session Replay Semantics, Error code catalog), §5.2 (Pool Configuration and Execution Modes)

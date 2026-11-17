@@ -1,11 +1,10 @@
 {{- /*
 lenny-podset-deletion-guard ValidatingAdmissionWebhook
 (§10.5, the "key safety invariant"). Blocks a PodSet
-DELETE while a RuntimeUpgrade record that references the template's
-PodSet is still active. The decider lists the referencing
-PodSets through the API-server reader and probes the gateway
-GET /internal/runtime-upgrade/active endpoint for each pool's upgrade
-state. Scoped to the podsets resource on DELETE; fail-closed
+DELETE while a RuntimeUpgrade record of the PodSet's pool is still
+active. A PodSet is named after its pool, so the decider probes the
+gateway GET /internal/runtime-upgrade/active endpoint for the pool the
+deleted object names. Scoped to the podsets resource on DELETE; fail-closed
 with a 5s timeout so an unreachable webhook denies the deletion rather
 than admitting a delete it cannot verify against the safety invariant.
 */ -}}
@@ -18,7 +17,7 @@ gateway-probe egress the system-network-policies default-deny otherwise
 blocks. The podset-deletion-guard webhook calls
 GET /internal/runtime-upgrade/active on
 lenny-gateway.<release>.svc:internalPort before admitting a
-PodSet DELETE that has a referencing PodSet; without
+PodSet DELETE; without
 this egress rule the probe times out and the fail-closed webhook rejects
 the deletion in any cluster that runs Lenny with default network
 policies in place.

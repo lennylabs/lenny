@@ -260,7 +260,7 @@ func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
 	}
 }
 
-// reservedAgentPod builds a AgentPod projecting the §6.2 `reserved` phase,
+// reservedAgentPod builds an AgentPod projecting the §6.2 `reserved` phase,
 // pinned to tenantID, the projection the acquisition-path rebind branch
 // scans for.
 func reservedAgentPod(ns, name, tenantID string) *lennyv1.AgentPod {

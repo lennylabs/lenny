@@ -18,18 +18,16 @@ import (
 )
 
 // finalizerTerminatingSeconds is the gauge the FinalizerStuck alert
-// reads: seconds a AgentPod has been in Terminating with the
+// reads: seconds an AgentPod has been in Terminating with the
 // session-cleanup finalizer still present. The §16.5 FinalizerStuck
 // alert fires on `lenny_agentpod_finalizer_terminating_seconds > 300`.
-// spec: §4.6.1 "AgentPod finalizers" — "If the finalizer is not removed
-// within 5 minutes (pod stuck in Terminating), the controller fires a
-// FinalizerStuck alert." The gauge is per AgentPod (namespace, name) so
+// spec: §4.6.1 (AgentPod finalizers). The gauge is per AgentPod (namespace, name) so
 // the alert can name the stuck pod; the series is cleared once the
 // finalizer is removed.
 var finalizerTerminatingSeconds = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_agentpod_finalizer_terminating_seconds",
-		Help: "Seconds a AgentPod has been Terminating with the session-cleanup finalizer present.",
+		Help: "Seconds an AgentPod has been Terminating with the session-cleanup finalizer present.",
 	}, []string{"namespace", "sandbox"})
 	if err != nil {
 		panic(fmt.Sprintf("sandbox: build finalizer-terminating gauge: %v", err))
@@ -44,7 +42,7 @@ var finalizerTerminatingSeconds = func() *prometheus.GaugeVec {
 // FinalizerStuck threshold even without an intervening claim event.
 const finalizerStuckRequeue = 30 * time.Second
 
-// reconcileFinalizer handles a AgentPod under deletion. It removes the
+// reconcileFinalizer handles an AgentPod under deletion. It removes the
 // session-cleanup finalizer once no active PodClaim references the
 // AgentPod; until then it leaves the finalizer in place and advances the
 // terminating-seconds gauge so the §16.5 FinalizerStuck alert fires

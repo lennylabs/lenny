@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package podspec builds the Kubernetes Pod that backs a AgentPod. The
+// Package podspec builds the Kubernetes Pod that backs an AgentPod. The
 // §4.7 WarmPoolController's AgentPod-to-Pod reconciler calls Build to
 // translate a resolved AgentPod, PodSet, and Runtime into a
 // corev1.Pod.
@@ -85,7 +85,7 @@ type Inputs struct {
 	Name      string
 	Namespace string
 	// Labels are stamped onto the Pod, typically the pool and managed
-	// labels the WarmPoolController applies to a AgentPod.
+	// labels the WarmPoolController applies to an AgentPod.
 	Labels map[string]string
 	// RuntimeImage is the OCI image of the runtime, from Runtime.spec.image.
 	RuntimeImage string

@@ -32,7 +32,7 @@ const customRuntimeImage = "ghcr.io/lennylabs/runtime-my-agent@sha256:" +
 // TestEmbeddedRuntimeApplyWarmsPod_spec_17_4 exercises the §17.4 runtime-apply
 // verb against a real kube-apiserver: with no Postgres and no
 // PoolScalingController, applying an arbitrary (non-echo) runtime's Runtime,
-// PodSet, and PodSet CRD set materializes the PodSet
+// PodSet CRD set materializes the PodSet
 // the gateway's ResolvePool lists, and the unconditionally-registered
 // WarmPoolController reconciles the pool to a warm AgentPod when the `runc`
 // RuntimeClass the `standard` isolation profile resolves to is present. This is
@@ -53,7 +53,7 @@ const customRuntimeImage = "ghcr.io/lennylabs/runtime-my-agent@sha256:" +
 // diagnosis: a failure means the runtime-apply verb does not materialize a
 // usable pool for a custom runtime. Either the PodSet CRD apply did
 // not create the CRD the gateway's ResolvePool lists (so §4.7 placement stays
-// inert for the runtime), or the WarmPoolController did not warm a AgentPod with
+// inert for the runtime), or the WarmPoolController did not warm an AgentPod with
 // the `runc` RuntimeClass present (the pool stayed Degraded and decision.Create
 // was suppressed), so the runtime-agnostic deliverable is broken.
 //
@@ -73,7 +73,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// The verb writes the pool pair into the agent namespace it fixes
+	// The verb writes the PodSet into the agent namespace it fixes
 	// (`lenny-agents`), so this test claims that namespace on the shared
 	// control plane rather than working in a namespace of its own. The
 	// Runtime is cluster-scoped, so its name is unique to the test.
@@ -129,12 +129,8 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	if pool.Spec.MinWarm != 1 || pool.Spec.MaxWarm != 1 {
 		t.Errorf("applied pool minWarm/maxWarm = %d/%d, want 1/1", pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
-	var tmpl lennyv1.PodSet
-	if err := c.Get(ctx, key, &tmpl); err != nil {
-		t.Fatalf("get applied PodSet: %v", err)
-	}
-	if tmpl.Spec.RuntimeRef != runtimeName {
-		t.Errorf("applied template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, runtimeName)
+	if pool.Spec.RuntimeRef != runtimeName {
+		t.Errorf("applied PodSet runtimeRef = %q, want %q", pool.Spec.RuntimeRef, runtimeName)
 	}
 
 	// The gateway resolves the runtime to the applied pool by name, the
@@ -161,7 +157,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	}
 	var ours int
 	for _, p := range pools.Items {
-		if strings.Contains(p.Name, runtimeName) || strings.Contains(p.Spec.TemplateRef, runtimeName) {
+		if strings.Contains(p.Name, runtimeName) || strings.Contains(p.Spec.RuntimeRef, runtimeName) {
 			ours++
 		}
 	}

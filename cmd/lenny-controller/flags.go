@@ -185,7 +185,7 @@ func registerLifecycleFlags(f *controllerFlags) {
 	flag.IntVar(&f.workqueueMaxDepth, "workqueue-max-depth", 500,
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	flag.BoolVar(&f.devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
-		"§5.3 global.devMode. When true, a AgentPod that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
+		"§5.3 global.devMode. When true, an AgentPod that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
 }
 
 // registerCertFlags binds the §4.6.1 / §10.3 idle-pod certificate-expiry

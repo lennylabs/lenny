@@ -2,8 +2,8 @@
 
 package v1alpha1
 
-// Annotation keys the PoolScalingController stamps on the pool CRD pair
-// (PodSet) so the gateway can compare the
+// Annotation keys the PoolScalingController stamps on the pool's PodSet
+// so the gateway can compare the
 // CRD-side reconciliation state against the Postgres source of truth.
 // Exported here so both the writer (pkg/controller/poolscaling) and the
 // reader (pkg/gateway/podsession sync-status lookup) share one literal
@@ -17,7 +17,7 @@ const (
 
 	// AnnotationLastReconciledAt carries the RFC3339Nano instant at which
 	// the PoolScalingController last reconciled a pool's config into its
-	// CRD pair. It is stamped alongside AnnotationConfigGeneration whenever
+	// PodSet. It is stamped alongside AnnotationConfigGeneration whenever
 	// the generation changes, so a steady-state pool does not rewrite the
 	// CRD every tick. The gateway sync-status endpoint reports it as
 	// lastReconciledAt and derives lagSeconds from it.

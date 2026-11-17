@@ -8,7 +8,7 @@ triggers:
 components:
   - platform
 symptoms:
-  - "a AgentPod is stuck in finalization beyond the §6.2 grace window"
+  - "an AgentPod is stuck in finalization beyond the §6.2 grace window"
 tags:
   - chaos
 related: []
@@ -16,7 +16,7 @@ related: []
 
 # agent-pod-finalizer-hang
 
-a AgentPod is stuck in finalization beyond the §6.2 grace window.
+an AgentPod is stuck in finalization beyond the §6.2 grace window.
 
 ## Trigger
 

@@ -28,7 +28,7 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets", "podsets"]
+    resources: ["podsets"]
     verbs: ["get", "list", "watch"]
   # Runtimes: the §5.1 RuntimeReconciler watches Runtime resources and
   # mirrors them into the gateway runtime registry. It manages a
@@ -67,7 +67,7 @@ rules:
     resources: ["podclaims"]
     verbs: ["get", "list", "watch", "delete"]
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets/status", "podsets/status", "agentpods/status", "runtimes/status"]
+    resources: ["podsets/status", "agentpods/status", "runtimes/status"]
     verbs: ["get", "update", "patch"]
   # PodDisruptionBudgets: the §4.6.1 per-PodSet warm-pod PDB
   # management owns one PDB per pool (maxUnavailable: 1) and tears it

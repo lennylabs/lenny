@@ -17,7 +17,7 @@ import (
 )
 
 // TestRuntimeProcessSessionPolicyPgRoundTrip_spec_5_2 brings up an embedded
-// Postgres, applies the sandbox_warm_pools migration chain, and proves that
+// Postgres, applies the pool-record migration chain, and proves that
 // sessionPolicy.recycle.runtimeProcess round-trips through the
 // session_policy JSONB column on the INSERT, SELECT, UPDATE, and List paths,
 // and that a pool without the field reads it back empty. A key dropped from

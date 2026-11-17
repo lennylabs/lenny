@@ -48,7 +48,7 @@ func (p *queueProbe) onTimeout(_ string) { p.timeouts.Add(1) }
 
 // queueExhaustionPool is the §5.2 poolstore record whose sessionPolicy folds
 // the onPoolExhausted queue disposition and its wait bound onto the PoolMatch
-// the start path's claim queue reads. The CRD pair (PodSet +
+// the start path's claim queue reads. The PodSet (PodSet +
 // PodSet) does not carry these fields; the poolstore is the source.
 func queueExhaustionPool(maxQueueWaitSeconds int) poolstore.Pool {
 	return poolstore.Pool{
@@ -74,8 +74,7 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 	adapterSrv.Runtime = &podBindRuntime{}
 
 	objs := []client.Object{
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	}
 	for i, name := range agentPods {
 		objs = append(objs, podBindIdleAgentPod(t, name, "echo-pool", fmt.Sprintf("10.244.2.%d", 5+i)))
@@ -174,8 +173,8 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 // request is holding a claim it should not (the "holds no claim" invariant is
 // broken) or the per-pod CREATE guard let two claims race onto one pod. If a
 // session row exists for a waiting request, the gateway persisted a row before
-// the claim succeeded, breaking the §7.1 "session_id only on success"
-// atomicity contract.
+// the claim succeeded, breaking the §7.1 rule that a session row exists
+// only once its claim succeeds.
 func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 	t.Parallel()
 	srv, cluster, store, probe := queueExhaustionServer(t, queueExhaustionPool(30), 10*time.Millisecond, "sbx-1")

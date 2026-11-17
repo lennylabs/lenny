@@ -79,11 +79,11 @@ func TestPoolScalingControllerWritesRuntimeProcessUnpruned(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 	for name, want := range map[string]string{"keep-pool": "keep", "restart-pool": "restart"} {
-		var tmpl lennyv1.PodSet
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &tmpl); err != nil {
-			t.Fatalf("get template %q: %v", name, err)
+		var ps lennyv1.PodSet
+		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &ps); err != nil {
+			t.Fatalf("get PodSet %q: %v", name, err)
 		}
-		sp := tmpl.Spec.SessionPolicy
+		sp := ps.Spec.SessionPolicy
 		if sp == nil || sp.Recycle == nil || sp.Recycle.RuntimeProcess != want {
 			t.Errorf("%s: PodSet.spec.sessionPolicy = %+v, want recycle.runtimeProcess %q", name, sp, want)
 		}

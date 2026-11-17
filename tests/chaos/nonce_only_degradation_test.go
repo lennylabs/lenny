@@ -17,8 +17,7 @@
 //     Postgres-authoritative: the pool-config-validator webhook rejects a
 //     direct kubectl write to a PodSet. The
 //     PoolScalingController reconciles the Postgres pool row into the
-//     PodSet CRD pair and mirrors the
-//     acknowledgment onto PodSet.spec.
+//     pool's PodSet and mirrors the acknowledgment onto PodSet.spec.
 //   - The WarmPoolController then renders a nonce-only warm member AgentPod
 //     for the acknowledged pool: the AgentPod reconciler resolves the §4.7
 //     two-point gate (sidecar runtime + requireSoPeercred: false + pool
@@ -65,15 +64,14 @@ import (
 // nonceOnlyPoolPrefix / nonceOnlyRuntimePrefix are the name stems the
 // nonce-only chaos scenario builds its per-run pool and Runtime names
 // from. The names are made unique per run (uniqueNonceOnlyName) because a
-// pool name is the PRIMARY KEY of the Postgres `sandbox_warm_pools` table
+// pool name is the PRIMARY KEY of the Postgres `pools` table
 // (migrations/0033) and a soft-deleted row keeps the name occupied: a
 // re-create with the same name fails with a unique violation (409
 // RESOURCE_ALREADY_EXISTS). A fixed name therefore lets the test run only once
 // per cluster lifetime; a unique name per run makes it repeatable and
 // keeps a leftover pool from a prior run (one F-13.2.24 leaves stuck) from
-// colliding with this run. The pool name doubles as the PodSet +
-// PodSet object name the PoolScalingController reconciles into the
-// agent namespace.
+// colliding with this run. The pool name doubles as the name of the
+// PodSet the PoolScalingController reconciles into the agent namespace.
 const (
 	nonceOnlyPoolPrefix    = "chaos-nonce-only-pool"
 	nonceOnlyRuntimePrefix = "chaos-nonce-only-runtime"
@@ -91,7 +89,7 @@ const nonceOnlyRuntimeClass = "runc"
 
 // nonceOnlyReconcileBound is the time the test allows the
 // PoolScalingController and the WarmPoolController to reconcile a freshly
-// created Postgres pool into its CRD pair, render the nonce-only warm
+// created Postgres pool into its PodSet, render the nonce-only warm
 // member, and surface (or clear) the SecurityDegradedMode condition and the
 // lenny_pool_security_degraded gauge. The PSC reconciles on a periodic tick
 // and the WPC wakes on the owned-AgentPod watch; the bound covers the
@@ -150,7 +148,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	}
 
 	// Build a unique pool + Runtime name for this run. A pool name is the
-	// PRIMARY KEY of the Postgres sandbox_warm_pools table and a soft-deleted
+	// PRIMARY KEY of the Postgres pools table and a soft-deleted
 	// row keeps the name occupied, so a fixed name lets the scenario run only
 	// once per cluster lifetime (the second create returns 409
 	// RESOURCE_ALREADY_EXISTS). A per-run suffix makes the test repeatable and keeps
@@ -298,9 +296,9 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 
 	// Recovery (runbook remediation step 3): replace the pre-revert nonce-only
 	// members so the pool's carrier set goes empty. This is the §4.7 recovery
-	// transition the proposal's testing design names: "the pool condition
-	// reverts to False only when the runtime field has returned to true and no
-	// member AgentPod still carries SOPeercredDisabled=True". With the runtime
+	// transition the proposal's testing design names: the pool condition
+	// returns to False once the runtime field is true again and none of the
+	// pool's member AgentPods carries SOPeercredDisabled=True. With the runtime
 	// already reverted to requireSoPeercred=true, the recovery completes once
 	// the last carrier member is gone.
 	//
@@ -310,10 +308,10 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// probe and fails closed when its egress is blocked by the §13.2
 	// default-deny (the orthogonal, separately-tracked F-13.2.24 chart defect).
 	// The §4.7 condition-clearing invariant this leg verifies sits entirely on
-	// the member-AgentPod carrier set, not on template teardown, so the leg
-	// keeps the PodSet present and asserts the stronger explicit-False
+	// the member-AgentPod carrier set rather than on PodSet teardown, so the
+	// leg keeps the PodSet present and asserts the stronger explicit-False
 	// outcome (the condition flips to False rather than merely going absent on
-	// template removal) without depending on the deletion-guard path the
+	// PodSet removal) without depending on the deletion-guard path the
 	// unrelated F-13.2.24 defect blocks.
 	//
 	// First scale the pool's warm count to 0 through the §25.17 admin API so
@@ -322,7 +320,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 	// the Idle phase on this cluster (its image is an unpullable digest, so it
 	// sits Pending/ErrImagePull), and the §4.6 planner only drains Idle pods,
 	// so a scale-to-0 alone cannot shed a never-ready warm member; deleting the
-	// member AgentPod is the §4.7 "pod is replaced" step. A AgentPod DELETE is
+	// member AgentPod is the §4.7 "pod is replaced" step. An AgentPod DELETE is
 	// not gated by any webhook (the deletion guard scopes only podsets
 	// on DELETE), so this runs unconditionally on the cluster.
 	setNonceOnlyPoolWarmCount(t, gatewayURL, pool, 0)
@@ -360,7 +358,7 @@ func TestNonceOnlyModeDegradationAndRecovery(t *testing.T) {
 
 // uniqueNonceOnlyName appends a short random suffix to prefix so each test
 // run uses a fresh pool / Runtime name. The pool name is the PRIMARY KEY of
-// the Postgres sandbox_warm_pools table and a soft-deleted row keeps the
+// the Postgres pools table and a soft-deleted row keeps the
 // name occupied (migrations/0033), so reusing a fixed name makes the second
 // run fail with 409 RESOURCE_ALREADY_EXISTS. The suffix is 8 lowercase-hex
 // characters, which keeps the name within the §5.2 pool-name pattern
@@ -400,7 +398,7 @@ func setNonceOnlyPoolWarmCount(t *testing.T, gatewayURL, pool string, warmCount 
 
 // deleteNonceOnlyMembers deletes the pool's member AgentPods directly through
 // the API server, the §4.7 "the last nonce-only pod is replaced" recovery
-// step. A AgentPod DELETE is not gated by any admission webhook (the §10.5
+// step. An AgentPod DELETE is not gated by any admission webhook (the §10.5
 // podset-deletion-guard scopes only podsets on DELETE), so
 // it runs unconditionally and does not depend on the gateway-egress
 // NetworkPolicy the orthogonal F-13.2.24 defect omits. It is paired with a
@@ -415,7 +413,7 @@ func deleteNonceOnlyMembers(t *testing.T, c *kind.Cluster, pool string) {
 	t.Helper()
 	if out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "delete", "sandbox",
+		"-n", agentNamespace, "delete", "agentpod",
 		"-l", "lenny.dev/pool="+pool, "--wait=false",
 	); err != nil {
 		t.Fatalf("failed to delete the nonce-only member AgentPods of pool %s: %v\n%s", pool, err, out)
@@ -470,19 +468,16 @@ func createNonceOnlyPool(t *testing.T, gatewayURL, pool, runtimeName string) {
 
 // deleteNonceOnlyPool removes a nonce-only pool from both of the places it
 // lives. It soft-deletes the Postgres row through the admin API
-// (DELETE /v1/admin/pools/{name}), then deletes the PodSet and the
-// PodSet the PoolScalingController derived from the row.
+// (DELETE /v1/admin/pools/{name}), then deletes the PodSet the
+// PoolScalingController derived from the row.
 //
-// The second step exists because a soft delete leaves the CRD pair in place:
-// the PoolScalingController reconciles only active pool rows and has no path
-// that removes the pair of a row that left the active set, so every run of
-// this test used to leave its PodSet (and, when the run was killed
-// before the recovery leg, a PodSet with a warm member) on the
-// cluster. The warm pool goes first and the template second, because the
-// podset-deletion-guard admits a template delete without probing the
-// gateway only once no PodSet references the template; the probe is
-// blocked on this cluster (F-13.2.24). The member AgentPods are owned by the
-// PodSet and are garbage-collected with it.
+// The second step exists because a soft delete can leave the PodSet in
+// place: every run of this test used to leave its PodSet (and, when the run
+// was killed before the recovery leg, a PodSet with a warm member) on the
+// cluster. The PodSet delete passes through the podset-deletion-guard, whose
+// gateway probe is blocked on this cluster (F-13.2.24), so the delete is
+// best-effort. The member AgentPods are owned by the PodSet and are
+// garbage-collected with it.
 //
 // It is the t.Cleanup body and the start-time sweep's per-pool action, so it
 // is best-effort: it tolerates a 404 (pool already gone) and logs every other
@@ -509,14 +504,13 @@ func deleteNonceOnlyPool(t *testing.T, c *kind.Cluster, gatewayURL, pool string)
 }
 
 // nonceOnlyPoolCRDs lists the CRD kinds the PoolScalingController derives
-// from a pool row, each named after the pool, in the order they are deleted:
-// the PodSet before the PodSet it references.
-var nonceOnlyPoolCRDs = []string{"podsets", "podsets"}
+// from a pool row, each named after the pool.
+var nonceOnlyPoolCRDs = []string{"podsets"}
 
 // nonceOnlyPoolNamePattern matches exactly the names uniqueNonceOnlyName
 // mints from nonceOnlyPoolPrefix: the prefix, a hyphen, and the 8-character
 // lowercase-hex run suffix. The start-time sweep selects by this pattern, so
-// it cannot select a pool, template, or warm pool another suite owns.
+// it cannot select a pool or a PodSet another suite owns.
 var nonceOnlyPoolNamePattern = regexp.MustCompile(regexp.QuoteMeta(nonceOnlyPoolPrefix) + `-[0-9a-f]{8}`)
 
 // nonceOnlyFixtureLabel is the label nonceOnlyRuntimeManifest stamps on the
@@ -547,7 +541,7 @@ const nonceOnlyFixtureLabel = "lenny.dev/test=chaos-nonce-only"
 //
 //  1. Pools still active in Postgres (the run was killed before its cleanup)
 //     are removed through deleteNonceOnlyPool, which soft-deletes the row
-//     first so the PoolScalingController stops re-applying the CRD pair.
+//     first so the PoolScalingController stops re-applying the PodSet.
 //  2. PodSet objects whose pool row was already
 //     soft-deleted are removed by name. The admin listing omits soft-deleted
 //     rows, so step 1 cannot see them; this is the leak that accumulated.
@@ -568,7 +562,7 @@ func sweepStaleNonceOnlyFixtures(t *testing.T, c *kind.Cluster, gatewayURL, keep
 }
 
 // sweepStaleNonceOnlyPools removes every nonce-only pool row a prior run left
-// active in Postgres, together with its CRD pair (step 1 of
+// active in Postgres, together with its PodSet (step 1 of
 // sweepStaleNonceOnlyFixtures). Best-effort and logged, never fatal.
 func sweepStaleNonceOnlyPools(t *testing.T, c *kind.Cluster, gatewayURL, keep string) {
 	t.Helper()
@@ -686,8 +680,8 @@ func runtimeRegisteredStatus(t *testing.T, c *kind.Cluster, runtime string) stri
 
 // securityDegradedConditionStatus reads the §4.7 SecurityDegradedMode
 // condition status off the live PodSet. It returns "True", "False",
-// or "" when the condition (or the template) is absent. A read error yields
-// "" so the caller keeps polling; an absent template after a pool delete is
+// or "" when the condition (or the PodSet) is absent. A read error yields
+// "" so the caller keeps polling; an absent PodSet after a pool delete is
 // reported as "" (a cleared state).
 func securityDegradedConditionStatus(t *testing.T, c *kind.Cluster, pool string) string {
 	t.Helper()
@@ -710,7 +704,7 @@ func nonceOnlyMemberNames(t *testing.T, c *kind.Cluster, pool string) []string {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandbox",
+		"-n", agentNamespace, "get", "agentpod",
 		"-l", "lenny.dev/pool="+pool,
 		"-o", `jsonpath={range .items[?(@.spec.requireSoPeercred==false)]}{.metadata.name}{"\n"}{end}`,
 	)
@@ -728,7 +722,7 @@ func describeNonceOnlyMembers(t *testing.T, c *kind.Cluster, pool string) string
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandbox",
+		"-n", agentNamespace, "get", "agentpod",
 		"-l", "lenny.dev/pool="+pool,
 		"-o", `jsonpath={range .items[*]}{.metadata.name}=phase:{.status.phase},`+
 			`requireSoPeercred:{.spec.requireSoPeercred},`+

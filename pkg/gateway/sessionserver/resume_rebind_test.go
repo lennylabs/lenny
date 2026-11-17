@@ -79,8 +79,7 @@ func newRebindFixture(t *testing.T, id string, noIdlePod bool) *rebindFixture {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 	objs := []client.Object{
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	}
 	if !noIdlePod {
 		objs = append(objs, podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"))

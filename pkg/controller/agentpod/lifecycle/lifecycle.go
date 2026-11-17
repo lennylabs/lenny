@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package lifecycle holds the pure warm-path planner for the AgentPod
-// pod lifecycle (§6.2). Given a AgentPod's current phase and the
+// pod lifecycle (§6.2). Given an AgentPod's current phase and the
 // observed state of its backing Pod, Decide returns the single action
 // the controller should take: create the Pod, delete it, advance the
 // AgentPod phase, or do nothing.
@@ -84,7 +84,7 @@ type Decision struct {
 	NextPhase state.State
 }
 
-// Decide maps a AgentPod's current phase and its observed Pod to the
+// Decide maps an AgentPod's current phase and its observed Pod to the
 // next warm-path action (§6.2). Phases outside the warm path the
 // WarmPoolController owns yield ActionNone.
 func Decide(phase state.State, pod PodObservation) Decision {

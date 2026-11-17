@@ -239,7 +239,7 @@ func TestWarmupFailureMeterForgetsAgentPodPastWarmup(t *testing.T) {
 	n := len(m.counted)
 	m.mu.Unlock()
 	if n != 0 {
-		t.Fatalf("a AgentPod past warm-up kept its record: %d entries", n)
+		t.Fatalf("an AgentPod past warm-up kept its record: %d entries", n)
 	}
 	if len(c.got) != 1 {
 		t.Fatalf("increments = %v, want one", c.got)

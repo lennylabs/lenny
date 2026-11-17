@@ -27,7 +27,7 @@ import (
 )
 
 // poolConfigValidatorWebhook is the ValidatingWebhookConfiguration that
-// gates PodSet / PodSet semantic budget invariants.
+// gates the PodSet semantic budget invariants.
 const poolConfigValidatorWebhook = "lenny-pool-config-validator"
 
 // poolConfigValidatorDeployment runs the validator webhook backend.
@@ -388,9 +388,8 @@ func TestSchemaMigrationDirtyFlag(t *testing.T) {
 }
 
 // warmPoolManifest renders a PodSet manifest with the given
-// minWarm/maxWarm. templateRef is required by the CRD; the referenced
-// template need not exist for the pool-config validator (it inspects
-// only the PodSet spec, not the template).
+// minWarm/maxWarm. The CRD requires runtimeRef. The pool-config validator
+// reads only the PodSet spec, so the named Runtime need not exist.
 func warmPoolManifest(name, ns string, minWarm, maxWarm int) string {
 	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
 kind: PodSet
@@ -402,7 +401,7 @@ metadata:
 spec:
   minWarm: %d
   maxWarm: %d
-  templateRef: chaos-drift-template
+  runtimeRef: chaos-drift-runtime
 `, name, ns, minWarm, maxWarm)
 }
 

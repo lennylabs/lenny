@@ -180,8 +180,8 @@ func (e *wsdOutageEnv) delegateServer(t *testing.T, runtimes runtimestore.Store)
 	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 }
 
-// wsdOutageCluster is a fake cluster holding a warm pool, a template, and
-// one idle sandbox with its pod for the runtime, recording every create,
+// wsdOutageCluster is a fake cluster holding the pool's PodSet and one
+// idle sandbox with its pod for the runtime, recording every create,
 // update, and patch in writes.
 func wsdOutageCluster(t *testing.T, writes *wsdClusterWrites) client.Client {
 	t.Helper()
@@ -192,15 +192,16 @@ func wsdOutageCluster(t *testing.T, writes *wsdClusterWrites) client.Client {
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add core scheme: %v", err)
 	}
-	pool, tmpl, apod := wsdOutageRuntime+"-pool", wsdOutageRuntime+"-tmpl", wsdOutageRuntime+"-sbx"
+	pool, apod := wsdOutageRuntime+"-pool", wsdOutageRuntime+"-sbx"
 	objs := []client.Object{
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: wsdOutageNS},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: wsdOutageNS},
-			Spec:       lennyv1.PodSetSpec{RuntimeRef: wsdOutageRuntime, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef:       wsdOutageRuntime,
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
+			},
 		},
 		&lennyv1.AgentPod{
 			ObjectMeta: metav1.ObjectMeta{Name: apod, Namespace: wsdOutageNS, Labels: map[string]string{warmpool.LabelPool: pool}},

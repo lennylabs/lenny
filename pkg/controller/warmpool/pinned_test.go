@@ -82,7 +82,7 @@ func pinnedReconciler(c client.Client, apiReader client.Reader) *warmpool.Reconc
 func TestReconcilePinnedIdleInventory_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 3),
+	c := newClient(t, s, pool(ns, 2, 3),
 		idleAgentPod(ns, "sb-acme"), idleAgentPod(ns, "sb-globex"),
 		tenantPod(ns, "sb-acme", "acme"), tenantPod(ns, "sb-globex", "globex"))
 	reconcileWith(t, pinnedReconciler(c, c))
@@ -101,7 +101,7 @@ func TestReconcilePinnedIdleInventory_spec_5_2(t *testing.T) {
 }
 
 // spec: 5.2 (Pinned idle inventory), 4.6.1 (Warm Pool Controller)
-// diagnosis: a pod whose acquisition is in flight is drained, a AgentPod
+// diagnosis: a pod whose acquisition is in flight is drained, an AgentPod
 // without a Pod is counted as pinned, a pod pinned `unassigned` is counted as
 // claimable inventory, or a claim the cache has not yet seen lets the pod be
 // drained.
@@ -109,7 +109,7 @@ func TestReconcilePinnedIdleClaimAndLabelConditions_spec_5_2(t *testing.T) {
 	t.Run("a claimed labelled pod is inventory", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(ns), pool(ns, 1, 1),
+		c := newClient(t, s, pool(ns, 1, 1),
 			idleAgentPod(ns, "sb-held"), tenantPod(ns, "sb-held", "acme"), pinTestClaim(ns, "sb-held", "acme"))
 		reconcileWith(t, pinnedReconciler(c, c))
 		if ph := phases(t, c); ph["sb-held"] != "idle" || len(ph) != 1 {
@@ -122,7 +122,7 @@ func TestReconcilePinnedIdleClaimAndLabelConditions_spec_5_2(t *testing.T) {
 	t.Run("no Pod is unpinned and unassigned is pinned", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(ns), pool(ns, 1, 1),
+		c := newClient(t, s, pool(ns, 1, 1),
 			idleAgentPod(ns, "sb-nopod"), idleAgentPod(ns, "sb-unassigned"), tenantPod(ns, "sb-unassigned", "unassigned"))
 		reconcileWith(t, pinnedReconciler(c, c))
 		ph := phases(t, c)
@@ -136,7 +136,7 @@ func TestReconcilePinnedIdleClaimAndLabelConditions_spec_5_2(t *testing.T) {
 	t.Run("a cached NotFound is confirmed through the API reader", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		base := newClient(t, s, template(ns), pool(ns, 1, 1),
+		base := newClient(t, s, pool(ns, 1, 1),
 			idleAgentPod(ns, "sb-lag"), tenantPod(ns, "sb-lag", "acme"), pinTestClaim(ns, "sb-lag", "acme"))
 		stale := interceptor.NewClient(base, interceptor.Funcs{
 			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -207,7 +207,7 @@ func TestReconcilePinnedIdleReadFailuresFailTheReconcile_spec_5_2(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			ns := testNamespace(t)
 			s := newScheme(t)
-			base := newClient(t, s, template(ns), pool(ns, 2, 3),
+			base := newClient(t, s, pool(ns, 2, 3),
 				idleAgentPod(ns, "sb-acme"), idleAgentPod(ns, "sb-globex"),
 				tenantPod(ns, "sb-acme", "acme"), tenantPod(ns, "sb-globex", "globex"))
 			var reader client.Reader = base
@@ -235,9 +235,9 @@ func TestReconcilePinnedIdleReadFailuresFailTheReconcile_spec_5_2(t *testing.T) 
 func TestReconcileServicePoolReadsNoPin_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	tm := template(ns)
+	tm := pool(ns, 2, 3)
 	tm.Spec.ExecutionMode = "service"
-	c := newClient(t, s, tm, pool(ns, 2, 3),
+	c := newClient(t, s, tm,
 		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"),
 		tenantPod(ns, "sb-a", "acme"), tenantPod(ns, "sb-b", "globex"))
 	reconcileWith(t, pinnedReconciler(c, c))
@@ -287,7 +287,7 @@ func labelValue(m *dto.Metric, name string) string {
 func TestReconcilePinnedIdleMetrics_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 3),
+	c := newClient(t, s, pool(ns, 1, 3),
 		idleAgentPod(ns, "sb-p1"), idleAgentPod(ns, "sb-p2"),
 		tenantPod(ns, "sb-p1", "acme"), tenantPod(ns, "sb-p2", "globex"))
 	r := pinnedReconciler(c, c)

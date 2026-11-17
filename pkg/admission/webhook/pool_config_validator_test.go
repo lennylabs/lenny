@@ -20,9 +20,9 @@ import (
 )
 
 // spec: §4.6.3 (spec/04_system-components.md) — the
-// lenny-pool-config-validator webhook transport dispatches on the
-// admitted resource Kind, decodes a PodSet,
-// and surfaces a rule-set-1 rejection as a 422 with the
+// lenny-pool-config-validator webhook transport admits the PodSet kind
+// only, decodes the PodSet, applies the warm-target and pool-setting
+// rules to it, and surfaces a rule-set-1 rejection as a 422 with the
 // INVALID_POOL_CONFIGURATION reason code.
 
 // poolConfigReq builds an AdmissionRequest for the given Kind carrying
@@ -50,10 +50,10 @@ func poolConfigReqAs(t *testing.T, kind string, obj any, username string) *admis
 	}
 }
 
-func TestPoolConfigValidatorAdmitsValidWarmPool(t *testing.T) {
+func TestPoolConfigValidatorAdmitsValidWarmTargets(t *testing.T) {
 	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 10},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", pool))
 	if !resp.Allowed {
@@ -61,10 +61,10 @@ func TestPoolConfigValidatorAdmitsValidWarmPool(t *testing.T) {
 	}
 }
 
-func TestPoolConfigValidatorRejectsWarmPoolBudgetViolation(t *testing.T) {
+func TestPoolConfigValidatorRejectsWarmTargetBudgetViolation(t *testing.T) {
 	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 20, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 20, MaxWarm: 10},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", pool))
 	if resp.Allowed {
@@ -78,7 +78,7 @@ func TestPoolConfigValidatorRejectsWarmPoolBudgetViolation(t *testing.T) {
 	}
 }
 
-func TestPoolConfigValidatorAdmitsValidTemplate(t *testing.T) {
+func TestPoolConfigValidatorAdmitsValidPoolSettings(t *testing.T) {
 	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.PodSetSpec{
@@ -97,7 +97,7 @@ func TestPoolConfigValidatorAdmitsValidTemplate(t *testing.T) {
 	}
 }
 
-func TestPoolConfigValidatorRejectsTemplateInvariantViolation(t *testing.T) {
+func TestPoolConfigValidatorRejectsPoolSettingViolation(t *testing.T) {
 	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.PodSetSpec{
@@ -132,10 +132,10 @@ func TestPoolConfigValidatorRejectsUnknownKind(t *testing.T) {
 // principal other than the PoolScalingController SA are rejected with
 // HTTP 403 and the UNAUTHORIZED_POOL_CONFIG_WRITE reason code, even when
 // the write satisfies every rule-set-1 budget invariant.
-func TestPoolConfigValidatorRejectsManualWarmPoolWrite(t *testing.T) {
+func TestPoolConfigValidatorRejectsManualWarmTargetWrite(t *testing.T) {
 	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 10},
 	}
 	req := poolConfigReqAs(t, "PodSet", pool, "system:serviceaccount:acme:platform-admin")
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
@@ -150,7 +150,7 @@ func TestPoolConfigValidatorRejectsManualWarmPoolWrite(t *testing.T) {
 	}
 }
 
-func TestPoolConfigValidatorRejectsManualTemplateWrite(t *testing.T) {
+func TestPoolConfigValidatorRejectsManualPoolSettingsWrite(t *testing.T) {
 	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.PodSetSpec{
@@ -173,7 +173,7 @@ func TestPoolConfigValidatorRejectsManualTemplateWrite(t *testing.T) {
 func TestPoolConfigValidatorBudgetViolationPrecedesAuthz(t *testing.T) {
 	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 20, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 20, MaxWarm: 10},
 	}
 	req := poolConfigReqAs(t, "PodSet", pool, "system:serviceaccount:acme:platform-admin")
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)

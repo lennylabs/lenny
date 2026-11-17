@@ -13,16 +13,16 @@ spec:
     listKind: AgentPodList
     plural: agentpods
     shortNames:
-    - sbx
-    singular: sandbox
+    - apod
+    singular: agentpod
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
     - jsonPath: .status.phase
       name: Phase
       type: string
-    - jsonPath: .spec.poolRef
-      name: Pool
+    - jsonPath: .spec.podSetRef
+      name: PodSet
       type: string
     - jsonPath: .status.podName
       name: Pod
@@ -55,7 +55,7 @@ spec:
             type: object
           spec:
             description: |-
-              AgentPodSpec is the desired state of a AgentPod — one managed agent
+              AgentPodSpec is the desired state of an AgentPod — one managed agent
               pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
               created from the pool's PodSet, and these fields pin the
               per-pod identity the controller and gateway resolve against.
@@ -74,7 +74,7 @@ spec:
                   The WarmPoolController denormalizes it from the pool's
                   PodSet.spec.executionMode onto each AgentPod (the same
                   copy-down as IsolationProfile) so the registry can project it
-                  without resolving the template on every read. Empty is treated as
+                  without resolving the PodSet on every read. Empty is treated as
                   `session`.
                 enum:
                 - session
@@ -89,10 +89,15 @@ spec:
                 - sandboxed
                 - microvm
                 type: string
-              poolRef:
-                description: PoolRef names the PodSet this pod is a member
-                  of.
+              podSetRef:
+                description: |-
+                  PodSetRef names the PodSet this pod is a member of. The PodSet is
+                  also the AgentPod's controller owner, and the reference cannot change
+                  after create.
                 type: string
+                x-kubernetes-validations:
+                - message: podSetRef is immutable
+                  rule: self == oldSelf
               requireSoPeercred:
                 description: |-
                   RequireSoPeercred carries the resolved §4.7 nonce-only render
@@ -306,13 +311,13 @@ spec:
                   type: object
                 type: array
             required:
-            - poolRef
+            - podSetRef
             - runtimeRef
             type: object
             x-kubernetes-preserve-unknown-fields: true
           status:
             description: |-
-              AgentPodStatus is the observed state of a AgentPod. status.phase is
+              AgentPodStatus is the observed state of an AgentPod. status.phase is
               the §6.2 authoritative pod lifecycle state machine; it is the
               single source of truth that the §4.6 claim path and the
               lenny-podclaim-guard webhook read.

@@ -93,15 +93,14 @@ func uploadScopeCluster(t *testing.T, n int) client.Client {
 	}
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: uploadScopeNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "echo",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool: %v", err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: uploadScopeNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template: %v", err)
+		t.Fatalf("create pod set: %v", err)
 	}
 	for i := 1; i <= n; i++ {
 		seedUploadScopeAgentPod(t, c, fmt.Sprintf("sbx-%d", i), fmt.Sprintf("10.244.3.%d", i))

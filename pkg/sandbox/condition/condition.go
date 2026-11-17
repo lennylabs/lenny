@@ -24,17 +24,17 @@ import (
 )
 
 // AgentPod lifecycle condition types written by Apply. They are the §4.6.1
-// history entries operators read to learn why a AgentPod sits in a given
+// history entries operators read to learn why an AgentPod sits in a given
 // §6.2 phase.
 //
 // The session-terminal and interrupt-suspension facts are NOT AgentPod
 // conditions: the §5.2 mode collapse relocated them to the Postgres session
 // model (§7.2 / §8.8), because the gateway lost agentpods/status RBAC and is
-// no longer a AgentPod.status writer (§4.6.3). The orphan-claim reclaim is the
+// no longer an AgentPod.status writer (§4.6.3). The orphan-claim reclaim is the
 // sole remaining condition write, and the WarmPoolController performs it.
 const (
 	// OrphanClaimReclaimed records the §4.6.1 orphan-PodClaim
-	// collection that returned a AgentPod to idle. Written by the
+	// collection that returned an AgentPod to idle. Written by the
 	// WarmPoolController, the sole writer of AgentPod.status (§4.6.3).
 	OrphanClaimReclaimed = "OrphanClaimReclaimed"
 )

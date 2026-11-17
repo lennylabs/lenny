@@ -59,8 +59,7 @@ func TestReconcileSessionModePoolLeavesCredentialSharingUnmanaged(t *testing.T) 
 	c := newClient(
 		t, s,
 		runtimeCR("cred-runtime", []string{"anthropic_direct"}),
-		template(ns), // default session-mode template
-		pool(ns, 1, 3),
+		pool(ns, 1, 3), // default session-mode pool
 	)
 	reconcile(t, c, s)
 

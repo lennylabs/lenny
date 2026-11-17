@@ -113,6 +113,8 @@ spec:
   runtimeRef: e2e-nonexistent-runtime
   deliveryMode: direct
   isolationProfile: standard
+  minWarm: 0
+  maxWarm: 0
 `,
 			wantCode: "DirectModeStandardIsolationMultiTenantRejected",
 		},
@@ -129,6 +131,8 @@ spec:
   deliveryMode: proxy
   isolationProfile: sandboxed
   spiffeBinding: disabled
+  minWarm: 0
+  maxWarm: 0
 `,
 			wantCode: "ProxyModeSpiffeBindingDisabledMultiTenantRejected",
 		},

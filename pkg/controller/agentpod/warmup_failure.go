@@ -104,7 +104,7 @@ func classifyWarmupPod(pod *corev1.Pod) (string, bool) {
 	return "", false
 }
 
-// inWarmup reports whether a AgentPod phase is a warm-up phase, in which
+// inWarmup reports whether an AgentPod phase is a warm-up phase, in which
 // the pod has not yet reached idle.
 //
 // spec: §6.2 (Pod State Machine).
@@ -126,7 +126,7 @@ func podRuntimeClass(pod *corev1.Pod) string {
 }
 
 // warmupFailureMeter counts each warm-up failure once. A reconcile is
-// level-triggered, so a pod stuck in an image pull failure, or a AgentPod
+// level-triggered, so a pod stuck in an image pull failure, or an AgentPod
 // whose pod creation the quota keeps rejecting, is observed on every
 // reconcile. The meter records the failure it last counted for each
 // AgentPod and counts again only when the failing pod differs. The record
@@ -135,7 +135,7 @@ func podRuntimeClass(pod *corev1.Pod) string {
 type warmupFailureMeter struct {
 	// mu guards counted.
 	mu sync.Mutex
-	// counted maps a AgentPod to the failure last counted for it: the
+	// counted maps an AgentPod to the failure last counted for it: the
 	// failing pod's UID, or createRejectedKey for a rejected creation.
 	counted map[types.NamespacedName]string
 	// inc increments the counter. Tests substitute it.
@@ -169,7 +169,7 @@ func (m *warmupFailureMeter) record(sb *lennyv1.AgentPod, key, runtimeClass, err
 }
 
 // observePod counts a warming pod whose status shows a §16.1 warm-up
-// error type. A AgentPod past warm-up drops its record, so the map holds
+// error type. An AgentPod past warm-up drops its record, so the map holds
 // only AgentPods still warming.
 func (m *warmupFailureMeter) observePod(sb *lennyv1.AgentPod, pod *corev1.Pod, podPresent bool) {
 	if !inWarmup(sb.Status.Phase) {
@@ -196,7 +196,7 @@ func (m *warmupFailureMeter) observeCreateError(sb *lennyv1.AgentPod, pod *corev
 	m.record(sb, createRejectedKey, podRuntimeClass(pod), errorType)
 }
 
-// forget drops the record for a AgentPod that left warm-up or was deleted.
+// forget drops the record for an AgentPod that left warm-up or was deleted.
 func (m *warmupFailureMeter) forget(id types.NamespacedName) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

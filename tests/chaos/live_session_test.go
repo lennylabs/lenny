@@ -198,7 +198,7 @@ func countIdlePodsInPool(t *testing.T, c *kind.Cluster, pool string) int {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandbox",
+		"-n", agentNamespace, "get", "agentpod",
 		"-l", "lenny.dev/pool="+pool,
 		"-o", "jsonpath={range .items[*]}{.status.phase}{\"\\n\"}{end}",
 	)

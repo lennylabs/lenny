@@ -29,9 +29,7 @@ const statusFieldOwner = string(ownership.Gateway)
 // writeBoundStatus stamps the first binding state (`bound`) on a freshly
 // created per-pod PodClaim. The claim is CREATEd with spec only,
 // because a Kubernetes status subresource is not writable by the resource
-// Create call (§4.6.1 "created with spec only, and the gateway writes the
-// first binding state (`bound`) with a subsequent status patch"); this
-// helper writes that first status. It also stamps the binding-state
+// Create call (§4.6.1); this helper writes that first status. It also stamps the binding-state
 // transition time, which the WarmPoolController orphan GC keys its
 // live-binding-state reclaim predicate on (§4.6.1 / §4.6.3).
 //

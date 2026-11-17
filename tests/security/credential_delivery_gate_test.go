@@ -132,19 +132,15 @@ func deliveryGateCluster(t *testing.T) client.Client {
 	}
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: deliveryGateNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
-	}); err != nil {
-		t.Fatalf("create warm pool: %v", err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: deliveryGateNS},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "echo",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			SpiffeBinding:    "disabled",
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}); err != nil {
-		t.Fatalf("create template: %v", err)
+		t.Fatalf("create pod set: %v", err)
 	}
 	if err := c.Create(ctx, &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 		Name: "sbx-1", Namespace: deliveryGateNS, Labels: map[string]string{warmpool.LabelPool: "echo-pool"},

@@ -20,7 +20,7 @@ import (
 // WarmPoolController cannot render. Regenerate the CRD from the Go type with
 // `make generate`.
 func TestPodSetServedSchemaCarriesRuntimeProcessEnum(t *testing.T) {
-	crd := loadChartCRD(t, "lenny.dev_sandboxtemplates.yaml")
+	crd := loadChartCRD(t, "lenny.dev_podsets.yaml")
 	sp := specProperty(t, crd, "sessionPolicy")
 	recycle, ok := sp.Properties["recycle"]
 	if !ok {

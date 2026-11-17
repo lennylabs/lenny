@@ -182,8 +182,7 @@ func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
 	// envelope with a Retry-After header.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{
 		DevTenantHeader:         true,
@@ -1524,8 +1523,7 @@ func TestCreateClaimsPodAndPersistsBinding_spec_7_1_4(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
@@ -1598,8 +1596,7 @@ func TestCreateLeavesNoRowOnPoolExhaustion_spec_7_1_28(t *testing.T) {
 	// Postgres, the fallback), so the create-time claim returns ErrNoIdlePod.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -1651,8 +1648,7 @@ func TestCreateServiceModeIsClaimless_spec_5_2(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
-		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindServicePodSet(t, "svc-pool", "svc-runtime", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	store := memstore.New()
@@ -1702,8 +1698,7 @@ func TestCreateRollsBackClaimOnPersistFailure_spec_7_1_28(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-rb", "echo-pool", "10.244.2.6"),
 	)
 	store := &createRejectingStore{Store: memstore.New()}
@@ -1746,8 +1741,7 @@ func TestTerminateCreatedSessionReleasesClaimedPod_spec_15_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()

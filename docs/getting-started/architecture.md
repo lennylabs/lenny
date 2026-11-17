@@ -252,7 +252,7 @@ Manages desired pool configuration, scaling intelligence, and variant pool sizin
 
 **Key responsibilities:**
 
-- Reconcile pool configuration from Postgres (admin API, the source of truth) into `PodSet` and `PodSet` CRDs.
+- Reconcile pool configuration from Postgres (admin API, the source of truth) into `PodSet` CRDs.
 - Manage scaling decisions: time-of-day schedules, demand-based rules, variant pool sizing.
 - Compute `minWarm` targets using a demand-based formula that accounts for steady-state claim rates, burst patterns, controller failover windows, and pod startup times.
 - Adjust base pool sizing when variants divert traffic.

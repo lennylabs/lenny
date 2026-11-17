@@ -289,27 +289,30 @@ func newLookupFixture(t *testing.T, opts lookupFixtureOpts) *lookupFixture {
 	objs := []client.Object{
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: lookupNS},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: lookupNS},
-			Spec:       lennyv1.PodSetSpec{RuntimeRef: lookupExclusiveRT, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef:       lookupExclusiveRT,
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
+			},
 		},
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "derived-pool", Namespace: lookupNS},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "derived-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "derived-tmpl", Namespace: lookupNS},
-			Spec:       lennyv1.PodSetSpec{RuntimeRef: lookupDerivedRT, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef:       lookupDerivedRT,
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
+			},
 		},
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: lookupNS},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: lookupNS},
-			Spec:       lennyv1.PodSetSpec{RuntimeRef: lookupConcRT, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef:       lookupConcRT,
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
+			},
 		},
 		// The create-time claim a finalize-time row holds on its pod.
 		&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim-" + lookupAgentPod, Namespace: lookupNS}},

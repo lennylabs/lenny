@@ -79,7 +79,7 @@ func TestEqualSOPeercredCondition_IgnoresTransitionTime_spec_4_4(t *testing.T) {
 }
 
 // TestBuildAgentPodStatusPatch_RevertsDropsCondition verifies the
-// §4.5 revert path: a AgentPod that carries SOPeercredDisabled=True in its
+// §4.5 revert path: an AgentPod that carries SOPeercredDisabled=True in its
 // status but whose carrier has reverted to the SO_PEERCRED-enforcing default
 // (nil) produces a status patch that drops the condition (sends an empty
 // condition list under the WPC field manager).
@@ -116,28 +116,16 @@ func TestBuildAgentPodStatusPatch_RevertsDropsCondition(t *testing.T) {
 // spec: §4.7, §5.3.
 func TestResolveNonceOnly_FailsClosed_spec_4_7(t *testing.T) {
 	scheme := sdkWarmScheme(t)
-	ackTmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "tmpl-ack", Namespace: "lenny-agents"},
-		Spec:       lennyv1.PodSetSpec{AcknowledgeNonceOnlyAuth: true},
-	}
-	noAckTmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "tmpl-noack", Namespace: "lenny-agents"},
-		Spec:       lennyv1.PodSetSpec{AcknowledgeNonceOnlyAuth: false},
-	}
 	ackPool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pool-ack", Namespace: "lenny-agents"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "tmpl-ack"},
+		Spec:       lennyv1.PodSetSpec{AcknowledgeNonceOnlyAuth: true},
 	}
 	noAckPool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "pool-noack", Namespace: "lenny-agents"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "tmpl-noack"},
-	}
-	noTmplPool := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "pool-notmpl", Namespace: "lenny-agents"},
-		Spec:       lennyv1.PodSetSpec{},
+		Spec:       lennyv1.PodSetSpec{AcknowledgeNonceOnlyAuth: false},
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).
-		WithObjects(ackTmpl, noAckTmpl, ackPool, noAckPool, noTmplPool).Build()
+		WithObjects(ackPool, noAckPool).Build()
 	r := &Reconciler{Client: cl, Scheme: scheme}
 
 	sb := func(poolRef string) *lennyv1.AgentPod {
@@ -159,7 +147,6 @@ func TestResolveNonceOnly_FailsClosed_spec_4_7(t *testing.T) {
 		{"explicit true never activates", &lennyv1.Runtime{Spec: lennyv1.RuntimeSpec{DeploymentModel: "sidecar", RequireSoPeercred: ptr.To(true)}}, "pool-ack", false},
 		{"empty poolRef fails closed", sidecarFalse, "", false},
 		{"missing pool fails closed", sidecarFalse, "pool-absent", false},
-		{"pool without templateRef fails closed", sidecarFalse, "pool-notmpl", false},
 		{"unacknowledged pool fails closed", sidecarFalse, "pool-noack", false},
 		{"acknowledged sidecar false activates", sidecarFalse, "pool-ack", true},
 	}
@@ -175,7 +162,7 @@ func TestResolveNonceOnly_FailsClosed_spec_4_7(t *testing.T) {
 }
 
 // TestBuildAgentPodStatusPatch_NoopWhenConditionStable verifies that
-// a AgentPod already carrying SOPeercredDisabled=True whose carrier still
+// an AgentPod already carrying SOPeercredDisabled=True whose carrier still
 // records nonce-only mode produces no status patch when nothing else
 // changed, so the reconcile does not churn the status every pass.
 //

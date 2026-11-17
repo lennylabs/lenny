@@ -182,17 +182,15 @@ func deliveryGateResolveServer(t *testing.T, tenancyMode, isoProfile, spiffeBind
 	}
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: isoProfile,
 			SpiffeBinding:    spiffeBinding,
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 	return &Server{
 		podBinder:      &podsession.Binder{Client: c, Namespace: ns},
 		agentNamespace: ns,

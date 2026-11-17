@@ -103,7 +103,7 @@ func (r *Reconciler) launchMode(ctx context.Context, sb *lennyv1.AgentPod, rt *l
 	return podspec.LaunchPreconnectSDKWarm, nil
 }
 
-// sdkWarmDisabled reads the pool's spec.sdkWarmDisabled breaker. A AgentPod
+// sdkWarmDisabled reads the pool's spec.sdkWarmDisabled breaker. An AgentPod
 // without a pool has no breaker, which reads as closed. Any read error,
 // NotFound included, is returned, so the caller fails closed.
 func (r *Reconciler) sdkWarmDisabled(ctx context.Context, sb *lennyv1.AgentPod) (bool, error) {
@@ -118,7 +118,7 @@ func (r *Reconciler) sdkWarmDisabled(ctx context.Context, sb *lennyv1.AgentPod) 
 }
 
 // poolRuntimeProcess reads the pool's recycle.runtimeProcess from the
-// PodSet the PoolScalingController mirrors it into. A AgentPod
+// PodSet the PoolScalingController mirrors it into. An AgentPod
 // without a pool, a pool or template that no longer exists, and a template
 // without the field read as empty, which creates a `keep` pod. Any other
 // read error is returned, so a transient failure creates no pod rather than

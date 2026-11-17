@@ -45,9 +45,9 @@ type occupancy struct {
 	RewarmStarted bool
 }
 
-// ProjectOccupancyPhase computes the coarse AgentPod.status.phase as a
-// level-triggered projection of per-pod PodClaim existence, the claim's
-// binding state, and the rewarm stamp (§4.6.1, §6.2, §4.6.3). It returns the
+// ProjectOccupancyPhase computes the coarse AgentPod.status.phase from
+// whether the pod's PodClaim exists, the claim's binding state, and the
+// rewarm stamp, recomputing it on every reconcile (§4.6.1, §6.2, §4.6.3). It returns the
 // projected phase and whether the projection owns the pod's phase at all:
 // when ok is false the warm-fill and SDK-warm legs the AgentPod-to-Pod
 // reconciler owns (warming→idle, the preConnect pre-idle sdk_connecting, idle,
@@ -198,7 +198,7 @@ func (r *OccupancyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err := r.Client.Get(ctx, req.NamespacedName, &sb); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	// A AgentPod being torn down is the AgentPod-to-Pod reconciler's to drive
+	// An AgentPod being torn down is the AgentPod-to-Pod reconciler's to drive
 	// to terminated; re-projecting its phase here is pointless and would
 	// fight the teardown.
 	if sb.DeletionTimestamp != nil {

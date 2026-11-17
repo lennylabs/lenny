@@ -3,9 +3,9 @@
 // Package v1 contains the lenny.dev/v1alpha1 CustomResourceDefinition API
 // types — the Kubernetes-native declarations the Lenny controllers
 // reconcile. The §4 control plane is CRD-driven: a Runtime declares a
-// registered agent runtime, a PodSet declares a pool of
-// pre-warmed pods, a PodClaim requests a pod for a session, and a
-// AgentPod is the per-pod lifecycle record.
+// registered agent runtime, a PodSet records a pool's settings, warm
+// targets, and pre-warmed pods, a PodClaim records the gateway's claim on
+// one pod, and an AgentPod is the per-pod lifecycle record.
 //
 // controller-gen generates the runtime.Object DeepCopy methods
 // (zz_generated.deepcopy.go) and the CRD manifests from these types.

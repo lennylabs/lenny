@@ -5,7 +5,7 @@ pool configuration (rule set 1) and a defense-in-depth backstop for the
 field-ownership authorization path (rule set 2). Rejects PodSet
 and PodSet spec writes that violate a semantic budget
 invariant with 422 INVALID_POOL_CONFIGURATION. Scoped to the
-podsets and podsets resources on CREATE and UPDATE;
+podsets resources on CREATE and UPDATE;
 fail-closed with a 5s timeout so an unreachable webhook denies both
 manual edits and PoolScalingController reconciliation writes rather
 than admitting an unvalidated pool configuration. Part of the Phase 3.5
@@ -37,7 +37,7 @@ webhooks:
     rules:
       - apiGroups: ["lenny.dev"]
         apiVersions: ["v1alpha1"]
-        resources: ["podsets", "podsets"]
+        resources: ["podsets"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
     clientConfig:

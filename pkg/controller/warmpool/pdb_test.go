@@ -38,7 +38,7 @@ func getPDB(t *testing.T, c client.Client, name string) (policyv1.PodDisruptionB
 func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 
 	reconcile(t, c, s)
 
@@ -67,7 +67,7 @@ func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 func TestReconcileCreatesNoPDBBelowMinWarmTwo(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
@@ -84,7 +84,7 @@ func TestReconcileCreatesNoPDBBelowMinWarmTwo(t *testing.T) {
 func TestReconcileConvergesMaxUnavailableToMinAvailable(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 
 	maxUnavailable := intstr.FromInt(1)
 	existing := &policyv1.PodDisruptionBudget{
@@ -122,7 +122,7 @@ func TestReconcileConvergesMaxUnavailableToMinAvailable(t *testing.T) {
 func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 
 	reconcile(t, c, s)
 	pdb, ok := getPDB(t, c, testPool+"-warm")
@@ -154,7 +154,7 @@ func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 func TestCreateAgentPodStampsFinalizer(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 

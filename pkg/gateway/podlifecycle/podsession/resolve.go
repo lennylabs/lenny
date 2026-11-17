@@ -64,7 +64,7 @@ func (e *PoolWarmingError) Error() string {
 // fields copied alongside it, so the start path can decide between the
 // session-claim and slot-claim paths without re-reading the template.
 //
-// The CRD pair carries the execution mode, the §5.3 isolation profile,
+// The PodSet carries the execution mode, the §5.3 isolation profile,
 // the service-mode per-pod request capacity, and the recycle scrub
 // profile. The remaining §5.2 sessionPolicy dispatch fields
 // (maxConcurrentSessions, recycle.allowCrossTenantReuse, and the
@@ -74,7 +74,7 @@ func (e *PoolWarmingError) Error() string {
 type PoolMatch struct {
 	// Pool is the resolved PodSet name.
 	Pool string
-	// ExecutionMode is the §5.2 mode declared on the template: `session`
+	// ExecutionMode is the §5.2 mode declared on the PodSet: `session`
 	// or `service`. Empty is treated as `session`.
 	ExecutionMode string
 	// MaxConcurrent is the §5.2 service-mode per-pod request capacity. For
@@ -84,7 +84,7 @@ type PoolMatch struct {
 	// MaxConcurrentSessions is the §5.2 sessionPolicy.maxConcurrentSessions
 	// bound: the per-pod simultaneous-session count for session mode. A
 	// value above 1 routes the bind through the slot-claim path. It is
-	// sourced from the poolstore sessionPolicy mirror; the CRD pair does
+	// sourced from the poolstore sessionPolicy mirror; the PodSet does
 	// not carry it. Zero (or 1) keeps the session-claim path.
 	MaxConcurrentSessions int32
 	// IsolationProfile is the §5.3 profile the pool's pods run under,
@@ -107,7 +107,7 @@ type PoolMatch struct {
 	Recycle bool
 	// AllowCrossTenantReuse and MicrovmScrubMode select the §7.1 scrubPolicy
 	// variant for a cross-tenant-reuse microvm pool. MicrovmScrubMode is set
-	// from sessionPolicy.recycle.scrubProfile on the CRD pair;
+	// from sessionPolicy.recycle.scrubProfile on the PodSet;
 	// AllowCrossTenantReuse is gateway-enforced and folded in from the
 	// poolstore sessionPolicy mirror.
 	AllowCrossTenantReuse bool
@@ -129,7 +129,7 @@ type PoolMatch struct {
 	// cleanup commands and their aggregate cap, run by the adapter's
 	// whole-pod scrub after the credential purge and before the standard
 	// scrub steps. They are gateway-enforced and live on the poolstore
-	// sessionPolicy mirror (not the CRD pair), so foldPoolPolicy copies
+	// sessionPolicy mirror (not the PodSet), so foldPoolPolicy copies
 	// them in from the PoolPolicyMirror the way AllowCrossTenantReuse is
 	// folded. The recycle-path Shutdown carries them to the adapter so the
 	// scrub runs against the pool configuration as it stood at session start.
@@ -189,7 +189,7 @@ type PoolMatch struct {
 }
 
 // PoolPolicyMirror is the gateway-enforced subset of a pool's §5.2
-// sessionPolicy that does not live on the CRD pair: the per-pod
+// sessionPolicy that does not live on the PodSet: the per-pod
 // simultaneous-session bound, the cross-tenant-reuse gate, the
 // service-mode per-pod request capacity, and the concurrent-workspace
 // pod-uptime retirement cap. ResolvePool folds it into the PoolMatch so
@@ -203,7 +203,7 @@ type PoolPolicyMirror struct {
 	MaxConcurrent int32
 	// Recycle is sessionPolicy.recycle.enabled: the §5.2 sequential
 	// pod-reuse flag for every scrub profile (standard, vm-restart,
-	// in-place). The CRD pair carries the flag only implicitly, for the
+	// in-place). The PodSet carries the flag only implicitly, for the
 	// microvm cross-tenant scrub variants where a non-empty scrubProfile
 	// is itself an admission-enforced signal (§4.6.3 ownership); a
 	// standard-profile recycling pool sets no CRD field at all. When a
@@ -223,7 +223,7 @@ type PoolPolicyMirror struct {
 	// sessionPolicy.cleanupCommands and sessionPolicy.cleanupTimeoutSeconds
 	// the adapter's whole-pod scrub runs at the recycle boundary. They are
 	// gateway-enforced and live on the poolstore sessionPolicy mirror, not
-	// the CRD pair. spec: §5.2 (whole-pod scrub trigger).
+	// the PodSet. spec: §5.2 (whole-pod scrub trigger).
 	CleanupCommands       []string
 	CleanupTimeoutSeconds int
 	// MaxPodUptimeSeconds is sessionPolicy.recycle.maxPodUptimeSeconds, the
@@ -268,7 +268,7 @@ func poolWarming(pool *lennyv1.PodSet) (warmingUp bool, podsWarming int32) {
 	return warmingUp, podsWarming
 }
 
-// ResolvePool finds the PodSet whose PodSet serves
+// ResolvePool finds the PodSet that serves
 // the given runtime — and, when isolationProfile is non-empty, the
 // given §5.3 isolation profile. The gateway calls it to choose the
 // pool a session's pod is claimed from, and to read the dispatch
@@ -280,8 +280,7 @@ func poolWarming(pool *lennyv1.PodSet) (warmingUp bool, podsWarming int32) {
 // When pool is non-empty the client pinned a specific pool (the §14.1
 // CreateSessionRequest.pool selector): resolution is constrained to that
 // named pool, which still must be backed by runtimeRef and satisfy
-// isolationProfile (mirroring the §15.1 replay targetPool rule "Must be a
-// pool backed by targetRuntime"). A pinned pool that is absent, not
+// isolationProfile (mirroring the §15.1 replay targetPool rule). A pinned pool that is absent, not
 // backed by the runtime, or isolation-inconsistent returns
 // ErrPoolNotSatisfiable so the gateway fails closed with 400 rather than
 // scheduling on a different pool. The §4 pool_tenant_access authorization
@@ -422,7 +421,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	m.SlotRetries = mirror.SlotRetries
 	// §5.2 / §4.6.1 pool-exhaustion disposition: the queue-vs-reject choice
 	// and its wait bound are gateway-enforced and live on the mirror, not the
-	// CRD pair. A pool with no mirror row keeps the "reject" default.
+	// PodSet. A pool with no mirror row keeps the "reject" default.
 	m.OnPoolExhausted = mirror.OnPoolExhausted
 	m.MaxQueueWaitSeconds = mirror.MaxQueueWaitSeconds
 	// The service-mode per-pod request capacity is gateway-enforced; the
@@ -440,7 +439,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 }
 
 // PoolStatusLookup reads the live §5.2 bootstrap status of a pool from
-// its Kubernetes CRD pair. The §15.1 admin pool GET handler consults it
+// its Kubernetes PodSet. The §15.1 admin pool GET handler consults it
 // to surface `poolCondition` and `idlePodCount` (§5.2) without
 // requiring operators to inspect the CR status directly. The pool's
 // PodSet share the pool name (the

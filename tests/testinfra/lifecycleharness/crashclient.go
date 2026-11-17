@@ -104,7 +104,7 @@ func (c crashableClient) Delete(ctx context.Context, obj client.Object, opts ...
 // projection, which the harness does not run: a claim the gateway deletes
 // retires its pod, so the pod's AgentPod moves to draining and no later claim
 // takes it. The claim names its pod in spec.agentPodRef, or, for a delete by
-// name, through the deterministic claim-<pod> name. A AgentPod already gone is
+// name, through the deterministic claim-<pod> name. An AgentPod already gone is
 // left alone.
 // spec: §4.6.1 (occupancy projection on claim DELETE), §6.2 (claimed →
 // draining)

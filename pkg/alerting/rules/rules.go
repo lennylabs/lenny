@@ -1428,8 +1428,8 @@ func warningAlerts() []Rule {
 			Name:        "FinalizerStuck",
 			Expr:        `lenny_agentpod_finalizer_terminating_seconds > 300`,
 			Severity:    SeverityWarning,
-			Summary:     "A AgentPod pod finalizer is stuck",
-			Description: "A AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.",
+			Summary:     "An AgentPod pod finalizer is stuck",
+			Description: "An AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.",
 			SpecRef:     "§16.5",
 		},
 		{

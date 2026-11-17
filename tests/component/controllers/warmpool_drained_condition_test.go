@@ -32,7 +32,7 @@ import (
 // the PoolWarmingUp condition because PoolWarmingUp's Available and Drained
 // states share Status False, so meta.SetStatusCondition never refreshes its
 // timestamp across that transition and the >5m dwell would read a stale entry
-// time. This test confirms the controller emits PoolDrained onto the template
+// time. This test confirms the controller emits PoolDrained onto the PodSet
 // status against a real apiserver (schema-validated, status-subresource
 // write) in its False state while the pool is provisioning warm pods.
 //
@@ -61,14 +61,8 @@ func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
-		},
-	})
-	mustCreate(t, ctx, c, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.PodSetSpec{
-			TemplateRef: poolName,
-			MinWarm:     2,
-			MaxWarm:     10,
+			MinWarm:          2,
+			MaxWarm:          10,
 		},
 	})
 
@@ -82,7 +76,7 @@ func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 	}
 	drained := drainedCondition(t, ctx, c, req.NamespacedName)
 	if drained == nil {
-		t.Fatalf("template carries no PoolDrained condition after reconcile")
+		t.Fatalf("PodSet carries no PoolDrained condition after reconcile")
 	}
 	if drained.Status != metav1.ConditionFalse {
 		t.Fatalf("PoolDrained Status = %q while provisioning, want False", drained.Status)
@@ -127,7 +121,7 @@ func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
 	ns := testNamespaces.Create(t, c)
 	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: poolName, MinWarm: 1, MaxWarm: 2},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "claude-code", MinWarm: 1, MaxWarm: 2},
 	})
 
 	gvr := schema.GroupVersionResource{Group: "lenny.dev", Version: "v1alpha1", Resource: "podsets"}
@@ -174,13 +168,13 @@ func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
 // wrote onto the PodSet, or nil when absent.
 func drainedCondition(t *testing.T, ctx context.Context, c client.Client, key client.ObjectKey) *metav1.Condition {
 	t.Helper()
-	var tmpl lennyv1.PodSet
-	if err := c.Get(ctx, key, &tmpl); err != nil {
-		t.Fatalf("get template: %v", err)
+	var ps lennyv1.PodSet
+	if err := c.Get(ctx, key, &ps); err != nil {
+		t.Fatalf("get PodSet: %v", err)
 	}
-	for i := range tmpl.Status.Conditions {
-		if tmpl.Status.Conditions[i].Type == "PoolDrained" {
-			return &tmpl.Status.Conditions[i]
+	for i := range ps.Status.Conditions {
+		if ps.Status.Conditions[i].Type == "PoolDrained" {
+			return &ps.Status.Conditions[i]
 		}
 	}
 	return nil

@@ -1043,8 +1043,8 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: A AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
-            summary: A AgentPod pod finalizer is stuck
+            description: An AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
+            summary: An AgentPod pod finalizer is stuck
         - alert: DedicatedDNSDegraded
           expr: kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} > 0 and kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} < scalar(lenny_agent_dns_min_replicas)
           labels:

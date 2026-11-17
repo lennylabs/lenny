@@ -426,7 +426,7 @@ func (r *Reconciler) emitPoolStateChanged(ctx context.Context, pool string, oldP
 	}
 }
 
-// observedPhase maps a AgentPod's reported phase to a state.State. A
+// observedPhase maps an AgentPod's reported phase to a state.State. A
 // AgentPod that exists but has not yet reported a phase is still
 // starting up, so it is treated as warming — this prevents the
 // planner from creating a duplicate before the new pod's status lands.
@@ -486,7 +486,7 @@ func derivePodStates(pool *lennyv1.PodSet, tmpl *lennyv1.PodSet, agentPods []len
 	return out
 }
 
-// parseResourceVersion parses a AgentPod metadata.resourceVersion into
+// parseResourceVersion parses an AgentPod metadata.resourceVersion into
 // the BIGINT the agent_pod_state.resource_version column expects. The
 // Kubernetes API server's resourceVersion is an opaque string;
 // etcd-backed clusters return a decimal integer, and the fake client

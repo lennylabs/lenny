@@ -123,7 +123,7 @@ func TestAdminModeRequiredOnPoolTenantAccess(t *testing.T) {
 	// FK lands on real referents.
 	seedRuntime(t, ctx, pg, "runtime-claude")
 	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO sandbox_warm_pools (name, runtime_ref, isolation_profile)
+		`INSERT INTO pools (name, runtime_ref, isolation_profile)
 		 VALUES ('pool-default', 'runtime-claude', 'standard')`); err != nil {
 		t.Fatalf("seed pool: %v", err)
 	}

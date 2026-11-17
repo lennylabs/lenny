@@ -158,7 +158,7 @@ type Pool struct {
 	DeletedAt time.Time
 
 	// Generation is the §4.6.2 pool_config_generation counter, bumped
-	// on every admin-API write and stamped onto the pool's CRD pair as
+	// on every admin-API write and stamped onto the pool's PodSet as
 	// the lenny.dev/config-generation annotation so the §4.6.2
 	// PoolConfigDrift alert can compare Postgres-side and CRD-side
 	// generations. spec: §4.6.2.

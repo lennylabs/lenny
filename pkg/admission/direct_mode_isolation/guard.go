@@ -6,14 +6,13 @@
 // PodSet resources in agent namespaces and renders
 // unconditionally (§13.2.5 step 2). The credential-delivery
 // fields it inspects (deliveryMode, isolationProfile, spiffeBinding,
-// egressProfile) are authored only on the PodSet spec. A
-// PodSet references a template by name (templateRef) and
-// carries none of these fields, and the per-session AgentPod CR is a
-// controller-produced copy-down from an already-validated template, so
-// the PodSet is the only admitted resource that can carry a
-// forbidden combination. Scoping the chart rule to podsets is
-// therefore complete; matching PodSet or core Pods would add
-// rules with no fields to inspect. spec: §17.2. F-17.2.14.
+// egressProfile) are authored only on the PodSet spec. Each pool has
+// one PodSet, which carries these fields together with the pool's warm
+// targets. The per-session AgentPod CR is a controller-produced
+// copy-down from an already-validated PodSet, so the PodSet is the only
+// admitted resource that can carry a forbidden combination. Scoping the
+// chart rule to podsets is therefore complete; matching AgentPods or
+// core Pods would add rules with no fields to inspect. spec: §17.2. F-17.2.14.
 //
 // In a multi-tenant deployment two credential-delivery configurations
 // expose cross-tenant credential risk and are rejected:

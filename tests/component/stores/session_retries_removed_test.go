@@ -117,9 +117,9 @@ func TestSessionPolicyStoresDropRetiredMaxSessionRetries(t *testing.T) {
 		if err := store.Create(ctx, p); err != nil {
 			t.Fatalf("Create: %v", err)
 		}
-		assertPolicyWithoutRetries(t, "after create", rawSessionPolicy(t, pg, "sandbox_warm_pools", p.Name))
+		assertPolicyWithoutRetries(t, "after create", rawSessionPolicy(t, pg, "pools", p.Name))
 
-		plantLegacyPolicy(t, pg, "sandbox_warm_pools", p.Name)
+		plantLegacyPolicy(t, pg, "pools", p.Name)
 		got, err := store.Get(ctx, p.Name)
 		if err != nil {
 			t.Fatalf("Get a legacy row: %v", err)
@@ -133,6 +133,6 @@ func TestSessionPolicyStoresDropRetiredMaxSessionRetries(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("Update: %v", err)
 		}
-		assertPolicyWithoutRetries(t, "after update", rawSessionPolicy(t, pg, "sandbox_warm_pools", p.Name))
+		assertPolicyWithoutRetries(t, "after update", rawSessionPolicy(t, pg, "pools", p.Name))
 	})
 }

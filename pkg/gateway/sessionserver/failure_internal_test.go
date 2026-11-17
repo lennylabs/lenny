@@ -153,7 +153,7 @@ func (h *hookStore) setAfter(fn func(sessionstore.Session)) {
 type funnelOpts struct {
 	noRegistry bool
 	noBinder   bool
-	// noPool leaves the cluster without the warm pool and template, so the
+	// noPool leaves the cluster without the pool PodSet, so the
 	// funnel's pool resolution fails.
 	noPool bool
 }
@@ -233,11 +233,11 @@ func (f *funnelFixture) binder(t *testing.T, withPool bool) *podsession.Binder {
 		b = b.WithObjects(
 			&lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "pool-c", Namespace: funnelNS},
-				Spec:       lennyv1.PodSetSpec{TemplateRef: "tmpl-c", MinWarm: 1, MaxWarm: 2},
-			},
-			&lennyv1.PodSet{
-				ObjectMeta: metav1.ObjectMeta{Name: "tmpl-c", Namespace: funnelNS},
-				Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo"},
+				Spec: lennyv1.PodSetSpec{
+					RuntimeRef: "echo",
+					MinWarm:    1,
+					MaxWarm:    2,
+				},
 			},
 		)
 	}

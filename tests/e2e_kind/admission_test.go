@@ -66,7 +66,7 @@ metadata:
   name: e2e-admission-badpool
   namespace: lenny-agents
 spec:
-  templateRef: e2e-nonexistent-template
+  runtimeRef: e2e-nonexistent-runtime
   minWarm: 5
   maxWarm: 2
 `
@@ -278,7 +278,7 @@ func TestAdmissionInventory(t *testing.T) {
 // because it converts between versions the CRD serves and a
 // single-version CRD has none to convert to. A failure here means at
 // least one guard is inert; the fail-open the podclaim-guard rule
-// produced admitted a second PodClaim for a AgentPod that already
+// produced admitted a second PodClaim for an AgentPod that already
 // carried one.
 func TestLennyCRDWebhookRulesNameAServedVersion(t *testing.T) {
 	c := kind.InstallLenny(t)
@@ -419,77 +419,55 @@ func TestLabelImmutability(t *testing.T) {
 // 10.5 (runtime-upgrade probe on PodSet DELETE)
 // diagnosis: the §13.2 allow-deletion-guard-gateway-egress NetworkPolicy
 // is missing or the deletion-guard's gateway probe hop is still blocked
-// by the lenny-system default-deny. The test creates a PodSet
-// and a referencing PodSet (no active RuntimeUpgrade), then
-// deletes the template. The fail-closed lenny-podset-deletion-guard
-// webhook lists the referencing pool and probes
-// GET /internal/runtime-upgrade/active on the gateway internal port; a
-// failure means that probe egress is dropped, so the DELETE times out and
-// the webhook denies it with `context deadline exceeded` / a 503 instead
-// of allowing the deletion. Negative-space check: the template must have a
-// referencing pool, because a template with zero referencing pools is
-// Allowed without any gateway hop and would not exercise the restored
-// egress path.
+// by the lenny-system default-deny. The test creates a PodSet (no active
+// RuntimeUpgrade) and then deletes it. The fail-closed
+// lenny-podset-deletion-guard webhook probes
+// GET /internal/runtime-upgrade/active on the gateway internal port for the
+// pool the PodSet names; a failure means that probe egress is dropped, so
+// the DELETE times out and the webhook denies it with
+// `context deadline exceeded` / a 503 instead of allowing the deletion.
 func TestPodSetDeleteReachesGatewayProbe(t *testing.T) {
 	c := kind.InstallLenny(t)
 
 	// A §4.9-compliant PodSet (deliveryMode proxy with the
 	// default spiffeBinding, isolationProfile sandboxed) so the
 	// unconditionally-rendered lenny-direct-mode-isolation webhook admits
-	// the CREATE. This is a real apply: the template must persist so the
-	// DELETE below drives the deletion-guard.
-	const template = `apiVersion: lenny.dev/v1alpha1
-kind: PodSet
-metadata:
-  name: e2e-deletion-guard-template
-  namespace: lenny-agents
-spec:
-  runtimeRef: e2e-nonexistent-runtime
-  deliveryMode: proxy
-  isolationProfile: sandboxed
-`
-
-	// A PodSet whose spec.templateRef names the template above,
-	// so the deletion-guard's decider finds a referencing pool and takes
-	// the gateway-probe branch rather than the zero-pool Allow shortcut.
-	// minWarm 0 keeps the poolscaling controller from provisioning agent
-	// pods, and minWarm <= maxWarm satisfies the pool-config-validator.
+	// the CREATE. This is a real apply: the PodSet must persist so the
+	// DELETE below drives the deletion-guard. minWarm 0 keeps the
+	// poolscaling controller from provisioning agent pods, and
+	// minWarm <= maxWarm satisfies the pool-config-validator.
 	const pool = `apiVersion: lenny.dev/v1alpha1
 kind: PodSet
 metadata:
   name: e2e-deletion-guard-pool
   namespace: lenny-agents
 spec:
-  templateRef: e2e-deletion-guard-template
+  runtimeRef: e2e-nonexistent-runtime
+  deliveryMode: proxy
+  isolationProfile: sandboxed
   minWarm: 0
   maxWarm: 1
 `
 
-	// Clean up the pool and template regardless of the outcome. The pool
-	// is removed first so its later teardown cannot re-arm the guard, and
-	// both use --ignore-not-found so a successful in-test delete is not a
-	// cleanup error.
+	// Clean up the PodSet regardless of the outcome. The delete uses
+	// --ignore-not-found so a successful in-test delete is not a cleanup
+	// error.
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, pool) })
-	t.Cleanup(func() { _, _ = c.DeleteStdin(t, template) })
 
-	// The lenny-pool-config-validator webhook admits PodSet and
-	// PodSet spec writes only from the PoolScalingController
-	// service account (Postgres-authoritative pool config). Impersonate
-	// that principal to seat the fixtures, as the controller does at
-	// runtime.
-	if out, err := applyAsPoolScalingController(t, c, template); err != nil {
-		t.Fatalf("API server rejected the §4.9-compliant PodSet fixture: %v\noutput:\n%s", err, out)
-	}
+	// The lenny-pool-config-validator webhook admits PodSet spec writes
+	// only from the PoolScalingController service account
+	// (Postgres-authoritative pool config). Impersonate that principal to
+	// seat the fixture, as the controller does at runtime.
 	if out, err := applyAsPoolScalingController(t, c, pool); err != nil {
-		t.Fatalf("API server rejected the referencing PodSet fixture: %v\noutput:\n%s", err, out)
+		t.Fatalf("API server rejected the §4.9-compliant PodSet fixture: %v\noutput:\n%s", err, out)
 	}
 
 	// No RuntimeUpgrade is created, so the gateway
 	// GET /internal/runtime-upgrade/active probe reports no active upgrade
-	// for the referencing pool and the guard admits the delete — provided
-	// the probe hop reaches the gateway. Deleting the template drives the
-	// DELETE through the fail-closed deletion-guard.
-	out, err := c.KubectlOut(t, "delete", "podset", "e2e-deletion-guard-template", "-n", "lenny-agents")
+	// for the pool and the guard admits the delete, provided the probe hop
+	// reaches the gateway. Deleting the PodSet drives the DELETE through
+	// the fail-closed deletion-guard.
+	out, err := c.KubectlOut(t, "delete", "podset", "e2e-deletion-guard-pool", "-n", "lenny-agents")
 	if err != nil {
 		// A dropped probe egress surfaces as a webhook call timeout. Name
 		// the two signatures so a failure points at the missing NetworkPolicy

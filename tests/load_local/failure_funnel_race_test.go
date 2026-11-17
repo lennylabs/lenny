@@ -138,11 +138,11 @@ func newFunnelRaceFixture(t *testing.T, n int) *funnelRaceFixture {
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "pool-c", Namespace: funnelRaceNS},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "tmpl-c", MinWarm: 1, MaxWarm: 2},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "tmpl-c", Namespace: funnelRaceNS},
-			Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo"},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef: "echo",
+				MinWarm:    1,
+				MaxWarm:    2,
+			},
 		},
 	).WithInterceptorFuncs(interceptor.Funcs{
 		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {

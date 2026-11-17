@@ -31,7 +31,7 @@ func newClient(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().
 		WithScheme(agentPodScheme(t)).
 		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.AgentPod{}, &lennyv1.PodSet{}, &lennyv1.PodSet{}, &lennyv1.PodClaim{}).
+		WithStatusSubresource(&lennyv1.AgentPod{}, &lennyv1.PodSet{}, &lennyv1.PodClaim{}).
 		Build()
 }
 
@@ -40,17 +40,15 @@ func newClient(t *testing.T, objs ...client.Object) client.Client {
 // and observed AgentPod phase counts into one PoolStatus.
 // spec: §4.6.1.
 func TestCRDPoolReader_GetPoolStatus(t *testing.T) {
-	tmpl := &lennyv1.PodSet{
+	ps := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-prod", Namespace: "agents"},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-prod",
 			IsolationProfile: "sandboxed",
+			MinWarm:          3,
+			MaxWarm:          10,
 		},
-	}
-	swp := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-prod", Namespace: "agents"},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-prod", MinWarm: 3, MaxWarm: 10},
-		Status:     lennyv1.PodSetStatus{WarmCount: 4},
+		Status: lennyv1.PodSetStatus{WarmCount: 4},
 	}
 	idle := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "p-idle", Namespace: "agents"},
@@ -62,7 +60,7 @@ func TestCRDPoolReader_GetPoolStatus(t *testing.T) {
 		Spec:       lennyv1.AgentPodSpec{RuntimeRef: "claude-prod", PodSetRef: "claude-prod"},
 		Status:     lennyv1.AgentPodStatus{Phase: string(podlifecycle.PodStateClaimed)},
 	}
-	c := newClient(t, tmpl, swp, idle, claimed)
+	c := newClient(t, ps, idle, claimed)
 	r := &podlifecycle.CRDPoolReader{Client: c, Namespace: "agents"}
 
 	got, err := r.GetPoolStatus(context.Background(), "claude-prod")
@@ -99,7 +97,7 @@ func TestCRDPoolReader_GetPoolStatus_NotFound(t *testing.T) {
 // occupancy PodClaim (`claim-<podName>`) with a `bound` binding state,
 // without writing AgentPod.status — the WarmPoolController projects the
 // claimed phase from the claim.
-// spec: §4.6.1; §4.6.3 (gateway is not a AgentPod.status writer).
+// spec: §4.6.1; §4.6.3 (gateway is not an AgentPod.status writer).
 func TestCRDPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.T) {
 	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "p1", Namespace: "agents"},
@@ -138,13 +136,13 @@ func TestCRDPodLifecycleManager_ClaimPod_CreatesPerPodClaim(t *testing.T) {
 	if claim.Status.Phase != "bound" {
 		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
 	}
-	// spec: §4.6.1 — the `bound` write stamps the binding-state-transition
-	// time the orphan GC keys its live-binding-state reclaim on.
+	// The `bound` write stamps the binding-state-transition time the orphan
+	// GC keys its live-binding-state reclaim on.
 	if claim.Status.BindingStateTransitionTime == nil {
 		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
 	}
 
-	// AgentPod.status is left untouched: the gateway is not a AgentPod.status
+	// AgentPod.status is left untouched: the gateway is not an AgentPod.status
 	// writer; the WarmPoolController projects the claimed phase.
 	var got lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "pod-1"}, &got); err != nil {
@@ -267,10 +265,11 @@ func TestCRDPodLifecycleManager_DrainPod_AnnotatesCheckpointFirst(t *testing.T) 
 	}
 }
 
-// TestCRDPoolManager_ReconcilePool_CreatesTemplateAndWarmPool
-// confirms ReconcilePool creates both CRDs on first apply.
+// TestCRDPoolManager_ReconcilePool_CreatesPodSet confirms ReconcilePool
+// creates the pool's one PodSet, carrying both the pod settings and the
+// warm targets, on first apply.
 // spec: §4.6.1.
-func TestCRDPoolManager_ReconcilePool_CreatesTemplateAndWarmPool(t *testing.T) {
+func TestCRDPoolManager_ReconcilePool_CreatesPodSet(t *testing.T) {
 	c := newClient(t)
 	m := &podlifecycle.CRDPoolManager{
 		CRDPoolReader: podlifecycle.CRDPoolReader{Client: c, Namespace: "agents"},
@@ -284,19 +283,22 @@ func TestCRDPoolManager_ReconcilePool_CreatesTemplateAndWarmPool(t *testing.T) {
 	if err := m.ReconcilePool(context.Background(), cfg); err != nil {
 		t.Fatalf("ReconcilePool: %v", err)
 	}
-	var tmpl lennyv1.PodSet
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "p1"}, &tmpl); err != nil {
-		t.Fatalf("template not created: %v", err)
-	}
-	if tmpl.Spec.RuntimeRef != "claude-prod" || tmpl.Spec.IsolationProfile != "sandboxed" {
-		t.Errorf("template spec = %+v", tmpl.Spec)
-	}
-	var swp lennyv1.PodSet
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "p1"}, &swp); err != nil {
+	var ps lennyv1.PodSet
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "p1"}, &ps); err != nil {
 		t.Fatalf("PodSet not created: %v", err)
 	}
-	if swp.Spec.MinWarm != 2 || swp.Spec.MaxWarm != 8 || swp.Spec.TemplateRef != "p1" {
-		t.Errorf("SWP spec = %+v", swp.Spec)
+	if ps.Spec.RuntimeRef != "claude-prod" || ps.Spec.IsolationProfile != "sandboxed" {
+		t.Errorf("PodSet pod settings = %+v", ps.Spec)
+	}
+	if ps.Spec.MinWarm != 2 || ps.Spec.MaxWarm != 8 {
+		t.Errorf("PodSet warm targets = %d/%d, want 2/8", ps.Spec.MinWarm, ps.Spec.MaxWarm)
+	}
+	var all lennyv1.PodSetList
+	if err := c.List(context.Background(), &all, client.InNamespace("agents")); err != nil {
+		t.Fatalf("list PodSets: %v", err)
+	}
+	if len(all.Items) != 1 {
+		t.Errorf("ReconcilePool created %d PodSets, want 1", len(all.Items))
 	}
 }
 
@@ -319,12 +321,12 @@ func TestCRDPoolManager_ApplyPoolDefinition_DeleteTearsTemplate(t *testing.T) {
 	var got lennyv1.PodSet
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: "agents", Name: "p1"}, &got)
 	if err == nil {
-		t.Errorf("template still exists after delete: %+v", got)
+		t.Errorf("PodSet still exists after delete: %+v", got)
 	}
 }
 
 // TestCRDPoolManager_GarbageCollect_DetectsOrphanedAgentPod
-// confirms the GC sweep flags a AgentPod whose pool has no template.
+// confirms the GC sweep flags an AgentPod whose pool has no PodSet.
 // spec: §4.6.1.
 func TestCRDPoolManager_GarbageCollect_DetectsOrphanedAgentPod(t *testing.T) {
 	orphan := &lennyv1.AgentPod{

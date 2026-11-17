@@ -100,7 +100,7 @@ type imageDigestResolver func(repository string) (digest string, err error)
 // missing `lenny image import` step rather than letting the apply surface a
 // raw OpenAPI pattern rejection.
 //
-// The PodSet pair is applied through the C1
+// The PodSet is applied through the C1
 // dynamic-apply path (applyObjects), and the Runtime CR through the same
 // typed-client upsert the echo seed uses (upsertRuntimeCR), so the verb reuses
 // both established apply mechanisms rather than adding a parallel one. The
@@ -218,7 +218,7 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 
 // ApplyRuntimeSetFromConfig assembles the runtime's CRD set from rt and applies
 // it against an already-resolved rest config through the C1 dynamic-apply path
-// (the PodSet pair) plus the echo seed's typed-client
+// (the PodSet) plus the echo seed's typed-client
 // upsert (the Runtime CR). It is split from RunRuntimeApply so a component-tier envtest
 // drives the same apply path against a real kube-apiserver with the lenny.dev
 // CRDs installed, without writing a kubeconfig file, the way
@@ -227,7 +227,7 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 // via resolveRuntimeImage); rt reaching here carries the digest-pinned image
 // the §5.3 CRD pattern accepts. The Runtime CR is applied first (the
 // PodSet's runtimeRef points at it), then the PodSet and
-// PodSet pair. spec: §17.4, §5.3, §4.6.2.
+// PodSet. spec: §17.4, §5.3, §4.6.2.
 func ApplyRuntimeSetFromConfig(ctx context.Context, cfg *rest.Config, rt *lennyv1alpha1.Runtime) error {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(lennyv1alpha1.AddToScheme(scheme))

@@ -62,11 +62,9 @@ func TestCreateBodyPoolHonorsBackedAuthorizedPin_spec_7_1(t *testing.T) {
 	// (not the disambiguation) selected it. Each pool carries one idle pod.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool-a", "echo-tmpl-a"),
-		podBindTemplate(t, "echo-tmpl-a", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool-a", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-a", "echo-pool-a", "10.244.2.5"),
-		podBindWarmPool(t, "echo-pool-b", "echo-tmpl-b"),
-		podBindTemplate(t, "echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool-b", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-b", "echo-pool-b", "10.244.2.6"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -126,8 +124,7 @@ func TestCreateBodyPoolHonorsPinnedProfileWhenIsolationOmitted_spec_7_1(t *testi
 	// pool's own profile govern rather than reject on the defaulted profile.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "microvm-pool", "microvm-tmpl"),
-		podBindTemplate(t, "microvm-tmpl", "echo", string(isolation.ProfileMicrovm)),
+		podBindPodSet(t, "microvm-pool", "echo", string(isolation.ProfileMicrovm)),
 		podBindIdleAgentPod(t, "sbx-mv", "microvm-pool", "10.244.2.7"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -176,12 +173,10 @@ func TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 	cluster := podBindClient(
 		t,
 		// echo-pool backs echo / sandboxed.
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 		// other-pool backs a different runtime at a stricter isolation.
-		podBindWarmPool(t, "other-pool", "other-tmpl"),
-		podBindTemplate(t, "other-tmpl", "other-runtime", string(isolation.ProfileMicrovm)),
+		podBindPodSet(t, "other-pool", "other-runtime", string(isolation.ProfileMicrovm)),
 		podBindIdleAgentPod(t, "sbx-2", "other-pool", "10.244.2.6"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -253,8 +248,7 @@ func TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))

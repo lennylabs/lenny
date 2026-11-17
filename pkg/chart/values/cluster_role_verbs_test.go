@@ -121,7 +121,7 @@ func TestClusterRolesGrantRequiredVerbs(t *testing.T) {
 // because §5.2 intra-pod capacity is gated by the Redis slot counter with
 // a §12.4 Postgres GetActiveSlotsByPod fallback. A positive-only verb
 // matrix would still pass if a later edit
-// re-added a AgentPod.status write or the SSA claim-list capacity gate to
+// re-added an AgentPod.status write or the SSA claim-list capacity gate to
 // the gateway; this table catches that regression. An empty Verbs slice
 // asserts the resource carries no rule for the role at all.
 //
@@ -152,7 +152,7 @@ var forbiddenVerbs = []struct {
 // TestGatewayHasNoAgentPodStatusWrite asserts the fail-closed half of the
 // §4.6.3 decomposition: the gateway holds no AgentPod.status write surface
 // and no write verb on the AgentPod main resource. diagnosis: a failure
-// here means the gateway ClusterRole regained a AgentPod or AgentPod.status
+// here means the gateway ClusterRole regained an AgentPod or AgentPod.status
 // write grant the WarmPoolController must own exclusively, breaking the
 // single-writer ownership boundary that keeps occupancy a claim projection.
 //

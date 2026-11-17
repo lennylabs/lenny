@@ -124,7 +124,7 @@ func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 	// for one of the ten pool AgentPods (five goroutines share each
 	// AgentPod). Every claim for a given AgentPod carries the deterministic
 	// claim-<podName> name the gateway claim path always uses (§4.6.1), so
-	// the five racers on a AgentPod collide on one resource name: the API
+	// the five racers on an AgentPod collide on one resource name: the API
 	// server's name-uniqueness check plus the lenny-podclaim-guard
 	// CREATE webhook together admit exactly one and reject the rest. A
 	// plain CREATE (not apply) is used so a loser is rejected outright
@@ -301,7 +301,7 @@ func leaderKillSessionID(i int) string {
 }
 
 // leaderKillLabeledAgentPod renders a pool AgentPod carrying the sweep
-// label so the whole seeded pool is deletable in one cleanup. poolRef and
+// label so the whole seeded pool is deletable in one cleanup. podSetRef and
 // runtimeRef are the CRD-required fields; their referents need not exist
 // for the claim-fencing scenario, which keys on the AgentPod name via
 // .spec.agentPodRef.
@@ -314,7 +314,7 @@ metadata:
   labels:
     lenny.dev/test: chaos-leaderkill-claim
 spec:
-  poolRef: chaos-pool
+  podSetRef: chaos-pool
   runtimeRef: chaos-runtime
 `, name, agentNamespace)
 }

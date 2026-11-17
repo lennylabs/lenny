@@ -50,7 +50,7 @@ func degradedCondition(t *testing.T, p lennyv1.PodSet) (metav1.Condition, bool) 
 func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -85,7 +85,7 @@ func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 	stub := &stubRuntimeClassChecker{exists: true}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -114,7 +114,7 @@ func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
 
@@ -143,7 +143,7 @@ func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{err: errors.New("apiserver unreachable")}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -163,7 +163,7 @@ func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 func TestReconcileNilRuntimeClassChecker_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 
 	reconcile(t, c, s) // builds a Reconciler with no RuntimeClasses checker
 
@@ -206,9 +206,9 @@ func TestReaderRuntimeClassChecker_spec_5_3(t *testing.T) {
 func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	tmpl := template(ns)
+	tmpl := pool(ns, 1, 10)
 	tmpl.Spec.IsolationProfile = "" // optional; maps to no RuntimeClass
-	c := newClient(t, s, tmpl, pool(ns, 1, 10))
+	c := newClient(t, s, tmpl)
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -227,7 +227,7 @@ func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
 func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: &stubRuntimeClassChecker{exists: false}}
 	reconcileWith(t, r)
 	cond, _ := degradedCondition(t, getPool(t, c))
@@ -243,7 +243,7 @@ func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 func TestRuntimeClassOverrideRoutesPresenceCheck_spec_17_5(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{

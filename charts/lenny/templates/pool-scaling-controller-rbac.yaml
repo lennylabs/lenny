@@ -1,7 +1,7 @@
 {{- /*
 RBAC for the lenny-pool-scaling-controller ServiceAccount (§4.6.2,
 §4.6.3). The PoolScalingController reconciles Postgres pool definitions
-into the PodSet CRD pair. Per the §4.6.3
+into the PodSet. Per the §4.6.3
 ownership table it owns the PodSet spec and the
 PoolScalingController-owned PodSet spec fields, plus the
 status.sdkWarmCircuitBreaker carve-out on PodSet. It has no
@@ -32,7 +32,7 @@ rules:
   # assigns the PSC create/update/delete on both CRDs (it reconciles the
   # full derived spec from Postgres).
   - apiGroups: ["lenny.dev"]
-    resources: ["podsets", "podsets"]
+    resources: ["podsets"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
   # PodSet status: SSA writes to the PSC-owned
   # status.sdkWarmCircuitBreaker carve-out require get (read current) and

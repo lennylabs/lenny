@@ -54,7 +54,7 @@ func lifetimePod(ns, pool, name, tenant, lifetime string) *corev1.Pod {
 	return p
 }
 
-// reservedIn builds a AgentPod in pool projecting the §6.2 `reserved` phase
+// reservedIn builds an AgentPod in pool projecting the §6.2 `reserved` phase
 // for tenant.
 func reservedIn(ns, pool, name, tenant string) *lennyv1.AgentPod {
 	sb := agentPodIn(ns, pool, name, "reserved")

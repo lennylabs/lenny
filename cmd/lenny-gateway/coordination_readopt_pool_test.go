@@ -133,17 +133,13 @@ func TestPoolResolverPinsPlacedPoolRef_spec_5_2(t *testing.T) {
 	}
 	const ns = "lenny-agents"
 	objs := []*lennyv1.PodSet{
-		{ObjectMeta: metav1.ObjectMeta{Name: "tmpl-a", Namespace: ns}, Spec: lennyv1.PodSetSpec{RuntimeRef: "rt"}},
-		{ObjectMeta: metav1.ObjectMeta{Name: "tmpl-b", Namespace: ns}, Spec: lennyv1.PodSetSpec{RuntimeRef: "rt"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "pool-a", Namespace: ns}, Spec: lennyv1.PodSetSpec{RuntimeRef: "rt"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "pool-b", Namespace: ns}, Spec: lennyv1.PodSetSpec{RuntimeRef: "rt"}},
 	}
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, o := range objs {
 		builder = builder.WithObjects(o)
 	}
-	builder = builder.WithObjects(
-		&lennyv1.PodSet{ObjectMeta: metav1.ObjectMeta{Name: "pool-a", Namespace: ns}, Spec: lennyv1.PodSetSpec{TemplateRef: "tmpl-a"}},
-		&lennyv1.PodSet{ObjectMeta: metav1.ObjectMeta{Name: "pool-b", Namespace: ns}, Spec: lennyv1.PodSetSpec{TemplateRef: "tmpl-b"}},
-	)
 	r := poolResolver{reader: builder.Build(), namespace: ns}
 
 	match, err := r.ResolveReadoptPool(context.Background(), sessionstore.Session{ID: "s4", RuntimeRef: "rt", Pool: "pool-a", PoolRef: "pool-b"})

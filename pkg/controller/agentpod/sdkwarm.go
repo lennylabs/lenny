@@ -61,7 +61,7 @@ func (c sdkWarmConfig) sdkWarmActive() bool {
 }
 
 // resolveSDKWarm best-effort resolves the §6.1 SDK-warm configuration for
-// a AgentPod in-cluster: the runtime's capabilities.preConnect (Runtime CRD
+// an AgentPod in-cluster: the runtime's capabilities.preConnect (Runtime CRD
 // by spec.runtimeRef), the pool's spec.sdkWarmDisabled circuit-breaker
 // flag, and the sdkConnectTimeoutSeconds watchdog budget (PodSet
 // by spec.poolRef). Any lookup miss yields preConnect=false so the pod

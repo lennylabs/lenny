@@ -361,9 +361,9 @@ func lookupOutageCluster(t *testing.T) client.Client {
 	if err := c.Create(context.Background(), &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: deliveryGateNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	seedMaterializeCredPool(t, c, lookupOutageAgentPool, lookupOutageAgentPool+"-tmpl", lookupOutageAgentRuntime)
+	seedMaterializeCredPool(t, c, lookupOutageAgentPool, lookupOutageAgentRuntime)
 	seedMaterializeCredAgentPod(t, c, lookupOutageAgentPod, lookupOutageAgentPool, "10.244.6.21")
-	seedMaterializeCredPool(t, c, lookupOutageToolPool, lookupOutageToolPool+"-tmpl", lookupOutageToolRuntime)
+	seedMaterializeCredPool(t, c, lookupOutageToolPool, lookupOutageToolRuntime)
 	seedMaterializeCredAgentPod(t, c, lookupOutageToolAgentPod, lookupOutageToolPool, "10.244.6.22")
 	return c
 }

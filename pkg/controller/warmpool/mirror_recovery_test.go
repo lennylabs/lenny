@@ -59,7 +59,7 @@ func (m *recordingMirror) RecycleCounters(context.Context, string) (agentpodstat
 func TestMirrorRecoveryReconcilesAllAgentPods(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 5), idleAgentPod(ns, "pod-1"), idleAgentPod(ns, "pod-2"))
+	c := newClient(t, s, pool(ns, 2, 5), idleAgentPod(ns, "pod-1"), idleAgentPod(ns, "pod-2"))
 
 	mirror := &recordingMirror{}
 	m := &warmpool.MirrorReconciler{
@@ -96,7 +96,7 @@ func TestMirrorRecoveryReconcilesAllAgentPods(t *testing.T) {
 func TestMirrorRecoveryEmptyClusterPrunesMirror(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 5))
+	c := newClient(t, s, pool(ns, 2, 5))
 
 	mirror := &recordingMirror{}
 	m := &warmpool.MirrorReconciler{Client: c, Mirror: mirror, Namespaces: []string{ns}}

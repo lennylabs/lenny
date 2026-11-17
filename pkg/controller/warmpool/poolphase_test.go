@@ -74,7 +74,7 @@ func TestDerivePoolPhase(t *testing.T) {
 func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
@@ -122,7 +122,7 @@ func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10),
+	c := newClient(t, s, pool(ns, 3, 10),
 		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"), idleAgentPod(ns, "sb-c"))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
@@ -143,7 +143,7 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 0))
+	c := newClient(t, s, pool(ns, 3, 0))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)
@@ -189,7 +189,7 @@ func TestReconcileEmitsExhaustedWithWarningSeverity(t *testing.T) {
 func TestReconcileWithoutEventsIsSilent(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 	r := &warmpool.Reconciler{Client: c, Scheme: s}
 	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
 		t.Fatalf("Reconcile without Events: %v", err)

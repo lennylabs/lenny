@@ -174,7 +174,7 @@ lenny-ctl Dockerfile BINARY=lenny-ctl
 # built and loaded onto the offline Kind cluster like the rest.
 lenny-pool-scaling-controller Dockerfile BINARY=lenny-pool-scaling-controller
 # TESTING.md §12.9.8 security-tier egress-capture sidecar; the controller injects
-# this image when a AgentPod carries the egress-capture annotation.
+# this image when an AgentPod carries the egress-capture annotation.
 lenny-egress-capture Dockerfile BINARY=lenny-egress-capture
 # The adapter binary image. It is a build base only: the lenny-adapter
 # image below overlays the supervise-probe binary onto it.
@@ -1877,7 +1877,7 @@ fi
 # RuntimeClass. The pools themselves are Postgres-authoritative: the §17.6
 # bootstrap.pools list seeded through the chart (Step 9) creates the pool
 # rows, and the PoolScalingController reconciles each into a
-# PodSet CRD pair in lenny-agents. The AgentPod
+# PodSet in lenny-agents. The AgentPod
 # reconciler reads each pool's Runtime CR spec.image to build the warm
 # agent pods, so the tier-5/8/9 tests that need a live agent pod run
 # against a real workload rather than skipping. The chart's

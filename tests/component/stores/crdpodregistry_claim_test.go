@@ -62,7 +62,7 @@ func claimTestEnv(t *testing.T) (*podregistry.CRDPodRegistry, client.Client, str
 	return r, c, ns
 }
 
-// seedIdleAgentPod creates a AgentPod in the idle phase belonging to pool.
+// seedIdleAgentPod creates an AgentPod in the idle phase belonging to pool.
 func seedIdleAgentPod(t *testing.T, ctx context.Context, c client.Client, ns, name, pool string) {
 	t.Helper()
 	sb := &lennyv1.AgentPod{
@@ -71,7 +71,7 @@ func seedIdleAgentPod(t *testing.T, ctx context.Context, c client.Client, ns, na
 			Namespace: ns,
 			Labels:    map[string]string{podregistry.PoolLabel: pool},
 		},
-		Spec: lennyv1.AgentPodSpec{RuntimeRef: "echo", PoolRef: pool, IsolationProfile: "sandboxed"},
+		Spec: lennyv1.AgentPodSpec{RuntimeRef: "echo", PodSetRef: pool, IsolationProfile: "sandboxed"},
 	}
 	if err := c.Create(ctx, sb); err != nil {
 		t.Fatalf("create sandbox %s: %v", name, err)
@@ -178,7 +178,7 @@ func TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1(t *testing.T) {
 }
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
-// a AgentPod.status writer). ReleasePod deletes the deterministic per-pod
+// an AgentPod.status writer). ReleasePod deletes the deterministic per-pod
 // PodClaim and writes no AgentPod.status against a real API server.
 // A second release of the same pod is idempotent.
 //
@@ -209,7 +209,7 @@ func TestCRDPodRegistryReleaseDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	}
 
 	// AgentPod.status is untouched: the seeded idle phase persists because the
-	// gateway is not a AgentPod.status writer and the WarmPoolController owns the
+	// gateway is not an AgentPod.status writer and the WarmPoolController owns the
 	// projection back to idle.
 	var sb lennyv1.AgentPod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "alpha"}, &sb); err != nil {

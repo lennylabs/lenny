@@ -205,6 +205,8 @@ spec:
   runtimeRef: e2e-nonexistent-runtime
   deliveryMode: proxy
   isolationProfile: sandboxed
+  minWarm: 0
+  maxWarm: 0
 `
 	out, err := dryRunApplyAsPoolScalingController(t, c, goodTemplate)
 	if err != nil {

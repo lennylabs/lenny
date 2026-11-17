@@ -172,7 +172,7 @@ func TestResumeCarriesThePoolRecycleDispositionOntoItsBindResult_spec_5_2(t *tes
 	}
 }
 
-// getResumePod reads the agent Pod backing a AgentPod.
+// getResumePod reads the agent Pod backing an AgentPod.
 func getResumePod(t *testing.T, c client.Client, name string) corev1.Pod {
 	t.Helper()
 	ns := testNamespace(t)

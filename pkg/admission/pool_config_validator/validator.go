@@ -206,7 +206,7 @@ func rejectBudget(msg string) Decision {
 // runs rule set 1 first and rule set 2 only when rule set 1 admits.
 //
 // username is the AdmissionRequest's userInfo.username. The webhook is
-// scoped to the podsets and podsets resources (not the
+// scoped to the podsets resources (not the
 // `/status` subresource), so every request DecideAuthorization sees is a
 // spec write.
 func DecideAuthorization(username string) Decision {

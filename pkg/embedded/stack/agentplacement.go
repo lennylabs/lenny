@@ -43,7 +43,7 @@ const agentNamespace = "lenny-agents"
 const runcRuntimeClassName = "runc"
 
 // The §17.4 echo warm-pool parameters the embedded bring-up applies as a
-// PodSet pair. The pool is a §5.2 single-pod hot
+// PodSet. The pool is a §5.2 single-pod hot
 // pool (warmCount 1, so minWarm = maxWarm = 1) named echo-pool-embedded,
 // matching the working Kind precedent. It runs `standard` (runc) isolation
 // under the §17.4 local-fidelity disclosure, the `restricted` egress
@@ -67,7 +67,7 @@ const (
 	echoPoolDNSPolicy        = "cluster-default"
 )
 
-// applyEchoPool applies the echo PodSet pair to the
+// applyEchoPool applies the echo PodSet to the
 // cluster reachable through kubeconfigPath. Under the §17.4 no-Postgres
 // development profile no PoolScalingController runs, so the canonical
 // poolstore→CRD projection (poolscaling.PoolStoreSource.toConfig) is

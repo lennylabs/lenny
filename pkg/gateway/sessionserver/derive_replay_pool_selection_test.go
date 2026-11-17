@@ -90,8 +90,8 @@ func asPlatformAdmin(req *http.Request) {
 
 // targetPoolCluster is a fake cluster holding echo-pool (echo, sandboxed),
 // micro-pool (echo, microvm), other-pool (other-runtime, sandboxed), and
-// standard-pool (echo, standard). Pool resolution reads pools and templates
-// with List and Get only, so the fake client serves the selection check.
+// standard-pool (echo, standard). Pool resolution lists the PodSets and
+// reads them with Get only, so the fake client serves the selection check.
 func targetPoolCluster(t *testing.T) client.Client {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -99,14 +99,10 @@ func targetPoolCluster(t *testing.T) client.Client {
 		t.Fatalf("AddToScheme: %v", err)
 	}
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindWarmPool(t, "micro-pool", "micro-tmpl"),
-		podBindTemplate(t, "micro-tmpl", "echo", string(isolation.ProfileMicrovm)),
-		podBindWarmPool(t, "other-pool", "other-tmpl"),
-		podBindTemplate(t, "other-tmpl", "other-runtime", string(isolation.ProfileSandboxed)),
-		podBindWarmPool(t, "standard-pool", "standard-tmpl"),
-		podBindTemplate(t, "standard-tmpl", "echo", string(isolation.ProfileStandard)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "micro-pool", "echo", string(isolation.ProfileMicrovm)),
+		podBindPodSet(t, "other-pool", "other-runtime", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "standard-pool", "echo", string(isolation.ProfileStandard)),
 	).Build()
 }
 
@@ -212,11 +208,9 @@ func TestDeriveAndReplayGrantedTargetPoolClaimsOnIt_spec_15_1(t *testing.T) {
 			h, _, _ := claimingServerWith(
 				t, store, rt,
 				func(o *sessionserver.Options) { o.TenantAccess = poolSelectTenantAccess(t, "echo-pool-b") },
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 				podBindIdleAgentPod(t, "sbx-a", "echo-pool", "10.244.2.5"),
-				podBindWarmPool(t, "echo-pool-b", "echo-tmpl-b"),
-				podBindTemplate(t, "echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool-b", "echo", string(isolation.ProfileSandboxed)),
 				podBindIdleAgentPod(t, "sbx-b", "echo-pool-b", "10.244.2.6"),
 			)
 			rr := rt.call(t, h)

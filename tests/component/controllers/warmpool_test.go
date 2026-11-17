@@ -69,14 +69,8 @@ func TestWarmPoolController(t *testing.T) {
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
-		},
-	})
-	mustCreate(t, ctx, c, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.PodSetSpec{
-			TemplateRef: poolName,
-			MinWarm:     3,
-			MaxWarm:     10,
+			MinWarm:          3,
+			MaxWarm:          10,
 		},
 	})
 
@@ -119,12 +113,8 @@ func TestWarmPoolController(t *testing.T) {
 		t.Errorf("pool status warmCount = %d, want 3", pool.Status.WarmCount)
 	}
 
-	var tmpl lennyv1.PodSet
-	if err := c.Get(ctx, req.NamespacedName, &tmpl); err != nil {
-		t.Fatalf("get template: %v", err)
-	}
 	var foundCondition bool
-	for _, cond := range tmpl.Status.Conditions {
+	for _, cond := range pool.Status.Conditions {
 		if cond.Type == "PoolWarmingUp" {
 			foundCondition = true
 			if cond.Reason != "Provisioning" {
@@ -133,7 +123,7 @@ func TestWarmPoolController(t *testing.T) {
 		}
 	}
 	if !foundCondition {
-		t.Errorf("template carries no PoolWarmingUp condition after reconcile")
+		t.Errorf("PodSet carries no PoolWarmingUp condition after reconcile")
 	}
 
 	// A second reconcile must not create more pods: the three created

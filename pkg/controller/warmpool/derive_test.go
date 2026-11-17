@@ -39,7 +39,7 @@ func TestDerivePodStatesProjectsAgentPodFields(t *testing.T) {
 			Status:     lennyv1.AgentPodStatus{Phase: "idle", NodeName: "node-7"},
 		},
 		{
-			// A AgentPod that has not yet reported a phase derives as
+			// An AgentPod that has not yet reported a phase derives as
 			// warming, matching observedPhase.
 			ObjectMeta: metav1.ObjectMeta{Name: "sb-fresh", ResourceVersion: "4100"},
 			Spec:       lennyv1.AgentPodSpec{IsolationProfile: "microvm"},
@@ -80,7 +80,7 @@ func TestDerivePodStatesProjectsAgentPodFields(t *testing.T) {
 
 	fresh := got[1]
 	if fresh.State != "warming" {
-		t.Errorf("a AgentPod with no reported phase derived State = %q, want warming", fresh.State)
+		t.Errorf("an AgentPod with no reported phase derived State = %q, want warming", fresh.State)
 	}
 	if fresh.IsolationProfile != "microvm" {
 		t.Errorf("IsolationProfile = %q, want microvm", fresh.IsolationProfile)
@@ -147,7 +147,7 @@ func TestPoolDrainedConditionDerivation(t *testing.T) {
 
 // TestPoolDrainedTracksEntryTransition drives the PoolWarmingUp and
 // PoolDrained conditions through the common Available→Drained transition via
-// meta.SetStatusCondition (the exact path updateTemplateCondition uses) and
+// meta.SetStatusCondition (the exact path updatePoolConditions uses) and
 // asserts that PoolDrained's lastTransitionTime marks entry into Drained,
 // while PoolWarmingUp's does not. This is the regression for divergence #2:
 // meta.SetStatusCondition refreshes lastTransitionTime only on a Status
@@ -199,7 +199,7 @@ func TestPoolDrainedTracksEntryTransition(t *testing.T) {
 }
 
 // setAt applies a condition through meta.SetStatusCondition at a fixed time,
-// mirroring the updateTemplateCondition write path so the test exercises the
+// mirroring the updatePoolConditions write path so the test exercises the
 // same lastTransitionTime semantics the controller relies on.
 func setAt(conds *[]metav1.Condition, c metav1.Condition, at time.Time) {
 	c.LastTransitionTime = metav1.NewTime(at)

@@ -58,7 +58,7 @@ func guardClient(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(guardScheme(t)).WithObjects(objs...).Build()
 }
 
-// spec: §4.6.1 — the first claim for a AgentPod is admitted.
+// spec: §4.6.1 — the first claim for an AgentPod is admitted.
 func TestPodClaimGuardAllowsCreateWithNoExistingClaim(t *testing.T) {
 	c := guardClient(t)
 	resp := webhook.PodClaimGuard(c)(context.Background(), &admissionv1.AdmissionRequest{
@@ -68,7 +68,7 @@ func TestPodClaimGuardAllowsCreateWithNoExistingClaim(t *testing.T) {
 		Object:    claimRaw(t, "claim-pod-1", "sbx-1"),
 	})
 	if !resp.Allowed {
-		t.Errorf("creating the first claim for a AgentPod should be allowed: %+v", resp.Result)
+		t.Errorf("creating the first claim for an AgentPod should be allowed: %+v", resp.Result)
 	}
 }
 

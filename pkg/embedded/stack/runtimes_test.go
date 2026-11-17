@@ -95,10 +95,10 @@ func TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3(t *testing.T
 
 // The §17.4 echo warm pool is no longer seeded into the bootstrap payload:
 // the no-Postgres development profile registers no PoolScalingController to
-// materialize a poolstore row, so the echo PodSet
-// pair is applied directly (echoPoolObjects). The §5.2 single-pod / §13.2
-// cluster-default field mapping the seed used to carry is now asserted on
-// echoPoolObjects in agentplacement_test.go (TestEchoPoolObjects*).
+// materialize a poolstore row, so the echo PodSet is applied directly
+// (echoPoolObject). The §5.2 single-pod / §13.2 cluster-default field mapping
+// the seed used to carry is now asserted on echoPoolObject in
+// agentplacement_test.go (TestEchoPoolObjects*).
 
 // TestBuildBootstrapSeedCarriesNoPool_spec_4_6_2 asserts the §17.4 Embedded
 // Mode bootstrap seed carries no pool. The PoolScalingController that would

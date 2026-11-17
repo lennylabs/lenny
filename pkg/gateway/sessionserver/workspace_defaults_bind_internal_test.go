@@ -109,23 +109,24 @@ func newWDFixture(t *testing.T, extra []runtimestore.Runtime, opts wdOpts) *wdFi
 	return f
 }
 
-// wdCluster is a fake cluster holding a warm pool, a template, and one idle
+// wdCluster is a fake cluster holding a pool PodSet and one idle
 // sandbox with its pod for each runtime in rts, recording every create,
 // update, and patch in writes.
 func wdCluster(t *testing.T, rts []runtimestore.Runtime, writes *kubeWrites) client.Client {
 	t.Helper()
 	var objs []client.Object
 	for _, rt := range rts {
-		pool, tmpl := rt.Name+"-pool", rt.Name+"-tmpl"
+		pool := rt.Name + "-pool"
 		objs = append(
 			objs,
 			&lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: lookupNS},
-				Spec:       lennyv1.PodSetSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
-			},
-			&lennyv1.PodSet{
-				ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: lookupNS},
-				Spec:       lennyv1.PodSetSpec{RuntimeRef: rt.Name, IsolationProfile: string(isolation.ProfileSandboxed)},
+				Spec: lennyv1.PodSetSpec{
+					RuntimeRef:       rt.Name,
+					IsolationProfile: string(isolation.ProfileSandboxed),
+					MinWarm:          1,
+					MaxWarm:          5,
+				},
 			},
 			&lennyv1.AgentPod{
 				ObjectMeta: metav1.ObjectMeta{Name: rt.Name + "-sbx", Namespace: lookupNS, Labels: map[string]string{warmpool.LabelPool: pool}},

@@ -148,20 +148,19 @@ func TestPodReadersDecodeWhatKubectlPrints(t *testing.T) {
 //
 // TestClaimableReadersSkipClaimedPodsAndAWarmingPool pins the claimability
 // readers: a pod holding a PodClaim is not idle, and a pool whose
-// template reports PoolWarmingUp is not available.
+// PodSet reports PoolWarmingUp is not available.
 func TestClaimableReadersSkipClaimedPodsAndAWarmingPool(t *testing.T) {
 	c, _ := fakeKubectl(
 		t,
 		kubectlRule{match: "podset p -o jsonpath={.spec.minWarm}", outputs: []string{"1 3"}},
-		kubectlRule{match: "podset p", outputs: []string{"tmpl-p"}},
-		kubectlRule{match: "podset tmpl-p", outputs: []string{"True", "False"}},
+		kubectlRule{match: "podset p", outputs: []string{"True", "False"}},
 		kubectlRule{match: "podclaim claim-a --ignore-not-found", outputs: []string{"podclaim/claim-a"}},
 		kubectlRule{match: "podclaim claim-a -o jsonpath={.status.phase}", outputs: []string{"bound", "reserved"}},
 		kubectlRule{match: "podclaim", outputs: []string{""}},
 		kubectlRule{match: "get pods -l lenny.dev/pool=p", outputs: []string{podList(podDoc("a", true, false), podDoc("b", true, false), podDoc("c", true, false))}},
 	)
 	if !PoolWarmingUp(t, c, "p") {
-		t.Fatal("PoolWarmingUp = false on a template reporting True")
+		t.Fatal("PoolWarmingUp = false on a PodSet reporting True")
 	}
 	WaitPoolAvailable(t, c, "p", time.Second)
 	if !ClaimExists(t, c, "a") || ClaimExists(t, c, "b") {

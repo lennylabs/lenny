@@ -22,7 +22,7 @@
 // state a crashed holder leaves behind. The occupancy projection moves the
 // AgentPod to reserved from the claim and back to idle once the GC deletes it;
 // the fixture writes no AgentPod status itself (see orphan_gc_recovery_test.go
-// for why). A real pod is required for the idle assertion: a AgentPod with no
+// for why). A real pod is required for the idle assertion: an AgentPod with no
 // backing pod is retired from idle by the AgentPod-to-Pod reconciler at once.
 // The test skips with a precise diagnosis when the controller Deployment is
 // not Ready or the workload has no idle warm pod.

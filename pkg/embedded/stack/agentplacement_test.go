@@ -117,67 +117,64 @@ func TestUpsertRuntimeCRUpdatesInPlace_spec_5_1(t *testing.T) {
 }
 
 // TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2 asserts the echo
-// PodSet pair the embedded bring-up applies reproduces
-// the canonical poolstore→CRD field mapping (poolscaling.PoolStoreSource.toConfig)
-// for a §5.2 single-pod hot pool: the PodSet sets templateRef to the
-// pool name with minWarm = maxWarm = warmCount, and the PodSet carries
-// the runtimeRef, the §17.4 local-fidelity `standard` isolation, the restricted
-// egress profile, the §13.2 cluster-default DNS opt-out, and the small resource
-// class. A drift between this direct apply and what the controller would have
-// produced from the seed would warm a pod with the wrong template.
+// PodSet the embedded bring-up applies reproduces the canonical
+// poolstore→CRD field mapping (poolscaling.PoolStoreSource.toConfig) for a
+// §5.2 single-pod hot pool: the one PodSet is named after the pool, sets
+// minWarm = maxWarm = warmCount, and carries the runtimeRef, the §17.4
+// local-fidelity `standard` isolation, the restricted egress profile, the
+// §13.2 cluster-default DNS opt-out, and the small resource class. A drift
+// between this direct apply and what the controller would have produced from
+// the seed would warm a pod with the wrong settings.
 //
 // spec: §4.6.2 (the poolstore→CRD projection), §5.2 (single-pod hot pool),
 // §13.2 (cluster-default DNS opt-out), §17.4 (Embedded Mode echo seed).
 func TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2(t *testing.T) {
 	const ns = "lenny-agents"
-	tmpl, pool := echoPoolObjects(ns)
+	ps := echoPoolObject(ns)
 
-	if tmpl.Namespace != ns || pool.Namespace != ns {
-		t.Errorf("CRD pair namespaces = %q/%q, want %q", tmpl.Namespace, pool.Namespace, ns)
+	if ps.Namespace != ns {
+		t.Errorf("PodSet namespace = %q, want %q", ps.Namespace, ns)
 	}
-	if tmpl.Name != EchoPoolName || pool.Name != EchoPoolName {
-		t.Errorf("CRD pair names = %q/%q, want %q", tmpl.Name, pool.Name, EchoPoolName)
+	if ps.Name != EchoPoolName {
+		t.Errorf("PodSet name = %q, want %q", ps.Name, EchoPoolName)
 	}
 	// §5.2 single-pod hot pool: warmCount maps to minWarm = maxWarm.
-	if pool.Spec.TemplateRef != EchoPoolName {
-		t.Errorf("warm pool templateRef = %q, want %q", pool.Spec.TemplateRef, EchoPoolName)
+	if ps.Spec.MinWarm != echoPoolWarmCount || ps.Spec.MaxWarm != echoPoolWarmCount {
+		t.Errorf("PodSet minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+			ps.Spec.MinWarm, ps.Spec.MaxWarm, echoPoolWarmCount, echoPoolWarmCount)
 	}
-	if pool.Spec.MinWarm != echoPoolWarmCount || pool.Spec.MaxWarm != echoPoolWarmCount {
-		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
-			pool.Spec.MinWarm, pool.Spec.MaxWarm, echoPoolWarmCount, echoPoolWarmCount)
+	if ps.Spec.RuntimeRef != EchoRuntimeName {
+		t.Errorf("PodSet runtimeRef = %q, want %q", ps.Spec.RuntimeRef, EchoRuntimeName)
 	}
-	if tmpl.Spec.RuntimeRef != EchoRuntimeName {
-		t.Errorf("template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, EchoRuntimeName)
+	if ps.Spec.IsolationProfile != "standard" {
+		t.Errorf("PodSet isolationProfile = %q, want standard (§17.4 local fidelity)", ps.Spec.IsolationProfile)
 	}
-	if tmpl.Spec.IsolationProfile != "standard" {
-		t.Errorf("template isolationProfile = %q, want standard (§17.4 local fidelity)", tmpl.Spec.IsolationProfile)
+	if ps.Spec.EgressProfile != "restricted" {
+		t.Errorf("PodSet egressProfile = %q, want restricted", ps.Spec.EgressProfile)
 	}
-	if tmpl.Spec.EgressProfile != "restricted" {
-		t.Errorf("template egressProfile = %q, want restricted", tmpl.Spec.EgressProfile)
+	if ps.Spec.DNSPolicy != "cluster-default" {
+		t.Errorf("PodSet dnsPolicy = %q, want cluster-default (§13.2 opt-out)", ps.Spec.DNSPolicy)
 	}
-	if tmpl.Spec.DNSPolicy != "cluster-default" {
-		t.Errorf("template dnsPolicy = %q, want cluster-default (§13.2 opt-out)", tmpl.Spec.DNSPolicy)
+	if ps.Spec.ResourceClass != "small" {
+		t.Errorf("PodSet resourceClass = %q, want small", ps.Spec.ResourceClass)
 	}
-	if tmpl.Spec.ResourceClass != "small" {
-		t.Errorf("template resourceClass = %q, want small", tmpl.Spec.ResourceClass)
-	}
-	// The echo pool sets no execution mode, so the template leaves it empty
+	// The echo pool sets no execution mode, so the PodSet leaves it empty
 	// (the §5.2 session default), matching the toConfig mapping for a row
 	// with no ExecutionMode.
-	if tmpl.Spec.ExecutionMode != "" {
-		t.Errorf("template executionMode = %q, want empty (session default)", tmpl.Spec.ExecutionMode)
+	if ps.Spec.ExecutionMode != "" {
+		t.Errorf("PodSet executionMode = %q, want empty (session default)", ps.Spec.ExecutionMode)
 	}
 }
 
 // TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2 asserts the echo
-// pool pair the bring-up applies is encoded as unstructured objects carrying the
-// lenny.dev/v1alpha1 PodSet GVK and preserving the
-// canonical field mapping, so the C1 dynamic-apply path (apply.go applyObject)
-// can resolve each object's GVR via the RESTMapper and server-side-apply it. The
-// echo seed and the runtime-agnostic CLI verb share this dynamic-apply transport
-// rather than a parallel typed-client upsert; the GVK on each object is what lets
-// the shared applier route them. A missing apiVersion/kind would fail RESTMapping
-// at apply time.
+// pool the bring-up applies is encoded as one unstructured object carrying the
+// lenny.dev/v1alpha1 PodSet GVK and preserving the canonical field mapping, so
+// the C1 dynamic-apply path (apply.go applyObject) can resolve the object's GVR
+// via the RESTMapper and server-side-apply it. The echo seed and the
+// runtime-agnostic CLI verb share this dynamic-apply transport rather than a
+// parallel typed-client upsert; the GVK on the object is what lets the shared
+// applier route it. A missing apiVersion/kind would fail RESTMapping at apply
+// time.
 //
 // spec: §4.6.2 (the bring-up materializes the pool CRDs through the
 // dynamic-apply path), §5.2 (single-pod hot pool), §17.4 (one apply path).
@@ -187,46 +184,33 @@ func TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2(t *testing.T) 
 	if err != nil {
 		t.Fatalf("echoPoolUnstructured: %v", err)
 	}
-	if len(objs) != 2 {
-		t.Fatalf("echoPoolUnstructured returned %d objects, want 2 (PodSet)", len(objs))
+	if len(objs) != 1 {
+		t.Fatalf("echoPoolUnstructured returned %d objects, want 1 (PodSet)", len(objs))
 	}
 
-	byKind := map[string]unstructured.Unstructured{}
-	for _, o := range objs {
-		if got := o.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
-			t.Errorf("%s apiVersion = %q, want %q", o.GetKind(), got, lennyv1alpha1.GroupVersion.String())
-		}
-		if o.GetNamespace() != ns {
-			t.Errorf("%s namespace = %q, want %q", o.GetKind(), o.GetNamespace(), ns)
-		}
-		if o.GetName() != EchoPoolName {
-			t.Errorf("%s name = %q, want %q", o.GetKind(), o.GetName(), EchoPoolName)
-		}
-		byKind[o.GetKind()] = o
+	ps := objs[0]
+	if ps.GetKind() != "PodSet" {
+		t.Errorf("kind = %q, want PodSet", ps.GetKind())
 	}
-
-	tmpl, ok := byKind["PodSet"]
-	if !ok {
-		t.Fatal("echoPoolUnstructured produced no PodSet")
+	if got := ps.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
+		t.Errorf("apiVersion = %q, want %q", got, lennyv1alpha1.GroupVersion.String())
 	}
-	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "runtimeRef"); got != EchoRuntimeName {
-		t.Errorf("template spec.runtimeRef = %q, want %q", got, EchoRuntimeName)
+	if ps.GetNamespace() != ns {
+		t.Errorf("namespace = %q, want %q", ps.GetNamespace(), ns)
 	}
-	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "isolationProfile"); got != "standard" {
-		t.Errorf("template spec.isolationProfile = %q, want standard (§17.4 local fidelity)", got)
+	if ps.GetName() != EchoPoolName {
+		t.Errorf("name = %q, want %q", ps.GetName(), EchoPoolName)
 	}
-
-	pool, ok := byKind["PodSet"]
-	if !ok {
-		t.Fatal("echoPoolUnstructured produced no PodSet")
+	if got, _, _ := unstructured.NestedString(ps.Object, "spec", "runtimeRef"); got != EchoRuntimeName {
+		t.Errorf("PodSet spec.runtimeRef = %q, want %q", got, EchoRuntimeName)
 	}
-	if got, _, _ := unstructured.NestedString(pool.Object, "spec", "templateRef"); got != EchoPoolName {
-		t.Errorf("warm pool spec.templateRef = %q, want %q", got, EchoPoolName)
+	if got, _, _ := unstructured.NestedString(ps.Object, "spec", "isolationProfile"); got != "standard" {
+		t.Errorf("PodSet spec.isolationProfile = %q, want standard (§17.4 local fidelity)", got)
 	}
-	minWarm, _, _ := unstructured.NestedInt64(pool.Object, "spec", "minWarm")
-	maxWarm, _, _ := unstructured.NestedInt64(pool.Object, "spec", "maxWarm")
+	minWarm, _, _ := unstructured.NestedInt64(ps.Object, "spec", "minWarm")
+	maxWarm, _, _ := unstructured.NestedInt64(ps.Object, "spec", "maxWarm")
 	if minWarm != int64(echoPoolWarmCount) || maxWarm != int64(echoPoolWarmCount) {
-		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+		t.Errorf("PodSet minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
 			minWarm, maxWarm, echoPoolWarmCount, echoPoolWarmCount)
 	}
 }

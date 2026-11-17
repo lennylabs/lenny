@@ -15,12 +15,12 @@ import (
 // the Terminating state. spec: §4.6.1 "AgentPod finalizers".
 const FinalizerSessionCleanup = "lenny.dev/session-cleanup"
 
-// AgentPodConditionSOPeercredDisabled marks a AgentPod running in §4.7
+// AgentPodConditionSOPeercredDisabled marks an AgentPod running in §4.7
 // nonce-only mode. Set by the WarmPoolController; the adapter has no
 // apiserver access (§10.3).
 const AgentPodConditionSOPeercredDisabled = "SOPeercredDisabled"
 
-// AgentPodSpec is the desired state of a AgentPod — one managed agent
+// AgentPodSpec is the desired state of an AgentPod — one managed agent
 // pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
 // created from the pool's PodSet, and these fields pin the
 // per-pod identity the controller and gateway resolve against.
@@ -48,7 +48,7 @@ type AgentPodSpec struct {
 	// The WarmPoolController denormalizes it from the pool's
 	// PodSet.spec.executionMode onto each AgentPod (the same
 	// copy-down as IsolationProfile) so the registry can project it
-	// without resolving the template on every read. Empty is treated as
+	// without resolving the PodSet on every read. Empty is treated as
 	// `session`.
 	// +kubebuilder:validation:Enum=session;service
 	// +optional
@@ -95,7 +95,7 @@ type AgentPodSpec struct {
 	RequireSoPeercred *bool `json:"requireSoPeercred,omitempty"`
 }
 
-// AgentPodStatus is the observed state of a AgentPod. status.phase is
+// AgentPodStatus is the observed state of an AgentPod. status.phase is
 // the §6.2 authoritative pod lifecycle state machine; it is the
 // single source of truth that the §4.6 claim path and the
 // lenny-podclaim-guard webhook read.

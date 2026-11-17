@@ -887,7 +887,7 @@ func (f *gatewayFlags) registerPolicyFlags() {
 	f.agentNamespace = flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and AgentPods live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
-		"client-go QPS for the cluster client the gateway uses to list/get/patch PodSet / PodSet / AgentPod / PodClaim. The session-start path issues 5+ API calls per request, so client-go's default of 5 saturates at trivial load. The spec mandates explicit QPS values for the controller (§4.6.1) but leaves the gateway's client throttle to operator tuning; the kube-apiserver's own priority+fairness is the production-bounded gate. Override via LENNY_CLUSTER_QPS.")
+		"client-go QPS for the cluster client the gateway uses to list/get/patch PodSet / AgentPod / PodClaim. The session-start path issues 5+ API calls per request, so client-go's default of 5 saturates at trivial load. The spec mandates explicit QPS values for the controller (§4.6.1) but leaves the gateway's client throttle to operator tuning; the kube-apiserver's own priority+fairness is the production-bounded gate. Override via LENNY_CLUSTER_QPS.")
 	f.clusterBurst = flag.Int("cluster-burst", envInt("LENNY_CLUSTER_BURST", 200),
 		"client-go burst (token-bucket size) for the cluster client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST.")
 	f.defaultIsolationProfile = flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),

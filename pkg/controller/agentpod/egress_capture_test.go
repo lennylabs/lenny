@@ -16,7 +16,7 @@ import (
 )
 
 // spec: 12.9.8
-// diagnosis: a AgentPod annotated with the TESTING.md §12.9.8 egress-capture
+// diagnosis: an AgentPod annotated with the TESTING.md §12.9.8 egress-capture
 // upstream is reconciled into a pod that carries the
 // lenny-egress-capture sidecar and the shared capture volume.
 func TestReconcileInjectsEgressCaptureSidecarFromAnnotation(t *testing.T) {

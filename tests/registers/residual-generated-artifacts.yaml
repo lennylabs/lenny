@@ -24,7 +24,7 @@ entries:
     reason: |-
       a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
   - member: |-
-      charts/lenny/crds/lenny.dev_sandboxclaims.yaml
+      charts/lenny/crds/lenny.dev_podclaims.yaml
     class: generated-artifacts
     disposition: in-class
     reason: |-
@@ -36,13 +36,7 @@ entries:
     reason: |-
       a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
   - member: |-
-      charts/lenny/crds/lenny.dev_sandboxtemplates.yaml
-    class: generated-artifacts
-    disposition: in-class
-    reason: |-
-      a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
-  - member: |-
-      charts/lenny/crds/lenny.dev_sandboxwarmpools.yaml
+      charts/lenny/crds/lenny.dev_podsets.yaml
     class: generated-artifacts
     disposition: in-class
     reason: |-
@@ -54,7 +48,7 @@ entries:
     reason: |-
       a copy of a chart custom resource definition, which the copying producer writes without a generation marker
   - member: |-
-      pkg/embedded/crds/lenny.dev_sandboxclaims.yaml
+      pkg/embedded/crds/lenny.dev_podclaims.yaml
     class: generated-artifacts
     disposition: in-class
     reason: |-
@@ -66,13 +60,7 @@ entries:
     reason: |-
       a copy of a chart custom resource definition, which the copying producer writes without a generation marker
   - member: |-
-      pkg/embedded/crds/lenny.dev_sandboxtemplates.yaml
-    class: generated-artifacts
-    disposition: in-class
-    reason: |-
-      a copy of a chart custom resource definition, which the copying producer writes without a generation marker
-  - member: |-
-      pkg/embedded/crds/lenny.dev_sandboxwarmpools.yaml
+      pkg/embedded/crds/lenny.dev_podsets.yaml
     class: generated-artifacts
     disposition: in-class
     reason: |-

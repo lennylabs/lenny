@@ -48,9 +48,8 @@ const defaultClaimOrphanTimeout = 15 * time.Minute
 const defaultReservedHoldGrace = 60 * time.Second
 
 // defaultGCInterval is the §4.6.1 orphan-claim sweep cadence: the leader
-// lists candidate claims every 60 seconds. spec: §4.6.1 "Orphaned
-// PodClaim detection" — "every 60 seconds, the leader replica lists
-// all PodClaim resources".
+// lists candidate claims every 60 seconds. spec: §4.6.1 (Orphaned
+// PodClaim detection).
 const defaultGCInterval = 60 * time.Second
 
 // orphanedClaims is the §4.6.1 lenny_orphaned_claims_total counter:
@@ -434,9 +433,9 @@ func (g *ClaimGarbageCollector) recordReclaimed(ctx context.Context, claim *lenn
 	g.recordReclaimCondition(ctx, claim.Namespace, claim.Spec.AgentPodRef)
 }
 
-// drainAgentPod transitions a AgentPod to draining via an SSA status patch
+// drainAgentPod transitions an AgentPod to draining via an SSA status patch
 // under the WarmPoolController field manager. The §4.6.3 retry policy applies
-// on HTTP 409. A AgentPod already absent, already draining, or already terminal
+// on HTTP 409. An AgentPod already absent, already draining, or already terminal
 // is a no-op. Draining from idle is intentional and fail-closed: a live-state
 // or empty-status (CREATE-before-status crash) reclaim cannot know whether the
 // crashed gateway scrubbed or even occupied the pod, so the pod is retired

@@ -118,7 +118,7 @@ const httpHost = "127.0.0.1"
 // platform image bundle (overlapping the import with the apply of the
 // non-image objects), creates the dev bearer-trust Secret, applies the
 // embedded manifests, seeds the echo runtime (its registry record, Runtime
-// CR, and its PodSet pair), starts the host-side
+// CR, and its PodSet), starts the host-side
 // gateway forwarder, and waits for the gateway Deployment to report Ready.
 //
 // The host-process control plane (embedded Postgres, Redis, the dev OIDC
@@ -258,7 +258,7 @@ func Up(ctx context.Context, cfg Config) (*Stack, error) {
 		// The Runtime CR was applied in provisionClusterState. Register the echo
 		// runtime record through the gateway /v1/admin/bootstrap path (which
 		// needs the gateway answering) and apply the echo PodSet/
-		// PodSet pair directly, so the unconditionally-registered
+		// PodSet directly, so the unconditionally-registered
 		// WarmPoolController pre-warms the pod with no Postgres-backed
 		// PoolScalingController. spec: §4.6.2, §5.2, §15.4.4.
 		if err := s.seedEcho(ctx, forwarderAddr, res, out); err != nil {
@@ -348,7 +348,7 @@ func (s *Stack) applyControlPlane(ctx context.Context, res substrateResult, keyF
 }
 
 // seedEcho registers the echo runtime record through the gateway bootstrap
-// path and applies the echo warm-pool CRD pair directly. It runs after the
+// path and applies the echo PodSet directly. It runs after the
 // gateway is ready (the bootstrap call dials it) and is gated on the import
 // having resolved an echo digest: with no resolved digest the Runtime CR was
 // not applied, so materializing a pool would only ImagePullBackOff. spec:

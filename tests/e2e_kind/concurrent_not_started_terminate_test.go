@@ -17,7 +17,7 @@ import (
 // agentPodPhaseOf reads the pod's AgentPod status.phase.
 func agentPodPhaseOf(t *testing.T, c *kind.Cluster, pod string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandbox", pod, "-o", "jsonpath={.status.phase}")
+	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "agentpod", pod, "-o", "jsonpath={.status.phase}")
 	if err != nil {
 		t.Fatalf("read the AgentPod phase of %s: %v\n%s", pod, err, out)
 	}

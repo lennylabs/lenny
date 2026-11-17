@@ -168,34 +168,33 @@ func materializeCluster(t *testing.T) client.Client {
 		t.Fatalf("create namespace: %v", err)
 	}
 
-	seedMaterializePool(t, c, matOKPool, "tmpl-ok", matOKRuntime)
+	seedMaterializePool(t, c, matOKPool, matOKRuntime)
 	seedMaterializeIdleAgentPod(t, c, matOKAgentPod, matOKPool, "10.244.3.1")
 
-	seedMaterializePool(t, c, matRacePool, "tmpl-race", matRaceRuntime)
+	seedMaterializePool(t, c, matRacePool, matRaceRuntime)
 	seedMaterializeIdleAgentPod(t, c, matRaceAgentPod, matRacePool, "10.244.3.2")
 
-	seedMaterializePool(t, c, matWarmingPool, "tmpl-warming", matWarmingRuntime)
-	seedMaterializeWarming(t, c, "tmpl-warming", matWarmingPool)
+	seedMaterializePool(t, c, matWarmingPool, matWarmingRuntime)
+	seedMaterializeWarming(t, c, matWarmingPool)
 
 	return c
 }
 
 // seedMaterializePool creates a PodSet for the
 // given runtime under the sandboxed §5.3 profile.
-func seedMaterializePool(t *testing.T, c client.Client, pool, tmpl, runtimeRef string) {
+func seedMaterializePool(t *testing.T, c client.Client, pool, runtimeRef string) {
 	t.Helper()
 	ctx := context.Background()
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: crossEnvNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool %s: %v", pool, err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: crossEnvNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template %s: %v", tmpl, err)
+		t.Fatalf("create pod set %s: %v", pool, err)
 	}
 }
 
@@ -228,30 +227,23 @@ func seedMaterializeIdleAgentPod(t *testing.T, c client.Client, name, pool, podI
 // PodSet and a warm-but-not-ready count on the pool, so ResolvePool
 // returns the PoolWarmingError the materialization surfaces as
 // RUNTIME_UNAVAILABLE. The pool has no idle AgentPod.
-func seedMaterializeWarming(t *testing.T, c client.Client, tmpl, pool string) {
+func seedMaterializeWarming(t *testing.T, c client.Client, pool string) {
 	t.Helper()
 	ctx := context.Background()
-	var template lennyv1.PodSet
-	if err := c.Get(ctx, client.ObjectKey{Namespace: crossEnvNS, Name: tmpl}, &template); err != nil {
-		t.Fatalf("get template %s: %v", tmpl, err)
+	var ps lennyv1.PodSet
+	if err := c.Get(ctx, client.ObjectKey{Namespace: crossEnvNS, Name: pool}, &ps); err != nil {
+		t.Fatalf("get pod set %s: %v", pool, err)
 	}
-	template.Status.Conditions = []metav1.Condition{{
+	ps.Status.Conditions = []metav1.Condition{{
 		Type:               "PoolWarmingUp",
 		Status:             metav1.ConditionTrue,
 		Reason:             "Provisioning",
 		Message:            "bootstrapping",
 		LastTransitionTime: metav1.Now(),
 	}}
-	if err := c.Status().Update(ctx, &template); err != nil {
-		t.Fatalf("seed warming template status %s: %v", tmpl, err)
-	}
-	var warm lennyv1.PodSet
-	if err := c.Get(ctx, client.ObjectKey{Namespace: crossEnvNS, Name: pool}, &warm); err != nil {
-		t.Fatalf("get warm pool %s: %v", pool, err)
-	}
-	warm.Status.WarmCount, warm.Status.ReadyCount = 2, 0
-	if err := c.Status().Update(ctx, &warm); err != nil {
-		t.Fatalf("seed warming pool status %s: %v", pool, err)
+	ps.Status.WarmCount, ps.Status.ReadyCount = 2, 0
+	if err := c.Status().Update(ctx, &ps); err != nil {
+		t.Fatalf("seed warming pod set status %s: %v", pool, err)
 	}
 }
 

@@ -123,6 +123,6 @@ func TestAgentPodServedSchemaExposesRequireSoPeercred(t *testing.T) {
 // read the PSC-mirrored acknowledgment, so an acknowledged pool can never
 // enter nonce-only mode. Regenerate the CRD.
 func TestPodSetServedSchemaExposesAcknowledgeNonceOnlyAuth(t *testing.T) {
-	crd := loadChartCRD(t, "lenny.dev_sandboxtemplates.yaml")
+	crd := loadChartCRD(t, "lenny.dev_podsets.yaml")
 	assertBooleanField(t, crd, "acknowledgeNonceOnlyAuth")
 }

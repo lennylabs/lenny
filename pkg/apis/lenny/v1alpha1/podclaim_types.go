@@ -7,7 +7,7 @@ import (
 )
 
 // PodClaimSpec is the desired state of a PodClaim — the §4.6
-// per-pod-occupancy claim on a AgentPod pod. A gateway replica acquires a
+// per-pod-occupancy claim on an AgentPod pod. A gateway replica acquires a
 // pod by creating a PodClaim with the deterministic name
 // `claim-<podName>`; exactly one CREATE wins and the others receive an
 // AlreadyExists conflict. The session-to-pod binding lives on the
@@ -52,7 +52,6 @@ type PodClaimStatus struct {
 	// drains and terminates the pod. Per §4.6.3 only `released` and
 	// `failed` are terminal. Returning a pod to the pool (`reserved → idle`
 	// on hold expiry) is the claim DELETE edge, not a phase value.
-	// spec: §4.6.3 (SandboxClaim.status.phase enumeration)
 	// +kubebuilder:validation:Enum=bound;recycling;reserved;released;failed
 	// +optional
 	Phase string `json:"phase,omitempty"`
@@ -116,7 +115,7 @@ type PodClaimStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 
 // PodClaim is the lenny.dev/v1alpha1 record of a per-pod-occupancy
-// claim on a AgentPod pod (§4.6). Gateway replicas create it with the
+// claim on an AgentPod pod (§4.6). Gateway replicas create it with the
 // deterministic name `claim-<podName>` so exactly one wins a contested
 // pod through the API server's CREATE uniqueness.
 type PodClaim struct {

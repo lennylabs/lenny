@@ -217,9 +217,9 @@ func TestReleasePodPropagatesDeleteError(t *testing.T) {
 }
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
-// a AgentPod.status writer). ReleasePod deletes the deterministic per-pod
+// an AgentPod.status writer). ReleasePod deletes the deterministic per-pod
 // PodClaim and leaves AgentPod.status untouched. The release reason
-// no longer maps to a AgentPod phase.
+// no longer maps to an AgentPod phase.
 func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	cli := newFakeClient(t, seedAgentPod("alpha", "echo-pool", "claimed"))
 	// Seed the per-pod claim the release deletes.
@@ -244,7 +244,7 @@ func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 		client.ObjectKey{Namespace: "lenny-agents", Name: "claim-alpha"}, &got); !apierrors.IsNotFound(err) {
 		t.Errorf("claim still present after release: err = %v, want NotFound", err)
 	}
-	// AgentPod.status is untouched: the gateway is not a AgentPod.status writer,
+	// AgentPod.status is untouched: the gateway is not an AgentPod.status writer,
 	// so the stored phase stays as the WarmPoolController last projected it and
 	// no session/tenant is cleared on AgentPod.status here.
 	var sb lennyv1.AgentPod

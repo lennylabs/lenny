@@ -130,8 +130,7 @@ func TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1(t *testing.T) {
 			rt.seed(t, store)
 			h, cluster, _ := claimingServer(
 				t, store, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 				podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
@@ -173,8 +172,7 @@ func TestDeriveAndReplayClaimFailureLeavesNoRowAndNoCopy_spec_7_1(t *testing.T) 
 			rt.seed(t, store)
 			h, _, snap := claimingServer(
 				t, store, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusServiceUnavailable {
@@ -211,8 +209,7 @@ func TestDeriveAndReplayInsertFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			rt.seed(t, mem)
 			h, cluster, _ := claimingServer(
 				t, &insertRejectingStore{Store: mem}, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 				podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
@@ -246,8 +243,7 @@ func TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			rt.seed(t, store)
 			h, cluster, _ := claimingServer(
 				t, store, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 				podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)

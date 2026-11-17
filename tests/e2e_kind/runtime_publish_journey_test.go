@@ -163,8 +163,8 @@ func TestRuntimePublishJourney(t *testing.T) {
 
 	// Step: apply the Runtime CRD. §26 requires it explicitly: a
 	// session against a placeholder-pinned reference-runtime record
-	// "requires a runnable image digest, an applied Runtime CRD
-	// instance, and a warm pool before it starts." The admin
+	// needs a runnable image digest, an applied Runtime object, and a
+	// warm pool before it starts. The admin
 	// registration above only wrote the Postgres-side record; the
 	// AgentPod reconciler reads a runtime's image from the CRD object
 	// directly (pkg/controller/agentpod), not from that record.
@@ -203,7 +203,7 @@ spec:
 	// Step: create a warm pool for the runtime via POST /v1/admin/pools
 	// (§15.1), the same admin surface an operator uses. The
 	// PoolScalingController reconciles this Postgres-authoritative pool
-	// row into a PodSet CRD pair, and the
+	// row into a PodSet, and the
 	// AgentPod reconciler then produces a real agent pod from it.
 	poolPath := filepath.Join(workDir, "pool.json")
 	poolBody := fmt.Sprintf(`{
@@ -253,9 +253,9 @@ spec:
 
 	// Step: wait for the pool to reach a real pod. POST /v1/admin/pools
 	// only writes the Postgres-authoritative pool row; the
-	// PoolScalingController reconciles it into a PodSet/
-	// PodSet CRD pair on its own poll interval, and only once
-	// that CRD pair exists can the gateway's pool resolver (which lists
+	// PoolScalingController reconciles it into a PodSet on its own
+	// poll interval, and only once that PodSet exists can the
+	// gateway's pool resolver (which lists
 	// PodSets, not Postgres rows) find it at all — before then,
 	// session creation fails closed with the non-retried
 	// "no warm pool matches the runtime" rather than a warming-up
@@ -506,7 +506,7 @@ func stripTag(ref string) string {
 // not require the pod's containers to be Ready (that is the further
 // §5.2 PoolWarmingUp window createAndStartTolerant covers); it only
 // confirms the PoolScalingController has reconciled the pool into a
-// live PodSet CRD pair and the AgentPod
+// live PodSet and the AgentPod
 // reconciler has scheduled a pod from it.
 func waitForPoolPod(t *testing.T, c *kind.Cluster, poolName string, timeout time.Duration) {
 	t.Helper()
@@ -559,7 +559,7 @@ func createAndStartTolerant(t *testing.T, ctx context.Context, d *sessiondriver.
 // this test's own name prefix left on the shared Kind cluster, keeping
 // the pool this run is about to create. A pool row is authoritative in
 // Postgres, so the pool is removed through the same admin surface the
-// test creates it with; deleting only the reconciled CRD pair would let
+// test creates it with; deleting only the reconciled PodSet would let
 // the pool controller rebuild it.
 func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL, keepPool string) {
 	t.Helper()
@@ -601,7 +601,7 @@ type journeyPoolReclaim struct {
 	deletePool  func(pool string) (string, error)
 	poolPresent func(pool string) (bool, error)
 	// removeObjects deletes the reconciled PodSet and
-	// PodSet pair directly. It runs only once the admin delete
+	// PodSet directly. It runs only once the admin delete
 	// has removed the authoritative Postgres row, so the pool controller
 	// has nothing left to rebuild the pair from.
 	removeObjects func(pool string) (string, error)
@@ -631,7 +631,7 @@ func newJourneyPoolReclaim(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL
 		},
 		removeObjects: func(pool string) (string, error) {
 			out, err := c.KubectlOut(t, "-n", "lenny-agents", "delete",
-				"podset,podset", pool, "--ignore-not-found", "--timeout=60s")
+				"podset", pool, "--ignore-not-found", "--timeout=60s")
 			if err != nil {
 				return out, fmt.Errorf("delete the reconciled objects of pool %s: %w", pool, err)
 			}

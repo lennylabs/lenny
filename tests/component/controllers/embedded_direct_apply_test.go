@@ -23,7 +23,7 @@ import (
 
 // TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4 exercises the §17.4
 // no-Postgres pool-materialization path against a real kube-apiserver: the
-// embedded bring-up applies the echo PodSet pair
+// embedded bring-up applies the echo PodSet
 // directly (no Postgres, no PoolScalingController), and the unconditionally-
 // registered WarmPoolController reconciles the pool to a warm pod when the
 // `runc` RuntimeClass the `standard` isolation profile resolves to is present.
@@ -48,7 +48,7 @@ import (
 // no-Postgres pool-materialization path is broken.
 //
 // spec: §17.4 (Embedded Mode echo seed materializes a warm pod without
-// Postgres), §4.6.2 (the bring-up applies the CRD pair directly), §5.2
+// Postgres), §4.6.2 (the bring-up applies the PodSet directly), §5.2
 // (single-pod hot pool, PoolWarmingUp), §5.3 (standard→runc RuntimeClass gate).
 func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	env := sharedEnv.Start(t)
@@ -70,7 +70,7 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	claimRuntimeClasses(t, c, "runc")
 
 	// The §4.6.2 direct apply: with no Postgres and no PoolScalingController,
-	// the bring-up applies the echo PodSet pair
+	// the bring-up applies the echo PodSet
 	// directly. This is the path the embedded stack runs at lenny up.
 	if err := stack.ApplyEchoPoolFromConfig(ctx, env.RESTConfig(), ns); err != nil {
 		t.Fatalf("direct apply echo pool: %v", err)
@@ -90,15 +90,11 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 		t.Errorf("applied pool minWarm/maxWarm = %d/%d, want 1/1 (single-pod hot pool)",
 			pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
-	var tmpl lennyv1.PodSet
-	if err := c.Get(ctx, key, &tmpl); err != nil {
-		t.Fatalf("get directly-applied PodSet: %v", err)
+	if pool.Spec.RuntimeRef != stack.EchoRuntimeName {
+		t.Errorf("applied PodSet runtimeRef = %q, want %q", pool.Spec.RuntimeRef, stack.EchoRuntimeName)
 	}
-	if tmpl.Spec.RuntimeRef != stack.EchoRuntimeName {
-		t.Errorf("applied template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, stack.EchoRuntimeName)
-	}
-	if tmpl.Spec.IsolationProfile != "standard" {
-		t.Errorf("applied template isolationProfile = %q, want standard (§17.4 local fidelity)", tmpl.Spec.IsolationProfile)
+	if pool.Spec.IsolationProfile != "standard" {
+		t.Errorf("applied PodSet isolationProfile = %q, want standard (§17.4 local fidelity)", pool.Spec.IsolationProfile)
 	}
 
 	// ----- Idempotent re-apply -----
@@ -174,11 +170,11 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	// The §5.2 PoolWarmingUp condition is surfaced during the initial fill of
 	// the minWarm > 0 pool; the session-start path maps it to 503
 	// RUNTIME_UNAVAILABLE until the pod is idle.
-	if err := c.Get(ctx, key, &tmpl); err != nil {
-		t.Fatalf("get template after warm: %v", err)
+	if err := c.Get(ctx, key, &pool); err != nil {
+		t.Fatalf("get PodSet after warm: %v", err)
 	}
 	var warming bool
-	for _, cond := range tmpl.Status.Conditions {
+	for _, cond := range pool.Status.Conditions {
 		if cond.Type == "PoolWarmingUp" {
 			warming = true
 			if cond.Reason != "Provisioning" {
@@ -187,6 +183,6 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 		}
 	}
 	if !warming {
-		t.Errorf("template carries no PoolWarmingUp condition; the §5.2 initial-fill 503 RUNTIME_UNAVAILABLE window is not surfaced")
+		t.Errorf("PodSet carries no PoolWarmingUp condition; the §5.2 initial-fill 503 RUNTIME_UNAVAILABLE window is not surfaced")
 	}
 }

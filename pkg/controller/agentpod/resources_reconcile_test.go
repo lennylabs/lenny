@@ -51,15 +51,11 @@ func runtimePodContainer(t *testing.T, c client.Client) corev1.Container {
 // container. spec: §5.2, §6.4.
 func TestReconcileStampsTemplateResourceClass_spec_6_4_413(t *testing.T) {
 	s := newScheme(t)
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: testRuntime(t), ResourceClass: "small"},
-	}
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: testRuntime(t), ResourceClass: "small", MinWarm: 1, MaxWarm: 3},
 	}
-	c := newClient(t, s, agentPodCR(t, ""), runtimeCR(t), tmpl, pool)
+	c := newClient(t, s, agentPodCR(t, ""), runtimeCR(t), pool)
 	reconcileResources(t, c, s)
 
 	cont := runtimePodContainer(t, c)
@@ -68,9 +64,8 @@ func TestReconcileStampsTemplateResourceClass_spec_6_4_413(t *testing.T) {
 	}
 }
 
-// TestReconcileStampsSandboxResourceClass verifies the §12.6 CreatePod
+// TestReconcileStampsAgentPodResourceClass verifies the §12.6 CreatePod
 // path: AgentPod.spec.resourceClass is set directly and takes precedence.
-// spec: §12.6 (Interface Design)
 func TestReconcileStampsAgentPodResourceClass(t *testing.T) {
 	s := newScheme(t)
 	sb := agentPodCR(t, "")

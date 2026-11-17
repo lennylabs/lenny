@@ -12,8 +12,8 @@ import (
 )
 
 const (
-	// ReadinessGateAgentPodReady is the §6.1 pod readiness gate
-	// ("Marked 'idle and claimable' via readiness gate"). The pod spec
+	// ReadinessGateAgentPodReady is the §6.1 pod readiness gate that marks
+	// a pod idle and claimable. The pod spec
 	// declares the gate so the kubelet holds Pod.Ready False — and the pod
 	// un-claimable — until the WarmPoolController asserts the pod is warm.
 	// Container readiness alone does not make a pod claimable; the

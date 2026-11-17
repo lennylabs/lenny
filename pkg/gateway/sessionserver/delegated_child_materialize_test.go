@@ -73,8 +73,7 @@ func materializeCluster(t *testing.T, adapterOpts ...grpc.ServerOption) (client.
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	return cluster, podBindAdapterDialer(t, adapterSrv, adapterOpts...), wsRoot
@@ -402,13 +401,14 @@ func TestMaterializeDelegatedChildNonCreatedGuard_spec_8_2(t *testing.T) {
 	}
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: testNS(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "echo",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: testNS(t)},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}
-	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool).Build()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,
@@ -444,13 +444,14 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialRevoked)
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: testNS(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "echo",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: testNS(t)},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}
-	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool).Build()
 	registry := podsession.NewRegistry()
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader:         true,

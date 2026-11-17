@@ -8,7 +8,7 @@
 // lifecycle subpackage; the Pod is assembled by the podspec subpackage.
 // This file is the controller-runtime adapter that observes the Pod,
 // applies the plan, and writes the AgentPod status. The Pod is named
-// after the AgentPod and carries an owner reference to it, so a AgentPod
+// after the AgentPod and carries an owner reference to it, so an AgentPod
 // deletion garbage-collects its Pod.
 package agentpod
 
@@ -75,7 +75,7 @@ type Reconciler struct {
 	// (EgressCaptureUpstreamAnnotation).
 	EgressCaptureImage string
 	// DevMode is the platform global.devMode (LENNY_DEV_MODE=true). When
-	// true, a AgentPod that omits an isolation profile defaults its pod to
+	// true, an AgentPod that omits an isolation profile defaults its pod to
 	// `standard` (runc) per §5.3, so a developer can launch pods
 	// on a cluster without gVisor installed.
 	DevMode bool
@@ -111,7 +111,7 @@ type Reconciler struct {
 	// deployment) leaves the pod without the bundle. spec: §13.2.
 	ObjectStoreCAConfigMap string
 	// StatusDedup is the §4.6.1 statusUpdateDeduplicationWindow gate. When
-	// set, a AgentPod status write within the window of the previous write
+	// set, an AgentPod status write within the window of the previous write
 	// for the same AgentPod is deferred and the reconcile requeued so the
 	// trailing status lands once the window expires. A nil gate disables
 	// deduplication.
@@ -194,7 +194,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// §4.6.1 AgentPod finalizers: a AgentPod under deletion stays in
+	// §4.6.1 AgentPod finalizers: an AgentPod under deletion stays in
 	// Terminating until no active PodClaim references it, at which
 	// point the session-cleanup finalizer is removed and Kubernetes
 	// garbage-collects the backing pod.
@@ -646,7 +646,7 @@ func (r *Reconciler) createPod(ctx context.Context, sb *lennyv1.AgentPod) error 
 	} else if sb.Spec.RequireSoPeercred != nil && !*sb.Spec.RequireSoPeercred {
 		// spec: §4.5 revert invariant — the no-flag render path must clear a
 		// stale carrier so the carrier and the pod's actual render decision
-		// coincide (§4.4). A AgentPod object reused across a carrier write that
+		// coincide (§4.4). An AgentPod object reused across a carrier write that
 		// preceded a failed pod Create plus an operator revert of the Runtime
 		// field reaches this branch on the create retry: resolveNonceOnly now
 		// returns nil (the reverted Runtime renders no flag), but the persisted
@@ -1019,7 +1019,7 @@ func buildAgentPodStatusPatch(live *lennyv1.AgentPod, decision lifecycle.Decisio
 }
 
 // nonceOnlyConditions returns the WPC-owned condition entries derived from
-// the AgentPod's §4.7 nonce-only carrier. A AgentPod whose
+// the AgentPod's §4.7 nonce-only carrier. An AgentPod whose
 // AgentPod.spec.requireSoPeercred is explicitly false was rendered in
 // nonce-only mode, so it carries SOPeercredDisabled=True; any other carrier
 // value carries no entry, so the WPC owns no SOPeercredDisabled condition and

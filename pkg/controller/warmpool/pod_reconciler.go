@@ -104,13 +104,13 @@ var preIdleStates = map[string]bool{
 //   - replaces an idle pod whose certificate will expire within the
 //     configured threshold by transitioning its AgentPod to draining; the
 //     PodSet reconciler then recreates a fresh pod toward
-//     minWarm (§4.6.1 "Track certificate expiry on idle pods", §10.3). A claimed or active pod is never disrupted — its cert is
+//     minWarm (§4.6.1, §10.3). A claimed or active pod is never disrupted — its cert is
 //     refreshed in place via filesystem-watching TLS (§10.3).
 //
 // The reconciler is leader-elected (it carries no NeedLeaderElection
 // override, so the controller-runtime default applies) so only one
-// replica writes labels and drains pods, matching the §4.6.1 "the
-// leader reads the target Node" wording.
+// replica writes labels and drains pods, as §4.6.1 assigns the Node read
+// to the leader.
 type PodReconciler struct {
 	// Client is the controller-runtime client backed by the manager
 	// cache. The Pod informer is shared with the AgentPod-to-Pod
@@ -638,7 +638,7 @@ func (r *PodReconciler) reconcileDrainRequest(ctx context.Context, pod *corev1.P
 	return true, nil
 }
 
-// patchAgentPodDraining transitions a AgentPod to the draining phase via
+// patchAgentPodDraining transitions an AgentPod to the draining phase via
 // SSA under the WPC field manager, re-applying the live WPC-owned status
 // fields so the partial apply does not clobber PodName/NodeName/PodIP.
 // It is a no-op when the AgentPod is absent or already draining. When

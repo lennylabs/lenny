@@ -176,15 +176,14 @@ func recycleCluster(t *testing.T) client.Client {
 	}
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "recycle-pool", Namespace: recycleNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "recycle-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "echo",
+			IsolationProfile: "microvm",
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool: %v", err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "recycle-tmpl", Namespace: recycleNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: "microvm"},
-	}); err != nil {
-		t.Fatalf("create template: %v", err)
+		t.Fatalf("create pod set: %v", err)
 	}
 	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{

@@ -2180,7 +2180,7 @@ Community contributors and integrators need clear guarantees about which APIs ar
 
 3. **Runtime adapter protocol:** Versioned independently (see [Section 15.4](#154-runtime-adapter-specification)). The adapter advertises a protocol version at INIT; the gateway selects a compatible version. Major version changes are breaking.
 
-4. **CRDs:** All Lenny CRDs (`PodSet`, `PodSet`, `AgentPod`, `PodClaim`) ship initially at **`v1alpha1`** and follow the graduation path `v1alpha1` → `v1beta1` → `v1`. Graduation criteria: `v1alpha1` → `v1beta1` requires Phase 2 benchmark completion and no breaking field changes for 60 days; `v1beta1` → `v1` requires GA load-test sign-off (Phase 14.5) and no breaking changes for 6 months.
+4. **CRDs:** All Lenny CRDs (`PodSet`, `AgentPod`, `PodClaim`) ship initially at **`v1alpha1`** and follow the graduation path `v1alpha1` → `v1beta1` → `v1`. Graduation criteria: `v1alpha1` → `v1beta1` requires Phase 2 benchmark completion and no breaking field changes for 60 days; `v1beta1` → `v1` requires GA load-test sign-off (Phase 14.5) and no breaking changes for 6 months.
 
    **Conversion webhook deployment.** Multi-version coexistence during upgrades depends on a running conversion webhook. The conversion webhook (`lenny-crd-conversion`) must be deployed **before** adding a new served version to any CRD — the API server begins routing conversion requests to the webhook as soon as `spec.conversion.strategy: Webhook` is set, and a missing webhook causes all CRD operations to fail. The deployment procedure for each version graduation is:
    1. Deploy the `lenny-crd-conversion` Deployment (from `charts/lenny/templates/conversion-webhook.yaml`) and wait for its pods to reach `Ready` state.

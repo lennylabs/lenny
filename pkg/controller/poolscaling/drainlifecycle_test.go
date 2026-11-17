@@ -15,17 +15,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 )
 
-// seedWarmPool returns a PodSet object with the given spec and
+// seedPodSet returns the test pool's PodSet with the given warm targets and
 // status.readyCount, for pre-loading into the fake client.
-func seedWarmPool(minWarm, maxWarm, readyCount int32) *lennyv1.PodSet {
+func seedPodSet(minWarm, maxWarm, readyCount int32) *lennyv1.PodSet {
 	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: testPool, MinWarm: minWarm, MaxWarm: maxWarm},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "claude-code", MinWarm: minWarm, MaxWarm: maxWarm},
 		Status:     lennyv1.PodSetStatus{ReadyCount: readyCount},
 	}
 }
 
-func warmPoolExists(t *testing.T, c client.Client) bool {
+func podSetExists(t *testing.T, c client.Client) bool {
 	t.Helper()
 	var p lennyv1.PodSet
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testPool}, &p)
@@ -33,7 +33,7 @@ func warmPoolExists(t *testing.T, c client.Client) bool {
 		return false
 	}
 	if err != nil {
-		t.Fatalf("get warm pool: %v", err)
+		t.Fatalf("get PodSet: %v", err)
 	}
 	return true
 }
@@ -51,16 +51,18 @@ func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	// getPodSet fails the test when the PodSet is absent: the PodSet is
+	// retained so the pool can be restored on re-activation.
+	pool := getPodSet(t, c)
 	if pool.Spec.MinWarm != 0 {
 		t.Errorf("paused variant minWarm = %d, want 0", pool.Spec.MinWarm)
 	}
 	if pool.Spec.MaxWarm != 10 {
 		t.Errorf("paused variant maxWarm = %d, want 10 (unchanged)", pool.Spec.MaxWarm)
 	}
-	// The PodSet is retained so the pool can be restored on
-	// re-activation.
-	_ = getTemplate(t, c)
+	if pool.Spec.RuntimeRef != "claude-code" {
+		t.Errorf("paused variant runtimeRef = %q, want claude-code (pod settings kept)", pool.Spec.RuntimeRef)
+	}
 }
 
 // spec: §10.7 — a concluded variant pool with warm pods still
@@ -68,7 +70,7 @@ func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
 func TestSyncDrainAndDeleteDrainsWhileReady(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(seedWarmPool(3, 10, 4)).
+		WithObjects(seedPodSet(3, 10, 4)).
 		WithStatusSubresource(&lennyv1.PodSet{}).
 		Build()
 	cfg := config()
@@ -78,23 +80,21 @@ func TestSyncDrainAndDeleteDrainsWhileReady(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if !warmPoolExists(t, c) {
-		t.Fatal("warm pool deleted while readyCount > 0; want retained for drain")
+	if !podSetExists(t, c) {
+		t.Fatal("PodSet deleted while readyCount > 0; want retained for drain")
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Spec.MinWarm != 0 || pool.Spec.MaxWarm != 0 {
 		t.Errorf("draining pool min/max = %d/%d, want 0/0", pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
-	// The PodSet is not deleted.
-	_ = getTemplate(t, c)
 }
 
 // spec: §10.7 — once status.readyCount reaches 0 the
-// PodSet CRD is deleted; the PodSet is retained.
+// PodSet is deleted, and a later Sync does not recreate it.
 func TestSyncDrainAndDeleteDeletesWhenDrained(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(seedWarmPool(0, 0, 0)).
+		WithObjects(seedPodSet(0, 0, 0)).
 		WithStatusSubresource(&lennyv1.PodSet{}).
 		Build()
 	cfg := config()
@@ -104,16 +104,19 @@ func TestSyncDrainAndDeleteDeletesWhenDrained(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if warmPoolExists(t, c) {
-		t.Fatal("warm pool not deleted after readyCount reached 0")
+	if podSetExists(t, c) {
+		t.Fatal("PodSet not deleted after readyCount reached 0")
 	}
-	// PodSet retained per §10.7.
-	_ = getTemplate(t, c)
+	if err := syncOnce(t, c, src); err != nil {
+		t.Fatalf("second Sync: %v", err)
+	}
+	if podSetExists(t, c) {
+		t.Fatal("a Sync after the drain recreated the deleted PodSet")
+	}
 }
 
 // A concluded experiment whose variant pool was already reclaimed must
-// not be recreated: drain-and-delete on an absent pool is a no-op, and
-// the PodSet is still reconciled.
+// not be recreated: drain-and-delete on an absent PodSet is a no-op.
 func TestSyncDrainAndDeleteAbsentPoolIsNoOp(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).
@@ -126,8 +129,7 @@ func TestSyncDrainAndDeleteAbsentPoolIsNoOp(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if warmPoolExists(t, c) {
+	if podSetExists(t, c) {
 		t.Fatal("drain-and-delete recreated an absent PodSet")
 	}
-	_ = getTemplate(t, c)
 }

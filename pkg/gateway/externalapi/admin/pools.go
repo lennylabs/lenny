@@ -37,7 +37,7 @@ type ReconciliationResumer interface {
 }
 
 // PoolStatusReader reads a pool's live §5.2 bootstrap status from its
-// Kubernetes CRD pair so the admin pool GET can surface poolCondition
+// Kubernetes PodSet so the admin pool GET can surface poolCondition
 // and idlePodCount (§5.2) without operators inspecting the CR
 // status directly. condition is "PoolWarmingUp" while the pool is
 // bootstrapping and the empty string otherwise; idlePodCount is the
@@ -84,7 +84,7 @@ type BootstrapStatusPayload struct {
 type CRDGenerationReader interface {
 	// CRDGeneration returns the generation observed on the pool's
 	// PodSet annotation, the last successful reconciliation
-	// instant, and ok = true when the CRD pair exists. ok = false
+	// instant, and ok = true when the PodSet exists. ok = false
 	// when no PodSet has been created for the pool yet.
 	CRDGeneration(ctx context.Context, poolName string) (generation int64, lastReconciledAt time.Time, ok bool, err error)
 }

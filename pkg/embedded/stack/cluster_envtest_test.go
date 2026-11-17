@@ -257,13 +257,12 @@ func TestEchoPoolReadyReflectsReadyCount_spec_17_4(t *testing.T) {
 	cfg := env.RESTConfig()
 
 	// echoPoolReady reads the echo pool in the agent namespace the product
-	// code fixes, so this test owns the echo pool pair there on the
+	// code fixes, so this test owns the echo PodSet there on the
 	// package's shared control plane, and the claim deletes a copy whose
 	// readyCount an earlier iteration set.
 	const ns = "lenny-agents"
 	claimFixedObjects(
 		t, cfg,
-		&lennyv1alpha1.PodSet{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
 		&lennyv1alpha1.PodSet{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
 	)
 	if err := stack.EnsureAgentNamespaceFromConfigForTest(ctx, cfg, ns); err != nil {

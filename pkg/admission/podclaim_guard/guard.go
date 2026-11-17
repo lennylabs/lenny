@@ -23,9 +23,9 @@
 //	the Postgres-fallback claim path could race with the normal
 //	CRD-based claim path and produce duplicate claims.
 //
-// The guard reads no phase: it queries existing PodClaim resources
-// by `.spec.agentPodRef` and does not read AgentPod.status.phase or
-// PodClaim.status.phase. The deterministic claim-<podName> name
+// The guard reads no phase: it lists the PodClaim resources whose
+// `.spec.agentPodRef` names the pod, and it reads neither
+// AgentPod.status.phase nor PodClaim.status.phase. The deterministic claim-<podName> name
 // means a duplicate CREATE under the canonical name also fails the API
 // server's name-uniqueness check; the webhook check additionally covers
 // a claim created under any other name (§4.6.1).

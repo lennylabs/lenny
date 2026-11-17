@@ -699,15 +699,14 @@ func sharedToolCluster(t *testing.T) client.Client {
 	}
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "shared-pool", Namespace: crossEnvNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "shared-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "shared-tool",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool: %v", err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "shared-tmpl", Namespace: crossEnvNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "shared-tool", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template: %v", err)
+		t.Fatalf("create pod set: %v", err)
 	}
 	if err := c.Create(ctx, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{

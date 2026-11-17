@@ -64,7 +64,7 @@ func idleWarmAgentPod(t *testing.T, c *kind.Cluster, pool string) string {
 		t.Skipf("not yet applicable: precondition not met: cannot list %s pods: %v\n%s", pool, err, out)
 	}
 	for _, name := range strings.Fields(out) {
-		phase, perr := c.KubectlOut(t, "-n", agentNamespace, "get", "sandbox", name,
+		phase, perr := c.KubectlOut(t, "-n", agentNamespace, "get", "agentpod", name,
 			"-o", "jsonpath={.status.phase}")
 		if perr != nil || strings.TrimSpace(phase) != "idle" {
 			continue
@@ -80,10 +80,10 @@ func idleWarmAgentPod(t *testing.T, c *kind.Cluster, pool string) string {
 	return ""
 }
 
-// agentPodPhase reads a AgentPod's status.phase, or "" on a read error.
+// agentPodPhase reads an AgentPod's status.phase, or "" on a read error.
 func agentPodPhase(t *testing.T, c *kind.Cluster, name string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandbox", name, "-o", "jsonpath={.status.phase}")
+	out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "agentpod", name, "-o", "jsonpath={.status.phase}")
 	if err != nil {
 		return ""
 	}
@@ -162,7 +162,7 @@ func TestOrphanGCDrainsRecyclingClaimAfterGatewayCrash(t *testing.T) {
 	default:
 		// The drained AgentPod can be retired and garbage-collected before the
 		// read; an absent AgentPod is the end of the drain path.
-		out, _ := c.KubectlOut(t, "-n", agentNamespace, "get", "sandbox", agentPodRef, "--ignore-not-found", "-o", "name")
+		out, _ := c.KubectlOut(t, "-n", agentNamespace, "get", "agentpod", agentPodRef, "--ignore-not-found", "-o", "name")
 		if strings.TrimSpace(out) != "" {
 			t.Errorf("AgentPod %s phase = %q after reclaim, want draining or terminated", agentPodRef, phase)
 		}

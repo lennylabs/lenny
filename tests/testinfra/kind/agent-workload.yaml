@@ -11,7 +11,7 @@
 # create them. The pools are therefore seeded into Postgres through the
 # §17.6 bootstrap.pools list in e2e-values.yaml; the PoolScalingController
 # reconciles each Postgres pool row into its PodSet +
-# PodSet CRD pair, keyed by pool name, in the lenny-agents
+# PodSet, keyed by pool name, in the lenny-agents
 # namespace. The AgentPod reconciler then produces real agent pods so the
 # tier-5/8/9 tests that need a live agent pod run against a real workload.
 #

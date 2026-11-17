@@ -25,7 +25,6 @@ func TestAddToSchemeRegistersAllKinds(t *testing.T) {
 		&lennyv1.AgentPod{}, &lennyv1.AgentPodList{},
 		&lennyv1.PodClaim{}, &lennyv1.PodClaimList{},
 		&lennyv1.PodSet{}, &lennyv1.PodSetList{},
-		&lennyv1.PodSet{}, &lennyv1.PodSetList{},
 	} {
 		gvks, _, err := scheme.ObjectKinds(obj)
 		if err != nil {
@@ -235,9 +234,9 @@ func TestPodSetDeepCopyIsolatesNestedPolicy(t *testing.T) {
 func TestPodSetDeepCopyIsolatesCircuitBreaker(t *testing.T) {
 	orig := &lennyv1.PodSet{
 		Spec: lennyv1.PodSetSpec{
-			TemplateRef: "default",
-			MinWarm:     2,
-			MaxWarm:     10,
+			RuntimeRef: "default",
+			MinWarm:    2,
+			MaxWarm:    10,
 		},
 		Status: lennyv1.PodSetStatus{
 			WarmCount: 2,

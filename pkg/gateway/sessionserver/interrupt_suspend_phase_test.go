@@ -29,7 +29,7 @@ import (
 // interrupt_acknowledged is a session-model state on the Postgres session row.
 // The interrupt-suspension fact (SuspendedAt + SuspendedReason) lives on the
 // session row, not on AgentPod.status.conditions: the gateway lost
-// agentpods/status RBAC and is no longer a AgentPod.status writer (§4.6.3), so
+// agentpods/status RBAC and is no longer an AgentPod.status writer (§4.6.3), so
 // the gateway writes no AgentPod condition for the suspend. The pod stays in
 // the coarse `claimed` phase (the WarmPoolController is the sole AgentPod.status
 // writer). F-6.2.12.
@@ -242,7 +242,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	}
 }
 
-// getAgentPod reads a AgentPod by name from the envtest cluster.
+// getAgentPod reads an AgentPod by name from the envtest cluster.
 func getAgentPod(t *testing.T, c client.Client, name string) lennyv1.AgentPod {
 	t.Helper()
 	var sb lennyv1.AgentPod

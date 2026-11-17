@@ -78,12 +78,11 @@ func poolAccessCluster(t *testing.T) client.Client {
 	objs := []client.Object{
 		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: poolAccessNS},
-			Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.PodSet{
-			ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: poolAccessNS},
 			Spec: lennyv1.PodSetSpec{
-				RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed),
+				RuntimeRef:       "echo",
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
 			},
 		},
 	}

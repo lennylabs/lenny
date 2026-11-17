@@ -157,7 +157,7 @@ func TestDecideRejectsNonCreateOperation(t *testing.T) {
 // setting that binding state. spec: §4.6.3 — the PodClaim status.phase
 // enumeration lists bound, recycling, reserved, released, failed.
 func TestPodClaimCRDEnumCoversEveryClaimStatus(t *testing.T) {
-	crdPath := filepath.Join("..", "..", "..", "charts", "lenny", "crds", "lenny.dev_sandboxclaims.yaml")
+	crdPath := filepath.Join("..", "..", "..", "charts", "lenny", "crds", "lenny.dev_podclaims.yaml")
 	data, err := os.ReadFile(crdPath)
 	if err != nil {
 		t.Fatalf("read CRD %s: %v", crdPath, err)

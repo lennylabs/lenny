@@ -377,7 +377,7 @@ spec:
 func removeKeptRuntimePool(t *testing.T, c *kind.Cluster, probe, gwIP string, admin gwRole, name string) {
 	t.Helper()
 	cleanupPool(t, c, probe, gwIP, admin, name)
-	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "podset,podset", name,
+	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "podset", name,
 		"--wait=false", "--ignore-not-found")
 	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "agentpods", "-l", "lenny.dev/pool="+name,
 		"--wait=false", "--ignore-not-found")
@@ -475,7 +475,7 @@ func (h *keptRuntimeHarness) waitDrained(t *testing.T, pod string, timeout time.
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		switch got := h.objectField(t, "sandbox", pod, "{.status.phase}"); got {
+		switch got := h.objectField(t, "agentpod", pod, "{.status.phase}"); got {
 		case "draining", "terminated", "":
 			return
 		default:
@@ -495,7 +495,7 @@ func (h *keptRuntimeHarness) waitIdleOrSkip(t *testing.T, pod string, timeout ti
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		switch got := h.objectField(t, "sandbox", pod, "{.status.phase}"); got {
+		switch got := h.objectField(t, "agentpod", pod, "{.status.phase}"); got {
 		case "idle":
 			return
 		case "draining", "terminated", "":
@@ -714,7 +714,7 @@ func TestKeptRuntimePodNeverBindsSecondTenant(t *testing.T) {
 	if got := h.objectField(t, "podclaim", "claim-"+podA, "{.metadata.name}"); got != "" {
 		t.Errorf("a PodClaim names pod %s, which is pinned to another tenant", podA)
 	}
-	if got := h.objectField(t, "sandbox", podA, "{.status.phase}"); got != "idle" {
+	if got := h.objectField(t, "agentpod", podA, "{.status.phase}"); got != "idle" {
 		t.Errorf("pod %s phase = %q, want idle and still pinned for its tenant", podA, got)
 	}
 }

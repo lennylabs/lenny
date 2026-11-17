@@ -42,8 +42,7 @@ func ssaConflict() error {
 // Force ownership. Forcing would steal the field from the other manager and
 // defeat the isolation the SSA boundary enforces.
 //
-// spec: §4.6 ("Controllers must not use --force-conflicts (SSA
-// Force: true)").
+// spec: §4.6.3 (CRD Field Ownership and Write Boundaries)
 func TestUpdateStatusReReadsAndNeverForcesOnSSAConflict(t *testing.T) {
 	s := reclaimScheme(t)
 	pool := &lennyv1.PodSet{

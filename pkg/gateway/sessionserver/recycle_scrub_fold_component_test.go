@@ -119,17 +119,16 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 		t.Fatalf("create recycle pool: %v", err)
 	}
 
-	// The CRD template carries the recycle block so ResolvePool sets
+	// The pool's PodSet carries the recycle block so ResolvePool sets
 	// PoolMatch.Recycle and MicrovmScrubMode (both CRD-sourced), while the
 	// poolstore mirror above supplies the gateway-enforced cleanup config.
-	tmpl := podBindTemplate(t, "recycle-tmpl", "echo", string(isolation.ProfileMicrovm))
-	tmpl.Spec.SessionPolicy = &lennyv1.SessionPolicy{
+	podSet := podBindPodSet(t, "recycle-pool", "echo", string(isolation.ProfileMicrovm))
+	podSet.Spec.SessionPolicy = &lennyv1.SessionPolicy{
 		Recycle: &lennyv1.RecyclePolicy{ScrubProfile: string(runtimestore.MicrovmScrubVMRestart)},
 	}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "recycle-pool", "recycle-tmpl"),
-		tmpl,
+		podSet,
 		podBindIdleAgentPod(t, "sbx-r", "recycle-pool", "10.244.3.9"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))

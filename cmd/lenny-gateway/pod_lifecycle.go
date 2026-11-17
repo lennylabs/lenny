@@ -39,7 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// adapterGRPCPort is the TCP port a AgentPod pod's §4.7 adapter listens
+// adapterGRPCPort is the TCP port an AgentPod pod's §4.7 adapter listens
 // on. §13.2 fixes the gateway↔adapter link to TCP 50051.
 const adapterGRPCPort = 50051
 

@@ -121,7 +121,7 @@ func applyManifestsFromConfig(ctx context.Context, cfg *rest.Config, fsys fs.FS)
 // applyObjects server-side-applies a set of already-decoded unstructured
 // objects to the cluster addressed by cfg through the same dynamic client,
 // RESTMapper, and field manager the embedded manifest apply uses (C1). The
-// echo PodSet pair the no-Postgres bring-up seeds is
+// echo PodSet the no-Postgres bring-up seeds is
 // applied through this path so the echo seed and the runtime-agnostic CLI verb
 // share one declarative server-side-apply mechanism rather than a parallel
 // typed-client upsert. The objects are applied in §17.4 dependency order, so a

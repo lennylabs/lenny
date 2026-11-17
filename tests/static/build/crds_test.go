@@ -47,7 +47,6 @@ var expectedCRDs = map[string]string{
 	"AgentPod": "Namespaced",
 	"PodClaim": "Namespaced",
 	"PodSet":   "Namespaced",
-	"PodSet":   "Namespaced",
 }
 
 func crdDir(t *testing.T) string {

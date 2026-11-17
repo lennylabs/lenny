@@ -196,17 +196,17 @@ func ssEnvClient(t *testing.T, objs ...client.Object) client.Client {
 	return c
 }
 
-func ssWarmPool(name, templateRef string) *lennyv1.PodSet {
+// ssPodSet returns the PodSet named after the pool, carrying the runtime
+// settings and the warm targets.
+func ssPodSet(name, runtimeRef string) *lennyv1.PodSet {
 	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ssNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
-	}
-}
-
-func ssTemplate(name, runtimeRef string) *lennyv1.PodSet {
-	return &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ssNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
 }
 
@@ -505,8 +505,7 @@ func ssErrCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
@@ -588,8 +587,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssSlotBinder(t, cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
@@ -666,8 +664,7 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 func TestSingleShotReleasesAndRetiresOnDispatchError_spec_15(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
@@ -724,8 +721,7 @@ func TestSingleShotReleasesAndRetiresOnDispatchError_spec_15(t *testing.T) {
 func TestSingleShotReleaseDrainsOnDetachedContextAfterTimeout_spec_15(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
@@ -783,12 +779,11 @@ func TestSingleShotReleaseDrainsOnDetachedContextAfterTimeout_spec_15(t *testing
 // failure. A failure here means the adapter emitted a generic server_error,
 // dropped the Retry-After, or dispatched against an unclaimed pod.
 func TestSingleShotPoolExhaustionReturnsRetryableEnvelope_spec_7_1(t *testing.T) {
-	// A warm pool and template exist, but no idle AgentPod: the claim finds no
+	// The pool's PodSet exists, but no idle AgentPod: the claim finds no
 	// pod and reports pool exhaustion.
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	registry := podsession.NewRegistry()
@@ -834,8 +829,7 @@ func TestSingleShotPoolExhaustionReturnsRetryableEnvelope_spec_7_1(t *testing.T)
 func TestSingleShotCredentialExhaustionHasNoRetryAfter_spec_4_9(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
@@ -956,8 +950,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 	// case asserts zero live claims.
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
@@ -1112,8 +1105,7 @@ func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
+		ssPodSet("echo-pool", "echo"),
 		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.9"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))

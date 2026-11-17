@@ -33,7 +33,7 @@ func sdkWarmPoolCR(t *testing.T, timeoutSeconds int64) *lennyv1.PodSet {
 	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec: lennyv1.PodSetSpec{
-			TemplateRef: "claude-template",
+			RuntimeRef:  testRuntime(t),
 			MinWarm:     1,
 			MaxWarm:     3,
 			ScalePolicy: &lennyv1.ScalePolicy{SDKConnectTimeoutSeconds: timeoutSeconds},

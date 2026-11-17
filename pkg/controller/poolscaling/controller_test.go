@@ -67,27 +67,18 @@ func syncOnce(t *testing.T, c client.Client, src *fakeSource) error {
 	return r.Sync(context.Background())
 }
 
-func getTemplate(t *testing.T, c client.Client) lennyv1.PodSet {
-	t.Helper()
-	var tm lennyv1.PodSet
-	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: testNS, Name: testPool}, &tm); err != nil {
-		t.Fatalf("get template: %v", err)
-	}
-	return tm
-}
-
-func getWarmPool(t *testing.T, c client.Client) lennyv1.PodSet {
+// getPodSet reads the test pool's PodSet, failing the test when it is absent.
+func getPodSet(t *testing.T, c client.Client) lennyv1.PodSet {
 	t.Helper()
 	var p lennyv1.PodSet
 	if err := c.Get(context.Background(),
 		client.ObjectKey{Namespace: testNS, Name: testPool}, &p); err != nil {
-		t.Fatalf("get warm pool: %v", err)
+		t.Fatalf("get PodSet: %v", err)
 	}
 	return p
 }
 
-func TestSyncCreatesTheCRDPair(t *testing.T) {
+func TestSyncCreatesThePodSet(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
@@ -96,17 +87,20 @@ func TestSyncCreatesTheCRDPair(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	tmpl := getTemplate(t, c)
-	if tmpl.Spec.RuntimeRef != "claude-code" || tmpl.Spec.IsolationProfile != "sandboxed" {
-		t.Errorf("template spec = %+v, want runtimeRef claude-code / isolation sandboxed", tmpl.Spec)
-	}
-
-	pool := getWarmPool(t, c)
-	if pool.Spec.TemplateRef != testPool {
-		t.Errorf("warm pool templateRef = %q, want %q", pool.Spec.TemplateRef, testPool)
+	pool := getPodSet(t, c)
+	if pool.Spec.RuntimeRef != "claude-code" || pool.Spec.IsolationProfile != "sandboxed" {
+		t.Errorf("PodSet spec = %+v, want runtimeRef claude-code / isolation sandboxed", pool.Spec)
 	}
 	if pool.Spec.MinWarm != 3 || pool.Spec.MaxWarm != 10 {
-		t.Errorf("warm pool min/max = %d/%d, want 3/10", pool.Spec.MinWarm, pool.Spec.MaxWarm)
+		t.Errorf("PodSet min/max = %d/%d, want 3/10", pool.Spec.MinWarm, pool.Spec.MaxWarm)
+	}
+
+	var all lennyv1.PodSetList
+	if err := c.List(context.Background(), &all, client.InNamespace(testNS)); err != nil {
+		t.Fatalf("list PodSets: %v", err)
+	}
+	if len(all.Items) != 1 {
+		t.Errorf("synced %d PodSets for one pool, want 1", len(all.Items))
 	}
 }
 
@@ -129,11 +123,11 @@ func TestSyncUpdatesAnExistingPool(t *testing.T) {
 		t.Fatalf("second Sync: %v", err)
 	}
 
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
-		t.Errorf("warm pool minWarm = %d after re-sync, want 7", got)
+	if got := getPodSet(t, c).Spec.MinWarm; got != 7 {
+		t.Errorf("PodSet minWarm = %d after re-sync, want 7", got)
 	}
-	if got := getTemplate(t, c).Spec.RuntimeRef; got != "claude-code-next" {
-		t.Errorf("template runtimeRef = %q after re-sync, want claude-code-next", got)
+	if got := getPodSet(t, c).Spec.RuntimeRef; got != "claude-code-next" {
+		t.Errorf("PodSet runtimeRef = %q after re-sync, want claude-code-next", got)
 	}
 }
 
@@ -147,7 +141,7 @@ func TestSyncCorrectsManualSpecDrift(t *testing.T) {
 	}
 
 	// Simulate an operator hand-editing the derived CRD.
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	pool.Spec.MinWarm = 999
 	if err := c.Update(context.Background(), &pool); err != nil {
 		t.Fatalf("manual update: %v", err)
@@ -156,7 +150,7 @@ func TestSyncCorrectsManualSpecDrift(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("re-sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 3 {
 		t.Errorf("warm pool minWarm = %d, want 3 (drift not corrected)", got)
 	}
 }
@@ -198,12 +192,12 @@ func TestSyncReconcilesDeliveryFieldsOntoTemplateCRD(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	tmpl := getTemplate(t, c)
-	if tmpl.Spec.DeliveryMode != "proxy" {
-		t.Errorf("template deliveryMode = %q, want proxy", tmpl.Spec.DeliveryMode)
+	ps := getPodSet(t, c)
+	if ps.Spec.DeliveryMode != "proxy" {
+		t.Errorf("PodSet deliveryMode = %q, want proxy", ps.Spec.DeliveryMode)
 	}
-	if tmpl.Spec.SpiffeBinding != "disabled" {
-		t.Errorf("template spiffeBinding = %q, want disabled", tmpl.Spec.SpiffeBinding)
+	if ps.Spec.SpiffeBinding != "disabled" {
+		t.Errorf("PodSet spiffeBinding = %q, want disabled", ps.Spec.SpiffeBinding)
 	}
 }
 
@@ -270,7 +264,7 @@ func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 8 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 8 {
 		t.Errorf("warm pool minWarm = %d, want 8 (formula-derived)", got)
 	}
 }
@@ -300,7 +294,7 @@ func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 7 {
 		t.Errorf("warm pool minWarm = %d, want 7 (Tier 3 safety_factor 1.2)", got)
 	}
 }
@@ -331,7 +325,7 @@ func TestSyncPoolSafetyFactorOverridesTierDefault_spec_17_8_2_1010(t *testing.T)
 		t.Fatalf("Sync: %v", err)
 	}
 
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 9 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 9 {
 		t.Errorf("warm pool minWarm = %d, want 9 (pool-pinned safety_factor 2.0)", got)
 	}
 }
@@ -353,7 +347,7 @@ func TestSyncStaysAtBootstrapWithoutObservedDemand(t *testing.T) {
 
 	// config()'s MinWarm is the bootstrap value; unconverged demand
 	// must not let the high observed rate above leak into the result.
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 3 {
 		t.Errorf("warm pool minWarm = %d, want 3 (bootstrap, demand not observed)", got)
 	}
 }
@@ -368,7 +362,7 @@ func TestSyncStaysAtBootstrapWithNoDemandSource(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 3 {
 		t.Errorf("warm pool minWarm = %d, want 3 (bootstrap, no demand source)", got)
 	}
 }
@@ -412,7 +406,7 @@ func TestSyncSizesVariantPoolByVariantWeight(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 7 {
 		t.Errorf("variant pool minWarm = %d, want 7 (variant-weight-scaled)", got)
 	}
 }
@@ -444,7 +438,7 @@ func TestSyncAdjustsBasePoolBySumVariantWeights(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 19 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 19 {
 		t.Errorf("base pool minWarm = %d, want 19 (adjusted by 1-Σ)", got)
 	}
 }
@@ -473,7 +467,7 @@ func TestSyncTreatsEmptyPoolTypeAsStandard(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync with empty PoolType: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 8 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 8 {
 		t.Errorf("minWarm = %d, want 8 (empty PoolType sized as standard)", got)
 	}
 }
@@ -522,28 +516,28 @@ func TestSyncBacksOffWithinPause(t *testing.T) {
 	now := time.Unix(1000, 0)
 	r := &poolscaling.Reconciler{Client: c, Source: src, Now: func() time.Time { return now }}
 
-	// First pass: both CRD tuples are denied once (2 Create attempts).
+	// First pass: the PodSet tuple is denied once (1 Create attempt).
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("sync 1: %v", err)
 	}
-	if creates != 2 {
-		t.Fatalf("after first sync creates=%d, want 2 (template+warmpool)", creates)
+	if creates != 1 {
+		t.Fatalf("after first sync creates=%d, want 1 (one PodSet)", creates)
 	}
-	// Second pass at the same instant: both tuples are inside the 1s
-	// backoff window, so neither apply is retried.
+	// Second pass at the same instant: the tuple is inside the 1s
+	// backoff window, so the apply is not retried.
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("sync 2: %v", err)
 	}
-	if creates != 2 {
-		t.Errorf("sync inside backoff retried the apply: creates=%d, want 2", creates)
+	if creates != 1 {
+		t.Errorf("sync inside backoff retried the apply: creates=%d, want 1", creates)
 	}
-	// Advancing past the 1s window lets the tuples retry.
+	// Advancing past the 1s window lets the tuple retry.
 	now = now.Add(1 * time.Second)
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("sync 3: %v", err)
 	}
-	if creates != 4 {
-		t.Errorf("sync after backoff did not retry: creates=%d, want 4", creates)
+	if creates != 2 {
+		t.Errorf("sync after backoff did not retry: creates=%d, want 2", creates)
 	}
 }
 
@@ -591,8 +585,8 @@ func TestSyncStuckPoolResumesAfterReconciliationReset(t *testing.T) {
 	}
 
 	// Operator resets the denial counter for the pool.
-	if cleared := r.ResumeReconciliation(testNS, testPool); cleared != 2 {
-		t.Errorf("ResumeReconciliation cleared=%d, want 2 (both tuples)", cleared)
+	if cleared := r.ResumeReconciliation(testNS, testPool); cleared != 1 {
+		t.Errorf("ResumeReconciliation cleared=%d, want 1 (the PodSet tuple)", cleared)
 	}
 	// The underlying rejection has cleared; the next Sync now succeeds.
 	deny = false
@@ -602,8 +596,7 @@ func TestSyncStuckPoolResumesAfterReconciliationReset(t *testing.T) {
 	if got := r.StuckPools(); len(got) != 0 {
 		t.Errorf("StuckPools after recovery = %v, want []", got)
 	}
-	getTemplate(t, c)
-	getWarmPool(t, c)
+	getPodSet(t, c)
 }
 
 // spec: §4.6.2 item 3 condition (c) (AdminResumer binds the agent namespace)
@@ -633,8 +626,8 @@ func TestAdminResumerBindsNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resume: %v", err)
 	}
-	if cleared != 2 {
-		t.Errorf("AdminResumer cleared=%d, want 2", cleared)
+	if cleared != 1 {
+		t.Errorf("AdminResumer cleared=%d, want 1", cleared)
 	}
 	// A wrong namespace clears nothing.
 	other := poolscaling.AdminResumer{Reconciler: r, Namespace: "wrong-ns"}
@@ -659,13 +652,13 @@ func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 0 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 0 {
 		t.Errorf("inside scaleToZero window minWarm = %d, want 0", got)
 	}
 }
 
 // TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558 confirms the
-// PoolScalingController writes lenny.dev/config-generation onto both
+// PoolScalingController writes lenny.dev/config-generation onto the
 // PodSet, taking the value from the
 // PoolConfig.Generation the admin store bumps on every write.
 // spec: §4.6.2.
@@ -678,13 +671,9 @@ func TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	tmpl := getTemplate(t, c)
-	if got := tmpl.Annotations["lenny.dev/config-generation"]; got != "7" {
-		t.Errorf("template config-generation annotation = %q, want 7", got)
-	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if got := pool.Annotations["lenny.dev/config-generation"]; got != "7" {
-		t.Errorf("warm pool config-generation annotation = %q, want 7", got)
+		t.Errorf("PodSet config-generation annotation = %q, want 7", got)
 	}
 }
 
@@ -698,9 +687,9 @@ func TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558(t *testing.T) {
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	tmpl := getTemplate(t, c)
-	if _, set := tmpl.Annotations["lenny.dev/config-generation"]; set {
-		t.Errorf("template carries config-generation annotation with zero generation: %v", tmpl.Annotations)
+	ps := getPodSet(t, c)
+	if _, set := ps.Annotations["lenny.dev/config-generation"]; set {
+		t.Errorf("PodSet carries config-generation annotation with zero generation: %v", ps.Annotations)
 	}
 }
 
@@ -727,7 +716,7 @@ func TestSyncServiceModeUsesMaxConcurrent_spec_5_2(t *testing.T) {
 	}
 	// mode_factor=burst=8: steady = 0.4·1.5·35 / 8 = 2.625; burst =
 	// 0.4·10 / 8 = 0.5 → ceil(3.125) = 4.
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 4 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 4 {
 		t.Errorf("service pool minWarm = %d, want 4 (mode_factor=8)", got)
 	}
 }
@@ -783,7 +772,7 @@ func TestSyncRecyclingPoolColdStartUsesBaseModeFactor(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 26 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 26 {
 		t.Errorf("cold-start recycling pool minWarm = %d, want 26 (mode_factor=1.0)", got)
 	}
 }
@@ -800,7 +789,7 @@ func TestSyncRecyclingPoolNilSourceUsesBaseModeFactor(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 26 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 26 {
 		t.Errorf("nil-source recycling pool minWarm = %d, want 26 (mode_factor=1.0)", got)
 	}
 }
@@ -822,7 +811,7 @@ func TestSyncRecyclingPoolConvergedUsesObservedMedian(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 9 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 9 {
 		t.Errorf("converged recycling pool minWarm = %d, want 9 (mode_factor=5)", got)
 	}
 }
@@ -845,7 +834,7 @@ func TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 7 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 7 {
 		t.Errorf("bounded recycling pool minWarm = %d, want 7 (mode_factor clamped to 10)", got)
 	}
 }
@@ -866,7 +855,7 @@ func TestSyncRecyclingPoolSourceErrorFallsBackToColdStart(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 26 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 26 {
 		t.Errorf("source-error recycling pool minWarm = %d, want 26 (cold-start fallback)", got)
 	}
 }
@@ -887,7 +876,7 @@ func TestSyncSessionPoolConcurrentBurstFactor(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 23 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 23 {
 		t.Errorf("concurrent session pool minWarm = %d, want 23 (burst_mode_factor=4)", got)
 	}
 }
@@ -907,7 +896,7 @@ func TestSyncScaleToZeroInactiveKeepsBootstrap(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
+	if got := getPodSet(t, c).Spec.MinWarm; got != 3 {
 		t.Errorf("outside scaleToZero window minWarm = %d, want bootstrap 3", got)
 	}
 }

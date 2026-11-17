@@ -16,7 +16,7 @@ import (
 // API's Postgres pool definitions are the source of truth (§4.6.2
 // "CRDs become derived state"); this source lists the active pool rows
 // and maps each into the PoolConfig the controller upserts into its
-// PodSet CRD pair.
+// PodSet.
 //
 // v1 has no separately-modeled per-pool minWarm/maxWarm: the store's
 // warmCount is the operator-set bootstrap floor. Until the §4.6.2
@@ -27,7 +27,7 @@ type PoolStoreSource struct {
 	// Store is the pool registry. List returns the active (non
 	// soft-deleted) pool rows.
 	Store poolstore.Store
-	// Namespace is the agent namespace the derived CRD pair lives in.
+	// Namespace is the agent namespace the derived PodSet lives in.
 	// The CRDs are derived state, so a single agent namespace per
 	// deployment is the v1 assumption (§5.1 pools are platform-global;
 	// their CRDs are materialized in the agent namespace).

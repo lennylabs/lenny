@@ -398,17 +398,15 @@ func serviceModeResumeServer(t *testing.T, store sessionstore.Store, inner sessi
 	const ns = "lenny-agents"
 	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "svc-runtime",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 	if err := inner.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
 		ID:     "svc", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,

@@ -28,24 +28,22 @@ func hasArgPrefixVal(args []string, prefix string) bool {
 	return false
 }
 
-// checkpointFixture seeds a AgentPod referencing a pool whose PodSet
+// checkpointFixture seeds an AgentPod referencing a pool whose PodSet
 // carries the supplied workspaceSizeLimitBytes, returning the booted envtest
 // client.
 func checkpointFixture(t *testing.T, sizeLimit *int64) client.Client {
 	t.Helper()
 	s := newScheme(t)
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
+	pool := &lennyv1.PodSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:              testRuntime(t),
 			WorkspaceSizeLimitBytes: sizeLimit,
+			MinWarm:                 1,
+			MaxWarm:                 3,
 		},
 	}
-	pool := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
-	}
-	return newClient(t, s, agentPodCR(t, ""), runtimeCR(t), tmpl, pool)
+	return newClient(t, s, agentPodCR(t, ""), runtimeCR(t), pool)
 }
 
 // reconcileWithCA runs one AgentPod reconcile with the reconciler carrying the

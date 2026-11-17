@@ -3,7 +3,7 @@
 //go:build component
 
 // Component tests for the lenny-pool-config-validator
-// DecideTemplate path (§4.6.3, §5.2). The unit suites in
+// DecidePoolSettings path (§4.6.3, §5.2). The unit suites in
 // pkg/admission/pool_config_validator and pkg/admission/webhook exercise
 // the decision logic and the AdmissionReview transport against
 // hand-built Go structs. This suite adds the higher-fidelity property:
@@ -24,7 +24,7 @@
 //
 // Each derived-property case creates a schema-valid PodSet
 // through the real API server, reads it back so the object has
-// round-tripped the CRD codec, and runs DecideTemplate on the
+// round-tripped the CRD codec, and runs DecidePoolSettings on the
 // round-tripped object. A rejection that depended only on a Go literal
 // would not catch a regression where the CRD codec drops or renames a
 // field the webhook reads; this suite does.
@@ -100,7 +100,7 @@ func roundTrip(t *testing.T, c client.Client, ctx context.Context, tpl *lennyv1.
 // acknowledgeMicrovmResidualState) are dropped or renamed by the OpenAPI
 // schema so the webhook can no longer see them. The test creates a
 // schema-valid in-place-without-acknowledgment template through envtest,
-// reads it back, and asserts DecideTemplate rejects it with 422. An admit
+// reads it back, and asserts DecidePoolSettings rejects it with 422. An admit
 // here means a cross-tenant residual-state acknowledgment is bypassable.
 func TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2(t *testing.T) {
 	c, ctx := newClient(t)
@@ -123,7 +123,7 @@ func TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2(t *testing.T) {
 	}
 	got := roundTrip(t, c, ctx, tpl)
 
-	d := pcv.DecideTemplate(got)
+	d := pcv.DecidePoolSettings(got)
 	if d.Allowed {
 		t.Fatal("§5.2: an in-place recycle PodSet without acknowledgeMicrovmResidualState " +
 			"must be rejected by the pool-config-validator webhook")
@@ -143,7 +143,7 @@ func TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2(t *testing.T) {
 // diagnosis: the §5.2 in-place scrub gate became over-broad and rejects a
 // template that carries the acknowledgment. The test is the positive
 // control: an acknowledged in-place template must round-trip the CRD codec
-// and be admitted by DecideTemplate, so the rejection above is not a false
+// and be admitted by DecidePoolSettings, so the rejection above is not a false
 // positive.
 func TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2(t *testing.T) {
 	c, ctx := newClient(t)
@@ -164,7 +164,7 @@ func TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2(t *testing.T) {
 	}
 	got := roundTrip(t, c, ctx, tpl)
 
-	if d := pcv.DecideTemplate(got); !d.Allowed {
+	if d := pcv.DecidePoolSettings(got); !d.Allowed {
 		t.Fatalf("§5.2: an acknowledged in-place recycle PodSet must be admitted: %q", d.Reason)
 	}
 }
@@ -177,7 +177,7 @@ func TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2(t *testing.T) {
 // terminationGracePeriodSeconds) are dropped or renamed by the OpenAPI
 // schema. The test creates a schema-valid service-mode template whose
 // declared grace period is below the floor, reads it back, and asserts
-// DecideTemplate rejects it. An admit means a pool could be SIGKILL'd
+// DecidePoolSettings rejects it. An admit means a pool could be SIGKILL'd
 // mid-checkpoint on drain.
 func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	c, ctx := newClient(t)
@@ -200,7 +200,7 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	}
 	got := roundTrip(t, c, ctx, tpl)
 
-	d := pcv.DecideTemplate(got)
+	d := pcv.DecidePoolSettings(got)
 	if d.Allowed {
 		t.Fatal("§5.2: a service-mode PodSet whose terminationGracePeriodSeconds is below the " +
 			"per-pod checkpoint floor must be rejected")
@@ -225,7 +225,7 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 // §4.6.1 120s effective default. The test creates a schema-valid
 // service-mode template with maxConcurrent: 2 and no grace field (floor
 // 2*90 + 30 = 210s > the 120s default), reads it back to confirm the
-// codec applied no default, and asserts DecideTemplate rejects it. A
+// codec applied no default, and asserts DecidePoolSettings rejects it. A
 // non-nil round-tripped field means a +kubebuilder:default crept onto the
 // CRD; an admit means the omitted-field nil-bypass regressed and a pool
 // could be SIGKILL'd mid-checkpoint on drain.
@@ -250,7 +250,7 @@ func TestDecideTemplateRejectsAbsentGraceBelowFloor_spec_5_2_516(t *testing.T) {
 			*got.Spec.TerminationGracePeriodSeconds)
 	}
 
-	d := pcv.DecideTemplate(got)
+	d := pcv.DecidePoolSettings(got)
 	if d.Allowed {
 		t.Fatal("§5.2: a service-mode PodSet whose omitted terminationGracePeriodSeconds defaults below the " +
 			"agent-pod floor must be rejected; the omitted field must not bypass the floor")
@@ -299,7 +299,7 @@ func TestDecideTemplateAdmitsAbsentGraceAtFloor_spec_5_2_516(t *testing.T) {
 			*got.Spec.TerminationGracePeriodSeconds)
 	}
 
-	if d := pcv.DecideTemplate(got); !d.Allowed {
+	if d := pcv.DecidePoolSettings(got); !d.Allowed {
 		t.Fatalf("§5.2: a single-slot default-tier pool whose 120s effective default equals the agent-pod floor "+
 			"must be admitted: %q", d.Reason)
 	}

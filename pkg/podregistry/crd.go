@@ -249,15 +249,15 @@ func (r *CRDPodRegistry) claimViaPodClaim(ctx context.Context, sb *lennyv1.Agent
 // PodClaim (`claim-<podName>`); the WarmPoolController projects the pod's
 // occupancy phase (§4.6.1 occupancy projection). The gateway does not write AgentPod.status to roll the
 // pod back: the `agentpods/status` grant is removed under the §4.6.3 ownership
-// decomposition, so a AgentPod.status write here would be RBAC-denied. The
+// decomposition, so an AgentPod.status write here would be RBAC-denied. The
 // release reason is no longer recorded on AgentPod.status; a terminal
 // retirement disposition is written to the claim's binding state on the live
-// recycle-coordinator path rather than mapped to a AgentPod phase here. The
+// recycle-coordinator path rather than mapped to an AgentPod phase here. The
 // delete is idempotent: a missing claim is a no-op so a double release or a
 // claim the orphan GC already reclaimed does not error.
 //
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
-// a AgentPod.status writer; releases via the claim lifecycle).
+// an AgentPod.status writer; releases via the claim lifecycle).
 func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason ReleaseReason) (err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opRelease, "", start, err) }()
@@ -521,7 +521,7 @@ func (r *CRDPodRegistry) listAgentPods(ctx context.Context, poolID PoolID, filte
 	return out, nil
 }
 
-// toPodRecord projects a AgentPod onto a PodRecord. spec: §12.6 — every key field, including SessionID (set on claim,
+// toPodRecord projects an AgentPod onto a PodRecord. spec: §12.6 — every key field, including SessionID (set on claim,
 // from status) and ExecutionMode (denormalized onto the AgentPod spec
 // from the pool's PodSet), is carried so a consumer can rely
 // on the record for claim attribution and task-vs-session mode.

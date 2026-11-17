@@ -3,7 +3,7 @@
 // Package resourceclass maps a §5.2 named resource class (small, medium,
 // large, or a deployer-defined class) to concrete Kubernetes container
 // CPU/memory requests and limits. The §4.7 AgentPod-to-Pod reconciler
-// resolves a AgentPod's resource class through a Registry and stamps the
+// resolves an AgentPod's resource class through a Registry and stamps the
 // resulting corev1.ResourceRequirements onto every agent container so the
 // pod has a per-pod cgroup memory and CPU boundary.
 //

@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 )
 
-// applyAgentPodStatus seeds a AgentPod status via SSA Apply under the same
+// applyAgentPodStatus seeds an AgentPod status via SSA Apply under the same
 // field manager the reconciler uses, so the reconciler's subsequent Apply
 // is a same-manager update rather than a cross-manager conflict.
 func applyAgentPodStatus(t *testing.T, c client.Client, name string, status lennyv1.AgentPodStatus) {
@@ -44,7 +44,7 @@ func reconcileResult(t *testing.T, r *agentpod.Reconciler) ctrl.Result {
 	return res
 }
 
-// spec: §4.6.1 statusUpdateDeduplicationWindow — a AgentPod status write
+// spec: §4.6.1 statusUpdateDeduplicationWindow — an AgentPod status write
 // within the window of the previous write for the same AgentPod is
 // deferred and the reconcile requeued, while the live status is left
 // unchanged until the window expires.

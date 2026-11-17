@@ -12,12 +12,11 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// spec: §10.5 — the lenny-podset-deletion-guard
-// webhook blocks a PodSet DELETE while a RuntimeUpgrade of the PodSet's
-// pool is still active.
+// The tests in this file cover the lenny-podset-deletion-guard webhook, which
+// blocks a PodSet DELETE while a RuntimeUpgrade of the PodSet's pool is still
+// active.
 
 // fakeUpgradeProbe reports a fixed active set keyed by pool name, or an
 // error so the fail-closed branch can be exercised.
@@ -43,7 +42,10 @@ func deletePodSetReq(name string) *admissionv1.AdmissionRequest {
 	}
 }
 
-func TestDeletionBlockedWhenReferencingPoolUpgradeActive_spec_10_5_508(t *testing.T) {
+// TestDeletionBlockedWhenPoolUpgradeActive checks that deleting a PodSet
+// whose pool has an active RuntimeUpgrade is denied with HTTP 409.
+// spec: §10.5 (Upgrade and Rollback Strategy)
+func TestDeletionBlockedWhenPoolUpgradeActive(t *testing.T) {
 	probe := fakeUpgradeProbe{active: map[string]bool{"coding-agents": true}}
 	resp := webhook.PodSetDeletionGuard(probe)(context.Background(), deletePodSetReq("coding-agents"))
 	if resp.Allowed {
@@ -54,7 +56,10 @@ func TestDeletionBlockedWhenReferencingPoolUpgradeActive_spec_10_5_508(t *testin
 	}
 }
 
-func TestDeletionAllowedWhenNoActiveUpgrade_spec_10_5_508(t *testing.T) {
+// TestDeletionAllowedWhenNoActiveUpgrade checks that deleting a PodSet whose
+// pool has no active RuntimeUpgrade is admitted.
+// spec: §10.5 (Upgrade and Rollback Strategy)
+func TestDeletionAllowedWhenNoActiveUpgrade(t *testing.T) {
 	probe := fakeUpgradeProbe{active: map[string]bool{"coding-agents": false}}
 	resp := webhook.PodSetDeletionGuard(probe)(context.Background(), deletePodSetReq("coding-agents"))
 	if !resp.Allowed {
@@ -62,7 +67,10 @@ func TestDeletionAllowedWhenNoActiveUpgrade_spec_10_5_508(t *testing.T) {
 	}
 }
 
-func TestDeletionGuardIgnoresNonDelete_spec_10_5_508(t *testing.T) {
+// TestDeletionGuardIgnoresNonDelete checks that the guard admits an
+// operation other than DELETE even while the pool's upgrade is active.
+// spec: §10.5 (Upgrade and Rollback Strategy)
+func TestDeletionGuardIgnoresNonDelete(t *testing.T) {
 	probe := fakeUpgradeProbe{active: map[string]bool{"coding-agents": true}}
 	req := deletePodSetReq("coding-agents")
 	req.Operation = admissionv1.Update
@@ -72,7 +80,10 @@ func TestDeletionGuardIgnoresNonDelete_spec_10_5_508(t *testing.T) {
 	}
 }
 
-func TestDeletionFailsClosedOnProbeError_spec_10_5_508(t *testing.T) {
+// TestDeletionFailsClosedOnProbeError checks that a failed upgrade probe
+// denies the delete with HTTP 503.
+// spec: §10.5 (Upgrade and Rollback Strategy)
+func TestDeletionFailsClosedOnProbeError(t *testing.T) {
 	probe := fakeUpgradeProbe{err: errors.New("gateway unreachable")}
 	resp := webhook.PodSetDeletionGuard(probe)(context.Background(), deletePodSetReq("coding-agents"))
 	if resp.Allowed {

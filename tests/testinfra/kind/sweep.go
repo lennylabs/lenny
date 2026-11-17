@@ -92,17 +92,14 @@ func sweepResource(t testing.TB, c *Cluster, namespace, selector, resource strin
 // SweepNamedOnce is the start-time sweep for a fixture whose objects carry no
 // label of the fixture's own, so they can be recognized only by name. Objects
 // a platform controller derives from a fixture's request are the usual case:
-// the PoolScalingController names a pool's PodSet and
-// PodSet after the pool and stamps only platform labels on them.
+// the PoolScalingController names a pool's PodSet after the pool and stamps
+// only platform labels on it.
 //
 // The first call per (namespace, pattern) pair in a process lists each named
 // resource type in namespace, in the order given, and deletes every object
 // whose name StaleNames selects. The caller orders resources so a dependent
-// object goes before the object it references (a PodSet before its
-// PodSet), and each delete waits for the objects to leave the API
-// server before the next type is swept. The wait matters for a template: the
-// podset-deletion-guard admits a template delete without consulting
-// the gateway only once no PodSet references the template.
+// object goes before the object it references, and each delete waits for
+// the objects to leave the API server before the next type is swept.
 //
 // The pattern must be anchored on the fixture's own name prefix, so the sweep
 // never touches state another fixture or the platform owns. keep names this

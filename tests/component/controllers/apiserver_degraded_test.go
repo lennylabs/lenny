@@ -113,14 +113,8 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
-		},
-	})
-	mustCreate(t, ctx, live, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.PodSetSpec{
-			TemplateRef: poolName,
-			MinWarm:     3,
-			MaxWarm:     10,
+			MinWarm:          3,
+			MaxWarm:          10,
 		},
 	})
 

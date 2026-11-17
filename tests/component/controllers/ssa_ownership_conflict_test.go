@@ -23,11 +23,8 @@ import (
 // Apply field-ownership boundary against a real kube-apiserver rather than
 // against the in-process ownership matrix in pkg/admission/ownership. The
 // spec names SSA field-manager conflict as the primary enforcement
-// mechanism: "If a controller attempts to update a field owned by another
-// manager, the API server returns a conflict error (HTTP 409) without
-// applying the update. This is the primary enforcement mechanism — it is
-// enforced by the API server itself, without any additional controller
-// logic."
+// mechanism: the API server refuses, with HTTP 409, an apply that changes
+// a field another manager owns, with no controller logic involved.
 //
 // The ownership table assigns PodSet.status.* (excluding the
 // status.sdkWarmCircuitBreaker carve-out) to the WarmPoolController. The
@@ -67,9 +64,9 @@ func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
 	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
 		Spec: lennyv1.PodSetSpec{
-			TemplateRef: poolName,
-			MinWarm:     3,
-			MaxWarm:     10,
+			RuntimeRef: "claude-code",
+			MinWarm:    3,
+			MaxWarm:    10,
 		},
 	})
 

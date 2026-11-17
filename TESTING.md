@@ -308,9 +308,9 @@ lenny/
     "4.6.1": {
       "title": "Warm Pool Controller — Pod Lifecycle",
       "tests": [
-        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestSandboxClaimSkipLocked",
+        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestPodClaimSkipLocked",
         "tests/e2e_kind/sandbox_claim_test.go::TestConcurrentClaimNoDoubleAssignment",
-        "tests/chaos/concurrent_claim_test.go::TestSandboxClaimUnder100Goroutines"
+        "tests/chaos/concurrent_claim_test.go::TestPodClaimUnder100Goroutines"
       ],
       "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
       "schemas": ["api/crds/sandbox_claim.yaml"],
@@ -377,7 +377,7 @@ Every component-and-higher test must carry a `// diagnosis:` comment immediately
 // diagnosis: ClaimSandbox returned a row that was already claimed.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED is wrapping the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 Diagnosis strings are not stack traces. They explain the most common cause of the most-likely failure mode. The author of the test owns the diagnosis.
@@ -1688,7 +1688,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure delivered in Phase 3.5.**
 - `pkg/admission/podclaim_guard` is the pure-decision logic for the `lenny-podclaim-guard` webhook from §4.6.1 (ADR-007). The guard enforces per-pod claim uniqueness at CREATE only: CREATE rejects when a non-terminal `PodClaim` already exists for the same `AgentPod`. The webhook does not gate PATCH/PUT; the per-pod claim spec is immutable after CREATE and binding-state transitions are `PodClaim.status`-subresource writes serialized by the §4.6.1 `resourceVersion`-precondition mechanism. The CREATE rejection message matches the spec verbatim.
 - `pkg/admission/label_immutability` is the pure-decision logic for the `lenny-label-immutability` webhook from §17.2 item 5 / §5.2 NET-003. The three immutable agent-pod labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`) reject any mutation; `lenny.dev/tenant-id` allows `unset → {tenant_id}` only for the gateway ServiceAccount and `{tenant_id} → unassigned` only for the WarmPoolController ServiceAccount.
-- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `PodSet`, `PodSet` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `AgentPod`, and `PodClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
+- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `PodSet` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `AgentPod`, and `PodClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
 
 **Test infrastructure deferred to later phases.**
 - The webhook binaries that wrap each decision package with a `k8s.io/api/admission/v1` AdmissionReview HTTP handler are deferred to the K8s-integration phase. The handlers are thin shims over the decision packages above; they need the controller-runtime stack and a cert-manager-issued serving certificate.
@@ -2258,7 +2258,7 @@ Above every test function:
 // diagnosis: ClaimSandbox returned a row already claimed by another goroutine.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED applied to the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 - `spec:` is mandatory on every test in the component tier and the tiers after it. It lists every spec section the test encodes.

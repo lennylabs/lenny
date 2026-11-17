@@ -39,7 +39,7 @@ func TestSyncBootstrapOverridePinsMinWarm_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Spec.MinWarm != 2096 {
 		t.Errorf("spec.minWarm = %d, want 2096 (override)", pool.Spec.MinWarm)
 	}
@@ -61,7 +61,7 @@ func TestSyncNoOverrideReportsFormulaMode_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "formula" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "formula" {
 		t.Errorf("status.scalingMode = %q, want formula", got)
 	}
 }
@@ -88,7 +88,7 @@ func TestSyncBootstrapConvergesToFormula_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 1: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "bootstrap" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "bootstrap" {
 		t.Fatalf("after 1 reconcile scalingMode = %q, want bootstrap (window not yet elapsed)", got)
 	}
 	// Advance past the stability window with the same steady target.
@@ -96,7 +96,7 @@ func TestSyncBootstrapConvergesToFormula_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Status.ScalingMode != "formula" {
 		t.Fatalf("after window elapsed scalingMode = %q, want formula", pool.Status.ScalingMode)
 	}
@@ -129,7 +129,7 @@ func TestSyncBootstrapHeldByWarmPoolLow_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "bootstrap" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "bootstrap" {
 		t.Errorf("scalingMode = %q, want bootstrap (recent WarmPoolLow blocks convergence)", got)
 	}
 }
@@ -156,7 +156,7 @@ func TestSyncBootstrapHeldByInsufficientData_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "bootstrap" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "bootstrap" {
 		t.Errorf("scalingMode = %q, want bootstrap (only 12h of data)", got)
 	}
 }

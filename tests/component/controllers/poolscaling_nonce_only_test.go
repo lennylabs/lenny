@@ -87,19 +87,19 @@ func TestPoolScalingControllerMirrorsNonceOnlyAck(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	templateAck := func(name string) bool {
+	podSetAck := func(name string) bool {
 		t.Helper()
-		var tmpl lennyv1.PodSet
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &tmpl); err != nil {
-			t.Fatalf("get template %q: %v", name, err)
+		var ps lennyv1.PodSet
+		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &ps); err != nil {
+			t.Fatalf("get PodSet %q: %v", name, err)
 		}
-		return tmpl.Spec.AcknowledgeNonceOnlyAuth
+		return ps.Spec.AcknowledgeNonceOnlyAuth
 	}
 
-	if !templateAck("nonce-ack") {
+	if !podSetAck("nonce-ack") {
 		t.Error("nonce-ack PodSet.spec.acknowledgeNonceOnlyAuth = false after Sync, want true")
 	}
-	if templateAck("no-ack") {
+	if podSetAck("no-ack") {
 		t.Error("no-ack PodSet.spec.acknowledgeNonceOnlyAuth = true after Sync, want false")
 	}
 }

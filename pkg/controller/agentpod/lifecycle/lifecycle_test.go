@@ -179,7 +179,7 @@ var allObservations = []lifecycle.PodObservation{
 // spec: 6.2 (Pod State Machine)
 //
 // TestDecideFailedIsReclaimedNotASink pins the §6.2 failed → draining
-// edge ("failed pod reclaimed and replaced"): a failed AgentPod drains
+// edge, which reclaims and replaces a failed pod: a failed AgentPod drains
 // whatever its pod looks like, and the draining arm then deletes the pod
 // and reaches terminated. Before the fix the failed phase was a sink and
 // a failed pod held its node resources indefinitely.

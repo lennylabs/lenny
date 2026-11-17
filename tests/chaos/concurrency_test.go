@@ -61,7 +61,7 @@ func TestDoubleClaimVerification(t *testing.T) {
 	// precise diagnosis when the webhook's API-server egress is blocked.
 	requirePodClaimGuardReachable(t, c)
 
-	// Create a AgentPod the claims will reference. The guard's CREATE
+	// Create an AgentPod the claims will reference. The guard's CREATE
 	// rule keys on .spec.agentPodRef; a real AgentPod makes the scenario
 	// faithful to the §4.6.1 claim flow.
 	const agentPodRef = "chaos-doubleclaim-sandbox"
@@ -77,7 +77,7 @@ func TestDoubleClaimVerification(t *testing.T) {
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, claim1) })
 	if out, err := c.ApplyStdin(t, claim1); err != nil {
 		t.Fatalf("the first PodClaim was rejected with no sibling claim present; "+
-			"the guard must admit the first claim for a AgentPod: %v\n%s", err, out)
+			"the guard must admit the first claim for an AgentPod: %v\n%s", err, out)
 	}
 	t.Logf("first PodClaim for AgentPod %s admitted", agentPodRef)
 
@@ -133,7 +133,7 @@ func TestPodClaimRaceUnder100Goroutines(t *testing.T) {
 	// goroutine submits this same document: it carries one
 	// resourceVersion, so ADR-007's optimistic-locking CAS admits the
 	// first writer the API server processes and rejects the rest.
-	raw, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandbox", agentPodRef, "-o", "json")
+	raw, err := c.KubectlOut(t, "-n", agentNamespace, "get", "agentpod", agentPodRef, "-o", "json")
 	if err != nil {
 		t.Fatalf("failed to read the target AgentPod: %v\n%s", err, raw)
 	}
@@ -234,7 +234,7 @@ func TestAgentPodFinalizerHang(t *testing.T) {
 	requirePodClaimGuardReachable(t, c)
 
 	// Create a PodClaim carrying a test-owned finalizer. The
-	// agentPodRef points at a AgentPod that does not exist so the
+	// agentPodRef points at an AgentPod that does not exist so the
 	// WarmPoolController does not adopt or reconcile the claim; the
 	// test owns the resource's whole lifecycle.
 	const claimName = "chaos-finalizer-claim"
@@ -319,7 +319,7 @@ func TestAgentPodFinalizerHang(t *testing.T) {
 		claimName)
 }
 
-// agentPodManifest renders a minimal AgentPod CR. poolRef and runtimeRef
+// agentPodManifest renders a minimal AgentPod CR. podSetRef and runtimeRef
 // are the CRD-required fields; their referents need not exist for the
 // claim-guard tests, which key on the AgentPod name via .spec.agentPodRef.
 func agentPodManifest(name, ns string) string {
@@ -331,7 +331,7 @@ metadata:
   labels:
     lenny.dev/test: chaos-concurrency
 spec:
-  poolRef: chaos-pool
+  podSetRef: chaos-pool
   runtimeRef: chaos-runtime
 `, name, ns)
 }

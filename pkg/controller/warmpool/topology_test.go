@@ -21,14 +21,14 @@ func TestCreateAgentPodCopiesTopologyConstraints(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 
-	tmpl := template(ns)
+	tmpl := pool(ns, 1, 10)
 	tmpl.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
 		MaxSkew:           1,
 		TopologyKey:       "topology.kubernetes.io/zone",
 		WhenUnsatisfiable: corev1.ScheduleAnyway,
 		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"lenny.dev/pool": testPool}},
 	}}
-	c := newClient(t, s, tmpl, pool(ns, 1, 10))
+	c := newClient(t, s, tmpl)
 
 	reconcile(t, c, s)
 
@@ -50,14 +50,13 @@ func TestCreateAgentPodCopiesTopologyConstraints(t *testing.T) {
 	}
 }
 
-// A template with no topology constraints produces AgentPods with none;
-// the controller copies what the template carries without inventing
+// A PodSet with no topology constraints produces AgentPods with none;
+// the controller copies what the PodSet carries without inventing
 // defaults (defaulting is the PoolScalingController's job per §5.2).
-// spec: §5.2 (Pool Configuration and Execution Modes)
 func TestCreateAgentPodWithoutTopologyConstraints(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 

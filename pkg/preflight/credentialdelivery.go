@@ -46,11 +46,10 @@ type CredentialDeliveryPool struct {
 // multi-tenant mode; a single-tenant or development deployment permits
 // the combinations and the check passes cleanly.
 //
-// spec: §4.9 — "The lenny-preflight Job additionally scans all
-// PodSet pool definitions at install and upgrade time and fails
-// when any pool in a multi-tenant deployment carries deliveryMode: proxy
-// + spiffeBinding: disabled." §13.1 — matching the shareProcessNamespace
-// preflight pattern (fail-closed at install time).
+// The check follows the shareProcessNamespace preflight pattern of the
+// pod security section: it fails closed at install time.
+//
+// spec: §4.9 (Credential Leasing Service)
 func CheckCredentialDelivery(templates []CredentialDeliveryPool, tenancyMode string, devMode bool) Decision {
 	if tenancyMode != direct_mode_isolation.TenancyMulti {
 		return Decision{Passed: true}

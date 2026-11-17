@@ -457,15 +457,14 @@ func denyLeakageCluster(t *testing.T) client.Client {
 	}
 	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "shared-pool", Namespace: deliveryGateNS},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "shared-tmpl", MinWarm: 2, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "shared-tool",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          2,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool: %v", err)
-	}
-	if err := c.Create(ctx, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "shared-tmpl", Namespace: deliveryGateNS},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: "shared-tool", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template: %v", err)
+		t.Fatalf("create pod set: %v", err)
 	}
 	for i, ip := range []string{"10.244.2.21", "10.244.2.22"} {
 		name := "sbx-leaf-" + string(rune('a'+i))

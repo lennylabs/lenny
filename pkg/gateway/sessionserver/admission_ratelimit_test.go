@@ -186,24 +186,22 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
-	pool := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	// A service-mode template makes the create-time claim claimless (§5.2),
+	// A service-mode PodSet makes the create-time claim claimless (§5.2),
 	// so the per-pool rate-limit gate (which resolves the pool ahead of any
 	// claim) is exercised without seeding an idle AgentPod or needing the
 	// SSA-capable envtest claim path. The per-pool scope still resolves the
-	// pool from the template, which is what this test asserts.
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
+	// pool from the PodSet, which is what this test asserts.
+	pool := &lennyv1.PodSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pool).Build()
 	binder := &podsession.Binder{Client: c, Namespace: ns}
 
 	rec := &rlRecorder{}

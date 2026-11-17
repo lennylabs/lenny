@@ -23,7 +23,7 @@ import (
 const requireSoPeercredFalseFlag = "--require-so-peercred=false"
 
 // nonceOnlyFixture seeds the §4.7 activation chain: a Runtime carrying the
-// supplied deploymentModel and requireSoPeercred, a AgentPod referencing it
+// supplied deploymentModel and requireSoPeercred, an AgentPod referencing it
 // through the pool, the pool, and the pool's PodSet carrying the
 // supplied acknowledgment. It returns the booted client.
 func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *bool, acknowledge bool) client.Client {
@@ -37,18 +37,16 @@ func nonceOnlyFixture(t *testing.T, deploymentModel string, requireSoPeercred *b
 	if deploymentModel == "embedded" {
 		rt.Spec.Command = nil
 	}
-	tmpl := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-template", Namespace: testNamespace(t)},
+	pool := &lennyv1.PodSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
 		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:               testRuntime(t),
 			AcknowledgeNonceOnlyAuth: acknowledge,
+			MinWarm:                  1,
+			MaxWarm:                  3,
 		},
 	}
-	pool := &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker", Namespace: testNamespace(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-template", MinWarm: 1, MaxWarm: 3},
-	}
-	return newClient(t, s, agentPodCR(t, ""), rt, tmpl, pool)
+	return newClient(t, s, agentPodCR(t, ""), rt, pool)
 }
 
 // adapterArgs returns the args of the pod's adapter container, failing the
@@ -192,7 +190,7 @@ func TestReconcileSkipsNonceOnlyForEmbeddedRuntime_spec_4_7(t *testing.T) {
 }
 
 // carrierPatchFailClient wraps a client and fails the §4.7 nonce-only carrier
-// write (the spec.requireSoPeercred SSA Apply patch on a AgentPod) while
+// write (the spec.requireSoPeercred SSA Apply patch on an AgentPod) while
 // passing every other call through. It models an apiserver hiccup on the
 // carrier write that is not a 409 conflict, the failure mode the create-then-
 // persist ordering could not recover from.
@@ -202,7 +200,7 @@ type carrierPatchFailClient struct {
 	fail *bool
 }
 
-// Patch fails a carrier apply (an ApplyPatchType patch targeting a AgentPod,
+// Patch fails a carrier apply (an ApplyPatchType patch targeting an AgentPod,
 // not its status subresource) while *fail is true; status applies and other
 // patches pass through. The carrier write is the only non-status AgentPod apply
 // the reconciler issues, so matching on the type and object is sufficient.
@@ -384,7 +382,7 @@ func TestReconcileClearsStaleCarrierAfterRevert_spec_4_5(t *testing.T) {
 //
 // spec: §4.3, §4.5, §4.7.
 func TestReconcileStaleCarrierClearFailureIsRecoverable_spec_4_5(t *testing.T) {
-	// Seed a AgentPod already carrying the stale false carrier (the state left
+	// Seed an AgentPod already carrying the stale false carrier (the state left
 	// by a prior carrier write that preceded a failed pod create), then revert
 	// the Runtime field so the next reconcile resolves no flag and must clear.
 	c := nonceOnlyFixture(t, "sidecar", ptr.To(true), true)

@@ -84,8 +84,8 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	return c
 }
 
-// concurrentAgentPod builds a AgentPod in the test pool with the given phase
-// and tenant pin. Occupancy is no longer a AgentPod.status field: the per-pod
+// concurrentAgentPod builds an AgentPod in the test pool with the given phase
+// and tenant pin. Occupancy is no longer an AgentPod.status field: the per-pod
 // PodClaim (claim-<podName>) is the occupancy authority and the Redis
 // counter is the intra-pod capacity gate, so a pod's slots are set up with
 // seedOccupiedPod rather than a status field.

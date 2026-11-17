@@ -33,7 +33,7 @@ var (
 )
 
 // CRDPoolReader is the v1 default PoolReader: a thin
-// translator over the lenny.dev/v1alpha1 PodSet / PodSet /
+// translator over the lenny.dev/v1alpha1 PodSet /
 // AgentPod CRDs. spec: §4.6.1.
 type CRDPoolReader struct {
 	// Client is the controller-runtime client every read uses.
@@ -162,7 +162,7 @@ type CRDPodLifecycleManager struct {
 // carries no session identifier; the returned PodHandle echoes sessionID
 // for the caller's attribution alone.
 //
-// spec: §4.6.1; §4.6.3 (gateway is not a AgentPod.status writer).
+// spec: §4.6.1; §4.6.3 (gateway is not an AgentPod.status writer).
 func (m *CRDPodLifecycleManager) ClaimPod(ctx context.Context, poolName, sessionID string, opts ClaimOpts) (PodHandle, error) {
 	pod, err := m.findIdleAgentPod(ctx, poolName)
 	if err != nil {
@@ -298,7 +298,7 @@ func (m *CRDPodLifecycleManager) findIdleAgentPod(ctx context.Context, poolName 
 }
 
 // warmModeFromAnnotations reads the §6.1 warm mode the warming
-// controller stamps on a AgentPod. An unrecognized or missing
+// controller stamps on an AgentPod. An unrecognized or missing
 // annotation defaults to pod_warm (the §6.1 default mode).
 func warmModeFromAnnotations(annotations map[string]string) WarmMode {
 	if annotations["lenny.dev/warm-mode"] == string(WarmModeSDKWarm) {

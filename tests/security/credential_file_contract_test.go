@@ -7,14 +7,10 @@
 // /run/lenny/slots/{sessionId}/credentials.json with mode 0440, owned by
 // the adapter UID and group-owned by the shared lenny-cred-readers
 // group. Every session is bound to a slot on every pod, so the file is
-// per session and no pod-global credential file exists. §4.7
-// states: "mode 0440, owned by the adapter UID and group-owned by
-// the shared lenny-cred-readers supplementary group ... Mode 0440
-// grants read to owner (adapter) and group (agent via
-// supplementary-group membership) while denying all access to other
-// UIDs, so no third party in the pod can read the file." §13.1
-// restates it: "written by the adapter with mode 0440 — owner-writable
-// and group-readable, no access for other UIDs."
+// per session and no pod-global credential file exists. §4.7 fixes the
+// mode, the owner, and the group: the owner (the adapter) and the group
+// (the agent, through its supplementary group) can read the file, and
+// every other UID in the pod is denied. §13.1 states the same mode.
 //
 // The credfile writer's 0440 mode is pinned at tier-1
 // (pkg/adapter/credfile TestWriteSetsRestrictiveMode) and the pod's

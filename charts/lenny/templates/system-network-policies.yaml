@@ -146,7 +146,7 @@ in one row (kube-apiserver, PgBouncer, kube-system CoreDNS), but the PSC runs
 as its own Deployment labelled lenny.dev/component: pool-scaling-controller
 (§4.6.2), not lenny.dev/component: controller, so the allow-controller-egress
 policy above does not select it. Without this policy the PSC cannot reach the
-kube-apiserver to watch and write its PodSet / PodSet CRD
+kube-apiserver to watch and write its PodSet CRD
 pair, nor PgBouncer to read the Postgres-authoritative pool definitions it
 reconciles, and the §13.2 default-deny breaks pool reconciliation. The PSC
 accepts no unsolicited ingress, so the policy is egress-only. The DNS peers

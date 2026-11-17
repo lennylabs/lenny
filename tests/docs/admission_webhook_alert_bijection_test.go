@@ -114,9 +114,8 @@ func TestAdmissionWebhookAdditiveLabelCarriersAgree(t *testing.T) {
 	// drain-readiness pre-drain callback (sub-rule (b)) and the
 	// podset-deletion-guard runtime-upgrade probe (sub-rule
 	// (c), added by proposal 0022). No other webhook may carry the
-	// label; §17.2's "MUST NOT add per-webhook labels to any webhook
-	// other than lenny-drain-readiness and
-	// lenny-podset-deletion-guard" guard forbids it.
+	// label; §17.2 forbids the label on every webhook other than
+	// lenny-drain-readiness and lenny-podset-deletion-guard.
 	want := map[string]bool{
 		"drain-readiness":       true,
 		"podset-deletion-guard": true,
@@ -168,18 +167,17 @@ func carrierSetDiff(want, got map[string]bool) string {
 	return b.String()
 }
 
-// TestDeletionGuardCrossReferenceResolves asserts the §13.2
-// "acknowledged as a labeled admission-webhook Deployment in §17.2"
-// cross-reference has a resolving antecedent in §17.2: §13.2 contains
+// TestDeletionGuardCrossReferenceResolves asserts that the §13.2
+// cross-reference to §17.2 for the labeled deletion-guard Deployment has a
+// resolving antecedent in §17.2: §13.2 contains
 // the phrase referring the reader to §17.2, and §17.2 contains a
 // sentence that acknowledges `lenny-podset-deletion-guard` as
 // a labeled admission-webhook Deployment (the additive-label / HA
 // sentence added on application of proposal 0022).
 //
 // diagnosis: A failure means the §13.2 cross-reference to §17.2 for the
-// podset-deletion-guard is dangling — either §13.2 dropped the
-// "acknowledged as a labeled admission-webhook Deployment in §17.2"
-// phrase, or §17.2 dropped the antecedent sentence naming
+// podset-deletion-guard is dangling — either §13.2 dropped the phrase
+// that refers the reader to §17.2, or §17.2 dropped the antecedent sentence naming
 // lenny-podset-deletion-guard with its additive
 // `lenny.dev/webhook-name` label. The reader following the §13.2 row to
 // §17.2 would find no acknowledgement of the deletion-guard.
@@ -203,9 +201,8 @@ func TestDeletionGuardCrossReferenceResolves(t *testing.T) {
 
 	// (b2) §17.2 carries the antecedent sentence: it acknowledges
 	// lenny-podset-deletion-guard as a labeled admission-webhook
-	// Deployment carrying the additive per-webhook label. The sentence
-	// added on application states the deletion-guard "carries the additive
-	// per-webhook label lenny.dev/webhook-name: podset-deletion-guard".
+	// Deployment carrying the additive per-webhook label
+	// lenny.dev/webhook-name with the value podset-deletion-guard.
 	if !strings.Contains(text172, "lenny-podset-deletion-guard") {
 		t.Fatalf("§17.2 does not name lenny-podset-deletion-guard; the §13.2 cross-reference has no antecedent")
 	}
@@ -244,8 +241,8 @@ var backtickedNameRe = regexp.MustCompile("`(lenny-[a-z0-9-]+)`")
 // line-56 enumeration without a matching §16.5 alert is caught.
 //
 // diagnosis: A failure means a webhook was added to the §17.2 line-56
-// `replicas: 2` SLO enumeration (the antecedent the "1:1 alert in this
-// list" clause quantifies over) without a matching per-webhook
+// `replicas: 2` SLO enumeration (the antecedent the one-alert-per-webhook
+// clause quantifies over) without a matching per-webhook
 // `*Unavailable` alert in the §16.5 catalog / rules.Catalog(), so §17.2
 // now asserts a per-webhook alert that does not exist — or the alert was
 // removed from rules.Catalog while the enumeration still names it. The

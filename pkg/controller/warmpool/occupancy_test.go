@@ -79,7 +79,7 @@ func agentPodPhase(t *testing.T, c client.Client, podName string) string {
 	return sb.Status.Phase
 }
 
-// occupiedAgentPod is a AgentPod seeded into the given coarse phase, so a
+// occupiedAgentPod is an AgentPod seeded into the given coarse phase, so a
 // claim-deletion projection has an occupied phase to act on.
 func occupiedAgentPod(ns, name, phase string) *lennyv1.AgentPod {
 	sb := idleAgentPod(ns, name)

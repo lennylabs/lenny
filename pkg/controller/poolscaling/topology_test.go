@@ -26,7 +26,7 @@ func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	got := getTemplate(t, c).Spec.TopologySpreadConstraints
+	got := getPodSet(t, c).Spec.TopologySpreadConstraints
 	if len(got) != 2 {
 		t.Fatalf("topology constraints = %d, want 2 (zone + node)", len(got))
 	}
@@ -72,7 +72,7 @@ func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	got := getTemplate(t, c).Spec.TopologySpreadConstraints
+	got := getPodSet(t, c).Spec.TopologySpreadConstraints
 	if len(got) != 1 {
 		t.Fatalf("topology constraints = %d, want 1 (the override, not the 2 defaults)", len(got))
 	}
@@ -100,7 +100,7 @@ func TestSyncTopologyDefaultsAreIdempotent_spec_5_2_631(t *testing.T) {
 		t.Fatalf("second Sync: %v", err)
 	}
 
-	if got := getTemplate(t, c).Spec.TopologySpreadConstraints; len(got) != 2 {
+	if got := getPodSet(t, c).Spec.TopologySpreadConstraints; len(got) != 2 {
 		t.Fatalf("after re-sync topology constraints = %d, want 2", len(got))
 	}
 	// The source PoolConfig is never mutated by the sync (the defaults

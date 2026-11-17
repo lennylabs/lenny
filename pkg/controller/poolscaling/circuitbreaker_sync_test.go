@@ -69,7 +69,7 @@ func TestSyncTripsBreakerOnHighDemotionRate(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if !pool.Spec.SDKWarmDisabled {
 		t.Fatal("spec.sdkWarmDisabled should be true after the breaker trips")
 	}
@@ -104,7 +104,7 @@ func TestSyncLeavesBreakerClosedOnLowDemotionRate(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Spec.SDKWarmDisabled {
 		t.Error("spec.sdkWarmDisabled should stay false at a low demotion rate")
 	}
@@ -136,7 +136,7 @@ func TestSyncBreakerStateRoundTripsAndHoldsOpen(t *testing.T) {
 	if err := r1.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync pass 1: %v", err)
 	}
-	first := getWarmPool(t, c).Status.SDKWarmCircuitBreaker
+	first := getPodSet(t, c).Status.SDKWarmCircuitBreaker
 	if first == nil || first.OpenedAt == nil {
 		t.Fatal("pass 1 should have persisted an open breaker")
 	}
@@ -153,7 +153,7 @@ func TestSyncBreakerStateRoundTripsAndHoldsOpen(t *testing.T) {
 		t.Fatalf("Sync pass 2: %v", err)
 	}
 
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if !pool.Spec.SDKWarmDisabled {
 		t.Fatal("breaker must stay open inside the grace window despite the recovered rate")
 	}
@@ -198,7 +198,7 @@ func TestSyncBreakerClosesAfterGraceWindow(t *testing.T) {
 		t.Fatalf("Sync pass 2: %v", err)
 	}
 
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Spec.SDKWarmDisabled {
 		t.Error("breaker should close once the grace window elapses and the rate recovers")
 	}
@@ -220,7 +220,7 @@ func TestSyncHonorsPersistedBreakerWithoutDemotionSource(t *testing.T) {
 	existing := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS},
 		Spec: lennyv1.PodSetSpec{
-			TemplateRef:     testPool,
+			RuntimeRef:      "claude-code",
 			MinWarm:         3,
 			MaxWarm:         10,
 			SDKWarmDisabled: true,
@@ -247,7 +247,7 @@ func TestSyncHonorsPersistedBreakerWithoutDemotionSource(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if !pool.Spec.SDKWarmDisabled {
 		t.Fatal("a fresh leader must hold a persisted breaker open until its grace window elapses")
 	}

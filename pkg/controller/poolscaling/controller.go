@@ -287,7 +287,7 @@ type ModeFactorSource interface {
 }
 
 // Reconciler is the §4.6.2 PoolScalingController. It syncs pool
-// definitions from the PoolConfigSource into their CRD pair, deriving
+// definitions from the PoolConfigSource into their PodSet, deriving
 // each pool's warm-pod floor from observed demand.
 type Reconciler struct {
 	// Client is the controller-runtime client.

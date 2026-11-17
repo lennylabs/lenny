@@ -82,8 +82,8 @@ func podBindScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// podBindClient returns a cluster holding a warm pool, its template, and
-// one idle AgentPod the start path can claim. Backed by envtest so the
+// podBindClient returns a cluster holding a pool's PodSet and one idle
+// AgentPod the start path can claim. Backed by envtest so the
 // §4.6.3 SSA Apply path the session-mode claimer + slot claimer use is
 // real; the fake client does not implement SSA (kubernetes/kubernetes#115598).
 // spec: §4.6.3 ownership table.
@@ -164,17 +164,18 @@ func podBindEnvtestClient(t *testing.T, objs ...client.Object) client.Client {
 	return c
 }
 
-func podBindWarmPool(t *testing.T, name, templateRef string) *lennyv1.PodSet {
+// podBindPodSet returns the PodSet of one pool: it is named after the pool,
+// carries the runtime and isolation profile ResolvePool matches on, and
+// carries the warm-pool targets.
+func podBindPodSet(t *testing.T, name, runtimeRef, isolationProfile string) *lennyv1.PodSet {
 	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS(t)},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
-	}
-}
-
-func podBindTemplate(t *testing.T, name, runtimeRef, isolationProfile string) *lennyv1.PodSet {
-	return &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS(t)},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: isolationProfile},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: isolationProfile,
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}
 }
 
@@ -227,8 +228,7 @@ func TestSessionStartPlacesSessionOnWarmPod(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -310,8 +310,7 @@ func TestCombinedStartRunsCredentialPreCheckOnce_spec_7_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -395,8 +394,7 @@ func TestCombinedStartEndToEndIncludesPodClaim_spec_6_3_348(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -474,8 +472,7 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	// runtime no warm pool covers.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -514,8 +511,8 @@ func TestSessionStartLeavesNoRowOnClaimFailure_spec_7_1_4(t *testing.T) {
 	}
 }
 
-// podBindServer builds a sessionserver wired to a warm pool, its
-// template, and an idle AgentPod, returning the server, the registry,
+// podBindServer builds a sessionserver wired to a pool's PodSet and
+// an idle AgentPod, returning the server, the registry,
 // the cluster client, and the adapter's workspace root.
 func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.Registry, client.Client, string) {
 	t.Helper()
@@ -526,8 +523,7 @@ func podBindServer(t *testing.T, id string) (*sessionserver.Server, *podsession.
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -638,8 +634,7 @@ func TestTwoStepStartRunsNoCredentialWork_spec_15_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -800,8 +795,7 @@ func TestFinalizeFailsSessionAndReclaimsPodOnSetupError_spec_7_5(t *testing.T) {
 	apod.Spec.IsolationProfile = string(isolation.ProfileSandboxed)
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		apod,
 	)
 	registry := podsession.NewRegistry()
@@ -936,8 +930,7 @@ func TestFinalizeRejectsOverLimitArchiveAsNonRetryable_spec_13_4(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -1131,8 +1124,7 @@ func runFinalizeMaterializationFailureCase(t *testing.T, tc finalizeMaterializat
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -1242,8 +1234,7 @@ func TestFinalizeCredentialMismatchReclaimsPod_spec_7_3(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -1421,8 +1412,7 @@ func TestFinalizePostCredentialWriteFailureRevokesLease_spec_7_1(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -1547,8 +1537,7 @@ func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -1801,8 +1790,7 @@ func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	store := memstore.New()
@@ -1852,8 +1840,7 @@ func TestSessionStartPersistsPodAssignment(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "sbx-persist", "echo-pool", "10.244.2.9"),
 	)
 	registry := podsession.NewRegistry()
@@ -1912,8 +1899,7 @@ func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 	// retryable response).
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -1955,7 +1941,7 @@ func TestResumeKeepsPendingOnTransientPoolExhaustion(t *testing.T) {
 
 // TestResumePassesRecoveryGenerationAndSizeHintsToAdapter covers
 // F-7.3.22 + F-7.3.26: the gateway must pass the session's recovery
-// generation and the last_checkpoint_workspace_bytes / template hard
+// generation and the last_checkpoint_workspace_bytes / PodSet hard
 // limit to the adapter so per-pod telemetry, partial-manifest tagging,
 // and the symmetric pre-extraction size check have the spec-mandated
 // inputs.
@@ -1966,16 +1952,15 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = rt
 
-	// WorkspaceSizeLimitBytes on the template is the §4.4 / §10.1
+	// WorkspaceSizeLimitBytes on the PodSet is the §4.4 / §10.1
 	// per-pod hard cap; the resume path forwards it to the adapter.
 	limit := int64(64 * 1024 * 1024)
-	tmpl := podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed))
-	tmpl.Spec.WorkspaceSizeLimitBytes = &limit
+	podSet := podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed))
+	podSet.Spec.WorkspaceSizeLimitBytes = &limit
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		tmpl,
+		podSet,
 		podBindIdleAgentPod(t, "sbx-rg", "echo-pool", "10.244.4.5"),
 	)
 	registry := podsession.NewRegistry()
@@ -2091,8 +2076,7 @@ func TestSessionStartQueuesUntilPodFrees(t *testing.T) {
 	// exhausts both the claim path and (absent Postgres) the fallback.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -2168,8 +2152,7 @@ func TestSessionStartQueueTimeoutReturnsExhausted(t *testing.T) {
 	// bound and returns WARM_POOL_EXHAUSTED.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -2229,8 +2212,7 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 	)
 	registry := podsession.NewRegistry()
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
@@ -2271,14 +2253,14 @@ func TestSessionStartRejectFailsImmediately(t *testing.T) {
 	}
 }
 
-// podBindServiceTemplate is podBindTemplate's service-mode sibling: a
+// podBindServicePodSet is podBindPodSet's service-mode sibling: a
 // PodSet whose §5.2 executionMode is `service`, so ResolvePool
 // reports a service-mode match and the start path takes the claimless
 // routing branch.
-func podBindServiceTemplate(t *testing.T, name, runtimeRef, isolationProfile string) *lennyv1.PodSet {
-	tmpl := podBindTemplate(t, name, runtimeRef, isolationProfile)
-	tmpl.Spec.ExecutionMode = string(runtimestore.ExecutionModeService)
-	return tmpl
+func podBindServicePodSet(t *testing.T, name, runtimeRef, isolationProfile string) *lennyv1.PodSet {
+	ps := podBindPodSet(t, name, runtimeRef, isolationProfile)
+	ps.Spec.ExecutionMode = string(runtimestore.ExecutionModeService)
+	return ps
 }
 
 // podBindServicePool returns a poolstore mirror for a service-mode pool so
@@ -2300,7 +2282,7 @@ func podBindServicePool(t *testing.T, name, runtimeRef string, maxConcurrent int
 // spec: §5.2 (service mode is claimless: no PodClaim, no workspace
 // materialization), (service-mode session contract), §7.1
 // (conversationContinuity).
-// diagnosis: a service-mode start that claims a AgentPod or binds a pod
+// diagnosis: a service-mode start that claims an AgentPod or binds a pod
 // breaks the §5.2 claimless contract — every service-mode session would
 // burn a warm pod and the tenant-affinity routing layer would never be
 // reached. A failure here means the start path did not take the claimless
@@ -2311,12 +2293,11 @@ func TestServiceModeStartIsClaimless_spec_5_2(t *testing.T) {
 	adapterSrv.WorkspaceBase = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
 
-	// The cluster carries a service-mode pool, its service-mode template, and
-	// one idle AgentPod. The claimless path must leave that AgentPod unclaimed.
+	// The cluster carries a service-mode pool's PodSet and one idle
+	// AgentPod. The claimless path must leave that AgentPod unclaimed.
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
-		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindServicePodSet(t, "svc-pool", "svc-runtime", string(isolation.ProfileSandboxed)),
 		podBindIdleAgentPod(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	registry := podsession.NewRegistry()

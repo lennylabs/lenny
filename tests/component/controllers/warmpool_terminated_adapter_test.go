@@ -78,11 +78,12 @@ func newTerminatedAdapterEnv(t *testing.T) *terminatedAdapterEnv {
 	})
 	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: taPool, Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{RuntimeRef: rtName, IsolationProfile: "standard"},
-	})
-	mustCreate(t, ctx, c, &lennyv1.PodSet{
-		ObjectMeta: metav1.ObjectMeta{Name: taPool, Namespace: ns},
-		Spec:       lennyv1.PodSetSpec{TemplateRef: taPool, MinWarm: 1, MaxWarm: 3},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       rtName,
+			IsolationProfile: "standard",
+			MinWarm:          1,
+			MaxWarm:          3,
+		},
 	})
 	return &terminatedAdapterEnv{
 		t: t, ctx: ctx, c: c, ns: ns, runtime: rtName,
@@ -185,7 +186,7 @@ func (e *terminatedAdapterEnv) setPodStatus(name string, adapterExited, ready bo
 	}
 }
 
-// applyAgentPodPhase seeds a AgentPod phase under the WarmPoolController
+// applyAgentPodPhase seeds an AgentPod phase under the WarmPoolController
 // field manager, standing in for the occupancy projection.
 func (e *terminatedAdapterEnv) applyAgentPodPhase(name string, phase state.State) {
 	e.t.Helper()
@@ -217,7 +218,7 @@ func (e *terminatedAdapterEnv) fillOne() string {
 	return name
 }
 
-// drainToTerminated reconciles a AgentPod until its pod is deleted and it
+// drainToTerminated reconciles an AgentPod until its pod is deleted and it
 // reaches terminated, asserting each step of the §6.2 reclaim.
 func (e *terminatedAdapterEnv) drainToTerminated(name string) {
 	e.t.Helper()

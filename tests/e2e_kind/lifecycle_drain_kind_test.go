@@ -252,7 +252,7 @@ func podReturnedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, s
 		if err != nil {
 			return false, err.Error()
 		}
-		agentPod, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox", pod,
+		agentPod, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "agentpod", pod,
 			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 		if err != nil {
 			return false, fmt.Sprintf("read sandbox: %v", err)

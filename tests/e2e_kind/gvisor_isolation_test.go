@@ -56,8 +56,8 @@ const gvisorNodeLabelSelector = "lenny.dev/pool=sandbox-gvisor"
 // §13.1 capability-drop invariant stopped applying to sandboxed pods
 // specifically, or the pod's kernel is not actually gVisor's
 // intercepting sentry (a silent fallback to the host runc kernel would
-// defeat the "kernel-level isolation prevents container escape via
-// kernel exploits" guarantee §5.3 makes for the sandboxed profile).
+// defeat the kernel-level isolation guarantee §5.3 makes for the
+// sandboxed profile).
 func TestGvisorIsolation(t *testing.T) {
 	c := kind.InstallLenny(t)
 	requireGvisorRuntimeClass(t, c)

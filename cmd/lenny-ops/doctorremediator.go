@@ -34,8 +34,8 @@ const (
 	// stamps on a stalled PodSet to re-drive the WarmPoolController.
 	// The apiserver honors an annotation write (advancing resourceVersion and
 	// emitting a watch Update event) where a direct .metadata.generation write
-	// is a no-op, so this achieves the §25.6 "triggers controller to re-drive"
-	// mechanism against a real cluster.
+	// is a no-op, so this achieves the §25.6 re-drive mechanism against a
+	// real cluster.
 	doctorRedriveAnnotation = "lenny.dev/doctor-redrive"
 	corednsNamespace        = "kube-system"
 	corednsDeployment       = "coredns"
@@ -445,8 +445,7 @@ func (r *k8sDoctorRemediator) warmPoolDrainedPastWindow(_ context.Context, pool 
 	return false, nil
 }
 
-// applyWarmPoolStuck re-drives the stalled PodSet (spec line 2956:
-// "Bumps pool generation (triggers controller to re-drive)"). It stamps a
+// applyWarmPoolStuck re-drives the stalled PodSet (§25.6). It stamps a
 // re-drive annotation carrying the current timestamp onto .metadata, which
 // the apiserver honors: an annotation write is a spec-adjacent metadata
 // change that advances .metadata.resourceVersion and (as a spec-file change)

@@ -71,45 +71,45 @@ func TestWarmPool(t *testing.T) {
 	}{
 		{
 			name: "minWarm below maxWarm is admitted",
-			spec: lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
+			spec: lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 10},
 		},
 		{
 			name: "minWarm equal to maxWarm is admitted",
-			spec: lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 5, MaxWarm: 5},
+			spec: lennyv1.PodSetSpec{MinWarm: 5, MaxWarm: 5},
 		},
 		{
 			name: "scale-to-zero floor is admitted",
-			spec: lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 0, MaxWarm: 0},
+			spec: lennyv1.PodSetSpec{MinWarm: 0, MaxWarm: 0},
 		},
 		{
 			name:       "minWarm above maxWarm is rejected",
-			spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 12, MaxWarm: 10},
+			spec:       lennyv1.PodSetSpec{MinWarm: 12, MaxWarm: 10},
 			reject:     true,
 			wantSubstr: "spec.minWarm (12) exceeds spec.maxWarm (10)",
 		},
 		{
 			name:       "negative minWarm is rejected",
-			spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: -1, MaxWarm: 10},
+			spec:       lennyv1.PodSetSpec{MinWarm: -1, MaxWarm: 10},
 			reject:     true,
 			wantSubstr: "spec.minWarm (-1) must not be negative",
 		},
 		{
 			name:       "negative maxWarm is rejected",
-			spec:       lennyv1.PodSetSpec{TemplateRef: "t", MinWarm: 0, MaxWarm: -3},
+			spec:       lennyv1.PodSetSpec{MinWarm: 0, MaxWarm: -3},
 			reject:     true,
 			wantSubstr: "spec.maxWarm (-3) must not be negative",
 		},
 		{
 			name: "bootstrapMinWarm within maxWarm is admitted",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{BootstrapMinWarm: 8},
 			},
 		},
 		{
 			name: "bootstrapMinWarm above maxWarm is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{BootstrapMinWarm: 25},
 			},
 			reject:     true,
@@ -118,7 +118,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "negative bootstrapMinWarm is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{BootstrapMinWarm: -2},
 			},
 			reject:     true,
@@ -127,7 +127,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "valid schedule window is admitted",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "17:00", MinWarm: 8}},
 				},
@@ -136,7 +136,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "schedule window with malformed start is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "9am", End: "17:00", MinWarm: 3}},
 				},
@@ -147,7 +147,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "schedule window with malformed end is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "25:61", MinWarm: 3}},
 				},
@@ -158,7 +158,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "zero-duration schedule window is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "09:00", MinWarm: 3}},
 				},
@@ -169,7 +169,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "schedule window minWarm above maxWarm is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "17:00", MinWarm: 40}},
 				},
@@ -180,7 +180,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "negative schedule window minWarm is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "17:00", MinWarm: -1}},
 				},
@@ -191,7 +191,7 @@ func TestWarmPool(t *testing.T) {
 		{
 			name: "second schedule window violation is rejected",
 			spec: lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{
 						{Start: "09:00", End: "17:00", MinWarm: 8},
@@ -790,7 +790,7 @@ func TestWarmPoolScaleToZero(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			spec := lennyv1.PodSetSpec{
-				TemplateRef: "t", MinWarm: 0, MaxWarm: 10,
+				MinWarm: 0, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{ScaleToZero: tc.policy},
 			}
 			d := pcv.DecideWarmTargets(warmPool(spec))

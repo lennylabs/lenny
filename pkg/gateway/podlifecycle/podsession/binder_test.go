@@ -975,7 +975,6 @@ func (w *phaseStatusWriter) Patch(ctx context.Context, obj client.Object, patch 
 // WarmPoolController projects the pod phase from the per-pod claim's binding
 // state. The acquisition is recorded as a `bound` binding state on the
 // per-pod PodClaim instead.
-// spec: §4.6.3 (CRD Field Ownership and Write Boundaries)
 func TestBindWritesNoAgentPodStatusThroughSetupChain(t *testing.T) {
 	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
@@ -1012,7 +1011,6 @@ func TestBindWritesNoAgentPodStatusThroughSetupChain(t *testing.T) {
 // WarmPoolController projects draining from the claim DELETE). The terminal
 // disposition fact lives on the Postgres session row (§7.2 / §8.8), so the
 // gateway records no AgentPod condition. F-6.2.12.
-// spec: §4.6.3 (CRD Field Ownership and Write Boundaries)
 func TestReleaseNonRecyclingDeletesClaimWritesNoAgentPodStatus(t *testing.T) {
 	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
@@ -1056,7 +1054,6 @@ func TestReleaseNonRecyclingDeletesClaimWritesNoAgentPodStatus(t *testing.T) {
 // TestReleaseExpiredDeletesClaimWithoutAgentPodStatus asserts an
 // expired session's Release on a non-recycling pool deletes the per-pod claim
 // and writes no AgentPod.status field (§4.6.3).
-// spec: §4.6.3 (CRD Field Ownership and Write Boundaries)
 func TestReleaseExpiredDeletesClaimWithoutAgentPodStatus(t *testing.T) {
 	ns := testNamespace(t)
 	srv := adapter.New("adapter-test")
@@ -1905,14 +1902,9 @@ func TestBindFallbackReturnsErrNoIdlePodWhenMirrorAlsoExhausted(t *testing.T) {
 // name-uniqueness check alone fences the cross-path race, which is precisely
 // what the spec means by double-claim being impossible regardless of timing.
 //
-// spec: §4.6.1 — "the deterministic claim-<podName> name additionally
-// subjects a duplicate CREATE to the API server's name-uniqueness check,
-// double-claim is impossible regardless of timing: even if two writers race
-// to create a claim for the same AgentPod, the second writer's CREATE is
-// rejected ... by the name-uniqueness check, before a second binding is
-// established"; without the deterministic name "the fallback path could race
-// with the normal CRD-based claim path and produce duplicate claims for the
-// same AgentPod".
+// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)). Without the
+// deterministic name the fallback path and the normal path could each create
+// a claim for one AgentPod.
 //
 // diagnosis: a failure here means the Postgres fallback claim path no longer
 // names its claim claim-<podName>. A fallback claim racing the normal

@@ -53,7 +53,7 @@ tests:
   # the deletion-guard pods by the paired canonical + additive selector,
   # egressing to the gateway on the internal port. F-13.2.24. Before this
   # fix no NetworkPolicy rendered and the fail-closed webhook denied a
-  # PodSet DELETE with a referencing PodSet.
+  # PodSet DELETE.
   - it: renders allow-deletion-guard-gateway-egress narrowed to the paired selector, egress-only to the gateway
     documentSelector:
       path: metadata.name

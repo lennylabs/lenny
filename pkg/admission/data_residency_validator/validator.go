@@ -26,8 +26,7 @@
 // inherited region, or — at the webhook-transport layer — a missing
 // region configuration all reject. A webhook outage rejects via
 // failurePolicy: Fail so an unverifiable region constraint cannot be
-// silently admitted (§12.8: "if the webhook is unavailable, admission
-// is denied").
+// silently admitted (§12.8).
 //
 // The decision logic is split from the webhook HTTP/AdmissionReview
 // transport so it can be unit-tested without the controller-runtime

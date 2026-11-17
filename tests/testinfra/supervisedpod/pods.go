@@ -166,7 +166,7 @@ func WaitReadyPods(t testing.TB, c *kind.Cluster, pool string, n int, timeout ti
 // PodClaim, and the pool's PodSet no longer reports
 // PoolWarmingUp. A Ready pod that served an earlier session can still hold a
 // claim through its reserved hold and drain, and the gateway answers a start
-// with 503 RUNTIME_UNAVAILABLE while the template reports PoolWarmingUp, so
+// with 503 RUNTIME_UNAVAILABLE while the PodSet reports PoolWarmingUp, so
 // neither a Ready pod alone nor an unclaimed pod alone makes a start
 // claimable. A pool that does not reach n within timeout skips the test as
 // not yet applicable, as WaitReadyPods does.
@@ -216,20 +216,16 @@ func unclaimedReadyPods(t testing.TB, c *kind.Cluster, pool string) []PodState {
 	return idle
 }
 
-// PoolWarmingUp reports whether the PodSet behind pool carries the
+// PoolWarmingUp reports whether the pool's PodSet carries the
 // PoolWarmingUp condition with status True, the condition the gateway reads
 // to refuse a start while the pool has no idle pod.
 // spec: §5.2 (PoolWarmingUp condition).
 func PoolWarmingUp(t testing.TB, c *kind.Cluster, pool string) bool {
 	t.Helper()
-	tmpl, err := c.KubectlOut(t, "-n", Namespace, "get", "podset", pool, "-o", "jsonpath={.spec.templateRef}")
-	if err != nil {
-		t.Fatalf("read templateRef of %s: %v\n%s", pool, err, tmpl)
-	}
-	out, err := c.KubectlOut(t, "-n", Namespace, "get", "podset", strings.TrimSpace(tmpl), "-o",
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "podset", pool, "-o",
 		`jsonpath={.status.conditions[?(@.type=="PoolWarmingUp")].status}`)
 	if err != nil {
-		t.Fatalf("read PoolWarmingUp of template %s: %v\n%s", tmpl, err, out)
+		t.Fatalf("read PoolWarmingUp of PodSet %s: %v\n%s", pool, err, out)
 	}
 	return strings.TrimSpace(out) == "True"
 }
