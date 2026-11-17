@@ -23,3 +23,7 @@ Settled by the owner on 2026-11-16 ("go with all your recommendations"), on the 
 10. **§26 moves in the runtimes area change**, beside the runtime protocol and its conformance suite.
 11. **Documentation front matter is added per area.** Each documentation gate turns on for a page once the area it describes has landed.
 
+Settled by the owner on 2026-11-16 ("ok"), on a question step 0115.S5 raised while building:
+
+12. **Section citations during the transition.** The ratchet of `tests/registers/spec-section-citations.yaml` fails when a package's count of `§` citations rises, unless the same commit raises that package's count, so the rise is deliberate and shows in review. Once an area has migrated, its packages' counts become strict: they may only fall. The area change that migrates them records the switch.
+

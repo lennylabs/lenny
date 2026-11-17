@@ -9,7 +9,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 7 |
-| Waiting on decisions | 41 |
+| Ready | 2 |
+| Waiting on decisions | 39 |
 | Blocked | 141 |
 | Cancelled | 1 |
 
@@ -30,8 +31,8 @@ Not yet resolved to steps: 0116.
 | [0115.S5](0115-spec-structure/steps.md#0115s5-annotation-rule-and-its-lint) | Annotation rule and its lint | Building |  |
 | [0115.S7](0115-spec-structure/steps.md#0115s7-successor-stubs-and-the-frozen-reference) | Successor stubs and the frozen reference | Building |  |
 | [0115.S8](0115-spec-structure/steps.md#0115s8-helpers-that-read-the-structure) | Helpers that read the structure | Building |  |
-| [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Waiting on decisions | 0137 is `Draft` |
-| [0154.S1](0154-merge-gate/steps.md#0154s1-repair-tier-0-and-sweep-for-accidental-deletions) | Repair tier 0 and sweep for accidental deletions | Waiting on decisions | 0154 is `Draft` |
+| [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Ready |  |
+| [0154.S1](0154-merge-gate/steps.md#0154s1-repair-tier-0-and-sweep-for-accidental-deletions) | Repair tier 0 and sweep for accidental deletions | Ready |  |
 | [0115.S6](0115-spec-structure/steps.md#0115s6-documentation-rule-and-gates) | Documentation rule and gates | Blocked | 0115.S3, 0115.S4 |
 | [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Blocked | 0115.S8 |
 | [0154.S2](0154-merge-gate/steps.md#0154s2-the-gate-container-the-gate-command-and-concurrent-static-checks) | The gate container, the gate command, and concurrent static checks | Blocked | 0154.S1 |
@@ -270,7 +271,7 @@ Not yet resolved to steps: 0117.
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 0 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
-| [0154](0154-merge-gate/change.md) | Green main line and merge gate | `Draft` | 0 of 3 | 5 |
-| [0155](0155-test-tiers-by-name/change.md) | Test tiers by name and the static and documentation tiers | `Draft` | 0 of 3 | 3 |
+| [0154](0154-merge-gate/change.md) | Green main line and merge gate | `Decided` | 0 of 3 | 0 |
+| [0155](0155-test-tiers-by-name/change.md) | Test tiers by name and the static and documentation tiers | `Decided` | 0 of 3 | 0 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
-| [0157](0157-persona-journeys/change.md) | Persona journey tier | `Draft` | 0 of 1 | 3 |
+| [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |

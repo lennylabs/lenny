@@ -25,7 +25,7 @@ import sys
 STEP_STATUS = ['Planned', 'Building', 'Landed', 'Cancelled']
 CHANGE_STATUS = ['Draft', 'Decided', 'In progress', 'Implemented', 'Cancelled']
 LANES = {'specification', 'code', 'documentation', 'non-specification'}
-FIELDS = ('status', 'aliases', 'lanes', 'depends-on', 'closes')
+FIELDS = ('status', 'aliases', 'lanes', 'depends-on', 'closes', 'ruled-ready')
 HEAD = re.compile(r'^### (\d{4})\.S(\d+) (.+)$')
 FIELD = re.compile(r'^- ([a-z-]+): (.*)$')
 STEP_REF = re.compile(r'^\d{4}\.S\d+$')
@@ -152,6 +152,8 @@ def load(tree):
             st = fields.get('status', (None,))[0]
             if st not in STEP_STATUS:
                 errors.append(f'{sid}: status {st!r} unknown')
+            if 'ruled-ready' in fields and not re.match(r'^\d{4}-\d{2}-\d{2}\b', fields['ruled-ready'][0]):
+                errors.append(f'{sid}: ruled-ready must start with the date of the owner\'s ruling')
             for k in ('aliases', 'lanes', 'depends-on', 'closes'):
                 if k in fields and parse_list(fields[k][0]) is None:
                     errors.append(f'{sid}: field {k} is not a [list]')
@@ -170,7 +172,8 @@ def load(tree):
                           'status_line': fields.get('status', (None, None))[1],
                           'aliases': parse_list(fields.get('aliases', ('',))[0]) or [],
                           'deps': parse_list(fields.get('depends-on', ('',))[0]) or [],
-                          'closes': parse_list(fields.get('closes', ('',))[0]) or []}
+                          'closes': parse_list(fields.get('closes', ('',))[0]) or [],
+                          'ruled_ready': fields.get('ruled-ready', (None,))[0]}
             changes[num]['steps'].append(sid)
     return changes, steps, errors
 
@@ -312,7 +315,7 @@ def render_board(tree, changes, steps):
             return s['status']
         if any(d in steps and steps[d]['status'] not in done for d in s['deps']):
             return 'Blocked'
-        if changes[s['change']]['status'] == 'Draft':
+        if changes[s['change']]['status'] == 'Draft' and not s['ruled_ready']:
             return 'Waiting on decisions'
         return 'Ready'
 
