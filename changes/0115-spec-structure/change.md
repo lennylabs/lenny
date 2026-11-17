@@ -76,7 +76,7 @@ The `lenny-def` block format of TAXONOMY ("Owners of enumerable facts"), with on
 
 ### Gates
 
-Each gate runs in tier 0 and costs no model tokens. They apply to pages of the new tree, and to a numbered file once its sections are stubs:
+Each gate runs in tier 0 and costs no model tokens. They apply to pages of the new tree, and to a numbered file once every numbered section in it is a full stub:
 
 - links and identifiers resolve, fragments are registered identifiers, and no link targets a heading on another page (`specshift ref check`);
 - every definition block is defined once and validates against its kind's schema;
@@ -105,11 +105,11 @@ The gate that every added or modified requirement has a test citing it needs cov
 - `since <date or commit>` lists the requirements added, modified, and retired, and the packages changed under each area.
 - `docs/about/status.md` is generated from the programs' milestones, in place of the roadmap.
 
-Each is a skill over a command of `scripts/changes/changes.py` or `scripts/specshift`, as 0114 set for helpers.
+Each is a skill over a command, as 0114 set for helpers: `digest`, `where`, and `since` are commands of `scripts/specshift` in `scripts/specshift/survey`, and the status page is the `status-page` command of `scripts/changes/changes.py`.
 
 ### Successor stubs and the frozen reference
 
-An area change replaces each migrated paragraph of a numbered section with a successor list under the same heading ([legacy-stubs.md](evidence/spike-migration/spec-next/legacy-stubs.md) shows the format), so a `§` citation still resolves to its heading and the heading names where the content went. `specshift ref lookup §N.M` follows the stub. The frozen reference keeps the original text readable: the git tag `spec-frozen` marks the commit before the first area migrates, and `lookup` prints the section's text from that tag (decision 7).
+An area change replaces each migrated paragraph of a numbered section with a successor list under the same heading ([legacy-stubs.md](evidence/spike-migration/spec-next/legacy-stubs.md) shows the format), so a `§` citation still resolves to its heading and the heading names where the content went. `specshift ref lookup §N.M` follows the stub. The frozen reference keeps the original text readable: the git tag `spec-frozen` marks the last commit of `main` before this change merges, so it holds the original text of every numbered section, §18, §21, and §23 included, and `lookup` prints the section's text from that tag (decision 7).
 
 ### Retiring the root plan files
 
@@ -127,7 +127,7 @@ An area change replaces each migrated paragraph of a numbered section with a suc
 
 - Specification: `spec/README.md` as the root map, `spec/conventions.md`, the placeholder pages and generated indexes of the new tree, `spec/registry.json`, and `spec/catalogs/` (empty catalogs until areas add blocks). §28's naming law N3 and N8 lose the root plan files. §18 and §21 retire, and §23 moves to `docs/about/` (decision 9).
 - Rules: `.claude/rules/spec-annotations.md` (new), `spec-citations.md`, `spec-driven-development.md`, `code-best-practices.md`, `doc-content.md`, and `channel-naming.md`.
-- Code: `scripts/specshift` gains the reference pass, the block parser and generators, and the gates; `scripts/changes/changes.py` gains `digest` and `since`; tier-0 tests in `tests/tier0_static/`.
+- Code: `scripts/specshift` gains the reference pass, the block parser and generators, the gates, and `digest`, `where`, and `since` in `scripts/specshift/survey`; `scripts/changes/changes.py` gains the `status-page` command that generates the status page; tier-0 tests in `tests/tier0_static/`.
 - Skills: `digest`, `where`, and `since`.
 - Removed: `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md`.
 
@@ -140,7 +140,7 @@ An area change replaces each migrated paragraph of a numbered section with a suc
 ## Tests
 
 - Tier 0: the reference pass (registry, `check` with planted errors, `fix` after a move, `lookup` of an identifier and of a `§` citation), the block parser and each kind's schema, the generators against fresh runs, each gate with a failing and a passing fixture, the annotation lint on a diff, the ratchet, the documentation front-matter gate, and the status page generator.
-- Tier 11: the documentation gates over `docs/`.
+- Tier 0: the documentation gates over `docs/`, in `tests/tier0_static/doc_spec_gates_test.go`.
 - The existing citation gates keep passing: no `§` citation breaks, because no numbered heading changes in this change.
 
 ## Validation owed

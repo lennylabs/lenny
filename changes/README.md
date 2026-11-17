@@ -152,7 +152,7 @@ A change moves through these activities. Their order is typical rather than fixe
 4. **Review.** Check the result, confirm or refute each finding, fix what needs no decision, and raise the rest as open decisions or issues.
 5. **Land.** Merge the step, close the issues it lists, and update the status. Archive the change after its last step, or when it is cancelled.
 
-The first area change of the specification migration creates the git tag `spec-frozen` on the commit before its first specification edit. The tag keeps the numbered files readable after their sections become successor stubs, as "Frozen reference" in [`spec/conventions.md`](../spec/conventions.md) states.
+The git tag `spec-frozen` is created on the last commit of `main` before change 0115 (specification structure) merges, so it holds the original text of every numbered section, including §18, §21, and §23, which 0115 retires or moves. The tag keeps the numbered files readable after their sections become successor stubs, as "Frozen reference" in [`spec/conventions.md`](../spec/conventions.md) states.
 
 ## Helpers
 

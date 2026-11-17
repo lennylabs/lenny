@@ -150,7 +150,7 @@ A page carries a generated section between the marker comments `<!-- generated:<
 | `events-emitted` | The event types whose `emitter` names the page's code. |
 | `rbac-grants` | The page's own `grant` blocks and the `rbac-grant` blocks whose `unit` names the page's code. |
 | `network-rules` | The `network-rule` blocks whose `unit` names the page's code. |
-| `index` | On a folder's `index.md` whose type is not `index`, the table of the folder's pages. An `index.md` of type `index` is generated whole, and a folder index with no such section gets one appended under a Pages heading. |
+| `index` | On every folder's `index.md`, the table of the folder's pages. The `index.md` keeps its hand-written sections, and only the text between its `index` markers is generated. A folder index with no such section gets one appended under a Pages heading. |
 | `definition-kinds` | This reference. |
 | `code-registry` | On the conventions page, the code registry: every page's code, type, path, and summary, read from the pages' front matter. |
 
@@ -575,7 +575,7 @@ The paragraphs that have not migrated.
 
 ## Frozen reference
 
-The git tag `spec-frozen` marks the commit before the first area change edits the specification, and that change creates the tag. The numbered files at the tag are the frozen reference: they hold the original text of every numbered section after its content has migrated. No copy of the numbered files stays in the tree.
+The git tag `spec-frozen` marks the last commit of `main` before the change that introduced this structure merged, and it is created on that commit. The numbered files at the tag are the frozen reference: they hold the original text of every numbered section, including §18, §21, and §23, which that change retired or moved, and of every section after its content has migrated. No copy of the numbered files stays in the tree.
 
 Run `specshift ref lookup §N.M` to read a section citation. The command prints the section's file and anchor, states whether the section is a full stub, a partial stub, or not yet migrated, lists the successors its stub names, and prints the section's text at `spec-frozen`. Before the tag exists, the command states that the tag does not exist yet. To read a whole numbered file as it stood, run `git show spec-frozen:spec/NN_file-name.md`.
 
