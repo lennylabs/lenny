@@ -447,3 +447,8 @@ The pod-local filesystem (`/workspace/slots/{sessionId}/current`) containing the
 {: #workspace-plan }
 
 A structured schema defining how a session's workspace should be materialized. It holds a `sources` array of inline files, uploaded files and archives, directories, and Git clones to materialize, and a `setupCommands` array. Defined in Section 14 of the spec with a versioned `schemaVersion` field.
+
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-glossary -->
+
+<!-- /generated:reference-glossary -->

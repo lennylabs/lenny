@@ -26,8 +26,8 @@ comment boundary is one site. The prohibition's domain is `spec/`, `docs/`, `sch
 a tracked Go file, and a tracked root-level markdown document the exclusion list below leaves in scope, of
 which `README.md` and `TESTING.md` are the two that carry the phrase today. Outside that
 domain are the historical audit records `BUILD-GAPS.md` and `TEST-GAPS.md`, the two root planning documents
-`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, the build and queue records
-`BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, the `proposals/` directory, and every
+`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, the queue record
+`PROPOSAL-QUEUE.md`, the `proposals/` directory, and every
 `testdata/` directory, each of which records a finding, a plan, or a fixture as it was written rather than
 the current contract. This section describes the two reserved words rather than reproducing the banned
 spellings, because the section sits inside the prohibition's own domain. The literal spellings are held

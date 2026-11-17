@@ -169,8 +169,9 @@ func TestTLSPlaintextRejection(t *testing.T) {
 //     defends).
 //   - cmd/lenny-webhook handler tests.
 //   - charts/lenny/tests/sandboxclaim-guard-webhook_test.yaml.
-//   - resolved e2e webhook-reachability work recorded in the Wave 6
-//     Blocked section of BUILD-PROGRESS.md.
+//   - the chart's kubeApiServerPorts value, which admits the
+//     post-DNAT kube-apiserver port so the guard's callback reaches
+//     the apiserver on the e2e cluster.
 //
 // The composite live double-claim exercise needs both a persisted
 // first claim and reachable webhook backend on the e2e cluster;

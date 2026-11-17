@@ -80,7 +80,7 @@ func TestMinIOReplicationLag(t *testing.T) {
 //     KEK alias is unreachable.
 //
 // Live cloud-KMS outage probe needs a cloud KMS adapter (deferred via
-// the CloudProviderSeam per BUILD-PROGRESS Phase 12a).
+// the CloudProviderSeam).
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestKMSUnavailable(t *testing.T) {
@@ -139,7 +139,7 @@ func TestDNSOutage(t *testing.T) {
 
 // §12.8 runtime upgrade stuck — covered structurally by:
 //   - pkg/controller/runtimeupgrade (the runtime-upgrade state
-//     substrate; Phase 3 Done per BUILD-PROGRESS).
+//     substrate).
 //   - pkg/alerting/rules (§16.5 RuntimeUpgradeStuck alert).
 //
 // Live stuck-roll fault injection is on the ops backlog.
@@ -250,7 +250,7 @@ func TestCredentialPoolExhaustion(t *testing.T) {
 
 // --- Delegation failures ---
 
-// §8 delegation primitives are Phase 9 Done per BUILD-PROGRESS:
+// §8 delegation primitives are built in:
 //   - pkg/delegation/cycle (cycle detector + fuzz suite).
 //   - pkg/delegation/lease (lease + extension).
 //   - pkg/delegation/tracing.
@@ -401,8 +401,7 @@ func TestCertificateExpiryAdvance(t *testing.T) {
 
 // §12.8 CRD upgrade immutable-field change — covered structurally by:
 //   - pkg/apis/lenny/v1 kubebuilder validation tags (the CRDs ship
-//     at v1 only with conversion strategy None per
-//     BUILD-PROGRESS Phase 3.5).
+//     at v1 only with conversion strategy None).
 //   - charts/lenny/tests crd-conversion-webhook helm-unittest
 //     (verifies the conversion webhook is unwired by design).
 //

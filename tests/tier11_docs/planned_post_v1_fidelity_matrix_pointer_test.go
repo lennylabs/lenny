@@ -51,7 +51,7 @@ var fidelityMatrixPointerExpr = regexp.MustCompile(`The Translation Fidelity Mat
 // subsection beside the matrix carries none of the last three.
 var fidelityMatrixMaterialTerms = []string{"MessagePart", "schemaVersion", "[lossy]", "A2A"}
 
-// TestPlannedFidelityMatrixPointerResolvesToTheMatrix_spec_15_4 reads
+// TestPlannedFidelityMatrixPointerResolvesToTheMatrix reads
 // the specification pages and requires the durable-consumer
 // obligation's citation to resolve to the heading that carries the
 // Translation Fidelity Matrix, under a label naming the section that
@@ -66,7 +66,7 @@ var fidelityMatrixMaterialTerms = []string{"MessagePart", "schemaVersion", "[los
 // Repoint or relabel the citation rather than widening this check.
 //
 // spec: §15.4, §21
-func TestPlannedFidelityMatrixPointerResolvesToTheMatrix_spec_15_4(t *testing.T) {
+func TestPlannedFidelityMatrixPointerResolvesToTheMatrix(t *testing.T) {
 	pages := readFidelityMatrixPointerPages(t)
 	for _, finding := range fidelityMatrixPointerFindings(pages) {
 		t.Errorf("spec/%s: %s", plannedSpecFile, finding)
@@ -85,7 +85,7 @@ func TestPlannedFidelityMatrixPointerResolvesToTheMatrix_spec_15_4(t *testing.T)
 	}
 }
 
-// TestPlannedFidelityMatrixPointerCheckReadsItsFailureCases_spec_15_4
+// TestPlannedFidelityMatrixPointerCheckReadsItsFailureCases
 // plants each state the reconciliation exists to report and requires
 // every one of them reported.
 //
@@ -104,7 +104,7 @@ func TestPlannedFidelityMatrixPointerResolvesToTheMatrix_spec_15_4(t *testing.T)
 // rather than the fixture.
 //
 // spec: §15.4, §21
-func TestPlannedFidelityMatrixPointerCheckReadsItsFailureCases_spec_15_4(t *testing.T) {
+func TestPlannedFidelityMatrixPointerCheckReadsItsFailureCases(t *testing.T) {
 	const matrixTarget = apiSurfaceSpecFile + "#translation-fidelity-matrix"
 	api := fidelityMatrixFixtureAPIPage()
 	planned := fidelityMatrixFixturePlannedPage()

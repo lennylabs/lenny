@@ -121,8 +121,7 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 	// paragraph (:629), the auto-mode must-not-retry sentence (:712), the
 	// elicitation-mode terminal-condition (:725), and the "User rejects"
 	// requesting-subtree identifier (:729). Also the §4.7 platform-tool
-	// note (:697), §9.1 runtime-control row (:12), §18.23 Phase-9
-	// deliverable (:431), and §19 row 13 (:19).
+	// note (:697), §9.1 runtime-control row (:12), and §19 row 13 (:19).
 	sites := []struct {
 		file    string
 		heading string
@@ -131,7 +130,6 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 		{"08_recursive-delegation.md", "### 8.6 ", "§8.6 Lease Extension"},
 		{"04_system-components.md", "### 4.7 ", "§4.7 Runtime Adapter"},
 		{"09_mcp-integration.md", "### 9.1 ", "§9.1 Where MCP Is Used"},
-		{"18_build-sequence.md", "### 18.23 ", "§18.23 Phase 9"},
 		{"19_resolved-decisions.md", "## 19", "§19 Resolved Decisions"},
 	}
 
@@ -182,20 +180,6 @@ func TestSpecNoAdapterTriggerAttribution_F866(t *testing.T) {
 	if strings.Contains(strings.ToLower(s91), "lease extension") {
 		t.Errorf("§9.1 gateway↔pod runtime-control row still lists lease extension as a gRPC payload; it is an in-process operation now (F-15.3.6)")
 	}
-
-	// §18.23 Phase-9 lease-extension deliverable must name the gateway LLM
-	// Proxy in-process trigger dispatching leasecontrol.ExtendLease, not the
-	// removed adapter↔gateway ExtendLease gRPC surface. The shared banned
-	// list already rejects the "adapter↔gateway `ExtendLease`" construction
-	// this line carried pre-fix; this positive assertion pins the reworded
-	// deliverable so the site is verified rather than merely enumerated. The
-	// surviving "leasecontrol.ExtendLease" dispatch name is expected here and
-	// is not the banned adapter-attributing form.
-	s1823 := specSection(t, filepath.Join(specDir, "18_build-sequence.md"), "### 18.23 ")
-	requireAllContain(t, "§18.23 Phase-9 lease extension", s1823, []string{
-		"gateway LLM Proxy in-process budget-exhaustion trigger",
-		"leasecontrol.ExtendLease",
-	})
 }
 
 // spec: 8.6, 11.2

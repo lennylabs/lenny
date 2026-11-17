@@ -70,3 +70,15 @@ func TestChangeBoardIsCurrent(t *testing.T) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 }
+
+// diagnosis: the generated plan section of docs/about/status.md no longer
+// matches the programs under changes/programs/ and the step statuses, because
+// a program or a step status changed without regenerating it. Run
+// `python3 scripts/changes/changes.py status-page` and commit the result.
+func TestStatusPageIsCurrent(t *testing.T) {
+	t.Parallel()
+	out, err := runChangesTool(t, filepath.Join("scripts", "changes", "changes.py"), "status-page", "--check")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}

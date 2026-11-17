@@ -161,33 +161,6 @@ func TestSection49NoCredentialPoolSpiffeBindingCarrier(t *testing.T) {
 	}
 }
 
-// TestBuildSequenceOptInSingleTenantOnly asserts the spec/18
-// lenny-direct-mode-isolation build-sequence bullet no longer states the
-// proxy + spiffeBinding: disabled combination is rejected "unless
-// `allowProxyModeSpiffeBindingDisabled` is set", which contradicted
-// §4.9's rule that the opt-in cannot be set in multi-tenant mode. The
-// corrected bullet qualifies the opt-in to single-tenant / development
-// mode.
-//
-// diagnosis: A failure means spec/18 again states the multi-tenant
-// rejection is skipped when the opt-in is set, contradicting §4.9's
-// "the opt-in field cannot be set in multi-tenant mode".
-//
-// spec: 18 (build-sequence webhook bullet), 4.9 (multi-tenant opt-in
-// rule)
-func TestBuildSequenceOptInSingleTenantOnly(t *testing.T) {
-	root := repoRoot(t)
-	text := readRepoFile(t, root, "spec/18_build-sequence.md")
-
-	if strings.Contains(text, "unless `allowProxyModeSpiffeBindingDisabled` is set") {
-		t.Errorf("spec/18 again states the multi-tenant rejection is skipped when the opt-in is set, contradicting §4.9")
-	}
-	const corrected = "The `allowProxyModeSpiffeBindingDisabled` opt-in permits combination (b) only in single-tenant or development mode; it cannot be set in multi-tenant mode."
-	if !strings.Contains(text, corrected) {
-		t.Errorf("spec/18 is missing the corrected opt-in qualification %q", corrected)
-	}
-}
-
 // TestWebhookChartAndGuardDocAgreeSandboxTemplateScope asserts the
 // shipped lenny-direct-mode-isolation webhook chart rule is scoped to
 // the sandboxtemplates resource only, and the guard package doc states

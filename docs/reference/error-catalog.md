@@ -222,6 +222,11 @@ Codes emitted as annotations on responses rather than HTTP error responses.
 |:-----|:------------|
 | `UNREGISTERED_PART_TYPE` | A `MessagePart` carries an unprefixed `type` not present in the platform-defined registry. The part is passed through with a custom-type-to-`text` fallback and a warning annotation. Third-party types should use the `x-<vendor>/` namespace prefix. |
 
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-errors -->
+
+<!-- /generated:reference-errors -->
+
 ---
 
 ## Validation error format

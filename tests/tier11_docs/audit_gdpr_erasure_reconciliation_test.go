@@ -216,7 +216,6 @@ func TestReceiptCheckSurfacesDropChainRewriteBoundary(t *testing.T) {
 		parts []string
 	}{
 		{"spec/16_observability.md", []string{"spec", "16_observability.md"}},
-		{"spec/18_build-sequence.md", []string{"spec", "18_build-sequence.md"}},
 		{"spec/25_agent-operability.md", []string{"spec", "25_agent-operability.md"}},
 		{"docs/reference/metrics.md", []string{"docs", "reference", "metrics.md"}},
 		{"pkg/alerting/rules/rules.go", []string{"pkg", "alerting", "rules", "rules.go"}},
@@ -227,9 +226,7 @@ func TestReceiptCheckSurfacesDropChainRewriteBoundary(t *testing.T) {
 	}
 	// "chain rewrite boundary" and the "(original_hash, new_hash)" pair are
 	// the removed constructs. "re-seal" is deliberately NOT forbidden as a
-	// bare substring: the reconciled §18 deliverable negates it ("no hash is
-	// re-sealed into any row's `prev_hash`"), so a substring ban would flag
-	// the corrected sentence.
+	// bare substring, because a corrected sentence can negate it.
 	for _, s := range staleSurfaces {
 		body := readRepoFile(t, root, s.parts...)
 		if strings.Contains(body, "chain rewrite boundary") {
@@ -248,15 +245,6 @@ func TestReceiptCheckSurfacesDropChainRewriteBoundary(t *testing.T) {
 	}
 	if !strings.Contains(obs, "its `original_hash` does not match the redacted row's preserved pre-redaction hash") {
 		t.Errorf("§16.5 AuditRedactionReceiptMissing row does not state the original_hash vs preserved-pre-redaction-hash check")
-	}
-
-	// §18 build deliverable: receipt-authorized redacted_gdpr discontinuity.
-	build := readRepoFile(t, root, "spec", "18_build-sequence.md")
-	if !strings.Contains(build, "produces the receipt-authorized `redacted_gdpr` chain discontinuity") {
-		t.Errorf("§18 build deliverable does not describe the receipt-authorized redacted_gdpr discontinuity")
-	}
-	if strings.Contains(build, "re-seals the chain.") {
-		t.Errorf("§18 build deliverable still says the redaction path 're-seals the chain'")
 	}
 
 	// §25 external-verifier check: match original_hash to preserved hash.

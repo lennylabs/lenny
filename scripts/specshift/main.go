@@ -43,10 +43,54 @@
 // both flags as optional and prints the whole write domain when neither
 // is given, so an operator measures a confinement before applying it.
 //
+// The ref subcommand is the reference pass over the new specification
+// tree, documented in the ref subpackage:
+//
+//	specshift ref [-root <path>] registry [-check] | check | fix |
+//	  lookup <identifier | code | §N.M> | links-into <code> |
+//	  stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]
+//
 // A run of a pass reports the confinement it ran under, the files it
 // planned, and the register entries it deferred because their files lie
 // outside that confinement, so an entry the complementary run still owes
 // stands in the output rather than being inferred from the command line.
+//
+// The defs subcommand reads the definition blocks of the specification
+// tree rather than rewriting a register's sites, so it sits beside the
+// passes rather than among them:
+//
+//	specshift defs [-root <path>] check
+//	specshift defs [-root <path>] generate [--check]
+//	specshift defs schemas
+//
+// The defs package documents what each command reads and writes.
+//
+// The digest, where, and since subcommands read the specification
+// structure, the code's annotations, the documentation's front matter,
+// and the issue records together, for the helpers of the same names:
+//
+//	specshift digest [-root <path>] [-base <rev>] [-stdout] [-force] <step>
+//	specshift where [-root <path>] <identifier | code | anchor>
+//	specshift since [-root <path>] <YYYY-MM-DD | commit>
+//
+// The survey package documents what each one reports.
+//
+// The pages subcommand runs the gates that read the text of the
+// specification tree's pages, and the gate that holds the contribution
+// blocks against the rendered chart:
+//
+//	specshift pages [-root <path>] check
+//	specshift pages [-root <path>] contributions -manifests <rendered.yaml>
+//
+// The pagegate package documents each gate.
+//
+// The docs subcommand runs the gates that keep the documentation under
+// docs/ in step with the specification:
+//
+//	specshift docs [-root <path>] check
+//	specshift docs [-root <path>] impact
+//
+// The docgate package documents each gate.
 package main
 
 import (
@@ -56,15 +100,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/anchor"
+	"github.com/lennylabs/lenny/scripts/specshift/defs"
+	"github.com/lennylabs/lenny/scripts/specshift/docgate"
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
+	"github.com/lennylabs/lenny/scripts/specshift/pagegate"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
+	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
+	"github.com/lennylabs/lenny/scripts/specshift/survey"
 )
 
 func main() {
@@ -180,9 +230,28 @@ func passNames() string {
 	return strings.Join(names, ", ")
 }
 
-// run parses the command line and executes one pass, or prints one
-// pass's write domain.
+// run parses the command line and executes one pass, prints one pass's
+// write domain, or hands a ref, defs, pages, docs, digest, where, or since
+// command to its package. Those subcommands are dispatched before the flags
+// are parsed, because they are driven by the generated registry and the
+// definition blocks rather than by a register, and take arguments of their
+// own.
 func run(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "ref" {
+		return ref.Main(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == defs.Command {
+		return defs.Run(ctx, args[1:], out)
+	}
+	if len(args) > 0 && slices.Contains(survey.Commands, args[0]) {
+		return survey.Run(ctx, args[0], args[1:], out)
+	}
+	if len(args) > 0 && args[0] == pagegate.Command {
+		return pagegate.Run(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == docgate.Command {
+		return docgate.Run(ctx, args[1:], out)
+	}
 	return runWith(ctx, builtPasses, args, out)
 }
 

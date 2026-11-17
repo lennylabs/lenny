@@ -1185,10 +1185,29 @@
     "scripts/changes/": {
       "static": ["tests/tier0_static/changes_records_test.go"]
     },
+    "scripts/specshift/ref": {
+      "static": ["tests/tier0_static/spec_reference_test.go"],
+      "unit": ["scripts/specshift/ref/..."]
+    },
+    "spec/registry.json": {
+      "static": ["tests/tier0_static/spec_reference_test.go"]
+    },
     "scripts/specshift": {
       "static": ["tests/tier0_static/..."],
       "unit": ["scripts/specshift/..."],
       "docs": ["tests/tier11_docs/..."]
+    },
+    "scripts/specshift/defs/": {
+      "static": ["tests/tier0_static/spec_defs_test.go"],
+      "unit": ["scripts/specshift/defs/..."]
+    },
+    "scripts/specshift/pagegate/": {
+      "static": ["tests/tier0_static/spec_page_gates_test.go"],
+      "unit": ["scripts/specshift/pagegate/..."]
+    },
+    "scripts/specshift/docgate/": {
+      "static": ["tests/tier0_static/doc_spec_gates_test.go"],
+      "unit": ["scripts/specshift/docgate/..."]
     },
     "tests/testinfra/containers": {
       "unit": ["tests/testinfra/containers/..."],
@@ -1388,11 +1407,19 @@
       "conformance": ["tests/tier10_conformance/..."]
     },
     "docs/": {
+      "static": ["tests/tier0_static/doc_spec_gates_test.go"],
+      "docs": ["tests/tier11_docs/..."]
+    },
+    "docs/reference/": {
+      "static": ["tests/tier0_static/spec_defs_test.go", "tests/tier0_static/doc_spec_gates_test.go"],
       "docs": ["tests/tier11_docs/..."]
     },
     "spec/": {
-      "static": ["tests/tier0_static/spec_link_check_test.go"],
+      "static": ["tests/tier0_static/spec_link_check_test.go", "tests/tier0_static/spec_defs_test.go", "tests/tier0_static/spec_reference_test.go", "tests/tier0_static/spec_page_gates_test.go", "tests/tier0_static/fragment_link_test.go", "tests/tier0_static/doc_spec_gates_test.go"],
       "docs": ["tests/tier11_docs/..."]
+    },
+    "spec/catalogs/": {
+      "static": ["tests/tier0_static/spec_defs_test.go"]
     },
     "proposals/": {
       "docs": ["tests/tier11_docs/..."]

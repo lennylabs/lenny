@@ -4,7 +4,7 @@
 
 | Item | Waits on it |
 | :-- | :-- |
-| The owner's time and the tokens each of the first few changes after this one uses, so the helpers can be adjusted from those numbers ([WORKFLOW.md](../../0115-spec-structure/evidence/spike/WORKFLOW.md), "Build order"). | Nothing; it is recorded in each change's digest. |
+| The owner's time and the tokens each of the first few changes after this one uses, so the helpers can be adjusted from those numbers ([WORKFLOW.md](../2026-11-16-0115-spec-structure/evidence/spike/WORKFLOW.md), "Build order"). | Nothing; it is recorded in each change's digest. |
 
 ## Steps
 

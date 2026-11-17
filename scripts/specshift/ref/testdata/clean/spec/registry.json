@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "code": "CLAIM",
+      "path": "spec/capabilities/pools/pod-claims.md",
+      "type": "capability",
+      "status": ""
+    },
+    {
+      "code": "KPCLAIM",
+      "path": "spec/interfaces/kubernetes/podclaim.md",
+      "type": "interface",
+      "status": ""
+    },
+    {
+      "code": "PLACE",
+      "path": "spec/components/placement.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "POOL",
+      "path": "spec/capabilities/pools/warm-pools.md",
+      "type": "capability",
+      "status": "",
+      "aliases": [
+        "WPOOL"
+      ]
+    }
+  ],
+  "requirements": [
+    {
+      "id": "CLAIM-R1",
+      "anchor": "claim-r1",
+      "file": "spec/capabilities/pools/pod-claims.md"
+    },
+    {
+      "id": "POOL-R1",
+      "anchor": "pool-r1",
+      "file": "spec/capabilities/pools/warm-pools.md"
+    },
+    {
+      "id": "POOL-R2",
+      "anchor": "pool-r2",
+      "file": "spec/capabilities/pools/warm-pools.md"
+    }
+  ],
+  "operations": [
+    {
+      "id": "KPCLAIM-create",
+      "anchor": "kpclaim-create",
+      "file": "spec/interfaces/kubernetes/podclaim.md"
+    },
+    {
+      "id": "KPCLAIM-updateStatus",
+      "anchor": "kpclaim-updatestatus",
+      "file": "spec/interfaces/kubernetes/podclaim.md"
+    }
+  ],
+  "terms": [
+    {
+      "anchor": "claim",
+      "file": "spec/capabilities/pools/pod-claims.md"
+    },
+    {
+      "anchor": "pool",
+      "file": "spec/capabilities/pools/warm-pools.md"
+    },
+    {
+      "anchor": "reserved-hold",
+      "file": "spec/capabilities/pools/warm-pools.md"
+    }
+  ],
+  "blocks": [
+    {
+      "kind": "custom-resource",
+      "name": "PodClaim",
+      "anchor": "custom-resource-podclaim",
+      "file": "spec/interfaces/kubernetes/podclaim.md"
+    },
+    {
+      "kind": "setting",
+      "name": "pool.minWarm",
+      "anchor": "setting-pool-minwarm",
+      "file": "spec/capabilities/pools/warm-pools.md"
+    }
+  ],
+  "retired": [
+    {
+      "id": "POOL-R3",
+      "anchor": "pool-r3",
+      "file": "spec/capabilities/pools/warm-pools.md",
+      "successor": "CLAIM-R1"
+    },
+    {
+      "id": "POOL-R4",
+      "anchor": "pool-r4",
+      "file": "spec/capabilities/pools/warm-pools.md",
+      "removed": "removed (the execution modes left the design)"
+    }
+  ],
+  "moves": []
+}

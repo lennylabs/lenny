@@ -229,5 +229,157 @@ class LinksTest(Fixture):
         self.assertEqual(got, {'a', 'notes', 'notes-1', 'x', 'custom', 'raw'})
 
 
+STATUS_PROGRAM = """---
+program: p
+goal: >-
+  Everything lands
+  by January 2027.
+members: [0100, 0101, 0105]
+milestones:
+  - id: M1
+    title: First
+    steps: [0100]
+    exit: The alpha work has landed (0100.S1, 0100.S2).
+  - id: M2
+    title: Second, after 0100 lands
+    steps: [0101.S1, 0105]
+    exit: >-
+      The beta step has landed
+      and 0101.S1 is checked.
+  - id: M3
+    title: Third
+    exit: Nothing yet.
+current: M2
+---
+
+# Program p
+"""
+
+
+class StatusPageTest(Fixture):
+    def setUp(self):
+        super().setUp()
+        C.write(os.path.join(self.root, 'changes', 'programs', 'p.md'), STATUS_PROGRAM)
+        os.makedirs(os.path.join(self.root, 'docs', 'about'))
+        self.page = os.path.join(self.root, 'docs', 'about', 'status.md')
+        C.write(self.page, '# Status\n\nIntro written by hand.\n\n<!-- generated:status -->\nstale\n<!-- /generated:status -->\n\n## Surfaces\n\nKept.\n')
+
+    def test_status_page_states_goal_milestones_exit_criteria_and_share_landed(self):
+        self.run_cli('step', '0100.S1', 'Landed')
+        self.run_cli('step', '0100.S2', 'Building')
+        self.assertEqual(self.run_cli('status-page')[0], 0)
+        page = C.read(self.page)
+        self.assertTrue(page.startswith('# Status\n\nIntro written by hand.\n\n<!-- generated:status -->\n'))
+        self.assertTrue(page.endswith('<!-- /generated:status -->\n\n## Surfaces\n\nKept.\n'))
+        self.assertNotIn('stale', page)
+        self.assertIn('Goal: Everything lands by January 2027.', page)
+        self.assertIn('| First | 1 of 2 | In progress |', page)
+        self.assertIn('| Second, after the "Alpha" change lands (current) | 0 of 1 | Not started |', page)
+        self.assertIn('| Third | None assigned yet | Not started |', page)
+        self.assertIn('Exit criteria: The alpha work has landed.\n', page)
+        self.assertIn('Exit criteria: The beta step has landed and a step of the "Beta" change is checked.', page)
+        self.assertIn('1 of its 2 steps have landed, and 1 is being built.', page)
+        self.assertIn('Part of its work is not yet divided into steps', page)
+        self.assertIn('Its one step has not started. Part of its work', page)
+        self.assertIn('No steps are assigned to this milestone yet.', page)
+        self.assertIn('https://github.com/lennylabs/lenny/blob/main/changes/BOARD.md', page)
+        self.assertNotIn('M1', page)
+        self.assertNotIn('0100', page)
+
+    def test_a_milestone_whose_steps_all_landed_is_done_and_cancelled_steps_do_not_count(self):
+        self.run_cli('step', '0100.S1', 'Landed')
+        self.run_cli('step', '0100.S2', 'Cancelled')
+        self.run_cli('status-page')
+        page = C.read(self.page)
+        self.assertIn('| First | 1 of 1 | Done |', page)
+        self.assertIn('Its one step has landed.', page)
+
+    def test_status_page_check_detects_a_stale_page(self):
+        self.assertEqual(self.run_cli('status-page', '--check')[0], 1)
+        self.run_cli('status-page')
+        self.assertEqual(self.run_cli('status-page', '--check')[0], 0)
+        self.run_cli('step', '0100.S1', 'Landed')
+        rc, out, _ = self.run_cli('status-page', '--check')
+        self.assertEqual(rc, 1)
+        self.assertIn('out of date', out)
+
+    def test_status_page_without_markers_is_an_error(self):
+        C.write(self.page, '# Status\n')
+        rc, _, err = self.run_cli('status-page')
+        self.assertEqual(rc, 2)
+        self.assertIn('no <!-- generated:status -->', err)
+
+
+
+class SymlinkTest(Fixture):
+    """The commands refuse to write through a symbolic link or into a
+    directory that resolves outside the repository."""
+
+    def setUp(self):
+        super().setUp()
+        self.outside = tempfile.mkdtemp()
+        self.victim = os.path.join(self.outside, 'victim.txt')
+        C.write(self.victim, 'untouched\n')
+
+    def tearDown(self):
+        shutil.rmtree(self.outside)
+        super().tearDown()
+
+    def test_board_refuses_a_symlinked_board(self):
+        os.symlink(self.victim, os.path.join(self.root, 'changes', 'BOARD.md'))
+        rc, _, err = self.run_cli('board')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(C.read(self.victim), 'untouched\n')
+
+    def test_status_page_refuses_a_symlinked_page_and_a_directory_outside(self):
+        C.write(os.path.join(self.root, 'changes', 'programs', 'p.md'), STATUS_PROGRAM)
+        page = '# Status\n\n<!-- generated:status -->\n<!-- /generated:status -->\n'
+        C.write(self.victim, page)
+        os.makedirs(os.path.join(self.root, 'docs', 'about'))
+        os.symlink(self.victim, os.path.join(self.root, 'docs', 'about', 'status.md'))
+        rc, _, err = self.run_cli('status-page')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(C.read(self.victim), page)
+        os.remove(os.path.join(self.root, 'docs', 'about', 'status.md'))
+        os.rmdir(os.path.join(self.root, 'docs', 'about'))
+        C.write(os.path.join(self.outside, 'status.md'), page)
+        os.symlink(self.outside, os.path.join(self.root, 'docs', 'about'))
+        rc, _, err = self.run_cli('status-page')
+        self.assertEqual(rc, 2)
+        self.assertIn('outside the repository', err)
+        self.assertEqual(C.read(os.path.join(self.outside, 'status.md')), page)
+
+    def test_new_refuses_a_change_folder_that_is_a_symlink(self):
+        os.symlink(self.outside, os.path.join(self.root, 'changes', '0106-zeta'))
+        rc, _, err = self.run_cli('new', 'zeta')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(sorted(os.listdir(self.outside)), ['victim.txt'])
+
+    def test_archive_refuses_an_archive_directory_outside_the_repository(self):
+        self.run_cli('step', '0100.S1', 'Landed')
+        self.run_cli('step', '0100.S2', 'Landed')
+        self.run_cli('status', '0100', 'Implemented')
+        os.symlink(self.outside, os.path.join(self.root, 'changes', 'archive'))
+        rc, _, err = self.run_cli('archive', '0100')
+        self.assertEqual(rc, 2)
+        self.assertIn('outside the repository', err)
+        self.assertTrue(os.path.isdir(os.path.join(self.root, 'changes', '0100-alpha')))
+        self.assertEqual(sorted(os.listdir(self.outside)), ['victim.txt'])
+
+    def test_step_refuses_a_symlinked_steps_file(self):
+        steps = os.path.join(self.root, 'changes', '0100-alpha', 'steps.md')
+        C.write(self.victim, C.read(steps))
+        os.remove(steps)
+        os.symlink(self.victim, steps)
+        before = C.read(self.victim)
+        rc, _, err = self.run_cli('step', '0100.S1', 'Building')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(C.read(self.victim), before)
+
+
 if __name__ == '__main__':
     unittest.main()
