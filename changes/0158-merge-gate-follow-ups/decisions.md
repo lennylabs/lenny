@@ -21,3 +21,12 @@ Settled by the owner on 2026-11-17 ("go with all your recommendations on 0158"),
 6. **Wider review rule.** `tests/static/`, `tests/registers/`, `go.mod`, and `go.sum` join the paths whose changes are reviewed before they merge (decision 1). Scripts and the packages `lenny-test` imports stay outside the rule.
 7. **Archives and binary files.** A reviewed list of the tracked archives and binary files is kept in the repository, and the check fails on a tracked archive or binary file that the list does not name, until it is reviewed and listed.
 
+Settled by the owner on 2026-11-17, on questions the review of 0158.S2 raised:
+
+8. **Archive and binary detection.** The check classifies tracked files with the libraries gitleaks itself uses, `mholt/archives` and `h2non/filetype`, at the versions gitleaks v8.30.1 pins, and a test runs the pinned gitleaks binary over sample files and fails when the two disagree about which files gitleaks reads.
+9. **What the scan reads.** Both halves of the check read the committed tree at `HEAD`, not the working tree.
+
+Settled by the owner on 2026-11-17, on a question the second review of 0158.S2 raised:
+
+10. **Records-only commits and the secret scan.** A records-only commit keeps the merge-gate verdict only when the secret-scan check also passes on it, beside the records checks `.claude/rules/git-workflow.md` names. The exception's paths are unchanged.
+
