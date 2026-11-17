@@ -71,9 +71,33 @@ const (
 	// not in the gate image.
 	gateImageMarker = "/etc/lenny-gate/image"
 	// gateGoTmpDir is where go build keeps its work directories inside
-	// the container. It stays off the fixture root's bind mount, where compiling is
-	// slower, and off /tmp (testtmp.UnderTmp).
+	// the container, on the container's own file system and off /tmp
+	// (testtmp.UnderTmp).
 	gateGoTmpDir = "/var/tmp/lenny-go"
+	// gateGoCache is where the container keeps the Go build cache. It
+	// matches GOCACHE in tests/gate/Dockerfile and lies outside /root, so
+	// the unprivileged gate user can use it.
+	gateGoCache = "/var/cache/go-build"
+	// gateFixtureRoot is the fixture root inside the container (TMPDIR
+	// and LENNY_TEST_TMPDIR). It lies on the container's own file system,
+	// which behaves as a local Linux file system on every host: modes are
+	// enforced, a rename over a file is atomic to a concurrent reader, and
+	// a directory listing reflects an unlink at once. A Docker Desktop
+	// file share does none of these reliably. The path is short so a Unix
+	// socket under a test's t.TempDir() stays below the 108-byte limit.
+	gateFixtureRoot = "/var/tmp/lenny-test"
+	// gateTmpParent and gateTmpPrefix name the host directory the
+	// container mounts at its own path as LENNY_TEST_SHARED_TMPDIR,
+	// gateTmpParent/gateTmpPrefix<8 hex digits>, for the fixtures a test
+	// bind-mounts into a testcontainer (testtmp.SharedDir). Docker Desktop
+	// shares /tmp with its VM, and on Linux the daemon resolves the same
+	// path, so such a bind mount resolves on the host daemon.
+	gateTmpParent = "/tmp"
+	gateTmpPrefix = "lenny-gate-"
+	// gateEnvUID and gateEnvGID carry the worktree owner's IDs into the
+	// container, which runs the gate as that user (gateContainerScript).
+	gateEnvUID = "LENNY_GATE_UID"
+	gateEnvGID = "LENNY_GATE_GID"
 	// gateContainerSocket is where the container sees the Docker socket.
 	gateContainerSocket = "/var/run/docker.sock"
 	// gateNotRunPrefix opens the reason of a tier the gate selected but
@@ -113,9 +137,12 @@ var gateDocsFiles = []string{
 
 // gateOptions are the inputs of one gate run.
 type gateOptions struct {
-	root        string
-	base        string
-	rdepsDepth  int
+	root       string
+	base       string
+	rdepsDepth int
+	// all selects every package of the unit tier and every test of the
+	// component, contract, and integration tiers, whatever the diff.
+	all         bool
 	environment string
 	// environmentErr says why the environment is not the gate image, or
 	// is nil when it is.
@@ -133,6 +160,10 @@ type gateRecord struct {
 	Dirty bool `json:"dirty"`
 	// Environment names the image the gate ran in, or the host.
 	Environment string `json:"environment"`
+	// All reports a run with --all, which selected every package of the
+	// unit tier and every test of tiers 2 to 4 rather than the --changed
+	// selection.
+	All bool `json:"all,omitempty"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -150,6 +181,7 @@ func runGate(args []string) int {
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module importers of a changed package join the unit tier (-1: the full transitive closure)")
+	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -161,10 +193,13 @@ func runGate(args []string) int {
 	root := repoRoot()
 	if *here {
 		env, envErr := gateEnvironment(root, gateImageMarker, os.Getenv)
-		v := defaultGateRunner(root).run(gateOptions{root: root, base: *base, rdepsDepth: *rdeps, environment: env, environmentErr: envErr})
+		v := defaultGateRunner(root).run(gateOptions{root: root, base: *base, rdepsDepth: *rdeps, all: *all, environment: env, environmentErr: envErr})
 		return finishGate(root, v)
 	}
 	passArgs := []string{"--base", *base, "--rdeps-depth", strconv.Itoa(*rdeps)}
+	if *all {
+		passArgs = append(passArgs, "--all")
+	}
 	return runGateInContainer(root, passArgs, *rebuild, !*noSocket)
 }
 
@@ -242,6 +277,7 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 		return 2
 	}
 	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: passArgs}
+	h.uid, h.gid = pathOwner(root)
 	if common, err := gitCommonDir(root); err == nil {
 		h.gitCommonDir = common
 	} else {
@@ -338,25 +374,37 @@ func (s gateImageStore) save(tag, id string) error {
 	return writeFileAtomic(s.path(tag), []byte(id+"\n"), 0o644)
 }
 
-// gateHostTmpDir creates and returns the host directory that serves as
-// the container's fixture root for the worktree at root. It lies under
-// the user cache directory, one per worktree, and the container mounts
-// it at the same path. A test that bind-mounts a temporary directory
-// into a testcontainer then names a path the host daemon resolves. It
-// lies outside the worktree, because the static checks that walk the
-// tree (goimports, gofumpt, and the tier-0 tree scans) run while other
-// checks create and remove fixtures, and would read them half-written.
+// gateHostTmpDir creates and returns the host directory the container
+// mounts at its own path as LENNY_TEST_SHARED_TMPDIR for the worktree at
+// root: /tmp/lenny-gate-<8 hex digits of the worktree path>, one per
+// worktree. A test that bind-mounts a fixture into a testcontainer
+// creates it there (testtmp.SharedDir), so the bind mount names a path
+// the host daemon resolves; Docker Desktop shares /tmp with its VM. The
+// path is short, so a Unix socket under it stays below the 108-byte
+// limit. It lies outside the worktree, because the static checks that
+// walk the tree (goimports, gofumpt, and the tier-0 tree scans) run while
+// other checks create and remove fixtures, and would read them
+// half-written.
 func gateHostTmpDir(root string) (string, error) {
-	d, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("locate the cache directory for the gate's fixture root: %w", err)
-	}
 	sum := sha256.Sum256([]byte(root))
-	tmp := filepath.Join(d, "lenny-test", "gate-tmp", hex.EncodeToString(sum[:])[:12])
+	tmp := filepath.Join(gateTmpParent, gateTmpPrefix+hex.EncodeToString(sum[:])[:8])
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return "", fmt.Errorf("create the gate's fixture root: %w", err)
+		return "", fmt.Errorf("create the gate's shared fixture directory: %w", err)
 	}
 	return tmp, nil
+}
+
+// pathOwner returns the user and group IDs that own p, or 0 and 0 when
+// they cannot be read.
+func pathOwner(p string) (uid, gid int) {
+	info, err := os.Stat(p)
+	if err != nil {
+		return 0, 0
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		return int(st.Uid), int(st.Gid)
+	}
+	return 0, 0
 }
 
 // gateImageTag derives the image reference from the Dockerfile content.
@@ -380,9 +428,12 @@ type gateHost struct {
 	gitCommonDir string // "" when it lies inside root or is unknown
 	image        string
 	imageID      string // "" runs the image by its tag
-	tmpDir       string // host directory mounted at its own path as TMPDIR
+	tmpDir       string // host directory mounted at its own path as LENNY_TEST_SHARED_TMPDIR
 	dockerSocket string // "" when the container gets no Docker socket
-	passArgs     []string
+	// uid and gid own the worktree. The container runs the gate as that
+	// user, and as root when uid is 0.
+	uid, gid int
+	passArgs []string
 }
 
 // gateDockerRunArgs is the argv of `docker run` for one gate run.
@@ -391,18 +442,38 @@ type gateHost struct {
 // tree, in git's worktree metadata, and in tool output mean the same
 // thing inside and outside the container. A linked worktree keeps its
 // git metadata in the main checkout's git directory, which is mounted
-// read-only at its host path for the same reason. The fixture root
-// (gateHostTmpDir) is mounted at its host path too, and TMPDIR points at
-// it, so a temporary directory that a test bind-mounts into a
-// testcontainer is a path the host daemon resolves. The module and build
-// caches live in named volumes, so only the first run downloads and
-// compiles from cold. The container runs the image by the ID the gate
-// recorded, checks the module cache against go.sum with `go mod verify`,
-// builds lenny-test from the mounted tree, and runs `lenny-test gate
-// --here`, so the gate always runs the harness of the commit under test.
+// read-only at its host path for the same reason. TMPDIR and the fixture
+// root are gateFixtureRoot, on the container's own file system. The
+// shared fixture directory (gateHostTmpDir) is mounted at its host path
+// as LENNY_TEST_SHARED_TMPDIR, so a fixture that a test bind-mounts into
+// a testcontainer is a path the host daemon resolves. The module and
+// build caches live in named volumes, so only the first run downloads
+// and compiles from cold.
+//
+// The container shares the network namespace of the Docker host
+// (--network host). A testcontainer publishes its ports there, on
+// 127.0.0.1 or on every address, so a test reaches a fixture at
+// 127.0.0.1 inside the gate as it does on a host, including the Redis
+// cluster, whose nodes announce 127.0.0.1, and the Docker-backed k3s,
+// whose kubeconfig names 127.0.0.1. Testcontainers detects that it runs
+// in a container and would otherwise dial the container's default
+// gateway, so TESTCONTAINERS_HOST_OVERRIDE points it at 127.0.0.1.
+//
+// The container gets CAP_SYS_ADMIN and unmasked /proc paths
+// (systempaths=unconfined), and runs without an AppArmor profile, so the
+// runtime supervisor tests can create user, PID, mount, and IPC
+// namespaces with unshare and mount a fresh /proc in them. The container
+// already holds the host Docker socket, which grants more than these.
+//
+// The container runs the image by the ID the gate recorded and runs
+// gateContainerScript, which runs the gate as the worktree's owner.
 func gateDockerRunArgs(h gateHost) []string {
 	args := []string{
 		"run", "--rm", "--init",
+		"--network", "host",
+		"--cap-add", "SYS_ADMIN",
+		"--security-opt", "systempaths=unconfined",
+		"--security-opt", "apparmor=unconfined",
 		"-v", h.root + ":" + h.root,
 		"-w", h.root,
 	}
@@ -412,48 +483,86 @@ func gateDockerRunArgs(h gateHost) []string {
 	args = append(
 		args,
 		"-v", gateModVolume+":/go/pkg/mod",
-		"-v", gateBuildVolume+":/root/.cache/go-build",
+		"-v", gateBuildVolume+":"+gateGoCache,
 		"-e", gateEnvImage+"="+h.image,
 		"-e", "GOTMPDIR="+gateGoTmpDir,
+		"-e", "TMPDIR="+gateFixtureRoot,
+		"-e", testtmp.EnvRoot+"="+gateFixtureRoot,
+		// The worktree is a Docker Desktop file share on macOS, where a
+		// rename over a file is not atomic to a concurrent reader. Every
+		// `git status` rewrites .git/index by a rename when it can take
+		// the lock, and every `go build` of a main package runs `git
+		// status` for its VCS stamp, so parallel builds read a missing
+		// index and fail with "error obtaining VCS status". The gate
+		// turns off git's optional index refresh and the stamp, which no
+		// test reads.
+		"-e", "GIT_OPTIONAL_LOCKS=0",
+		"-e", "GOFLAGS=-buildvcs=false",
+		"-e", gateEnvUID+"="+strconv.Itoa(h.uid),
+		"-e", gateEnvGID+"="+strconv.Itoa(h.gid),
 	)
 	if h.tmpDir != "" {
 		args = append(
 			args,
 			"-v", h.tmpDir+":"+h.tmpDir,
-			"-e", "TMPDIR="+h.tmpDir,
-			"-e", testtmp.EnvRoot+"="+h.tmpDir,
+			"-e", testtmp.EnvShared+"="+h.tmpDir,
 		)
 	}
 	if h.imageID != "" {
 		args = append(args, "-e", gateEnvImageID+"="+h.imageID)
 	}
 	if h.dockerSocket != "" {
-		// Testcontainers started from inside the container publish
-		// their ports on the Docker host, which the container reaches
-		// as host.docker.internal.
 		args = append(
 			args,
 			"-v", h.dockerSocket+":"+gateContainerSocket,
-			"--add-host", "host.docker.internal:host-gateway",
-			"-e", "TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal",
+			"-e", "TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		)
 	}
-	// The script empties the fixture root first, because a killed
-	// earlier run leaves its fixtures behind, and verifies the module
-	// cache before it compiles the harness from it.
-	script := `set -e
-if [ -n "${LENNY_TEST_TMPDIR:-}" ]; then find "$LENNY_TEST_TMPDIR" -mindepth 1 -delete; fi
-mkdir -p "$GOTMPDIR"
-go mod verify
-go build -o /usr/local/bin/lenny-test ./cmd/lenny-test
-exec lenny-test gate --here "$@"`
 	ref := h.image
 	if h.imageID != "" {
 		ref = h.imageID
 	}
-	args = append(args, ref, "sh", "-c", script, "lenny-test-gate")
+	args = append(args, ref, "sh", "-c", gateContainerScript, "lenny-test-gate")
 	return append(args, h.passArgs...)
 }
+
+// gateContainerScript is the container's command. It starts as root,
+// empties the shared fixture directory (a killed earlier run leaves its
+// fixtures behind), and creates the fixture root and the directories the
+// Go toolchain writes. When
+// LENNY_GATE_UID names a user other than root, it creates that user, with
+// the group that owns the Docker socket as a supplementary group, gives
+// it the fixture root and the cache volumes, and drops to it with
+// setpriv. Running as the
+// worktree's owner means the files the gate writes into the worktree,
+// the verdict among them, belong to that owner, and the tests run
+// unprivileged as they do on a developer host: initdb refuses to run as
+// root, and the runtime supervisor tests derive the adapter UID from the
+// test's own. The user then verifies the module cache against go.sum,
+// compiles lenny-test from the mounted tree, and runs `lenny-test gate
+// --here`, so the gate always runs the harness of the commit under test.
+const gateContainerScript = `set -e
+if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
+mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" /go/pkg/mod
+run='set -e
+go mod verify
+mkdir -p "$HOME/bin"
+go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
+exec "$HOME/bin/lenny-test" gate --here "$@"'
+uid="${LENNY_GATE_UID:-0}"
+gid="${LENNY_GATE_GID:-0}"
+if [ "$uid" = 0 ]; then exec sh -c "$run" lenny-test-gate "$@"; fi
+getent group "$gid" >/dev/null || groupadd --gid "$gid" gate
+getent passwd "$uid" >/dev/null || useradd --uid "$uid" --gid "$gid" --no-create-home --home-dir /home/gate --shell /bin/sh gate
+mkdir -p /home/gate
+chown "$uid:$gid" /home/gate
+groups="$gid"
+if [ -S /var/run/docker.sock ]; then groups="$groups,$(stat -c %g /var/run/docker.sock)"; fi
+for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOTMPDIR"; do
+	if [ "$(stat -c %u "$d")" != "$uid" ]; then chown -R "$uid:$gid" "$d"; fi
+done
+export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
+exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
 
 // pathWithin reports whether p is root or lies under it.
 func pathWithin(p, root string) bool {
@@ -521,7 +630,7 @@ func runStreaming(name string, args ...string) error {
 // them to run the gate's control flow without go test or Docker.
 type gateRunner struct {
 	static func() (string, string, *tierResult)
-	plan   func(base string, rdepsDepth int) (resolvedSelector, error)
+	plan   func(base string, rdepsDepth int, all bool) (resolvedSelector, error)
 	exec   map[string]tierExecFn
 	// precheck returns why a tier cannot run in this environment, or
 	// nil when it can.
@@ -558,8 +667,13 @@ func defaultGateRunner(root string) gateRunner {
 }
 
 // gateChangedPlan resolves the --changed plan against base, capped at
-// the integration tier.
-func gateChangedPlan(base string, rdepsDepth int) (resolvedSelector, error) {
+// the integration tier. With all, it resolves every tier up to the
+// integration tier in full instead: the whole unit tier (./...) and every
+// test of the component, contract, and integration tiers.
+func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, error) {
+	if all {
+		return selector{maxTier: tierIntegration}.resolve()
+	}
 	sel := selector{changed: true, since: base, maxTier: tierIntegration, rdepsDepth: rdepsDepth}
 	return sel.resolve()
 }
@@ -570,16 +684,19 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	sel := selector{changed: true, since: o.base, rdepsDepth: o.rdepsDepth}
 	v := newVerdict(sel)
 	v.Command = fmt.Sprintf("lenny-test gate --base %s --rdeps-depth %d", o.base, o.rdepsDepth)
+	if o.all {
+		v.Command += " --all"
+	}
 	v.Trigger.Mode = "gate"
 	head, mergeBase, dirty := g.state(o.base)
 	if head != "" {
 		v.Trigger.GitRevision = head
 	}
-	v.Gate = &gateRecord{Base: o.base, MergeBase: mergeBase, Dirty: dirty, Environment: o.environment}
+	v.Gate = &gateRecord{Base: o.base, MergeBase: mergeBase, Dirty: dirty, Environment: o.environment, All: o.all}
 
 	g.record(v, tierStatic, g.static)
 
-	plan, err := g.plan(o.base, o.rdepsDepth)
+	plan, err := g.plan(o.base, o.rdepsDepth, o.all)
 	if err != nil {
 		v.recordTier(tierUnit, verdictstatus.Fail, 0, fmt.Sprintf("resolve the changed tiers against %s: %v", o.base, err))
 	}

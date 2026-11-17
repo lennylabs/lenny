@@ -4,6 +4,7 @@ package embpg
 
 import (
 	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,59 @@ func TestStartStopRoundTrip(t *testing.T) {
 		t.Errorf("second Start: %v", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := i.Ping(ctx); err != nil {
+		t.Fatalf("Ping: %v", err)
+	}
+}
+
+// TestStartMovesOffAPortAnotherProcessTookOnIPv4 covers a collision
+// between freePort and the start. Another listener holds the IPv4
+// loopback port Start draws first, so the start fails, either at the
+// library's own port check or, when the other process binds after that
+// check, at the postmaster's bind of 127.0.0.1, and Start tries again on
+// a fresh port. The test can hold the port only before the library's
+// check, so it exercises the retry; listening on 127.0.0.1 alone is what
+// turns the later collision into a start failure. It downloads the
+// PostgreSQL bundle, so it is skipped under -short. The retry is test
+// tooling with no specification section, so the test carries no spec
+// annotation.
+func TestStartMovesOffAPortAnotherProcessTookOnIPv4(t *testing.T) {
+	if testing.Short() {
+		t.Skip("blocked: downloads the PostgreSQL bundle, which -short excludes")
+	}
+	held, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("hold a port: %v", err)
+	}
+	defer func() { _ = held.Close() }()
+	taken := uint32(held.Addr().(*net.TCPAddr).Port)
+	draw := freePort
+	calls := 0
+	freePort = func() (uint32, error) {
+		calls++
+		if calls == 1 {
+			return taken, nil
+		}
+		return draw()
+	}
+	t.Cleanup(func() { freePort = draw })
+
+	i := New(Config{
+		DataDir:      t.TempDir(),
+		Database:     "lenny",
+		Username:     "lenny",
+		Password:     "lenny",
+		StartTimeout: 3 * time.Minute,
+	})
+	if err := i.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = i.Stop() }()
+	if i.Port() == taken || calls < 2 {
+		t.Fatalf("Start kept the taken port %d (port %d, %d draws)", taken, i.Port(), calls)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := i.Ping(ctx); err != nil {
