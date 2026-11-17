@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 9 |
 | Ready | 2 |
 | Waiting on decisions | 39 |
-| Blocked | 139 |
+| Blocked | 146 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -19,8 +19,6 @@ A step is ready when every step it depends on has landed and its change is not `
 ### M0: Workflow in place
 
 ### M1: Specification structure foundation (current)
-
-Not yet resolved to steps: 0116.
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
@@ -35,6 +33,13 @@ Not yet resolved to steps: 0116.
 | [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Building |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Ready |  |
 | [0154.S1](0154-merge-gate/steps.md#0154s1-repair-tier-0-and-sweep-for-accidental-deletions) | Repair tier 0 and sweep for accidental deletions | Ready |  |
+| [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Blocked | 0115.S5, 0115.S7, 0115.S8 |
+| [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Blocked | 0116.S1 |
+| [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Blocked | 0116.S1 |
+| [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3, 0154.S2 |
+| [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Blocked | 0115.S1 |
+| [0116.S6](0116-coverage-and-selection/steps.md#0116s6-retire-the-maps-their-registers-and-their-self-tests) | Retire the maps, their registers, and their self-tests | Blocked | 0116.S2, 0116.S3 |
+| [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Blocked | 0115.S5 |
 | [0154.S2](0154-merge-gate/steps.md#0154s2-the-gate-container-the-gate-command-and-concurrent-static-checks) | The gate container, the gate command, and concurrent static checks | Blocked | 0154.S1 |
 | [0154.S3](0154-merge-gate/steps.md#0154s3-the-merge-policy) | The merge policy | Blocked | 0154.S2 |
 | [0155.S1](0155-test-tiers-by-name/steps.md#0155s1-name-the-tiers) | Name the tiers | Blocked | 0115.S9 |
@@ -234,7 +239,7 @@ Not yet resolved to steps: 0117.
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
 | [0115](0115-spec-structure/change.md) | Specification structure | `In progress` | 0 of 9 | 0 |
-| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Draft` | 0 of 0 | 0 |
+| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Draft` | 0 of 7 | 18 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |
