@@ -2,10 +2,11 @@
 
 # Quarantined tests registry per TESTING.md §21.4.
 #
-# A test enters this list when `lenny-test stress --test <name> --runs 50`
-# observes a non-deterministic failure, or when a test fails the merge
-# gate for a reason the change under test did not introduce. The author
-# has one week from the `quarantined_at` date to land a fix or remove the
+# Only a flaky test enters this list: one for which `lenny-test stress
+# --test <name> --runs 50` observes a non-deterministic failure on one
+# commit. A deterministic failure on `main` never enters it; it is fixed
+# or reverted before any other branch merges (.claude/rules/
+# test-coverage.md, "Gates", rules 2 and 4). The author has one week from the `quarantined_at` date to land a fix or remove the
 # test; after that, nightly invocations of phase-launch-gate fail.
 #
 # The quarantine is capped. `cap` is the largest number of entries the

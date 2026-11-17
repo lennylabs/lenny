@@ -8,7 +8,12 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 ## Merge only on a green gate verdict
 
-- A branch merges only when the merge-gate verdict for its head commit is `PASS`. `lenny-test gate` runs the merge gate in the gate container and writes the verdict to `tests/results/gate-<run>.json`; `.claude/rules/test-coverage.md` ("Gates") states the tiers it runs. The verdict counts for the head only when its `trigger.git_revision` is the branch head and its `gate.dirty` is false. A commit added to the branch after the run, including a conflict resolution, needs a new verdict. The one exception is a commit that touches only the change's records under `changes/` (the step's digest, which records the verdict, the step statuses, and the board), provided `python3 scripts/changes/changes.py check` passes on it.
+- A branch merges only when the merge-gate verdict for its head commit is `PASS`. `lenny-test gate` runs the merge gate in the gate container and writes the verdict to `tests/results/gate-<run>.json`; `.claude/rules/test-coverage.md` ("Gates") states the tiers it runs. The verdict counts for the head only when its `trigger.git_revision` is the branch head and its `gate.dirty` is false. A commit added to the branch after the run, including a conflict resolution, needs a new verdict.
+- A records-only commit is the one exception: a commit after a `PASS` verdict keeps that verdict when both of the following hold.
+  1. Every path the commit touches is under `changes/` (the step's digest, which records the verdict, the step statuses, and the board), or is `docs/about/status.md` with every changed line between its `<!-- generated:status -->` and `<!-- /generated:status -->` markers.
+  2. The tier-0 records checks pass on the commit: `python3 scripts/changes/changes.py check`, `python3 scripts/changes/changes.py board --check`, and `python3 scripts/changes/changes.py status-page --check` when `changes.py` has the `status-page` command (change 0115 adds it).
+
+  A commit that touches any other path, or any line of `docs/about/status.md` outside the markers, needs a new verdict.
 - The merge commit message or the step's digest names the verdict's run identifier, so the green run behind each merge can be found.
 - `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges. Revert the merge that introduced the failure with `git revert -m 1 <merge>` when the fix is not immediate.
 

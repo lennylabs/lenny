@@ -31,7 +31,10 @@ jobs:
     # merge gate is `lenny-test gate` in the container under tests/gate/
     # until pull requests replace direct merges, when this workflow is
     # repaired to run that gate. Every other job needs this one, so this
-    # condition skips the whole workflow. Delete the line to re-enable it.
+    # condition skips the whole workflow. Deleting the line restores manual
+    # dispatch only, because the `on:` block above holds workflow_dispatch
+    # alone. Restoring the pull_request and push triggers is part of the
+    # change that brings pull requests back.
     if: false
     runs-on: ubuntu-latest
     # The group opens with the static tier, so a cold tool install runs
