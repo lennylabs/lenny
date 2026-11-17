@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Waiting on decisions | 40 |
-| Blocked | 132 |
+| Waiting on decisions | 41 |
+| Blocked | 140 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -18,11 +18,20 @@ A step is ready when every step it depends on has landed and its change is not `
 
 ### M1: Specification structure foundation
 
-Not yet resolved to steps: 0115; 0116.
+Not yet resolved to steps: 0116.
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0115.S1](0115-spec-structure/steps.md#0115s1-conventions-the-code-registry-and-placeholder-pages) | Conventions, the code registry, and placeholder pages | Waiting on decisions | 0115 is `Draft` |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Waiting on decisions | 0137 is `Draft` |
+| [0115.S2](0115-spec-structure/steps.md#0115s2-the-reference-tool) | The reference tool | Blocked | 0115.S1 |
+| [0115.S3](0115-spec-structure/steps.md#0115s3-definition-blocks-and-generators) | Definition blocks and generators | Blocked | 0115.S1 |
+| [0115.S4](0115-spec-structure/steps.md#0115s4-gates) | Gates | Blocked | 0115.S2, 0115.S3 |
+| [0115.S5](0115-spec-structure/steps.md#0115s5-annotation-rule-and-its-lint) | Annotation rule and its lint | Blocked | 0115.S2 |
+| [0115.S6](0115-spec-structure/steps.md#0115s6-documentation-rule-and-gates) | Documentation rule and gates | Blocked | 0115.S3, 0115.S4 |
+| [0115.S7](0115-spec-structure/steps.md#0115s7-successor-stubs-and-the-frozen-reference) | Successor stubs and the frozen reference | Blocked | 0115.S2 |
+| [0115.S8](0115-spec-structure/steps.md#0115s8-helpers-that-read-the-structure) | Helpers that read the structure | Blocked | 0115.S2, 0115.S3 |
+| [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Blocked | 0115.S8 |
 
 ### M2: Gateway package layout
 
@@ -211,7 +220,7 @@ Not yet resolved to steps: 0117.
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0115](0115-spec-structure/change.md) | Specification structure | `Draft` | 0 of 0 | 0 |
+| [0115](0115-spec-structure/change.md) | Specification structure | `Draft` | 0 of 9 | 6 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |
