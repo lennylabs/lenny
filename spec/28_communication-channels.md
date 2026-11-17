@@ -4,8 +4,8 @@ This section is the normative home for the communication channels between the ga
 pod, the adapter container, the runtime container, and the control plane. §28.1 states the law that fixes
 each channel's identifier. §28.2 states the classes an identifier is drawn from and the axes every channel
 records. §28.3 carries the registers of links, channels, and register entries, together with the naming
-table that records the spelling each carrier takes. §28.4 states the claim register, which records the
-implementation status of every statement this section makes.
+table that records the spelling each carrier takes. §28.4 states where the implementation status of a
+mechanism this section specifies is recorded.
 
 ### 28.1 Naming law
 
@@ -45,7 +45,7 @@ spanning channels is named for the invariant it enforces and carries no channel 
 of N4 is deferred. The remediation step that adds the adapter metrics endpoint and its catalog entries is
 the step that discharges it, because the adapter process emits those metrics inside the agent pod and they
 sit outside the default scrape target set until a deployer wires an adapter scrape target. The deferral
-carries a claim-register row with status `ABSENT` naming that step, per §28.4.
+is recorded as an issue that names that step, per §28.4.
 
 **N5.** A link identifier and the channel identifiers it carries share no stem, so a search for one never
 returns the other.
@@ -157,20 +157,15 @@ reference to the channel.
 | `CH-RUNTIMEOPS` | path | `lifecycle-events` | `runtime-ops-events` |
 | `CH-RUNTIMEOPS` | path | `lifecyclechannel` | `runtimeops` |
 
-### 28.4 Claim register
+### 28.4 Implementation status
 
-Every normative statement this section makes about a mechanism carries a row in the claim register at
-`tests/claim-map.json`, with a status drawn from a closed set. `WIRED` means the mechanism is reachable from production code. `UNWIRED`
-means it is implemented and has no production caller. `ABSENT` means it is specified and not implemented.
+A mechanism this section specifies that the tree does not carry out, or carries out with no production
+caller, is recorded as an issue under `issues/`, filed under the code of the specification page that owns
+the mechanism's contract. The issue names the step that closes it, and `issues/README.md` states its layout.
 
-A `WIRED` row names the production surface that reaches the mechanism. A row whose status is not `WIRED`
-names, through a deferral identifier, the step that closes it, which makes the register the work queue for
-the steps that follow.
-
-The claim register carries its own schema rather than the entry schema the migration registers share,
-because a `WIRED` row is a permanent statement about the tree and carries no expiry, while a migration
-register's entry expires. The register file, its seed rows, and the validator that reads it land with the
-contract cards.
+A mechanism the tree carries out has no record in this section. The `// spec:` annotation on the code that
+makes the mechanism's decision identifies where the tree carries it out, and the issue that recorded the
+mechanism closes when the step that carries it out lands.
 
 ### 28.5 Contract cards
 
@@ -198,8 +193,8 @@ Every field names the section that states its content. Where the specification s
 of a channel, the card records that the specification does not state it. A card never supplies a plausible
 value for a field no section states, because a reader cannot afterwards distinguish a value the
 specification fixes from one the card invented. A mechanism a card states that is specified and not
-implemented carries its status in the §28.4 claim register, so the card states the contract and the
-register states how far the tree has reached it.
+implemented is recorded as an issue, as §28.4 states, so the card states the contract and the issue
+records how far the tree has reached it.
 
 #### 28.5.1 Gateway-to-pod
 
