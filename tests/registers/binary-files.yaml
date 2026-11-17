@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: MIT
+#
+# Reviewed archives, binary files, and symbolic links.
+#
+# gitleaks does not read a file whose name identifies an archive (the
+# secret scan passes no --max-archive-depth, because some upload fixtures
+# are archive bombs), a file whose content it detects as binary, or a
+# symbolic link, so a secret in such a file is not found. Each committed
+# file of those kinds is therefore reviewed for secrets by hand and named
+# here with its size, SHA-256, and the reason the tree carries it. The
+# secret scan of the static tier (cmd/lenny-test, secretscan_coverage.go)
+# reads the committed tree at HEAD and fails on such a file this list does
+# not name, on a listed file whose size or SHA-256 differs, and on an
+# entry that names a file the commit does not hold or that is no longer of
+# those kinds (change 0158, decision 7).
+#
+# The class follows gitleaks v8.30.1 and git. A file is binary when
+# gitleaks would stop reading it at a chunk that github.com/h2non/filetype
+# gives an `application` MIME type, which gitleaks checks for each chunk
+# until a newline has appeared, when its first 8,000 bytes hold a NUL
+# byte, or when git reports the `binary` attribute set or the `diff`
+# attribute unset. A file is an archive when its content starts with an
+# archive's magic number, or when it is binary and
+# github.com/mholt/archives identifies its name as an archive's, which
+# includes a substring such as ".br" or ".s2" anywhere in the name. A text
+# file with such a name is not listed here: the scan renames it so
+# gitleaks reads it. A symbolic link's size and SHA-256 are those of its
+# target path. A file of
+# these kinds under a path the default gitleaks allowlist skips is named
+# here alone, rather than also in secret-scan-skipped-paths.yaml.
+#
+# This directory is reviewed before it merges
+# (.claude/rules/git-workflow.md, "Review changes to the merge gate"). To
+# add or update an entry, review the file's content (list and read an
+# archive's members), then copy the size and SHA-256 the failing check
+# prints.
+#
+# The entries were built from the tree on 2026-11-17 (change 0158, step
+# S2), and each file was reviewed: the archive members were listed and
+# read, and the text files were scanned with gitleaks v8.30.1 under a
+# name its path allowlist does not skip, with no finding.
+kind: binary-files
+version: 1
+entries:
+  - path: sdks/runtime/typescript/src/transport.ts
+    class: binary
+    size: 11682
+    sha256: 5ac2f5e291d0deba1394bb5ae314f05620341a22a57aa73d4c69705515a8014b
+    reason: >-
+      TypeScript source of the runtime SDK. dialUnixSocket writes the
+      leading byte of a Linux abstract socket address as a literal NUL in a
+      string, so git treats the file as binary. gitleaks reads it, because
+      it has no binary magic number, and the scan finds nothing in it.
+  - path: tests/testdata/uploads/archives/bomb-count.tar
+    class: archive
+    size: 3075584
+    sha256: 840548903986535aac730f0b826488258cd80229254ccb0ea83cccfde4d05dc9
+    reason: >-
+      Upload fixture and archive bomb by entry count: 1,000 small files
+      named file-N.txt, each holding its own number, above the per-archive
+      entry cap. The upload validator must refuse it.
+  - path: tests/testdata/uploads/archives/bomb-deep.tar
+    class: archive
+    size: 37376
+    sha256: f0e94735175d897e9e5588f9f5505b8aef6c1abd4e431a684cf65c59d532e0ac
+    reason: >-
+      Upload fixture and archive bomb by depth: directories d1 to d12
+      nested beyond the depth cap, holding one file with the word "deep".
+      The upload validator must refuse it.
+  - path: tests/testdata/uploads/archives/clean.tar.gz
+    class: archive
+    size: 415
+    sha256: 6b42054f162430037d2452c6990bdc0d3e415cfa77ed296e4d20cf64ba4688b5
+    reason: >-
+      Upload fixture: a well-formed gzip tar archive holding hello.txt and
+      world.txt with the words "hello" and "world". The upload validator
+      must accept it.
+  - path: tests/testdata/uploads/archives/path-traversal.tar
+    class: archive
+    size: 2048
+    sha256: cef672999e821eb3f010ec5db39957ce1b1a212eb05d274025ecd256406dae7a
+    reason: >-
+      Upload fixture: one entry named ../../etc/passwd holding the word
+      "rooted". The upload validator must refuse the path traversal.
+  - path: tests/testdata/uploads/archives/setuid.tar
+    class: archive
+    size: 2048
+    sha256: df7aa9d9d021af0c9d7a30cbb82e8f58eb74503fe3d2c0fe43074e292852d3b9
+    reason: >-
+      Upload fixture: one entry with mode 4755 holding the word "escalate".
+      The upload validator must refuse the setuid bit.
+  - path: tests/testinfra/fuzz/crashes/mcp_framing/null-bytes
+    class: binary
+    size: 79
+    sha256: 4c37a19add0750b39f33c3c219a319be80e9d579e8e0d44ab1373904d2a161ba
+    reason: >-
+      Seed of the MCP framing fuzz corpus: a tools/list request frame with
+      a NUL byte inside the method name, which the parser must handle
+      without a panic.

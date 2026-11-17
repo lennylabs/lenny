@@ -1,27 +1,42 @@
 # SPDX-License-Identifier: MIT
 #
 # gitleaks configuration for the secret scan of the merge gate's static
-# tier (`lenny-test`, check "gitleaks dir (tracked files)", in
-# cmd/lenny-test/secretscan.go). The check scans the files git tracks and
-# reads this file explicitly; it ignores `gitleaks:allow` comments and any
-# .gitleaksignore file. The allowlist is therefore the entries below plus
-# the global allowlist of the default configuration this file extends,
-# which skips some files by path (images, fonts, office documents, go.mod
-# and go.sum, lockfiles, vendored trees, anything under node_modules, and
-# any path containing "gitleaks.toml") and some values by pattern. gitleaks
-# also skips archives and binary files without reading them. A diff to this
-# file is reviewed with the `review` skill before it merges
-# (.claude/rules/git-workflow.md, "Review changes to the merge gate").
+# tier (`lenny-test`, check "gitleaks dir (committed tree at HEAD)", in
+# cmd/lenny-test/secretscan.go). The check scans the committed tree at
+# HEAD and reads this file, as committed, explicitly; it ignores
+# `gitleaks:allow` comments and any .gitleaksignore file. The allowlist is
+# therefore the entries below plus the value patterns of the global
+# allowlist of the default configuration this file extends. That global
+# allowlist also skips some files and directories by path (images, fonts,
+# office documents, go.mod and go.sum, lockfiles, vendored trees, anything
+# under node_modules, and any path containing "gitleaks.toml"); the check
+# writes each committed file under such a path into its scan tree under a
+# renamed path that no pattern matches, so gitleaks reads it, and
+# tests/registers/secret-scan-skipped-paths.yaml records those files.
+# gitleaks does not read archives, files whose content it detects as
+# binary, or symbolic links; the check holds each committed file of those
+# kinds to a reviewed entry in tests/registers/binary-files.yaml
+# (cmd/lenny-test/secretscan_coverage.go). A diff to this file is reviewed
+# with the `review` skill before it merges (.claude/rules/git-workflow.md,
+# "Review changes to the merge gate").
 #
 # The configuration extends the default rules of the pinned gitleaks
 # release (tests/gate/Dockerfile). Each allowlist entry below covers values
 # that are fake secrets by design: a test fixture, a documentation example,
 # a placeholder in recorded spike evidence, or an identifier a rule
-# mistakes for a key. Each entry sets condition = "AND", so a value is
-# allowed only at the paths the entry names and only when it matches the
+# mistakes for a key. gitleaks skips a whole file when it matches the
+# paths of any [[allowlists]] entry that names no targetRules, whatever the
+# entry's condition, so every entry names the rules whose findings it
+# covers in targetRules. gitleaks then evaluates the entry per finding of
+# those rules, with condition = "AND": a value is allowed only for those
+# rules, only at the paths the entry names, and only when it matches the
 # entry's regular expression, which is the exact value or a pattern that
-# admits no other kind of value. A real credential never gets an entry: it
-# is removed from the tree and rotated.
+# admits no other kind of value. The check decodes this file as gitleaks
+# does and refuses an entry without targetRules, regexes, or condition =
+# "AND", an `allowlist` key, an [extend] table other than
+# useDefault = true, and a [[rules]] entry that reuses a default rule's id
+# (cmd/lenny-test/secretscan_config.go). A real credential never gets an
+# entry: it is removed from the tree and rotated.
 #
 # The entries were built by running the scan on the tree on 2026-11-17
 # (change 0158, step S1) and reviewing every finding. The comment above
@@ -61,6 +76,7 @@ useDefault = true
 [[allowlists]]
 description = "Stub cloud tokens minted by the local stub server of the 0127 federation spike"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = ['''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-federation/logs/[^/]+\.out$''']
 regexes = ['''^(gcp-sts-at-v\d-[0-9a-f]{6}|gcp-sa-at-from-gcp-sts-at-v\d-[0-9a-f]{6}|gce-md-at-\d{10}|az-msi-at-\d{10})$''']
 
@@ -73,6 +89,7 @@ regexes = ['''^(gcp-sts-at-v\d-[0-9a-f]{6}|gcp-sa-at-from-gcp-sts-at-v\d-[0-9a-f
 [[allowlists]]
 description = "Placeholder bearer values the 0127 egress spikes send for the proxy to replace"
 condition = "AND"
+targetRules = ["curl-auth-header"]
 paths = [
   '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-inject/t1\.sh$''',
   '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-owed-d/i2\.sh$''',
@@ -95,6 +112,7 @@ regexes = ['''^(lenny-ph-acme|lenny-injected)$''']
 [[allowlists]]
 description = "Commit ID, certificate subject, and truncated JWT header in 0127 spike outputs"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = [
   '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-lsrefs/t1\.out$''',
   '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-owed-b/out/s2-long\.out$''',
@@ -121,6 +139,7 @@ regexes = ['''^(7b8b171c0dbfa8af665c24a63d91f2b185b8701b|subject=CN=lenny-egress
 [[allowlists]]
 description = "Placeholder and invalid-by-construction tokens in the 0152 Git identity spikes"
 condition = "AND"
+targetRules = ["curl-auth-header", "generic-api-key", "github-app-token"]
 paths = [
   '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-gh/''',
   '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-ghlive/smoke\.sh$''',
@@ -138,6 +157,7 @@ regexes = ['''^(OTHER-TOKEN-x9|USER-FILE-CURRENT|Z2l0bGFiLWxmczpMRlNUT0tFTi|ghu_
 [[allowlists]]
 description = "RFC 6455 sample WebSocket key replayed by the 0152 spikes"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = ['''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-gh/''']
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 
@@ -151,6 +171,7 @@ regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 [[allowlists]]
 description = "Published development encryption key of the chart's dev preset"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = [
   '''^charts/lenny/presets/dev\.yaml$''',
   '''^pkg/embedded/manifests/manifests\.yaml$''',
@@ -166,6 +187,7 @@ regexes = ['''^bGVubnktZW1iZWRkZWQtZGV2LWFlc2NiYy1rZXktMzJieQ==$''']
 [[allowlists]]
 description = "KMS master key fixture of a chart unit test"
 condition = "AND"
+targetRules = ["generic-api-key", "kubernetes-secret-yaml"]
 paths = ['''^charts/lenny/tests/kms-master-key-secret_test\.yaml$''']
 regexes = ['''^(?:master-key: )?cHJlc2VydmVkLW1hc3Rlci1rZXktcHJlc2VydmVkLW1hc3Rlci1rZXk=$''']
 
@@ -175,6 +197,7 @@ regexes = ['''^(?:master-key: )?cHJlc2VydmVkLW1hc3Rlci1rZXktcHJlc2VydmVkLW1hc3Rl
 [[allowlists]]
 description = "HMAC key of the Kind end-to-end test install"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = ['''^tests/testinfra/kind/install\.sh$''']
 regexes = ['''^bGVubnktZTJlLWJlYXJlci10cnVzdC1obWFjLWtleS0zMmJ5dGVz$''']
 
@@ -187,6 +210,7 @@ regexes = ['''^bGVubnktZTJlLWJlYXJlci10cnVzdC1obWFjLWtleS0zMmJ5dGVz$''']
 [[allowlists]]
 description = "Backup encryption key fixture of the integration tests (bytes 0x00 to 0x1f)"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = ['''^tests/integration/backup_[a-z_]+_test\.go$''']
 regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=$''']
 
@@ -204,6 +228,7 @@ regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=$''']
 [[allowlists]]
 description = "Literal fixture values in Go tests"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = [
   '''(?:^|/)binder_test\.go$''',
   '''(?:^|/)playground_redact_internal_test\.go$''',
@@ -225,6 +250,7 @@ regexes = ['''^(0123456789abcdef|sk-live-abc123|tier4-scope-probe-secret-materia
 [[allowlists]]
 description = "Kubernetes Secret names in credential pool examples"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = [
   '''^spec/04_system-components\.md$''',
   '''^docs/operator-guide/(configuration|security)\.md$''',
@@ -235,22 +261,28 @@ paths = [
 regexes = ['''^anthropic-key-\d$''']
 
 # Example upload tokens and client secrets in the documentation. Each
-# upload token is elided with "..." and so is not a usable value.
+# upload token is elided with "..." and so is not a usable value; the
+# regex lists each elided example exactly.
 # Findings (generic-api-key):
 #   docs/client-guide/session-lifecycle.md:128,151,185,407,502,540
+#     sess_abc123, sess_def456, sess_ghi789, and sess_jkl012, each
+#     followed by .1712345678.a1b2c3d4e5f6...
 #   docs/client-guide/webhooks.md:42
+#     sess_abc123.1712345678.a1b2c3d4e5f6...
 #   docs/tutorials/session-derive-replay.md:82,132
-#   docs/api/mcp.md:370
+#     sess_02....a3f1c7e2d9b8 and sess_03....b4g2d8f3e0c9
+#   docs/api/mcp.md:370   sess_01J5K9....1712345678.a1b2c3...
 #   docs/tutorials/using-connectors.md:42   secret_xyz789
 [[allowlists]]
 description = "Elided upload tokens and an example client secret in the documentation"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = [
   '''^docs/client-guide/(session-lifecycle|webhooks)\.md$''',
   '''^docs/tutorials/(session-derive-replay|using-connectors)\.md$''',
   '''^docs/api/mcp\.md$''',
 ]
-regexes = ['''^(sess_[A-Za-z0-9.]*\.\.\.[A-Za-z0-9.]*|secret_xyz789)$''']
+regexes = ['''^(sess_abc123\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_def456\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_ghi789\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_jkl012\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_02\.\.\.\.a3f1c7e2d9b8|sess_03\.\.\.\.b4g2d8f3e0c9|sess_01J5K9\.\.\.\.1712345678\.a1b2c3\.\.\.|secret_xyz789)$''']
 
 # Identifiers a rule mistakes for keys: a column name and test names.
 # Findings (generic-api-key):
@@ -263,6 +295,7 @@ regexes = ['''^(sess_[A-Za-z0-9.]*\.\.\.[A-Za-z0-9.]*|secret_xyz789)$''']
 [[allowlists]]
 description = "Column and test names that a rule reads as keys"
 condition = "AND"
+targetRules = ["generic-api-key"]
 paths = [
   '''^migrations/0128_ops_operation_baselines\.up\.sql$''',
   '''^migrations/ops_operation_baselines_test\.go$''',
@@ -270,3 +303,61 @@ paths = [
   '''^TEST-GAPS\.md$''',
 ]
 regexes = ['''^(p50_duration_ms|TestChildMintingProducesA2ADelegation|T4KmsKeyUnusable)$''']
+
+# Module checksums in go.sum that the generic rule reads as keys. The
+# scan renames go.sum in its scan tree, because the default allowlist
+# skips it by path, so the path below is the renamed one
+# (cmd/lenny-test/secretscan_tree.go). Each value is the h1: hash of the
+# module named on its line, whose path contains a word such as "auth",
+# "secret", "token", or "key", which the rule takes as a key name. A
+# dependency change that adds such a line adds its exact hash here, and
+# go.sum and this file are both reviewed before they merge.
+# Findings (generic-api-key), by module:
+#   cloud.google.com/go/auth/oauth2adapt v0.2.8
+#   cloud.google.com/go/secretmanager v1.20.0
+#   github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.4.0
+#   github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0
+#   github.com/aws/aws-sdk-go-v2/credentials v1.19.16
+#   github.com/aws/aws-sdk-go-v2/feature/rds/auth v1.6.23
+#   github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.41.7
+#   github.com/keybase/go-keychain v0.0.1
+#   github.com/moby/moby/api v1.54.1
+#   golang.org/x/oauth2 v0.36.0
+#   google.golang.org/api v0.274.0
+#   k8s.io/api v0.31.4
+#   k8s.io/apiextensions-apiserver v0.31.4
+#   k8s.io/apimachinery v0.31.4
+#   modernc.org/token v1.1.0
+[[allowlists]]
+description = "Module checksums in go.sum next to module paths a rule reads as key names"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^\.lenny-secretscan-renamed/go\.scan\.sum$''']
+regexes = [
+  '''^keo8NaayQZ6wimpNSmW5OPc283g65QNIiLpZnkHRbnc=$''',
+  '''^GjE3NoyFXo7ipRPy26PMmg4oRX1Ra8fswH45r16rWV0=$''',
+  '''^E4MgwLBGeVB5f2MdcIVD3ELVAWpr\+WD6MUe1i\+tM/PA=$''',
+  '''^aMFOzch6ZJo4Ct9hI4A9Y2fPen5YNRTPmkSBhe5m0ZQ=$''',
+  '''^r3RJBuU7X9ibt8RHbMjWE6y60QbKBiII6wSrXnapxSU=$''',
+  '''^jPWBQFmN0v3kiumSS/4ES5rupdfR5jFi5fHwilsX\+KY=$''',
+  '''^JUGKqUnJHbXpS8uyuICP/zpQ\+vXUIXW2zTEqjMLCqrY=$''',
+  '''^way\+bWYa6lDppZoZcgMbYsvC7GxljxrskdNInRtuthU=$''',
+  '''^TqVzuJkOLsgLDDwNLmYqACUuTehOHRGKiPhvH8V3Nn4=$''',
+  '''^peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=$''',
+  '''^aYhycS5QQCwxHLwfEHRRLf9yNsfvp1JadKKWBE54RFA=$''',
+  '''^I2QNzitPVsPeLQvexMEsj945QumYraqv9m74isPDKhM=$''',
+  '''^FxbqzSvy92Ca9DIs5jqot883G0Ln/PGXfm/07t39LS0=$''',
+  '''^8xjE2C4CzhYVm9DGf60yohpNUh5AEBnPxCryPBECmlM=$''',
+  '''^Xl7Ap9dKaEs5kLoOQeQmPWevfnk/DM5qcLcYlA8ys6Y=$''',
+]
+
+# The values this file quotes in its own comments, which the scan reads
+# because it renames this file in its scan tree (the default allowlist
+# skips any path containing "gitleaks.toml"). Each value is one an entry
+# above allows, with the reason given there.
+[[allowlists]]
+description = "Fake values this configuration quotes in its own comments"
+condition = "AND"
+targetRules = ["generic-api-key", "github-app-token"]
+paths = ['''^\.lenny-secretscan-renamed/%2Egitleaks\.scan\.toml$''']
+regexes = ['''^(Z2l0bGFiLWxmczpMRlNUT0tFTi|ghu_invalidsmoketesttoken000000000000000)$''']

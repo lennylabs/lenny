@@ -12,7 +12,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | Ready | 5 |
 | Waiting on decisions | 40 |
 | Blocked | 148 |
-| Landed | 1 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -31,7 +30,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Blocked | 0116.S1 |
 | [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3 |
 | [0116.S6](0116-coverage-and-selection/steps.md#0116s6-retire-the-maps-their-registers-and-their-self-tests) | Retire the maps, their registers, and their self-tests | Blocked | 0116.S2, 0116.S3 |
-| [0158.S1](0158-merge-gate-follow-ups/steps.md#0158s1-secret-scan-in-the-gate-and-the-review-rule-for-gate-changes) | Secret scan in the gate and the review rule for gate changes | Landed |  |
 
 ### M2: Gateway package layout and the journey pilot
 
@@ -281,4 +279,3 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |
-| [0158](0158-merge-gate-follow-ups/change.md) | Merge gate follow-ups | `In progress` | 1 of 1 | 3 |
