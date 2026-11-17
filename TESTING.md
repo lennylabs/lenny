@@ -82,7 +82,7 @@ Lenny's tests run in tiers, and each tier has a name that says what its tests ne
 
 | Tier | Title | Scope | Backing services | Runs in PR | Runs nightly | Runs pre-release |
 |:-----|:-----|:------|:-----------------|:----------:|:------------:|:----------------:|
-| `static` | Static | Lint, type-check, schema validate, query/schema linter, license check | None | Yes | Yes | Yes |
+| `static` | Static | Lint, type-check, schema validate, query/schema linter, license check, secret scan | None | Yes | Yes | Yes |
 | `unit` | Unit | Pure logic, no I/O, no goroutines spanning processes | None | Yes | Yes | Yes |
 | `component` | Component | One Lenny component against real backing services | Postgres, Redis, MinIO, KMS stub, OIDC stub | Yes | Yes | Yes |
 | `contract` | Contract | Wire-format equivalence across surfaces (REST, MCP, OpenAI Completions, OpenAI Responses) | Gateway process, echo runtime | Yes | Yes | Yes |
@@ -503,7 +503,7 @@ Every tier runs whatever an earlier tier reports, so one run reports every failu
 
 `--all` replaces the `--changed` selection with every package of tier 1 and every test of tiers 2, 3, and 4, whatever the diff. It checks that every tier the gate can select passes in the gate's environment, for example after a change to the image or to the container's options. The verdict records it as `gate.all`, and its `command` ends with `--all`.
 
-**Environment.** The gate runs in one canonical Linux environment: a container built from `tests/gate/Dockerfile`. The image pins Go at the version `go.mod` names, Python, Helm, `buf`, `controller-gen`, `golangci-lint`, `gofumpt`, `goimports`, the protobuf plugins, the envtest binaries for Kubernetes 1.31.0, the Docker CLI, `jq`, git, and a C toolchain, at the versions the workflows and `scripts/setup-dev.sh` pin. The base images (`golang`, `python`, and `docker` for the CLI) are pinned by the digest of their multi-arch index, and every downloaded binary is checked against the checksum its publisher releases, including the SHA-512 that controller-tools publishes for envtest. The image tag is a digest of the Dockerfile, so a changed pin builds a new image on the next run. On the host, `lenny-test gate` does the following:
+**Environment.** The gate runs in one canonical Linux environment: a container built from `tests/gate/Dockerfile`. The image pins Go at the version `go.mod` names, Python, Helm, `buf`, `controller-gen`, `golangci-lint`, `gofumpt`, `goimports`, the protobuf plugins, the envtest binaries for Kubernetes 1.31.0, the Docker CLI, `jq`, gitleaks, git, and a C toolchain, at the versions the workflows and `scripts/setup-dev.sh` pin. The base images (`golang`, `python`, and `docker` for the CLI) are pinned by the digest of their multi-arch index, and every downloaded binary is checked against the checksum its publisher releases, including the SHA-512 that controller-tools publishes for envtest. The image tag is a digest of the Dockerfile, so a changed pin builds a new image on the next run. On the host, `lenny-test gate` does the following:
 
 1. It builds the image when no image with that tag exists, and records the ID of the image it built under the user's cache directory (`lenny-test/gate-images`). Before it reuses an image it checks that the tag still names the recorded ID, and it rebuilds when it does not. `--rebuild` builds the image again. The container runs the image by that ID.
 2. It mounts the worktree at its host path. For a linked worktree, it also mounts the main checkout's git directory read-only at its host path, so git works inside the container. It sets `GIT_OPTIONAL_LOCKS=0` and `GOFLAGS=-buildvcs=false`. On a Docker Desktop file share a rename over a file is not atomic to a concurrent reader, so a `git status` that rewrites `.git/index` while parallel `go build` runs read it for their VCS stamp fails those builds. No test reads the VCS stamp.
@@ -531,6 +531,8 @@ A `FAIL` or `INCONCLUSIVE` verdict stays as it is in either case.
 **Verdict.** The gate writes `tests/results/gate-<run>.json` and `tests/results/gate-latest.json` in the format of §7, and appends the run to `tests/results/history.jsonl`. `trigger.git_revision` is the commit the gate ran on, and every tier carries its result and its failures. The `gate` object adds the base ref, the merge base, whether the tree had uncommitted changes (`dirty`), the environment (the image tag and ID, or the host), the tiers not run (`not_run`), and the reasons the verdict cannot stand for the commit (`unverified`). The exit code is 0 for `PASS`, 1 for `FAIL`, 2 for `INCONCLUSIVE`, and 3 for `UNVERIFIED`.
 
 **Merge policy.** A branch merges into `main` only on a `PASS` verdict for its head commit, and `main` stays green: a merge-gate failure on `main` is fixed or reverted before any other branch merges. `.claude/rules/git-workflow.md` and `.claude/rules/test-coverage.md` ("Gates") state the policy, including the area and release gates that run the tiers outside the merge gate.
+
+**Changes to the gate.** The container builds `lenny-test` from the branch under test, so a branch that changes the harness is judged by its own version of it. A branch that changes the gate's own files is therefore reviewed with the `review` skill before it merges, as `.claude/rules/git-workflow.md` ("Review changes to the merge gate") states, which names the files.
 
 **Running the gate on macOS.** The runtime supervisor checks of the static tier build a Linux binary and skip on any other host, and a cgo link step depends on the host's C toolchain and SDK. On macOS the gate therefore runs in the container:
 
@@ -919,18 +921,19 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 14. `scripts/check-schema-breaking.sh` — breaking changes in the JSON Schema files under `schemas/` against `main`.
 15. `scripts/check-action-pins.sh` — every external `uses:` reference in a workflow is pinned to a commit digest (§20.16).
 16. `scripts/check-tool-pins.sh` — no `go install <path>@latest` in a workflow; tool installs are version-pinned (§20.16).
-17. `scripts/lint-determinism.sh` — §17.4 determinism rules across the test surface. Findings are reported without failing the tier while the pre-existing violations are migrated to `testinfra`.
-18. `scripts/lint-test-conventions.sh` — §17.6 and §17.7 test-authoring conventions. Findings are reported without failing the tier.
-19. `scripts/check-markdown-links.sh` — `markdown-link-check` over `docs/` and `spec/`. Findings are reported without failing the tier, because many internal links resolve only in the rendered site; the PR workflow keeps a hard gate against the rendered site.
-20. The static-tier Go tests, one check per package, run concurrently with the other checks. Each package has a time budget, and the tier message names a package that exceeds it; the overrun does not change the package's result. The packages and their budgets are in "Static-tier packages" below.
+17. `gitleaks dir` over the files git tracks: the secret scan. The harness places the files `git ls-files --cached` lists in a temporary tree and scans that tree with `.gitleaks.toml` at the repository root, which extends the default rules of the gitleaks release the gate image pins and allowlists the test fixtures and documentation examples that are fake secrets by design. The `dir` mode reads files, so the scan judges the tree the gate runs on; scanning history stays with the `secret-scan` workflow. The scan ignores `gitleaks:allow` comments and `.gitleaksignore` files, so the configuration file holds the whole allowlist, and a change to it is reviewed before it merges (see "Changes to the gate" under "Merge gate"). The report names each finding's file, line, and rule without the secret value. A host without gitleaks reports `unverified`.
+18. `scripts/lint-determinism.sh` — §17.4 determinism rules across the test surface. Findings are reported without failing the tier while the pre-existing violations are migrated to `testinfra`.
+19. `scripts/lint-test-conventions.sh` — §17.6 and §17.7 test-authoring conventions. Findings are reported without failing the tier.
+20. `scripts/check-markdown-links.sh` — `markdown-link-check` over `docs/` and `spec/`. Findings are reported without failing the tier, because many internal links resolve only in the rendered site; the PR workflow keeps a hard gate against the rendered site.
+21. The static-tier Go tests, one check per package, run concurrently with the other checks. Each package has a time budget, and the tier message names a package that exceeds it; the overrun does not change the package's result. The packages and their budgets are in "Static-tier packages" below.
     - `go test ./tests/static/build/...` — build and generated-artifact drift: the license header on every source file, the CRD and JSON Schema inventories, the migration numbering, the supervisor binary, the workflow tool staging, the change records, and the generated-code no-drift checks for `pkg/proto/` and the API code.
     - `go test ./tests/static/chart/...` — the Helm chart render and the deployment boundary: flags the chart renders parse against their binaries, the profiles, RBAC, the adapter inputs, and the chart's agreement with the specification's ops RBAC block and OpenSLO fragment.
     - `go test ./tests/static/lint/...` — code-invariant lints over Go source and test-hygiene lints: the coordinator-hold allowlist, Redis cluster safety, the erasure writers, the production-mode carrier, dead code, retired symbols, proto addressing, ephemeral ports, temp roots, and provider coverage.
     - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the claim register, the skip-reason classifier, the gates of the specification tree, and the self-tests of the spec map and the change graph.
 
     The no-drift test in the build package reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
-21. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
-22. `lenny-test validate-maps` — spec-map and change-graph integrity.
+22. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
+23. `lenny-test validate-maps` — spec-map and change-graph integrity.
 
 **Gate.** Every check must pass. A check that reaches no conclusion reports `unverified`, and the tier carries that status rather than `pass`. No retries.
 
@@ -2618,7 +2621,7 @@ The project minimizes long-lived secrets:
 - External pen-test report uploads: encrypted at rest, scoped to the pen-test partner via a separate org-level secret with two-person approval.
 - Real LLM provider keys (for pre-release smoke against real providers): held in `lenny-prerelease` environment with required reviewers.
 
-Secret scanning: GitHub's built-in scanner is on. `trivy fs --scanners secret` runs in the static tier.
+Secret scanning: GitHub's built-in scanner is on. gitleaks scans the tracked files in the static tier (§12.0), and the `secret-scan` workflow scans the commits a pull request introduces with the same `.gitleaks.toml`.
 
 Runner-image security: the ARC runner image is rebuilt weekly with the latest base image, signed with cosign, and digest-pinned in the ARC values file. Every PR that modifies the runner image requires review from a maintainer.
 
