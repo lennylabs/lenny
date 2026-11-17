@@ -84,7 +84,8 @@ func TestCheckPassesThePassingDocumentation(t *testing.T) {
 	if res.Pages != 5 || res.WithSpec != 4 || res.InScope != 3 {
 		t.Errorf("read %d page(s), %d with spec, %d in scope; want 5, 4, and 3", res.Pages, res.WithSpec, res.InScope)
 	}
-	mustContain(t, "the undecided findings", joined(res.Names.Undecided),
+	mustContain(
+		t, "the undecided findings", joined(res.Names.Undecided),
 		"pools.md:26: the default quoted for `minWarm` (2 (small), 5 (large)) is not a single value",
 		"the metric `lenny_legacy_requests_total` is not in the catalogs yet",
 		"the event type `dev.lenny.legacy_event` is not in the catalogs yet",
@@ -105,12 +106,14 @@ func TestCheckRefusesTheFailingDocumentation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustContain(t, "the front-matter problems", joined(res.FrontMatter),
+	mustContain(
+		t, "the front-matter problems", joined(res.FrontMatter),
 		"docs/guide/front-matter.md:3: spec must be a list of specification page codes",
 		`docs/guide/unknown-code.md:3: spec names "NOPE", which spec/registry.json does not register`,
 	)
 	got := joined(res.Names.Problems)
-	mustContain(t, "the catalog-name problems", got,
+	mustContain(
+		t, "the catalog-name problems", got,
 		"names.md:8: the metric `lenny_bogus_metric_total` is not in the catalogs, and no section of the specification defines it",
 		"names.md:8: the label or annotation `lenny.dev/bogus` is not in the catalogs",
 		"names.md:8: the event type `dev.lenny.bogus_happened` is not in the catalogs",

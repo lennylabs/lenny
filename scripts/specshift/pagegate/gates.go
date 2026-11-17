@@ -72,7 +72,8 @@ func checkNoNormativeKeyword(p *Page) []Problem {
 	for _, l := range proseLines(p) {
 		if k := normativeKeyword(l.Text); k != "" {
 			out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
-				"a page of type %s holds no normative keyword, and this line uses %q; state the rule on its owner page and link it", p.Type, k)})
+				"a page of type %s holds no normative keyword, and this line uses %q; state the rule on its owner page and link it", p.Type, k,
+			)})
 		}
 	}
 	return out
@@ -132,7 +133,8 @@ func checkReviewComments(p *Page, migrating map[string]bool) []Problem {
 	for _, l := range bodyLines(p) {
 		for _, m := range reviewComment.FindAllStringSubmatch(codeSpan.ReplaceAllString(l.Text, " "), -1) {
 			out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
-				"a %q review comment %s; move it into the migration record or an issue", m[1], reason)})
+				"a %q review comment %s; move it into the migration record or an issue", m[1], reason,
+			)})
 		}
 	}
 	return out

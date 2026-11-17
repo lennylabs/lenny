@@ -201,7 +201,8 @@ func missingDocs(code string, tp *touchedPage, naming []string) Problem {
 	return Problem{Path: tp.path, Message: fmt.Sprintf(
 		"the diff changes %s on %s and edits no documentation page whose front matter names %s (%s); "+
 			"edit the documentation that describes the change, or add the line `No reader-facing behavior changes: %s` to the Documentation section of the change's change.md",
-		strings.Join(tp.items, ", "), code, code, which, code)}
+		strings.Join(tp.items, ", "), code, code, which, code,
+	)}
 }
 
 // waivers returns the waiver lines in the Documentation sections of the
