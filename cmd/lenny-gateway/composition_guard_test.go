@@ -42,9 +42,6 @@ const guardUpdateEnv = "LENNY_GUARD_UPDATE"
 // flag set, so a flag a move drops, renames, re-defaults, or re-documents is
 // a difference.
 func TestGatewayFlagSurfaceIsFixed(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds the gateway binary; skipped in -short mode")
-	}
 	repo := repoRootDir(t)
 	bin := filepath.Join(t.TempDir(), "lenny-gateway")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/lenny-gateway")
