@@ -144,17 +144,29 @@ func lookupSection(ctx context.Context, t *Tree, number string, out io.Writer) e
 // carries outside the numbered files is a successor, including one to a
 // record outside the specification, such as a program under changes/ or
 // a documentation page. A partial stub keeps text whose links are not
-// successors, so only its links into the new tree are listed.
+// successors, so its links into the new tree are listed, and so is every
+// link in the list that follows the partial-stub lead line, wherever it
+// points, because the stub command writes the successors there.
 func printSuccessors(s numberedSection, number string, full bool, out io.Writer) {
 	var lines []string
-	body := strings.Join(s.body, "\n")
-	for _, l := range links(body) {
-		target, ok := resolve(s.file, l.path)
-		if !ok || isNumbered(target) || (!full && !newTreeTarget(target)) {
-			continue
+	seen := map[string]bool{}
+	addLinks := func(text string, anyTarget bool) {
+		for _, l := range links(text) {
+			target, ok := resolve(s.file, l.path)
+			if !ok || isNumbered(target) || (!anyTarget && !newTreeTarget(target)) {
+				continue
+			}
+			shown := displayTarget(target, l.fragment)
+			if !seen[shown] {
+				seen[shown] = true
+				lines = append(lines, "  "+shown)
+			}
 		}
-		lines = append(lines, "  "+displayTarget(target, l.fragment))
 	}
+	if !full {
+		addLinks(strings.Join(partialSuccessorList(s.body), "\n"), true)
+	}
+	addLinks(strings.Join(s.body, "\n"), full)
 	inTable := false
 	for _, l := range s.body {
 		trimmed := strings.TrimSpace(l)
@@ -180,6 +192,29 @@ func printSuccessors(s numberedSection, number string, full bool, out io.Writer)
 	for _, l := range lines {
 		fmt.Fprintln(out, l)
 	}
+}
+
+// partialSuccessorList returns the list items that follow the partial-stub
+// lead line of a section body, or nil when the body carries no such lead.
+func partialSuccessorList(body []string) []string {
+	var items []string
+	for i, l := range body {
+		if strings.TrimSpace(l) != partialStubLead {
+			continue
+		}
+		for _, item := range body[i+1:] {
+			trimmed := strings.TrimSpace(item)
+			if trimmed == "" && len(items) == 0 {
+				continue
+			}
+			if !strings.HasPrefix(trimmed, "- ") {
+				break
+			}
+			items = append(items, trimmed)
+		}
+		break
+	}
+	return items
 }
 
 // printFrozen prints the section's text as it stood at the frozen tag.
