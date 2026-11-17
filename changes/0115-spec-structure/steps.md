@@ -30,7 +30,7 @@ The `ref` pass of `scripts/specshift`: `registry`, `check`, `fix`, and `lookup`,
 The `lenny-def` schemas per kind, the parser, the generators of `spec/catalogs/`, the folder indexes, and the generated component sections, and tier-0 tests that compare each generated file with a fresh run.
 
 ### 0115.S4 Gates
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0115.S2, 0115.S3]
 
@@ -51,14 +51,14 @@ The tier-0 gates of "Gates" in `change.md`, applied to pages of the new tree and
 The extension of `doc-content.md`, the front-matter, catalog-name, and documentation-impact gates, and the generator of reference pages from the catalogs, turned on for a page once the area it describes has landed (decision 11).
 
 ### 0115.S7 Successor stubs and the frozen reference
-- status: Planned
+- status: Building
 - lanes: [specification, code]
 - depends-on: [0115.S2]
 
 The stub format in `conventions.md`, a `specshift ref stub` command that replaces migrated paragraphs with a successor list, `lookup` of a `§` citation through the stub, and the `spec-frozen` tag (decision 7), created when the first area change starts.
 
 ### 0115.S8 Helpers that read the structure
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0115.S2, 0115.S3]
 

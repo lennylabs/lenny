@@ -8,9 +8,9 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 4 |
+| Building | 7 |
 | Waiting on decisions | 40 |
-| Blocked | 137 |
+| Blocked | 134 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -26,12 +26,12 @@ Not yet resolved to steps: 0116.
 | [0115.S1](0115-spec-structure/steps.md#0115s1-conventions-the-code-registry-and-placeholder-pages) | Conventions, the code registry, and placeholder pages | Building |  |
 | [0115.S2](0115-spec-structure/steps.md#0115s2-the-reference-tool) | The reference tool | Building |  |
 | [0115.S3](0115-spec-structure/steps.md#0115s3-definition-blocks-and-generators) | Definition blocks and generators | Building |  |
+| [0115.S4](0115-spec-structure/steps.md#0115s4-gates) | Gates | Building |  |
 | [0115.S5](0115-spec-structure/steps.md#0115s5-annotation-rule-and-its-lint) | Annotation rule and its lint | Building |  |
+| [0115.S7](0115-spec-structure/steps.md#0115s7-successor-stubs-and-the-frozen-reference) | Successor stubs and the frozen reference | Building |  |
+| [0115.S8](0115-spec-structure/steps.md#0115s8-helpers-that-read-the-structure) | Helpers that read the structure | Building |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Waiting on decisions | 0137 is `Draft` |
-| [0115.S4](0115-spec-structure/steps.md#0115s4-gates) | Gates | Blocked | 0115.S2, 0115.S3 |
 | [0115.S6](0115-spec-structure/steps.md#0115s6-documentation-rule-and-gates) | Documentation rule and gates | Blocked | 0115.S3, 0115.S4 |
-| [0115.S7](0115-spec-structure/steps.md#0115s7-successor-stubs-and-the-frozen-reference) | Successor stubs and the frozen reference | Blocked | 0115.S2 |
-| [0115.S8](0115-spec-structure/steps.md#0115s8-helpers-that-read-the-structure) | Helpers that read the structure | Blocked | 0115.S2, 0115.S3 |
 | [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Blocked | 0115.S8 |
 
 ### M2: Gateway package layout
