@@ -13,7 +13,6 @@ package tokensigning_test
 import (
 	"context"
 	"errors"
-	"net"
 	"os/exec"
 	"strings"
 	"testing"
@@ -69,10 +68,9 @@ func TestTokenServiceExitsBeforeListenWhenKeySetCannotLoad_spec_10_2(t *testing.
 			t.Errorf("log does not name the key-set load failure (missing %q)\n%s", want, logs)
 		}
 	}
-	for _, addr := range []string{httpAddr, grpcAddr} {
-		if conn, derr := net.DialTimeout("tcp", addr, time.Second); derr == nil {
-			_ = conn.Close()
-			t.Errorf("something accepted a connection on the token service address %s after exit", addr)
-		}
-	}
+	// The process has exited by now, so a dial to its addresses cannot
+	// reach it: a listener found there belongs to another process that took
+	// the freed port, which happens under the merge gate's host networking.
+	// The absence of the listen log line above is the evidence that the
+	// service exited before it listened.
 }
