@@ -1,6 +1,6 @@
 # Records and workflow
 
-Status: `Draft`, revision 1, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
 
 ## Problem
 
@@ -45,12 +45,12 @@ Settled by the owner on 2026-11-16 during the specification structure spike:
 5. The open proposals are left for now. This change moves only `designs/`.
 6. M0 to M2 of the v1 program are fixed now. The area milestones are ordered once 0115 lands.
 
-## Open decisions
+Settled by the owner on 2026-11-16 in answer to this change's open decisions:
 
-1. **Numbering.** Recommendation: 0114 and 0115 as decided, 0116 for coverage derived from annotations, 0117 for the gateway package layout, and the designs from 0118 to 0153 in alphabetical order of their file names. The numbers carry no meaning, so alphabetical order is the cheapest reproducible rule.
-2. **The status of each moved design.** Recommendation: `Decided` when the design's Open decisions section is empty or states that no decision is open, and `Draft` otherwise. The status line keeps the design's revision and its date.
-3. **"Treat designs as implemented".** The owner's working rule says that agents describe current behavior as though every design were implemented. A change at `Decided` has not landed, and its status says so. Recommendation: keep the rule for descriptive text until each area's specification pages land, and use the status for planning. Restate the rule in `AGENTS.md` against `changes/`.
-4. **Prose that names `designs/`.** Besides links, the designs name `designs/` and `designs/evidence/` in running text, such as the decision records design's statement that designs are Lenny's decision records. Recommendation: rewrite each path to its new location, and rewrite each sentence that names the folder as a concept to name changes. This is an edit to a design's text, so each moved change records it in its review history.
+7. **Numbering.** 0114 and 0115 as decided, 0116 for coverage derived from annotations, 0117 for the gateway package layout, and the designs from 0118 to 0153 in alphabetical order of their file names.
+8. **Status of the moved designs.** Every moved design keeps the status `Draft`, because the owner runs a final cross-review of them before any is `Decided`. The status line keeps the design's revision and its date.
+9. **Reading a program's changes.** The owner's working rule of treating designs as implemented applies to this refactor and is not a general rule. It becomes reading guidance on the v1 program ("Reading the program" in [`v1.md`](../programs/v1.md)), and `AGENTS.md` points to it. The changes README lets any program state such guidance.
+10. **Prose that names `designs/`.** Each path is rewritten to its new location, and each sentence that names the folder as a concept names changes instead. Each moved change records the edit in its review history.
 
 ## Current state
 
@@ -68,7 +68,7 @@ Settled by the owner on 2026-11-16 during the specification structure spike:
 - `changes/0115-spec-structure/`, holding the specification structure spike as its evidence and a `change.md` skeleton at `Draft`. `changes/0114-helpers/` gets a skeleton at `Draft`.
 - `designs/` removed.
 - `scripts/specshift/scope/scope.go` and the residual registers exclude `changes/`.
-- `AGENTS.md` describes where planned work lives.
+- `AGENTS.md` describes where planned work lives and points to the active program's reading guidance. Its instructions for the beads tracker go, because commit `d09b5df5b` removed beads from the project.
 
 ## Documentation
 

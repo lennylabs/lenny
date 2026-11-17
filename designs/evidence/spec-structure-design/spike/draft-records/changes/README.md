@@ -93,7 +93,7 @@ An edit that changes no requirement, no defined value, and no operation lands as
 
 ## Programs
 
-A program is a plan over several changes: its goal, its member changes, milestones with exit criteria, and the current milestone. Members stay in their own folders, and the program lists them by number, so a change can belong to two programs or move between them. A program changes whenever the plan does, including after implementation starts; git history records each revision. Dependency edges live in the changes' steps, and `BOARD.md` computes the step graph and the status of each milestone from them.
+A program is a plan over several changes: its goal, its member changes, milestones with exit criteria, and the current milestone. Members stay in their own folders, and the program lists them by number, so a change can belong to two programs or move between them. A program changes whenever the plan does, including after implementation starts; git history records each revision. Dependency edges live in the changes' steps, and `BOARD.md` computes the step graph and the status of each milestone from them. A program may also state how agents read its member changes together while it runs, such as which state counts as the target and how a conflict between members is raised; agent instructions point to the active program's guidance.
 
 ```yaml
 ---
