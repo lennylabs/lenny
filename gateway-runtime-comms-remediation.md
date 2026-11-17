@@ -4515,6 +4515,13 @@ where git runs. Git in the gateway container needs a memory limit of about 20 Gi
   `internet` pools; §26.2 promises an allowlist that §13.2.6 does not provide; pull requests need the host API as well as
   git; and nodes host pods of different tenants by default.
 
+**Owner decisions (2026-11-01).**
+
+- F-12.9.24: require the `kms` encryption provider for credential Secrets only when the deployment has a T4 tenant, and state which part preflight verifies and which part is an operator obligation. Needs a proposal.
+- F-10.2.35: state the dev identity headers in the specification, add a user option to all three SDKs, and under `--dev-mode` only fall back to a default user such as `dev-user` with a log line. Needs a proposal.
+- Reader access (F-10.2.31, F-10.2.32, F-10.2.36, F-10.2.37): one proposal. Memory recall is owner-only. An attached stream re-evaluates access periodically, for example every 60 seconds, and closes on failure. The §10.2 matrix applies on every surface, including MCP and the adapters, with an explicit in-pod exemption. A reader cannot continue a conversation, and a demoted owner cannot send warm turns.
+- The finalize upload-token check stays in place until the shared key-source proposal lands.
+
 **Pending work (2026-11-01).** The kind cluster `lenny-e2e` is still at migration 196 with old images; reinstall once
 from `main` and run tiers 5, 8, and 9 for 0110, 0112, and slot reservations. Branch `fix/kind-verify-3cb3523` holds one
 test edit (`81af4b818`) to merge first. The shared gateway key-source proposal (F-7.1.31) is not affected by the review
@@ -4554,6 +4561,43 @@ re-confirmed against the tree at `65a7a15e3`.
     encryption meets it, while §4.9 accepts `aescbc`, `aesgcm`, and GKE default encryption for credential
     Secrets. The proposal resolves the conflict between the two sections.
 - Not filed: none. Every listed defect is filed.
+
+**Defects filed from proposal 0114's unstaged-defect list (2026-11-01).** Proposal 0114 (shared token and OAuth
+state, approved 2026-11-01) lists defects in the shipped tree that it does not stage. Each was re-confirmed against
+the tree at `91f8ff9cd`, and none was already fixed. These entries discharge RECORDS-1 items 3 and 4 of 0114's
+non-spec changes, so 0114's implementation does not file them again. F-9.3.18 and F-27.3.17 stay reserved for the
+findings RECORDS-1 names, so the ids below skip them.
+
+- [ ] **Proposal 0114** (approved 2026-11-01): resolves F-7.1.31 and F-27.3.16. Implementation is next.
+- Direct-fix queue, after proposal 0114's implementation.
+  - [ ] **F-12.5.34** (Medium): `softDeleteStagedBlob` does not reach `*cataloging.Store`, so session GC releases
+    refused upload bytes a second time and `storage_bytes_used` under-counts. Direct fix.
+  - [ ] **F-9.3.20** (Medium): the chart renders neither `--connector-oauth-callback-url` nor
+    `LENNY_CONNECTOR_OAUTH_CALLBACK_URL`, so a chart deployment cannot enable the connector OAuth flow. Direct fix.
+  - [ ] **F-11.1.12** (Low): `uploadLimiter.closeSession` runs only in the finalize handler, so a `sessionBytes`
+    entry outlives its session on every other replica. Direct fix.
+  - [ ] **F-27.3.18** (Low): `handleAuthError` renders 200 for tenant-claim rejections, while §27.3.1 records 401
+    and 403. Direct fix.
+- Proposal routing, independent of 0114's implementation.
+  - [ ] **F-12.3.30** (High): `environmentmw` reads the primary alone and fails closed, so a primary outage answers
+    500 on existing sessions, against §12.3. §10.6 makes the filter an authorization boundary, so it needs a
+    proposal.
+  - [ ] **F-12.8.64** (Medium): the dead-letter redaction receipt signer holds a per-process HMAC key that no party
+    can verify, and no admin route serves a public key. Needs a proposal, which adds the route.
+  - [ ] **F-7.4.22** (Low): finalize's upload abort is per process, so it does not sever a stream on a peer once
+    0114's cross-replica admission lands. §7.4 names no abort mechanism, so it needs a proposal.
+  - [ ] **F-9.3.19** (Low): the connector callback answers `400 CONNECTOR_OAUTH_STATE_UNKNOWN` on a store fault.
+    §9.3 is silent on a store fault, so it needs a proposal.
+  - [ ] **F-12.4.40** (Low): the §12.4 **Failure behavior per use case** table has no row for playground revocation
+    or OAuth state. Specification text, so it needs a proposal. Rides with F-9.3.19.
+  - [ ] **F-15.1.73** (Low): `REDIS_UNAVAILABLE` has no §15.1 catalog row and no `errorclassify` entry. Specification
+    text, so it needs a proposal.
+- Noted on existing OPEN entries, with no new item, because each already has a line in this section.
+  - **F-11.5.26** (High) and **F-11.5.27** (Medium): finalize's token check sits behind the idempotency middleware,
+    and a replay is not bound to the caller. The proposal that closes F-11.5.26 owns both.
+  - **F-15.1.57** (Low): the specification does not settle whether REST `/upload` in `running` admits a bearer. The
+    upload route proposal owns it.
+- Not filed: none. Every listed defect is filed or noted.
 
 **Test-harness direct fixes (2026-10-27).** The unit tier reported a package timeout for
 `pkg/gateway/podlifecycle/podsession` whenever the host was loaded, which hid the results of every
