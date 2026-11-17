@@ -8,17 +8,20 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Waiting on decisions | 40 |
-| Blocked | 132 |
+| Waiting on decisions | 42 |
+| Blocked | 135 |
 | Landed | 5 |
 | Cancelled | 1 |
 
 ## M0: Workflow in place (current)
 
-Not yet resolved to steps: 0114.
-
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0114.S1](0114-helpers/steps.md#0114s1-move-the-step-checker-board-generator-and-link-rewriter-into-scriptschanges-and-add-the-change-commands) | Move the step checker, board generator, and link rewriter into scripts/changes, and add the change commands | Waiting on decisions | 0114 is `Draft` |
+| [0114.S3](0114-helpers/steps.md#0114s3-the-review-workflow) | The review workflow | Waiting on decisions | 0114 is `Draft` |
+| [0114.S2](0114-helpers/steps.md#0114s2-generic-skills) | Generic skills | Blocked | 0114.S1 |
+| [0114.S4](0114-helpers/steps.md#0114s4-the-build-skill) | The build skill | Blocked | 0114.S1 |
+| [0114.S5](0114-helpers/steps.md#0114s5-retire-the-proposal-pipeline-and-rewrite-the-governing-rule) | Retire the proposal pipeline and rewrite the governing rule | Blocked | 0114.S2, 0114.S3, 0114.S4 |
 | [0113.S1](0113-records-and-workflow/steps.md#0113s1-create-the-records) | Create the records | Landed |  |
 | [0113.S2](0113-records-and-workflow/steps.md#0113s2-move-the-designs) | Move the designs | Landed |  |
 | [0113.S3](0113-records-and-workflow/steps.md#0113s3-exclude-changes-from-the-gates-and-update-the-agent-instructions) | Exclude `changes/` from the gates, and update the agent instructions | Landed |  |
@@ -221,7 +224,7 @@ Not yet resolved to steps: 0117.
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
 | [0113](0113-records-and-workflow/change.md) | Records and workflow | `Implemented` | 5 of 5 | 0 |
-| [0114](0114-helpers/change.md) | Helpers | `Draft` | 0 of 0 | 0 |
+| [0114](0114-helpers/change.md) | Helpers | `Draft` | 0 of 5 | 6 |
 | [0115](0115-spec-structure/change.md) | Specification structure | `Draft` | 0 of 0 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 0 |

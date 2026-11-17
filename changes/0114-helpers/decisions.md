@@ -2,4 +2,13 @@
 
 ## Open decisions
 
-To be framed.
+1. **Retire the proposal pipeline in this change.** Delete its workflows, skills, tools, agent, plan file, and tests, and their register rows. Git history keeps them, the open proposals are set aside, and the changes README already replaces each piece ([WORKFLOW.md](../0115-spec-structure/evidence/spike/WORKFLOW.md), "What retires"). Options: (a) delete now; (b) keep them until the open proposals are revisited. Recommendation: (a).
+2. **Rewrite `spec-driven-development.md` in this change.** The governing rule still routes every specification change through `change-proposal` and `implement-proposal`. Options: (a) rewrite it here as "Detailed design" describes; (b) leave it to 0115, which restructures the specification. Recommendation: (a), because an agent following the rule today uses the retired loop.
+3. **Form of each helper.** Options: (a) `review` as a workflow, the others as skills, and the bound helpers' model-free logic in Python under `scripts/changes/`; (b) every helper as a skill, with `review` starting its reviewers as subagents. Recommendation: (a), because a workflow runs the reviewers and verifiers in a fixed order and its tests can replay it.
+4. **Move the step checker and board generator out of 0113's evidence now.** Options: (a) move them to `scripts/changes/` in this change as the `board` helper, with tests; (b) leave them in 0113's evidence until 0115. Recommendation: (a), because `change` and `build` call them and the board is already in use.
+5. **Defaults of `review`.** Options: (a) three default charters (tree checker, implementer, documentation reader), a security reviewer on request, one verifier per finding, one round, and `--fix` limited to findings that need no decision; (b) the same with no verifier, to halve the cost. Recommendation: (a), because unverified findings were the main source of churn in the pipeline's rounds.
+6. **Branches and the integration branch.** Every change so far sits on `design/v1-cleanup` or a branch cut from it, and none is merged into `main`. Options: (a) merge `change/0113-records-and-workflow` into `design/v1-cleanup`, then `design/v1-cleanup` into `main`, and cut each later step's branch, `change/<step>-<slug>`, from `main`; (b) keep stacking branches until M0 ends. Recommendation: (a), as `.claude/rules/git-workflow.md` states.
+
+## Decisions
+
+None yet.
