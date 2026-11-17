@@ -1,6 +1,6 @@
 # Test tiers by name and the static and documentation tiers
 
-Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `In progress`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
 
 ## Problem
 

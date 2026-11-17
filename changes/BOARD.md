@@ -8,9 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 2 |
+| Building | 3 |
+| Ready | 1 |
 | Waiting on decisions | 43 |
-| Blocked | 151 |
+| Blocked | 149 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -21,8 +22,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0155.S1](0155-test-tiers-by-name/steps.md#0155s1-name-the-tiers) | Name the tiers | Building |  |
+| [0155.S2](0155-test-tiers-by-name/steps.md#0155s2-split-the-static-tier) | Split the static tier | Building |  |
+| [0155.S3](0155-test-tiers-by-name/steps.md#0155s3-unit-tests-beside-their-code-and-the-rule-for-documentation-checks) | Unit tests beside their code, and the rule for documentation checks | Building |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Ready |  |
-| [0155.S1](0155-test-tiers-by-name/steps.md#0155s1-name-the-tiers) | Name the tiers | Ready |  |
 | [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Waiting on decisions | 0116 is `Draft` |
 | [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Waiting on decisions | 0116 is `Draft` |
 | [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Waiting on decisions | 0116 is `Draft` |
@@ -30,8 +33,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Blocked | 0116.S1 |
 | [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3 |
 | [0116.S6](0116-coverage-and-selection/steps.md#0116s6-retire-the-maps-their-registers-and-their-self-tests) | Retire the maps, their registers, and their self-tests | Blocked | 0116.S2, 0116.S3 |
-| [0155.S2](0155-test-tiers-by-name/steps.md#0155s2-split-the-static-tier) | Split the static tier | Blocked | 0155.S1 |
-| [0155.S3](0155-test-tiers-by-name/steps.md#0155s3-unit-tests-beside-their-code-and-the-rule-for-documentation-checks) | Unit tests beside their code, and the rule for documentation checks | Blocked | 0155.S1 |
 
 ### M2: Gateway package layout and the journey pilot
 
@@ -273,6 +274,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 0 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
-| [0155](0155-test-tiers-by-name/change.md) | Test tiers by name and the static and documentation tiers | `Decided` | 0 of 3 | 0 |
+| [0155](0155-test-tiers-by-name/change.md) | Test tiers by name and the static and documentation tiers | `In progress` | 0 of 3 | 0 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |
