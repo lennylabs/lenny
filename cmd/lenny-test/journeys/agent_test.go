@@ -19,10 +19,13 @@ import (
 // They run a fake docker, a shell script that prints recorded stream-json
 // lines, so no container starts and no model is called.
 
-// fakeClaude writes a fake docker that answers `docker rm` at once and
-// otherwise records the token it received, prints lines, and then either
-// exits with code or, when hang is set, replaces itself with a long sleep
-// so only the harness's signal ends it.
+// fakeClaude writes a fake docker. It logs every invocation to calls.log,
+// answers the sandbox commands (network create, inspect, connect, and rm,
+// detached runs, exec, and rm) at once, reports the gateway port-forward
+// as started, and for the agent run records the token it received, prints
+// lines, and then either exits with code or, when hang is set, replaces
+// itself with a long sleep so only the harness's signal ends it. A run of
+// `sh -c` in place of claude prints CHECK_OUTPUT.
 func fakeClaude(t *testing.T, lines []string, code int, hang bool) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -35,8 +38,21 @@ func fakeClaude(t *testing.T, lines []string, code int, hang bool) string {
 		tail = "exec sleep 30"
 	}
 	script := filepath.Join(dir, "docker")
-	body := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = rm ] && exit 0\nprintf '%%s' \"$CLAUDE_CODE_OAUTH_TOKEN\" > %q\ncat %q\n%s\n",
-		filepath.Join(dir, "token-seen"), data, tail)
+	body := fmt.Sprintf(`#!/bin/sh
+echo "$*" >> %q
+case "$1" in
+  rm) exit 0 ;;
+  network) [ "$2" = inspect ] && echo true; exit 0 ;;
+  exec) case "$*" in *forward.log*) echo "Forwarding from 127.0.0.1:8080 -> 8080" ;; esac; exit 0 ;;
+esac
+case "$*" in
+  *--detach*) echo container-id; exit 0 ;;
+  *" sh -c "*) echo "${CHECK_OUTPUT:-PROBE_DONE}"; exit 0 ;;
+esac
+printf '%%s' "$CLAUDE_CODE_OAUTH_TOKEN" > %q
+cat %q
+%s
+`, filepath.Join(dir, "calls.log"), filepath.Join(dir, "token-seen"), data, tail)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +74,8 @@ func agentRun(t *testing.T, limit time.Duration) (AgentRun, *bytes.Buffer) {
 	t.Helper()
 	var transcript bytes.Buffer
 	return AgentRun{
-		Name: "agent", Network: KindNetwork, DocsDir: "/d", JourneyDir: "/j", HomeDir: "/h",
+		Name: "agent", RunID: "run1", UpstreamNetwork: KindNetwork, Allow: []string{"api.anthropic.com:443"},
+		DocsDir: "/d", JourneyDir: "/j", HarnessDir: "/hk", HomeDir: "/h",
 		Settings: []byte("{}"), Prompt: "p", SystemPrompt: "s",
 		TimeLimit: limit, Transcript: &transcript, Stderr: &bytes.Buffer{},
 	}, &transcript
@@ -173,7 +190,7 @@ func TestAgentErrorsWithoutAResultAreAgentErrors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Stop != StopAgentError || !strings.Contains(res.StopDetail, "start") {
+	if res.Stop != StopAgentError || !strings.Contains(res.StopDetail, "sandbox") {
 		t.Fatalf("a missing binary: %+v", res)
 	}
 }
@@ -216,9 +233,10 @@ func TestAgentArgsRestrictTheToolsAndCapTheBudget(t *testing.T) {
 }
 
 func TestDockerArgsIsolateTheAgentContainer(t *testing.T) {
-	cfg := AgentConfig{Docker: "docker", Image: "lenny-journeys-agent:abc", Model: DefaultModel, RunCapUSD: 6, UID: 501, GID: 20}
+	cfg := AgentConfig{Docker: "docker", Image: "sha256:abc", Model: DefaultModel, RunCapUSD: 6, UID: 501, GID: 20}
 	run := AgentRun{
-		Name: "agent-1", Network: "kind", DocsDir: "/s/docs", JourneyDir: "/s/journey", HomeDir: "/s/home",
+		Name: "agent-1", RunID: "run1", UpstreamNetwork: KindNetwork, DocsDir: "/s/docs", JourneyDir: "/s/journey",
+		HarnessDir: "/s/harness", HomeDir: "/s/home", TimeLimit: 30 * time.Minute,
 		Settings: []byte("{}"), Prompt: "p", SystemPrompt: "s", GatewayForward: true,
 		Env: map[string]string{"KUBECONFIG": ContainerKubeconfig, "LENNY_API_TOKEN": "tok-secret-value"},
 	}
@@ -228,21 +246,24 @@ func TestDockerArgsIsolateTheAgentContainer(t *testing.T) {
 		t.Fatalf("command line = %v", line)
 	}
 	for _, want := range []string{
-		"--rm", "--init", "--name agent-1", "--network kind", "--read-only", "--cap-drop ALL",
+		"--rm", "--init", "--name agent-1", "--label lenny.dev/journeys-run=run1",
+		"--network container:agent-1-netns", "--read-only", "--cap-drop ALL",
 		"--security-opt no-new-privileges", "--user 501:20",
 		"type=bind,source=/s/docs,target=/workspace/docs,readonly",
 		"type=bind,source=/s/journey,target=/journey,readonly",
 		"type=bind,source=/s/home,target=/home/agent",
 		"--workdir /workspace", "--env HOME=/home/agent", "--env CLAUDE_CODE_OAUTH_TOKEN",
-		"--env KUBECONFIG", "--env LENNY_API_TOKEN", "--env JOURNEY_GATEWAY_FORWARD=1",
-		"lenny-journeys-agent:abc claude -p p",
+		"--env HTTPS_PROXY=http://agent-1-proxy:3128", "--env HTTP_PROXY=http://agent-1-proxy:3128",
+		"--env NO_PROXY= ", "--env JOURNEY_TIME_LIMIT=1800",
+		"--env KUBECONFIG", "--env LENNY_API_TOKEN",
+		"sha256:abc claude -p p",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("the container command line lacks %q:\n%s", want, joined)
 		}
 	}
 	home, _ := os.UserHomeDir()
-	for _, leak := range []string{"docker.sock", "tok-secret-value", ".kube", ".aws", "--privileged", "-v " + home, "source=" + home + ","} {
+	for _, leak := range []string{"docker.sock", "tok-secret-value", ".kube", ".aws", "--privileged", "-v " + home, "source=" + home + ",", "/s/harness", "--network kind", "--network " + KindNetwork} {
 		if strings.Contains(joined, leak) {
 			t.Errorf("the container command line holds %q:\n%s", leak, joined)
 		}

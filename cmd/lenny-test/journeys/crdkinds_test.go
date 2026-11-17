@@ -3,13 +3,15 @@
 package journeys
 
 import (
-	"os"
+	"io/fs"
 	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/pkg/embedded/crds"
 )
 
 // These tests exercise contributor tooling and carry no spec annotation.
@@ -35,17 +37,20 @@ var kubectlValueFlags = map[string]bool{
 	"--field-selector": true, "--sort-by": true, "--request-timeout": true,
 }
 
-// crdNames returns every name a kubectl get accepts for the chart's CRDs:
-// plural, singular, kind, short names, and plural.group.
+// crdNames returns every name a kubectl get accepts for Lenny's CRDs:
+// plural, singular, kind, short names, and plural.group. It reads them
+// from pkg/embedded/crds, the copies of charts/lenny/crds that a static
+// check keeps equal to the chart's, so this package imports the package a
+// CRD change edits and the unit tier runs this test on every such change.
 func crdNames(t *testing.T) map[string]bool {
 	t.Helper()
-	files, err := filepath.Glob(filepath.Join("..", "..", "..", "charts", "lenny", "crds", "*.yaml"))
+	files, err := fs.Glob(crds.FS, "*.yaml")
 	if err != nil || len(files) == 0 {
-		t.Fatalf("no CRDs under charts/lenny/crds: %v", err)
+		t.Fatalf("no CRDs in pkg/embedded/crds: %v", err)
 	}
 	names := map[string]bool{}
 	for _, f := range files {
-		b, err := os.ReadFile(f)
+		b, err := crds.FS.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,7 +110,7 @@ func kubectlGetResources(args []string) []string {
 }
 
 // TestCommittedJourneysGetOnlyKindsTheChartDefines checks every resource
-// a committed postcondition gets with kubectl against the chart's CRDs
+// a committed postcondition gets with kubectl against Lenny's CRDs
 // and the built-in kinds, so a renamed CRD fails the unit tier instead of
 // every paid run of the journey.
 func TestCommittedJourneysGetOnlyKindsTheChartDefines(t *testing.T) {
@@ -125,7 +130,7 @@ func TestCommittedJourneysGetOnlyKindsTheChartDefines(t *testing.T) {
 				for _, r := range kubectlGetResources(args) {
 					checked++
 					if !known[r] && !builtinKinds[r] {
-						t.Errorf("%s: postcondition %s gets %q, which neither charts/lenny/crds nor the built-in kinds define", s.Name, p.Name, r)
+						t.Errorf("%s: postcondition %s gets %q, which neither Lenny's CRDs nor the built-in kinds define", s.Name, p.Name, r)
 					}
 				}
 			}

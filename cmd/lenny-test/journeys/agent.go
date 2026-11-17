@@ -30,15 +30,16 @@ const TokenEnv = "CLAUDE_CODE_OAUTH_TOKEN"
 // read-only documentation copy, /journey holds the read-only kubeconfigs,
 // and the home directory is the trial's writable scratch directory.
 const (
-	ContainerWorkspace      = "/workspace"
-	ContainerDocs           = "/workspace/docs"
-	ContainerJourneyDir     = "/journey"
-	ContainerHome           = "/home/agent"
-	ContainerKubeconfig     = "/journey/kubeconfig"
-	ContainerEmptyConfig    = "/journey/empty-kubeconfig"
-	ContainerHarnessConfig  = "/journey/harness-kubeconfig"
-	ContainerGatewayURL     = "http://127.0.0.1:8080"
-	containerGatewayForward = "JOURNEY_GATEWAY_FORWARD"
+	ContainerWorkspace   = "/workspace"
+	ContainerDocs        = "/workspace/docs"
+	ContainerJourneyDir  = "/journey"
+	ContainerHome        = "/home/agent"
+	ContainerKubeconfig  = "/journey/kubeconfig"
+	ContainerEmptyConfig = "/journey/empty-kubeconfig"
+	ContainerGatewayURL  = "http://127.0.0.1:8080"
+	// containerTimeLimit names the variable the entrypoint reads to run
+	// the agent under timeout(1).
+	containerTimeLimit = "JOURNEY_TIME_LIMIT"
 )
 
 // AgentConfig configures the journey agent: Claude Code in headless mode,
@@ -63,6 +64,12 @@ type AgentConfig struct {
 	// UID and GID are the user the container runs as, the owner of the
 	// mounted scratch directory.
 	UID, GID int
+	// Exec runs the docker commands that build and remove the sandbox;
+	// nil uses ExecRunner.
+	Exec CommandRunner
+	// ForwardTimeout bounds the wait for the gateway port-forward; zero
+	// means 90 seconds.
+	ForwardTimeout time.Duration
 }
 
 // DeniedTools are Claude Code's tools the journey agent never gets. The
@@ -79,15 +86,24 @@ var AgentTools = []string{"Bash", "Read", "Glob", "Grep"}
 
 // AgentRun is one invocation of the agent.
 type AgentRun struct {
-	// Name is the container's name.
+	// Name is the agent container's name, and the prefix of its network
+	// and companion containers.
 	Name string
-	// Network is the Docker network the container joins.
-	Network string
+	// RunID labels every Docker object of the run (RunLabel).
+	RunID string
+	// UpstreamNetwork is the cluster's Docker network, which the egress
+	// proxy joins (AgentEndpoint.Network).
+	UpstreamNetwork string
+	// Allow is the egress proxy's allow list of host:port pairs.
+	Allow []string
 	// DocsDir is the host directory mounted read-only at ContainerDocs.
 	DocsDir string
 	// JourneyDir is the host directory mounted read-only at
-	// ContainerJourneyDir, holding the kubeconfigs.
+	// ContainerJourneyDir, holding the agent's kubeconfig when granted.
 	JourneyDir string
+	// HarnessDir holds the harness kubeconfig the gateway port-forward
+	// uses. It is mounted in the network-namespace holder alone.
+	HarnessDir string
 	// HomeDir is the host scratch directory mounted at ContainerHome.
 	HomeDir string
 	// Settings is the settings JSON, passed inline to --settings.
@@ -101,9 +117,12 @@ type AgentRun struct {
 	// the docker process's environment; the command line names only the
 	// variables.
 	Env map[string]string
-	// GatewayForward makes the entrypoint forward the gateway into the
-	// container before the agent starts.
+	// GatewayForward starts the gateway port-forward in the agent's
+	// network namespace before the agent starts.
 	GatewayForward bool
+	// ForwardOptional lets the sandbox start when the port-forward does
+	// not; the probe uses it on its bare cluster, which has no gateway.
+	ForwardOptional bool
 	// TimeLimit bounds the run.
 	TimeLimit time.Duration
 	// Transcript receives every stream-json line except partial-message
@@ -155,34 +174,36 @@ func (c AgentConfig) ClaudeArgs(run AgentRun) []string {
 	}
 }
 
-// DockerArgs returns the docker arguments that run the agent: a
-// read-only root file system, no capabilities, no new privileges, the
-// trial's user, the agent's network, and three mounts (the documentation
-// read-only, the kubeconfigs read-only, and the scratch home directory).
-// No host home directory, Docker socket, or other host path is mounted,
-// and every environment variable is passed by name.
+// DockerArgs returns the docker arguments that run the agent: in the
+// network namespace of its holder container, on the internal network the
+// egress proxy guards, with a read-only root file system, no
+// capabilities, no new privileges, the trial's user, and three mounts
+// (the documentation read-only, the agent kubeconfig directory read-only,
+// and the scratch home directory). No host home directory, Docker socket,
+// or other host path is mounted, and every secret passes by name.
 func (c AgentConfig) DockerArgs(run AgentRun) []string {
+	n := namesFor(run)
 	args := []string{
 		"run", "--rm", "--init", "--interactive=false",
-		"--name", run.Name,
-		"--network", run.Network,
-		"--read-only",
-		"--tmpfs", "/tmp:rw,nosuid,size=512m",
-		"--cap-drop", "ALL",
-		"--security-opt", "no-new-privileges",
-		"--user", strconv.Itoa(c.UID) + ":" + strconv.Itoa(c.GID),
-		"--mount", "type=bind,source=" + run.DocsDir + ",target=" + ContainerDocs + ",readonly",
-		"--mount", "type=bind,source=" + run.JourneyDir + ",target=" + ContainerJourneyDir + ",readonly",
-		"--mount", "type=bind,source=" + run.HomeDir + ",target=" + ContainerHome,
-		"--workdir", ContainerWorkspace,
-		"--env", "HOME=" + ContainerHome,
-		"--env", TokenEnv,
+		"--name", n.agent,
+		"--label", RunLabel + "=" + run.RunID,
+		"--network", "container:" + n.holder,
 	}
+	args = append(args, c.hardening()...)
+	args = append(args,
+		"--mount", "type=bind,source="+run.DocsDir+",target="+ContainerDocs+",readonly",
+		"--mount", "type=bind,source="+run.JourneyDir+",target="+ContainerJourneyDir+",readonly",
+		"--mount", "type=bind,source="+run.HomeDir+",target="+ContainerHome,
+		"--workdir", ContainerWorkspace,
+		"--env", "HOME="+ContainerHome,
+		"--env", "HTTPS_PROXY="+n.proxyURL(),
+		"--env", "HTTP_PROXY="+n.proxyURL(),
+		"--env", "NO_PROXY=",
+		"--env", containerTimeLimit+"="+strconv.Itoa(int(run.TimeLimit.Seconds())),
+		"--env", TokenEnv,
+	)
 	for _, k := range sortedStringKeys(run.Env) {
 		args = append(args, "--env", k)
-	}
-	if run.GatewayForward {
-		args = append(args, "--env", containerGatewayForward+"=1")
 	}
 	args = append(args, c.Image, "claude")
 	return append(args, c.ClaudeArgs(run)...)
@@ -237,23 +258,27 @@ func sortedStringKeys(m map[string]string) []string {
 	return keys
 }
 
-// Run starts the agent container, streams its output into the meter and
-// the transcript, and stops it when the running cost estimate reaches the
-// cap, the time limit passes, or ctx is cancelled. The container is
-// removed on every path out.
+// Run builds the agent's sandbox, starts the agent container, streams
+// its output into the meter and the transcript, and stops it when the
+// running cost estimate reaches the cap, the time limit passes, or ctx is
+// cancelled. The sandbox is removed on every path out.
 func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error) {
 	start := time.Now()
+	cleanup, err := c.setupSandbox(ctx, run)
+	if err != nil {
+		return AgentResult{Stop: StopAgentError, StopDetail: "sandbox: " + err.Error()}, nil
+	}
+	defer cleanup()
 	limitCtx, cancelLimit := context.WithTimeout(ctx, run.TimeLimit)
 	defer cancelLimit()
 	capCtx, stopForCap := context.WithCancel(limitCtx)
 	defer stopForCap()
-	defer c.removeContainer(run.Name)
 
 	cmd := exec.CommandContext(capCtx, c.Docker, c.DockerArgs(run)...)
 	cmd.Env = c.dockerEnv(run)
 	cmd.Stderr = run.Stderr
 	// docker run proxies SIGTERM to the container, where tini passes it
-	// to claude; the deferred removal covers a container that outlives
+	// to claude; the deferred cleanup covers a container that outlives
 	// the docker process.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 15 * time.Second
@@ -280,15 +305,22 @@ func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error)
 	return res, nil
 }
 
-// removeContainer force-removes the agent container. It is a no-op when
-// docker run --rm already removed it.
-func (c AgentConfig) removeContainer(name string) {
-	if name == "" {
-		return
+// RunCheck builds the sandbox for run and runs script with sh in the agent
+// container in place of claude, returning its combined output. The probe
+// uses it to check what a grant mounts without calling the model.
+func (c AgentConfig) RunCheck(ctx context.Context, run AgentRun, script string) (string, error) {
+	cleanup, err := c.setupSandbox(ctx, run)
+	if err != nil {
+		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	_ = exec.CommandContext(ctx, c.Docker, "rm", "-f", name).Run()
+	defer cleanup()
+	args := c.DockerArgs(run)
+	i := len(args) - len(c.ClaudeArgs(run)) - 1
+	args = append(append([]string{}, args[:i]...), "sh", "-c", script)
+	cmd := exec.CommandContext(ctx, c.Docker, args...)
+	cmd.Env = c.dockerEnv(run)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 // consume reads stdout line by line until it closes. It returns whether

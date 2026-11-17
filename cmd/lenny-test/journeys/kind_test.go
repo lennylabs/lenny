@@ -67,6 +67,10 @@ type fakeCommands struct {
 	docker   string
 	owner    string // "run pid" printed by the node-label query
 	failOn   string
+	// The journey network's state.
+	netExists     bool
+	netSubnet     string
+	netContainers string
 }
 
 func (f *fakeCommands) run(_ context.Context, _ io.Writer, env []string, _, name string, args ...string) (string, error) {
@@ -77,6 +81,33 @@ func (f *fakeCommands) run(_ context.Context, _ io.Writer, env []string, _, name
 		return "", errors.New("failed: " + call)
 	}
 	switch {
+	case strings.HasPrefix(call, "docker network inspect --format {{range"):
+		if !f.netExists {
+			return "", errors.New("no such network")
+		}
+		if f.netSubnet == "" {
+			return KindNetworkSubnet + " ", nil
+		}
+		return f.netSubnet + " ", nil
+	case strings.HasPrefix(call, "docker network inspect --format {{len"):
+		if !f.netExists {
+			return "", errors.New("no such network")
+		}
+		if f.netContainers == "" {
+			return "0\n", nil
+		}
+		return f.netContainers + "\n", nil
+	case strings.HasPrefix(call, "docker network inspect --format {{.Name}}"):
+		if !f.netExists {
+			return "", errors.New("no such network")
+		}
+		return KindNetwork + "\n", nil
+	case strings.HasPrefix(call, "docker network create"):
+		f.netExists = true
+		return "", nil
+	case strings.HasPrefix(call, "docker network rm"):
+		f.netExists = false
+		return "", nil
 	case call == "kind get clusters":
 		return f.clusters, nil
 	case strings.HasPrefix(call, "kind delete cluster"):
@@ -126,6 +157,7 @@ func TestKindTargetCreateDeletesADeadRunsClusterAndStopsAfterTheDataStores(t *te
 	}
 	env := strings.Join(f.envs[len(f.envs)-1], " ")
 	for _, w := range []string{
+		"KIND_EXPERIMENTAL_DOCKER_NETWORK=" + KindNetwork, "LENNY_EXTRA_VALUES=" + filepath.Join(k.Dir, "journey-values.yaml"),
 		"LENNY_KIND_CLUSTER=" + KindClusterName, "LENNY_INSTALL_STOP_AFTER=datastores", "LENNY_ALIAS_TAG=journeys",
 		"LENNY_SKIP_PRUNE=1", "KUBECONFIG=" + k.Kubeconfig(), "LENNY_CLUSTER_CONFIG=",
 		"LENNY_INSTALL_GEN_DIR=" + filepath.Join(k.Dir, "gen"), "LENNY_INSTALL_FACTS_FILE=" + filepath.Join(k.Dir, "install-facts"),
@@ -135,8 +167,80 @@ func TestKindTargetCreateDeletesADeadRunsClusterAndStopsAfterTheDataStores(t *te
 		}
 	}
 	cfg, err := os.ReadFile(filepath.Join(k.Dir, "kind-cluster.yaml"))
-	if err != nil || !strings.Contains(string(cfg), "run-mine") {
-		t.Errorf("the cluster configuration lacks the owner label: %v", err)
+	if err != nil || !strings.Contains(string(cfg), "run-mine") || !strings.Contains(string(cfg), JourneyPodSubnet) || !strings.Contains(string(cfg), JourneyServiceSubnet) {
+		t.Errorf("the cluster configuration lacks the owner label or the journey networks: %v\n%s", err, cfg)
+	}
+	if !f.ran("docker network create --subnet " + KindNetworkSubnet) {
+		t.Errorf("the journey network was not created: %q", f.calls)
+	}
+	values, err := os.ReadFile(filepath.Join(k.Dir, "journey-values.yaml"))
+	if err != nil || !strings.Contains(string(values), JourneyPodSubnet) {
+		t.Errorf("the journey values overlay = %q, %v", values, err)
+	}
+}
+
+func TestKindTargetRefusesANetworkWithAnotherSubnet(t *testing.T) {
+	f := &fakeCommands{netExists: true, netSubnet: "172.18.0.0/16"}
+	k := kindTarget(t, f)
+	if err := k.Create(context.Background(), SetupCluster, io.Discard); err == nil || !strings.Contains(err.Error(), "172.18.0.0/16") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.ran("kind create") {
+		t.Error("a cluster was created on a foreign network")
+	}
+}
+
+func TestKindTargetRefusesAClusterWhoseOwnerCannotBeRead(t *testing.T) {
+	f := &fakeCommands{clusters: KindClusterName + "\n", owner: ""}
+	k := kindTarget(t, f)
+	if err := k.Create(context.Background(), SetupLenny, io.Discard); !errors.Is(err, ErrOwnerUnknown) {
+		t.Fatalf("create over an unlabelled cluster: %v", err)
+	}
+	if err := k.Delete(context.Background(), io.Discard); !errors.Is(err, ErrOwnerUnknown) {
+		t.Fatalf("delete an unlabelled cluster this target did not create: %v", err)
+	}
+	if f.ran("kind delete") {
+		t.Fatalf("the target deleted a cluster whose owner it could not read: %q", f.calls)
+	}
+}
+
+func TestKindTargetDeletesItsOwnClusterAndNetwork(t *testing.T) {
+	f := &fakeCommands{clusters: "lenny-e2e\n"}
+	k := kindTarget(t, f)
+	if err := k.Create(context.Background(), SetupCluster, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	f.clusters, f.owner = KindClusterName+"\n", "" // labels unreadable, as on a half-created cluster
+	if err := k.Delete(context.Background(), io.Discard); err != nil {
+		t.Fatalf("the target could not delete the cluster it created: %v", err)
+	}
+	if !f.ran("kind delete") || f.netExists {
+		t.Fatalf("calls = %q, network left = %v", f.calls, f.netExists)
+	}
+	if err := k.VerifyDeleted(context.Background()); err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	f.netExists, f.netContainers = true, "2"
+	if err := k.Delete(context.Background(), io.Discard); err == nil || !strings.Contains(err.Error(), "2 container(s)") {
+		t.Errorf("a network still in use was removed: %v", err)
+	}
+	if err := k.VerifyDeleted(context.Background()); err == nil || !strings.Contains(err.Error(), "still exists") {
+		t.Errorf("a remaining network verified: %v", err)
+	}
+}
+
+func TestKubeconfigServerReadsTheAPIServerAddress(t *testing.T) {
+	got, err := KubeconfigServer([]byte("clusters:\n- cluster: {server: https://lenny-journeys-control-plane:6443}\n"))
+	if err != nil || got != "lenny-journeys-control-plane:6443" {
+		t.Errorf("server = %q, %v", got, err)
+	}
+	if got, _ := KubeconfigServer([]byte("clusters:\n- cluster: {server: https://api.example}\n")); got != "api.example:443" {
+		t.Errorf("a server without a port = %q", got)
+	}
+	for _, bad := range []string{"", "clusters: []", "clusters:\n- cluster: {server: '::'}", ":::"} {
+		if _, err := KubeconfigServer([]byte(bad)); err == nil {
+			t.Errorf("kubeconfig %q gave a server", bad)
+		}
 	}
 }
 
@@ -153,14 +257,10 @@ func TestKindTargetRefusesAClusterAnotherLiveRunOwns(t *testing.T) {
 	if f.ran("kind delete") || f.ran("bash") {
 		t.Fatalf("the target touched a live run's cluster: %q", f.calls)
 	}
-	// The run's own cluster, and one with no readable owner, are deleted.
+	// The run's own cluster, by its labels, is deleted.
 	f.owner = "run-mine 100"
 	if err := k.Delete(context.Background(), io.Discard); err != nil || !f.ran("kind delete") {
 		t.Fatalf("delete the run's own cluster: %v %q", err, f.calls)
-	}
-	f.clusters, f.owner, f.calls = KindClusterName+"\n", "", nil
-	if err := k.Delete(context.Background(), io.Discard); err != nil || !f.ran("kind delete") {
-		t.Fatalf("delete an unlabelled leftover: %v %q", err, f.calls)
 	}
 	f.calls = nil
 	if err := k.Delete(context.Background(), io.Discard); err != nil || f.ran("kind delete") {
@@ -210,7 +310,7 @@ func TestKindTargetReadsFactsAndTheInternalEndpoint(t *testing.T) {
 		t.Errorf("facts = %v", got)
 	}
 	ep, err := k.AgentEndpoint(context.Background())
-	if err != nil || ep.Network != KindNetwork || !strings.Contains(string(ep.Kubeconfig), "lenny-journeys-control-plane") {
+	if err != nil || ep.Network != KindNetwork || ep.APIServer != "lenny-journeys-control-plane:6443" || !strings.Contains(string(ep.Kubeconfig), "lenny-journeys-control-plane") {
 		t.Errorf("endpoint = %+v, %v", ep, err)
 	}
 }

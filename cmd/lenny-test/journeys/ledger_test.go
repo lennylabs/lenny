@@ -116,31 +116,36 @@ func TestLedgerPersistsAndKeepsItsCap(t *testing.T) {
 	}
 }
 
-func TestLockExcludesASecondRunAndTakesOverAStaleLock(t *testing.T) {
-	dir := t.TempDir()
-	l, err := AcquireLock(dir)
+func TestLockExcludesASecondRunUntilReleased(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state", "journeys.lock")
+	l, err := AcquireLock(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := AcquireLock(dir); err == nil || !strings.Contains(err.Error(), "another journeys run") {
+	if _, err := AcquireLock(path); err == nil || !strings.Contains(err.Error(), "another journeys run") {
 		t.Fatalf("a second lock while the first is held: %v", err)
 	}
+	// A file a dead process left is not a lock: only a held flock is.
 	if err := l.Release(); err != nil {
 		t.Fatal(err)
 	}
-	// A lock naming a process that does not run is stale.
-	stale := filepath.Join(dir, "journeys.lock")
-	if err := os.WriteFile(stale, []byte(strconv.Itoa(1<<30)+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(strconv.Itoa(1<<30)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	l2, err := AcquireLock(dir)
+	l2, err := AcquireLock(path)
 	if err != nil {
-		t.Fatalf("a stale lock was not taken over: %v", err)
+		t.Fatalf("an unheld lock file was refused: %v", err)
 	}
 	if err := l2.Release(); err != nil {
 		t.Fatal(err)
 	}
 	if err := l2.Release(); err != nil {
 		t.Errorf("releasing a released lock: %v", err)
+	}
+	if lp, err := LockPath(); err != nil || !strings.HasSuffix(lp, filepath.Join(".lenny-tmp", "journeys.lock")) {
+		t.Errorf("lock path = %q, %v", lp, err)
+	}
+	if _, err := AcquireLock(t.TempDir()); err == nil {
+		t.Error("a directory was accepted as the lock file")
 	}
 }

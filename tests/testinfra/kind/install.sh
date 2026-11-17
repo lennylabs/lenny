@@ -104,6 +104,12 @@
 #                        references a journey scenario names to, as
 #                        name=value lines (echoImage, the digest-pinned
 #                        echo runtime image).
+#   LENNY_EXTRA_VALUES   A Helm values file passed after every other values
+#                        file. Default: none.
+#   KIND_EXPERIMENTAL_DOCKER_NETWORK
+#                        Read by kind itself: the Docker network the cluster's
+#                        nodes join. Default: kind. The journey tier names its
+#                        own network.
 
 set -euo pipefail
 
@@ -140,6 +146,13 @@ CHART_DIR="${REPO_ROOT}/charts/lenny"
 # directory so a journey run writes nothing into the checkout.
 GEN_DIR="${LENNY_INSTALL_GEN_DIR:-${REPO_ROOT}/tests/testinfra/kind}"
 mkdir -p "${GEN_DIR}"
+# EXTRA_VALUES_ARGS passes LENNY_EXTRA_VALUES to helm after every other
+# values file. The journey cluster's overlay uses it for the settings that
+# follow its own pod network.
+EXTRA_VALUES_ARGS=()
+if [[ -n "${LENNY_EXTRA_VALUES:-}" ]]; then
+  EXTRA_VALUES_ARGS=(-f "${LENNY_EXTRA_VALUES}")
+fi
 
 # Fixed in-cluster data-store facts. These mirror datastores.yaml and
 # the postgres/redis/minio keys in e2e-values.yaml; the test code reads
@@ -1782,6 +1795,7 @@ if helm status lenny -n lenny-system --kube-context "${KCTX}" >/dev/null 2>&1; t
     -f "${E2E_VALUES}" \
     -f "${IMAGE_TAGS_OVERLAY}" \
     -f "${BOOTSTRAP_OVERLAY}" \
+    ${EXTRA_VALUES_ARGS[@]+"${EXTRA_VALUES_ARGS[@]}"} \
     --set-file minio.tls.caBundle="${MINIO_CA_FILE}" \
     --server-side=false \
     --timeout 420s
@@ -1793,6 +1807,7 @@ else
     -f "${E2E_VALUES}" \
     -f "${IMAGE_TAGS_OVERLAY}" \
     -f "${BOOTSTRAP_OVERLAY}" \
+    ${EXTRA_VALUES_ARGS[@]+"${EXTRA_VALUES_ARGS[@]}"} \
     --set-file minio.tls.caBundle="${MINIO_CA_FILE}" \
     --server-side=false \
     --timeout 420s

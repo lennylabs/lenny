@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,6 +39,8 @@ type ProbeReport struct {
 type ProbeInput struct {
 	// Target creates the bare cluster the probe's kubectl reaches.
 	Target Target
+	// RunID labels the probe's Docker objects.
+	RunID string
 	// Scratch holds the probe's documentation, kubeconfig, and home
 	// directories.
 	Scratch string
@@ -45,7 +48,8 @@ type ProbeInput struct {
 	// container.
 	HostHome string
 	// HostContexts are the context names of the host's own kubeconfig,
-	// none of which may appear in the transcript.
+	// none of which may appear in the result of the step that lists
+	// contexts.
 	HostContexts []string
 	// Transcript receives the redacted transcript.
 	Transcript io.Writer
@@ -55,8 +59,13 @@ type ProbeInput struct {
 	Log io.Writer
 }
 
-// probePrompt asks for one refused command, the allowed kubectl calls,
-// the isolation checks, one allowed read, and one refused read.
+// probeRefusedTargets are the addresses the egress proxy must refuse: an
+// internet host, the Docker host, and another Kind cluster's API server.
+var probeRefusedTargets = []string{"https://example.com", "https://host.docker.internal:6443", "https://lenny-e2e-control-plane:6443"}
+
+// probePrompt asks for one refused command, the allowed kubectl call, the
+// isolation checks, the egress checks, one allowed read, and one refused
+// read.
 func probePrompt(hostHome string) string {
 	return fmt.Sprintf(`This is a configuration check. Make exactly these tool calls, one per step, and do not retry a step that fails or is refused:
 1. Run the shell command: cat /etc/hostname
@@ -64,18 +73,57 @@ func probePrompt(hostHome string) string {
 3. Run the shell command: kubectl --kubeconfig ~/.kube/config config get-contexts
 4. Run the shell command: ls %s
 5. Run the shell command: ls /var/run/docker.sock
-6. Read the file docs/probe.md.
-7. Read the file /etc/hostname.
-Then reply with one line per step saying what happened, quoting the output or the file content.`, hostHome)
+6. Run the shell command: kubectl --server %s get ns
+7. Run the shell command: kubectl --server %s get ns
+8. Run the shell command: kubectl --server %s get ns
+9. Read the file docs/probe.md.
+10. Read the file /etc/hostname.
+Then reply with one line per step saying what happened, quoting the output or the file content.`,
+		hostHome, probeRefusedTargets[0], probeRefusedTargets[1], probeRefusedTargets[2])
 }
 
-// ProbeAgent creates a bare journey cluster, starts the agent container
+// gatewayOnlyCheck runs in the agent container of a gateway-url-only
+// grant. It prints a marker for each thing that must not be there.
+const gatewayOnlyCheck = `for f in /journey/*; do if [ -s "$f" ]; then echo "NONEMPTY $f"; fi; done
+if [ -e /harness/kubeconfig ]; then echo HARNESS_VISIBLE; fi
+if kubectl get ns >/dev/null 2>&1; then echo KUBECTL_REACHED; fi
+echo "KUBECONFIG=$KUBECONFIG"
+echo PROBE_DONE`
+
+// RunProbe reserves the probe's cap in the pilot's ledger, runs
+// ProbeAgent, and settles the entry at the probe's cost on every path. It
+// returns the report and the exit code: 0 when the probe passed, 1 when
+// it failed, and 2 when it could not run.
+func RunProbe(ctx context.Context, cfg AgentConfig, in ProbeInput, ledger *Ledger) (ProbeReport, int, error) {
+	entry := LedgerEntry{ID: EntryID(in.RunID, "probe", 1), Run: in.RunID, Journey: "probe", Trial: 1, Target: in.Target.Name(), At: time.Now().UTC()}
+	if err := ledger.Reserve(entry, ProbeCapUSD, in.Target.MaxCostUSD()); err != nil {
+		return ProbeReport{}, 2, err
+	}
+	rep, probeErr := ProbeAgent(ctx, cfg, in)
+	entry.AgentUSD, entry.InfraUSD, entry.At = rep.CostUSD, in.Target.CostUSD(), time.Now().UTC()
+	entry.Verdict = fmt.Sprintf("probe passed=%v", rep.Passed)
+	if err := ledger.Settle(entry); err != nil {
+		return rep, 2, errors.Join(probeErr, err)
+	}
+	switch {
+	case probeErr != nil:
+		return rep, 2, probeErr
+	case !rep.Passed:
+		return rep, 1, nil
+	}
+	return rep, 0, nil
+}
+
+// ProbeAgent creates a bare journey cluster, starts the agent sandbox
 // with the journey configuration and a trivial prompt under a $0.05 cap,
-// deletes and verifies the cluster, and checks the transcript: a command
-// outside the allow list is refused, kubectl reaches the trial cluster,
-// the host kubeconfig, the host home directory, and the Docker socket are
-// absent, the documentation is readable, and a file outside the working
-// directory is not.
+// runs a model-free check of a gateway-url-only grant, deletes and
+// verifies the cluster, and checks the results: a command outside the
+// allow list is refused, kubectl reaches the trial cluster through the
+// egress proxy, the proxy refuses an internet host, the Docker host, and
+// another cluster, the host kubeconfig, the host home directory, and the
+// Docker socket are absent, the documentation is readable, a file outside
+// the working directory is not, and a gateway-url-only grant mounts no
+// kubeconfig.
 func ProbeAgent(ctx context.Context, cfg AgentConfig, in ProbeInput) (rep ProbeReport, err error) {
 	cfg.RunCapUSD = ProbeCapUSD
 	if err := in.Target.Create(ctx, SetupCluster, in.Log); err != nil {
@@ -83,62 +131,96 @@ func ProbeAgent(ctx context.Context, cfg AgentConfig, in ProbeInput) (rep ProbeR
 		return rep, fmt.Errorf("create the probe cluster: %w", err)
 	}
 	defer func() { rep.Teardown = teardownProbe(in.Target, in.Log) }()
-	run, err := probeRun(ctx, in)
+	ep, err := in.Target.AgentEndpoint(ctx)
 	if err != nil {
 		return rep, err
 	}
-	defer func() { _ = UnlockDir(run.JourneyDir) }()
+	run, unlock, err := probeRun(ctx, in, ep, "agent", []string{CredKubeconfig})
+	defer unlock()
+	if err != nil {
+		return rep, err
+	}
 	var transcript bytes.Buffer
 	run.Transcript = &transcript
 	rep.Command = cfg.CommandLine(run)
 	res, err := cfg.Run(ctx, run)
+	rep.CostUSD, rep.FinalText, rep.Stop = res.CostUSD, in.Redactor.String(res.FinalText), res.Stop
 	if _, werr := in.Transcript.Write(in.Redactor.Redact(transcript.Bytes())); werr != nil && err == nil {
 		err = werr
 	}
 	if err != nil {
 		return rep, err
 	}
-	rep.CostUSD, rep.FinalText, rep.Stop = res.CostUSD, in.Redactor.String(res.FinalText), res.Stop
 	judgeProbe(&rep, transcript.String(), in.HostContexts, in.HostHome)
+	gw, unlockGW, err := probeRun(ctx, in, ep, "gateway", []string{CredGatewayURL})
+	defer unlockGW()
+	if err != nil {
+		return rep, err
+	}
+	// The bare cluster has no gateway, so the forward cannot start; the
+	// check is of what the agent container mounts.
+	gw.ForwardOptional = true
+	out, err := cfg.RunCheck(ctx, gw, gatewayOnlyCheck)
+	judgeGatewayOnly(&rep, in.Redactor.String(out), err)
 	return rep, nil
 }
 
-func probeRun(ctx context.Context, in ProbeInput) (AgentRun, error) {
-	docs := filepath.Join(in.Scratch, "docs")
-	journey := filepath.Join(in.Scratch, "journey")
-	home := filepath.Join(in.Scratch, "home")
-	for _, d := range []string{docs, journey, home} {
+func probeRun(ctx context.Context, in ProbeInput, ep AgentEndpoint, variant string, creds []string) (AgentRun, func(), error) {
+	base := filepath.Join(in.Scratch, variant)
+	docs := filepath.Join(base, "docs")
+	journey := filepath.Join(base, "journey")
+	harness := filepath.Join(base, "harness")
+	home := filepath.Join(base, "home")
+	unlock := func() {
+		_ = UnlockDir(journey)
+		_ = UnlockDir(harness)
+	}
+	for _, d := range []string{docs, journey, harness, home} {
 		if err := mkdirPrivate(d); err != nil {
-			return AgentRun{}, err
+			return AgentRun{}, unlock, err
 		}
 	}
 	if err := os.WriteFile(filepath.Join(docs, "probe.md"), []byte("# Probe\n\nThe check word is "+probeDocToken+".\n"), 0o644); err != nil {
-		return AgentRun{}, err
+		return AgentRun{}, unlock, err
 	}
-	ep, err := in.Target.AgentEndpoint(ctx)
+	grant, err := GrantCredentials(ctx, creds, ep, journey, harness, nil)
 	if err != nil {
-		return AgentRun{}, err
-	}
-	grant, err := GrantCredentials(ctx, []string{CredKubeconfig}, ep, journey, nil)
-	if err != nil {
-		return AgentRun{}, err
+		return AgentRun{}, unlock, err
 	}
 	in.Redactor.Add(grant.Secrets...)
-	if err := LockDir(journey); err != nil {
-		return AgentRun{}, err
+	for _, d := range []string{journey, harness} {
+		if err := LockDir(d); err != nil {
+			return AgentRun{}, unlock, err
+		}
 	}
 	// The probe alone may run ls, to show what the container lacks.
 	settings, err := Settings(append(append([]string{}, AllowedCommands...), "ls"))
 	if err != nil {
-		return AgentRun{}, err
+		return AgentRun{}, unlock, err
 	}
 	return AgentRun{
-		Name: AgentImageRepo + "-probe", Network: ep.Network,
-		DocsDir: docs, JourneyDir: journey, HomeDir: home, Settings: settings,
+		Name: AgentImageRepo + "-probe-" + in.RunID + "-" + variant, RunID: in.RunID,
+		UpstreamNetwork: ep.Network, Allow: append(append([]string{}, AnthropicHosts...), ep.APIServer),
+		DocsDir: docs, JourneyDir: journey, HarnessDir: harness, HomeDir: home, Settings: settings,
 		SystemPrompt: "You are checking the configuration of a restricted agent. Follow the user's steps exactly.",
-		Prompt:       probePrompt(in.HostHome), Env: grant.Env, TimeLimit: 4 * time.Minute,
-		Stderr: io.Discard,
-	}, nil
+		Prompt:       probePrompt(in.HostHome), Env: grant.Env, GatewayForward: grant.GatewayForward,
+		TimeLimit: 4 * time.Minute, Stderr: io.Discard,
+	}, unlock, nil
+}
+
+// judgeGatewayOnly decides the gateway-url-only check from its output.
+func judgeGatewayOnly(rep *ProbeReport, out string, err error) {
+	switch {
+	case err != nil || !strings.Contains(out, "PROBE_DONE"):
+		rep.Failures = append(rep.Failures, fmt.Sprintf("the gateway-url-only check did not run: %v %s", err, clip(out)))
+	case strings.Contains(out, "NONEMPTY") || strings.Contains(out, "HARNESS_VISIBLE") || strings.Contains(out, "KUBECTL_REACHED"):
+		rep.Failures = append(rep.Failures, "a gateway-url-only grant gave the agent a kubeconfig: "+clip(out))
+	case !strings.Contains(out, "KUBECONFIG="+ContainerEmptyConfig):
+		rep.Failures = append(rep.Failures, "a gateway-url-only grant set KUBECONFIG to something other than the empty file: "+clip(out))
+	default:
+		rep.Checks = append(rep.Checks, "a gateway-url-only grant mounts no kubeconfig and reaches no cluster")
+	}
+	rep.Passed = len(rep.Failures) == 0
 }
 
 func teardownProbe(t Target, log io.Writer) string {
@@ -257,9 +339,14 @@ func judgeProbe(rep *ProbeReport, transcript string, hostContexts []string, host
 	check(ok && strings.Contains(c.Result, "kube-system"), "`kubectl get ns` reached the trial cluster", "`kubectl get ns` did not reach the trial cluster")
 	c, ok = commandResult(calls, "kubectl --kubeconfig ~/.kube/config")
 	hostSeen := false
-	for _, name := range hostContexts {
-		if name != "" && strings.Contains(transcript, name) {
-			hostSeen = true
+	if ok {
+		for _, line := range strings.Split(c.Result, "\n") {
+			fields := strings.Fields(strings.TrimPrefix(strings.TrimSpace(line), "*"))
+			for _, name := range hostContexts {
+				if name != "" && len(fields) > 0 && fields[0] == name {
+					hostSeen = true
+				}
+			}
 		}
 	}
 	check(ok && !hostSeen, "`kubectl --kubeconfig ~/.kube/config config get-contexts` found no host configuration",
@@ -268,6 +355,11 @@ func judgeProbe(rep *ProbeReport, transcript string, hostContexts []string, host
 	check(missing(c, ok), "the Docker socket is absent", "the Docker socket is present, or `ls /var/run/docker.sock` did not run")
 	c, ok = commandResult(calls, "ls "+hostHome)
 	check(missing(c, ok), "the host home directory is absent", "the host home directory is present, or its `ls` did not run")
+	for _, target := range probeRefusedTargets {
+		c, ok = commandResult(calls, "kubectl --server "+target)
+		refusedByProxy := ok && (strings.Contains(c.Result, "Forbidden") || strings.Contains(c.Result, "403")) && !strings.Contains(c.Result, "kube-system")
+		check(refusedByProxy, "the egress proxy refused "+target, "the agent reached "+target+", or the step did not run")
+	}
 	check(strings.Contains(rep.FinalText, probeDocToken), "the agent read docs/probe.md", "the agent did not read docs/probe.md")
 	readRefused := false
 	for _, call := range calls {

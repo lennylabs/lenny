@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -224,51 +223,56 @@ func writeFileAtomic(path string, data []byte) error {
 }
 
 // Lock is held for a whole journeys run, and for a probe. Every trial
-// uses the one cluster name lenny-journeys (decision 6), and the ledger
-// is read and written during a run, so two journeys processes on one
-// host must not overlap. The lock lives in the host-wide state directory
-// with the ledgers, whatever --results-dir names.
-type Lock struct{ path string }
+// uses the one cluster name lenny-journeys (decision 6) and one Docker
+// network, and the ledger is read and written during a run, so two
+// journeys processes on one host must not overlap. The lock is an
+// exclusive flock on an open file at a fixed host path (LockPath), which
+// neither --state-dir nor --results-dir moves; the kernel releases it when
+// the process ends, however it ends.
+type Lock struct{ f *os.File }
 
-// AcquireLock creates dir/journeys.lock holding this process's ID. A lock
-// left by a process that no longer runs is taken over.
-func AcquireLock(dir string) (*Lock, error) {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return nil, err
+// LockPath returns the fixed host path of the journeys lock,
+// $HOME/.lenny-tmp/journeys.lock.
+func LockPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("no home directory for the journeys lock: %v", err)
 	}
-	path := filepath.Join(dir, "journeys.lock")
-	for attempt := 0; attempt < 2; attempt++ {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			_, werr := f.WriteString(strconv.Itoa(os.Getpid()) + "\n")
-			cerr := f.Close()
-			if werr != nil || cerr != nil {
-				_ = os.Remove(path)
-				return nil, errors.Join(werr, cerr)
-			}
-			return &Lock{path: path}, nil
-		}
-		if !errors.Is(err, os.ErrExist) {
-			return nil, err
-		}
-		b, rerr := os.ReadFile(path)
-		pid, perr := strconv.Atoi(strings.TrimSpace(string(b)))
-		if rerr == nil && perr == nil && processAlive(pid) {
-			return nil, fmt.Errorf("another journeys run (process %d) holds %s", pid, path)
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-	}
-	return nil, fmt.Errorf("could not acquire %s", path)
+	return filepath.Join(home, testtmp.HomeDirName, "journeys.lock"), nil
 }
 
-// Release removes the lock file.
-func (l *Lock) Release() error {
-	if err := os.Remove(l.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
+// AcquireLock takes the exclusive lock on path without waiting. It fails
+// when another process holds it.
+func AcquireLock(path string) (*Lock, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
 	}
-	return nil
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("another journeys run on this host holds %s", path)
+		}
+		return nil, fmt.Errorf("lock %s: %w", path, err)
+	}
+	if err := f.Truncate(0); err == nil {
+		_, _ = f.WriteString(strconv.Itoa(os.Getpid()) + "\n")
+	}
+	return &Lock{f: f}, nil
+}
+
+// Release drops the lock. Releasing twice is a no-op.
+func (l *Lock) Release() error {
+	if l.f == nil {
+		return nil
+	}
+	f := l.f
+	l.f = nil
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return f.Close()
 }
 
 func processAlive(pid int) bool {

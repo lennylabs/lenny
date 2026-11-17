@@ -26,25 +26,30 @@ type AdminTokenReader interface {
 	AdminToken(ctx context.Context) (string, error)
 }
 
-// GrantCredentials writes the kubeconfig files of the agent container's
-// read-only /journey mount into journeyDir and resolves the scenario's
+// GrantCredentials writes the kubeconfig of the agent container's
+// read-only /journey mount into journeyDir, writes the harness kubeconfig
+// of the gateway port-forward into harnessDir, and resolves the scenario's
 // credentials into the container's environment.
 //
 //   - kubeconfig: KUBECONFIG names the endpoint's kubeconfig, whose server
-//     is reachable from the container's network only.
-//   - gateway-url: LENNY_API_URL names 127.0.0.1:8080 inside the
-//     container, which the entrypoint forwards to the gateway Service
-//     through the API server, using a harness copy of the kubeconfig.
+//     is reachable through the egress proxy only.
+//   - gateway-url: LENNY_API_URL names 127.0.0.1:8080 in the agent's
+//     network namespace, which a port-forward in the namespace's holder
+//     container serves. The holder alone mounts harnessDir, so the agent
+//     never sees that kubeconfig.
 //   - admin-token: LENNY_API_TOKEN holds the token of the lenny-admin-token
 //     Secret.
 //
-// Without the kubeconfig credential, KUBECONFIG names an empty file, so
-// kubectl and helm in the container hold no cluster. Every file is
-// written 0400; LockDir makes the directory read-only afterwards.
-func GrantCredentials(ctx context.Context, names []string, ep AgentEndpoint, journeyDir string, tokens AdminTokenReader) (AgentGrant, error) {
+// Without the kubeconfig credential, KUBECONFIG names an empty file and
+// journeyDir holds no kubeconfig, so kubectl and helm in the container
+// hold no cluster. Every file is written 0400; LockDir makes each
+// directory read-only afterwards.
+func GrantCredentials(ctx context.Context, names []string, ep AgentEndpoint, journeyDir, harnessDir string, tokens AdminTokenReader) (AgentGrant, error) {
 	g := AgentGrant{Env: map[string]string{"KUBECONFIG": ContainerEmptyConfig}, Secrets: KubeconfigSecretsFrom(ep.Kubeconfig)}
-	if err := os.MkdirAll(journeyDir, 0o700); err != nil {
-		return g, err
+	for _, d := range []string{journeyDir, harnessDir} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return g, err
+		}
 	}
 	if err := writeReadOnly(filepath.Join(journeyDir, filepath.Base(ContainerEmptyConfig)), nil); err != nil {
 		return g, err
@@ -57,7 +62,7 @@ func GrantCredentials(ctx context.Context, names []string, ep AgentEndpoint, jou
 			}
 			g.Env["KUBECONFIG"] = ContainerKubeconfig
 		case CredGatewayURL:
-			if err := writeReadOnly(filepath.Join(journeyDir, filepath.Base(ContainerHarnessConfig)), ep.Kubeconfig); err != nil {
+			if err := writeReadOnly(filepath.Join(harnessDir, "kubeconfig"), ep.Kubeconfig); err != nil {
 				return g, err
 			}
 			g.Env["LENNY_API_URL"] = ContainerGatewayURL
@@ -77,6 +82,10 @@ func GrantCredentials(ctx context.Context, names []string, ep AgentEndpoint, jou
 }
 
 func writeReadOnly(path string, data []byte) error {
+	// A read-only file an earlier grant left cannot be opened for writing.
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := os.WriteFile(path, data, 0o400); err != nil {
 		return err
 	}

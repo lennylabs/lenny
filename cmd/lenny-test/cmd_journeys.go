@@ -80,7 +80,7 @@ func parseJourneysFlags(args []string) (journeysFlags, error) {
 	fs.StringVar(&f.pilot, "pilot", "pilot", "the pilot whose ledger the run records its cost in")
 	fs.StringVar(&f.model, "model", journeys.DefaultModel, "the journey agent's model")
 	fs.StringVar(&f.docker, "docker", "docker", "the docker executable that runs the agent container")
-	fs.StringVar(&f.stateDir, "state-dir", "", "the host-wide directory of the journeys lock, the pilot ledgers, and the token file (default ~/.lenny-tmp/journeys)")
+	fs.StringVar(&f.stateDir, "state-dir", "", "the directory of the pilot ledgers and the token file (default ~/.lenny-tmp/journeys); the lock stays at ~/.lenny-tmp/journeys.lock")
 	fs.StringVar(&f.tokenFile, "claude-token-file", "", "the file holding the `claude setup-token` token, mode 0600 (default <state-dir>/claude-token)")
 	fs.BoolVar(&f.skipAgent, "skip-agent", false, "create each cluster and evaluate the postconditions without starting the agent")
 	fs.BoolVar(&f.probe, "probe", false, "check the agent container on a bare cluster with a trivial prompt under a $0.05 cap")
@@ -148,11 +148,23 @@ func runJourneys(args []string) int {
 		}
 		agentCfg.Token = tok
 	}
-	lock, err := journeys.AcquireLock(f.stateDir)
+	lockPath, err := journeys.LockPath()
+	if err != nil {
+		return journeysFail(err)
+	}
+	lock, err := journeys.AcquireLock(lockPath)
 	if err != nil {
 		return journeysFail(err)
 	}
 	defer func() { _ = lock.Release() }()
+	runID := journeys.NewRunID(time.Now())
+	removed, err := journeys.CleanupLeftovers(ctx, journeys.ExecRunner, f.docker, runID)
+	if err != nil {
+		return journeysFail(fmt.Errorf("remove the containers earlier runs left: %w", err))
+	}
+	for _, r := range removed {
+		fmt.Printf("lenny-test: journeys: removed the %s an earlier run left\n", r)
+	}
 	ledger, err := journeys.OpenLedger(journeys.LedgerPath(f.stateDir, f.pilot), f.pilot, f.pilotCap)
 	if err != nil {
 		return journeysFail(err)
@@ -163,7 +175,6 @@ func runJourneys(args []string) int {
 		return journeysFail(err)
 	}
 	defer os.RemoveAll(scratch)
-	runID := time.Now().UTC().Format("20060102T150405Z")
 	if !f.skipAgent || f.probe {
 		builder := &journeys.ImageBuilder{RepoRoot: root, Dir: scratch, Run: journeys.ExecRunner, Log: os.Stdout}
 		fmt.Println("lenny-test: journeys: building the agent image")
@@ -231,12 +242,8 @@ func journeysExitCode(sum *journeys.RunSummary, runErr error) int {
 }
 
 // runJourneysProbe runs the agent configuration check on a bare journey
-// cluster and records its cost in the pilot's ledger.
+// cluster; journeys.RunProbe records its cost in the pilot's ledger.
 func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID string, agentCfg journeys.AgentConfig, ledger *journeys.Ledger) int {
-	entry := journeys.LedgerEntry{ID: journeys.EntryID(runID, "probe", 1), Run: runID, Journey: "probe", Trial: 1, Target: journeys.TargetKind, At: time.Now().UTC()}
-	if err := ledger.Reserve(entry, journeys.ProbeCapUSD, 0); err != nil {
-		return journeysFail(err)
-	}
 	if err := os.MkdirAll(resultsDir, 0o700); err != nil {
 		return journeysFail(err)
 	}
@@ -248,25 +255,18 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 	defer transcript.Close()
 	home, _ := os.UserHomeDir()
 	target := journeys.NewKindTarget(root, runID)(filepath.Join(scratch, "probe", "target"))
-	rep, probeErr := journeys.ProbeAgent(ctx, agentCfg, journeys.ProbeInput{
-		Target: target, Scratch: filepath.Join(scratch, "probe"), HostHome: home,
+	rep, code, probeErr := journeys.RunProbe(ctx, agentCfg, journeys.ProbeInput{
+		Target: target, RunID: runID, Scratch: filepath.Join(scratch, "probe"), HostHome: home,
 		HostContexts: journeys.HostContexts(filepath.Join(home, ".kube", "config")),
 		Transcript:   transcript, Redactor: journeys.NewRedactor(agentCfg.Token), Log: os.Stdout,
-	})
-	entry.AgentUSD, entry.Verdict, entry.At = rep.CostUSD, fmt.Sprintf("probe passed=%v", rep.Passed), time.Now().UTC()
-	if err := ledger.Settle(entry); err != nil {
-		return journeysFail(err)
-	}
+	}, ledger)
 	out, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(out))
 	fmt.Printf("Transcript: %s\n", transcriptPath)
 	if probeErr != nil {
-		return journeysFail(probeErr)
+		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe: %v\n", probeErr)
 	}
-	if !rep.Passed {
-		return 1
-	}
-	return 0
+	return code
 }
 
 func printJourneysDryRun(selected []*journeys.Scenario, agentCfg journeys.AgentConfig, f journeysFlags) int {
@@ -280,8 +280,8 @@ func printJourneysDryRun(selected []*journeys.Scenario, agentCfg journeys.AgentC
 			return journeysFail(err)
 		}
 		run := journeys.AgentRun{
-			Name: journeys.AgentImageRepo + "-<run>-" + s.Name + "-<trial>", Network: journeys.KindNetwork,
-			DocsDir: "<trial>/docs", JourneyDir: "<trial>/journey", HomeDir: "<trial>/home",
+			Name: journeys.AgentImageRepo + "-<run>-" + s.Name + "-<trial>", RunID: "<run>", UpstreamNetwork: journeys.KindNetwork,
+			DocsDir: "<trial>/docs", JourneyDir: "<trial>/journey", HomeDir: "<trial>/home", TimeLimit: s.Limit(),
 			Settings: settings, SystemPrompt: journeys.SystemPrompt(s), Prompt: "<prompt.md>",
 			Env: map[string]string{"KUBECONFIG": journeys.ContainerKubeconfig},
 		}

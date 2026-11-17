@@ -33,9 +33,11 @@ func (f *imageCommands) run(_ context.Context, _ io.Writer, env []string, _, nam
 		return "", os.WriteFile(out, []byte("lenny-ctl binary"), 0o755)
 	case strings.HasPrefix(call, "docker image inspect"):
 		if f.exists {
-			return "sha256:1", nil
+			return "sha256:1\n", nil
 		}
 		return "", errors.New("no such image")
+	case strings.HasPrefix(call, "docker build"):
+		f.exists = true
 	}
 	return "", nil
 }
@@ -56,25 +58,28 @@ func TestImageBuilderBuildsOnceForTheContextDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(ref, AgentImageRepo+":") || len(ref) != len(AgentImageRepo)+1+12 {
-		t.Errorf("reference = %q", ref)
+	if ref != "sha256:1" {
+		t.Errorf("the image is not pinned by its ID: %q", ref)
 	}
 	joined := strings.Join(f.calls, "\n")
-	if !strings.Contains(joined, "docker build --platform linux/arm64 -t "+ref+" .") {
-		t.Errorf("no build of %s:\n%s", ref, joined)
+	if !strings.Contains(joined, "docker build --platform linux/arm64 -t "+AgentImageRepo+":") {
+		t.Errorf("no build:\n%s", joined)
+	}
+	if !strings.Contains(joined, "go build -trimpath -o "+filepath.Join(b.Dir, "agent-image", "journey-egress-proxy")+" ./cmd/lenny-test/journeys/egress/proxy") {
+		t.Errorf("the egress proxy was not built:\n%s", joined)
 	}
 	if env := strings.Join(f.envs[1], " "); !strings.Contains(env, "GOOS=linux") || !strings.Contains(env, "GOARCH=arm64") || !strings.Contains(env, "CGO_ENABLED=0") {
 		t.Errorf("lenny-ctl is not cross-compiled for the Docker host: %s", env)
 	}
 	ctxDir := filepath.Join(b.Dir, "agent-image")
-	for _, name := range []string{"Dockerfile", "agent-entrypoint.sh", "lenny-ctl"} {
+	for _, name := range []string{"Dockerfile", "agent-entrypoint.sh", "lenny-ctl", "journey-egress-proxy"} {
 		if _, err := os.Stat(filepath.Join(ctxDir, name)); err != nil {
 			t.Errorf("the build context lacks %s: %v", name, err)
 		}
 	}
 	entries, _ := os.ReadDir(ctxDir)
-	if len(entries) != 3 {
-		t.Errorf("the build context holds %d files, want only the three it needs", len(entries))
+	if len(entries) != 4 {
+		t.Errorf("the build context holds %d files, want only the files the image needs", len(entries))
 	}
 
 	f2 := &imageCommands{arch: "arm64", exists: true}
@@ -114,7 +119,7 @@ func TestAgentDockerfilePinsItsInputs(t *testing.T) {
 	if got, want := strings.Count(df, "sha256sum -c -"), 3; got != want {
 		t.Errorf("%d checksum checks, want one per download (claude, kubectl, helm)", got)
 	}
-	for _, want := range []string{"CLAUDE_CODE_VERSION=2.1.326", "DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1", "COPY lenny-ctl"} {
+	for _, want := range []string{"CLAUDE_CODE_VERSION=2.1.326", "DISABLE_AUTOUPDATER=1", "DISABLE_UPDATES=1", "DISABLE_TELEMETRY=1", "DISABLE_ERROR_REPORTING=1", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "COPY lenny-ctl journey-egress-proxy"} {
 		if !strings.Contains(df, want) {
 			t.Errorf("the Dockerfile lacks %q", want)
 		}

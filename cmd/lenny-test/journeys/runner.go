@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
@@ -212,19 +213,18 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 	tornDown := false
 	defer func() {
 		if !tornDown {
-			rec.Teardown = r.teardown(target, rec.Dir)
+			rec.Teardown = r.teardown(target, rec.Dir, red)
 		}
 	}()
 
 	infraErr := r.prepareDirs(rec.Dir, scratch)
 	if infraErr == nil {
-		infraErr = r.provision(ctx, target, s, rec.Dir)
+		infraErr = r.provision(ctx, target, s, rec.Dir, red)
 	}
 	if infraErr == nil {
-		red.Add(KubeconfigSecrets(target.Kubeconfig())...)
 		infraErr = r.runAgentAndCheck(ctx, s, target, scratch, &rec, red)
 	}
-	rec.Teardown = r.teardown(target, rec.Dir)
+	rec.Teardown = r.teardown(target, rec.Dir, red)
 	tornDown = true
 	rec.InfraCostUSD = target.CostUSD()
 	rec.FinishedAt = r.now()
@@ -282,17 +282,42 @@ func writePrivate(path string, data []byte) error {
 	return os.Chmod(path, 0o600)
 }
 
-func (r *Runner) provision(ctx context.Context, target Target, s *Scenario, dir string) error {
-	log, err := createPrivate(filepath.Join(dir, "provision.log"))
-	if err != nil {
+// provision creates the cluster. Its output is held in memory and
+// written to provision.log redacted, with the new cluster's kubeconfig
+// secrets added to the redactor first, because the output streams arrive
+// in chunks a secret could straddle.
+func (r *Runner) provision(ctx context.Context, target Target, s *Scenario, dir string, red *Redactor) error {
+	var log lockedBuffer
+	r.logf("    creating the %s cluster (setup %s)", target.Name(), s.Setup)
+	createErr := target.Create(ctx, s.Setup, &log)
+	red.Add(KubeconfigSecrets(target.Kubeconfig())...)
+	if err := writePrivate(filepath.Join(dir, "provision.log"), red.Redact(log.Bytes())); err != nil && createErr == nil {
 		return err
 	}
-	defer log.Close()
-	r.logf("    creating the %s cluster (setup %s)", target.Name(), s.Setup)
-	if err := target.Create(ctx, s.Setup, log); err != nil {
-		return fmt.Errorf("create the %s cluster: %w (see provision.log)", target.Name(), err)
+	if createErr != nil {
+		return fmt.Errorf("create the %s cluster: %w (see provision.log)", target.Name(), createErr)
 	}
 	return nil
+}
+
+// lockedBuffer is a bytes.Buffer safe for the two output streams of a
+// command.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+// Bytes returns the buffered output.
+func (b *lockedBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
 }
 
 // runAgentAndCheck runs the agent against the created cluster and
@@ -319,18 +344,20 @@ func (r *Runner) runAgentAndCheck(ctx context.Context, s *Scenario, target Targe
 	return nil
 }
 
-// agentDirs are the host directories of one agent container: the
-// documentation copy, the read-only kubeconfig mount, and the home
+// agentDirs are the host directories of one agent sandbox: the
+// documentation copy, the agent's read-only kubeconfig mount, the
+// holder's read-only harness kubeconfig mount, and the agent's home
 // directory.
-type agentDirs struct{ docs, journey, home string }
+type agentDirs struct{ docs, journey, harness, home string }
 
 func (r *Runner) prepareAgentDirs(s *Scenario, scratch string) (agentDirs, error) {
 	d := agentDirs{
 		docs:    filepath.Join(scratch, "docs"),
 		journey: filepath.Join(scratch, "journey"),
+		harness: filepath.Join(scratch, "harness"),
 		home:    filepath.Join(scratch, "home"),
 	}
-	for _, dir := range []string{d.journey, d.home} {
+	for _, dir := range []string{d.journey, d.harness, d.home} {
 		if err := mkdirPrivate(dir); err != nil {
 			return d, err
 		}
@@ -359,15 +386,17 @@ func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, acces
 	if err != nil {
 		return fmt.Errorf("agent endpoint: %w", err)
 	}
-	grant, err := GrantCredentials(ctx, s.Credentials, ep, dirs.journey, access)
+	grant, err := GrantCredentials(ctx, s.Credentials, ep, dirs.journey, dirs.harness, access)
 	if err != nil {
 		return fmt.Errorf("agent credentials: %w", err)
 	}
 	red.Add(grant.Secrets...)
-	if err := LockDir(dirs.journey); err != nil {
-		return err
+	for _, d := range []string{dirs.journey, dirs.harness} {
+		if err := LockDir(d); err != nil {
+			return err
+		}
+		defer func(d string) { _ = UnlockDir(d) }(d)
 	}
-	defer func() { _ = UnlockDir(dirs.journey) }()
 	settings, err := Settings(s.Tools)
 	if err != nil {
 		return err
@@ -379,8 +408,9 @@ func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, acces
 	defer transcript.Close()
 	var stderr bytes.Buffer
 	run := AgentRun{
-		Name:    fmt.Sprintf("%s-%s-%s-%d", AgentImageRepo, r.RunID, s.Name, rec.Trial),
-		Network: ep.Network, DocsDir: dirs.docs, JourneyDir: dirs.journey, HomeDir: dirs.home,
+		Name:  fmt.Sprintf("%s-%s-%s-%d", AgentImageRepo, r.RunID, s.Name, rec.Trial),
+		RunID: r.RunID, UpstreamNetwork: ep.Network, Allow: append(append([]string{}, AnthropicHosts...), ep.APIServer),
+		DocsDir: dirs.docs, JourneyDir: dirs.journey, HarnessDir: dirs.harness, HomeDir: dirs.home,
 		Settings: settings, SystemPrompt: SystemPrompt(s), Prompt: UserPrompt(s, vars),
 		Env: grant.Env, GatewayForward: grant.GatewayForward, TimeLimit: s.Limit(),
 		Transcript: red.Writer(transcript), Stderr: &stderr,
@@ -395,13 +425,15 @@ func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, acces
 	}
 	r.logf("    running the agent (cap $%.2f, limit %s)", r.RunCapUSD, s.Limit())
 	res, runErr := r.Agent.Run(ctx, run)
+	// The result carries the run's cost, which the ledger settles at, so
+	// it is kept even when the run or the record below fails.
+	rec.Agent = res
 	if err := writePrivate(filepath.Join(rec.Dir, "agent-stderr.log"), red.Redact(stderr.Bytes())); err != nil && runErr == nil {
 		runErr = err
 	}
 	if runErr != nil {
 		return fmt.Errorf("agent: %w", runErr)
 	}
-	rec.Agent = res
 	return nil
 }
 
@@ -416,6 +448,8 @@ func (r *Runner) trialVars(s *Scenario, target Target, nonce string) map[string]
 	vars["nonce"] = nonce
 	vars["cluster"] = KindClusterName
 	vars["imageTag"] = KindAliasTag
+	vars["podSubnet"] = JourneyPodSubnet
+	vars["serviceSubnet"] = JourneyServiceSubnet
 	vars["journey"] = s.Name
 	if s.Setup == SetupPrerequisites {
 		vars["chart"] = ContainerHome + "/" + chartDirName
@@ -425,18 +459,17 @@ func (r *Runner) trialVars(s *Scenario, target Target, nonce string) map[string]
 
 // teardown deletes the cluster and verifies the deletion on a context
 // detached from the run's.
-func (r *Runner) teardown(target Target, dir string) TeardownRecord {
+func (r *Runner) teardown(target Target, dir string, red *Redactor) TeardownRecord {
 	ctx, cancel := context.WithTimeout(context.Background(), teardownTimeout)
 	defer cancel()
-	var log io.Writer = io.Discard
-	if f, err := os.OpenFile(filepath.Join(dir, "teardown.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
-		defer f.Close()
-		log = f
-	}
+	var log lockedBuffer
+	defer func() {
+		_ = writePrivate(filepath.Join(dir, "teardown.log"), red.Redact(log.Bytes()))
+	}()
 	r.logf("    deleting the %s cluster", target.Name())
 	var rec TeardownRecord
 	var errs []error
-	if err := target.Delete(ctx, log); err != nil {
+	if err := target.Delete(ctx, &log); err != nil {
 		errs = append(errs, fmt.Errorf("delete: %w", err))
 	} else {
 		rec.Deleted = true
@@ -448,7 +481,7 @@ func (r *Runner) teardown(target Target, dir string) TeardownRecord {
 	}
 	if err := errors.Join(errs...); err != nil {
 		rec.Error = err.Error()
-		fmt.Fprintln(log, rec.Error)
+		fmt.Fprintln(&log, rec.Error)
 	}
 	return rec
 }
@@ -522,6 +555,16 @@ func (r *Runner) nonce() string {
 		return r.Nonce()
 	}
 	return NewNonce()
+}
+
+// NewRunID returns a run identifier: the UTC start time and six random
+// hex digits, so two runs started in the same second differ.
+func NewRunID(start time.Time) string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return start.UTC().Format("20060102T150405Z") + fmt.Sprintf("-%06x", start.UnixNano()&0xffffff)
+	}
+	return start.UTC().Format("20060102T150405Z") + "-" + hex.EncodeToString(b[:])
 }
 
 // NewNonce returns eight random hex digits. A journey's goal and its

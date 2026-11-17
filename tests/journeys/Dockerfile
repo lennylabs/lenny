@@ -2,14 +2,16 @@
 #
 # The journey agent's container. `lenny-test --tier journeys` builds this
 # image with a build context holding only this file, agent-entrypoint.sh,
-# and a lenny-ctl it cross-compiles from the tree, and tags it with a digest
-# of the three, so a changed pin or a changed lenny-ctl builds a new image.
-# The agent runs in it with no host home directory, no Docker socket, and
-# no host kubeconfig (TESTING.md, "Persona journeys").
+# and the lenny-ctl and journey-egress-proxy binaries it cross-compiles from
+# the tree, tags it with a digest of the four, and runs every container by
+# the image's ID. The agent runs in it with no host home directory, no
+# Docker socket, and no host kubeconfig, and its egress proxy runs from the
+# same image (TESTING.md, "Persona journeys").
 #
-# The image holds the claude CLI, kubectl, helm, lenny-ctl, a shell, and
-# the CA certificates. The claude CLI is the native binary of Claude Code's
-# npm platform packages, which runs without Node.js.
+# The image holds the claude CLI, kubectl, helm, lenny-ctl, the egress
+# proxy, a shell, coreutils (timeout), and the CA certificates. The claude
+# CLI is the native binary of Claude Code's npm platform packages, which
+# runs without Node.js.
 #
 # Pins:
 #   Base image   debian:bookworm-slim, by the digest of its multi-arch index
@@ -57,13 +59,20 @@ RUN set -eux; \
     mkdir -p /workspace /journey /home/agent; \
     chmod 0777 /home/agent
 COPY --from=fetch /out/claude /out/kubectl /out/helm /usr/local/bin/
-COPY lenny-ctl /usr/local/bin/lenny-ctl
+COPY lenny-ctl journey-egress-proxy /usr/local/bin/
 COPY agent-entrypoint.sh /usr/local/bin/journey-entrypoint
-# Claude Code's container guidance: no background update check, no update
-# path at all, and no telemetry or error reporting.
+# Claude Code's documented settings for a restricted network: no update
+# check or update path, no telemetry, no error reporting, and no other
+# nonessential traffic, so the agent needs only the hosts the egress proxy
+# allows. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB strips credentials from the
+# environment of the commands Claude Code runs; the harness does not rely
+# on it, since the agent's shell is limited to kubectl, helm, and lenny-ctl.
 ENV HOME=/home/agent \
     DISABLE_AUTOUPDATER=1 \
     DISABLE_UPDATES=1 \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1 \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/journey-entrypoint"]

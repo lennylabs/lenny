@@ -56,6 +56,9 @@ type AgentEndpoint struct {
 	Network string
 	// Kubeconfig is a kubeconfig valid from that network.
 	Kubeconfig []byte
+	// APIServer is the host:port of the cluster's API server on that
+	// network, which the egress proxy allows.
+	APIServer string
 }
 
 // TargetFactory builds a target for one trial. dir is the trial's

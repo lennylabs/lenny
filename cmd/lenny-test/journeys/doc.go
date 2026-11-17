@@ -5,10 +5,13 @@
 // A journey is a written scenario for one persona (an operator, a tenant
 // administrator, an end user) kept as a YAML file under tests/journeys/.
 // The harness creates a dedicated Kind cluster for each trial, starts a
-// Claude Code agent in headless mode in an isolated container (the image
-// tests/journeys/Dockerfile defines) with the scenario's goal, a read-only
-// copy of the documentation, a shell limited to kubectl, helm, and
-// lenny-ctl, and only the credentials the scenario grants, and then
+// Claude Code agent in headless mode in an isolated sandbox (sandbox.go:
+// the image tests/journeys/Dockerfile defines, on an internal Docker
+// network whose only way out is an egress proxy that tunnels to the
+// Anthropic API and the trial cluster's API server) with the scenario's
+// goal, a read-only copy of the documentation, a shell limited to kubectl,
+// helm, and lenny-ctl, and only the credentials the scenario grants, and
+// then
 // evaluates the scenario's postconditions against the cluster and the
 // gateway's API from the host. The postconditions decide the verdict. The
 // agent never does.

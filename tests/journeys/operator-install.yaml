@@ -29,7 +29,9 @@ environment: |
   The cluster is a local Kind cluster named {{cluster}}, with one
   control-plane node and two workers. It has no Lenny release yet.
   cert-manager, the prometheus-operator CRDs, and ingress-nginx are
-  installed, and the lenny-system namespace exists.
+  installed, and the lenny-system namespace exists. The cluster's pod
+  network is {{podSubnet}} and its service network is {{serviceSubnet}};
+  the data stores below run on the pod network.
 
   The data stores run in the lenny-system namespace:
   - Postgres at lenny-postgres.lenny-system.svc:5432, database lenny, user

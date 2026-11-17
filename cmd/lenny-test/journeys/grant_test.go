@@ -35,7 +35,7 @@ func TestGrantCredentialsWritesReadOnlyKubeconfigsAndNamesOnlyGrantedValues(t *t
 	dir := filepath.Join(t.TempDir(), "journey")
 	ep := AgentEndpoint{Network: KindNetwork, Kubeconfig: []byte(internalKubeconfig)}
 
-	g, err := GrantCredentials(context.Background(), nil, ep, dir, tokenReader{})
+	g, err := GrantCredentials(context.Background(), nil, ep, dir, filepath.Join(t.TempDir(), "harness"), tokenReader{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,21 +47,44 @@ func TestGrantCredentialsWritesReadOnlyKubeconfigsAndNamesOnlyGrantedValues(t *t
 	}
 
 	dir2 := filepath.Join(t.TempDir(), "journey")
-	g, err = GrantCredentials(context.Background(), []string{CredKubeconfig, CredGatewayURL, CredAdminToken}, ep, dir2, tokenReader{tok: "admin-token-value"})
+	harness2 := filepath.Join(t.TempDir(), "harness")
+	g, err = GrantCredentials(context.Background(), []string{CredKubeconfig, CredGatewayURL, CredAdminToken}, ep, dir2, harness2, tokenReader{tok: "admin-token-value"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if g.Env["KUBECONFIG"] != ContainerKubeconfig || g.Env["LENNY_API_URL"] != ContainerGatewayURL || g.Env["LENNY_API_TOKEN"] != "admin-token-value" || !g.GatewayForward {
 		t.Errorf("grant = %+v", g)
 	}
-	for _, f := range []string{"kubeconfig", "harness-kubeconfig", "empty-kubeconfig"} {
-		fi, err := os.Stat(filepath.Join(dir2, f))
+	for _, f := range []string{filepath.Join(dir2, "kubeconfig"), filepath.Join(dir2, "empty-kubeconfig"), filepath.Join(harness2, "kubeconfig")} {
+		fi, err := os.Stat(f)
 		if err != nil || fi.Mode().Perm() != 0o400 {
 			t.Errorf("%s: mode %v, %v; want 0400", f, fi, err)
 		}
 	}
+	entries, _ := os.ReadDir(dir2)
+	if len(entries) != 2 {
+		t.Errorf("the agent's kubeconfig directory holds %d files, want the kubeconfig and the empty file", len(entries))
+	}
+
+	fullSecrets := g.Secrets
+
+	// A gateway-url-only grant gives the agent's directory no kubeconfig.
+	dir3, harness3 := filepath.Join(t.TempDir(), "journey"), filepath.Join(t.TempDir(), "harness")
+	g, err = GrantCredentials(context.Background(), []string{CredGatewayURL}, ep, dir3, harness3, tokenReader{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.Env["KUBECONFIG"] != ContainerEmptyConfig || !g.GatewayForward {
+		t.Errorf("gateway-only grant = %+v", g)
+	}
+	if entries, _ := os.ReadDir(dir3); len(entries) != 1 {
+		t.Errorf("a gateway-url-only grant put %d files in the agent's directory, want only the empty kubeconfig", len(entries))
+	}
+	if _, err := os.Stat(filepath.Join(harness3, "kubeconfig")); err != nil {
+		t.Errorf("the holder's harness kubeconfig is missing: %v", err)
+	}
 	secrets := map[string]bool{}
-	for _, s := range g.Secrets {
+	for _, s := range fullSecrets {
 		secrets[s] = true
 	}
 	for _, want := range []string{"admin-token-value", "a2V5LWRhdGEtc2VjcmV0", "key-data-secret"} {
@@ -69,10 +92,10 @@ func TestGrantCredentialsWritesReadOnlyKubeconfigsAndNamesOnlyGrantedValues(t *t
 			t.Errorf("the grant does not report %q as a secret", want)
 		}
 	}
-	if _, err := GrantCredentials(context.Background(), []string{CredAdminToken}, ep, t.TempDir(), tokenReader{err: errors.New("no secret")}); err == nil {
+	if _, err := GrantCredentials(context.Background(), []string{CredAdminToken}, ep, t.TempDir(), t.TempDir(), tokenReader{err: errors.New("no secret")}); err == nil {
 		t.Error("a missing admin token was granted")
 	}
-	if _, err := GrantCredentials(context.Background(), []string{"aws"}, ep, t.TempDir(), tokenReader{}); err == nil {
+	if _, err := GrantCredentials(context.Background(), []string{"aws"}, ep, t.TempDir(), t.TempDir(), tokenReader{}); err == nil {
 		t.Error("an unknown credential was granted")
 	}
 }
@@ -82,7 +105,7 @@ func TestLockDirMakesTheKubeconfigUnwritable(t *testing.T) {
 		t.Skip("not-yet-applicable: root ignores file modes, so the write refusal cannot be observed")
 	}
 	dir := filepath.Join(t.TempDir(), "journey")
-	if _, err := GrantCredentials(context.Background(), []string{CredKubeconfig}, AgentEndpoint{Kubeconfig: []byte(internalKubeconfig)}, dir, tokenReader{}); err != nil {
+	if _, err := GrantCredentials(context.Background(), []string{CredKubeconfig}, AgentEndpoint{Kubeconfig: []byte(internalKubeconfig)}, dir, filepath.Join(t.TempDir(), "harness"), tokenReader{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := LockDir(dir); err != nil {

@@ -80,7 +80,7 @@ func TestLedgerKeepsADeadRunsReservationCharged(t *testing.T) {
 
 func TestLedgerAndLockAreWrittenPrivately(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
-	lock, err := AcquireLock(dir)
+	lock, err := AcquireLock(filepath.Join(dir, "journeys.lock"))
 	if err != nil {
 		t.Fatal(err)
 	}

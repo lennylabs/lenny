@@ -28,13 +28,15 @@ type fakeTarget struct {
 
 func (f *fakeTarget) Name() string       { return "fake" }
 func (f *fakeTarget) Kubeconfig() string { return filepath.Join(f.dir, "kubeconfig") }
-func (f *fakeTarget) Create(_ context.Context, setup string, _ io.Writer) error {
+func (f *fakeTarget) Create(_ context.Context, setup string, log io.Writer) error {
+	_, _ = io.WriteString(log, "Authorization: Bearer provision-bearer-secret\n")
 	f.created++
 	f.setupSeen = setup
 	return f.createErr
 }
 
-func (f *fakeTarget) Delete(context.Context, io.Writer) error {
+func (f *fakeTarget) Delete(_ context.Context, log io.Writer) error {
+	_, _ = io.WriteString(log, "Authorization: Bearer teardown-bearer-secret\n")
 	f.deleted++
 	return f.deleteErr
 }
@@ -49,7 +51,7 @@ func (f *fakeTarget) Facts() map[string]string {
 }
 
 func (f *fakeTarget) AgentEndpoint(context.Context) (AgentEndpoint, error) {
-	return AgentEndpoint{Network: "kind", Kubeconfig: []byte("users:\n- user:\n    token: kubeconfig-token-secret\n")}, nil
+	return AgentEndpoint{Network: "lenny-journeys", APIServer: "lenny-journeys-control-plane:6443", Kubeconfig: []byte("users:\n- user:\n    token: kubeconfig-token-secret\n")}, nil
 }
 func (f *fakeTarget) MaxCostUSD() float64 { return f.maxCost }
 
@@ -184,8 +186,11 @@ func TestRunnerRunsEachTrialAndRecordsIt(t *testing.T) {
 	if strings.HasPrefix(run.DocsDir, fx.r.RepoRoot) {
 		t.Errorf("the documentation copy %s is inside the repository", run.DocsDir)
 	}
-	if run.Network != "kind" || run.Env["KUBECONFIG"] != ContainerKubeconfig || len(run.Env) != 1 {
-		t.Errorf("the agent run grants %v on %q", run.Env, run.Network)
+	if run.UpstreamNetwork != "lenny-journeys" || run.Env["KUBECONFIG"] != ContainerKubeconfig || len(run.Env) != 1 || run.RunID != "run1" {
+		t.Errorf("the agent run grants %v on %q", run.Env, run.UpstreamNetwork)
+	}
+	if strings.Join(run.Allow, ",") != "api.anthropic.com:443,claude.ai:443,platform.claude.com:443,lenny-journeys-control-plane:6443" {
+		t.Errorf("the proxy allows %v", run.Allow)
 	}
 	if fi, err := os.Stat(filepath.Join(run.JourneyDir, "kubeconfig")); err != nil || fi.Mode().Perm() != 0o400 {
 		t.Errorf("the agent kubeconfig: %v, %v", fi, err)
@@ -203,12 +208,12 @@ func TestRunnerRunsEachTrialAndRecordsIt(t *testing.T) {
 			t.Errorf("record directory %s: %v, %v; want mode 0700", d, fi, err)
 		}
 	}
-	for _, f := range []string{"transcript.jsonl", "agent-stderr.log"} {
+	for _, f := range []string{"transcript.jsonl", "agent-stderr.log", "provision.log", "teardown.log"} {
 		b, err := os.ReadFile(filepath.Join(trialDir, f))
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, secret := range []string{"kubeconfig-token-secret", "admin-token-secret", "abcdefghijklmnop"} {
+		for _, secret := range []string{"kubeconfig-token-secret", "admin-token-secret", "abcdefghijklmnop", "provision-bearer-secret", "teardown-bearer-secret"} {
 			if strings.Contains(string(b), secret) {
 				t.Errorf("%s holds the secret %q: %s", f, secret, b)
 			}
