@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT
+
+package carrier
+
+// hold has two section citations, one wrapped onto the next line.
+//
+// spec: §4.7 (Claim hold and release rules,
+// expiry), 4.8 (Release)
+func hold() {}
+
+// claim cites an identifier, which the ratchet does not count.
+//
+// spec: CLAIM-R4
+func claim() {}
+
+// text holds a string that looks like an annotation and is not one.
+var text = "// spec: §9.9 (not a comment)"

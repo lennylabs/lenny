@@ -1,6 +1,6 @@
 # Spec-driven and test-driven development
 
-This is the governing rule for how change happens in this repository. Lenny is built spec-first and test-first: the technical specification under `spec/` is the single source of truth, code implements the spec, and tests verify the spec. It frames the companion rules `code-best-practices.md`, `test-coverage.md`, and `doc-style.md`.
+This is the governing rule for how change happens in this repository. Lenny is built spec-first and test-first: the technical specification under `spec/` is the single source of truth, code implements the spec, and tests verify the spec. It frames the companion rules `code-best-practices.md`, `test-coverage.md`, `spec-annotations.md`, and `doc-style.md`.
 
 ## Top-level principle
 
@@ -9,7 +9,7 @@ All new code aligns to the spec. Every behavior in `pkg/`, `cmd/`, `sdks/`, `mig
 ## The spec is the source of truth
 
 - Implement what the spec says. When code and spec disagree, the spec is right and the code is the defect, unless the spec itself is wrong (see below).
-- Cite the spec on spec-derived logic with `// spec: §X.Y` (see `code-best-practices.md`). A reviewer traces any behavior to its section through that citation.
+- Cite the spec on the code that makes a decision the spec states, with a `// spec:` annotation in the form `spec-annotations.md` gives: a requirement or operation identifier once the page the code implements exists, and `§N.M (heading)` in an area that has not migrated. A reviewer traces any behavior to its requirement through that citation.
 - Do not edit `spec/` ad hoc to match code you want to write. A specification change goes through a change, as below.
 
 ## When the spec is silent, wrong, or contradictory
@@ -30,7 +30,7 @@ When the change belongs to a program under `changes/programs/`, read the program
 
 - Tests encode the spec's required behavior, including the empty, error, concurrent, boundary, and spec-named-failure paths, across every tier the change reaches (see `test-coverage.md`). Happy-path coverage alone does not satisfy this rule.
 - A behavior is not done until a test pins it to its spec section and that test passes. Run the tests; writing them is half the work.
-- Tests are first-class spec artifacts. Every test carries a `// spec:` annotation mapping it to the sections it verifies, and every behavioral spec section has at least one test. The harness maps tests to sections through that annotation.
+- Tests are first-class spec artifacts. Every test that verifies a requirement carries a `// spec:` annotation in its doc comment, in the form `spec-annotations.md` gives, and every behavioral requirement has at least one test. The harness maps tests to requirements through that annotation.
 
 ## A finished record is not edited
 
@@ -50,7 +50,7 @@ A change that has not finished is different: it is still being written or built,
 1. Find the spec section the change implements. If none exists or it is wrong, stop and raise it as a change, or as an open decision on the change you are building.
 2. Land the spec edit first on the step's branch; implement the code against the edited spec.
 3. Write the tests that encode the spec's behavior for every tier the change reaches, with the `// spec:` annotation, and run them to green.
-4. Cite the spec section in the code and the tests.
+4. Cite the requirement in the code that makes the decision and in the tests, as `spec-annotations.md` states.
 
 ## Escape hatches
 

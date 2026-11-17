@@ -16,7 +16,7 @@ Project-wide rules for testing code changes. They apply to every change under `p
 
 ## Top-level principle
 
-Every code change ships with tests across all relevant tiers, not unit tests alone. Tests are first-class artifacts of the spec: each test cites the spec sections it exercises, and every behavioral spec section has at least one test. A change is not done until its relevant tiers run and pass; writing a test without running it does not count.
+Every code change ships with tests across all relevant tiers, not unit tests alone. Tests are first-class artifacts of the spec: each test that verifies a requirement cites it, and every behavioral requirement has at least one test. A change is not done until its relevant tiers run and pass; writing a test without running it does not count.
 
 ## The tier model
 
@@ -67,9 +67,9 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 
 ## Test conventions
 
-- Every test carries a `// spec:` annotation naming the spec sections it exercises (form: `// spec: N.M.K (section heading), N.M (section heading)`). The harness maps tests to spec sections through this annotation.
+- Every test that verifies a requirement carries a `// spec:` annotation in its doc comment naming the requirements it verifies, in the form `spec-annotations.md` gives (`// spec: POOL-R5`, or `// spec: §N.M (section heading)` in an area that has not migrated). The harness maps tests to requirements through this annotation.
 - Every tier-2-and-higher test carries a `// diagnosis:` comment immediately above the function declaration, stating what a failure means. The harness surfaces it in the verdict.
-- Name tests for the behavior and the spec section, not the function under test alone.
+- Name tests for the behavior they check rather than for the function under test alone. A test name carries no section number and no identifier (`spec-annotations.md`).
 
 ## How to run
 
@@ -85,7 +85,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 2. Write the tests for those tiers alongside the code, covering the non-happy paths.
 3. Run tier 0 and tier 1 plus each reached tier; fix the code until they pass.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
-5. Add the `// spec:` annotation to every test and the `// diagnosis:` comment to tier-2-and-up tests.
+5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to tier-2-and-up tests.
 
 ## Environment preflight
 
