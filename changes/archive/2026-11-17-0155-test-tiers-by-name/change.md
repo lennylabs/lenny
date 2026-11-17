@@ -1,12 +1,12 @@
 # Test tiers by name and the static and documentation tiers
 
-Status: `In progress`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Implemented`, revision 2, 2026-11-17. Programs: [v1](../../programs/v1.md), milestone M1.
 
 ## Problem
 
 The test tiers are numbered 0 to 12, and tier 7 is split into 7a and 7b, so a reader has to map numbers to meanings. `lenny-test` already selects tiers by name (`static`, `unit`, `component`, `contract`, `integration`, `e2e_kind`, `e2e_cloud`, `load_local`, `load_kind`, `chaos`, `security`, `conformance`, `docs`, and `load_cloud`), and the directories and prose use the numbers.
 
-The static tier is also heavy and brittle under the specification restructure. 190 of its 322 tests check citations, naming, comment wording, or the maps, and one test takes 35 of its 56 seconds. Sixty documentation-tier files match prose inside numbered specification sections, so they break as each area migrates, and `tests/tier1_unit/` holds 13 files of unit tests away from the code they test ([test infrastructure review](../archive/2026-11-17-0154-merge-gate/evidence/test-infrastructure-review.md), "Question 1", "Keep", "Cut", and "Merge").
+The static tier is also heavy and brittle under the specification restructure. 190 of its 322 tests check citations, naming, comment wording, or the maps, and one test takes 35 of its 56 seconds. Sixty documentation-tier files match prose inside numbered specification sections, so they break as each area migrates, and `tests/unit/` holds 13 files of unit tests away from the code they test ([test infrastructure review](../2026-11-17-0154-merge-gate/evidence/test-infrastructure-review.md), "Question 1", "Keep", "Cut", and "Merge").
 
 ## Scope
 
@@ -15,7 +15,7 @@ The static tier is also heavy and brittle under the specification restructure. 1
   - The static tier split into four packages (`build`, `chart`, `lint`, and `structure`) with a time budget.
   - The tier-0 category E gates retired as 0115's reference tool and gates cover them, and the 14 migration registers retired when the channel-naming migration closes.
   - A rule that a new documentation check is a general gate or a generator check, and that no test matches specification prose.
-  - `tests/tier1_unit/` moved beside the code it tests.
+  - `tests/unit/` moved beside the code it tests.
   - The v1 program's area exit requiring each area to delete or replace its documentation-tier reconciliation tests and its gap-record tests.
 - **Out of scope.** The merge gate (0154), coverage and selection (0116), and new kinds of tests (0156, 0157).
 
@@ -25,7 +25,7 @@ Each tier keeps the name `lenny-test` already gives it, and its directory takes 
 
 ## Current state
 
-- 14 directories `tests/tier0_static/` to `tests/tier12_load_cloud/`, including `tests/tier7a_load_local/` and `tests/tier7b_load_kind/`.
+- 14 directories `tests/static/` to `tests/load_cloud/`, including `tests/load_local/` and `tests/load_kind/`.
 - 760 Go files declare a `package tierN_...` clause, and about 1,460 tracked files outside the historical records mention a tier number in a path, a package name, or prose, in about 4,500 lines. Almost all of it is mechanical to rewrite.
 - `cmd/lenny-test` maps each tier name to its numbered directory in `cmd_list_resolve.go` and `cmd_run_resolve.go`.
 

@@ -159,7 +159,7 @@ Formats that Lenny defined for itself:
 - **Batching.** No server accepts a JSON-RPC batch. TEST-GAPS T-META.10 asks for a batch test, which no MCP version from `2025-06-18` permits.
 - **Authorization.** `/mcp` accepts a bearer token and publishes no protected resource metadata (BUILD-GAPS F-10.2.39). No server checks `Origin`.
 
-Tests pin the current versions in `pkg/gateway/mcpfabric/mcp/version_internal_test.go`, in `tests/tier3_contract/rest_mcp_consistency/published_schema_test.go`, and in `tests/tier5_e2e_kind/mcp_conformance_test.go`. The vendored schemas are `tests/testdata/mcp/schema/2024-11-05.schema.json` and `2025-03-26.schema.json`.
+Tests pin the current versions in `pkg/gateway/mcpfabric/mcp/version_internal_test.go`, in `tests/contract/rest_mcp_consistency/published_schema_test.go`, and in `tests/e2e_kind/mcp_conformance_test.go`. The vendored schemas are `tests/testdata/mcp/schema/2024-11-05.schema.json` and `2025-03-26.schema.json`.
 
 ## Detailed design
 

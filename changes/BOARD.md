@@ -8,10 +8,9 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 3 |
-| Ready | 1 |
-| Waiting on decisions | 43 |
-| Blocked | 149 |
+| Ready | 2 |
+| Waiting on decisions | 44 |
+| Blocked | 147 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -22,9 +21,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0155.S1](0155-test-tiers-by-name/steps.md#0155s1-name-the-tiers) | Name the tiers | Building |  |
-| [0155.S2](0155-test-tiers-by-name/steps.md#0155s2-split-the-static-tier) | Split the static tier | Building |  |
-| [0155.S3](0155-test-tiers-by-name/steps.md#0155s3-unit-tests-beside-their-code-and-the-rule-for-documentation-checks) | Unit tests beside their code, and the rule for documentation checks | Building |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Ready |  |
 | [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Waiting on decisions | 0116 is `Draft` |
 | [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Waiting on decisions | 0116 is `Draft` |
@@ -38,19 +34,19 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Ready |  |
 | [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Waiting on decisions | 0117 is `Draft` |
-| [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0117.S8, 0137.S5, 0155.S1 |
-| [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0117.S2](0117-gateway-package-layout/steps.md#0117s2-the-seam-interface-package-the-layout-gate-and-the-move-driver) | The seam interface package, the layout gate, and the move driver | Blocked | 0117.S1, 0155.S1 |
-| [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0117.S5](0117-gateway-package-layout/steps.md#0117s5-upload-handler-split) | Upload handler split | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0117.S6](0117-gateway-package-layout/steps.md#0117s6-stream-proxy-split-69-import-sites) | Stream proxy split (69 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0117.S7](0117-gateway-package-layout/steps.md#0117s7-platform-tools-seam-428-import-sites) | Platform tools seam (428 import sites) | Blocked | 0117.S6, 0137.S5, 0155.S1 |
-| [0117.S8](0117-gateway-package-layout/steps.md#0117s8-api-front-and-the-shared-api-conventions-497-import-sites) | API front and the shared API conventions (497 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0137.S5, 0155.S1 |
-| [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
-| [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Blocked | 0155.S1 |
+| [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Blocked | 0117.S2, 0137.S5 |
+| [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0117.S8, 0137.S5 |
+| [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Blocked | 0117.S2, 0137.S5 |
+| [0117.S2](0117-gateway-package-layout/steps.md#0117s2-the-seam-interface-package-the-layout-gate-and-the-move-driver) | The seam interface package, the layout gate, and the move driver | Blocked | 0117.S1 |
+| [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Blocked | 0117.S2, 0137.S5 |
+| [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Blocked | 0117.S2, 0137.S5 |
+| [0117.S5](0117-gateway-package-layout/steps.md#0117s5-upload-handler-split) | Upload handler split | Blocked | 0117.S2, 0137.S5 |
+| [0117.S6](0117-gateway-package-layout/steps.md#0117s6-stream-proxy-split-69-import-sites) | Stream proxy split (69 import sites) | Blocked | 0117.S2, 0137.S5 |
+| [0117.S7](0117-gateway-package-layout/steps.md#0117s7-platform-tools-seam-428-import-sites) | Platform tools seam (428 import sites) | Blocked | 0117.S6, 0137.S5 |
+| [0117.S8](0117-gateway-package-layout/steps.md#0117s8-api-front-and-the-shared-api-conventions-497-import-sites) | API front and the shared API conventions (497 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0137.S5 |
+| [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Blocked | 0117.S2, 0137.S5 |
 
 ### M3+: Areas, one milestone each, ordered once 0115 lands
 
@@ -97,6 +93,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft`; a part waits on 0127.S10 |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft` |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
+| [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Waiting on decisions | 0156 is `Draft` |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
 | [0118.S4](0118-agent-pod-layout/steps.md#0118s4-layout-and-volumes) | Layout and volumes | Blocked | 0118.S1 |
@@ -229,7 +226,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
-| [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Blocked | 0155.S1 |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -274,6 +270,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 0 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
-| [0155](0155-test-tiers-by-name/change.md) | Test tiers by name and the static and documentation tiers | `In progress` | 0 of 3 | 0 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |

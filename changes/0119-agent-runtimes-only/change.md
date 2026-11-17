@@ -267,7 +267,7 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 ### Root records and tests
 
 - [`BUILD-GAPS.md`](../../BUILD-GAPS.md): F-5.2.65 and F-5.2.66 (both High and open) close by removal. F-15.1.76 loses its `executionMode` half and keeps its `runtimeRef` half. 23.1-INFO-007 closes. F-5.2.69 stays, because it concerns `maxConcurrentSessionsPerPod` **[source]**.
-- [`TESTING.md`](../../TESTING.md): §13.26 "Phase 12b — `type: mcp` runtime support" leaves, and §13.27 loses its service-mode half; the reference to `tests/tier4_integration/mcp_runtime_endpoints_test.go` leaves.
+- [`TESTING.md`](../../TESTING.md): §13.26 "Phase 12b — `type: mcp` runtime support" leaves, and §13.27 loses its service-mode half; the reference to `tests/integration/mcp_runtime_endpoints_test.go` leaves.
 - [`BUILD-PLAN.md`](../../BUILD-PLAN.md) and [`README.md`](../../README.md): the `type: mcp` and service-mode lines leave. `ROADMAP.md` keeps its entry (O2).
 - `tests/`: `tier4_integration/mcp_runtime_lifecycle_test.go`, `tier3_contract/mcp_runtimes/endpoint_test.go`, `tier5_e2e_kind/execution_modes_test.go` (whose tests exercise `sessionPolicy` presets and move), `tier2_component/migrations/prod_columns_test.go`, `tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go`, `tier7a_load_local/session_frame_pairing_race_test.go`, `tier11_docs/slot_definition_glossary_reconciliation_test.go` and `session_suspension_reader_doc_reconciliation_test.go`, the `tier9_security` tenant isolation and pool admission tests, the migration test of `0167`, and the registers `tests/spec-map.json`, `tests/change-graph.json`, and `tests/registers/*.yaml`.
 
