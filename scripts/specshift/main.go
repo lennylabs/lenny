@@ -47,7 +47,8 @@
 // tree, documented in the ref subpackage:
 //
 //	specshift ref [-root <path>] registry [-check] | check | fix |
-//	  lookup <identifier | code | §N.M>
+//	  lookup <identifier | code | §N.M> |
+//	  stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]
 //
 // A run of a pass reports the confinement it ran under, the files it
 // planned, and the register entries it deferred because their files lie

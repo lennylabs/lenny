@@ -149,6 +149,8 @@ A change moves through these activities. Their order is typical rather than fixe
 4. **Review.** Check the result, confirm or refute each finding, fix what needs no decision, and raise the rest as open decisions or issues.
 5. **Land.** Merge the step, close the issues it lists, and update the status. Archive the change after its last step, or when it is cancelled.
 
+The first area change of the specification migration creates the git tag `spec-frozen` on the commit before its first specification edit. The tag keeps the numbered files readable after their sections become successor stubs, as "Frozen reference" in [`spec/conventions.md`](../spec/conventions.md) states.
+
 ## Helpers
 
 The helpers are skills under `.claude/skills/` that any of these activities can use, in any order. Most take their target and their conventions as arguments, so they also work on documents and code outside this folder. Those marked as bound to conventions read the layouts of this folder, `issues/`, and the specification. The logic of the bound helpers that needs no model is in `scripts/changes/changes.py`, which tier 0 tests.

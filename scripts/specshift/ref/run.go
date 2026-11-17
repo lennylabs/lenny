@@ -12,12 +12,17 @@
 // "References and moves" in the specification-structure change's
 // taxonomy.
 //
+// The stub command turns a numbered section whose content has migrated
+// into a successor stub, as "Successor stubs" in spec/conventions.md
+// states, and lookup follows a section citation through that stub.
+//
 // Usage:
 //
 //	specshift ref [-root <path>] registry [-check]
 //	specshift ref [-root <path>] check
 //	specshift ref [-root <path>] fix
 //	specshift ref [-root <path>] lookup <identifier | code | §N.M>
+//	specshift ref [-root <path>] stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]
 package ref
 
 import (
@@ -34,7 +39,7 @@ import (
 )
 
 // usage is the command synopsis printed with a usage error.
-const usage = "usage: specshift ref [-root <path>] registry [-check] | check | fix | lookup <identifier | code | §N.M>"
+const usage = "usage: specshift ref [-root <path>] registry [-check] | check | fix | lookup <identifier | code | §N.M> | stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]"
 
 // Main runs the ref subcommand with its arguments. The repository root
 // is the -root flag, or the git toplevel of the working directory.
@@ -90,6 +95,8 @@ func Run(ctx context.Context, t *Tree, args []string, out io.Writer) error {
 			return errors.New(usage)
 		}
 		return Lookup(ctx, t, args[1], out)
+	case "stub":
+		return runStub(ctx, t, args[1:], out)
 	default:
 		return fmt.Errorf("unknown command %q; %s", args[0], usage)
 	}
@@ -185,5 +192,62 @@ func runFix(ctx context.Context, t *Tree, out io.Writer) error {
 		fmt.Fprintf(out, "unresolved: %s\n", u)
 	}
 	fmt.Fprintf(out, "wrote %s\n", RegistryPath)
+	return nil
+}
+
+// listFlag is a flag that takes a comma-separated list and may be
+// repeated.
+type listFlag []string
+
+func (l *listFlag) String() string { return strings.Join(*l, ",") }
+
+func (l *listFlag) Set(v string) error {
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			*l = append(*l, item)
+		}
+	}
+	return nil
+}
+
+// runStub parses the stub command, whose flags may come before or after
+// the section, rewrites the section, and prints what it changed.
+func runStub(ctx context.Context, t *Tree, args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("specshift ref stub", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var to listFlag
+	fs.Var(&to, "to", "the successors: page codes, page paths, identifiers, or anchors (comma-separated, repeatable)")
+	keep := fs.Bool("keep", false, "keep the section's text below the successor list and write no stub marker")
+	recursive := fs.Bool("recursive", false, "accept a section with subsections and stub every heading under it")
+	var positional []string
+	for rest := args; ; {
+		if err := fs.Parse(rest); err != nil {
+			return fmt.Errorf("parse flags: %w; %s", err, usage)
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+	if len(positional) != 1 {
+		return errors.New(usage)
+	}
+	res, err := Stub(ctx, t, StubOptions{Section: positional[0], To: to, Keep: *keep, Recursive: *recursive})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "stubbed §%s in %s\n", res.Section, res.File)
+	for _, c := range res.Changes {
+		if c.Full {
+			fmt.Fprintf(out, "  %s: full stub, %d line(s) of text removed\n", c.Title, c.Removed)
+			continue
+		}
+		fmt.Fprintf(out, "  %s: partial stub, text kept\n", c.Title)
+	}
+	fmt.Fprintln(out, "successors:")
+	for _, s := range res.Successors {
+		fmt.Fprintf(out, "  %s\n", s)
+	}
 	return nil
 }
