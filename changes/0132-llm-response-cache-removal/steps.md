@@ -17,9 +17,10 @@
 - status: Planned
 - aliases: [RC-A, RC-1, RC-2, RC-3, RC-4]
 - lanes: [specification, code, documentation]
+- closes: [T-4.9.15, T-12.1.1, T-12.2.5, F-12.8.53 (part)]
 
-The removal: RC-1 to RC-4. It rebases on CA-G (0123.S2) if CA-G lands first. 0132.S1 can land first because it removes behaviour and adds none.
+The removal: RC-1 to RC-4. It closes the cache half of F-12.8.53, which stays open for the billing buffer. It rebases on CA-G (0123.S2) if CA-G lands first, and 0132.S1 and 0133.S2 rebase on whichever of them lands first, because both edit `handler.go`, `credentialpoolstore`, and the admin pool validator. 0132.S1 can land first because it removes behaviour and adds none.
 
 ### Notes on the steps
 
-RC-B moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), where 0133.S1 (LU-A) absorbs it: the §4.9 passthrough statement under this change's D2 ("RC-5"), the usage count, the billing fields, and the closure of F-11.2.38. It follows that change's own order, and the owner's settlement D2 for the passthrough statement. It is independent of 0132.S1. RC-B fixes a metering gap that exists with or without the semantic cache.
+RC-B moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), where 0133.S1 (LU-A) carries the usage count, the billing fields, and the closure of F-11.2.38, and 0133.S2 (LU-9) carries the §4.9 passthrough statement under this change's D2 ("RC-5") with RCR-5. It follows that change's own order, and the owner's settlement D2 for the passthrough statement. It is independent of 0132.S1. RC-B fixes a metering gap that exists with or without the semantic cache.
