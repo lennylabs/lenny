@@ -39,13 +39,18 @@ import (
 // relative to the copy's root, so they read as repository paths and the
 // path rules of the configuration match them.
 //
-// Allowlist. The allowlist lives only in .gitleaks.toml at the repository
-// root, which is reviewed before it merges (.claude/rules/git-workflow.md).
-// The check passes --ignore-gitleaks-allow, so a `gitleaks:allow` comment
-// in a file does not silence a finding, and it points
-// --gitleaks-ignore-path at an empty directory and leaves a root
-// .gitleaksignore out of the scanned tree, so a .gitleaksignore file does
-// not either.
+// Allowlist. The allowlist is .gitleaks.toml at the repository root, which
+// is reviewed before it merges (.claude/rules/git-workflow.md), together
+// with the global allowlist of the default configuration it extends. The
+// check passes --ignore-gitleaks-allow, so a `gitleaks:allow` comment in a
+// file does not silence a finding, and it points --gitleaks-ignore-path at
+// an empty directory and leaves a root .gitleaksignore out of the scanned
+// tree, so a .gitleaksignore file does not either.
+//
+// Limits. gitleaks skips archives (no --max-archive-depth is passed, and the
+// tracked upload fixtures include archive bombs) and files it detects as
+// binary, and the default global allowlist skips some paths, as the header
+// of .gitleaks.toml lists. A secret in such a file is not found.
 
 // secretScanConfig is the gitleaks configuration at the repository root.
 const secretScanConfig = ".gitleaks.toml"

@@ -4,8 +4,13 @@
 # tier (`lenny-test`, check "gitleaks dir (tracked files)", in
 # cmd/lenny-test/secretscan.go). The check scans the files git tracks and
 # reads this file explicitly; it ignores `gitleaks:allow` comments and any
-# .gitleaksignore file, so this file is the whole allowlist. A diff to it is
-# reviewed with the `review` skill before it merges
+# .gitleaksignore file. The allowlist is therefore the entries below plus
+# the global allowlist of the default configuration this file extends,
+# which skips some files by path (images, fonts, office documents, go.mod
+# and go.sum, lockfiles, vendored trees, anything under node_modules, and
+# any path containing "gitleaks.toml") and some values by pattern. gitleaks
+# also skips archives and binary files without reading them. A diff to this
+# file is reviewed with the `review` skill before it merges
 # (.claude/rules/git-workflow.md, "Review changes to the merge gate").
 #
 # The configuration extends the default rules of the pinned gitleaks
@@ -20,7 +25,11 @@
 #
 # The entries were built by running the scan on the tree on 2026-11-17
 # (change 0158, step S1) and reviewing every finding. The comment above
-# each entry lists the findings it covers and why each one is fake.
+# each entry lists the findings it covers and why each one is fake. A path
+# under changes/ also matches the folder's archived location
+# (changes/archive/<date>-<folder>), so archiving a change keeps its entry,
+# and a Go test fixture under pkg/ is matched by its file name, so a package
+# move keeps its entry; the value regex stays exact in both cases.
 
 title = "Lenny secret scan"
 minVersion = "v8.30.1"
@@ -52,7 +61,7 @@ useDefault = true
 [[allowlists]]
 description = "Stub cloud tokens minted by the local stub server of the 0127 federation spike"
 condition = "AND"
-paths = ['''^changes/0127-egress-and-git/evidence/spike-federation/logs/[^/]+\.out$''']
+paths = ['''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-federation/logs/[^/]+\.out$''']
 regexes = ['''^(gcp-sts-at-v\d-[0-9a-f]{6}|gcp-sa-at-from-gcp-sts-at-v\d-[0-9a-f]{6}|gce-md-at-\d{10}|az-msi-at-\d{10})$''']
 
 # Placeholder credentials in the egress-proxy spikes of change 0127. The
@@ -65,8 +74,8 @@ regexes = ['''^(gcp-sts-at-v\d-[0-9a-f]{6}|gcp-sa-at-from-gcp-sts-at-v\d-[0-9a-f
 description = "Placeholder bearer values the 0127 egress spikes send for the proxy to replace"
 condition = "AND"
 paths = [
-  '''^changes/0127-egress-and-git/evidence/spike-inject/t1\.sh$''',
-  '''^changes/0127-egress-and-git/evidence/spike-owed-d/i2\.sh$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-inject/t1\.sh$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-owed-d/i2\.sh$''',
 ]
 regexes = ['''^(lenny-ph-acme|lenny-injected)$''']
 
@@ -87,9 +96,9 @@ regexes = ['''^(lenny-ph-acme|lenny-injected)$''']
 description = "Commit ID, certificate subject, and truncated JWT header in 0127 spike outputs"
 condition = "AND"
 paths = [
-  '''^changes/0127-egress-and-git/evidence/spike-lsrefs/t1\.out$''',
-  '''^changes/0127-egress-and-git/evidence/spike-owed-b/out/s2-long\.out$''',
-  '''^changes/0127-egress-and-git/evidence/spike-k8s/t1-out\.txt$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-lsrefs/t1\.out$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-owed-b/out/s2-long\.out$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-k8s/t1-out\.txt$''',
 ]
 regexes = ['''^(7b8b171c0dbfa8af665c24a63d91f2b185b8701b|subject=CN=lenny-egress-ca-5|eyJhbGciOiJSUzI1NiIsImtpZCI6Ii1WMTdEWVk4)$''']
 
@@ -113,8 +122,8 @@ regexes = ['''^(7b8b171c0dbfa8af665c24a63d91f2b185b8701b|subject=CN=lenny-egress
 description = "Placeholder and invalid-by-construction tokens in the 0152 Git identity spikes"
 condition = "AND"
 paths = [
-  '''^changes/0152-user-git-identity/evidence/spike-gh/''',
-  '''^changes/0152-user-git-identity/evidence/spike-ghlive/smoke\.sh$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-gh/''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-ghlive/smoke\.sh$''',
 ]
 regexes = ['''^(OTHER-TOKEN-x9|USER-FILE-CURRENT|Z2l0bGFiLWxmczpMRlNUT0tFTi|ghu_invalidsmoketesttoken0+)$''']
 
@@ -129,7 +138,7 @@ regexes = ['''^(OTHER-TOKEN-x9|USER-FILE-CURRENT|Z2l0bGFiLWxmczpMRlNUT0tFTi|ghu_
 [[allowlists]]
 description = "RFC 6455 sample WebSocket key replayed by the 0152 spikes"
 condition = "AND"
-paths = ['''^changes/0152-user-git-identity/evidence/spike-gh/''']
+paths = ['''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-gh/''']
 regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
 
 # The development encryption key of the chart's dev preset, base64 of
@@ -152,12 +161,13 @@ regexes = ['''^bGVubnktZW1iZWRkZWQtZGV2LWFlc2NiYy1rZXktMzJieQ==$''']
 # "preserved-master-key-preserved-master-key". The test checks that an
 # upgrade keeps an existing key.
 # Findings: charts/lenny/tests/kms-master-key-secret_test.yaml:40
-# (kubernetes-secret-yaml) and :46 (generic-api-key).
+# (kubernetes-secret-yaml, whose secret includes the "master-key: " key)
+# and :46 (generic-api-key).
 [[allowlists]]
 description = "KMS master key fixture of a chart unit test"
 condition = "AND"
 paths = ['''^charts/lenny/tests/kms-master-key-secret_test\.yaml$''']
-regexes = ['''cHJlc2VydmVkLW1hc3Rlci1rZXktcHJlc2VydmVkLW1hc3Rlci1rZXk=''']
+regexes = ['''^(?:master-key: )?cHJlc2VydmVkLW1hc3Rlci1rZXktcHJlc2VydmVkLW1hc3Rlci1rZXk=$''']
 
 # The bearer-trust HMAC key the Kind end-to-end install writes into its
 # test cluster, base64 of "lenny-e2e-bearer-trust-hmac-key-32bytes".
@@ -195,8 +205,8 @@ regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=$''']
 description = "Literal fixture values in Go tests"
 condition = "AND"
 paths = [
-  '''^pkg/gateway/podlifecycle/podsession/binder_test\.go$''',
-  '''^pkg/gateway/mcpfabric/mcp/playground_redact_internal_test\.go$''',
+  '''(?:^|/)binder_test\.go$''',
+  '''(?:^|/)playground_redact_internal_test\.go$''',
   '''^tests/integration/ops_mcp_scope_live_bearer_test\.go$''',
   '''^tests/integration/ops_endpoints_test\.go$''',
 ]
@@ -220,7 +230,7 @@ paths = [
   '''^docs/operator-guide/(configuration|security)\.md$''',
   '''^proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/''',
   '''^tests/integration/drift_gatewayreader_http_test\.go$''',
-  '''^pkg/gateway/externalapi/admin/credential_pools_test\.go$''',
+  '''(?:^|/)credential_pools_test\.go$''',
 ]
 regexes = ['''^anthropic-key-\d$''']
 
