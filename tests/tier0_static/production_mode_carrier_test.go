@@ -169,7 +169,7 @@ func productionCarrierHits(rel string, src []byte) ([]string, error) {
 			return true
 		}
 		if msg := productionCarrierViolation(rel, value); msg != "" {
-			hits = append(hits, rel+":"+itoa(fset.Position(lit.Pos()).Line)+": "+msg)
+			hits = append(hits, rel+":"+strconv.Itoa(fset.Position(lit.Pos()).Line)+": "+msg)
 		}
 		return true
 	})

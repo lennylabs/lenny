@@ -123,11 +123,15 @@ func (l Lint) placement(fset *token.FileSet, file *ast.File, f ChangedFile) []Fi
 			}
 			switch {
 			case within(c.Slash, bodies):
-				out = append(out, Finding{f.Path, line, InFunctionBody,
-					"cite the requirement in the doc comment of the function that makes the decision"})
+				out = append(out, Finding{
+					f.Path, line, InFunctionBody,
+					"cite the requirement in the doc comment of the function that makes the decision",
+				})
 			case within(c.Slash, structs):
-				out = append(out, Finding{f.Path, line, OnStructField,
-					"cite the requirement on the type or the function that makes the decision"})
+				out = append(out, Finding{
+					f.Path, line, OnStructField,
+					"cite the requirement on the type or the function that makes the decision",
+				})
 			}
 		}
 	}
@@ -166,8 +170,10 @@ func testNames(fset *token.FileSet, file *ast.File, f ChangedFile) []Finding {
 		case *ast.FuncDecl:
 			line := fset.Position(t.Name.Pos()).Line
 			if t.Recv == nil && f.Lines[line] && isTestFunc(t.Name.Name) && sectionInName.MatchString(t.Name.Name) {
-				out = append(out, Finding{f.Path, line, SectionInTestName,
-					fmt.Sprintf("%s: name the behavior and cite the requirement in the doc comment", t.Name.Name)})
+				out = append(out, Finding{
+					f.Path, line, SectionInTestName,
+					fmt.Sprintf("%s: name the behavior and cite the requirement in the doc comment", t.Name.Name),
+				})
 			}
 		case *ast.CallExpr:
 			sel, ok := t.Fun.(*ast.SelectorExpr)
@@ -181,8 +187,10 @@ func testNames(fset *token.FileSet, file *ast.File, f ChangedFile) []Finding {
 			line := fset.Position(lit.Pos()).Line
 			name, err := strconv.Unquote(lit.Value)
 			if err == nil && f.Lines[line] && sectionInSubtest.MatchString(name) {
-				out = append(out, Finding{f.Path, line, SectionInTestName,
-					fmt.Sprintf("subtest %q: name the behavior", name)})
+				out = append(out, Finding{
+					f.Path, line, SectionInTestName,
+					fmt.Sprintf("subtest %q: name the behavior", name),
+				})
 			}
 		}
 		return true
@@ -225,8 +233,10 @@ func (l Lint) quotes(fset *token.FileSet, file *ast.File, f ChangedFile) []Findi
 		reported := false
 		for _, q := range QuotedSpans(strings.Join(whole, " ")) {
 			if l.Spec.ContainsQuote(q) {
-				out = append(out, Finding{f.Path, first, QuotedSpecText,
-					fmt.Sprintf("%q is quoted from the specification; cite the identifier instead", q)})
+				out = append(out, Finding{
+					f.Path, first, QuotedSpecText,
+					fmt.Sprintf("%q is quoted from the specification; cite the identifier instead", q),
+				})
 				reported = true
 				break
 			}
@@ -235,8 +245,10 @@ func (l Lint) quotes(fset *token.FileSet, file *ast.File, f ChangedFile) []Findi
 			continue
 		}
 		if run, ok := l.Spec.CopiedRun(strings.Join(changed, " ")); ok {
-			out = append(out, Finding{f.Path, first, QuotedSpecText,
-				fmt.Sprintf("%q is copied from the specification; cite the identifier instead", run)})
+			out = append(out, Finding{
+				f.Path, first, QuotedSpecText,
+				fmt.Sprintf("%q is copied from the specification; cite the identifier instead", run),
+			})
 		}
 	}
 	return out
@@ -277,8 +289,10 @@ func (l Lint) identifiers(f ChangedFile) []Finding {
 				out = append(out, Finding{f.Path, a.Line, RetiredIdentifier, retiredDetail(id, kind, rt)})
 				continue
 			}
-			out = append(out, Finding{f.Path, a.Line, UnresolvedIdentifier,
-				fmt.Sprintf("%s (%s) is not in %s", id, kind, RegistryPath)})
+			out = append(out, Finding{
+				f.Path, a.Line, UnresolvedIdentifier,
+				fmt.Sprintf("%s (%s) is not in %s", id, kind, RegistryPath),
+			})
 		}
 	}
 	return out

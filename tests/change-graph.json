@@ -1223,8 +1223,7 @@
     },
     "schemas/lenny-adapter.proto": {
       "static": [
-        "tests/tier0_static/schemas_test.go",
-        "tests/tier0_static/adapter_proto_intrapod_pointer_test.go"
+        "tests/tier0_static/schemas_test.go"
       ],
       "unit": ["pkg/adapter/..."],
       "contract": [

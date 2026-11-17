@@ -1086,7 +1086,7 @@ packages:
     - package: tests/testinfra/wait
       count: 4
     - package: tests/tier0_static
-      count: 362
+      count: 320
     - package: tests/tier10_conformance
       count: 137
     - package: tests/tier11_docs

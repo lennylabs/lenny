@@ -4,14 +4,25 @@ Project-wide rules for how branches are integrated and retired. They apply to ev
 
 ## Top-level principle
 
-Integration history is explicit and branches are short-lived. Every feature branch lands through a merge commit that records the integration, and a branch is deleted once it is merged so stale branches do not accumulate.
+Integration history is explicit, `main` stays green, and branches are short-lived. A feature branch merges only on a green merge-gate verdict for its head, lands through a merge commit that records the integration, and is deleted once it is merged so stale branches do not accumulate.
+
+## Merge only on a green gate verdict
+
+- A branch merges only when the merge-gate verdict for its head commit is `PASS`. `lenny-test gate` runs the merge gate in the gate container and writes the verdict to `tests/results/gate-<run>.json`; `.claude/rules/test-coverage.md` ("Gates") states the tiers it runs. The verdict counts for the head only when its `trigger.git_revision` is the branch head and its `gate.dirty` is false. A commit added to the branch after the run, including a conflict resolution, needs a new verdict.
+- A records-only commit is the one exception: a commit after a `PASS` verdict keeps that verdict when both of the following hold.
+  1. Every path the commit touches is under `changes/` (the step's digest, which records the verdict, the step statuses, and the board), or is `docs/about/status.md` with every changed line between its `<!-- generated:status -->` and `<!-- /generated:status -->` markers.
+  2. The tier-0 records checks pass on the commit: `python3 scripts/changes/changes.py check`, `python3 scripts/changes/changes.py board --check`, and `python3 scripts/changes/changes.py status-page --check` when `changes.py` has the `status-page` command (change 0115 adds it).
+
+  A commit that touches any other path, or any line of `docs/about/status.md` outside the markers, needs a new verdict.
+- The merge commit message or the step's digest names the verdict's run identifier, so the green run behind each merge can be found.
+- `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges. Revert the merge that introduced the failure with `git revert -m 1 <merge>` when the fix is not immediate.
 
 ## Merge with a merge commit, not a fast-forward
 
 - `main` is the integration branch. Cut every proposal, draft, fix, and records branch from `main`, and merge it back into `main`. Merges are direct until a first version ships; pull requests replace them after that.
 - Integrate a feature branch into a long-lived branch (parent branch unless the user asks for something else) with `git merge --no-ff`, so the integration is a single merge commit that names the branch and groups its commits. Do not fast-forward a feature branch into a long-lived branch, even when the long-lived branch has not advanced.
 - The merge commit message names the proposal, finding, or feature the branch implemented, so the integration point is greppable from the first-parent history.
-- A merge that conflicts is resolved on the feature branch (rebase or merge the target in, resolve, re-run the reached test tiers), then integrated with `--no-ff`. Do not resolve conflicts directly in the merge into a long-lived branch.
+- A merge that conflicts is resolved on the feature branch (rebase or merge the target in, resolve, re-run the merge gate on the new head), then integrated with `--no-ff`. Do not resolve conflicts directly in the merge into a long-lived branch.
 
 ## Delete a branch once merged
 
@@ -23,13 +34,15 @@ Integration history is explicit and branches are short-lived. Every feature bran
 
 - Every merge.
 - Branch cleanup after a merge.
+- The state of `main` between merges.
 
 ## How to apply when merging
 
-1. Confirm the feature branch is green and its work is complete before integrating.
+1. Confirm the feature branch's work is complete, run `lenny-test gate` on its committed head, and confirm the verdict is `PASS` for that commit with a clean tree. Do not merge on any other verdict.
 2. Merge into the target with `git merge --no-ff`, with a message naming what the branch implemented.
 3. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.
 4. Push the updated integration branch.
+5. When the merge-gate tiers fail on `main` afterwards, fix or revert before the next merge.
 
 ## Escape hatches
 

@@ -34,9 +34,11 @@ func words(list ...string) *regexp.Regexp {
 // "X, not Y", em-dash overuse, a missing serial conjunction, a fragment,
 // and hedging, stay with review.
 var stylePatterns = []stylePattern{
-	{words("comprehensive", "robust", "seamless", "seamlessly", "powerful", "leverage", "leverages", "leveraged", "leveraging",
-		"unlock", "unlocks", "elegant", "elegantly", "world-class", "best-in-class", "industry-leading", "game-changing", "cutting-edge"),
-		"Marketing or sales language"},
+	{
+		words("comprehensive", "robust", "seamless", "seamlessly", "powerful", "leverage", "leverages", "leveraged", "leveraging",
+			"unlock", "unlocks", "elegant", "elegantly", "world-class", "best-in-class", "industry-leading", "game-changing", "cutting-edge"),
+		"Marketing or sales language",
+	},
 	{words("load-bearing", "existential"), "Hyperbole"},
 	{words("very", "really", "just", "simply", "truly", "actually"), "Intensifiers and emphasis adverbs"},
 	{words("importantly", "notably", "it's worth noting", "it is worth noting", "in essence", "simply put", "at its core",
@@ -66,14 +68,16 @@ func checkStyle(p *Page) []Problem {
 		for _, sp := range stylePatterns {
 			if m := sp.expr.FindStringSubmatch(l.Text); m != nil {
 				out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
-					"%q breaks the documentation style rule (.claude/rules/doc-style.md, %q)", strings.Join(strings.Fields(m[1]), " "), sp.rule)})
+					"%q breaks the documentation style rule (.claude/rules/doc-style.md, %q)", strings.Join(strings.Fields(m[1]), " "), sp.rule,
+				)})
 			}
 		}
 		if m := headingLine.FindStringSubmatch(l.Text); m != nil {
 			if c := countHeading.FindStringSubmatch(m[2]); c != nil {
 				out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
 					"the heading %q names the count %q; name the noun instead (.claude/rules/doc-style.md, %q)",
-					strings.TrimSpace(m[2]), c[1], "Explicit counts of capabilities, types, SPIs")})
+					strings.TrimSpace(m[2]), c[1], "Explicit counts of capabilities, types, SPIs",
+				)})
 			}
 		}
 	}

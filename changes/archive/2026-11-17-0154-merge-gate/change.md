@@ -1,6 +1,6 @@
 # Green main line and merge gate
 
-Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Implemented`, revision 2, 2026-11-17. Programs: [v1](../../programs/v1.md), milestone M1.
 
 ## Problem
 
@@ -32,3 +32,16 @@ Contributors: `TESTING.md` and `docs/about/contributing.md` describe the merge g
 ## Tests
 
 The gate command and the verdict file are tested in `cmd/lenny-test`; the merge gate passes on `main` after this change, in the container.
+
+## Deletion sweep
+
+Decision 5 asks for the files deleted by design-only commits since 2026-10-01 to be listed and checked. The sweep read every non-merge commit on `main` since 2026-10-01 that deletes a file, and kept the commits whose other changes touch only design and records files: `designs/`, `changes/`, `proposals/`, `issues/`, and the root-level markdown records. Six commits qualify. Each deleted file and the reason for its deletion follow.
+
+- `hack/boilerplate.go.txt`, deleted by `8ef08bfa8` (2026-11-07, "designs: add allow-list mode to user credential request rules"). The deletion was accidental. The commit edits a design, and nothing in it concerns code generation, but `make generate` and `TestDeepCopyInSyncWithGoTypes` read the file. Step 0154.S1 restores it from the commit's parent.
+- `designs/experiment-provider-removal-design.md`, deleted by `5f18f1598` (2026-11-08). The deletion was intended: the commit replaces that design with the runtime routing design.
+- `designs/session-replay-design.md`, deleted by `bba749f3c` (2026-11-04). The deletion was intended: the commit merges the derive and replay designs into one design with two modes.
+- `designs/tenant-owned-pools-design.md`, deleted by `edac8705e` (2026-11-04). The deletion was intended: the commit message names the removal of that design in favor of derived runtimes.
+- `designs/session-derive-design.md`, `designs/user-git-identity-design.md`, `designs/evidence/README.md`, and `designs/evidence/service-account-credentials-design/README.md`, deleted by `2101789b5` (2026-11-16, step 0113.S2). The deletions were intended: the commit moves every design into its change folder, and the content is under `changes/0144-session-derive/`, `changes/0152-user-git-identity/`, and `changes/0143-service-account-credentials/evidence/`.
+- `tests/registers/proposal-label-commits.yaml` and `tests/tier0_static/proposal_label_commit_test.go`, deleted by `791ebcbc9` (2026-10-03). The deletions were intended: the commit reverts a commit-message lint that the 0079 design-conformance review added out of scope, and it changes nothing else.
+
+`hack/boilerplate.go.txt` is the only accidental deletion the sweep found.

@@ -307,9 +307,10 @@ func readExceptionSections(path string) map[string]bool {
 }
 
 // validateFlakeBudgetYAML enforces the flake budget policy on
-// tests/flake-budget.yaml. Every quarantined entry must carry a
-// non-empty test name, an https issue link, and an eta in
-// YYYY-MM-DD that has not yet passed.
+// tests/flake-budget.yaml. The file declares a quarantine cap, and the
+// quarantine may not hold more entries than the cap. Every quarantined
+// entry must carry a non-empty test name, an owner, a reason, an https
+// issue link, and an eta in YYYY-MM-DD that has not yet passed.
 func validateFlakeBudgetYAML(path string) checkResult {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -320,10 +321,12 @@ func validateFlakeBudgetYAML(path string) checkResult {
 	}
 	var doc struct {
 		Version     int `yaml:"version"`
+		Cap         int `yaml:"cap"`
 		Quarantined []struct {
 			Test    string `yaml:"test"`
 			Package string `yaml:"package"`
 			Owner   string `yaml:"owner"`
+			Reason  string `yaml:"reason"`
 			Issue   string `yaml:"issue"`
 			ETA     string `yaml:"eta"`
 		} `yaml:"quarantined"`
@@ -335,11 +338,22 @@ func validateFlakeBudgetYAML(path string) checkResult {
 		return newResult("flake-budget.yaml", false, fmt.Sprintf("expected version 1, got %d", doc.Version))
 	}
 	var problems []string
+	if doc.Cap < 1 {
+		problems = append(problems, fmt.Sprintf("cap must be a positive quarantine cap; got %d", doc.Cap))
+	} else if len(doc.Quarantined) > doc.Cap {
+		problems = append(problems, fmt.Sprintf("%d quarantined tests exceed the cap of %d; fix or delete a quarantined test before adding another", len(doc.Quarantined), doc.Cap))
+	}
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	for i, e := range doc.Quarantined {
 		if strings.TrimSpace(e.Test) == "" {
 			problems = append(problems, fmt.Sprintf("entry[%d]: missing test name", i))
 			continue
+		}
+		if strings.TrimSpace(e.Owner) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing owner", i, e.Test))
+		}
+		if strings.TrimSpace(e.Reason) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing reason", i, e.Test))
 		}
 		if !strings.HasPrefix(e.Issue, "https://") {
 			problems = append(problems, fmt.Sprintf("entry[%d] (%q): issue must be an https URL; got %q", i, e.Test, e.Issue))
@@ -361,7 +375,7 @@ func validateFlakeBudgetYAML(path string) checkResult {
 		return newResult("flake-budget.yaml", false, summarizeProblems(problems))
 	}
 	return newResult("flake-budget.yaml", true,
-		fmt.Sprintf("%d quarantined test(s); every entry valid", len(doc.Quarantined)))
+		fmt.Sprintf("%d quarantined test(s) of a cap of %d; every entry valid", len(doc.Quarantined), doc.Cap))
 }
 
 // ---- the shared register contract ---------------------------------

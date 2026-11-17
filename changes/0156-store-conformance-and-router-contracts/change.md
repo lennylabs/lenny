@@ -4,7 +4,7 @@ Status: `Draft`, revision 1, 2026-11-16. Programs: [v1](../programs/v1.md), area
 
 ## Problem
 
-A sample of 80 unit tests found 77.5 percent testing logic or in-process behavior, so the unit tests stay. Two weak spots stand out. 41 store packages have a memory and a Postgres implementation, and their unit tests round-trip the memory one only, so the two can diverge with no test failing. The CLI clients are tested against hand-written servers, so a change to the production gateway or ops routers can break a client with no test failing ([test infrastructure review](../0154-merge-gate/evidence/test-infrastructure-review.md), "Question 2").
+A sample of 80 unit tests found 77.5 percent testing logic or in-process behavior, so the unit tests stay. Two weak spots stand out. 41 store packages have a memory and a Postgres implementation, and their unit tests round-trip the memory one only, so the two can diverge with no test failing. The CLI clients are tested against hand-written servers, so a change to the production gateway or ops routers can break a client with no test failing ([test infrastructure review](../archive/2026-11-17-0154-merge-gate/evidence/test-infrastructure-review.md), "Question 2").
 
 ## Scope
 

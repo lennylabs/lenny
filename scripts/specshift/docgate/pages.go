@@ -196,7 +196,8 @@ func CheckFrontMatter(pages []*Page, st Statuses) []Problem {
 		for _, c := range p.Codes {
 			if _, ok := st[c]; !ok {
 				out = append(out, Problem{Path: p.Path, Line: p.SpecLine, Message: fmt.Sprintf(
-					"spec names %q, which %s does not register as a page code or an alias", c, ref.RegistryPath)})
+					"spec names %q, which %s does not register as a page code or an alias", c, ref.RegistryPath,
+				)})
 			}
 		}
 	}

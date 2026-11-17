@@ -46,8 +46,10 @@ func gitRepo(t *testing.T, branch string, files map[string]string) string {
 	root := t.TempDir()
 	run := func(args ...string) {
 		t.Helper()
-		cmd := exec.Command("git", append([]string{"-C", root, "-c", "user.name=alice", "-c", "user.email=alice@acme.com",
-			"-c", "commit.gpgsign=false"}, args...)...)
+		cmd := exec.Command("git", append([]string{
+			"-C", root, "-c", "user.name=alice", "-c", "user.email=alice@acme.com",
+			"-c", "commit.gpgsign=false",
+		}, args...)...)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -108,7 +110,7 @@ func TestLintBranchReadsOnlyTheLinesTheBranchChanges(t *testing.T) {
 func TestLintBranchResolvesIdentifiersOnceTheRegistryExists(t *testing.T) {
 	t.Parallel()
 	root := gitRepo(t, "main", map[string]string{
-		"spec/claims.md":     string(readFixture(t, "lint", "spec.md")),
+		"spec/claims.md":           string(readFixture(t, "lint", "spec.md")),
 		"spec/registry.json":       string(readFixture(t, "lint", "registry.json")),
 		"issues/CLAIM/CLAIM-I4.md": "# CLAIM-I4\n",
 		"pkg/claim/claim.go":       "package claim\n",

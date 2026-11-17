@@ -298,7 +298,8 @@ func TestDigestListsTheItemsTheBranchChangesWithTheirTextAndSites(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustContain(t, out,
+	mustContain(
+		t, out,
 		"# Digest: 0200.S1 Fixture step",
 		"its merge base with `main`",
 		"spec: rework the pool requirements (0200.S1)",
@@ -337,7 +338,8 @@ func TestDigestOfABranchWithNoChangesReportsNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mustContain(t, out,
+	mustContain(
+		t, out,
 		"The branch has no commits of its own yet.",
 		"None. The branch adds, modifies, and retires no requirement.",
 		"None. The branch adds, modifies, and retires no operation.",
@@ -394,7 +396,8 @@ func TestWhereReportsARequirementWithItsSitesDocumentationIssuesAndLastChange(t 
 	if err := Where(context.Background(), f.root, "POOL-R1", &out); err != nil {
 		t.Fatal(err)
 	}
-	mustContain(t, out.String(),
+	mustContain(
+		t, out.String(),
 		"POOL-R1 (requirement)",
 		"Page: POOL spec/capabilities/pools/warm-pools.md (Warm pools)",
 		"A pool MUST keep at least minWarm pods.",
@@ -463,7 +466,8 @@ func TestSinceListsChangedRequirementsAndGroupsPackagesByArea(t *testing.T) {
 		if err := Since(ctx, f.root, arg, &out); err != nil {
 			t.Fatalf("Since(%s): %v", arg, err)
 		}
-		mustContain(t, out.String(),
+		mustContain(
+			t, out.String(),
 			"  Added:\n    POOL-R3 Pools drain. (spec/capabilities/pools/warm-pools.md)",
 			"  Modified:\n    POOL-R1 Pools keep warm pods.",
 			"  Retired:\n    POOL-R2 Old rule. (spec/capabilities/pools/warm-pools.md), removed, the old thing is gone",

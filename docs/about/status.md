@@ -33,7 +33,7 @@ The work toward this goal is planned as milestones. A milestone is done when its
 | Milestone | Steps landed | State |
 |:----------|:-------------|:------|
 | Workflow in place | 10 of 10 | Done |
-| Specification structure foundation (current) | 9 of 23 | In progress |
+| Specification structure foundation (current) | 12 of 23 | In progress |
 | Gateway package layout and the journey pilot | 0 of 13 | Not started |
 | Areas, one milestone each, ordered once the "Specification structure" change lands | None assigned yet | Not started |
 
@@ -47,7 +47,7 @@ All 10 of its steps have landed.
 
 Exit criteria: Every merge passes the merge gate and `main` is green. The conventions, the identifier registry, the reference tool, the gates, and the annotation and documentation rules have landed, coverage and test selection are derived from annotations and the import graph, and the kind renames and the `PodSet` merge are done tree-wide. The test tiers carry names and the static tier is split.
 
-9 of its 23 steps have landed, and 0 are being built.
+12 of its 23 steps have landed, and 0 are being built.
 
 ### Gateway package layout and the journey pilot
 

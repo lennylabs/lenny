@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
@@ -402,10 +404,7 @@ type tierStep struct {
 // Building the table here keeps execute()'s loop body small and the
 // per-tier wiring readable from one place.
 func tierSteps() map[string]tierStep {
-	wrapStatic := func(_ tierPlan) (string, string, *tierResult) {
-		st, msg := runStaticTier()
-		return st, msg, nil
-	}
+	wrapStatic := func(_ tierPlan) (string, string, *tierResult) { return runStaticTier() }
 	return map[string]tierStep{
 		tierStatic: {
 			name: tierStatic, exec: wrapStatic, useSynthesize: true,
@@ -593,12 +592,14 @@ type staticCheck struct {
 	classify func(out string) (status string, detail string)
 }
 
-func runStaticTier() (string, string) {
-	// Tier 0 composes several independent checks. Each runs in sequence;
-	// the first failure stops the tier (the rest are still reported as
-	// "not-run" in the message).
+// runStaticTier runs the tier-0 check table. The checks are
+// independent, so they run concurrently, and every check runs whatever
+// the others report: a failure early in the table does not hide the
+// checks after it. The result carries one failure entry per failed
+// check.
+func runStaticTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
-		return verdictstatus.Skipped, "go not on PATH"
+		return verdictstatus.Skipped, "go not on PATH", nil
 	}
 
 	checks := []staticCheck{
@@ -885,7 +886,9 @@ func runStaticTier() (string, string) {
 		}},
 	}
 
-	return composeStaticChecks(checks)
+	outcomes := runStaticChecks(checks)
+	status, msg := reduceStaticOutcomes(outcomes)
+	return status, msg, staticTierResult(outcomes)
 }
 
 // goTestArgs returns the argv (after the "go" binary itself) that runs
@@ -911,40 +914,132 @@ func classifyUnverified(out string) (string, string) {
 	return verdictstatus.Unverified, strings.Join(reasons, "; ")
 }
 
-// composeStaticChecks runs the tier-0 check table in order and reduces
-// it to one tier status and one message. A check that errors ends the
-// tier at fail immediately, so a check reporting that it reached no
-// conclusion cannot mask a real failure. Otherwise the tier takes the
-// strongest status any classifier reported, by the same ranking the
-// verdict applies: fail outranks inconclusive, which outranks
-// unverified, which outranks pass. A check that reports nothing leaves
-// the tier at pass.
+// composeStaticChecks runs the tier-0 check table and reduces it to one
+// tier status and one message. See runStaticChecks and
+// reduceStaticOutcomes.
 func composeStaticChecks(checks []staticCheck) (string, string) {
+	return reduceStaticOutcomes(runStaticChecks(checks))
+}
+
+// staticOutcome is what one tier-0 check reported.
+type staticOutcome struct {
+	name     string
+	out      string
+	err      error
+	duration time.Duration
+	// status and detail are the classifier's normalized report. They
+	// are empty when the check errored or carries no classifier.
+	status string
+	detail string
+}
+
+// staticCheckConcurrency bounds how many tier-0 checks run at once.
+// Several checks (go vet, golangci-lint, and the tier-0 Go tests) are
+// parallel themselves, so running every check at once oversubscribes the
+// host without finishing sooner.
+var staticCheckConcurrency = max(2, runtime.NumCPU()/2)
+
+// runStaticChecks runs every check concurrently, bounded by
+// staticCheckConcurrency, and returns the outcomes in table order so the
+// tier message does not depend on which check finished first.
+func runStaticChecks(checks []staticCheck) []staticOutcome {
+	outcomes := make([]staticOutcome, len(checks))
+	sem := make(chan struct{}, staticCheckConcurrency)
+	var wg sync.WaitGroup
+	for i, c := range checks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			outcomes[i] = runStaticCheck(c)
+		}()
+	}
+	wg.Wait()
+	return outcomes
+}
+
+// runStaticCheck runs one check and applies its classifier when the
+// check did not error.
+func runStaticCheck(c staticCheck) staticOutcome {
+	start := time.Now()
+	out, err := c.run()
+	o := staticOutcome{name: c.name, out: out, err: err, duration: time.Since(start)}
+	if err == nil && c.classify != nil {
+		o.status, o.detail = normalizeCheckStatus(c.classify(out))
+	}
+	return o
+}
+
+// reduceStaticOutcomes reduces the outcomes to one tier status and one
+// message. Any check that errored makes the tier fail, and the message
+// names every such check with its output, so a run reports all of its
+// failures at once. Otherwise the tier takes the strongest status any
+// classifier reported, by the same ranking the verdict applies: fail
+// outranks inconclusive, which outranks unverified, which outranks pass.
+// A check that reports nothing leaves the tier at pass.
+func reduceStaticOutcomes(outcomes []staticOutcome) (string, string) {
+	var failed, notes []string
 	status := verdictstatus.Pass
-	var notes []string
-	for _, c := range checks {
-		out, err := c.run()
-		if err != nil {
-			return verdictstatus.Fail, fmt.Sprintf("%s failed:\n%s", c.name, out)
-		}
-		if c.classify == nil {
+	for _, o := range outcomes {
+		if o.err != nil {
+			failed = append(failed, fmt.Sprintf("%s failed:\n%s", o.name, o.out))
 			continue
 		}
-		checkStatus, detail := c.classify(out)
-		checkStatus, detail = normalizeCheckStatus(checkStatus, detail)
-		if checkStatus == verdictstatus.Pass {
+		if o.status == "" || o.status == verdictstatus.Pass {
 			continue
 		}
-		if tierStatusRank(checkStatus) > tierStatusRank(status) {
-			status = checkStatus
+		if tierStatusRank(o.status) > tierStatusRank(status) {
+			status = o.status
 		}
-		note := fmt.Sprintf("%s reported %s", c.name, checkStatus)
-		if detail != "" {
-			note += ": " + detail
+		note := fmt.Sprintf("%s reported %s", o.name, o.status)
+		if o.detail != "" {
+			note += ": " + o.detail
 		}
 		notes = append(notes, note)
 	}
+	if len(failed) > 0 {
+		return verdictstatus.Fail, strings.Join(append(failed, notes...), "\n")
+	}
 	return status, strings.Join(notes, "\n")
+}
+
+// staticTierResult converts the outcomes into the per-check counts and
+// failure entries the verdict records: one failure entry per check that
+// errored or whose classifier reported fail.
+func staticTierResult(outcomes []staticOutcome) *tierResult {
+	r := &tierResult{Total: len(outcomes)}
+	for _, o := range outcomes {
+		if o.err == nil && o.status != verdictstatus.Fail {
+			r.Passed++
+			continue
+		}
+		r.Failed++
+		msg := o.detail
+		if o.err != nil {
+			msg = o.err.Error()
+		}
+		r.Failures = append(r.Failures, failureEntry{
+			Test:       o.name,
+			Error:      msg,
+			DurationMS: o.duration.Milliseconds(),
+			StdoutTail: tailLines(o.out, staticFailureTailLines),
+		})
+	}
+	return r
+}
+
+// staticFailureTailLines is how many trailing lines of a failed check's
+// output its failure entry keeps.
+const staticFailureTailLines = 60
+
+// tailLines returns the last n lines of s.
+func tailLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // normalizeCheckStatus maps a classifier's return value onto the tier

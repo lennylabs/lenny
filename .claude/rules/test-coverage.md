@@ -38,9 +38,9 @@ The suite runs in thirteen stages (`lenny-test --tier <name>`; `--max-tier <name
 | 11 | documentation | doc and runbook consistency (alert-to-runbook resolution, examples) |
 | 12 | load and SLO (cloud) | sustained cloud-scale load |
 
-## Which tiers a change must touch
+## Which tiers a change writes tests for
 
-Always run tier 0 and tier 1 on every touched package and its dependents. Add every higher tier whose surface the change touches:
+A change writes tests for every tier whose surface it touches. This list says which tiers' tests a change writes; which tiers run, and what must pass before a merge, is under "Gates" below.
 
 - Pure function, type, or in-process logic: tier 1.
 - Controller, reconciler, or anything reading or writing the kube-apiserver: tier 2 (envtest).
@@ -55,15 +55,36 @@ Always run tier 0 and tier 1 on every touched package and its dependents. Add ev
 
 A change usually touches several of these. Implement the tests for each tier the change reaches, not only the lowest one.
 
+## Gates
+
+The merge, area, and release gates state which tiers run and what must be green. They replace the tier list above as the statement of what runs before a merge.
+
+| Gate | When | Tiers | Must be green to |
+|:--|:--|:--|:--|
+| Merge | Every branch, on its head commit, before it merges | 0; 1 on the changed packages and their importers; 2 to 4 as `--changed` selects against `main`; the general documentation gates of 11 | Merge into `main` |
+| Area | Each milestone exit from M3 on | 5, 8 core, 9, 10, and 11 for the area, plus the area's journeys | Close the milestone |
+| Release | Before a release, and weekly on `main` | 6, 7, 12, 8 in full, and all journeys | Tag a release |
+
+`lenny-test gate` runs the merge gate in one canonical environment, the Linux container it builds from `tests/gate/Dockerfile`, and writes `tests/results/gate-<run>.json` (TESTING.md, "Merge gate"). Only a run in that container yields a merge verdict. `lenny-test gate --here` runs the tiers in the current environment, and outside the gate image (when `LENNY_GATE_IMAGE` is not set, or does not name the image that `tests/gate/Dockerfile` at the commit defines) its verdict is `UNVERIFIED` at best and its exit code is non-zero, with the reason recorded under `gate.unverified`. A run on a tree with uncommitted changes is `UNVERIFIED` at best in the same way. Until the area and release gates have their own commands, run their tiers with `lenny-test --tier <name>`.
+
+The merge policy:
+
+1. A branch merges only when the merge-gate verdict for its head commit is `PASS`. The verdict's `trigger.git_revision` is the branch head, and its `gate.dirty` is false. A verdict of `FAIL`, `INCONCLUSIVE`, or `UNVERIFIED` blocks the merge. `UNVERIFIED` means a tier the gate selected did not run, which the verdict names under `gate.not_run`, or that the run cannot stand for the commit, which it explains under `gate.unverified`. The step's digest records the verdict's run identifier. A commit after the verdict needs a new verdict, except a commit that touches only the records `.claude/rules/git-workflow.md` names.
+2. `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges.
+3. A merge-gate failure is never recorded as pre-existing. Recording a failure that also occurs on `main` as pre-existing applies only to tiers outside the merge gate.
+4. Only a flaky test enters quarantine: a test that fails and passes on the same commit. A deterministic failure on `main` does not enter quarantine; it is fixed or reverted under rule 2. A quarantined test gets an entry in `tests/flake-budget.yaml` that names its owner and its reason, and its skip carries a reason in the `quarantined:` category. The quarantine has a cap, the `cap` field of that file. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
+
 ## Coverage target
 
-New code carries at least 80% line coverage, measured by `go-cover` and enforced by CI (the coverage policy in TESTING.md). The target is on new code; refactoring that does not change behavior is not penalized. Before declaring a change done, check the coverage of the lines you changed:
+New code carries at least 80% line coverage, measured by `go-cover` (the coverage policy in TESTING.md). The floor applies to new code; refactoring that does not change behavior is not held to it. A reviewer may waive the floor for wiring code, which connects components and decides nothing itself (flag parsing, constructor plumbing, and route registration, for example). The waiver names the code it waives, and the step's digest records it. Before declaring a change done, check the coverage of the lines you changed:
 
 ```
 lenny-test coverage --diff <base-ref>
 ```
 
-Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary, and spec-named-failure paths, not the happy path alone. A high coverage number over happy-path-only tests does not satisfy this rule.
+Coverage is a floor. Cover the empty, error, concurrent, boundary, and spec-named-failure paths as well as the happy path. A high coverage number over happy-path-only tests does not satisfy this rule.
+
+The release gate's weekly run on `main` includes a mutation run (`lenny-test mutation --pkg <path>`) over the critical packages: `pkg/sandboxclaim` (claims), `pkg/admission`, and `pkg/credential`. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests.
 
 ## Test conventions
 
@@ -74,6 +95,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 ## How to run
 
 - `lenny-test --changed --max-tier <tier>` runs every tier up to `<tier>` for the packages your diff touches; start here.
+- `lenny-test gate` runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.
 - `lenny-test --tier <name>` runs one tier; `--pkg <path>` scopes to a package.
 - Bring infrastructure up with `lenny-test infra up --profile compose|kind|all` before integration and higher tiers; see the AVAILABLE INFRASTRUCTURE the build loops document for standing clusters and stacks.
 - Check the environment before running any tier above 1, and read a failure there as an environment failure until you have ruled that out. The checks are in "Environment preflight" below.
@@ -83,7 +105,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 
 1. Identify every tier the change reaches from the table above before writing code.
 2. Write the tests for those tiers alongside the code, covering the non-happy paths.
-3. Run tier 0 and tier 1 plus each reached tier; fix the code until they pass.
+3. Iterate with `lenny-test --changed --max-tier <tier>` for each reached tier, then commit and run `lenny-test gate`; fix the code until the verdict for the head commit is `PASS`.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to tier-2-and-up tests.
 
@@ -137,9 +159,11 @@ orphaned; reap them with `pkill -f kubebuilder-envtest` before starting, and aga
 package.
 
 **5. The failure you are looking at is yours.** Before treating a tier failure above 1 as a defect in the
-change, confirm the same tier fails on a clean checkout of the merge base. A failure that predates the
-change is a pre-existing condition to record, not work for this step, and rebuilding a landed step to make
-somebody else's broken fixture pass is how a step enters a loop it cannot leave.
+change, confirm the same tier fails on a clean checkout of the merge base. For a tier outside the merge
+gate, a failure that predates the change is a pre-existing condition to record, not work for this step, and
+rebuilding a landed step to make somebody else's broken fixture pass is how a step enters a loop it cannot
+leave. For a tier inside the merge gate, the failure is on `main`, and it is fixed or reverted on `main`
+before other branches merge (see "Gates").
 
 **6. A test that creates cluster-scoped state sweeps it at START, not only at exit.** `t.Cleanup` does not
 run when the process is killed, and between the harness watchdog, the wall-clock timeout around a tier, and
@@ -194,9 +218,11 @@ image builds leave behind; `docker system df` shows it, and `docker builder prun
 the unused part without touching an image a cluster runs.
 
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
-and skip the affected case with a reason, in the register at `tests/registers/skip-reasons.yaml`. A test
-skipped with a recorded reason is honest; one that fails for an environmental reason teaches everyone to
-ignore red.
+and skip the affected case with a reason that opens with one of the categories in
+`cmd/lenny-test/skipreason`, such as `blocked:`. The tier-0 skip-reason classifier refuses any other
+reason; `tests/registers/skip-reasons.yaml` is the baseline of older skips that predate the categories, and
+it only shrinks. A test skipped with a recorded reason is honest; one that fails for an environmental reason
+teaches everyone to ignore red.
 
 ## Escape hatches
 

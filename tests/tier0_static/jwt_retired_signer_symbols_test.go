@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -96,7 +97,7 @@ func retiredSymbolHits(t *testing.T, dir string) []string {
 		}
 		for i, line := range strings.Split(string(src), "\n") {
 			if retiredJWTSignerSymbols.MatchString(line) {
-				hits = append(hits, path+":"+itoa(i+1))
+				hits = append(hits, path+":"+strconv.Itoa(i+1))
 			}
 		}
 		return nil

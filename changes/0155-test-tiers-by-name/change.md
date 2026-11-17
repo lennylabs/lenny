@@ -6,7 +6,7 @@ Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), mi
 
 The test tiers are numbered 0 to 12, and tier 7 is split into 7a and 7b, so a reader has to map numbers to meanings. `lenny-test` already selects tiers by name (`static`, `unit`, `component`, `contract`, `integration`, `e2e_kind`, `e2e_cloud`, `load_local`, `load_kind`, `chaos`, `security`, `conformance`, `docs`, and `load_cloud`), and the directories and prose use the numbers.
 
-The static tier is also heavy and brittle under the specification restructure. 190 of its 322 tests check citations, naming, comment wording, or the maps, and one test takes 35 of its 56 seconds. Sixty documentation-tier files match prose inside numbered specification sections, so they break as each area migrates, and `tests/tier1_unit/` holds 13 files of unit tests away from the code they test ([test infrastructure review](../0154-merge-gate/evidence/test-infrastructure-review.md), "Question 1", "Keep", "Cut", and "Merge").
+The static tier is also heavy and brittle under the specification restructure. 190 of its 322 tests check citations, naming, comment wording, or the maps, and one test takes 35 of its 56 seconds. Sixty documentation-tier files match prose inside numbered specification sections, so they break as each area migrates, and `tests/tier1_unit/` holds 13 files of unit tests away from the code they test ([test infrastructure review](../archive/2026-11-17-0154-merge-gate/evidence/test-infrastructure-review.md), "Question 1", "Keep", "Cut", and "Merge").
 
 ## Scope
 

@@ -2,17 +2,30 @@
 
 # Quarantined tests registry per TESTING.md §21.4.
 #
-# A test enters this list when `lenny-test stress --test <name> --runs 50`
-# observes a non-deterministic failure. The author has one week from the
-# `quarantined_at` date to land a fix or remove the test; after that,
-# nightly invocations of phase-launch-gate fail.
+# Only a flaky test enters this list: one for which `lenny-test stress
+# --test <name> --runs 50` observes a non-deterministic failure on one
+# commit. A deterministic failure on `main` never enters it; it is fixed
+# or reverted before any other branch merges (.claude/rules/
+# test-coverage.md, "Gates", rules 2 and 4). The author has one week from the `quarantined_at` date to land a fix or remove the
+# test; after that, nightly invocations of phase-launch-gate fail.
 #
-# CI's PR gate refuses to merge a PR that adds a new entry without an
-# associated issue link and an ETA, per TESTING.md §21.4. The validator that enforces
-# this lives in scripts/check-flake-budget.sh and runs in the Tier 0 static
-# gate.
+# The quarantine is capped. `cap` is the largest number of entries the
+# list may hold, and `lenny-test validate-maps` fails while the list holds
+# more. A test enters quarantine only when it names its owner (the person
+# who fixes or deletes it) and its reason (what the failure is and why it
+# is not a defect in the code under test). When the list is at the cap, a
+# quarantined test is fixed or deleted before another enters. A
+# quarantined test also skips with a reason in the `quarantined:`
+# category, so the skip-reason classifier admits it.
+#
+# Every entry also carries an associated issue link and an ETA, per
+# TESTING.md §21.4. The validator that enforces this file is
+# validateFlakeBudgetYAML in cmd/lenny-test, which `lenny-test
+# validate-maps` runs in the Tier 0 static gate.
 
 version: 1
+
+cap: 5
 
 quarantined: []
 
@@ -20,7 +33,8 @@ quarantined: []
 #
 #   - test: TestName
 #     package: pkg/path/...
-#     owner: github-handle
+#     owner: github-handle                 # required
+#     reason: What fails and why it is not the change's defect.  # required
 #     quarantined_at: YYYY-MM-DD
 #     issue: https://github.com/lennylabs/lenny/issues/N
 #     eta: YYYY-MM-DD

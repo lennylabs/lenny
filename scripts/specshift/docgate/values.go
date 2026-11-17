@@ -77,7 +77,8 @@ func compareField(r *Result, p *Page, s Span, b *defs.Block, field, quoted strin
 	if !ok {
 		if strings.TrimSpace(quoted) != "" {
 			r.Undecided = append(r.Undecided, Problem{Path: p.Path, Line: s.Line, Message: fmt.Sprintf(
-				"the %s quoted for `%s` (%s) is not a single value, so it is not compared with the definition block's %s", field, b.Name, strings.TrimSpace(quoted), b.Text(field))})
+				"the %s quoted for `%s` (%s) is not a single value, so it is not compared with the definition block's %s", field, b.Name, strings.TrimSpace(quoted), b.Text(field),
+			)})
 		}
 		return
 	}
@@ -90,10 +91,12 @@ func compareField(r *Result, p *Page, s Span, b *defs.Block, field, quoted strin
 	switch v {
 	case mismatch:
 		r.Problems = append(r.Problems, Problem{Path: p.Path, Line: s.Line, Message: fmt.Sprintf(
-			"the %s quoted for `%s` is %q, and the definition block gives %q", field, b.Name, value, b.Text(field))})
+			"the %s quoted for `%s` is %q, and the definition block gives %q", field, b.Name, value, b.Text(field),
+		)})
 	case undecided:
 		r.Undecided = append(r.Undecided, Problem{Path: p.Path, Line: s.Line, Message: fmt.Sprintf(
-			"the %s quoted for `%s` is %q, and the definition block gives %q; the gate cannot tell whether they agree", field, b.Name, value, b.Text(field))})
+			"the %s quoted for `%s` is %q, and the definition block gives %q; the gate cannot tell whether they agree", field, b.Name, value, b.Text(field),
+		)})
 	}
 }
 

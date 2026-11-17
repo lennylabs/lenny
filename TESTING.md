@@ -380,6 +380,11 @@ lenny-test --changed --all                        # Unit tier runs every package
 lenny-test --spec 4.2,12.3                        # Spec sections
 lenny-test --pkg pkg/store/session                # Explicit package
 
+# Merge gate (see "Merge gate" below)
+lenny-test gate                                   # Run the merge gate in the gate container
+lenny-test gate --base <ref>                      # Select the changed tiers against <ref> (default: main)
+lenny-test gate --here                            # Run the gate's tiers here (UNVERIFIED outside the gate image)
+
 # Discovery and validation
 lenny-test --dry-run --changed                    # Show what would run
 lenny-test list --tier component                  # List discoverable tests
@@ -458,6 +463,51 @@ The harness ships a long-lived helper, `lenny-test-cached`, that holds testconta
 The daemon exposes a Unix socket at `${XDG_RUNTIME_DIR}/lenny-test/cached.sock`. The harness probes the socket before starting; if absent, it spawns the daemon and waits for readiness.
 
 The daemon is opt-in via `--cached`. CI defaults to fresh containers per run for isolation. Developers default to cached for speed.
+
+### Merge gate
+
+The merge gate is the set of tiers a branch passes before it merges into `main`. `lenny-test gate` runs it and writes a verdict for the commit it ran on. The gate runs these tiers:
+
+- Tier 0 (static), in full.
+- Tier 1 (unit) on the packages the branch changes and their in-module importers, to the depth `--rdeps-depth` sets (default 1).
+- Tiers 2 (component), 3 (contract), and 4 (integration) when the `--changed` selection against the merge base of `--base` (default `main`) and `HEAD` selects them. The selection reads committed changes only, so commit the work before running the gate.
+- The general documentation gates of tier 11, which check the published documentation as a whole: links, code blocks, runbooks, alert-to-runbook resolution, the ADR catalog, the quickstart, the embedded manifests, and the harness inventories. The list is `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`. The rest of tier 11 runs at the area gate.
+
+Every tier runs whatever an earlier tier reports, so one run reports every failure.
+
+**Environment.** The gate runs in one canonical Linux environment: a container built from `tests/gate/Dockerfile`. The image pins Go at the version `go.mod` names, Python, Helm, `buf`, `controller-gen`, `golangci-lint`, `gofumpt`, `goimports`, the protobuf plugins, the envtest binaries for Kubernetes 1.31.0, the Docker CLI, `jq`, git, and a C toolchain, at the versions the workflows and `scripts/setup-dev.sh` pin. The base images (`golang`, `python`, and `docker` for the CLI) are pinned by the digest of their multi-arch index, and every downloaded binary is checked against the checksum its publisher releases, including the SHA-512 that controller-tools publishes for envtest. The image tag is a digest of the Dockerfile, so a changed pin builds a new image on the next run. On the host, `lenny-test gate` does the following:
+
+1. It builds the image when no image with that tag exists, and records the ID of the image it built under the user's cache directory (`lenny-test/gate-images`). Before it reuses an image it checks that the tag still names the recorded ID, and it rebuilds when it does not. `--rebuild` builds the image again. The container runs the image by that ID.
+2. It mounts the worktree at its host path. For a linked worktree, it also mounts the main checkout's git directory read-only at its host path, so git works inside the container.
+3. It mounts a fixture root at its host path and points `TMPDIR` at it, so a temporary directory that a test bind-mounts into a testcontainer is a path the host daemon resolves. The fixture root is a directory per worktree under the user's cache directory (`lenny-test/gate-tmp`). It lies outside the worktree so that the static checks that walk the tree do not read fixtures other checks are writing. The container empties it before each run.
+4. It keeps the Go module cache and the build cache in the named volumes `lenny-gate-gomod` and `lenny-gate-gocache`, so only the first run downloads and compiles from cold. The container runs `go mod verify` against `go.sum` before it compiles anything from the module cache.
+5. It gives the container the host Docker socket, so the testcontainers of tiers 2 and 4 start on the host daemon and the tests reach them at `host.docker.internal`. `--no-docker-socket` withholds the socket.
+6. It builds `lenny-test` from the mounted tree inside the container and runs `lenny-test gate --here`, which runs the tiers in the current environment.
+
+`lenny-test gate` takes flags only and refuses a positional argument with a usage error.
+
+**Runs that cannot stand for the commit.** The verdict is `UNVERIFIED` at best, with a non-zero exit code, in two cases, and the `gate.unverified` list records the reason for each:
+
+- The run is outside the gate image. `lenny-test gate --here` checks that `LENNY_GATE_IMAGE` names the image `tests/gate/Dockerfile` defines at the commit, and that the image's marker file `/etc/lenny-gate/image` names the same tag. A `--here` run on a host, including a Linux host that has the toolchain, fails that check. It runs every tier and reports their results, which helps while iterating, but it does not yield a merge verdict.
+- The tree has uncommitted changes, so the tiers did not run on the commit.
+
+A `FAIL` or `INCONCLUSIVE` verdict stays as it is in either case.
+
+**Isolation.** The gate container is not an isolation boundary. It mounts the host Docker socket and runs as root, so a test in it can do anything it could do on the host, including starting a privileged container. Run the gate only on code you would run on the host.
+
+**Tiers the gate cannot run.** A tier the gate selects but cannot run in its environment, such as tier 2 without a reachable Docker daemon or without the envtest binaries, is recorded with status `unverified` and a reason that opens with `not run:`, and it is listed under `gate.not_run`. A selected tier that reports `skipped` is recorded the same way. Either one keeps the verdict at `UNVERIFIED`, so the gate is not green.
+
+**Verdict.** The gate writes `tests/results/gate-<run>.json` and `tests/results/gate-latest.json` in the format of §7, and appends the run to `tests/results/history.jsonl`. `trigger.git_revision` is the commit the gate ran on, and every tier carries its result and its failures. The `gate` object adds the base ref, the merge base, whether the tree had uncommitted changes (`dirty`), the environment (the image tag and ID, or the host), the tiers not run (`not_run`), and the reasons the verdict cannot stand for the commit (`unverified`). The exit code is 0 for `PASS`, 1 for `FAIL`, 2 for `INCONCLUSIVE`, and 3 for `UNVERIFIED`.
+
+**Merge policy.** A branch merges into `main` only on a `PASS` verdict for its head commit, and `main` stays green: a merge-gate failure on `main` is fixed or reverted before any other branch merges. `.claude/rules/git-workflow.md` and `.claude/rules/test-coverage.md` ("Gates") state the policy, including the area and release gates that run the tiers outside the merge gate.
+
+**Running the gate on macOS.** The runtime supervisor checks of tier 0 build a Linux binary and skip on any other host, and a cgo link step depends on the host's C toolchain and SDK. On macOS the gate therefore runs in the container:
+
+1. Install Docker Desktop, or another runtime that serves the Docker socket at `/var/run/docker.sock` to containers.
+2. From the worktree, run `go run ./cmd/lenny-test gate`, or `lenny-test gate` when the harness is installed.
+3. Read the summary the command prints, and the verdict file it names.
+
+The first run builds the image and fills the caches, which takes several minutes. Later runs reuse both.
 
 ---
 
@@ -820,7 +870,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Scope.** Anything that does not need a running process or container.
 
-**Checks.** The harness composes the check table in `cmd/lenny-test` and runs it in this order. A tier-11 test reconciles this list against that table, so a check added to or removed from the harness must be reflected here.
+**Checks.** The harness composes the check table in `cmd/lenny-test` and lists it here in table order. The checks are independent, so the harness runs them concurrently, at most half the host's CPU count at a time, and runs every check whatever the others report. The tier message names every check that failed, and the verdict carries one failure entry per failed check. A tier-11 test reconciles this list against that table, so a check added to or removed from the harness must be reflected here.
 
 1. `go vet ./...`
 2. `go vet -tags=contract ./tests/tier3_contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
@@ -2280,7 +2330,7 @@ Each fuzz target runs with a small corpus per PR and a longer corpus nightly. Cr
 
 ### 19.3 Mutation
 
-`gremlins` runs nightly on the unit tier. The mutation report identifies surviving mutants in critical packages (`pkg/store/...`, `pkg/policy/...`, `pkg/audit/...`). Surviving mutants are filed as issues to the package owner; resolution may be a stronger test or a justified suppression.
+`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/sandboxclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
 
 ---
 
@@ -2435,9 +2485,9 @@ Cross-cutting patterns live under `.github/workflows/reusable/` and `.github/act
 | `actions/post-verdict-comment/` | Composite action that posts or updates the PR verdict comment |
 | `actions/upload-verdict/` | Uploads `tests/results/latest.json` and `latest.junit.xml` as artifacts |
 
-### 20.8 PR pipeline (every push)
+### 20.8 PR pipeline (disabled)
 
-Workflow file: `.github/workflows/pr.yml`. Triggered on `pull_request` and `push` to feature branches. Target wall-clock: under 15 minutes.
+Workflow file: `.github/workflows/pr.yml`. Its only trigger is `workflow_dispatch`, so it runs only when started by hand, and `if: false` on its first job disables it as well. Target wall-clock: under 15 minutes. The merge gate of §6 ("Merge gate") decides merges until pull requests replace direct merges. The change that brings pull requests back restores the `pull_request` and `push` triggers and repairs the workflow to run `lenny-test gate --here` in the gate container. The steps below are the workflow as written before it was disabled.
 
 1. `lenny-test --group pr-fast` (changed-only, max-tier component). Fails fast on common bugs.
 2. `lenny-test --tier static`.
@@ -2597,7 +2647,7 @@ A check that completes without reaching a conclusion (for example, a tool the ch
 
 ### 21.4 Tracking
 
-`tests/flake-budget.yaml` lists currently quarantined tests and the owner. CI fails to merge a PR that adds a quarantined test without an associated issue and ETA.
+`tests/flake-budget.yaml` lists the quarantined tests. Each entry names the test's owner and the reason for the quarantine, with an associated issue and ETA, and the file's `cap` field bounds how many tests the quarantine holds. `lenny-test validate-maps`, which tier 0 runs, fails on an entry without an owner, a reason, an issue, or a current ETA, and on a quarantine larger than the cap. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
 
 ---
 
@@ -2607,9 +2657,9 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 ### 22.1 Coverage
 
-- Unit-tier coverage on new code: 80%, enforced per PR.
+- Unit-tier coverage on new code: 80%, a floor a reviewer may waive for wiring code, naming the code waived (`.claude/rules/test-coverage.md`).
 - Repository coverage: tracked but not gated. Refactoring is not penalized.
-- Mutation-survival rate on critical packages: tracked nightly; surviving mutants in `pkg/audit/`, `pkg/store/`, `pkg/policy/` are filed as issues.
+- Mutation score on the critical packages `pkg/sandboxclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
 
 ### 22.2 Spec coverage
 
