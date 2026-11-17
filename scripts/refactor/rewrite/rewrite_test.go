@@ -691,11 +691,10 @@ func TestParseManifest_RejectsMalformedLine(t *testing.T) {
 	}
 }
 
-// The committed manifest must parse cleanly and contain the proposal's §1.3
-// exclusion
-// moves at their re-anchored destinations. This pins the driver to the actual
-// manifest the C1 step authored.
-func TestParseManifest_CommittedManifestExclusions(t *testing.T) {
+// The committed manifest must parse cleanly, every move must name the step
+// of change 0117 that applies it, and the moves that the change's design
+// names must sit at their destinations.
+func TestParseManifest_CommittedManifestNamesAStepPerMove(t *testing.T) {
 	data := readCommittedManifest(t)
 	moves, err := ParseManifest(strings.NewReader(data))
 	if err != nil {
@@ -704,19 +703,43 @@ func TestParseManifest_CommittedManifestExclusions(t *testing.T) {
 	if len(moves) == 0 {
 		t.Fatal("committed manifest parsed to zero moves")
 	}
-	byOld := make(map[string]string, len(moves))
+	byOld := make(map[string]Move, len(moves))
 	for _, m := range moves {
-		byOld[m.Old] = m.New
-	}
-	want := map[string]string{
-		"github.com/lennylabs/lenny/pkg/gateway/breakerstore":     "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore",
-		"github.com/lennylabs/lenny/pkg/gateway/interceptorstore": "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore",
-		"github.com/lennylabs/lenny/pkg/gateway/policy":           "github.com/lennylabs/lenny/pkg/gateway/policy/policy",
-		"github.com/lennylabs/lenny/pkg/gateway/environmentstore": "github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore",
-	}
-	for old, newPath := range want {
-		if got := byOld[old]; got != newPath {
-			t.Errorf("manifest move for %s = %q, want %q", old, got, newPath)
+		if !strings.HasPrefix(m.Step, "0117.S") {
+			t.Errorf("manifest move %s names step %q, want a step of change 0117", m.Old, m.Step)
 		}
+		byOld[m.Old] = m
+	}
+	const mod = "github.com/lennylabs/lenny/"
+	want := map[string]Move{
+		mod + "pkg/gateway/llmproxy/llmproxy":     {New: mod + "pkg/gateway/meteringproxy/llmproxy", Step: "0117.S3"},
+		mod + "pkg/gateway/core/subsystem":        {New: mod + "pkg/gateway/seam/subsystem", Step: "0117.S4"},
+		mod + "pkg/gateway/session/sessionevents": {New: mod + "pkg/gateway/streamproxy/sessionevents", Step: "0117.S6"},
+		mod + "pkg/gateway/sessionserver":         {New: mod + "pkg/gateway/core/session", Step: "0117.S11"},
+	}
+	for old, w := range want {
+		got := byOld[old]
+		if got.New != w.New || got.Step != w.Step {
+			t.Errorf("manifest move for %s = %q at %q, want %q at %q", old, got.New, got.Step, w.New, w.Step)
+		}
+	}
+}
+
+func TestParseManifest_ReadsTheOptionalStepField(t *testing.T) {
+	in := "github.com/lennylabs/lenny/pkg/gateway/a\tgithub.com/lennylabs/lenny/pkg/gateway/b\t0117.S3\n" +
+		"github.com/lennylabs/lenny/pkg/gateway/c\tgithub.com/lennylabs/lenny/pkg/gateway/d\n"
+	moves, err := ParseManifest(strings.NewReader(in))
+	if err != nil {
+		t.Fatalf("ParseManifest: %v", err)
+	}
+	steps := map[string]string{}
+	for _, m := range moves {
+		steps[RepoRel(m.Old)] = m.Step
+	}
+	if steps["pkg/gateway/a"] != "0117.S3" || steps["pkg/gateway/c"] != "" {
+		t.Errorf("steps = %v", steps)
+	}
+	if _, err := ParseManifest(strings.NewReader("a\tb\tc\td\n")); err == nil {
+		t.Error("a line with four fields parsed")
 	}
 }

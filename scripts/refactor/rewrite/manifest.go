@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-// ParseManifest reads the C1 move manifest (scripts/refactor/manifest): one
-// move per non-comment, non-blank line, two tab-separated fields
-// (<old import path>\t<new import path>). Lines beginning with '#' and blank
-// lines are skipped. It returns the moves in longest-old-path-first order, so
+// ParseManifest reads the move manifest (scripts/refactor/manifest): one
+// move per non-comment, non-blank line, two or three tab-separated fields
+// (<old import path>\t<new import path>[\t<step>]). Lines beginning with '#'
+// and blank lines are skipped. It returns the moves in longest-old-path-first order, so
 // the driver and the audit process a strict-prefix sibling pair (for example
 // pkg/gateway/mcptools before pkg/gateway/mcp) with the longer path first; the
 // boundary-anchored rewrites are order-independent, but the deterministic order
@@ -38,10 +38,14 @@ func ParseManifest(r io.Reader) ([]Move, error) {
 				cleaned = append(cleaned, f)
 			}
 		}
-		if len(cleaned) != 2 {
-			return nil, fmt.Errorf("manifest line %d: expected <old>\\t<new>, got %q", line, raw)
+		if len(cleaned) != 2 && len(cleaned) != 3 {
+			return nil, fmt.Errorf("manifest line %d: expected <old>\\t<new>[\\t<step>], got %q", line, raw)
 		}
-		moves = append(moves, Move{Old: cleaned[0], New: cleaned[1]})
+		m := Move{Old: cleaned[0], New: cleaned[1]}
+		if len(cleaned) == 3 {
+			m.Step = cleaned[2]
+		}
+		moves = append(moves, m)
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-// Command refactor is the committed, reproducible driver for the pkg/gateway
-// C3 regroup (proposal 0020, Part B §2, §4 C3/C4). It consumes the C1 move
+// Command refactor is the committed, reproducible move driver for the
+// gateway package layout of change 0117. It was written for the pkg/gateway
+// regroup of proposal 0020 (Part B §2, §4 C3/C4), and change 0117 replaced
+// its manifest with the moves of its own steps. It consumes the move
 // manifest (scripts/refactor/manifest) and, per move:
 //
 //  1. git mv the directory so rename detection preserves history;
@@ -10,8 +12,12 @@
 //     split path-segment form) across every *.go file, using the
 //     boundary-anchored primitives in the rewrite subpackage so a moved path
 //     that is a strict prefix of a sibling does not corrupt the sibling;
-//  3. rewrite the same references in tests/spec-map.json and
-//     tests/change-graph.json on a path-token boundary;
+//  3. rewrite the same references in the maps and registers keyed by package
+//     path (pathCarriers: tests/spec-map.json, tests/change-graph.json,
+//     tests/claim-map.json, the registers under tests/registers that name
+//     package paths, among them the gateway layout register, and the pending
+//     lists beside the maps) on a path-token boundary, skipping a carrier
+//     that no longer exists;
 //  4. gofmt -w and goimports -w the touched Go files to regroup imports;
 //  5. gate on go build ./..., go vet ./..., lenny-test validate-maps, and
 //     go list ./... (zero import cycles), aborting on any failure;
@@ -38,6 +44,8 @@
 //	  -manifest <path>   move manifest (default scripts/refactor/manifest)
 //	  -root <path>       repo root (default: the git toplevel)
 //	  -only <old-path>   apply only the move whose old import path equals this
+//	  -step <id>         apply only the moves the manifest assigns to this step,
+//	                     such as 0117.S3 (the per-step landing change 0117 uses)
 //	  -group <name>      apply only the moves whose destination group equals this
 //	                     (the per-group landing the proposal partitions by: the
 //	                     store cluster, the session cluster, and so on, each
@@ -51,11 +59,12 @@
 // in-flight branch reconciles by merging the pre-move base and re-running this
 // driver rather than hand-resolving import conflicts (proposal §2).
 //
-// spec: §4.1 (the gateway is one component; the regroup preserves the subsystem
-// seams and changes only import paths and the path references that name them).
+// The driver is contributor tooling that implements no platform behavior, so
+// it carries no specification annotation.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -80,6 +89,7 @@ type config struct {
 	manifest  string
 	root      string
 	only      string
+	step      string
 	group     string
 	dryRun    bool
 	skipGates bool
@@ -91,6 +101,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.manifest, "manifest", "scripts/refactor/manifest", "move manifest path")
 	flag.StringVar(&cfg.root, "root", "", "repo root (default: git toplevel)")
 	flag.StringVar(&cfg.only, "only", "", "apply only the move whose old import path equals this")
+	flag.StringVar(&cfg.step, "step", "", "apply only the moves the manifest assigns to this step")
 	flag.StringVar(&cfg.group, "group", "", "apply only the moves whose destination group equals this")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "plan without touching the tree")
 	flag.BoolVar(&cfg.skipGates, "skip-gates", false, "skip the go build/vet/validate-maps/go list gates")
@@ -123,6 +134,12 @@ func run(cfg config) error {
 			return fmt.Errorf("no manifest move matches -only %q", cfg.only)
 		}
 	}
+	if cfg.step != "" {
+		moves = filterMovesByStep(moves, cfg.step)
+		if len(moves) == 0 {
+			return fmt.Errorf("no manifest move names -step %q", cfg.step)
+		}
+	}
 	if cfg.group != "" {
 		moves = filterMovesByGroup(moves, cfg.group)
 		if len(moves) == 0 {
@@ -143,6 +160,18 @@ func filterMoves(moves []rewrite.Move, only string) []rewrite.Move {
 		}
 	}
 	return nil
+}
+
+// filterMovesByStep returns the moves the manifest assigns to step, so one
+// step of change 0117 applies exactly its own moves.
+func filterMovesByStep(moves []rewrite.Move, step string) []rewrite.Move {
+	var out []rewrite.Move
+	for _, m := range moves {
+		if m.Step == step {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // filterMovesByGroup returns the moves whose destination group equals group, so
@@ -437,7 +466,7 @@ func (d *driver) rewriteTree() error {
 	if err := d.rewriteGoFiles(); err != nil {
 		return err
 	}
-	return d.rewriteJSONMaps()
+	return d.rewritePathCarriers()
 }
 
 // rewriteGoFiles rewrites every *.go file under the repo root, skipping the
@@ -466,16 +495,41 @@ func (d *driver) rewriteGoFiles() error {
 	})
 }
 
-// rewriteJSONMaps rewrites the two committed JSON maps in place. This is the
+// pathCarriers are the files outside Go that key entries by package path:
+// the JSON test maps, and the registers and lists whose entries name a
+// package directory. A move rewrites each one that exists, so a carrier a
+// later change retires is skipped rather than failing the move.
+var pathCarriers = []string{
+	"tests/spec-map.json",
+	"tests/change-graph.json",
+	"tests/claim-map.json",
+	"tests/change-graph-pending.txt",
+	"tests/spec-map-pending.txt",
+	"tests/registers/change-graph-coverage.yaml",
+	"tests/registers/skip-reasons.yaml",
+	"tests/registers/residual-skip-reasons.yaml",
+	"tests/registers/spec-section-citations.yaml",
+	"tests/registers/identifier-senses.yaml",
+	"tests/registers/gateway-layout.yaml",
+}
+
+// rewritePathCarriers rewrites the package-path references in every carrier
+// that exists. The JSON maps take the quote-anchored token rewrite; the
+// registers and lists take the bare-token rewrite, because a YAML key or a
+// list line names a path without quotes. For the JSON maps this is also the
 // "regenerate the change-graph index" step: the maps are the index, and the
-// boundary-anchored token rewrite regenerates them, re-validated by the
-// validate-maps gate.
-func (d *driver) rewriteJSONMaps() error {
-	for _, rel := range []string{"tests/spec-map.json", "tests/change-graph.json"} {
+// validate-maps gate re-validates them.
+func (d *driver) rewritePathCarriers() error {
+	for _, rel := range pathCarriers {
 		path := filepath.Join(d.root, filepath.FromSlash(rel))
-		if err := d.rewriteFile(path, func(content string) string {
-			return rewrite.JSONTokens(content, d.moves)
-		}); err != nil {
+		if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		rewriteFn := func(content string) string { return rewrite.PathTokens(content, d.moves) }
+		if strings.HasSuffix(rel, ".json") {
+			rewriteFn = func(content string) string { return rewrite.JSONTokens(content, d.moves) }
+		}
+		if err := d.rewriteFile(path, rewriteFn); err != nil {
 			return fmt.Errorf("rewrite %s: %w", rel, err)
 		}
 	}

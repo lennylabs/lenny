@@ -23,10 +23,12 @@ import "strings"
 // Move is one (old import path -> new import path) manifest entry. The
 // paths are fully-qualified module import paths
 // (github.com/lennylabs/lenny/pkg/gateway/<old> ->
-// github.com/lennylabs/lenny/pkg/gateway/<group>/<pkg>).
+// github.com/lennylabs/lenny/pkg/gateway/<part>/<pkg>). Step names the step
+// of the change that applies the move, when the manifest gives one.
 type Move struct {
-	Old string
-	New string
+	Old  string
+	New  string
+	Step string
 }
 
 // modulePrefix is the import-path prefix every manifest path carries. The
