@@ -13,6 +13,8 @@ Lists the capabilities that let operators and DevOps agents observe, diagnose, a
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Alerting and SLOs](alerting-and-slos.md) | `ALERTSLO` | States the SLO targets, burn-rate alerting, the bundled alert set and its operator customization, and SLO export. |
@@ -21,6 +23,8 @@ Lists the capabilities that let operators and DevOps agents observe, diagnose, a
 | [Operational events](operational-events.md) | `OPSEV` | States which state changes emit operational events, buffering in the gateway, and delivery by stream, polling, and webhook. |
 | [Remediation and escalation](remediation-and-escalation.md) | `REMED` | States remediation locks, their consistency, stealing and long holds, the operations inventory, and escalation. |
 | [Runbooks](runbooks.md) | `RUNBOOK` | States the machine-readable runbook format and how runbooks are discovered from health results and alerts. |
+
+<!-- /generated:index -->
 
 ## Content today
 

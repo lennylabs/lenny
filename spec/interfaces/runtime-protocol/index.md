@@ -12,6 +12,8 @@ The runtime protocol between the adapter and a runtime: transports, capabilities
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Conformance](conformance.md) | `RTPCONF` | The conformance suite by capability, how it is packaged, and how failures are categorized. |
@@ -22,6 +24,8 @@ The runtime protocol between the adapter and a runtime: transports, capabilities
 | [Platform tools](platform-tools.md) | `RTPTOOL` | The platform tools a runtime calls, through frames or the reference MCP bridge, with schemas including the delegation tools and the task result. |
 | [Runtime ops](runtime-ops.md) | `RTPOPS` | The runtime-ops channel frames: quiesce, interrupt acknowledgement, and the remaining rotation frames. |
 | [Runtime SDKs](runtime-sdks.md) | `RTPSDK` | The runtime author SDKs: packages, what each adds to the protocol, and what each leaves to the runtime. |
+
+<!-- /generated:index -->
 
 ## Content today
 

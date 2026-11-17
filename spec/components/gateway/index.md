@@ -12,6 +12,8 @@ The gateway as a unit: the seam model and the isolation every seam has, the sess
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [API front](api-front.md) | `GWAPI` | The gateway's request pipeline as a part of every replica: middleware order, authentication, rate limiting, handler registration, and request scope. |
@@ -25,6 +27,8 @@ The gateway as a unit: the seam model and the isolation every seam has, the sess
 | [Session coordination](session-coordination.md) | `GWCOORD` | How gateway replicas coordinate a session: the coordination lease, handoff, hold state, stale replicas, and behavior when both stores fail. |
 | [Stream proxy](stream-proxy.md) | `GWSTREAM` | The stream proxy seam: session attachment, event relay, and reconnection for SSE readers. |
 | [Upload handler](upload-handler.md) | `GWUPLOAD` | The upload handler seam: upload proxying, validation, and staging. |
+
+<!-- /generated:index -->
 
 ## Content today
 

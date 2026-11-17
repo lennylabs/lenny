@@ -12,6 +12,8 @@ The agent pod as a unit: its containers in start order, volumes and size limits,
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Adapter](adapter.md) | `ADAPTER` | The adapter container: startup sequence, the slot registry, gateway and runtime connections, health checks, process settings, and metrics. |
@@ -19,6 +21,8 @@ The agent pod as a unit: its containers in start order, volumes and size limits,
 | [netagent](netagent.md) | `NETAGENT` | The netagent sidecar: the local egress endpoint, per-slot attribution, git on covered hosts, and per-slot credential files. |
 | [Runtime supervisor](runtime-supervisor.md) | `SUPV` | The slot containers and the runtime supervisor that runs as PID 1 in each: process launch and end, the sweep, the file-descriptor broker, and the materialization helper. |
 | [Volumes and quotas](volumes-and-quotas.md) | `PODVOL` | The agent pod's volumes, their size limits and eviction behavior, and the project quotas on slot volumes. |
+
+<!-- /generated:index -->
 
 ## Content today
 

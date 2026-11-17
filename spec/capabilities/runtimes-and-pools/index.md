@@ -12,6 +12,8 @@ Lists the capabilities that decide which runtimes Lenny runs, on which pods, and
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Agent pod lifecycle](agent-pod-lifecycle.md) | `APOD` | Defines the agent pod and its states and how a pod is created, becomes ready, is recycled, drained, quarantined, and deleted. |
@@ -25,3 +27,5 @@ Lists the capabilities that decide which runtimes Lenny runs, on which pods, and
 | [Runtime routes](runtime-routes.md) | `ROUTE` | Chooses the runtime for a session from routing labels and runtime routes, which replace experiment variants. |
 | [Tenant-derived runtimes](tenant-derived-runtimes.md) | `DERIVED` | Lets a granted tenant derive its own runtime from a platform base, with an owned pool, a pod budget, and capacity reservations. |
 | [Warm pools](warm-pools.md) | `POOL` | Defines pools and pod sets, keeps warm inventory between its targets, and protects warm pods from voluntary disruption. |
+
+<!-- /generated:index -->

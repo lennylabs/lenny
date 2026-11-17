@@ -12,6 +12,8 @@ The client REST API: authentication, versioning, and the resource groups, with l
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Credentials and links](credentials-and-links.md) | `CAPICRED` | User credential and account link operations. |
@@ -20,6 +22,8 @@ The client REST API: authentication, versioning, and the resource groups, with l
 | [Files and artifacts](files-and-artifacts.md) | `CAPIFILE` | Upload, artifact, blob, and export operations. |
 | [Messages](messages.md) | `CAPIMSG` | Message operations: send, retract, list, respond to input requests, and client tool results. |
 | [Sessions](sessions.md) | `CAPISES` | Session operations: create, start, get, list, interrupt, terminate, delete, derive, and the states and errors each returns. |
+
+<!-- /generated:index -->
 
 ## Content today
 

@@ -11,6 +11,8 @@ Lists the properties every capability and component upholds, with the pages that
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [API conventions](api-conventions.md) | `APICONV` | Conventions shared by the client, admin, and ops APIs: idempotency, ETags, pagination, dry-run, correlation headers, and rate-limit headers. |
@@ -23,3 +25,5 @@ Lists the properties every capability and component upholds, with the pages that
 | [Security model](security-model.md) | `SECMODEL` | Trust boundaries, the threat model, the adapter-to-runtime boundary, and image supply chain controls. |
 | [Tenant isolation](tenant-isolation.md) | `TENISO` | The tenant isolation property: tenant identifiers on every record, row-level security, key and object prefixes, and the query rules that keep tenants apart. |
 | [Upgrade and compatibility](upgrade-and-compatibility.md) | `COMPAT` | The compatibility policy: API versioning, expand-contract migrations, CRD versioning, wire-contract versions, and version skew. |
+
+<!-- /generated:index -->

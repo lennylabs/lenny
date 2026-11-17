@@ -12,6 +12,8 @@ Lists the capabilities that define tenants, environments, and principals and dec
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Authentication](authentication.md) | `AUTHN` | States how callers authenticate: OIDC, API keys, development mode, the token claims Lenny reads, key rotation, user invalidation, and the playground's session. |
@@ -23,3 +25,5 @@ Lists the capabilities that define tenants, environments, and principals and dec
 | [Tenant settings](tenant-settings.md) | `TSET` | Defines the tenant settings model, templates, the tenant key, compliance profiles, and how a setting changes on a live tenant. |
 | [Tenants](tenants.md) | `TENANT` | Defines the tenant object and its lifecycle from creation to deletion. |
 | [Token exchange](token-exchange.md) | `TOKX` | States the token exchange Lenny runs, scope narrowing, impersonation, write-before-issue, rotation, and revocation of issued tokens. |
+
+<!-- /generated:index -->

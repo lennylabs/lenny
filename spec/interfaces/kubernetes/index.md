@@ -12,6 +12,8 @@ Lenny's Kubernetes API conventions: the API group and version, the shipped CRDs 
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Admission](admission.md) | `KADMIT` | The writes Lenny's admission webhooks and policies refuse, with the refusal each returns. |
@@ -20,6 +22,8 @@ Lenny's Kubernetes API conventions: the API group and version, the shipped CRDs 
 | [PodClaim](podclaim.md) | `KPCLAIM` | The PodClaim kind. |
 | [PodSet](podset.md) | `KPSET` | The PodSet kind. |
 | [Runtime](runtime.md) | `KRUNTIME` | The Runtime kind. |
+
+<!-- /generated:index -->
 
 ## Content today
 

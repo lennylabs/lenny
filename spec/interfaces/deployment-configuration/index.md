@@ -12,11 +12,15 @@ The deployment configuration: the Helm values structure, the values schema, char
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Answer files](answer-files.md) | `DCFGANS` | Answer files: composition dimensions and the catalog of answer files. |
 | [Bootstrap seed](bootstrap-seed.md) | `DCFGSEED` | The bootstrap seed format that installs runtimes, pools, and tenants before the admin API is reachable. |
 | [Tier presets](tier-presets.md) | `DCFGTIER` | The tier preset files and the values each tier sets. |
+
+<!-- /generated:index -->
 
 ## Content today
 

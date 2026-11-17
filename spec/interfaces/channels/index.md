@@ -12,6 +12,8 @@ The gateway-to-pod channels and registers: classes, axes, the contract card form
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Control plane](control-plane.md) | `CHCTRL` | The control-plane channel for drain-readiness admission. |
@@ -21,6 +23,8 @@ The gateway-to-pod channels and registers: classes, axes, the contract card form
 | [Intra-pod](intra-pod.md) | `CHINTRA` | The intra-pod channels between Lenny's own processes, including the supervision channel; the runtime-facing channels point to the runtime protocol. |
 | [Pod egress](pod-egress.md) | `CHEGRESS` | The pod-egress channels to the metering proxy and the object store. |
 | [Pod to gateway](pod-to-gateway.md) | `CHPODGW` | The pod-to-gateway link and the adapter events channel. |
+
+<!-- /generated:index -->
 
 ## Content today
 

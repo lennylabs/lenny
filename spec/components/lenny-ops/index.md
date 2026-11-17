@@ -12,12 +12,16 @@ The lenny-ops Deployment: purpose, Helm values, Kubernetes resources, RBAC, Netw
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Backup jobs](backup-jobs.md) | `BKJOB` | The lenny-backup Jobs that lenny-ops creates: pod specification, ServiceAccount, NetworkPolicy, and bucket policy. |
 | [Gateway fan-out](gateway-fan-out.md) | `LOPSAGG` | How lenny-ops calls every gateway replica, sources metrics with and without Prometheus, and aggregates health and recommendations. |
 | [Hosted services](hosted-services.md) | `LOPSSVC` | The internal parts of the services lenny-ops hosts: storage tiers, implementation notes, and metrics for events, diagnostics, locks, escalations, audit queries, drift, backups, and upgrades. |
 | [Kubernetes resources](kubernetes-resources.md) | `LOPSKRES` | The Kubernetes resources the chart renders for lenny-ops: Helm values, Services, ServiceAccount and RBAC, NetworkPolicies, and the disruption budget. |
+
+<!-- /generated:index -->
 
 ## Content today
 

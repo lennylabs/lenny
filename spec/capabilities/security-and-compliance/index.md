@@ -12,6 +12,8 @@ Lists the capabilities that record evidence, oversee security, and meet data obl
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Agent activity streams](agent-activity-streams.md) | `ACTSTR` | States the agent activity streams recorded for forensics and their retention. |
@@ -23,3 +25,5 @@ Lists the capabilities that record evidence, oversee security, and meet data obl
 | [Quarantine and evidence](quarantine-and-evidence.md) | `FORENSIC` | States pod quarantine for evidence, the reconciler that ends it, the capture workflow, and security incident response. |
 | [Security oversight](security-oversight.md) | `SECOV` | States the tenant security record and posture, operator access transparency, and the rights of the operability service. |
 | [SIEM export](siem-export.md) | `SIEM` | States how audit records reach a SIEM, the OCSF mapping, per-tenant destinations, dead-lettering, and the erasure boundary. |
+
+<!-- /generated:index -->

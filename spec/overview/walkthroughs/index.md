@@ -12,6 +12,8 @@ Lists the non-normative walkthroughs that trace one scenario across components a
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Checkpoint capture](checkpoint-capture.md) | `WKCKPT` | Traces a checkpoint from its trigger through quiesce, capture passes, and upload. |
@@ -24,6 +26,8 @@ Lists the non-normative walkthroughs that trace one scenario across components a
 | [Restore and resume](restore-and-resume.md) | `WKRESUME` | Traces a resume after pod loss, from the failure through a new claim and restore. |
 | [Session start](session-start.md) | `WKSTART` | Traces a session from the create request through pod claim, materialization, and the first message. |
 | [Shared pod co-tenancy](shared-pod-co-tenancy.md) | `WKCOTEN` | Traces two sessions on one pod with several slots. |
+
+<!-- /generated:index -->
 
 ## Content today
 

@@ -12,6 +12,8 @@ The admin REST API under /v1/admin: the conventions its operation pages rely on 
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Billing](billing.md) | `ADMBILL` | Rate card, budget, billing correction, and usage operations. |
@@ -22,6 +24,8 @@ The admin REST API under /v1/admin: the conventions its operation pages rely on 
 | [Pools](pools.md) | `APOOLS` | Pool operations. |
 | [Runtimes](runtimes.md) | `ADMRT` | Runtime, revision, route, and resource class operations. |
 | [Tenants and environments](tenants-and-environments.md) | `ADMTEN` | Tenant, tenant setting, environment, and outbound connector operations. |
+
+<!-- /generated:index -->
 
 ## Content today
 

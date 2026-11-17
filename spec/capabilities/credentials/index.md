@@ -12,6 +12,8 @@ Lists the capabilities that hold credentials and deliver them to sessions and po
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Account links](account-links.md) | `LINK` | States how a user links an account through OAuth, the link prompt, and the link check before a session needs the account. |
@@ -23,3 +25,5 @@ Lists the capabilities that hold credentials and deliver them to sessions and po
 | [Repository authorization](repository-authorization.md) | `REPOAUTH` | States which repositories a session may reach under a user's VCS identity and how that authorization is decided. |
 | [Service account credentials](service-account-credentials.md) | `SACRED` | Lets a service account own credentials through the client credentials and issuer exchange sources. |
 | [User credentials](user-credentials.md) | `UCRED` | Defines user credential types, the registered source, the user credential binding, and request rules and presets. |
+
+<!-- /generated:index -->

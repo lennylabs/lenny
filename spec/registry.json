@@ -251,37 +251,43 @@
       "code": "CATALERT",
       "path": "spec/catalogs/alerts.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATCHAN",
       "path": "spec/catalogs/channels.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
+    },
+    {
+      "code": "CATCONTR",
+      "path": "spec/catalogs/contributions.md",
+      "type": "catalog",
+      "status": ""
     },
     {
       "code": "CATCRD",
       "path": "spec/catalogs/custom-resources.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATERR",
       "path": "spec/catalogs/errors.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATEVENT",
       "path": "spec/catalogs/events.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATGLOSS",
       "path": "spec/catalogs/glossary.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATIDX",
@@ -293,43 +299,43 @@
       "code": "CATLABEL",
       "path": "spec/catalogs/labels.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATLIMIT",
       "path": "spec/catalogs/limits.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATMETRIC",
       "path": "spec/catalogs/metrics.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATOPS",
       "path": "spec/catalogs/api-operations.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATREQ",
       "path": "spec/catalogs/requirements.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATSET",
       "path": "spec/catalogs/settings.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CATSTATE",
       "path": "spec/catalogs/state-machines.md",
       "type": "catalog",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "CDELIV",

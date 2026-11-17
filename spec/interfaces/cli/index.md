@@ -12,12 +12,16 @@ lenny-ctl: global flags, server discovery and routing, output formats, and the c
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Admin commands](admin-commands.md) | `CLIADM` | Runtime, pool, credential, quota, breaker, user, tenant, erasure, policy, and session commands. |
 | [Install and local](install-and-local.md) | `CLIINST` | Install, bootstrap, preflight, the installation wizard, the local stack, and image commands. |
 | [Ops commands](ops-commands.md) | `CLIOPS` | Operability commands: diagnose, events, audit, drift, locks, escalations, backups, upgrades, migrations, and MCP management. |
 | [Runtime scaffolding](runtime-scaffolding.md) | `CLISCAF` | The runtime scaffolding commands. |
+
+<!-- /generated:index -->
 
 ## Content today
 

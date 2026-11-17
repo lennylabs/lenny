@@ -11,6 +11,8 @@ Lists the capability areas with their summaries and the capabilities in each.
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Billing and usage](billing-and-usage/index.md) | `BILLAREA` | Lists the capabilities that meter usage, enforce budgets, and emit billing events. |
@@ -26,3 +28,5 @@ Lists the capability areas with their summaries and the capabilities in each.
 | [Sessions](sessions/index.md) | `SESAREA` | Lists the capabilities that govern a session from creation to its end, including suspension, resume, checkpoints, derive, and isolation between sessions on one pod. |
 | [Tenancy and access](tenancy-and-access/index.md) | `TENAREA` | Lists the capabilities that define tenants, environments, and principals and decide who may do what. |
 | [Workspaces and files](workspaces-and-files/index.md) | `WSAREA` | Lists the capabilities that build a session's workspace and move files in and out of it. |
+
+<!-- /generated:index -->

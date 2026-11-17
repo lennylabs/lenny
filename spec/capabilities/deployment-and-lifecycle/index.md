@@ -12,6 +12,8 @@ Lists the capabilities that install, size, upgrade, back up, and restore a Lenny
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Backup and restore](backup-and-restore.md) | `BACKUP` | States backup creation, scheduling, retention, verification, restore with its safety checks, and disaster recovery targets. |
@@ -19,3 +21,5 @@ Lists the capabilities that install, size, upgrade, back up, and restore a Lenny
 | [Installation](installation.md) | `INSTALL` | States what installation creates, the bootstrap seed, namespace quotas, image registries and air-gapped installs. |
 | [Local development](local-development.md) | `LOCALDEV` | States the local development modes, the embedded stack, its backends, and its guard rails. |
 | [Platform upgrades](platform-upgrades.md) | `UPGRADE` | States the platform upgrade state machine, upgrade checks and release channels, schema migration, CRD upgrades, and configuration diff and apply. |
+
+<!-- /generated:index -->

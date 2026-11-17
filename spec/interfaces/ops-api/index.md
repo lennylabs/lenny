@@ -12,6 +12,8 @@ The ops API served by the gateway and lenny-ops: terminology, envelopes, paginat
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Audit and drift](audit-and-drift.md) | `OPSAUD` | Audit query and configuration drift operations. |
@@ -21,6 +23,8 @@ The ops API served by the gateway and lenny-ops: terminology, envelopes, paginat
 | [Health and diagnostics](health-and-diagnostics.md) | `OPSHEALTH` | Health, recommendation, diagnostic, and runbook operations. |
 | [MCP management](mcp-management.md) | `OPSMCP` | The management MCP server of lenny-ops: tools, schemas, capability negotiation, and headers. |
 | [Remediation and operations](remediation-and-operations.md) | `OPSREM` | Remediation lock, escalation, and operations inventory operations. |
+
+<!-- /generated:index -->
 
 ## Content today
 

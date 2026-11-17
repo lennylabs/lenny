@@ -12,6 +12,8 @@ Lists the capabilities that decide what network traffic agent pods may send and 
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [DNS](dns.md) | `DNS` | States the DNS resolution agent pods get and the mitigations against DNS exfiltration. |
@@ -23,3 +25,5 @@ Lists the capabilities that decide what network traffic agent pods may send and 
 | [Network isolation](network-isolation.md) | `NETISO` | States the default-deny baseline and the allow-lists that apply to agent pods and to the platform namespace. |
 | [Operator services](operator-services.md) | `OPSVC` | States how a runtime reaches operator services through egress, the identity assertion attached to those requests, and the egress halt at suspension. |
 | [Outbound connector](outbound-connector.md) | `OUTCONN` | Lets a tenant reach hosts on its private network through an agent it runs, with registration, identity, liveness, rotation, and revocation. |
+
+<!-- /generated:index -->

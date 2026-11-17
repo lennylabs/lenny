@@ -53,6 +53,16 @@
 // planned, and the register entries it deferred because their files lie
 // outside that confinement, so an entry the complementary run still owes
 // stands in the output rather than being inferred from the command line.
+//
+// The defs subcommand reads the definition blocks of the specification
+// tree rather than rewriting a register's sites, so it sits beside the
+// passes rather than among them:
+//
+//	specshift defs [-root <path>] check
+//	specshift defs [-root <path>] generate [--check]
+//	specshift defs schemas
+//
+// The defs package documents what each command reads and writes.
 package main
 
 import (
@@ -66,6 +76,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/anchor"
+	"github.com/lennylabs/lenny/scripts/specshift/defs"
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
@@ -187,13 +198,17 @@ func passNames() string {
 	return strings.Join(names, ", ")
 }
 
-// run parses the command line and executes one pass, or prints one
-// pass's write domain. The ref subcommand is dispatched before the flags
-// are parsed, because the reference pass is driven by the generated
-// registry rather than by a register and takes commands of its own.
+// run parses the command line and executes one pass, prints one pass's
+// write domain, or hands a ref or defs command to its package. Those two
+// subcommands are dispatched before the flags are parsed, because they are
+// driven by the generated registry and the definition blocks rather than by
+// a register, and take commands of their own.
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "ref" {
 		return ref.Main(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == defs.Command {
+		return defs.Run(ctx, args[1:], out)
 	}
 	return runWith(ctx, builtPasses, args, out)
 }

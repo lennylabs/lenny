@@ -12,6 +12,8 @@ Lists the capabilities that build a session's workspace and move files in and ou
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Artifacts](artifacts.md) | `ARTIFACT` | States what Lenny keeps as session artifacts, transcripts, blob resolution, deduplication, and artifact retention. |
@@ -22,3 +24,5 @@ Lists the capabilities that build a session's workspace and move files in and ou
 | [Repository stores](repository-stores.md) | `REPO` | States the shared repository stores on a pod, the warm list, repository folders, and the warm-up checkout. |
 | [Uploads](uploads.md) | `UPLOAD` | States upload authorization, the upload token, size caps, archive handling, and mid-session uploads. |
 | [Workspace plan](workspace-plan.md) | `WSPLAN` | States what a workspace plan means: its sources, when it binds, its defaults, and the rules Lenny applies to each member. |
+
+<!-- /generated:index -->

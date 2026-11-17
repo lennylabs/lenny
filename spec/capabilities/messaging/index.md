@@ -12,6 +12,8 @@ Lists the capabilities that carry messages into a session and output out of it: 
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [Client tools](client-tools.md) | `CTOOL` | Lets a client supply tools a runtime calls, with admission, response validation, pending calls, and continuation. |
@@ -20,3 +22,5 @@ Lists the capabilities that carry messages into a session and output out of it: 
 | [Input requests](input-requests.md) | `INPUT` | States how a runtime asks the client for input, the elicitation chain through delegation, harness approvals, and the session's input policy. |
 | [Inter-session messaging](inter-session-messaging.md) | `IMSG` | States how one session messages another: scope, the configuration hierarchy, rate limits, content policy, and threading. |
 | [Message delivery](message-delivery.md) | `MSG` | States the delivery intents, the delivery paths, turn accounting, and the executor that delivers one message at a time to the runtime. |
+
+<!-- /generated:index -->

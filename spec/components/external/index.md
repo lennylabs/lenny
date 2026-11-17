@@ -11,6 +11,8 @@ Lists the external dependencies and the requirements Lenny places on each.
 
 ## Pages
 
+<!-- generated:index -->
+
 | Page | Code | Summary |
 | :-- | :-- | :-- |
 | [cert-manager](cert-manager.md) | `CERTM` | cert-manager: the certificates Lenny requests, CA rotation, and failure modes. |
@@ -20,3 +22,5 @@ Lists the external dependencies and the requirements Lenny places on each.
 | [Postgres](postgres.md) | `PG` | Postgres and its pooler: topology, HA, connection pooling, write classification, failover behavior, encryption, and backups. |
 | [Prometheus](prometheus.md) | `PROM` | Prometheus: when it is required, scrape targets, rule rendering, evaluation cost, and the bring-your-own model. |
 | [Redis](redis.md) | `REDIS` | Redis: topology, logical separation, failure modes per use, scalability ceilings, and TLS. |
+
+<!-- /generated:index -->
