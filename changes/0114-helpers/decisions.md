@@ -2,13 +2,17 @@
 
 ## Open decisions
 
-1. **Retire the proposal pipeline in this change.** Delete its workflows, skills, tools, agent, plan file, and tests, and their register rows. Git history keeps them, the open proposals are set aside, and the changes README already replaces each piece ([WORKFLOW.md](../0115-spec-structure/evidence/spike/WORKFLOW.md), "What retires"). Options: (a) delete now; (b) keep them until the open proposals are revisited. Recommendation: (a).
-2. **Rewrite `spec-driven-development.md` in this change.** The governing rule still routes every specification change through `change-proposal` and `implement-proposal`. Options: (a) rewrite it here as "Detailed design" describes; (b) leave it to 0115, which restructures the specification. Recommendation: (a), because an agent following the rule today uses the retired loop.
-3. **Form of each helper.** Options: (a) `review` as a workflow, the others as skills, and the bound helpers' model-free logic in Python under `scripts/changes/`; (b) every helper as a skill, with `review` starting its reviewers as subagents. Recommendation: (a), because a workflow runs the reviewers and verifiers in a fixed order and its tests can replay it.
-4. **Move the step checker and board generator out of 0113's evidence now.** Options: (a) move them to `scripts/changes/` in this change as the `board` helper, with tests; (b) leave them in 0113's evidence until 0115. Recommendation: (a), because `change` and `build` call them and the board is already in use.
-5. **Defaults of `review`.** Options: (a) three default charters (tree checker, implementer, documentation reader), a security reviewer on request, one verifier per finding, one round, and `--fix` limited to findings that need no decision; (b) the same with no verifier, to halve the cost. Recommendation: (a), because unverified findings were the main source of churn in the pipeline's rounds.
-6. **Branches and the integration branch.** Every change so far sits on `design/v1-cleanup` or a branch cut from it, and none is merged into `main`. Options: (a) merge `change/0113-records-and-workflow` into `design/v1-cleanup`, then `design/v1-cleanup` into `main`, and cut each later step's branch, `change/<step>-<slug>`, from `main`; (b) keep stacking branches until M0 ends. Recommendation: (a), as `.claude/rules/git-workflow.md` states.
+None.
 
 ## Decisions
 
-None yet.
+Settled by the owner on 2026-11-16 ("go with all your recommendations, except when it comes to `review`"):
+
+1. **The proposal pipeline retires in this change.** Its workflows, skills, tools other than `lookup`, agent, plan file, and tests are deleted with their register rows. Git history keeps them.
+2. **`spec-driven-development.md` is rewritten in this change** around `changes/`.
+3. **Form of the helpers.** Every helper is a skill, `review` included. The model-free logic of the bound helpers is Python under `scripts/changes/`.
+4. **The step checker, board generator, and link rewriter move to `scripts/changes/`** in this change, with tests.
+5. **`review` runs two subagents.** In the owner's words: "run it as a skill that spins up different subagents. Have one subagent for a general review of the change itself and a cross-reference to the tree, docs, as well as any other staged/planned changes in the same program. The other subagent should run a security review." This replaces the recommendation of three charters with a verifier per finding.
+6. **Branches.** `change/0113-records-and-workflow` merges into `design/v1-cleanup`, and `design/v1-cleanup` into `main`, each with `--no-ff`. Each later step's branch, `change/<step>-<slug>`, is cut from `main`.
+
+The questions as framed in revision 2 are in `review-history.md`.

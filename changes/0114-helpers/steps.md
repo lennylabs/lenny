@@ -21,11 +21,11 @@
 
 The `tidy`, `fact-check`, `ask`, and `change` skills, and the helpers table in `changes/README.md` naming each helper's file.
 
-### 0114.S3 The review workflow
+### 0114.S3 The review skill
 - status: Planned
 - lanes: [non-specification]
 
-`.claude/workflows/review.js` with its default charters, its verifier, `--since`, `--fix`, and `--record`, and its lint test. It is tried on one moved design before it is relied on.
+`.claude/skills/review/SKILL.md` with its general and security subagents, `--since`, `--fix`, and `--record`. It is tried on one moved design before it is relied on.
 
 ### 0114.S4 The build skill
 - status: Planned
@@ -39,4 +39,4 @@ The `build` skill: the branch name, the order of the lanes, `lenny-test --change
 - lanes: [non-specification]
 - depends-on: [0114.S2, 0114.S3, 0114.S4]
 
-Delete the pipeline's workflows, skills, tools other than `lookup`, the `cp-writer` agent, the plan file, and the tests other than `lookup.test.mjs` and `lint-workflows.mjs`. Remove their rows from the residual registers, rewrite `spec-driven-development.md`, and update `AGENTS.md` where it names a retired helper. Tier 0 passes.
+Delete the pipeline's workflows, skills, tools other than `lookup`, the `cp-writer` agent, the plan file, and the tests other than `lookup.test.mjs` and the files it needs. Remove their rows from the residual registers, rewrite `spec-driven-development.md`, and update `AGENTS.md` where it names a retired helper. Tier 0 passes.
