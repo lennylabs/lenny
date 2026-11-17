@@ -622,7 +622,7 @@ The front matter field `status` records how much of a page is written.
 - `status: partial` marks a page written in part. The front matter or the body names what is missing.
 - `status: placeholder` marks a page that is not yet written. A placeholder holds its front matter, its title, and a "Content today" section that links the numbered sections holding its content and the changes whose content lands on it. It registers no identifier.
 
-No link into a placeholder carries a fragment. When a placeholder becomes a full page, the reference tool lists the page-level links into it so that each can move to an identifier.
+`specshift ref check` reports a requirement, operation, term, or definition block registered on a placeholder. No link into a placeholder carries a fragment. When a placeholder becomes a full page, `specshift ref links-into <code>` lists the page-level links into it so that each can move to an identifier.
 
 ## Review comments during migration
 
@@ -937,7 +937,7 @@ The table lists every page code with its page type, its path relative to `spec/`
 | `RTPTOOL` | interface | [`interfaces/runtime-protocol/platform-tools.md`](interfaces/runtime-protocol/platform-tools.md) | The platform tools a runtime calls, through frames or the reference MCP bridge, with schemas including the delegation tools and the task result. |
 | `RTPOPS` | interface | [`interfaces/runtime-protocol/runtime-ops.md`](interfaces/runtime-protocol/runtime-ops.md) | The runtime-ops channel frames: quiesce, interrupt acknowledgement, and the remaining rotation frames. |
 | `RTPSDK` | interface | [`interfaces/runtime-protocol/runtime-sdks.md`](interfaces/runtime-protocol/runtime-sdks.md) | The runtime author SDKs: packages, what each adds to the protocol, and what each leaves to the runtime. |
-| `STOR` | index | [`interfaces/stored-schemas/index.md`](interfaces/stored-schemas/index.md) | The stored schemas that must stay compatible across versions, and the compatibility rules for each store. |
+| `STOR` | index | [`interfaces/stored-schemas/index.md`](interfaces/stored-schemas/index.md) | The stored schemas that are kept compatible across versions, and the compatibility rules for each store. |
 | `STOROBJ` | interface | [`interfaces/stored-schemas/object-store-layout.md`](interfaces/stored-schemas/object-store-layout.md) | The object key layout and the checkpoint pack format. |
 | `STORPG` | interface | [`interfaces/stored-schemas/postgres.md`](interfaces/stored-schemas/postgres.md) | The Postgres tables other versions read: sessions, tasks, pod state, billing, audit, and operations tables. |
 | `STORREDIS` | interface | [`interfaces/stored-schemas/redis-keys.md`](interfaces/stored-schemas/redis-keys.md) | The Redis key patterns and their tenant prefixing. |

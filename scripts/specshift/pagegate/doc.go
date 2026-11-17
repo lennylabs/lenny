@@ -14,7 +14,8 @@
 //   - the gloss rule: a borrowed term's row in a page's Terms table holds
 //     no number and no normative keyword in its gloss, and exactly one
 //     link;
-//   - walkthroughs: a page of type walkthrough holds no normative keyword;
+//   - normative keywords: a page of type overview, walkthrough, index, or
+//     catalog holds no normative keyword;
 //   - documentation style: a page holds none of the banned words and
 //     phrases of .claude/rules/doc-style.md that a pattern can find, and
 //     no heading that names a count, except that the headings of a

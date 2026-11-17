@@ -23,8 +23,8 @@ func Check(pages []*Page) []Problem {
 		if p.Type != typeNumbered {
 			out = append(out, checkGlosses(p)...)
 		}
-		if p.Type == typeWalkthrough {
-			out = append(out, checkWalkthrough(p)...)
+		if nonNormativeTypes[p.Type] {
+			out = append(out, checkNoNormativeKeyword(p)...)
 		}
 		out = append(out, checkStyle(p)...)
 		out = append(out, checkReviewComments(p, migrating)...)
@@ -55,13 +55,24 @@ func normativeKeyword(text string) string {
 	return lowerKeyword.FindString(text)
 }
 
-// checkWalkthrough reports every normative keyword of a walkthrough page.
-func checkWalkthrough(p *Page) []Problem {
+// nonNormativeTypes are the page types that "Normative language" in the
+// conventions says carry no normative keyword: overview, walkthrough,
+// index, and catalog pages. Glosses are held by the gloss gate.
+var nonNormativeTypes = map[string]bool{
+	typeOverview:    true,
+	typeWalkthrough: true,
+	typeIndex:       true,
+	typeCatalog:     true,
+}
+
+// checkNoNormativeKeyword reports every normative keyword of a page whose
+// type carries none.
+func checkNoNormativeKeyword(p *Page) []Problem {
 	var out []Problem
 	for _, l := range proseLines(p) {
 		if k := normativeKeyword(l.Text); k != "" {
 			out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
-				"a walkthrough holds no normative keyword, and this line uses %q; state the rule on its owner page and link it", k)})
+				"a page of type %s holds no normative keyword, and this line uses %q; state the rule on its owner page and link it", p.Type, k)})
 		}
 	}
 	return out

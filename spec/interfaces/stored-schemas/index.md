@@ -2,12 +2,12 @@
 code: STOR
 type: index
 summary: >-
-  The stored schemas that must stay compatible across versions, and the compatibility rules for each store.
+  The stored schemas that are kept compatible across versions, and the compatibility rules for each store.
 ---
 
 # Stored schemas
 
-The stored schemas that must stay compatible across versions, and the compatibility rules for each store.
+The stored schemas that are kept compatible across versions, and the compatibility rules for each store.
 
 ## Pages
 

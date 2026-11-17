@@ -17,6 +17,7 @@ import (
 // Page types and statuses the gates read.
 const (
 	typeWalkthrough   = "walkthrough"
+	typeOverview      = "overview"
 	typeIndex         = "index"
 	typeCatalog       = "catalog"
 	statusPlaceholder = "placeholder"

@@ -22,6 +22,7 @@
 //	specshift ref [-root <path>] check
 //	specshift ref [-root <path>] fix
 //	specshift ref [-root <path>] lookup <identifier | code | §N.M>
+//	specshift ref [-root <path>] links-into <code>
 //	specshift ref [-root <path>] stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]
 package ref
 
@@ -39,7 +40,7 @@ import (
 )
 
 // usage is the command synopsis printed with a usage error.
-const usage = "usage: specshift ref [-root <path>] registry [-check] | check | fix | lookup <identifier | code | §N.M> | stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]"
+const usage = "usage: specshift ref [-root <path>] registry [-check] | check | fix | lookup <identifier | code | §N.M> | links-into <code> | stub <§N.M> --to <name>[,<name>...] [--keep] [--recursive]"
 
 // Main runs the ref subcommand with its arguments. The repository root
 // is the -root flag, or the git toplevel of the working directory.
@@ -95,6 +96,11 @@ func Run(ctx context.Context, t *Tree, args []string, out io.Writer) error {
 			return errors.New(usage)
 		}
 		return Lookup(ctx, t, args[1], out)
+	case "links-into":
+		if len(args) != 2 {
+			return errors.New(usage)
+		}
+		return LinksInto(ctx, t, args[1], out)
 	case "stub":
 		return runStub(ctx, t, args[1:], out)
 	default:
