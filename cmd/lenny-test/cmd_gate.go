@@ -488,6 +488,16 @@ func gateDockerRunArgs(h gateHost) []string {
 		"-e", "GOTMPDIR="+gateGoTmpDir,
 		"-e", "TMPDIR="+gateFixtureRoot,
 		"-e", testtmp.EnvRoot+"="+gateFixtureRoot,
+		// The worktree is a Docker Desktop file share on macOS, where a
+		// rename over a file is not atomic to a concurrent reader. Every
+		// `git status` rewrites .git/index by a rename when it can take
+		// the lock, and every `go build` of a main package runs `git
+		// status` for its VCS stamp, so parallel builds read a missing
+		// index and fail with "error obtaining VCS status". The gate
+		// turns off git's optional index refresh and the stamp, which no
+		// test reads.
+		"-e", "GIT_OPTIONAL_LOCKS=0",
+		"-e", "GOFLAGS=-buildvcs=false",
 		"-e", gateEnvUID+"="+strconv.Itoa(h.uid),
 		"-e", gateEnvGID+"="+strconv.Itoa(h.gid),
 	)

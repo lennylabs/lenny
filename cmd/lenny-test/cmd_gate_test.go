@@ -363,6 +363,8 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 		"--security-opt apparmor=unconfined",
 		"-e " + gateEnvUID + "=501",
 		"-e " + gateEnvGID + "=20",
+		"-e GIT_OPTIONAL_LOCKS=0",
+		"-e GOFLAGS=-buildvcs=false",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("docker run args lack %q:\n%s", want, args)
