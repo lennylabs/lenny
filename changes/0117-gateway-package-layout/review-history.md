@@ -49,3 +49,4 @@
      - (b) Also move each part's wiring into a constructor in the part's package, leaving `cmd/lenny-gateway` as a composition root that calls one constructor per part.
 
      Recommendation: (a). Milestone M2's exit needs the layout and the moves, and moving the wiring touches startup order and flag handling, which are behavior. (b) is better done as its own change after the layout lands, when each part's package exists to receive its wiring.
+- 2026-11-17, same revision. The owner settled decision 7: each move step moves the wiring of the part it moves out of `cmd/lenny-gateway`, behind guard tests on flags and startup order. Status `Decided`. The out-of-scope bullet that kept `cmd/lenny-gateway` unchanged beyond import paths no longer applies.

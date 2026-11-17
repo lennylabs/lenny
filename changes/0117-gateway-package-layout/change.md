@@ -1,6 +1,6 @@
 # Gateway package layout
 
-Status: `Draft`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M2.
+Status: `Decided`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M2.
 
 ## Problem
 
@@ -27,7 +27,6 @@ The migration spike moved one gateway package, the pod claimer, and measured the
   - Behavior. Every step is a refactor that changes no requirement, defined value, or operation, apart from the seam interface page and the import rule.
   - Packages that a member change of the program removes. They stay where they are until that change deletes them (decision 5).
   - Renaming the seams, their metrics, or their Helm values. `gateway.subsystems.mcpFabric` and `lenny_mcp_fabric_*` keep their names here; the changes that redefine the seams (0126, 0133, 0138, and 0153) own any rename.
-  - Restructuring `cmd/lenny-gateway` beyond import paths and the constructors the split needs (decision 7).
   - Re-annotating moved code. Each area change replaces its `§` citations under 0115's annotation rule.
 
 ## Terms

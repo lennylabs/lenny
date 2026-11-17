@@ -9,8 +9,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 1 |
-| Ready | 5 |
-| Waiting on decisions | 41 |
+| Ready | 6 |
+| Waiting on decisions | 40 |
 | Blocked | 148 |
 | Cancelled | 1 |
 
@@ -36,8 +36,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Ready |  |
 | [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Ready |  |
-| [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Waiting on decisions | 0117 is `Draft` |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Blocked | 0117.S2, 0137.S5 |
 | [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0117.S8, 0137.S5 |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Blocked | 0117.S2, 0137.S5 |
@@ -241,7 +241,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
 | [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Decided` | 0 of 7 | 0 |
-| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `Draft` | 0 of 13 | 1 |
+| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `Decided` | 0 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |
@@ -280,4 +280,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |
-| [0158](0158-merge-gate-follow-ups/change.md) | Merge gate follow-ups | `Decided` | 0 of 1 | 0 |
+| [0158](0158-merge-gate-follow-ups/change.md) | Merge gate follow-ups | `Draft` | 0 of 1 | 1 |
