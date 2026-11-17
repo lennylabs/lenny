@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+
+// Package claim carries out pod claims.
+//
+// spec: GWCLAIM, CLAIM
+package claim
+
+// claim refuses a claim past the limit.
+//
+// spec: CLAIM-R4, KPCLAIM-create, setting-claimholdttlseconds
+func claim() {}
+
+// release carries out part of a requirement.
+//
+// spec: CLAIM-R9 (partial: CLAIM-I4)
+func release() {}
+
+// sweep awaits removal.
+//
+// spec: removal pending CLAIM-I7
+func sweep() {}
+
+// expire has not migrated yet.
+//
+// spec: §4.7 (Claim hold and release rules, error-model), 4.8
+func expire() {}
+
+// route names a channel.
+//
+// spec: LNK-GWCONTROL, CLAIM-acquire, metric-claimsheld,
+// NOPAGE
+func route() {}

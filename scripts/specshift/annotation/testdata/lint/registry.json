@@ -1,0 +1,15 @@
+{
+  "aliases": {},
+  "anchors": {
+    "claim-r4": "capabilities/runtimes-and-pools/pod-claims.md",
+    "claim-r9": "capabilities/runtimes-and-pools/pod-claims.md",
+    "kpclaim-create": "interfaces/kubernetes/podclaim.md",
+    "setting-claimholdttlseconds": "capabilities/runtimes-and-pools/pod-claims.md"
+  },
+  "codes": {
+    "CLAIM": "capabilities/runtimes-and-pools/pod-claims.md",
+    "GWCLAIM": "components/gateway/pod-claimer.md",
+    "KPCLAIM": "interfaces/kubernetes/podclaim.md"
+  },
+  "issues": ["CLAIM-I4"]
+}

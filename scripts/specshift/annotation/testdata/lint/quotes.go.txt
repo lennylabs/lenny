@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT
+
+package claim
+
+// hold implements the "claim stays reserved for the tenant's next session"
+// rule.
+func hold() {}
+
+// release follows "Claim hold and release rules" and the "Reserved hold" label.
+func release() {}
+
+// refuse: the gateway refuses a claim from any other tenant while the hold
+// is in force, so a second tenant waits.
+func refuse() {}
+
+// expire ends the hold when its timer fires, and a "short quoted value"
+// is a value rather than a quotation.
+func expire() {}
