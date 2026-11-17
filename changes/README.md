@@ -85,7 +85,7 @@ GitLab token reuse, the `git.operation` stream from `netagent`, ...
 - `depends-on` lists steps of any change that must land first. A reason for an edge, when it is not obvious, goes in the description. A step that lands "with or after" another depends on it, and steps that land together share a branch; an ordering that is conditional or that only says "lands with" stays a sentence. When only part of the step waits, the entry carries `(part)`, such as `0127.S5 (part)`, and the description names the part: the rest of the step can land first, and the waiting part lands with or after the other step.
 - `closes` lists the issues the step closes. Until a finding migrates to `issues/`, its legacy identifier from `BUILD-GAPS.md` or `TEST-GAPS.md` stands in. A step that closes part of an issue lists it with `(part)` and names the part in its description, and the issue closes when its last part lands.
 
-A step can be built while its change is `Draft` when none of the change's open decisions touches it. Several small steps may share a branch and a digest. A step that needs decisions or evidence of its own, such as one gated on a spike, may get its own change folder, which names the parent change in its status line and is listed by the step as an alias.
+A step can be built while its change is `Draft` when none of the change's open decisions touches it and the owner rules so; the step then carries `- ruled-ready: <date>, <reason>`, and the board counts it as ready. Several small steps may share a branch and a digest. A step that needs decisions or evidence of its own, such as one gated on a spike, may get its own change folder, which names the parent change in its status line and is listed by the step as an alias.
 
 ### Status
 

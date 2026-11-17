@@ -61,6 +61,7 @@ The step depends on nothing. It fixes today's defects, a pool or a runtime that 
 - status: Planned
 - aliases: [PLC-C, PLC-5, PLC-2 (part)]
 - lanes: [specification, code, documentation]
+- ruled-ready: 2026-11-16, names only, and no decision of 0137 is open
 
 The "Names." table and "Identifiers that change." of PLC-2: the Go types and files, `pkg/controller/sandbox` to `agentpod`, the lower-case identifiers, the CRD files, `LennyCRDNames`, RBAC, webhooks, metrics, alerts, the readiness gate, the field-manager prefix, runbooks, and the table rename from `sandbox_warm_pools` to `pools`. It also carries `podSetRef` and `agentPodRef`, the removal of `templateRef`, the merge of the template and the warm pool into one `PodSet` per pool named after the pool, and the Go type renames of PLC-5. It renames the kinds in the current specification text, row by row in the sections "Specification changes" lists, at today's fields. The tests are PLCR-3, PLCR-4, PLCR-5, PLCR-11, and PLCR-12.
 

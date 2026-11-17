@@ -1,6 +1,6 @@
 # Persona journey tier
 
-Status: `Draft`, revision 1, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M2.
+Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M2.
 
 ## Problem
 
