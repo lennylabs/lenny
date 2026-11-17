@@ -200,7 +200,7 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git is not on PATH")
+		t.Fatalf("git is not on PATH, so the fixture repository cannot be built: %v", err)
 	}
 	f := &fixture{t: t, root: t.TempDir()}
 	f.git("init", "-q", "-b", "main")
