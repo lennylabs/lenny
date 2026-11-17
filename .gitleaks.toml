@@ -205,7 +205,8 @@ regexes = ['''^(0123456789abcdef|sk-live-abc123|tier4-scope-probe-secret-materia
 # Kubernetes Secret names, which a rule reads as key values because the
 # field is named secretRef.
 # Findings (generic-api-key), value anthropic-key-1 or anthropic-key-2:
-#   spec/04_system-components.md:1600,1602,1650
+#   spec/04_system-components.md, three findings in the credential pool
+#     example
 #   docs/operator-guide/configuration.md:384,386
 #   docs/operator-guide/security.md:184
 #   proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre.spec-changes.md:43,49,69
