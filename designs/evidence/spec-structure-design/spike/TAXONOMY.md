@@ -190,19 +190,19 @@ Version 1's parts list mixed the seams with mechanisms that run in every replica
 
 [proposed/MAP.md](proposed/MAP.md) carries this layout in its gateway rows.
 
-## Open items from the migration spike
+## Items from the migration spike
 
-The migration spike ([../spike-migration/FINDINGS-spec.md](../spike-migration/FINDINGS-spec.md), [../spike-migration/FINDINGS-code.md](../spike-migration/FINDINGS-code.md)) found these gaps in version 2. Each records what the spike did:
+The migration spike ([../spike-migration/FINDINGS-spec.md](../spike-migration/FINDINGS-spec.md), [../spike-migration/FINDINGS-code.md](../spike-migration/FINDINGS-code.md)) found gaps in version 2. The owner settled them on 2026-11-16 except where an item says otherwise.
 
-1. Anchors for definition blocks: `<kind>-<slug>`, such as `setting-maxidleseconds`, and `<resource>-<verb>` for operations.
-2. Term anchors: unique across the specification, with qualified names where terms clash.
-3. Pages linked before they are written: `status: placeholder` and `status: partial` front matter.
-4. A register several parts of one binary write: owned by the component page of the binary.
-5. Admission refusals that have a message and no code: new codes owned by the capability.
-6. A component's RBAC grants within a larger component's: unresolved.
-7. Review comments in pages (`src`, `judgment`, and `unresolved`): conventions added, and the gates refuse them in a landed page.
-8. Operation identifiers such as `kubernetes#podclaim.create` read like Go selectors, and a package rename rewrote six of them. The format is open.
-9. The gateway's API surface (handlers, middleware, and the external API) and its domain stores and infrastructure packages have no page type or folder in the component tree.
+1. **Anchors for definition blocks.** A block's anchor is `<kind>-<slug>`, where the slug is the defined name lower-cased with each run of other characters replaced by `-`: `setting-maxidleseconds`. `conventions.md` fixes the kinds (setting, metric, alert, error, admission refusal, label, annotation, event, register, state, and grant). The registry refuses two blocks with the same anchor.
+2. **Term anchors.** A term anchor is unique across the specification. Two concepts that would share a word each take a qualified name (`pod-phase`, `claim-phase`).
+3. **Pages linked before they are written.** A page not yet migrated exists as `status: placeholder`, with its code, its summary, and a pointer to the current sections that still hold its content. A page written in part is `status: partial`. No link into a placeholder carries a fragment, and when a placeholder becomes a full page, the reference tool lists the page-level links into it so they can move to identifiers.
+4. **Registers.** The narrowest page that covers every writer owns a register: the page of one part of a component if only that part writes it, the component's index if several of its parts write it, `interfaces/gateway-seams.md` if it crosses a gateway seam, and an interface page if it crosses components.
+5. **Admission refusals with no code.** Migration states the designed target and adds no behavior, so it invents no error code. A refusal that carries a message and no code is an `admission-refusal` definition block, keyed by name, with its exact message. A machine-readable code for it is a change of its own.
+6. **Facts a component's parts contribute.** Decided in principle (each part states the RBAC grants it needs, and the component's table is generated); whether the mechanism is generic is pending the owner's answer.
+7. **Review comments in pages.** `src`, `judgment`, and `unresolved` comments exist only while an area migrates. Before the area lands, each `unresolved` becomes an issue or an open decision on the area's change, `src` and `judgment` move into the migration record in the change's `evidence/`, and the landing gate refuses all three.
+8. **Format of operation identifiers.** Pending the owner's answer.
+9. **The gateway's API surface and the domain stores.** The gateway's request pipeline (middleware order, authentication, rate limiting, handler registration, and request scope) is a replica-level part page, `components/gateway/api-front.md`, which is not a seam. The domain stores need no new page type: their rules live on capability pages, their schemas on the stored-schema interface page, and their stores under `components/external/`. In code, packages follow components for running units and capability areas for domain logic that several components share, so shared stores leave `pkg/gateway`.
 
 ## Owner decisions
 
