@@ -558,3 +558,35 @@ func TestRunRefusesMalformedCommands(t *testing.T) {
 		t.Error("Main accepted a flag with no value")
 	}
 }
+
+func TestCheckReportsACodeThatBreaksTheGrammar(t *testing.T) {
+	dir := t.TempDir()
+	page := func(code string, extra string) string {
+		return "---\ncode: " + code + "\ntype: capability\nsummary: s\n" + extra + "---\n\n# Page\n"
+	}
+	writeFile(t, dir, "spec/a.md", page("POOL", ""))
+	writeFile(t, dir, "spec/b.md", page("P", ""))
+	writeFile(t, dir, "spec/c.md", page("TOOLONGCODE", ""))
+	writeFile(t, dir, "spec/d.md", page("PO1", ""))
+	writeFile(t, dir, "spec/e.md", page("Pool", ""))
+	writeFile(t, dir, "spec/f.md", page("ALIASED", "aliases: [OLD-CODE]\n"))
+	findings, err := Check(context.Background(), fixtureTree(dir, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range findings {
+		if strings.Contains(f.Message, "is not two to nine upper-case letters") {
+			got = append(got, f.String())
+		}
+	}
+	all := strings.Join(got, "\n")
+	for _, want := range []string{"spec/b.md:2: code P ", "spec/c.md:2: code TOOLONGCODE ", "spec/d.md:2: code PO1 ", "spec/e.md:2: code Pool ", "spec/f.md:2: code OLD-CODE "} {
+		if !strings.Contains(all, want) {
+			t.Errorf("missing finding %q in:\n%s", want, all)
+		}
+	}
+	if len(got) != 5 || strings.Contains(all, "code POOL ") || strings.Contains(all, "code ALIASED ") {
+		t.Errorf("got %d grammar findings, want the five broken codes:\n%s", len(got), all)
+	}
+}

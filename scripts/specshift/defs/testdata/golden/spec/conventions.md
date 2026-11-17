@@ -46,6 +46,7 @@ A page carries a generated section between the marker comments `<!-- generated:<
 | `network-rules` | The `network-rule` blocks whose `unit` names the page's code. |
 | `index` | On a folder's `index.md` whose type is not `index`, the table of the folder's pages. An `index.md` of type `index` is generated whole, and a folder index with no such section gets one appended under a Pages heading. |
 | `definition-kinds` | This reference. |
+| `code-registry` | On the conventions page, the code registry: every page's code, type, path, and summary, read from the pages' front matter. |
 
 ### `setting`
 
@@ -391,3 +392,40 @@ kind: setting
 name: example
 ```
 ````
+
+## Code registry
+
+<!-- generated:code-registry -->
+
+| Code | Type | Path | Summary |
+| :-- | :-- | :-- | :-- |
+| `CONV` | conventions | [`conventions.md`](conventions.md) | How the fixture specification is written. |
+| `CAPS` | index | [`capabilities/index.md`](capabilities/index.md) | Lists the capability areas. |
+| `RTPOOL` | index | [`capabilities/pools/index.md`](capabilities/pools/index.md) | Lists the capabilities that keep pods warm. |
+| `POOL` | capability | [`capabilities/pools/warm-pools.md`](capabilities/pools/warm-pools.md) | Keeps a pool's pods warm. This page defines the pool and its settings. |
+| `CATALERT` | catalog | [`catalogs/alerts.md`](catalogs/alerts.md) | Lists every alert with its severity, the requirements whose breach it detects, and its owner block. |
+| `CATOPS` | catalog | [`catalogs/api-operations.md`](catalogs/api-operations.md) | Lists every interface operation with its identifier, method, path, and owner block. |
+| `CATCHAN` | catalog | [`catalogs/channels.md`](catalogs/channels.md) | Lists every register with its store, writers, readers, and owner block. |
+| `CATCONTR` | catalog | [`catalogs/contributions.md`](catalogs/contributions.md) | Lists every RBAC grant and network rule with the running unit that carries it, the page that states it, and the requirement behind it. |
+| `CATCRD` | catalog | [`catalogs/custom-resources.md`](catalogs/custom-resources.md) | Lists every custom resource kind with its group, version, scope, and owner block. |
+| `CATERR` | catalog | [`catalogs/errors.md`](catalogs/errors.md) | Lists every error code, admission refusal, and condition reason with its status and owner block. |
+| `CATEVT` | catalog | [`catalogs/events.md`](catalogs/events.md) | Lists every event type with its emitting components, its payload, and its owner block. |
+| `CATGLOSS` | catalog | [`catalogs/glossary.md`](catalogs/glossary.md) | Lists every owned term with a one-sentence gloss and a link to its owner. |
+| `CATIDX` | index | [`catalogs/index.md`](catalogs/index.md) | Lists the catalogs generated from the definition blocks, the terms, and the requirements of the specification's pages. |
+| `CATLABEL` | catalog | [`catalogs/labels.md`](catalogs/labels.md) | Lists every label, annotation, finalizer, and readiness gate with its carriers, mutability, and owner block. |
+| `CATLIMIT` | catalog | [`catalogs/limits.md`](catalogs/limits.md) | Lists every limit with its value, unit, and owner block. |
+| `CATMETRIC` | catalog | [`catalogs/metrics.md`](catalogs/metrics.md) | Lists every metric with its type, labels, emitting components, and owner block. |
+| `CATREQ` | catalog | [`catalogs/requirements.md`](catalogs/requirements.md) | Lists every requirement identifier with its title and page. |
+| `CATSET` | catalog | [`catalogs/settings.md`](catalogs/settings.md) | Lists every setting with its type, default, range, scopes, the components that read it, its tier presets, and its owner block. |
+| `CATSTATE` | catalog | [`catalogs/state-machines.md`](catalogs/state-machines.md) | Lists every state machine with its object, its states, and its owner block. |
+| `GW` | component | [`components/gateway/index.md`](components/gateway/index.md) | The gateway as a unit. |
+| `GWCLAIM` | component | [`components/gateway/pod-claimer.md`](components/gateway/pod-claimer.md) | The gateway part that claims pods. |
+| `COMPS` | index | [`components/index.md`](components/index.md) | Lists the components. |
+| `PSC` | component | [`components/pool-scaling-controller.md`](components/pool-scaling-controller.md) | The controller that sizes pools. |
+| `WPC` | component | [`components/warm-pool-controller.md`](components/warm-pool-controller.md) | The controller that creates agent pods. |
+| `IFS` | index | [`interfaces/index.md`](interfaces/index.md) | Lists the interfaces. |
+| `K8S` | interface | [`interfaces/kubernetes/index.md`](interfaces/kubernetes/index.md) | Lenny's Kubernetes API conventions. |
+| `KLABEL` | interface | [`interfaces/kubernetes/labels-and-annotations.md`](interfaces/kubernetes/labels-and-annotations.md) | The labels and annotations Lenny defines. |
+| `KPCLAIM` | interface | [`interfaces/kubernetes/podclaim.md`](interfaces/kubernetes/podclaim.md) | The PodClaim custom resource. |
+
+<!-- /generated:code-registry -->

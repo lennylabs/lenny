@@ -19,3 +19,8 @@ kind: setting
 name: example
 ```
 ````
+
+## Code registry
+
+<!-- generated:code-registry -->
+<!-- /generated:code-registry -->

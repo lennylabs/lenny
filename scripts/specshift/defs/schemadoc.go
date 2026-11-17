@@ -88,4 +88,5 @@ var regionDocs = [][2]string{
 	{RegionNetworkRules, "The `network-rule` blocks whose `unit` names the page's code."},
 	{RegionIndex, "On a folder's `index.md` whose type is not `index`, the table of the folder's pages. An `index.md` of type `index` is generated whole, and a folder index with no such section gets one appended under a Pages heading."},
 	{RegionDefinitionKinds, "This reference."},
+	{RegionCodeRegistry, "On the conventions page, the code registry: every page's code, type, path, and summary, read from the pages' front matter."},
 }
