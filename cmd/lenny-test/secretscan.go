@@ -47,10 +47,14 @@ import (
 // an empty directory and leaves a root .gitleaksignore out of the scanned
 // tree, so a .gitleaksignore file does not either.
 //
-// Limits. gitleaks skips archives (no --max-archive-depth is passed, and the
-// tracked upload fixtures include archive bombs) and files it detects as
-// binary, and the default global allowlist skips some paths, as the header
-// of .gitleaks.toml lists. A secret in such a file is not found.
+// Coverage. gitleaks skips archives (no --max-archive-depth is passed, and
+// the tracked upload fixtures include archive bombs), files it detects as
+// binary, and the paths the global allowlist of its default configuration
+// skips. Before it runs gitleaks, the check holds every tracked file of
+// those kinds to a reviewed entry in tests/registers/binary-files.yaml or
+// tests/registers/secret-scan-skipped-paths.yaml, and fails on one with no
+// matching entry (secretscan_coverage.go). That half needs no gitleaks, so
+// it runs and can fail on a host without it.
 
 // secretScanConfig is the gitleaks configuration at the repository root.
 const secretScanConfig = ".gitleaks.toml"
@@ -65,22 +69,28 @@ type secretScanFinding struct {
 	StartLine   int    `json:"StartLine"`
 }
 
-// runSecretScan runs gitleaks over the files git tracks under root. It
-// reports the unverified marker when gitleaks is not installed, because a
-// scan that did not run proves nothing, and it fails closed when the
-// tracked files cannot be listed or the configuration is missing.
+// runSecretScan checks that every tracked file gitleaks does not read has
+// a reviewed entry, then runs gitleaks over the files git tracks under
+// root. It reports the unverified marker when gitleaks is not installed,
+// because a scan that did not run proves nothing, and it fails closed when
+// the tracked files cannot be listed, a register or the configuration is
+// missing, or a file gitleaks does not read lacks its entry.
 func runSecretScan(root string) (string, error) {
+	files, err := trackedFiles(root)
+	if err != nil {
+		return "", err
+	}
+	coverage, err := checkSecretScanCoverage(root, files)
+	if err != nil {
+		return coverage, err
+	}
 	bin, err := exec.LookPath("gitleaks")
 	if err != nil {
-		return verdictstatus.UnverifiedMarker + " gitleaks not on PATH; the secret scan did not run (the gate image installs it)", nil
+		return verdictstatus.UnverifiedMarker + " gitleaks not on PATH; the secret scan did not run (the gate image installs it)\n" + coverage, nil
 	}
 	config := filepath.Join(root, secretScanConfig)
 	if _, err := os.Stat(config); err != nil {
 		return "", fmt.Errorf("secret scan configuration: %w", err)
-	}
-	files, err := trackedFiles(root)
-	if err != nil {
-		return "", err
 	}
 	work, err := os.MkdirTemp("", "lenny-secretscan-")
 	if err != nil {
@@ -122,7 +132,7 @@ func runSecretScan(root string) (string, error) {
 	if readErr != nil {
 		return string(out), readErr
 	}
-	return fmt.Sprintf("gitleaks: no secrets in %d tracked files", copied), nil
+	return fmt.Sprintf("gitleaks: no secrets in %d tracked files; %s", copied, coverage), nil
 }
 
 // trackedFiles returns the slash-separated, root-relative paths git lists

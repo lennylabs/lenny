@@ -169,3 +169,21 @@ so a run over a tree that still carries a site fails closed rather than
 reporting the zero work of a completed migration. The class's residual
 register is what records a member its broad predicate still matches
 after the pass has run.
+
+## Secret scan coverage registers
+
+The secret scan of the static tier (`cmd/lenny-test`,
+`secretscan_coverage.go`) reads two lists of the tracked files gitleaks
+does not read, each reviewed by hand for secrets:
+
+| File | Schema | What it names |
+|:--|:--|:--|
+| `binary-files.yaml` | `kind: binary-files`, `version: 1`, and an `entries` list of `path`, `class` (`archive` or `binary`), `size`, `sha256`, and `reason`. | Each tracked archive and binary file. |
+| `secret-scan-skipped-paths.yaml` | `kind: secret-scan-skipped-paths`, `version: 1`, and an `entries` list of `path` and `reason`. | Each tracked text file under a path the default gitleaks allowlist skips. |
+
+The scan fails on a tracked file of either kind that its list does not
+name, on a listed binary file whose size or hash changed, and on an
+entry that names no such file. Neither list is a baseline: an entry
+stays while its file does, and a change to this directory is reviewed
+before it merges (`.claude/rules/git-workflow.md`, "Review changes to
+the merge gate").

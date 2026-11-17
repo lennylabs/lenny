@@ -9,7 +9,12 @@
 # which skips some files by path (images, fonts, office documents, go.mod
 # and go.sum, lockfiles, vendored trees, anything under node_modules, and
 # any path containing "gitleaks.toml") and some values by pattern. gitleaks
-# also skips archives and binary files without reading them. A diff to this
+# also skips archives and binary files without reading them. The check
+# holds every tracked file gitleaks skips to a reviewed entry, and fails on
+# one without: archives and binary files in
+# tests/registers/binary-files.yaml, and text files under a skipped path in
+# tests/registers/secret-scan-skipped-paths.yaml, which names this file
+# too (cmd/lenny-test/secretscan_coverage.go). A diff to this
 # file is reviewed with the `review` skill before it merges
 # (.claude/rules/git-workflow.md, "Review changes to the merge gate").
 #

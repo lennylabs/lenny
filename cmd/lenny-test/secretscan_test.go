@@ -34,8 +34,9 @@ func requireGitleaks(t *testing.T) {
 }
 
 // newSecretScanFixtureRepo builds a git checkout holding the repository's
-// .gitleaks.toml and one clean tracked file, commits them, and returns
-// the checkout root.
+// .gitleaks.toml, the two coverage registers with the one entry the
+// configuration file needs, and one clean tracked file, commits them, and
+// returns the checkout root.
 func newSecretScanFixtureRepo(t *testing.T) string {
 	t.Helper()
 	config, err := os.ReadFile(filepath.Join(repoRoot(), secretScanConfig))
@@ -45,6 +46,7 @@ func newSecretScanFixtureRepo(t *testing.T) string {
 	root := t.TempDir()
 	gitIn(t, root, "init", "-q", "-b", "main")
 	writeScopeFile(t, filepath.Join(root, secretScanConfig), string(config))
+	writeCoverageRegisters(t, root, nil, nil)
 	writeScopeFile(t, filepath.Join(root, "README.md"), "A fixture with no secrets.\n")
 	gitIn(t, root, "add", "-A")
 	gitIn(t, root, "commit", "-q", "-m", "seed")
@@ -94,8 +96,8 @@ func TestSecretScanJudgesTrackedFilesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("scan failed on an untracked secret: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "no secrets in 2 tracked files") {
-		t.Errorf("scan output = %q, want the count of the two tracked files", out)
+	if !strings.Contains(out, "no secrets in 4 tracked files") {
+		t.Errorf("scan output = %q, want the count of the four tracked files", out)
 	}
 }
 
@@ -136,8 +138,19 @@ func TestSecretScanFailsWithoutItsConfiguration(t *testing.T) {
 // without gitleaks: the check carries the unverified marker, so the tier
 // reads "did not run" rather than a pass.
 func TestSecretScanWithoutGitleaksIsUnverified(t *testing.T) {
-	t.Setenv("PATH", t.TempDir())
-	out, err := runSecretScan(t.TempDir())
+	gitBin, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("blocked: precondition not met: git not on PATH")
+	}
+	root := newSecretScanFixtureRepo(t)
+	// A PATH that holds git alone, so the coverage half lists the tracked
+	// files and gitleaks is not found.
+	pathDir := t.TempDir()
+	if err := os.Symlink(gitBin, filepath.Join(pathDir, "git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+	out, err := runSecretScan(root)
 	if err != nil {
 		t.Fatalf("scan without gitleaks returned an error: %v", err)
 	}
