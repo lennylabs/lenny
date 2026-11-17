@@ -10,8 +10,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Building | 9 |
 | Ready | 2 |
-| Waiting on decisions | 39 |
-| Blocked | 146 |
+| Waiting on decisions | 40 |
+| Blocked | 157 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -48,10 +48,20 @@ A step is ready when every step it depends on has landed and its change is not `
 
 ### M2: Gateway package layout and the journey pilot
 
-Not yet resolved to steps: 0117.
-
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Waiting on decisions | 0117 is `Draft` |
+| [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
+| [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0117.S8, 0137.S5, 0155.S1 |
+| [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
+| [0117.S2](0117-gateway-package-layout/steps.md#0117s2-the-seam-interface-package-the-layout-gate-and-the-move-driver) | The seam interface package, the layout gate, and the move driver | Blocked | 0117.S1, 0155.S1 |
+| [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
+| [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
+| [0117.S5](0117-gateway-package-layout/steps.md#0117s5-upload-handler-split) | Upload handler split | Blocked | 0117.S2, 0137.S5, 0155.S1 |
+| [0117.S6](0117-gateway-package-layout/steps.md#0117s6-stream-proxy-split-69-import-sites) | Stream proxy split (69 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
+| [0117.S7](0117-gateway-package-layout/steps.md#0117s7-platform-tools-seam-428-import-sites) | Platform tools seam (428 import sites) | Blocked | 0117.S6, 0137.S5, 0155.S1 |
+| [0117.S8](0117-gateway-package-layout/steps.md#0117s8-api-front-and-the-shared-api-conventions-497-import-sites) | API front and the shared API conventions (497 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0137.S5, 0155.S1 |
+| [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Blocked | 0117.S2, 0137.S5, 0155.S1 |
 | [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Blocked | 0155.S1 |
 
 ### M3+: Areas, one milestone each, ordered once 0115 lands
@@ -240,6 +250,7 @@ Not yet resolved to steps: 0117.
 | :-- | :-- | :-- | :-- | --: |
 | [0115](0115-spec-structure/change.md) | Specification structure | `In progress` | 0 of 9 | 0 |
 | [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Draft` | 0 of 7 | 18 |
+| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `Draft` | 0 of 12 | 7 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |

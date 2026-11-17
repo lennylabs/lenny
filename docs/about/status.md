@@ -34,7 +34,7 @@ The work toward this goal is planned as milestones. A milestone is done when its
 |:----------|:-------------|:------|
 | Workflow in place | 10 of 10 | Done |
 | Specification structure foundation (current) | 0 of 23 | In progress |
-| Gateway package layout and the journey pilot | 0 of 1 | Not started |
+| Gateway package layout and the journey pilot | 0 of 13 | Not started |
 | Areas, one milestone each, ordered once the "Specification structure" change lands | None assigned yet | Not started |
 
 ### Workflow in place
@@ -53,7 +53,7 @@ Exit criteria: Every merge passes the merge gate and `main` is green. The conven
 
 Exit criteria: The gateway layout is decided and the package moves have landed. Three pilot persona journeys run, and their cost per run is measured.
 
-Its one step has not started. Part of its work is not yet divided into steps, so the count covers only the steps listed.
+0 of its 13 steps have landed, and 0 are being built.
 
 ### Areas, one milestone each, ordered once the "Specification structure" change lands
 
