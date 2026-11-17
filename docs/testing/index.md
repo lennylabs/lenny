@@ -94,7 +94,7 @@ Per TESTING.md §17.10 every test must pass 50 consecutive runs. Investigate via
 | Tier | Directory | Build tag |
 |:-----|:----------|:----------|
 | `static` | `tests/static/build/`, `tests/static/chart/`, `tests/static/lint/`, and `tests/static/structure/` | _(none)_ |
-| `unit` | `pkg/<area>/*_test.go` and `tests/tier1_unit/` | _(none)_ |
+| `unit` | `pkg/<area>/*_test.go`, beside the code each test covers | _(none)_ |
 | `component` | `tests/component/<subsystem>/` | `component` |
 | `contract` | `tests/contract/<surface>/` | `contract` |
 | `integration` | `tests/integration/` | `integration` |

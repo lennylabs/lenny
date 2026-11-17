@@ -758,22 +758,22 @@ sites:
       site: 1
       call: Skipf
       reason: 'NEEDS-OPERATOR: runtime class %q is not provisioned for this run. Provision its RuntimeClass + node pool via scripts/cloud/<provider>/up-runtimeclass-pools.sh and add %q to LENNY_BENCH_RUNTIME_CLASSES (gVisor needs no hardware virtualization; Kata needs nested-virt node pools).'
-    - path: tests/tier1_unit/flagdefaults/flagdefaults_test.go
+    - path: cmd/lenny-gateway/flagdefaults_test.go
       function: TestRequiredFlagsExposedInHelp
       site: 1
       call: Skipf
       reason: 'could not run --help for %s: %v'
-    - path: tests/tier1_unit/helm/helm_test.go
+    - path: pkg/chart/values/helm_unittest_test.go
       function: TestChartTemplatesViaHelmUnittest
       site: 1
       call: Skipf
       reason: 'helm not on PATH: %v'
-    - path: tests/tier1_unit/helm/helm_test.go
+    - path: pkg/chart/values/helm_unittest_test.go
       function: TestChartTemplatesViaHelmUnittest
       site: 2
       call: Skipf
       reason: 'helm plugin list failed: %v'
-    - path: tests/tier1_unit/helm/helm_test.go
+    - path: pkg/chart/values/helm_unittest_test.go
       function: TestChartTemplatesViaHelmUnittest
       site: 3
       call: Skipf

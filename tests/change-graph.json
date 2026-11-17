@@ -35,21 +35,6 @@
     "tests/load_cloud/": {
       "load_cloud": ["tests/load_cloud/..."]
     },
-    "tests/tier1_unit/concurrency/": {
-      "unit": ["tests/tier1_unit/concurrency/..."]
-    },
-    "tests/tier1_unit/flagdefaults/": {
-      "unit": ["tests/tier1_unit/flagdefaults/..."]
-    },
-    "tests/tier1_unit/helm/": {
-      "unit": ["tests/tier1_unit/helm/..."]
-    },
-    "tests/tier1_unit/lifecycle/": {
-      "unit": ["tests/tier1_unit/lifecycle/..."]
-    },
-    "tests/tier1_unit/rbac/": {
-      "unit": ["tests/tier1_unit/rbac/..."]
-    },
     "tests/component/admission/": {
       "component": ["tests/component/admission/..."]
     },
@@ -506,7 +491,7 @@
     },
     "supervisor/": {
       "static": ["tests/static/build/supervisor_binary_test.go"],
-      "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."],
+      "unit": ["tests/testinfra/supervisorbuild/..."],
       "e2e_cloud": ["tests/e2e_cloud/runtime_supervisor_isolation_test.go"]
     },
     "Dockerfile.supervisor": {
@@ -532,10 +517,7 @@
     },
     "tests/testinfra/supervisorbuild": {
       "static": ["tests/static/build/supervisor_binary_test.go"],
-      "unit": ["tests/testinfra/supervisorbuild/...", "tests/tier1_unit/supervisor/..."]
-    },
-    "tests/tier1_unit/supervisor": {
-      "unit": ["tests/tier1_unit/supervisor/..."]
+      "unit": ["tests/testinfra/supervisorbuild/..."]
     },
     "cmd/runtimes/supervise-probe/": {
       "unit": ["tests/testinfra/superviseprobe/..."],
@@ -1018,7 +1000,7 @@
       "security": ["tests/security/tenant_deletion_isolation_test.go"]
     },
     "tests/testinfra/lifecycleharness": {
-      "unit": ["tests/tier1_unit/lifecycle/...", "tests/testinfra/lifecycleharness/..."],
+      "unit": ["tests/testinfra/lifecycleharness/..."],
       "component": ["tests/component/lifecycle/..."],
       "integration": [
         "tests/integration/session_resume_driver_integration_test.go",

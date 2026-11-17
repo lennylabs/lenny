@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package flagdefaults
+package main_test
 
 import (
 	"os/exec"
@@ -13,6 +13,18 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 )
+
+// This file is the unit-tier regression test that every
+// operationally-tunable default the gateway chooses is read from a
+// flag, exposed in --help, and documented.
+//
+// Regression source: commit 0b7c71c. The gateway shipped with
+// client-go's default QPS=5 / Burst=10, which throttled a load
+// scenario at 5 req/s with no operator-visible knob. The added
+// --cluster-qps / --cluster-burst flags closed the hole; this
+// file asserts they remain operator-tunable.
+//
+// TESTING.md (Wave 4 default-tuning regression test).
 
 // requiredFlags lists every operationally-tunable flag the gateway
 // must expose. The flag name is the bare token (no leading dashes);
@@ -124,5 +136,5 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }

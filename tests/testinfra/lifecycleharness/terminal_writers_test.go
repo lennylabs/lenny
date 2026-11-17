@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package lifecycle_test runs the terminal-writer and resume-attempt cell
-// tables, and the lifecycle state machine, on the lifecycle harness over the
-// in-memory session store.
-package lifecycle_test
+package lifecycleharness_test
 
 import (
 	"testing"

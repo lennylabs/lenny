@@ -284,10 +284,10 @@ func TestCollapsePatternsDropsCoveredPackages(t *testing.T) {
 // spec: the test infrastructure §6 (selection algorithm)
 func TestGoTestPatternAndDiffRange(t *testing.T) {
 	for in, want := range map[string]string{
-		"pkg/a/...":             "./pkg/a/...",
-		"./pkg/a/...":           "./pkg/a/...",
-		"pkg/a/x_test.go":       "./pkg/a",
-		"tests/tier1_unit/life": "./tests/tier1_unit/life",
+		"pkg/a/...":            "./pkg/a/...",
+		"./pkg/a/...":          "./pkg/a/...",
+		"pkg/a/x_test.go":      "./pkg/a",
+		"tests/testinfra/life": "./tests/testinfra/life",
 	} {
 		if got := goTestPattern(in); got != want {
 			t.Errorf("goTestPattern(%q) = %q, want %q", in, got, want)

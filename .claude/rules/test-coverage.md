@@ -43,7 +43,7 @@ The suite runs in tiers, each named for what its tests need (`lenny-test --tier 
 
 A change writes tests for every tier whose surface it touches. This list says which tiers' tests a change writes; which tiers run, and what must pass before a merge, is under "Gates" below.
 
-- Pure function, type, or in-process logic: the unit tier.
+- Pure function, type, or in-process logic: the unit tier, in a `_test.go` file beside the code it tests. No directory under `tests/` holds unit tests.
 - Controller, reconciler, or anything reading or writing the kube-apiserver: component tier (envtest).
 - A wire contract (a proto message, a JSONL frame, an HTTP request or response, a CRD schema): the contract tier.
 - A flow that crosses the gateway, a datastore, or another service: integration tier.
@@ -74,6 +74,15 @@ The merge policy:
 2. `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges.
 3. A merge-gate failure is never recorded as pre-existing. Recording a failure that also occurs on `main` as pre-existing applies only to tiers outside the merge gate.
 4. Only a flaky test enters quarantine: a test that fails and passes on the same commit. A deterministic failure on `main` does not enter quarantine; it is fixed or reverted under rule 2. A quarantined test gets an entry in `tests/flake-budget.yaml` that names its owner and its reason, and its skip carries a reason in the `quarantined:` category. The quarantine has a cap, the `cap` field of that file. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
+
+## Documentation checks
+
+A new check of the documentation, the specification, or the records is one of two kinds, and no other:
+
+- **A general gate.** It checks the documentation as a whole against a rule that holds for every page, such as links that resolve, code blocks that parse, runbooks that every alert names, or a page's front matter. The general gates of the docs tier are listed in `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`, and the gates of the specification structure run in the structure package of the static tier.
+- **A generator check.** It regenerates a file from its source, such as a catalog, an index, or a reference page from the definition blocks, and fails when the committed file differs.
+
+No test matches specification prose. A test does not read a numbered section or a specification page and assert that a phrase, a sentence, or a heading's wording appears there, and it does not assert the wording of a gap record. A requirement is verified by the code that carries it out, and a page's names and values are checked by the documentation gates against the catalogs (`doc-content.md`, "Documentation and the specification"). A test that pins prose fails when the text moves without any defect behind it. The docs-tier reconciliation tests and gap-record tests that match prose today are deleted or replaced area by area, at each area's milestone exit.
 
 ## Coverage target
 

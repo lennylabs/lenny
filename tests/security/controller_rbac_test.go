@@ -13,7 +13,7 @@
 //
 // This file asserts the verb is allowed against the chart-installed
 // RBAC, not only the rendered chart template (the tier-1 guard in
-// tests/tier1_unit/rbac/rbac_test.go covers the rendered template). It
+// pkg/chart/values/cluster_role_verbs_test.go covers the rendered template). It
 // runs a live SubjectAccessReview through `kubectl auth can-i ... --as`
 // for the controller ServiceAccount in an agent namespace and asserts
 // the verb is allowed; a denial means the §4.7 carrier write is

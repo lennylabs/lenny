@@ -1,15 +1,37 @@
 // SPDX-License-Identifier: MIT
 
-package rbac
+package values_test
 
 import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 )
+
+// This file is the unit check that the chart's ClusterRoles
+// contain every verb the gateway and controller binaries need.
+//
+// Regression source: commit f54b7bb. The gateway issued
+// `client.Delete(... sandboxclaim ...)` while the gateway ClusterRole
+// did not grant `delete` on `sandboxclaims`. Every load_cloud
+// terminate returned HTTP 200 to the caller while leaking the claim,
+// and the pool saturated within seconds. The chart RBAC missing one
+// verb is one of the highest-leverage bug classes: it surfaces only
+// under load and only when the affected RBAC path actually fires.
+//
+// The check in this file asserts that a known-required set of
+// {verb, resource} pairs is present in each ClusterRole template
+// the gateway and controller bind to. The list is the source of
+// truth derived from the codebase; whenever a new client.Verb call
+// site is added, the test fails until the verb is added to both the
+// chart and the assertion table here.
+//
+// A future enhancement walks the Go AST to derive the {verb, resource}
+// set automatically. The Wave 4 cut is the hand-curated table.
+//
+// TESTING.md §6.1 (Wave 4 unit-test uplift).
 
 // requiredVerbs is the hand-curated set of {role, resource, verb}
 // triples the chart's ClusterRole templates must grant. The set tracks
@@ -73,7 +95,7 @@ func TestClusterRolesGrantRequiredVerbs(t *testing.T) {
 		t.Run(req.Role+"/"+req.Resource, func(t *testing.T) {
 			tmplPath, ok := templates[req.Role]
 			if !ok {
-				t.Fatalf("no template registered for role %q; update tests/tier1_unit/rbac/rbac_test.go", req.Role)
+				t.Fatalf("no template registered for role %q; update pkg/chart/values/cluster_role_verbs_test.go", req.Role)
 			}
 			body, err := os.ReadFile(tmplPath)
 			if err != nil {
@@ -329,14 +351,4 @@ func extractVerbs(rule string) []string {
 		out = append(out, m[1])
 	}
 	return out
-}
-
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		t.Fatal("runtime.Caller failed")
-	}
-	// tests/tier1_unit/rbac/rbac_test.go → repo root is three dirs up.
-	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 }

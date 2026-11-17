@@ -13,10 +13,6 @@ import (
 // check walks.
 const testDirsRoot = "tests"
 
-// unitTestDir is the directory of unit tests that do not yet sit beside
-// the code they test. The check covers it with the tier directories.
-const unitTestDir = "tests/tier1_unit"
-
 // validateTestDirsKeyed fails a tracked test directory under a tier
 // directory (tierDirs) that no glob key of tests/change-graph.json covers.
 //
@@ -97,8 +93,5 @@ func tierTestDirs(paths []string) []string {
 
 // inTierDir reports whether path sits under a tier directory.
 func inTierDir(path string) bool {
-	if strings.HasPrefix(path, unitTestDir+"/") {
-		return true
-	}
 	return tierOfDir(path) != ""
 }

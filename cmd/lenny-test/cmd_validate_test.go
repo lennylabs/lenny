@@ -1354,7 +1354,7 @@ func TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness(t *testi
 	want := map[string]map[string]string{
 		"supervisor/": {
 			"static": "tests/static/build/supervisor_binary_test.go",
-			"unit":   "tests/tier1_unit/supervisor/...",
+			"unit":   "tests/testinfra/supervisorbuild/...",
 		},
 		"Dockerfile.supervisor": {
 			"static": "tests/static/build/supervisor_binary_test.go",

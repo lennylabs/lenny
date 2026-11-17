@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package lifecycle_test
+package lifecycleharness_test
 
 import (
 	"encoding/json"

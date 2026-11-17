@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Docs check for the Helm chart paths §25.8 of the spec
-// cites for the canonical values.yaml reference. Neither the tier1_unit/helm
+// cites for the canonical values.yaml reference. Neither the helm-unittest driver
 // nor the static chart-render checks pin the file paths the prose in
 // spec/25_agent-operability.md tells an operator or agent to open; this test
 // closes that gap.

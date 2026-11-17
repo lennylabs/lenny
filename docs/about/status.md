@@ -57,7 +57,7 @@ Exit criteria: The gateway layout is decided and the package moves have landed. 
 
 ### Areas, one milestone each, ordered once the "Specification structure" change lands
 
-Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its findings from the gap records are filed as issues and closed, and its test tiers pass. The area's documentation-tier reconciliation tests and gap-record tests are deleted or replaced, its stores have conformance suites, and its persona journeys run.
+Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its findings from the gap records are filed as issues and closed, and its test tiers pass. The area's docs-tier reconciliation tests and gap-record tests are deleted or replaced, its stores have conformance suites, and its persona journeys run.
 
 No steps are assigned to this milestone yet.
 

@@ -7,7 +7,7 @@
 // gracefully when the helm CLI or the helm-unittest plugin are not
 // installed.
 
-package helm_test
+package values_test
 
 import (
 	"errors"

@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1595
+      count: 1599
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -174,7 +174,7 @@ packages:
     - package: pkg/blobstore/s3
       count: 43
     - package: pkg/chart/values
-      count: 17
+      count: 23
     - package: pkg/checkpoint
       count: 3
     - package: pkg/clockinject
@@ -1268,7 +1268,7 @@ packages:
     - package: tests/testinfra/lifecyclefence
       count: 86
     - package: tests/testinfra/lifecycleharness
-      count: 106
+      count: 120
     - package: tests/testinfra/load
       count: 18
     - package: tests/testinfra/matrix
@@ -1322,7 +1322,7 @@ packages:
     - package: tests/testinfra/superviseprobe
       count: 42
     - package: tests/testinfra/supervisorbuild
-      count: 1
+      count: 6
     - package: tests/testinfra/tcpfault
       count: 2
     - package: tests/testinfra/timectl
@@ -1333,13 +1333,3 @@ packages:
       count: 2
     - package: tests/testinfra/wait
       count: 4
-    - package: tests/tier1_unit/flagdefaults
-      count: 4
-    - package: tests/tier1_unit/helm
-      count: 2
-    - package: tests/tier1_unit/lifecycle
-      count: 14
-    - package: tests/tier1_unit/rbac
-      count: 4
-    - package: tests/tier1_unit/supervisor
-      count: 5

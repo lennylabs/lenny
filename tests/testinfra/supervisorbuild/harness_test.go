@@ -1,11 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package supervisor drives the runtime supervisor's C unit harness and
-// fuzz driver from go test. The C sources live under supervisor/, which
-// holds no Go file, so go vet and go test never compile them as cgo; this
-// package builds them with supervisor/Makefile into a temporary directory
-// and runs each harness case as a subtest.
-package supervisor
+package supervisorbuild_test
 
 import (
 	"bytes"

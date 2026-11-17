@@ -234,8 +234,6 @@ lenny/
     │   ├── chart/                 # Chart render and deployment boundary
     │   ├── lint/                  # Code invariants and test hygiene
     │   └── structure/             # Specification structure, migration gates, maps
-    ├── tier1_unit/                # Index only; unit tests live with their packages under pkg/.
-    │   └── helm/                  # Helm chart-rendering units (no obvious source-tree home)
     ├── component/
     │   ├── auditintegrity/
     │   ├── auditstore/
@@ -288,7 +286,7 @@ lenny/
 
 ### Why this layout
 
-- Unit tests live next to the code they cover (`pkg/.../foo_test.go`). The `tests/tier1_unit/` directory is a convention marker, not a code location.
+- Unit tests live next to the code they cover (`pkg/.../foo_test.go`). A unit test of a test helper sits beside the helper under `tests/testinfra/`, and the chart's unit tests (helm-unittest and the RBAC verb check) sit in `pkg/chart/values/`. There is no unit-tier directory under `tests/`.
 - Every other tier has its own directory, its own build tag, and its own dependency set.
 - The load tests have three directories: `load_local/` (in-process scenarios), `load_kind/` (Kind-based smoke and the canonical baseline corpus), and `load_cloud/` (opt-in cloud-profile runs). `load_kind/` and `load_cloud/` share scenario definitions but bind to different harnesses and run cadences.
 - A few `testinfra/` subdirectories carry only YAML, fixtures, or a single subcommand (`runtimes/`, `k8s/`, `sdkhelper/`). They are listed as asset directories in `tests/testinfra/README.md` so a reader does not expect a Go package at the top of each path.
@@ -953,7 +951,7 @@ The structure package carries the gates of the channel-naming and line-citation 
 | `TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister` | The degradation matrix matches the channel register | No. Kept. |
 | `TestResidualGateCertifiesTheTree` | Every member of a migration class is classified | No. Kept until the migration registers retire. |
 | `TestEveryMigrationGateIsRegisteredAtTierZero` | Every migration gate is still hard-gated | No. Kept while the gates it lists remain. |
-| `TestClaimRegisterSaysWhatTheSpecificationRequires`, `TestClaimRegisterIsReproducibleFromItsGenerator`, and `TestClaimRegisterAgreesWithTheAdapterProto` | The claim register's form, its generator, and its agreement with the adapter proto | No. The claim register becomes issues under change 0116. Kept. |
+| `TestClaimRegisterSaysWhatTheSpecificationRequires`, `TestClaimRegisterIsReproducibleFromItsGenerator`, and `TestClaimRegisterAgreesWithTheAdapterProto` | The claim register's form, its generator, and its agreement with the adapter proto | No. Kept. |
 | `TestComplianceFullChecksNamedForTheirChannel` | The compliance checks carry their channel's identifier | No. Kept. |
 
 **Wall-clock target.** Under 30 seconds on a laptop for each check other than the structure package, which has the budget above.
@@ -1582,7 +1580,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure to land.**
 - Proto and JSON Schema compilation in the static tier.
 - `tests/contract/adapter_jsonl/` and `tests/contract/workspaceplan/` directories with stub failing tests for every documented contract.
-- `tests/tier1_unit/` table-driven tests for every state machine introduced in Phase 1 (TaskRecord state, suspended session state, input_required state).
+- Unit tests beside each package for every state machine introduced in Phase 1 (TaskRecord state, suspended session state, input_required state).
 - buf-driven schema breaking-change detection.
 - Spec map entries for spec §1, §2, §3, §14, §15.4, §15.5.
 
