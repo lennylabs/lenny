@@ -128,12 +128,18 @@ func Held(pid int, addr string) Holder {
 		return HolderNone
 	}
 	owned, err := socketInodes(pid)
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission) {
 		// /proc/net/tcp was readable, so the platform exposes ownership, and
 		// a missing /proc/<pid>/fd means the process has exited. A process
 		// that exits on a bind refusal is reaped while its readiness probe
 		// still runs, and the listener on the port then belongs to another
-		// process (TEST-GAPS T-17.4.40).
+		// process (TEST-GAPS T-17.4.40). Before it is reaped, an exited
+		// process has released its memory, and the kernel then gives its
+		// /proc/<pid>/fd to root, so a caller that is not root reads a
+		// permission error rather than a missing directory. The harnesses
+		// start their own binaries as the caller's user, and none of them
+		// makes itself non-dumpable, so a running child's directory is
+		// always readable and a permission error means the same exit.
 		return HolderOther
 	}
 	if err != nil {

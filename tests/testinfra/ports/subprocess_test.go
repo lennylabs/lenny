@@ -81,6 +81,49 @@ func TestHeldNamesTheHolderOfALoopbackListener(t *testing.T) {
 	}
 }
 
+// spec: TESTING.md §12.4 (Tier 4 — Integration), TESTING.md §17.10 (Flake budget)
+//
+// TestHeldTreatsAnExitedUnreapedChildAsNotHolding pins the window between a
+// child's exit on a bind refusal and its reaping. The child's /proc entry
+// still exists, but the kernel has given its /proc/<pid>/fd to root, so a
+// caller that is not root, such as the merge gate's user, cannot read it.
+// A listener on the port then belongs to another process, and the exited
+// child is not ready on it. Before, the permission error read as an
+// unknown holder, so a harness accepted the other process's answer to its
+// readiness probe.
+func TestHeldTreatsAnExitedUnreapedChildAsNotHolding(t *testing.T) {
+	requireProcNet(t)
+	ln := NewListener(t)
+	addr := ln.Addr().String()
+	child := exec.Command("true")
+	if err := child.Start(); err != nil {
+		t.Skipf("blocked: cannot start a child process: %v", err)
+	}
+	t.Cleanup(func() { _ = child.Wait() })
+	stat := filepath.Join("/proc", fmt.Sprint(child.Process.Pid), "stat")
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, err := os.ReadFile(stat)
+		if err != nil {
+			t.Fatalf("read %s: %v", stat, err)
+		}
+		// The state follows the parenthesised command name.
+		if i := strings.LastIndexByte(string(b), ')'); i > 0 && strings.HasPrefix(string(b[i+1:]), " Z") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the child did not become a zombie: %s", b)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := Held(child.Process.Pid, addr); got != HolderOther {
+		t.Errorf("Held(exited unreaped child, listener) = %v, want other", got)
+	}
+	if Ready(child.Process.Pid, addr) {
+		t.Error("Ready(exited unreaped child, listener) = true, want false")
+	}
+}
+
 // spec: TESTING.md §12.4 (Tier 4 — Integration)
 //
 // TestListeningInodesReadsOnlyLoopbackAndWildcardListeners pins the
