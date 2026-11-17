@@ -101,9 +101,42 @@ func parseCommits(out string) []commit {
 	return res
 }
 
-// describe returns the commit a revision names, or an error.
+// resolveCommit returns the full hash of the commit a user-given
+// revision names. A revision that starts with "-" is refused before git
+// sees it, because git would read it as an option (such as --output=,
+// which writes a file). The revision is passed after --end-of-options to
+// rev-parse --verify, so only the verified hash reaches any later git
+// command.
+func (r repo) resolveCommit(ctx context.Context, rev string) (string, error) {
+	if rev == "" {
+		return "", errors.New("the revision is empty")
+	}
+	if strings.HasPrefix(rev, "-") {
+		return "", fmt.Errorf("revision %q starts with \"-\"; a revision names a commit, never an option", rev)
+	}
+	out, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("%s names no commit", rev)
+	}
+	hash := strings.TrimSpace(out)
+	if !hashExpr.MatchString(hash) {
+		return "", fmt.Errorf("%s names no commit", rev)
+	}
+	return hash, nil
+}
+
+// hashExpr matches a full object name as rev-parse prints it.
+var hashExpr = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
+// describe returns the commit a revision names, or an error. The revision
+// is resolved to a full hash first, so the log command never sees the
+// user-given text.
 func (r repo) describe(ctx context.Context, rev string) (commit, error) {
-	out, err := r.git(ctx, "log", "-1", "--date=short", commitFormat, rev+"^{commit}", "--")
+	hash, err := r.resolveCommit(ctx, rev)
+	if err != nil {
+		return commit{}, err
+	}
+	out, err := r.git(ctx, "log", "-1", "--date=short", commitFormat, hash, "--")
 	if err != nil {
 		return commit{}, err
 	}
