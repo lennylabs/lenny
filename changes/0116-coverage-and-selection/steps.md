@@ -40,7 +40,7 @@ The selector of CS-4 and CS-5 in `cmd/lenny-test` (`changed_select.go`, `cmd_run
 `--max-tier` removed, `--tier` taking a list, `--gate` bounding a selection by the gates 0154.S2 defines, and `run --changed` without a bound running the tiers that need no infrastructure (CS-7). `tests/groups.yaml`, `.github/workflows/reusable/lenny-test.yml`, `.claude/rules/test-coverage.md`, the `build` skill, and `TESTING.md` follow. The first validation item sets the default bound.
 
 ### 0116.S5 Claim register into issues
-- status: Planned
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: [0115.S1]
 

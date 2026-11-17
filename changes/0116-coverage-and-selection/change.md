@@ -1,6 +1,6 @@
 # Coverage and test selection from annotations
 
-Status: `Decided`, revision 3, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `In progress`, revision 3, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
 
 ## Problem
 
