@@ -4,47 +4,49 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/h2non/filetype"
+	"github.com/mholt/archives"
 	"gopkg.in/yaml.v3"
 )
 
-// The coverage half of the secret scan names every tracked file that
-// gitleaks does not read and holds each one to a reviewed entry, so no
-// tracked file escapes the scan unseen (change 0158, decisions 5 and 7).
-// It implements the merge gate rather than a specification behavior, so
-// it carries no spec annotation.
+// The coverage half of the secret scan holds the committed files whose
+// content gitleaks does not read, and the files under the paths its
+// default allowlist skips, to reviewed entries (change 0158, decisions 5
+// and 7). It implements the merge gate rather than a specification
+// behavior, so it carries no spec annotation.
 //
-// gitleaks leaves three kinds of file unread: archives, which it opens
-// only when --max-archive-depth is passed, and the check does not pass it
-// because the upload fixtures include archive bombs; files it detects as
-// binary; and files under the paths its default global allowlist skips
-// (secretscan_skipped.go). Two registers under tests/registers, which the
-// review rule of .claude/rules/git-workflow.md covers, hold the entries:
+// gitleaks v8.30.1 leaves a file unread when its name identifies an
+// archive to github.com/mholt/archives, which matches substrings of the
+// name such as ".br" or ".s2" (the scan passes no --max-archive-depth,
+// because some upload fixtures are archive bombs), or when the first chunk
+// of its content has an `application` MIME type under
+// github.com/h2non/filetype. The check calls the same two libraries at the
+// versions gitleaks v8.30.1 pins, the same way, and adds git's own rules
+// for a binary file: a NUL byte in the first 8,000 bytes, or the `binary`
+// attribute set or the `diff` attribute unset. A symbolic link is not
+// read either, because its content is a path. Two registers under
+// tests/registers, which the review rule of .claude/rules/git-workflow.md
+// covers, hold the entries:
 //
-//   - binary-files.yaml names each tracked archive and binary file with
-//     its size, SHA-256, and reason. A tracked archive or binary file it
-//     does not name fails, and so does a listed file whose content changed.
-//   - secret-scan-skipped-paths.yaml names each tracked text file under a
-//     skipped path with its reason. A binary file under a skipped path
-//     belongs in binary-files.yaml alone, so each file has one entry.
+//   - binary-files.yaml names each committed archive, binary file, and
+//     symbolic link with its size, SHA-256, and reason. One it does not
+//     name fails, and so does a listed file whose content changed.
+//   - secret-scan-skipped-paths.yaml names each committed text file under
+//     a path the default allowlist skips. The scan renames such a file in
+//     its scan tree so gitleaks reads it (secretscan_tree.go), and the
+//     register records which files are scanned that way.
 //
-// Binariness follows git: a file is binary when its first 8,000 bytes hold
-// a NUL byte, or when git check-attr reports the `binary` attribute set or
-// the `diff` attribute unset. An attribute never makes a file text. A file
-// is an archive when its name ends in a known archive extension or its
-// first bytes carry an archive's magic number.
+// gitleaks re-checks the MIME type of a later chunk while no newline has
+// appeared since the start of the file; the check reads the first chunk
+// alone, so a file whose first 100 kB hold no newline is a gap.
 
 // The two registers, relative to the repository root.
 const (
@@ -55,15 +57,17 @@ const (
 // binarySniffLen is how much of a file git reads to decide binariness.
 const binarySniffLen = 8000
 
-// The classes of file gitleaks does not read by content.
+// gitleaksChunkLen is the size of the first chunk gitleaks v8.30.1 reads
+// from a file and passes to filetype.Match (defaultBufferSize in its
+// sources/file.go).
+const gitleaksChunkLen = 100 * 1000
+
+// The classes of committed file the binary register holds.
 const (
 	classArchive = "archive"
 	classBinary  = "binary"
+	classSymlink = "symlink"
 )
-
-// archiveExtension matches the file names of the archive and compression
-// formats in common use, case-insensitively.
-var archiveExtension = regexp.MustCompile(`(?i)\.(?:zip|jar|war|ear|aar|apk|ipa|tar|tgz|taz|gz|tbz2?|bz2|txz|xz|tzst|zst|lz|lz4|lzma|tlz|z|7z|rar|cab|cpio|ar|deb|rpm|whl|egg|nupkg|gem|iso|dmg|xpi|crx|vsix|br|sz)$`)
 
 // binaryFileEntry is one entry of binary-files.yaml.
 type binaryFileEntry struct {
@@ -89,30 +93,83 @@ type scanCoverageRegister[E any] struct {
 
 var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// trackedFileFacts is what the coverage check learns about one tracked
-// regular file.
+// trackedFileFacts is what the coverage check learns about one committed
+// file.
 type trackedFileFacts struct {
-	class  string // classArchive, classBinary, or "" for a text file
+	class  string // classArchive, classBinary, classSymlink, or "" for text
 	size   int64
 	sha256 string
 }
 
-// checkSecretScanCoverage holds the tracked files gitleaks does not read
-// to the two registers under root. It returns a summary when every such
-// file matches its entry and every entry names such a file, and otherwise
-// the list of problems, each naming its path and remedy, with an error. A
+// gitleaksIdentifiesArchive reports whether gitleaks v8.30.1 treats a file
+// with this path as an archive: archives.Identify on the name alone, with
+// no stream, as gitleaks's sources/file.go calls it, returning a format.
+func gitleaksIdentifiesArchive(name string) bool {
+	format, _, err := archives.Identify(context.Background(), name, nil)
+	return err == nil && format != nil
+}
+
+// gitleaksMIMESkip reports whether gitleaks v8.30.1 skips content as
+// binary: filetype.Match on its first chunk returns a MIME type whose type
+// is `application`. It returns that MIME value.
+func gitleaksMIMESkip(content []byte) (string, bool) {
+	if len(content) == 0 {
+		return "", false
+	}
+	head := content[:min(len(content), gitleaksChunkLen)]
+	kind, err := filetype.Match(head)
+	if err != nil || kind.MIME.Type != "application" {
+		return "", false
+	}
+	return kind.MIME.Value, true
+}
+
+// gitleaksReads reports whether gitleaks v8.30.1 reads the content of a
+// file it reaches at path rel, and when it does not, why.
+func gitleaksReads(rel string, content []byte) (string, bool) {
+	if gitleaksIdentifiesArchive(rel) {
+		return "its name identifies an archive", false
+	}
+	if mime, skip := gitleaksMIMESkip(content); skip {
+		return "its content has the MIME type " + mime, false
+	}
+	return "", true
+}
+
+// blobFacts classifies one committed file and records its size and
+// SHA-256. A symbolic link's content is its target path.
+func blobFacts(rel, mode string, content []byte, attrBinary bool) trackedFileFacts {
+	sum := sha256.Sum256(content)
+	f := trackedFileFacts{size: int64(len(content)), sha256: hex.EncodeToString(sum[:])}
+	head := content[:min(len(content), binarySniffLen)]
+	switch {
+	case mode == gitModeSymlink:
+		f.class = classSymlink
+	case gitleaksIdentifiesArchive(rel):
+		f.class = classArchive
+	case attrBinary || bytes.IndexByte(head, 0) >= 0:
+		f.class = classBinary
+	default:
+		if _, skip := gitleaksMIMESkip(content); skip {
+			f.class = classBinary
+		}
+	}
+	return f
+}
+
+// checkSecretScanCoverage holds the committed files gitleaks does not read
+// to the two registers, whose committed content it is given (nil when the
+// register is not committed). It returns a summary when every such file
+// matches its entry and every entry names such a file, and otherwise the
+// list of problems, each naming its path and remedy, with an error. A
 // register that is missing or does not parse fails, so a lost register
 // never passes as an empty one.
-func checkSecretScanCoverage(root string, files []string) (string, error) {
-	binaries, err := loadBinaryFilesRegister(filepath.Join(root, binaryFilesRegister))
+func checkSecretScanCoverage(facts map[string]trackedFileFacts, binaryRegister, skippedRegister []byte) (string, error) {
+	binaries, err := loadBinaryFilesRegister(binaryRegister)
 	if err != nil {
 		return "", err
 	}
-	skipped, err := loadSkippedPathsRegister(filepath.Join(root, skippedPathsRegister))
-	if err != nil {
-		return "", err
-	}
-	facts, err := classifyTrackedFiles(root, files)
+	skipped, err := loadSkippedPathsRegister(skippedRegister)
 	if err != nil {
 		return "", err
 	}
@@ -121,13 +178,13 @@ func checkSecretScanCoverage(root string, files []string) (string, error) {
 	problems = append(problems, skippedPathProblems(facts, binaries, skipped)...)
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return formatScanCoverageProblems(problems), fmt.Errorf("secret scan coverage: %d tracked file(s) gitleaks does not read lack a matching reviewed entry", len(problems))
+		return formatScanCoverageProblems(problems), fmt.Errorf("secret scan coverage: %d problem(s) with the committed files gitleaks does not read", len(problems))
 	}
-	return fmt.Sprintf("%d archive and binary files match %s; %d files under skipped paths match %s", len(binaries), binaryFilesRegister, len(skipped), skippedPathsRegister), nil
+	return fmt.Sprintf("%d archives, binary files, and symbolic links match %s; %d files under skipped paths, scanned under another name, match %s", len(binaries), binaryFilesRegister, len(skipped), skippedPathsRegister), nil
 }
 
-// binaryFileProblems compares the tracked archives and binary files with
-// binary-files.yaml.
+// binaryFileProblems compares the committed archives, binary files, and
+// symbolic links with binary-files.yaml.
 func binaryFileProblems(facts map[string]trackedFileFacts, entries map[string]binaryFileEntry) []string {
 	var problems []string
 	for rel, f := range facts {
@@ -137,7 +194,7 @@ func binaryFileProblems(facts map[string]trackedFileFacts, entries map[string]bi
 		e, listed := entries[rel]
 		switch {
 		case !listed:
-			problems = append(problems, fmt.Sprintf("%s: tracked %s file that %s does not name; review it and add {path: %s, class: %s, size: %d, sha256: %s, reason: ...}", rel, f.class, binaryFilesRegister, rel, f.class, f.size, f.sha256))
+			problems = append(problems, fmt.Sprintf("%s: committed %s that %s does not name; review it and add {path: %s, class: %s, size: %d, sha256: %s, reason: ...}", rel, classNoun(f.class), binaryFilesRegister, rel, f.class, f.size, f.sha256))
 		case e.SHA256 != f.sha256 || e.Size != f.size:
 			problems = append(problems, fmt.Sprintf("%s: content changed since review (listed size %d, sha256 %s; now size %d, sha256 %s); review the new content and update the entry in %s", rel, e.Size, e.SHA256, f.size, f.sha256, binaryFilesRegister))
 		case e.Class != f.class:
@@ -148,18 +205,30 @@ func binaryFileProblems(facts map[string]trackedFileFacts, entries map[string]bi
 		f, tracked := facts[rel]
 		switch {
 		case !tracked:
-			problems = append(problems, fmt.Sprintf("%s: %s names a file the tree does not track; remove the entry", rel, binaryFilesRegister))
+			problems = append(problems, fmt.Sprintf("%s: %s names a file the committed tree does not hold; remove the entry", rel, binaryFilesRegister))
 		case f.class == "":
-			problems = append(problems, fmt.Sprintf("%s: %s names a file that is no longer an archive or binary file, so gitleaks reads it; remove the entry", rel, binaryFilesRegister))
+			problems = append(problems, fmt.Sprintf("%s: %s names a file that is no longer an archive, binary file, or symbolic link, so gitleaks reads it; remove the entry", rel, binaryFilesRegister))
 		}
 	}
 	return problems
 }
 
-// skippedPathProblems compares the tracked text files under the paths the
-// default allowlist skips with secret-scan-skipped-paths.yaml. An archive
-// or binary file under a skipped path is covered by its entry in
-// binary-files.yaml, which binaryFileProblems checks.
+// classNoun names a class in a problem message.
+func classNoun(class string) string {
+	switch class {
+	case classArchive:
+		return "archive"
+	case classSymlink:
+		return "symbolic link"
+	default:
+		return "binary file"
+	}
+}
+
+// skippedPathProblems compares the committed text files under the paths
+// the default allowlist skips with secret-scan-skipped-paths.yaml. An
+// archive, binary file, or symbolic link under a skipped path is covered
+// by its entry in binary-files.yaml, which binaryFileProblems checks.
 func skippedPathProblems(facts map[string]trackedFileFacts, binaries map[string]binaryFileEntry, entries map[string]skippedPathEntry) []string {
 	var problems []string
 	for rel, f := range facts {
@@ -172,7 +241,7 @@ func skippedPathProblems(facts map[string]trackedFileFacts, binaries map[string]
 			if matched != rel {
 				where = "its directory " + matched
 			}
-			problems = append(problems, fmt.Sprintf("%s: gitleaks skips this tracked file because %s matches the default allowlist pattern %s; move it, or review it and add {path: %s, reason: ...} to %s", rel, where, pattern, rel, skippedPathsRegister))
+			problems = append(problems, fmt.Sprintf("%s: %s matches the default allowlist pattern %s, so the scan reads this file under another name; review it and add {path: %s, reason: ...} to %s, or move it", rel, where, pattern, rel, skippedPathsRegister))
 		}
 	}
 	for rel := range entries {
@@ -180,12 +249,12 @@ func skippedPathProblems(facts map[string]trackedFileFacts, binaries map[string]
 		_, _, skippedPath := skippedByDefaultAllowlist(rel)
 		switch {
 		case !tracked:
-			problems = append(problems, fmt.Sprintf("%s: %s names a file the tree does not track; remove the entry", rel, skippedPathsRegister))
+			problems = append(problems, fmt.Sprintf("%s: %s names a file the committed tree does not hold; remove the entry", rel, skippedPathsRegister))
 		case !skippedPath:
-			problems = append(problems, fmt.Sprintf("%s: %s names a file no default allowlist pattern skips, so gitleaks reads it; remove the entry", rel, skippedPathsRegister))
+			problems = append(problems, fmt.Sprintf("%s: %s names a file no default allowlist pattern skips; remove the entry", rel, skippedPathsRegister))
 		case f.class != "":
 			if _, inBinaries := binaries[rel]; inBinaries {
-				problems = append(problems, fmt.Sprintf("%s: named in both registers; an archive or binary file keeps its entry in %s alone, so remove it from %s", rel, binaryFilesRegister, skippedPathsRegister))
+				problems = append(problems, fmt.Sprintf("%s: named in both registers; an archive, binary file, or symbolic link keeps its entry in %s alone, so remove it from %s", rel, binaryFilesRegister, skippedPathsRegister))
 			}
 		}
 	}
@@ -195,136 +264,18 @@ func skippedPathProblems(facts map[string]trackedFileFacts, binaries map[string]
 // formatScanCoverageProblems lists the problems with the reason they fail.
 func formatScanCoverageProblems(problems []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "gitleaks does not read %d tracked file(s) that lack a matching reviewed entry:\n", len(problems))
+	fmt.Fprintf(&b, "%d problem(s) with the committed files gitleaks does not read:\n", len(problems))
 	for _, p := range problems {
 		fmt.Fprintf(&b, "  %s\n", p)
 	}
-	b.WriteString("A file gitleaks does not read is reviewed for secrets by hand and named in " + binaryFilesRegister + " (archives and binary files) or " + skippedPathsRegister + " (text files under a path the default allowlist skips), with the reason; both are reviewed before they merge.")
+	b.WriteString("An archive, binary file, or symbolic link is reviewed for secrets by hand and named in " + binaryFilesRegister + "; a text file under a path the default allowlist skips is named in " + skippedPathsRegister + ". Both registers are reviewed before they merge.")
 	return b.String()
 }
 
-// classifyTrackedFiles reads each tracked regular file under root and
-// returns its class, size, and SHA-256, keyed by its root-relative path.
-// It skips the same paths copyTrackedFiles does: a path the working tree
-// no longer holds, a symbolic link, and a submodule.
-func classifyTrackedFiles(root string, files []string) (map[string]trackedFileFacts, error) {
-	attrBinary, err := attributeBinaryFiles(root, files)
-	if err != nil {
-		return nil, err
-	}
-	facts := make(map[string]trackedFileFacts, len(files))
-	for _, rel := range files {
-		src := filepath.Join(root, filepath.FromSlash(rel))
-		info, err := os.Lstat(src)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("secret scan coverage: %w", err)
-		}
-		if !info.Mode().IsRegular() {
-			continue
-		}
-		f, err := readFileFacts(src)
-		if err != nil {
-			return nil, fmt.Errorf("secret scan coverage: read %s: %w", rel, err)
-		}
-		if archiveExtension.MatchString(rel) || f.class == classArchive {
-			f.class = classArchive
-		} else if attrBinary[rel] {
-			f.class = classBinary
-		}
-		facts[rel] = f
-	}
-	return facts, nil
-}
-
-// readFileFacts hashes the file at src and classifies it by its first
-// bytes: an archive by its magic number, otherwise binary when the first
-// binarySniffLen bytes hold a NUL byte, otherwise text.
-func readFileFacts(src string) (trackedFileFacts, error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return trackedFileFacts{}, err
-	}
-	defer in.Close()
-	h := sha256.New()
-	head := make([]byte, binarySniffLen)
-	n, err := io.ReadFull(in, head)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return trackedFileFacts{}, err
-	}
-	head = head[:n]
-	h.Write(head)
-	rest, err := io.Copy(h, in)
-	if err != nil {
-		return trackedFileFacts{}, err
-	}
-	f := trackedFileFacts{size: int64(n) + rest, sha256: hex.EncodeToString(h.Sum(nil))}
-	switch {
-	case hasArchiveMagic(head):
-		f.class = classArchive
-	case bytes.IndexByte(head, 0) >= 0:
-		f.class = classBinary
-	}
-	return f, nil
-}
-
-// hasArchiveMagic reports whether head starts with the magic number of a
-// compressed or archive format gitleaks would identify as an archive:
-// gzip, zip, bzip2, xz, zstd, 7z, or tar (its "ustar" marker at offset
-// 257).
-func hasArchiveMagic(head []byte) bool {
-	magics := [][]byte{
-		{0x1f, 0x8b},
-		[]byte("PK\x03\x04"),
-		[]byte("PK\x05\x06"),
-		{0xfd, '7', 'z', 'X', 'Z', 0x00},
-		{0x28, 0xb5, 0x2f, 0xfd},
-		{'7', 'z', 0xbc, 0xaf, 0x27, 0x1c},
-	}
-	for _, m := range magics {
-		if bytes.HasPrefix(head, m) {
-			return true
-		}
-	}
-	if len(head) >= 10 && bytes.HasPrefix(head, []byte("BZh")) && head[3] >= '1' && head[3] <= '9' && bytes.Equal(head[4:10], []byte{0x31, 0x41, 0x59, 0x26, 0x53, 0x59}) {
-		return true
-	}
-	return len(head) >= 262 && bytes.Equal(head[257:262], []byte("ustar"))
-}
-
-// attributeBinaryFiles returns the files git's attributes mark as binary:
-// the `binary` macro set, or the `diff` attribute unset, which is how git
-// diff decides to print "Binary files differ" without reading the file.
-func attributeBinaryFiles(root string, files []string) (map[string]bool, error) {
-	cmd := exec.Command("git", "check-attr", "-z", "--stdin", "binary", "diff")
-	cmd.Dir = root
-	var in bytes.Buffer
-	for _, f := range files {
-		in.WriteString(f)
-		in.WriteByte(0)
-	}
-	cmd.Stdin = &in
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("secret scan coverage: git check-attr: %w", err)
-	}
-	fields := bytes.Split(out, []byte{0})
-	binary := map[string]bool{}
-	for i := 0; i+2 < len(fields); i += 3 {
-		rel, attr, value := string(fields[i]), string(fields[i+1]), string(fields[i+2])
-		if (attr == "binary" && value == "set") || (attr == "diff" && value == "unset") {
-			binary[rel] = true
-		}
-	}
-	return binary, nil
-}
-
-// loadBinaryFilesRegister reads binary-files.yaml and checks each entry's
+// loadBinaryFilesRegister parses binary-files.yaml and checks each entry's
 // fields, keyed by path.
-func loadBinaryFilesRegister(file string) (map[string]binaryFileEntry, error) {
-	reg, err := readScanCoverageRegister[binaryFileEntry](file, "binary-files")
+func loadBinaryFilesRegister(body []byte) (map[string]binaryFileEntry, error) {
+	reg, err := readScanCoverageRegister[binaryFileEntry](binaryFilesRegister, body, "binary-files")
 	if err != nil {
 		return nil, err
 	}
@@ -333,8 +284,8 @@ func loadBinaryFilesRegister(file string) (map[string]binaryFileEntry, error) {
 		switch {
 		case e.Path == "":
 			return nil, fmt.Errorf("%s: entry %d has no path", binaryFilesRegister, i+1)
-		case e.Class != classArchive && e.Class != classBinary:
-			return nil, fmt.Errorf("%s: %s: class %q is neither %q nor %q", binaryFilesRegister, e.Path, e.Class, classArchive, classBinary)
+		case e.Class != classArchive && e.Class != classBinary && e.Class != classSymlink:
+			return nil, fmt.Errorf("%s: %s: class %q is not %q, %q, or %q", binaryFilesRegister, e.Path, e.Class, classArchive, classBinary, classSymlink)
 		case !sha256Hex.MatchString(e.SHA256):
 			return nil, fmt.Errorf("%s: %s: sha256 is not 64 lowercase hexadecimal digits", binaryFilesRegister, e.Path)
 		case e.Size < 0:
@@ -350,10 +301,10 @@ func loadBinaryFilesRegister(file string) (map[string]binaryFileEntry, error) {
 	return entries, nil
 }
 
-// loadSkippedPathsRegister reads secret-scan-skipped-paths.yaml and checks
-// each entry's fields, keyed by path.
-func loadSkippedPathsRegister(file string) (map[string]skippedPathEntry, error) {
-	reg, err := readScanCoverageRegister[skippedPathEntry](file, "secret-scan-skipped-paths")
+// loadSkippedPathsRegister parses secret-scan-skipped-paths.yaml and
+// checks each entry's fields, keyed by path.
+func loadSkippedPathsRegister(body []byte) (map[string]skippedPathEntry, error) {
+	reg, err := readScanCoverageRegister[skippedPathEntry](skippedPathsRegister, body, "secret-scan-skipped-paths")
 	if err != nil {
 		return nil, err
 	}
@@ -373,21 +324,21 @@ func loadSkippedPathsRegister(file string) (map[string]skippedPathEntry, error) 
 	return entries, nil
 }
 
-// readScanCoverageRegister parses a register, refusing unknown fields, a
-// kind other than wantKind, and a version other than 1.
-func readScanCoverageRegister[E any](file, wantKind string) (scanCoverageRegister[E], error) {
+// readScanCoverageRegister parses a register's committed content,
+// refusing an absent register, unknown fields, a kind other than wantKind,
+// and a version other than 1.
+func readScanCoverageRegister[E any](name string, body []byte, wantKind string) (scanCoverageRegister[E], error) {
 	var reg scanCoverageRegister[E]
-	body, err := os.ReadFile(file)
-	if err != nil {
-		return reg, fmt.Errorf("secret scan coverage register: %w", err)
+	if body == nil {
+		return reg, fmt.Errorf("secret scan coverage register %s: not in the committed tree", name)
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(body))
 	dec.KnownFields(true)
 	if err := dec.Decode(&reg); err != nil {
-		return reg, fmt.Errorf("secret scan coverage register %s: %w", file, err)
+		return reg, fmt.Errorf("secret scan coverage register %s: %w", name, err)
 	}
 	if reg.Kind != wantKind || reg.Version != 1 {
-		return reg, fmt.Errorf("secret scan coverage register %s: kind %q version %d, want kind %q version 1", file, reg.Kind, reg.Version, wantKind)
+		return reg, fmt.Errorf("secret scan coverage register %s: kind %q version %d, want kind %q version 1", name, reg.Kind, reg.Version, wantKind)
 	}
 	return reg, nil
 }

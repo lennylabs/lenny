@@ -9,23 +9,36 @@ import (
 
 // gitleaks skips some files by path before it reads them: the paths the
 // global allowlist of its default configuration lists. .gitleaks.toml
-// extends that configuration, so the skip applies to the secret scan, and
-// a secret in such a file is never found. The check therefore fails when a
-// tracked file matches one of those patterns and has no reviewed entry
-// (change 0158, decision 5). It implements the merge gate rather than a
-// specification behavior, so it carries no spec annotation.
+// extends that configuration, so the skip applies to the secret scan. The
+// check therefore writes each committed file under such a path into the
+// scan tree under a renamed path that no pattern matches, so gitleaks
+// reads it (secretscan_tree.go), and fails when a committed text file
+// under such a path has no entry in the skipped-paths register, which
+// records the files scanned that way (change 0158, decision 5). It
+// implements the merge gate rather than a specification behavior, so it
+// carries no spec annotation.
 //
 // The patterns below are copied from the `[allowlist]` table of
 // config/gitleaks.toml at the tag v8.30.1 of github.com/gitleaks/gitleaks,
 // the release tests/gate/Dockerfile pins. TestGitleaksDefaultSkippedPathsMatchThePinnedRelease
 // fails when the pinned release or the minVersion of .gitleaks.toml moves
-// away from gitleaksDefaultsVersion, so a new pin reads the new release's
-// patterns before it lands. The value patterns of that allowlist stay as
+// away from gitleaksDefaultsVersion, or go.mod moves off the classifier
+// modules that release pins, so a new pin reads the new release's patterns
+// and modules before it lands, and the check reports unverified when the
+// gitleaks it runs is another release. The value patterns of that allowlist stay as
 // gitleaks ships them and are not copied here.
 
 // gitleaksDefaultsVersion is the gitleaks release the patterns of
 // gitleaksDefaultSkippedPaths were read from.
 const gitleaksDefaultsVersion = "8.30.1"
+
+// gitleaksClassifierModules names the modules gitleaks v8.30.1 uses to
+// decide which files it does not read, with the versions its go.mod pins.
+// The check imports the same versions (secretscan_coverage.go).
+var gitleaksClassifierModules = map[string]string{
+	"github.com/mholt/archives": "v0.1.2",
+	"github.com/h2non/filetype": "v1.1.3",
+}
 
 // gitleaksDefaultSkippedPaths lists the `paths` of the default global
 // allowlist of gitleaks v8.30.1, verbatim and in order. gitleaks compiles

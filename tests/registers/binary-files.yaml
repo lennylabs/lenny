@@ -1,25 +1,28 @@
 # SPDX-License-Identifier: MIT
 #
-# Reviewed archives and binary files.
+# Reviewed archives, binary files, and symbolic links.
 #
-# gitleaks does not read archives (the secret scan passes no
-# --max-archive-depth, because some upload fixtures are archive bombs) or
-# files it detects as binary, so a secret in such a file is never found.
-# Each tracked archive and binary file is therefore reviewed for secrets
-# by hand and named here with its size, SHA-256, and the reason the tree
-# carries it. The secret scan of the static tier (cmd/lenny-test,
-# secretscan_coverage.go) fails on a tracked archive or binary file this
-# list does not name, on a listed file whose size or SHA-256 differs, and
-# on an entry that names a file the tree no longer tracks or that is no
-# longer an archive or binary file (change 0158, decision 7).
+# gitleaks does not read a file whose name identifies an archive (the
+# secret scan passes no --max-archive-depth, because some upload fixtures
+# are archive bombs), a file whose content it detects as binary, or a
+# symbolic link, so a secret in such a file is not found. Each committed
+# file of those kinds is therefore reviewed for secrets by hand and named
+# here with its size, SHA-256, and the reason the tree carries it. The
+# secret scan of the static tier (cmd/lenny-test, secretscan_coverage.go)
+# reads the committed tree at HEAD and fails on such a file this list does
+# not name, on a listed file whose size or SHA-256 differs, and on an
+# entry that names a file the commit does not hold or that is no longer of
+# those kinds (change 0158, decision 7).
 #
-# A file is binary when its first 8,000 bytes hold a NUL byte, or when git
-# check-attr reports the `binary` attribute set or the `diff` attribute
-# unset. A file is an archive when its name ends in an archive extension
-# or its first bytes carry the magic number of an archive or compression
-# format. An archive or binary file under a path the default gitleaks
-# allowlist skips is named here alone, rather than also in
-# secret-scan-skipped-paths.yaml.
+# The class follows gitleaks v8.30.1 and git. A file is an archive when
+# github.com/mholt/archives identifies its name as one, which includes a
+# substring such as ".br" or ".s2" anywhere in the name. A file is binary
+# when github.com/h2non/filetype gives its first 100 kB an `application`
+# MIME type, when its first 8,000 bytes hold a NUL byte, or when git
+# reports the `binary` attribute set or the `diff` attribute unset. A
+# symbolic link's size and SHA-256 are those of its target path. A file of
+# these kinds under a path the default gitleaks allowlist skips is named
+# here alone, rather than also in secret-scan-skipped-paths.yaml.
 #
 # This directory is reviewed before it merges
 # (.claude/rules/git-workflow.md, "Review changes to the merge gate"). To

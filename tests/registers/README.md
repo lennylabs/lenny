@@ -173,15 +173,14 @@ after the pass has run.
 ## Secret scan coverage registers
 
 The secret scan of the static tier (`cmd/lenny-test`,
-`secretscan_coverage.go`) reads two lists of the tracked files gitleaks
-does not read, each reviewed by hand for secrets:
+`secretscan_coverage.go`) reads two lists of committed files:
 
 | File | Schema | What it names |
 |:--|:--|:--|
-| `binary-files.yaml` | `kind: binary-files`, `version: 1`, and an `entries` list of `path`, `class` (`archive` or `binary`), `size`, `sha256`, and `reason`. | Each tracked archive and binary file. |
-| `secret-scan-skipped-paths.yaml` | `kind: secret-scan-skipped-paths`, `version: 1`, and an `entries` list of `path` and `reason`. | Each tracked text file under a path the default gitleaks allowlist skips. |
+| `binary-files.yaml` | `kind: binary-files`, `version: 1`, and an `entries` list of `path`, `class` (`archive`, `binary`, or `symlink`), `size`, `sha256`, and `reason`. | Each committed archive, binary file, and symbolic link. gitleaks does not read these, so each is reviewed for secrets by hand. |
+| `secret-scan-skipped-paths.yaml` | `kind: secret-scan-skipped-paths`, `version: 1`, and an `entries` list of `path` and `reason`. | Each committed text file under a path the default gitleaks allowlist skips. The scan reads these under a renamed path. |
 
-The scan fails on a tracked file of either kind that its list does not
+The scan fails on a committed file of either kind that its list does not
 name, on a listed binary file whose size or hash changed, and on an
 entry that names no such file. Neither list is a baseline: an entry
 stays while its file does, and a change to this directory is reviewed
