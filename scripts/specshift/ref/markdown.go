@@ -313,9 +313,9 @@ func headingAnchors(content string) map[string]bool {
 	return out
 }
 
-// blockSlug returns the slug of a definition block's name: lower-cased,
-// with each run of characters other than letters and digits replaced by
-// a hyphen, and no hyphen at either end.
+// blockSlug returns the anchor slug of a definition block's name, as the
+// conventions define it: letters and digits kept in lower case, every other
+// run collapsed to one hyphen, and leading and trailing hyphens trimmed.
 func blockSlug(name string) string {
 	var b strings.Builder
 	pending := false
