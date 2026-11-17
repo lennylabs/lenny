@@ -16,3 +16,4 @@
   6. **Branches and the integration branch.** Every change so far sits on `design/v1-cleanup` or a branch cut from it, and none is merged into `main`. Options: (a) merge `change/0113-records-and-workflow` into `design/v1-cleanup`, then `design/v1-cleanup` into `main`, and cut each later step's branch, `change/<step>-<slug>`, from `main`; (b) keep stacking branches until M0 ends. Recommendation: (a), as `.claude/rules/git-workflow.md` states.
 
 
+- 2026-11-16, build. Steps S1 to S5 built on `change/0114-helpers`; [`digests/0114.S1-S5.md`](digests/0114.S1-S5.md) records the result. The `review` skill was tried on 0132: two subagents, about 273,000 tokens, every finding's evidence confirmed. The steps stay `Building` until the owner merges the branch.
