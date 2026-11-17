@@ -106,7 +106,6 @@ var linkPrecedes = regexp.MustCompile(`\]\([^)]*\)[^§]{0,40}§?$`)
 var citationDocumentExcluded = []string{
 	"TESTING.md",
 	"BUILD-GAPS.md",
-	"BUILD-PROGRESS.md",
 	"TEST-GAPS.md",
 	"PROPOSAL-QUEUE.md",
 	"proposals/",

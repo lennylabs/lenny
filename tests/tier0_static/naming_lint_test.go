@@ -482,8 +482,6 @@ func TestNamingLintPassesAFileTheExclusionListNames(t *testing.T) {
 	for _, target := range []string{
 		"BUILD-GAPS.md",
 		"TEST-GAPS.md",
-		"BUILD-PLAN.md",
-		"BUILD-PROGRESS.md",
 		"PROPOSAL-QUEUE.md",
 		"gateway-runtime-comms.md",
 		"gateway-runtime-comms-remediation.md",

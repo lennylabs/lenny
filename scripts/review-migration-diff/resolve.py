@@ -106,8 +106,8 @@ def main():
         if not path or path.startswith(
             ("proposals/", "scripts/specshift/", "tests/tier0_static/testdata/", ".claude/")
         ) or os.path.basename(path) in {
-            "BUILD-GAPS.md", "BUILD-PLAN.md", "BUILD-PROGRESS.md", "TEST-GAPS.md",
-            "PROPOSAL-QUEUE.md", "gateway-runtime-comms.md",
+            "BUILD-GAPS.md", "TEST-GAPS.md", "PROPOSAL-QUEUE.md",
+            "gateway-runtime-comms.md",
             "gateway-runtime-comms-remediation.md", "TESTING.md",
         }:
             continue

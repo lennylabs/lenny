@@ -81,7 +81,7 @@
 // zero having written nothing for a site a reviewer had resolved.
 //
 // The write domain, which excludes the historical audit records, the
-// staged proposals, the root build and queue records, and every file the
+// staged proposals, the root queue record, and every file the
 // per-file generated-artifact rule selects, comes from the scope package
 // rather than from a list here. A generated artifact's route out of the
 // population is the regeneration of its source.
