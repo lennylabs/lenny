@@ -95,9 +95,8 @@ func t5MCPValidateAgainst(t *testing.T, schemaFile, definition string, raw json.
 }
 
 // spec: 15 ("Built-in adapter inventory": MCPAdapter at `/mcp`,
-// protocol "MCP Streamable HTTP", status V1; "Built-in (compiled in):
-// MCP, OpenAI Completions, Open Responses. Always available,
-// configurable via admin API."); 15.2 ("Version negotiation": Lenny
+// protocol "MCP Streamable HTTP", status V1, built in and always
+// available); 15.2 ("Version negotiation": Lenny
 // concurrently serves the current (2025-03-26) and previous (2024-11-05)
 // MCP spec versions per the vendored schema README next to
 // tests/testdata/mcp).

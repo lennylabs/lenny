@@ -231,7 +231,7 @@ func buildGapsHeadingIDs(doc string) map[string]bool {
 
 func readP6ConditionAudit(t *testing.T, root string) (string, conditionAudit) {
 	t.Helper()
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	entry, ok := p6PlanEntry(plan, opsLockPlanEntryPrefix, opsLockPlanEntryTickedPf)
 	if !ok {
 		t.Fatal("gateway-runtime-comms-remediation.md: no P6 lenny-ops remediation-lock entry (renamed or removed?)")
@@ -321,7 +321,7 @@ func TestRedisConditionAuditFindingsAreFiled_spec_12_4(t *testing.T) {
 		t.Errorf("condition audit cell %s reads unmet and names no BUILD-GAPS finding", cell)
 	}
 
-	ids := buildGapsHeadingIDs(readDocPage(t, filepath.Join(root, "BUILD-GAPS.md")))
+	ids := buildGapsHeadingIDs(readRecord(t, filepath.Join(root, "BUILD-GAPS.md")))
 	cited := map[string]bool{}
 	for _, row := range audit.rows {
 		for _, cell := range row.cells {

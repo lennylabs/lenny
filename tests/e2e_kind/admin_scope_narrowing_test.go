@@ -155,13 +155,8 @@ func scopeForbiddenDetails(t *testing.T, body map[string]any) (code string, requ
 	return code, details["requiredScope"], details["activeScope"]
 }
 
-// spec: §25.1 ("Admin API middleware — every endpoint is mapped to a
-// canonical scope via its `x-lenny-scope` OpenAPI extension. The
-// middleware checks scopes before routing to the handler."; "A request
-// for a tool not permitted by any scope returns `403 SCOPE_FORBIDDEN`
-// with a response body listing the caller's active scopes."; "Absent
-// `scope` claim: no scope restriction — the token's role ceiling
-// applies unmodified.")
+// spec: §25.1 (the Admin API scope gate, `403 SCOPE_FORBIDDEN`, and the
+// absent `scope` claim)
 //
 // diagnosis: a failure here means the deployed gateway's §25.1 scope
 // gate does not actually parse and enforce the RFC 9068 `scope` claim

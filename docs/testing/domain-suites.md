@@ -22,21 +22,21 @@ The most important security suite. Every store, query path, API surface, and ada
 
 - **Static**: schema validation of `schemas/workspaceplan-v1.json`.
 - **Contract**: `tests/contract/workspaceplan/sources_test.go` — every source type with adversarial paths, modes, gitClone shapes.
-- **Tier 7 load**: `tests/load_kind/scenarios/checkpoint_duration/` for archive-bomb scenarios.
+- **load_kind**: `tests/load_kind/scenarios/checkpoint_duration/` for archive-bomb scenarios.
 
 ## TESTING.md §14.3 Credential leasing lifecycle
 
 - **Unit**: `pkg/credential/` ships every primitive.
 - **Contract**: `tests/contract/oauth_token/` covers §13.3 RFC 8693.
 - **Integration**: `tests/integration/scaffolds_test.go::TestCredentialLifecycle` (skip-bearing until Phase 12a wires the Token Service).
-- **Tier 7 load**: `tests/load_kind/scenarios/credential_rotation_under_load/`.
+- **load_kind**: `tests/load_kind/scenarios/credential_rotation_under_load/`.
 
 ## TESTING.md §14.4 Delegation and the task tree
 
-- **The unit tier**: `pkg/delegation/cycle/` + `pkg/delegation/lease/`.
-- **The integration tier**: `TestDelegation`, `TestDelegationRecovery`, `TestDelegationSelfRecursion` (scaffolds today).
+- **Unit**: `pkg/delegation/cycle/` + `pkg/delegation/lease/`.
+- **Integration**: `TestDelegation`, `TestDelegationRecovery`, `TestDelegationSelfRecursion` (scaffolds today).
 - **e2e_kind**: `tests/e2e_kind/scaffolds_test.go::TestCrossEnvironmentDelegation`.
-- **Tier 7**: `tests/load_kind/scenarios/delegation_fanout/`.
+- **load_kind**: `tests/load_kind/scenarios/delegation_fanout/`.
 
 ## TESTING.md §14.5 MCP elicitation chain
 
@@ -58,7 +58,7 @@ The most important security suite. Every store, query path, API surface, and ada
 
 ## TESTING.md §14.8 The 13-phase request interceptor chain
 
-- Composed across the component tier (per-interceptor) and the integration tier (composed). Today only the tier-1 enums (`pkg/circuitbreaker`, `pkg/idempotency`, `pkg/elicitation`, etc.) are shipped.
+- Composed across the component tier (per-interceptor) and the integration tier (composed). Today only the unit-tier enums (`pkg/circuitbreaker`, `pkg/idempotency`, `pkg/elicitation`, etc.) are shipped.
 
 ## TESTING.md §14.9 Pool and warm-pod lifecycle
 

@@ -4,14 +4,8 @@
 
 // Tier-8 chaos: node drain while MinIO is unavailable.
 //
-// spec: §4.4 (spec/04_system-components.md, Total-loss path) — "the
-// pre-drain MinIO health check webhook prevents most planned
-// drain-triggered instances of this scenario by blocking drains when
-// MinIO is unhealthy; the total-loss path is most likely to occur during
-// spontaneous node failures (not planned drains) or when the forced-drain
-// override (`lenny.dev/drain-force: "true"`) is used while both stores are
-// degraded." When an agent pod is evicted by a node drain while MinIO is
-// unreachable, the eviction checkpoint cannot land in MinIO, so the
+// spec: §4.4 (spec/04_system-components.md, Total-loss path). When an
+// agent pod is evicted by a node drain while MinIO is unreachable, the eviction checkpoint cannot land in MinIO, so the
 // gateway's eviction-fallback writer degrades to the Postgres minimal
 // state record; when Postgres is also unavailable it enters the
 // total-loss path (session.lost with reason eviction_total_loss and the

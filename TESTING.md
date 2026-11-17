@@ -78,30 +78,53 @@ The infrastructure is also complete only when the operator and the runtime autho
 
 ## 3. Test layer model
 
-Lenny uses a thirteen-stage tier model. Tier 7 is a two-stage gate (7a local, 7b Kind). The load_cloud tier sits after every other tier. Each stage has a scoped responsibility, a defined dependency set, an order in which it runs, and a position in the gate hierarchy.
+Lenny's tests run in tiers, and each tier has a name that says what its tests need. `lenny-test --tier <name>` selects a tier by that name. Each tier has a scoped responsibility, a defined dependency set, an order in which it runs, and a position in the gate hierarchy. The load tests run in two local stages, `load_local` and then `load_kind`, and `load_cloud` runs after every other tier.
 
-| Tier | Name | Scope | Backing services | Runs in PR | Runs nightly | Runs pre-release |
-|:----:|:-----|:------|:-----------------|:----------:|:------------:|:----------------:|
-| 0 | Static | Lint, type-check, schema validate, query/schema linter, license check | None | Yes | Yes | Yes |
-| 1 | Unit | Pure logic, no I/O, no goroutines spanning processes | None | Yes | Yes | Yes |
-| 2 | Component | One Lenny component against real backing services | Postgres, Redis, MinIO, KMS stub, OIDC stub | Yes | Yes | Yes |
-| 3 | Contract | Wire-format equivalence across surfaces (REST, MCP, OpenAI Completions, OpenAI Responses) | Gateway process, echo runtime | Yes | Yes | Yes |
-| 4 | Integration | Multi-component flows via a local stack | Compose stack: gateway, controller-sim, agent pods, stores | Yes | Yes | Yes |
-| 5 | E2E (Kind) | Full deployment on local Kubernetes | Kind cluster, Helm install, agent-sandbox CRDs | Critical-path subset | Full | Full |
-| 6 | E2E (cloud) | Real managed Kubernetes with gVisor and Kata | GKE, EKS, and AKS, each with a sandbox-capable node pool | No | Subset | Full on all three |
-| 7a | Load and SLO (local) | Hot-path concurrency, atomicity, error-propagation under load — every component exercised in-process | In-process Lenny, miniredis, embedded Postgres, fakekube | Yes | Yes | Yes |
-| 7b | Load and SLO (Kind) | Sustained traffic and SLO assertions on a Kind cluster; cases that require real Kubernetes primitives | Kind cluster, Helm install, real kubelet and scheduler | Smoke only | Path-specific | Full |
-| 8 | Chaos | Failure injection on a real cluster | Kind plus toxiproxy, plus cloud cluster for severe scenarios | Core scenarios | Most | All |
-| 9 | Security | Tenant isolation, RBAC, NetworkPolicy, mTLS, admission policy, fuzzing | Kind plus dedicated security cluster, OWASP ZAP, kube-bench | Critical subset | Full | Full plus external pen-test |
-| 10 | Conformance | Runtime adapter validation against the published contracts | `lenny-compliance` binary, sample images | Internal runtimes | All bundled | All bundled plus third-party |
-| 11 | Documentation | Doc samples, links, code blocks, ADR catalog | Local doc build | Yes | Yes | Yes |
-| 12 | Load and SLO (cloud) | Cloud-scale load envelope; load generated off-cluster from dedicated VMs against a real managed cluster | EKS / GKE / AKS, managed Postgres + cache, `lenny-loadctl` control plane, `lenny-loadrunner` pool, Prometheus snapshot, S3-resident HTML report | No | No | On-demand and pre-release |
+| Tier | Title | Scope | Backing services | Runs in PR | Runs nightly | Runs pre-release |
+|:-----|:-----|:------|:-----------------|:----------:|:------------:|:----------------:|
+| `static` | Static | Lint, type-check, schema validate, query/schema linter, license check | None | Yes | Yes | Yes |
+| `unit` | Unit | Pure logic, no I/O, no goroutines spanning processes | None | Yes | Yes | Yes |
+| `component` | Component | One Lenny component against real backing services | Postgres, Redis, MinIO, KMS stub, OIDC stub | Yes | Yes | Yes |
+| `contract` | Contract | Wire-format equivalence across surfaces (REST, MCP, OpenAI Completions, OpenAI Responses) | Gateway process, echo runtime | Yes | Yes | Yes |
+| `integration` | Integration | Multi-component flows via a local stack | Compose stack: gateway, controller-sim, agent pods, stores | Yes | Yes | Yes |
+| `e2e_kind` | E2E (Kind) | Full deployment on local Kubernetes | Kind cluster, Helm install, agent-sandbox CRDs | Critical-path subset | Full | Full |
+| `e2e_cloud` | E2E (cloud) | Real managed Kubernetes with gVisor and Kata | GKE, EKS, and AKS, each with a sandbox-capable node pool | No | Subset | Full on all three |
+| `load_local` | Load and SLO (local) | Hot-path concurrency, atomicity, error-propagation under load — every component exercised in-process | In-process Lenny, miniredis, embedded Postgres, fakekube | Yes | Yes | Yes |
+| `load_kind` | Load and SLO (Kind) | Sustained traffic and SLO assertions on a Kind cluster; cases that require real Kubernetes primitives | Kind cluster, Helm install, real kubelet and scheduler | Smoke only | Path-specific | Full |
+| `chaos` | Chaos | Failure injection on a real cluster | Kind plus toxiproxy, plus cloud cluster for severe scenarios | Core scenarios | Most | All |
+| `security` | Security | Tenant isolation, RBAC, NetworkPolicy, mTLS, admission policy, fuzzing | Kind plus dedicated security cluster, OWASP ZAP, kube-bench | Critical subset | Full | Full plus external pen-test |
+| `conformance` | Conformance | Runtime adapter validation against the published contracts | `lenny-compliance` binary, sample images | Internal runtimes | All bundled | All bundled plus third-party |
+| `docs` | Documentation | Doc samples, links, code blocks, ADR catalog | Local doc build | Yes | Yes | Yes |
+| `load_cloud` | Load and SLO (cloud) | Cloud-scale load envelope; load generated off-cluster from dedicated VMs against a real managed cluster | EKS / GKE / AKS, managed Postgres + cache, `lenny-loadctl` control plane, `lenny-loadrunner` pool, Prometheus snapshot, S3-resident HTML report | No | No | On-demand and pre-release |
+
+### Former tier numbers
+
+The tiers carried numbers before change 0155 named them. The historical records (`changes/archive/`, `proposals/`, `BUILD-GAPS.md`, `TEST-GAPS.md`, `CODE-REVIEW.md`, and `CHANGELOG.md`) keep the numbers and the numbered directory names. The table maps each number to the tier's name and its directory.
+
+| Former number | Former directory | Tier | Directory |
+|:--|:--|:--|:--|
+| 0 | `tests/tier0_static/` | `static` | `tests/static/` |
+| 1 | `tests/tier1_unit/` | `unit` | Beside the code it tests |
+| 2 | `tests/tier2_component/` | `component` | `tests/component/` |
+| 3 | `tests/tier3_contract/` | `contract` | `tests/contract/` |
+| 4 | `tests/tier4_integration/` | `integration` | `tests/integration/` |
+| 5 | `tests/tier5_e2e_kind/` | `e2e_kind` | `tests/e2e_kind/` |
+| 6 | `tests/tier6_e2e_cloud/` | `e2e_cloud` | `tests/e2e_cloud/` |
+| 7a | `tests/tier7a_load_local/` | `load_local` | `tests/load_local/` |
+| 7b | `tests/tier7b_load_kind/` | `load_kind` | `tests/load_kind/` |
+| 8 | `tests/tier8_chaos/` | `chaos` | `tests/chaos/` |
+| 9 | `tests/tier9_security/` | `security` | `tests/security/` |
+| 10 | `tests/tier10_conformance/` | `conformance` | `tests/conformance/` |
+| 11 | `tests/tier11_docs/` | `docs` | `tests/docs/` |
+| 12 | `tests/tier12_load_cloud/` | `load_cloud` | `tests/load_cloud/` |
+
+`lenny-test` accepts only the names. The Go package of a tier directory takes the tier's name without underscores (`e2ekind`, `loadlocal`), following the Go convention for package names.
 
 ### Gate hierarchy
 
-A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e_kind` runs tiers 0 through 5 and stops at the first failing tier. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
+A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e_kind` runs the selected tiers from `static` to `e2e_kind`, in the order of the table above, and stops at the first failing tier. `--max-tier` reads that order until change 0116 replaces it with the merge, area, and release gates. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
 
-Tier 7 is the only tier that runs as two sequential stages: `load_local` (7a) gates `load_kind` (7b). The load_cloud tier sits after the docs tier because a load_cloud-tier run is the most expensive part of the pipeline and should never fire while a lower-tier signal is missing.
+The load tests run as two sequential stages: `load_local` gates `load_kind`. The `load_cloud` tier sits after the `docs` tier because a `load_cloud` run is the most expensive part of the pipeline and should never fire while a lower-tier signal is missing.
 
 ### What "component" means
 
@@ -175,13 +198,13 @@ lenny/
     │   ├── assertions/            # Cross-cutting assertions (RLS, state machine)
     │   ├── audit/                 # Audit-pipeline helpers
     │   ├── chaos/                 # Failure injection primitives
-    │   ├── cloud/                 # Tier 6 cloud-provider lifecycle
+    │   ├── cloud/                 # e2e_cloud cloud-provider lifecycle
     │   ├── compose/               # docker-compose harness
     │   ├── containers/            # testcontainers-go wrappers
-    │   ├── envtest/               # controller-runtime envtest for Tier 2 K8s
+    │   ├── envtest/               # controller-runtime envtest for the component tier
     │   ├── fixtures/              # Seeded tenants, users, runtimes, pools
     │   ├── fuzz/                  # §19.2 fuzz-crash corpus mirror
-    │   ├── gateway/               # cmd/lenny-gateway subprocess for Tier 4
+    │   ├── gateway/               # cmd/lenny-gateway subprocess for the integration tier
     │   ├── golden/                # Golden-file roundtrip helpers
     │   ├── goleak/                # Per-test goroutine-leak detection
     │   ├── helm/                  # Helm chart render and apply helpers
@@ -263,7 +286,7 @@ lenny/
 
 - Unit tests live next to the code they cover (`pkg/.../foo_test.go`). The `tests/tier1_unit/` directory is a convention marker, not a code location.
 - Every other tier has its own directory, its own build tag, and its own dependency set.
-- Tier 7 is split into `load_kind/` (Kind-based smoke and the canonical baseline corpus) and `load_cloud/` (opt-in cloud-profile runs). The two share scenario definitions but bind to different harnesses and run cadences.
+- The load tests have three directories: `load_local/` (in-process scenarios), `load_kind/` (Kind-based smoke and the canonical baseline corpus), and `load_cloud/` (opt-in cloud-profile runs). `load_kind/` and `load_cloud/` share scenario definitions but bind to different harnesses and run cadences.
 - A few `testinfra/` subdirectories carry only YAML, fixtures, or a single subcommand (`runtimes/`, `k8s/`, `sdkhelper/`). They are listed as asset directories in `tests/testinfra/README.md` so a reader does not expect a Go package at the top of each path.
 - Shared infrastructure lives under `tests/testinfra/`. There is one canonical helper per concern (one container manager, one fixture loader, one verdict producer).
 - `cmd/lenny-test/` builds the harness binary. It is the only entry point developers and CI use to run tests.
@@ -341,7 +364,7 @@ The harness ships a `lenny-test validate-maps` subcommand. It runs in CI on ever
 2. Every package under `pkg/` appears in the change graph (or under an explicit `pkg/**` glob).
 3. Every spec section referenced under `spec/**.md` headings has at least one entry in the spec map. Exceptions are listed in `tests/spec-map-exceptions.yaml` with a justification.
 4. Every test file appears in at least one tier directory and carries the expected build tag.
-5. Every diagnosis comment (`// diagnosis: ...`) is present on tier-2-and-up tests that exercise non-trivial behavior.
+5. Every diagnosis comment (`// diagnosis: ...`) is present on the tests of the component tier and the tiers after it that exercise non-trivial behavior.
 
 ### Diagnosis strings
 
@@ -368,7 +391,7 @@ Diagnosis strings are not stack traces. They explain the most common cause of th
 ```bash
 # Tier and group selection
 lenny-test --tier <unit|component|...>            # Run a single tier
-lenny-test --max-tier <tier>                      # Run tiers 0 through <tier>
+lenny-test --max-tier <tier>                      # Run the tiers up to <tier>, in the order of §3
 lenny-test --group <pr|nightly|pre-release|...>   # Named selection (see §8)
 
 # Change-aware selection
@@ -470,7 +493,7 @@ The merge gate is the set of tiers a branch passes before it merges into `main`.
 
 - The static tier, in full.
 - The unit tier on the packages the branch changes and their in-module importers, to the depth `--rdeps-depth` sets (default 1).
-- Tiers 2 (component), 3 (contract), and 4 (integration) when the `--changed` selection against the merge base of `--base` (default `main`) and `HEAD` selects them. The selection reads committed changes only, so commit the work before running the gate.
+- The component, contract, and integration tiers when the `--changed` selection against the merge base of `--base` (default `main`) and `HEAD` selects them. The selection reads committed changes only, so commit the work before running the gate.
 - The general documentation gates of the docs tier, which check the published documentation as a whole: links, code blocks, runbooks, alert-to-runbook resolution, the ADR catalog, the quickstart, the embedded manifests, and the harness inventories. The list is `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`. The rest of the docs tier runs at the area gate.
 
 Every tier runs whatever an earlier tier reports, so one run reports every failure.
@@ -481,7 +504,7 @@ Every tier runs whatever an earlier tier reports, so one run reports every failu
 2. It mounts the worktree at its host path. For a linked worktree, it also mounts the main checkout's git directory read-only at its host path, so git works inside the container.
 3. It mounts a fixture root at its host path and points `TMPDIR` at it, so a temporary directory that a test bind-mounts into a testcontainer is a path the host daemon resolves. The fixture root is a directory per worktree under the user's cache directory (`lenny-test/gate-tmp`). It lies outside the worktree so that the static checks that walk the tree do not read fixtures other checks are writing. The container empties it before each run.
 4. It keeps the Go module cache and the build cache in the named volumes `lenny-gate-gomod` and `lenny-gate-gocache`, so only the first run downloads and compiles from cold. The container runs `go mod verify` against `go.sum` before it compiles anything from the module cache.
-5. It gives the container the host Docker socket, so the testcontainers of tiers 2 and 4 start on the host daemon and the tests reach them at `host.docker.internal`. `--no-docker-socket` withholds the socket.
+5. It gives the container the host Docker socket, so the testcontainers of the component and integration tiers start on the host daemon and the tests reach them at `host.docker.internal`. `--no-docker-socket` withholds the socket.
 6. It builds `lenny-test` from the mounted tree inside the container and runs `lenny-test gate --here`, which runs the tiers in the current environment.
 
 `lenny-test gate` takes flags only and refuses a positional argument with a usage error.
@@ -495,7 +518,7 @@ A `FAIL` or `INCONCLUSIVE` verdict stays as it is in either case.
 
 **Isolation.** The gate container is not an isolation boundary. It mounts the host Docker socket and runs as root, so a test in it can do anything it could do on the host, including starting a privileged container. Run the gate only on code you would run on the host.
 
-**Tiers the gate cannot run.** A tier the gate selects but cannot run in its environment, such as tier 2 without a reachable Docker daemon or without the envtest binaries, is recorded with status `unverified` and a reason that opens with `not run:`, and it is listed under `gate.not_run`. A selected tier that reports `skipped` is recorded the same way. Either one keeps the verdict at `UNVERIFIED`, so the gate is not green.
+**Tiers the gate cannot run.** A tier the gate selects but cannot run in its environment, such as the component tier without a reachable Docker daemon or without the envtest binaries, is recorded with status `unverified` and a reason that opens with `not run:`, and it is listed under `gate.not_run`. A selected tier that reports `skipped` is recorded the same way. Either one keeps the verdict at `UNVERIFIED`, so the gate is not green.
 
 **Verdict.** The gate writes `tests/results/gate-<run>.json` and `tests/results/gate-latest.json` in the format of §7, and appends the run to `tests/results/history.jsonl`. `trigger.git_revision` is the commit the gate ran on, and every tier carries its result and its failures. The `gate` object adds the base ref, the merge base, whether the tree had uncommitted changes (`dirty`), the environment (the image tag and ID, or the host), the tiers not run (`not_run`), and the reasons the verdict cannot stand for the commit (`unverified`). The exit code is 0 for `PASS`, 1 for `FAIL`, 2 for `INCONCLUSIVE`, and 3 for `UNVERIFIED`.
 
@@ -607,7 +630,7 @@ groups:
       include:
         - tier: e2e_kind
           subset: critical-path     # warm-pool, sandbox-claim, pod-lifecycle, mtls
-        - tier: load_local          # full tier-7a catalogue under -race
+        - tier: load_local          # full load_local catalogue under -race
         - tier: load_kind
           subset: smoke             # 20 VUs, ~25s per scenario
         - tier: security
@@ -625,7 +648,7 @@ groups:
       max_tier: component
 
   nightly:
-    description: Nightly gate. Includes full e2e on Kind plus path-specific load_kind. Tier 12 (load_cloud) is intentionally excluded.
+    description: Nightly gate. Includes full e2e on Kind plus path-specific load_kind. The load_cloud tier is intentionally excluded.
     selectors:
       include_tiers: [static, unit, component, contract, integration, e2e_kind, e2e_cloud, load_local, load_kind, chaos, security, conformance, docs]
       cloud_subset: critical-path
@@ -669,9 +692,9 @@ Subsets are concrete sets of test names listed under `tests/groups.subsets.yaml`
 
 ## 9. Local dependencies
 
-The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is supported through WSL2. The list below is the union of all dependencies; a developer working in tiers 0 through 4 needs only the core set.
+The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is supported through WSL2. The list below is the union of all dependencies; a developer working in the tiers from static to integration needs only the core set.
 
-### Core (required for tiers 0 through 4)
+### Core (required for the tiers from static to integration)
 
 | Tool | Minimum version | Purpose |
 |:-----|:---------------:|:--------|
@@ -688,7 +711,7 @@ The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is
 | golangci-lint | 2.12 | The static tier lint |
 | migrate (or atlas, or goose) | latest | Run migrations |
 
-### Local Kubernetes (tiers 5, 8, 9, parts of 7)
+### Local Kubernetes (e2e_kind, chaos, security, and load_kind)
 
 | Tool | Minimum version | Purpose |
 |:-----|:---------------:|:--------|
@@ -700,7 +723,7 @@ The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is
 | kuttl (optional) | 0.15 | Declarative e2e assertions |
 | stern (optional) | 1.27 | Pod log multiplexing during debugging |
 
-### Cloud Kubernetes (tier 6)
+### Cloud Kubernetes (e2e_cloud)
 
 | Tool | Purpose |
 |:-----|:--------|
@@ -717,12 +740,12 @@ CI provisions credentials for each provider through OIDC federation rather than 
 
 | Tool | Purpose |
 |:-----|:--------|
-| k6 | Tier 7 load scenarios |
+| k6 | load_kind and load_cloud scenarios |
 | vegeta (optional) | Burst HTTP load |
 | toxiproxy | Latency/failure injection between services |
 | chaos-mesh (cloud only) | Chaos in real clusters |
 
-### Security (tier 9)
+### Security (security tier)
 
 | Tool | Purpose |
 |:-----|:--------|
@@ -732,7 +755,7 @@ CI provisions credentials for each provider through OIDC federation rather than 
 | trivy | Image CVE scanning |
 | cosign | Image signing verification |
 
-### Documentation (tier 11)
+### Documentation (docs tier)
 
 | Tool | Purpose |
 |:-----|:--------|
@@ -752,37 +775,37 @@ CI provisions credentials for each provider through OIDC federation rather than 
 
 ## 10. Service and cluster provisioning
 
-Tests need real backing services. Lenny defines six profiles for service provisioning, named in `tests/testinfra/`. The first five back tiers 0 through 9; the last two (`loadgen` and `loadctl`) back the load_cloud tier.
+Tests need real backing services. Lenny defines six profiles for service provisioning, named in `tests/testinfra/`. The first five back the tiers from static to security; the last two (`loadgen` and `loadctl`) back the load_cloud tier.
 
-### Profile: `inproc` (tier 1, parts of tier 0)
+### Profile: `inproc` (unit, parts of static)
 
 - All services are stub or in-memory (SQLite, miniredis, fs-backed blob store).
 - Used by unit tests and by `make run`.
 - Starts in milliseconds.
 - Does **not** validate Postgres-specific behavior (RLS, advisory locks, JSONB-specific indexes). Component and higher tiers must not depend on this profile.
 
-### Profile: `containers` (tier 2)
+### Profile: `containers` (component)
 
 - testcontainers-go starts Postgres, Redis, MinIO, an OIDC stub, a KMS stub, and an OTLP collector per test suite.
 - Migrations applied on container startup. Same migration chain as production.
 - Containers are torn down on suite completion. With `lenny-test-cached`, they are reused across suites within a developer session.
 - Each test gets a fresh schema (`tests/testinfra/containers/postgres.NewSchema(t)`) so suites do not contaminate each other.
 
-### Profile: `compose` (tiers 3, 4, 7-smoke)
+### Profile: `compose` (contract, integration, load smoke)
 
 - `docker compose -f tests/testinfra/compose/docker-compose.yaml --profile <name> up` starts a multi-service stack: gateway, controller-sim, stores, observability, mock LLM provider, mock OAuth provider.
 - Profiles: `default` (plain HTTP, no TLS), `mtls` (cert-manager-equivalent self-signed PKI), `observability` (Prometheus, Grafana, Jaeger), `chaos` (toxiproxy in front of stores), `credentials` (real Token Service with KMS stub).
 - The compose stack is the local equivalent of a Tier 1 deployment. It is the developer's "is the system working end-to-end" sanity check.
 - The compose YAML and its profiles are versioned in the repository. Image tags pinned by digest from Phase 2 onward.
 
-### Profile: `kind` (tier 5, parts of tiers 7, 8, 9)
+### Profile: `kind` (e2e_kind, parts of load_kind, chaos, and security)
 
 - `tests/testinfra/kind/cluster.go` provisions a Kind cluster from a fixed config. The config enables NetworkPolicy via Calico, registers RuntimeClass entries for runc and gVisor (when host gVisor is available), and applies the `cert-manager` and `metrics-server` add-ons.
 - A typical cluster takes 30 seconds to bring up cold; a cached cluster image takes 10 seconds.
 - The harness applies the Helm chart with the test values file (`tests/testinfra/kind/values.yaml`). The values file sets `deploymentTier: tier1`, `global.devMode: false`, mounts test-specific TLS material, and enables the bootstrap Job.
 - Each e2e test suite gets a fresh namespace and tears it down on completion. The cluster is reused across suites.
 
-### Profile: `cloud` (tier 6, tier 12 cluster surface, parts of tiers 8 and 9)
+### Profile: `cloud` (e2e_cloud, the load_cloud cluster surface, parts of chaos and security)
 
 - Three providers, two cluster shapes each: `cloud-small-<provider>` (3-node, runc only, no sandbox) and `cloud-sandbox-<provider>` (3-node with the provider's sandbox node pool: gVisor on GKE, gVisor-via-Bottlerocket or Firecracker-via-Fargate on EKS, gVisor-via-containerd-handler or Confidential Containers on AKS).
 - Cluster bring-up is automated via `scripts/cloud/<provider>/up.sh` and torn down via `scripts/cloud/<provider>/down.sh`. The full matrix detail lives in §12.6.
@@ -790,7 +813,7 @@ Tests need real backing services. Lenny defines six profiles for service provisi
 - The cloud profile validates managed-K8s-specific behavior that no lower profile reproduces: external LB ingress, cloud-provider CSI, cert-manager with Let's Encrypt staging, provider-native KMS, and provider-native workload identity.
 - For the load_cloud tier, this profile provides the Lenny cluster plus managed datastores only. The load-generation surface lives in the `loadgen` profile and the control plane lives in the `loadctl` profile.
 
-### Profile: `loadgen` (tier 12 load-generation surface)
+### Profile: `loadgen` (load_cloud load-generation surface)
 
 - A pool of off-cluster VMs in the same cloud VPC, in private subnets: ASG of `c6i.2xlarge` on AWS, Managed Instance Group of `c2-standard-8` on GCP, VMSS of `Standard_F8s_v2` on Azure.
 - Each instance runs the `lenny-loadrunner` agent (`cmd/lenny-loadrunner/`) plus the `k6` binary. Instances pick up work from a per-cloud queue (SQS, Pub/Sub, Service Bus).
@@ -798,7 +821,7 @@ Tests need real backing services. Lenny defines six profiles for service provisi
 - Traffic between the runner pool and the Lenny gateway stays inside the cloud network over a PrivateLink endpoint (AWS), Private Service Connect (GCP), or Azure Private Endpoint.
 - A `cloud-metrics-collector` instance in the same pool polls the provider's metrics API (CloudWatch, Cloud Monitoring, Azure Monitor) and exposes the results as Prometheus-format metrics.
 
-### Profile: `loadctl` (tier 12 control plane)
+### Profile: `loadctl` (load_cloud control plane)
 
 - A managed-container deployment per cloud: ECS on Fargate behind an ALB (AWS), Cloud Run with Cloud Armor and a serverless VPC connector (GCP), Container Apps with managed certificate (Azure).
 - Backed by managed Postgres (RDS, Cloud SQL, Flexible Server) for run state, scenario library, and baseline pins.
@@ -866,7 +889,7 @@ Every test runtime ships with a `Dockerfile`, a pinned base image digest, and a 
 
 This section defines each tier's scope, dependencies, conventions, gate criteria, and a representative set of test cases. It is the longest section of this document.
 
-### 12.0 Tier 0 — Static
+### 12.0 Static (`static`)
 
 **Scope.** Anything that does not need a running process or container.
 
@@ -899,7 +922,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Wall-clock target.** Under 30 seconds on a laptop.
 
-### 12.1 Tier 1 — Unit
+### 12.1 Unit (`unit`)
 
 **Scope.** Pure logic. No I/O, no goroutines coordinating across processes, no clock-of-the-host dependencies.
 
@@ -941,7 +964,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Wall-clock target.** Under 60 seconds for the full unit-tier run.
 
-### 12.2 Tier 2 — Component
+### 12.2 Component (`component`)
 
 **Scope.** One Lenny component plus its real backing services. No other Lenny components.
 
@@ -1007,7 +1030,7 @@ The LLM Proxy native translator is exercised against canonical request/response 
 
 **Gate.** 100%. No flakiness budget.
 
-### 12.3 Tier 3 — Contract
+### 12.3 Contract (`contract`)
 
 **Scope.** Wire-format equivalence and protocol conformance across surfaces.
 
@@ -1073,7 +1096,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 
 **Wall-clock target.** Under 4 minutes.
 
-### 12.4 Tier 4 — Integration
+### 12.4 Integration (`integration`)
 
 **Scope.** Multi-component flows through the compose stack.
 
@@ -1112,7 +1135,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 
 **Gate.** 100%.
 
-### 12.5 Tier 5 — E2E on Kind
+### 12.5 E2E on Kind (`e2e_kind`)
 
 **Scope.** Full Lenny install on Kind. CRDs, controllers, warm pools, admission webhooks, NetworkPolicy, mTLS. RuntimeClass runc only on Kind (gVisor is exercised on cloud).
 
@@ -1151,7 +1174,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 
 **Full e2e Kind suite** (runs nightly): everything above. Target wall-clock under 45 minutes.
 
-### 12.6 Tier 6 — E2E on cloud
+### 12.6 E2E on cloud (`e2e_cloud`)
 
 **Scope.** Behaviors that Kind cannot reproduce. Lenny supports the three major managed-Kubernetes platforms and validates each independently.
 
@@ -1189,11 +1212,11 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 - Pre-release: full suite on **all three providers (GKE, EKS, AKS)** including both cluster shapes per provider.
 - `managed_ingress` runs in the pre-release run only. It is an environment check rather than a regression suite, so the nightly and weekly runs exclude it.
 
-### 12.7 Tier 7 — Load and SLO
+### 12.7 Load and SLO
 
-Tier 7 is the two-stage load gate. The load_local tier runs in-process and catches concurrency, ordering, atomicity, and error-propagation regressions before any cluster cost is incurred. The load_kind tier runs the surviving scenarios on Kind to cover cases that genuinely require real Kubernetes primitives. The cloud-scale envelope is at §12.12 (load_cloud tier, `load_cloud`).
+The local load tests form a two-stage gate. The load_local tier runs in-process and catches concurrency, ordering, atomicity, and error-propagation regressions before any cluster cost is incurred. The load_kind tier runs the surviving scenarios on Kind to cover cases that genuinely require real Kubernetes primitives. The cloud-scale envelope is at §12.12 (load_cloud tier, `load_cloud`).
 
-#### 12.7.a Tier 7a — Load and SLO (local)
+#### 12.7.a Load and SLO, local (`load_local`)
 
 **Scope.** Hot-path concurrency under load with no cluster involved. Every component is exercised either as a per-package bench (`pkg/<package>/bench_load_test.go`) or through an in-process multi-component harness (`tests/testinfra/inproc`) that boots a single-binary Lenny with `miniredis`, an embedded Postgres adapter, and a fake Kubernetes API surface (`tests/testinfra/fakekube`). The race detector is on for every run.
 
@@ -1228,7 +1251,7 @@ go test -tags load_local -race -count=1 -timeout 10m ./tests/load_local/...
 
 The load_local tier runs on every PR.
 
-#### 12.7.b Tier 7b — Load and SLO (Kind)
+#### 12.7.b Load and SLO, Kind (`load_kind`)
 
 **Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent SandboxClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
 
@@ -1264,7 +1287,7 @@ go test -tags load_kind -count=1 -timeout 30m ./tests/load_kind/...
 
 The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streaming sessions, the §12.12 catalogue) is phase-gated out of the load_kind tier and runs at the load_cloud tier.
 
-### 12.8 Tier 8 — Chaos
+### 12.8 Chaos (`chaos`)
 
 **Scope.** Resilience and recovery under failure.
 
@@ -1293,7 +1316,7 @@ The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streamin
 
 **Cadence.** Core scenarios (Postgres failover, pod kill during session, sandbox-claim race, Redis Sentinel failover, MinIO outage during checkpoint): PR (Kind subset). Full suite: nightly. Severe scenarios that require cloud (cross-zone partition, KMS key revocation): nightly cloud or pre-release.
 
-### 12.9 Tier 9 — Security
+### 12.9 Security (`security`)
 
 **Scope.** Security controls verified end-to-end, not merely configured.
 
@@ -1370,7 +1393,7 @@ The tier runs under its own budget of one hour, which `LENNY_TEST_SECURITY_TIMEO
 
 **Cadence.** Critical subset (12.9.1, 12.9.2, 12.9.3): PR. Full suite: nightly. External pen-test: per release.
 
-### 12.10 Tier 10 — Conformance
+### 12.10 Conformance (`conformance`)
 
 **Scope.** Runtime adapter conformance to the published contracts.
 
@@ -1395,7 +1418,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 **Cadence.** Bundled runtimes: PR. Reference catalog: nightly. Third-party: invoked by `lenny-test conformance` per request.
 
-### 12.11 Tier 11 — Documentation
+### 12.11 Documentation (`docs`)
 
 **Scope.** Anything documentation-shaped under `docs/`, `spec/`, and the repository root.
 
@@ -1412,7 +1435,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 **Cadence.** PR.
 
-### 12.12 Tier 12 — Load and SLO (cloud)
+### 12.12 Load and SLO, cloud (`load_cloud`)
 
 **Scope.** Cloud-scale load against a real managed Kubernetes cluster (EKS, GKE, or AKS) with managed datastores (RDS / Cloud SQL / Flexible Server, ElastiCache / Memorystore / Cache for Redis). The load_cloud tier ratifies a release. It does not surface design bugs; the load_local tier and the load_kind tier are where those land.
 
@@ -1541,7 +1564,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - A migration regression test: apply N, seed data, apply N+1, assert data integrity, roll back, assert reversibility.
 
 **Test group gating Phase 1.5 → Phase 2.**
-- `phase-1.5-gate`: Phase 1.5 deliverables verified. Static linters pass. Tier 2 migration suite passes against the initial schema.
+- `phase-1.5-gate`: Phase 1.5 deliverables verified. Static linters pass. The component-tier migration suite passes against the initial schema.
 
 ### 13.3 Phase 2 — Adapter protocol + `make run` + ImageResolver + startup benchmark
 
@@ -1644,7 +1667,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/gateway/session/sessionstore` defines the §4.2 SessionStore interface (Create, Get, Update, List, Delete) with strict tenant isolation — cross-tenant reads return `ErrNotFound`, never leaking existence.
 - `pkg/gateway/session/sessionstore/memstore` is the in-memory implementation backing the minimal gateway and every contract test. The Postgres-backed implementation that ships in a later phase swaps in behind the same interface without changing caller code.
 - `pkg/gateway/sessionserver` is the §15.1 REST `http.Handler`: `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, plus the five state-mutating endpoints (`finalize`, `start`, `interrupt`, `terminate`, `resume`). Every state-mutating call drives `session.Validate` first and emits the §15.1 `INVALID_STATE_TRANSITION` envelope on rejection (HTTP 409 with `details.currentState` and `details.allowedStates`).
-- `cmd/lenny-gateway` is the minimal Lenny gateway binary that boots the handler against `memstore`. No OIDC, no Postgres, no Kubernetes — the tenant is taken from the dev `X-Lenny-Tenant-ID` header (defaulting to `default` per §10.2 single-tenant mode). Provides a concrete handler for the tier-3 / integration-tier harness to exercise before the production gateway ships.
+- `cmd/lenny-gateway` is the minimal Lenny gateway binary that boots the handler against `memstore`. No OIDC, no Postgres, no Kubernetes — the tenant is taken from the dev `X-Lenny-Tenant-ID` header (defaulting to `default` per §10.2 single-tenant mode). Provides a concrete handler for the contract-tier and integration-tier harnesses to exercise before the production gateway ships.
 - `tests/contract/rest_sessions/` ships the §15.1 contract tests: happy-path lifecycle (created → finalize → start → interrupt → terminate), each state-transition rejection from the §15.1 precondition table, cross-tenant 404 existence-hiding, `INVALID_STATE_TRANSITION` envelope shape, and the `?state=` listing filter. Tests drive the handler via `httptest` so they run unchanged when the production store backend lands.
 
 **Test infrastructure deferred to later phases.**
@@ -1834,7 +1857,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.29 Phase 13.5 — Pre-hardening full-system load baseline
 
 **Test infrastructure to land.**
-- Tier 7 cloud scenarios fully operational.
+- load_cloud scenarios fully operational.
 - Phase 13.5 baseline JSON committed.
 - The Lenny-specific Postgres write-pattern benchmark is implemented and `postgres.writeCeilingIops` is calibrated.
 - The `PostgresWriteBurstIops` alert threshold is calibrated.
@@ -1904,7 +1927,7 @@ This section enumerates the suites that cut across multiple tiers and that the t
 
 ### 14.1 RLS and tenant isolation
 
-The single most important security suite. Every store, every query path, every API surface, every adapter is validated for cross-tenant isolation. The Tier 2 RLS suite is the foundation; the security tier cross-store suite is the adversarial overlay.
+The single most important security suite. Every store, every query path, every API surface, every adapter is validated for cross-tenant isolation. The component-tier RLS suite is the foundation; the security tier cross-store suite is the adversarial overlay.
 
 Key tests:
 - Every query through PgBouncer is preceded by `SET LOCAL app.current_tenant`. Queries without it raise via the `lenny_tenant_guard` trigger.
@@ -1929,7 +1952,7 @@ Key tests:
 
 ### 14.3 Credential leasing lifecycle
 
-End-to-end tests across Tier 2 (TokenStore, CredentialPoolStore, Token Service component), Tier 4 (compose integration with `delegation-echo` and `streaming-echo`), and the e2e_kind tier (Kind e2e with real cert-manager and KMS stub).
+End-to-end tests across the component tier (TokenStore, CredentialPoolStore, Token Service component), the integration tier (compose integration with `delegation-echo` and `streaming-echo`), and the e2e_kind tier (Kind e2e with real cert-manager and KMS stub).
 
 Coverage:
 - `AssignCredentials` writes a per-session lease atomically across all providers in `supportedProviders ∩ providerPools`.
@@ -1942,7 +1965,7 @@ Coverage:
 
 ### 14.4 Delegation and the task tree
 
-Coverage spans Tier 1 (policy evaluation, budget arithmetic), Tier 4 (`delegation-echo` flows), the e2e_kind tier, and the chaos tier.
+Coverage spans the unit tier (policy evaluation, budget arithmetic), the integration tier (`delegation-echo` flows), the e2e_kind tier, and the chaos tier.
 
 Notable cases:
 - Token budget carving: parent 100K, child 30K, parent remaining 70K. Child cannot grant more than 30K to its own children.
@@ -1957,7 +1980,7 @@ Notable cases:
 
 ### 14.5 MCP elicitation chain
 
-Coverage spans Tier 2 (integrity), Tier 4 (chain flow), the e2e_kind tier (provenance display, depth suppression), the security tier (tamper detection).
+Coverage spans the component tier (integrity), the integration tier (chain flow), the e2e_kind tier (provenance display, depth suppression), the security tier (tamper detection).
 
 Notable cases:
 - Hop-by-hop chain: External Tool → Gateway connector → Child → Parent → Gateway edge → Client.
@@ -1970,7 +1993,7 @@ Notable cases:
 
 ### 14.6 Operability surface
 
-Coverage spans Tier 2 (each `lenny-ops` subsystem), Tier 4 (compose-level end-to-end), the e2e_kind tier (Kind with the full chart), security tier (RBAC and SSRF on webhook callbacks).
+Coverage spans the component tier (each `lenny-ops` subsystem), the integration tier (compose-level end-to-end), the e2e_kind tier (Kind with the full chart), security tier (RBAC and SSRF on webhook callbacks).
 
 Notable cases:
 - `GET /v1/admin/health` reports healthy/degraded/unhealthy from in-process metrics with fallback when Prometheus is down.
@@ -1988,7 +2011,7 @@ Coverage in contract is the canonical layer. Each surface (REST, MCP, OpenAI Com
 
 ### 14.8 The 13-phase request interceptor chain
 
-The gateway's interceptor chain is exercised at Tier 2 (per-interceptor) and Tier 4 (composed). Coverage:
+The gateway's interceptor chain is exercised in the component tier (per-interceptor) and the integration tier (composed). Coverage:
 - Phase order: PreRoute, PreAuth, PreDelegation, PreUpload, PreExportMaterialization, PreWorkspacePlan, lifecycle pre/post.
 - Priority sorting within phase.
 - failPolicy: fail vs. warn.
@@ -2001,7 +2024,7 @@ Coverage in e2e_kind. Includes pod-warm vs. SDK-warm states, DemoteSDK on upload
 
 ### 14.10 Compliance and erasure
 
-Coverage spans Tier 2 (every store's DeleteByUser/DeleteByTenant), Tier 4 (erasure_job orchestrator running the 19-step sequence in order), and the e2e_kind tier (legal-hold override flow).
+Coverage spans the component tier (every store's DeleteByUser/DeleteByTenant), the integration tier (erasure_job orchestrator running the 19-step sequence in order), and the e2e_kind tier (legal-hold override flow).
 
 Notable cases:
 - T3 SLA: erasure completes within 72 hours.
@@ -2094,9 +2117,9 @@ Each language runtime is installed by `scripts/setup-dev.sh`. CI uses pre-built 
 - TypeScript: `eslint` with the project config; `tsc --noEmit` for type checks; `prettier`.
 
 **Cadence.**
-- PR: Static, unit, the full Tier 3 SDK contract harness, the runtime-author quick-start TTHW.
+- PR: Static, unit, the full contract-tier SDK harness, the runtime-author quick-start TTHW.
 - Nightly: full integration with each SDK against the compose stack; the gateway-version compatibility matrix.
-- Pre-release: SDK conformance against the production-grade chart on the e2e_kind tier (Kind) and the e2e_cloud tier; package-manager publication smoke tests (`go install`, `pip install`, `npm install`) against the staging registry.
+- Pre-release: SDK conformance against the production-grade chart on the e2e_kind and e2e_cloud tiers; package-manager publication smoke tests (`go install`, `pip install`, `npm install`) against the staging registry.
 
 **Anti-goals.** The SDKs do not embed retry logic for non-retryable errors. They do not silently swallow errors. They do not store credentials on disk. They do not provide a "convenience" surface that diverges from the published API. The test suite asserts these anti-goals explicitly.
 
@@ -2108,7 +2131,7 @@ The operability surface is mandatory from Phase 3.5 onward (§spec/17.8.5, §spe
 
 ### 15.1 `lenny-ctl` command coverage
 
-Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) has at least one integration test against the compose stack and, for cluster-affecting commands, an e2e_kind tier Kind test. The full list below mirrors the spec section IDs one-to-one; each command lands its tests in the phase that ships it per §13.
+Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) has at least one integration test against the compose stack and, for cluster-affecting commands, an e2e_kind test. The full list below mirrors the spec section IDs one-to-one; each command lands its tests in the phase that ships it per §13.
 
 - Bootstrap: idempotent re-run, dry-run shows accurate diff.
 - Preflight: DSN precedence (flags > env > values.yaml), probe timeouts respected.
@@ -2198,8 +2221,8 @@ Above every test function:
 func TestSandboxClaimSkipLocked(t *testing.T) { ... }
 ```
 
-- `spec:` is mandatory on every test from Tier 2 onward. It lists every spec section the test encodes.
-- `diagnosis:` is mandatory on every test from Tier 2 onward.
+- `spec:` is mandatory on every test in the component tier and the tiers after it. It lists every spec section the test encodes.
+- `diagnosis:` is mandatory on every test in the component tier and the tiers after it.
 - The harness extracts both at compile time. Missing or malformed annotations fail the static tier lint.
 
 ### 17.3 Table-driven by default
@@ -2241,7 +2264,7 @@ Each row is a subtest with a deterministic name. `go test -run TestWorkspacePlan
 
 ### 17.6 Parallelism
 
-- Tier 1 tests are `t.Parallel()` by default. The unit tier is embarrassingly parallel.
+- Unit tests are `t.Parallel()` by default. The unit tier is embarrassingly parallel.
 - Component tests are `t.Parallel()` within a suite. Each test reserves its own schema or namespace.
 - Integration tests are serial by default within a suite. The compose stack has finite capacity.
 - e2e_kind and beyond are serial within a suite; parallelism is at the suite level managed by CI.
@@ -2349,11 +2372,11 @@ Decision factors:
 | Free for OSS public repos | yes | Unlimited minutes for `ubuntu-latest`, `macos-latest`, `windows-latest` runners |
 | OIDC federation to GCP, AWS, Azure | yes | First-class support per provider; no long-lived secrets |
 | PR-comment and inline-annotation surface | yes | Required for the verdict integration in §20.5 |
-| Self-hosted runner support | yes | Required for Tier 5+ (memory and time ceilings on hosted runners) |
+| Self-hosted runner support | yes | Required for e2e_kind and the tiers after it (memory and time ceilings on hosted runners) |
 | Reusable workflows and composite actions | yes | Bounds YAML sprawl |
 | Mature community familiarity | yes | Lowers contributor friction |
 | Per-repo cache cap | 10 GB | Manageable with the strategy in §20.6 |
-| Hosted-runner wall-clock cap | 6 hours | Tier 7 sustained load and e2e_cloud must run on self-hosted |
+| Hosted-runner wall-clock cap | 6 hours | Sustained load_kind and load_cloud runs and e2e_cloud must run on self-hosted |
 
 Alternatives considered:
 - **Buildkite.** More programmable pipeline model, scales better for very complex matrices. Adds operational cost (agents must be hosted somewhere). Recommended reconsideration trigger: GHA YAML becomes a recurring debugging bottleneck.
@@ -2379,15 +2402,15 @@ Migration path when triggered: introduce a `dagger/` module that wraps each `len
 Lenny uses two runner classes.
 
 **Hosted runners (GitHub-managed).**
-- `ubuntu-latest` for the static tier, the unit tier, the contract tier, Tier 4 (integration with the compose stack), the conformance tier (conformance against bundled runtimes), the docs tier.
+- `ubuntu-latest` for the static, unit, contract, integration (with the compose stack), conformance (against bundled runtimes), and docs tiers.
 - `macos-latest` for docs diagram rendering (the `qlmanage` step) and SDK smoke tests against the macOS toolchain.
 - Windows is not in scope.
 
 **Self-hosted runners.**
 - The component tier optionally uses self-hosted for the cached-container performance win, but works fine on hosted.
-- The e2e_kind tier (e2e on Kind) requires self-hosted: 14 GB RAM and 8 cores are the documented minimum; hosted runners cap at 7 GB / 4 cores.
-- The e2e_cloud tier (e2e on cloud) requires self-hosted with provider credentials accessible via OIDC.
-- Tier 7 (load) requires self-hosted; sustained runs exceed the 6-hour hosted ceiling.
+- The e2e_kind tier requires self-hosted runners: 14 GB RAM and 8 cores are the documented minimum; hosted runners cap at 7 GB / 4 cores.
+- The e2e_cloud tier requires self-hosted runners with provider credentials accessible via OIDC.
+- The load_kind tier requires self-hosted runners; sustained runs exceed the 6-hour hosted ceiling.
 - The chaos tier and the security tier run wherever the e2e_kind tier runs.
 
 Self-hosted runner pool layout:
@@ -2456,13 +2479,13 @@ The PR-comment action is implemented as a composite action in `.github/actions/p
 The 10 GB per-repo cache cap is the binding constraint. The strategy:
 
 - **Go module cache** (`~/go/pkg/mod`): keyed by `go.sum` hash. Restore-on-miss falls back to the previous main branch cache. Typical size: 500 MB to 1 GB.
-- **Go build cache** (`~/.cache/go-build`): keyed by `go.sum` plus a workflow tag. Typical size: 1 to 2 GB. Restored before Tier 1 and Tier 2.
+- **Go build cache** (`~/.cache/go-build`): keyed by `go.sum` plus a workflow tag. Typical size: 1 to 2 GB. Restored before the unit and component tiers.
 - **npm cache** (`~/.npm`): keyed by `package-lock.json` hash. Per-SDK and per-tool.
 - **pip cache** (`~/.cache/pip`): keyed by `pyproject.toml` plus lock file.
 - **Ruby gem cache** (`vendor/bundle`): keyed by `Gemfile.lock` (docs tier only).
 - **Docker layer cache** (testcontainers and compose images): persisted via the GitHub Container Registry (`ghcr.io/lennylabs/cache/*`) using `docker buildx build --cache-to type=gha,mode=max`. This bypasses the 10 GB repo cap because GHCR images are not subject to it.
 - **Kind node images**: pinned by digest and pre-pulled to self-hosted runners on the ARC node template. Hosted-runner Kind jobs (if any) pull from GHCR using the Docker layer cache.
-- **Test runtime images** (`echo`, `streaming-echo`, `delegation-echo`): built on every change and pushed to `ghcr.io/lennylabs/runtimes/*` keyed by Git SHA. Used by Tier 5+ tests by SHA.
+- **Test runtime images** (`echo`, `streaming-echo`, `delegation-echo`): built on every change and pushed to `ghcr.io/lennylabs/runtimes/*` keyed by Git SHA. Used by e2e_kind and the tiers after it by SHA.
 - **Container cache socket** (`lenny-test-cached`) is a developer convenience and does not apply to CI; CI always starts with cold containers for isolation.
 
 Cache eviction policy: stale caches older than seven days are removed by a weekly workflow (`.github/workflows/cache-prune.yml`). Branch-scoped caches are pruned when the branch is deleted.
@@ -2669,7 +2692,7 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 ### 22.3 Diagnosis coverage
 
-Every Tier 2-and-up test has a diagnosis. The harness validates and reports the percentage; the gate is 100%.
+Every test in the component tier and the tiers after it has a diagnosis. The harness validates and reports the percentage; the gate is 100%.
 
 ### 22.4 Determinism gate
 

@@ -320,7 +320,7 @@ var streamFailurePlanItem = regexp.MustCompile(`(?m)^- \[x\] Gateway stream-fail
 // the item and record the proposal number and the implementation date.
 func TestRemediationPlanRecordsTheStreamFailureProposal_spec_28_5_1(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	if !streamFailurePlanItem.MatchString(plan) {
 		t.Error("gateway-runtime-comms-remediation.md: the gateway stream-failure item is not ticked with the proposal number and implementation date")
 	}

@@ -27,7 +27,7 @@ jobs:
     secrets: inherit
 
   e2e-cloud-full:
-    name: tier 6 — e2e cloud (all providers, cloud-small)
+    name: e2e_cloud (all providers, cloud-small)
     runs-on: ubuntu-latest
     timeout-minutes: 120
     needs: [nightly-suite]
@@ -89,7 +89,7 @@ jobs:
         run: ./bin/lenny-test report --dir tests/results --output json | python3 -c 'import json,sys; v=json.load(sys.stdin); sys.exit(0 if v["verdict"]=="PASS" else 1)'
 
   load-full-system:
-    name: tier 7 — load (full-system)
+    name: load (full-system)
     runs-on: ubuntu-latest
     timeout-minutes: 90
     needs: [nightly-suite]

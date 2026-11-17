@@ -2,9 +2,8 @@
 
 //go:build integration
 
-// Tier-4 integration test for the §25.1 enforcement-point-2 scope gate
-// ("MCP tool invocation — /mcp/management tools/call checks the scope
-// before dispatch") driven with a real, signed Bearer JWT against the
+// Integration test for the §25.1 enforcement-point-2 scope gate (the
+// /mcp/management tools/call scope check before dispatch) driven with a real, signed Bearer JWT against the
 // deployed cmd/lenny-ops binary.
 //
 // The existing scope-enforcement coverage (pkg/common/scopes,
@@ -33,11 +32,8 @@
 // (admin.set_pool_warm_count, x-lenny-scope tools:pool:write) through
 // POST /mcp/management with a token scoped only to tools:health:read.
 //
-// spec: §25.1 — "Scopes are enforced in three places: ...
-// 2. MCP tool invocation — /mcp/management tools/call checks the scope
-// before dispatch." and "A request for a tool not permitted by any scope
-// returns 403 SCOPE_FORBIDDEN with a response body listing the caller's
-// active scopes."
+// spec: §25.1 (the second scope enforcement point, the /mcp/management
+// tools/call check, and its 403 SCOPE_FORBIDDEN response)
 package integration_test
 
 import (

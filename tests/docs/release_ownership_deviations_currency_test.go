@@ -110,7 +110,7 @@ func declaredInDir(t *testing.T, dir, symbol string) bool {
 // describes.
 func TestReleaseOwnershipDeviationNamesTheLandedLeaseStep(t *testing.T) {
 	root := repoRoot(t)
-	heading, body := fullRevokeLeaseEntry(t, readDocPage(t, filepath.Join(root, filepath.FromSlash(releaseOwnershipDeviations))))
+	heading, body := fullRevokeLeaseEntry(t, readRecord(t, filepath.Join(root, filepath.FromSlash(releaseOwnershipDeviations))))
 
 	m := leaseStepClaim.FindStringSubmatch(body)
 	if m == nil {

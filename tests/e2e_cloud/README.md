@@ -1,4 +1,4 @@
-# Tier-6 cloud account setup
+# e2e_cloud cloud account setup
 
 This directory holds the e2e_cloud-tier end-to-end suites described in §12.6 of
 `TESTING.md`. These suites run against managed Kubernetes on Google Cloud,

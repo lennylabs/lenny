@@ -1,10 +1,10 @@
 # load_local
 
-Local, in-process load and concurrency tests. The load_local tier is the first stage of the two-stage tier-7 gate (TESTING.md §12.7.a). The companion load_kind tier (`tests/load_kind/`) runs the same family of scenarios end-to-end on Kind; the load_cloud tier (`tests/load_cloud/`) runs the cloud-scale envelope.
+Local, in-process load and concurrency tests. The load_local tier is the first stage of the two-stage local load gate (TESTING.md §12.7.a). The companion load_kind tier (`tests/load_kind/`) runs the same family of scenarios end-to-end on Kind; the load_cloud tier (`tests/load_cloud/`) runs the cloud-scale envelope.
 
 ## Scope
 
-load_local-tier binds together:
+The load_local tier binds together:
 
 - **Mode A — per-component benches.** Go benchmark-style hot-path loops against the package's public surface with `-race` enabled. Located under `pkg/<package>/bench_load_test.go`. Discovered by the `lenny-test` harness via build tag `load_local`.
 - **Mode B — multi-component in-process harness.** A single-binary Lenny boot via `tests/testinfra/inproc`, with `miniredis` for the slot counter and idempotency store, an embedded Postgres adapter for `sessionstore`/`auditstore`, and `tests/testinfra/fakekube` for the Kubernetes API surface. Scenarios live under `scenarios/<name>/scenario.go`.

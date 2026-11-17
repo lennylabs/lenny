@@ -2,7 +2,7 @@
 
 PR-cadence load and SLO smoke runs against the Kind e2e gateway, plus the canonical baseline corpus.
 
-Tier 7 is split into two directories:
+The load tests that run against a cluster are split into two directories:
 
 - `load_kind/` (this directory) — Kind-based smoke runs that drive a short, low-VU workload against the e2e cluster and diff the result against a stored baseline. Runs on every PR.
 - `load_cloud/` — Opt-in cloud-profile runs that exercise the §12.7 production sizing targets (100+ concurrent claims, 50-child fan-out, 500+ streaming sessions). Drives a real cloud cluster via `scripts/cloud/<provider>/run-load.sh`.

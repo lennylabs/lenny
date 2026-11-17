@@ -3,11 +3,11 @@
 # scripts/setup-dev.sh — Lenny test-infrastructure setup.
 #
 # Installs the dependencies enumerated in TESTING_DEPENDENCIES.md by tier
-# group. Defaults to tiers 0-4 (core toolchain). Higher tiers and the SDK
+# group. Defaults to static to integration tiers (core toolchain). Higher tiers and the SDK
 # toolchains are opt-in via --include flags.
 #
 # Phase 0 implementation: covers macOS (Homebrew) and Linux-Debian (apt) as
-# tier-1 platforms, plus a minimal Fedora path. Tools without a clean package
+# primary platforms, plus a minimal Fedora path. Tools without a clean package
 # manager are installed via curl-from-release scripts documented in
 # TESTING_DEPENDENCIES.md.
 #
@@ -47,7 +47,7 @@ Flags:
   --package-manager <name>   Override detection: brew | apt | dnf | none.
   --help                     This message.
 
-Default install set: tiers 0-4 (Go, Docker check, docker compose, make, git,
+Default install set: static to integration tiers (Go, Docker check, docker compose, make, git,
 jq, protoc, buf, openssl, golangci-lint, gofumpt, goimports, sqlc, migrate,
 conftest).
 
@@ -127,7 +127,7 @@ run_resolved() {
 # manager. Each writes its decision via lenny_log_ok / lenny_log_info /
 # lenny_log_warn.
 
-# ---- Core toolchain (tiers 0-4) ----
+# ---- Core toolchain (static to integration tiers) ----
 
 install_go() {
   local v=""
@@ -520,7 +520,7 @@ install_cloud() {
   esac
 }
 
-# ---- Load and chaos toolchain (tiers 7-8) ----
+# ---- Load and chaos toolchain (load and chaos tiers) ----
 
 install_load() {
   install_simple_brew k6 k6 version "$LENNY_VERSION_K6"
@@ -677,7 +677,7 @@ install_docs() {
 # ---- Dispatch ----
 
 echo
-lenny_log_info "installing core toolchain (tiers 0-4)"
+lenny_log_info "installing core toolchain (static to integration tiers)"
 install_core
 
 if want_group kubernetes; then echo; lenny_log_info "installing kubernetes toolchain"; install_kubernetes; fi

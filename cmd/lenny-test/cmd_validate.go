@@ -706,7 +706,7 @@ func gitTrackedPaths(root string, trees []string) ([]string, error) {
 // source domain, read from the shared statement of that domain.
 func isTrackedSourceFile(name string) bool { return changegraph.IsSourceFile(name) }
 
-// validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
+// validateTestFilesMapped walks the tier directories from component up for _test.go
 // files and confirms each is referenced from at least one section's
 // `tests` list in spec-map.json (or is explicitly exempt via
 // tests/spec-map-exceptions.yaml — though this version of the
@@ -790,7 +790,7 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 			fmt.Sprintf("%d test file(s) absent from spec-map: %s",
 				len(orphans), strings.Join(preview, "; ")))
 	}
-	return newResult("test files mapped", true, "every tier-2+ test file appears in spec-map")
+	return newResult("test files mapped", true, "every test file from the component tier on appears in spec-map")
 }
 
 // validateSpecMapCoverage confirms every spec section in the map
@@ -1042,7 +1042,7 @@ func readPendingPaths(path string) map[string]bool {
 // among them, because a guard that reads a document fires under
 // `--changed` only when an edit to that document resolves to a key.
 // `supervisor/` and `Dockerfile.supervisor` hold the runtime supervisor's
-// C sources and image, which the static-tier binary check and the tier-1 C
+// C sources and image, which the static-tier binary check and the unit-tier C
 // harness driver exercise; they sit outside the completeness domain,
 // which reads Go and shell sources only.
 func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
@@ -1221,8 +1221,8 @@ func precedingCommentExists(lines []string, idx int) bool {
 //     the missing infrastructure precisely.
 //   - t.Skip("phase-gated: …")            → blocked behind a phase
 //   - t.Skip("flaky-time: …")              → flaky-time quarantine
-//   - kind.SkipUnlessAvailable(t)         → tier-5 e2e_kind one-liner
-//   - cloud.SkipUnlessAuthorized(t)       → tier-6 helper
+//   - kind.SkipUnlessAvailable(t)         → e2e_kind one-liner
+//   - cloud.SkipUnlessAuthorized(t)       → e2e_cloud helper
 //   - any *.SkipUnless* harness helper that gates the test on an
 //     infrastructure precondition
 //

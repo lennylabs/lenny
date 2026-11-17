@@ -14,7 +14,7 @@
 //     CH-RUNTIMEOPS, must produce a checkpoint record tagged
 //     consistency: consistent.
 //   - Negative (spec line 243): signal-based (SIGSTOP/SIGCONT)
-//     checkpointing is "not supported under gVisor or Kata". A pod that
+//     checkpointing is not supported under gVisor or Kata. A pod that
 //     would take the embedded-adapter SIGSTOP path under a sandboxed
 //     profile must be refused rather than silently produce an
 //     inconsistent snapshot.

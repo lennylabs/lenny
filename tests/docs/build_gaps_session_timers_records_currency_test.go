@@ -182,7 +182,7 @@ func TestSessionTimersFiledDefectsAreConfirmed_spec_7_2(t *testing.T) {
 // (Coordinator-Loss Detection and Hold State)
 func TestSessionTimersPlanEntryStatesTheLandedDesign_spec_10_1_1(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	_, rest, ok := strings.Cut(plan, "- [x] **P3. Session timers and sweep ownership**")
 	if !ok {
 		t.Fatal("gateway-runtime-comms-remediation.md has no ticked P3 entry")

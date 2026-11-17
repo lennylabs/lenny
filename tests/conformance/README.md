@@ -17,7 +17,7 @@ Every test in the tier gates on the Go toolchain being on `PATH` (needed to buil
 | Test | Blocked on |
 |:--|:--|
 | `TestRecyclePropertyOnASupervisedRestartPod_spec_5_2` | A pool under `recycle.runtimeProcess: restart`, which pool admission refuses until proposal 0084 rebinds the intra-pod MCP servers per runtime generation. |
-| `TestShutdownWithinDeadlineOnASupervisedKeepPod_spec_15_4_6` | The adapter's write of the `shutdown` frame at pod drain, which lands with R16. Until then the tier-1 runtime-exit cases cover the `shutdown` row's classification. |
+| `TestShutdownWithinDeadlineOnASupervisedKeepPod_spec_15_4_6` | The adapter's write of the `shutdown` frame at pod drain, which lands with R16. Until then the unit-tier runtime-exit cases cover the `shutdown` row's classification. |
 
 ## Build tag and invocation
 

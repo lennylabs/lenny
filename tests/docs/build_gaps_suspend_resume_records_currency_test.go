@@ -315,7 +315,7 @@ func findingHeadingCount(body, id string) int {
 // step filed.
 func TestSuspendResumeFiledFindingsAreFiledOnce_spec_7_2(t *testing.T) {
 	root := repoRoot(t)
-	body := readDocPage(t, filepath.Join(root, "BUILD-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "BUILD-GAPS.md"))
 	findings := buildGapsFindingsByID(t, root)
 	for _, id := range suspendResumeFiledIDs {
 		t.Run(id, func(t *testing.T) {
@@ -546,7 +546,7 @@ var suspendResumePlanItem = regexp.MustCompile(`(?m)^- \[x\] Session suspend-and
 // implementation date and drop the closed member.
 func TestRemediationPlanRecordsTheSuspendResumeProposal_spec_7_3(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	if !suspendResumePlanItem.MatchString(plan) {
 		t.Error("gateway-runtime-comms-remediation.md: the session suspend-and-resume item is not ticked with its implementation date")
 	}

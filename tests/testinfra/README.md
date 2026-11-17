@@ -1,6 +1,6 @@
 # tests/testinfra
 
-Shared helper packages and asset directories for Lenny's test infrastructure. Every Tier 1+ test imports from here when it needs a backing service, a deterministic clock, a fixture, a goleak snapshot, or any other piece of plumbing the harness provides.
+Shared helper packages and asset directories for Lenny's test infrastructure. Every test outside the static tier imports from here when it needs a backing service, a deterministic clock, a fixture, a goleak snapshot, or any other piece of plumbing the harness provides.
 
 The full specification lives in `TESTING.md`. This README is the directory map.
 
@@ -28,7 +28,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`heartbeatsilence/`](heartbeatsilence/) | Runtime fixture for a runtime that hangs between turns. It runs an unmodified reference runtime as a child and stops forwarding heartbeats after a directive message. Its `Dockerfile` layers it on a reference runtime image for the e2e_kind tier heartbeat-silence pools that `kind/install.sh` installs. |
 | [`helm/`](helm/) | Helm chart rendering and apply helpers. |
 | [`kind/`](kind/) | Kind cluster lifecycle for the e2e_kind tier (cluster create, kubeconfig, kubectl apply, port-forward, teardown). |
-| [`load/`](load/) | k6 scenario runner and baseline diff utilities for Tier 7. |
+| [`load/`](load/) | k6 scenario runner and baseline diff utilities for the load tiers. |
 | [`matrix/`](matrix/) | Contract-test matrix combinatorics. |
 | [`mocks/`](mocks/) | Mock external services: LLM providers, OAuth connector, OTel collector. Subpackages mirror the mocked service names. |
 | [`ports/`](ports/) | Random free-port allocator for subprocess-style tests. |
@@ -36,7 +36,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`randctl/`](randctl/) | Deterministic RNG keyed by test name; substitutes for `crypto/rand` in tests. |
 | [`schematest/`](schematest/) | JSON Schema and protobuf round-trip helpers. |
 | [`security/`](security/) | SBOM, cosign verification, ZAP scanner driver, trivy, and kube-bench wrappers. Subpackages: `cosign/`, `kubebench/`, `pentest/`, `sbom/`, `zap/`. |
-| [`sessiondriver/`](sessiondriver/) | Live-session test driver (HTTP, SSE, chaos and security bridges) used by Tiers 5+. |
+| [`sessiondriver/`](sessiondriver/) | Live-session test driver (HTTP, SSE, chaos and security bridges) used by e2e_kind and the tiers after it. |
 | [`stubs/`](stubs/) | In-process fault models the gateway must handle gracefully. Subpackages: `kms/`, `llmprovider/`, `oidc/`, `siem/`. |
 | [`timectl/`](timectl/) | `Clock` interface; tests pass a frozen or advanceable clock where production uses wall time. |
 | [`tokenservice/`](tokenservice/) | Token-service minting helpers for mTLS-bearing client setups. |

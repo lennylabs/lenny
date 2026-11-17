@@ -116,7 +116,7 @@ func TestBuildGapsCrossSlotRecordMatchesOpsLockStore_spec_12_4(t *testing.T) {
 		t.Skip("not-yet-applicable: the lenny-ops lock store does not yet carry the ops:{lock}: hash tag, so F-12.4.28 class B/C is open")
 	}
 
-	heading, text, ok := buildGapsFinding(readDocPage(t, filepath.Join(root, "BUILD-GAPS.md")), crossSlotFindingID)
+	heading, text, ok := buildGapsFinding(readRecord(t, filepath.Join(root, "BUILD-GAPS.md")), crossSlotFindingID)
 	if !ok {
 		t.Fatalf("BUILD-GAPS.md: no %s heading (renumbered or removed?)", crossSlotFindingID)
 	}
@@ -165,7 +165,7 @@ func TestRemediationPlanOpsLockEntryNamesProposal_spec_12_4(t *testing.T) {
 	if !strings.Contains(string(store), opsLockHashTag) {
 		t.Skip("not-yet-applicable: the lenny-ops lock store does not yet carry the ops:{lock}: hash tag")
 	}
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	lines := strings.Split(plan, "\n")
 	for i, line := range lines {
 		if !strings.HasPrefix(line, opsLockPlanEntryPrefix) && !strings.HasPrefix(line, opsLockPlanEntryTickedPf) {

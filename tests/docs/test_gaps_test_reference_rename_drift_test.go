@@ -79,7 +79,7 @@ func renamedSuffixes(body, stem string) []string {
 //	back, because its name follows its citation.
 func TestTestGapsTestReferencesFollowSpecSuffixRenames(t *testing.T) {
 	root := repoRoot(t)
-	body := readDocPage(t, filepath.Join(root, "TEST-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "TEST-GAPS.md"))
 
 	sources := map[string]string{}
 	for _, ref := range testFuncReference.FindAllStringSubmatch(body, -1) {

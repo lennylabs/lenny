@@ -179,7 +179,7 @@ func specMapTestFuncsFixture(t *testing.T, sections map[string][]string, files m
 // that catches a rename which repoints or drops a mapped test function
 // but leaves the file in place, so validateSpecMapTestFiles (which only
 // stats the file) stays green while the map rots. The concrete drift
-// that motivated the check renamed a tier-4 interactive-iteration test
+// that motivated the check renamed an integration-tier interactive-iteration test
 // and left both section 7.1 and 7.2 pointing at the gone symbol.
 //
 // tests/spec-map.json maps every spec section to
@@ -1113,12 +1113,12 @@ func trackIdentifierPassRename(t *testing.T, root string) {
 	}
 }
 
-// Both tier-0 predicates over component-and-above test files range over
+// Both static-tier predicates over component-and-above test files range over
 // the tracked tree rather than over a fixture, so a test file added
 // without a spec-map entry or without its annotations turns the static
 // tier red for every later change. This case drives both predicates over
 // that same tree in process, so the omission surfaces from a package-
-// scoped unit run rather than only from a composed tier-0 run.
+// scoped unit run rather than only from a composed static-tier run.
 //
 // ("tests/spec-map.json maps every spec section to
 // the tests ... that encode it"), which requires the
@@ -1338,7 +1338,7 @@ func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) 
 // TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness pins
 // the change-graph keys of the runtime supervisor's C sources and image:
 // the path validator accepts both, and the committed graph routes an edit
-// under supervisor/ to the static-tier binary check and the tier-1 C harness
+// under supervisor/ to the static-tier binary check and the unit-tier C harness
 // driver, and an edit to Dockerfile.supervisor to the binary check. A
 // validator that rejected the keys would force their removal, and a C
 // change would then select no test under --changed.

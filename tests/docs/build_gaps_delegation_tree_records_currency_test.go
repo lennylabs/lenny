@@ -186,7 +186,7 @@ func TestDelegationTreeDeletedSymbolsStayDeleted_spec_8_10(t *testing.T) {
 // spec: 8.10 (Delegation Tree Recovery)
 func TestDelegationTreePlanEntryRecordsTheImplementation_spec_8_10(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	_, rest, ok := strings.Cut(plan, "  - **Outcome (P4a).** Proposal 0106")
 	if !ok {
 		t.Fatal("gateway-runtime-comms-remediation.md has no P4a outcome entry")

@@ -203,7 +203,7 @@ var releaseOwnershipFiledIDs = []string{
 // finding: when two headings name the same identifier, merge them.
 func TestReleaseOwnershipFiledFindingsAreFiledOnce(t *testing.T) {
 	root := repoRoot(t)
-	body := readDocPage(t, filepath.Join(root, "BUILD-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "BUILD-GAPS.md"))
 	findings := buildGapsFindingsByID(t, root)
 	for _, id := range releaseOwnershipFiledIDs {
 		t.Run(id, func(t *testing.T) {
@@ -284,7 +284,7 @@ func releaseOwnershipPlanEntry(plan string) string {
 // each moved-out member with its destination.
 func TestRemediationPlanRecordsTheReleaseOwnershipProposal(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	entry := releaseOwnershipPlanEntry(plan)
 	if entry == "" {
 		t.Fatal("gateway-runtime-comms-remediation.md: the release-ownership item is not ticked with its implementation date")

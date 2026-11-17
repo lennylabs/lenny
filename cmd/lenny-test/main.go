@@ -157,12 +157,15 @@ Usage:
 Run flags:
   --group <name>           A named group from tests/groups.yaml (e.g., pr, pr-fast,
                            nightly, pre-release, phase-3.5-gate).
-  --tier <name>            A single tier (static, unit, component, contract,
-                           integration, e2e_kind, e2e_cloud, load, chaos, security,
-                           conformance, docs). With --changed, --since,
-                           --spec, or --pkg, runs that selection restricted to
-                           the one tier (unit keeps the selected packages).
-  --max-tier <name>        Run all tiers up to and including <name>.
+  --tier <name>            A single tier by name (static, unit, component,
+                           contract, integration, e2e_kind, e2e_cloud,
+                           load_local, load_kind, chaos, security, conformance,
+                           docs, load_cloud). Tier numbers are not accepted.
+                           With --changed, --since, --spec, or --pkg, runs that
+                           selection restricted to the one tier (unit keeps the
+                           selected packages).
+  --max-tier <name>        Run all tiers up to and including <name>, in the
+                           order the --tier list gives.
   --changed                Run tests affected by uncommitted changes (git diff).
   --spec <s1,s2,...>       Run tests covering the given spec sections.
   --pkg <p1,p2,...>        Run tests covering the given source packages.

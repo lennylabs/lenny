@@ -33,7 +33,7 @@ Every `lenny-ctl` test follows the same shape:
 //	rotation event. Inspect the gateway's
 //	/v1/admin/credential-pools handler.
 func TestCtlCredentialPoolAdd(t *testing.T) {
-    gw := gateway.Start(t)  // tier-4: subprocess gateway
+    gw := gateway.Start(t)  // integration tier: subprocess gateway
     ctl := lennyctl.Build(t)
     out := ctl.Run(t, gw.BaseURL(),
         "credential", "pool", "add",

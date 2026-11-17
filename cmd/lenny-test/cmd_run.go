@@ -852,7 +852,7 @@ func runStaticTier() (string, string, *tierResult) {
 				out, err := exec.Command("go", goTestArgs("./tests/static/...")...).CombinedOutput()
 				return string(out), err
 			},
-			// A tier-0 test that ran but could not reach a
+			// A static-tier test that ran but could not reach a
 			// conclusion (a generator it needs is absent, for
 			// example) passes and writes the unverified marker to
 			// stdout. Parsing it here is what lets such a test
@@ -862,7 +862,7 @@ func runStaticTier() (string, string, *tierResult) {
 		},
 		{name: "validate-diagnosis", run: func() (string, error) {
 			// Re-invoke this very binary's `validate-diagnosis`
-			// subcommand. The subcommand walks every Tier 2+
+			// subcommand. The subcommand walks every component-and-later
 			// _test.go file and confirms each test function carries
 			// the §17.2 annotation (or is a scaffold whose t.Skip
 			// already names the spec section).
@@ -875,7 +875,7 @@ func runStaticTier() (string, string, *tierResult) {
 		}},
 		{name: "validate-maps", run: func() (string, error) {
 			// §5 spec-map integrity: spec_file existence,
-			// change-graph file existence, every tier-2+ test file
+			// change-graph file existence, every component-and-later test file
 			// appears in spec-map.
 			self, err := os.Executable()
 			if err != nil {
@@ -892,7 +892,7 @@ func runStaticTier() (string, string, *tierResult) {
 }
 
 // goTestArgs returns the argv (after the "go" binary itself) that runs
-// the given package pattern as a tier-0 check. The verbose flag is
+// the given package pattern as a static-tier check. The verbose flag is
 // load-bearing rather than cosmetic: in package-list mode cmd/go
 // buffers a test binary's output and drops it for a package that
 // passes, so without -v the unverified marker a passing test writes to
@@ -1265,7 +1265,7 @@ func componentTargets(subsets []string) ([]string, bool, error) {
 }
 
 func runConformanceTier(subsets []string) (string, string, *tierResult) {
-	// Tier 10 conformance exercises the runtime adapters against the
+	// The conformance tier exercises the runtime adapters against the
 	// lenny-compliance harness. The subset names map to integration
 	// levels: "basic" → cmd/runtimes/echo at lenny-compliance --level
 	// basic; "standard" → cmd/runtimes/delegation-echo at

@@ -9,7 +9,7 @@ The wire-contract artifact register in [`spec/28_communication-channels.md`](../
 Phase 1 the static tier runs these checks:
 
 ```bash
-lenny-test --tier static                # full Tier 0
+lenny-test --tier static                # the full static tier
 buf lint                                # proto only
 # JSON Schema example round-trips: tests/static/schemas_test.go
 ```

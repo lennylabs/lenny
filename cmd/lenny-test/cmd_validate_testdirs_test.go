@@ -48,7 +48,7 @@ func runTestDirsKeyed(root string) checkResult {
 }
 
 // TestValidateTestDirsKeyedFailsAnUnkeyedTestDirectory pins the check
-// T-17.4.35 asked for: a tracked test directory under tests/tier*/ that
+// T-17.4.35 asked for: a tracked test directory under a tier directory that
 // no change-graph glob key covers fails validate-maps and is named,
 // because `--since` would select none of its tests on its own change.
 //
@@ -92,7 +92,7 @@ func TestValidateTestDirsKeyedFailsAnUnkeyedTestDirectory(t *testing.T) {
 }
 
 // TestValidateTestDirsKeyedDomain pins what counts as a test directory:
-// a tracked _test.go under tests/tier*/ outside testdata/. A non-test
+// a tracked _test.go under a tier directory outside testdata/. A non-test
 // file, a testdata fixture, a harness directory outside the tier trees,
 // and an untracked test file need no key.
 //

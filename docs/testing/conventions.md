@@ -94,7 +94,7 @@ Each row is a subtest with a deterministic name. `go test -run TestWorkspacePlan
 
 ## Parallelism
 
-- Tier 1 tests are `t.Parallel()` by default.
+- Unit tests are `t.Parallel()` by default.
 - Component tests are `t.Parallel()` within a suite. Each test reserves its own schema or namespace.
 - Integration tests are serial by default within a suite. The compose stack has finite capacity.
 - e2e_kind and beyond are serial within a suite; parallelism is at the suite level managed by CI.

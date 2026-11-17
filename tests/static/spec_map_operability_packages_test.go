@@ -443,9 +443,8 @@ func TestSpecMapBackupTestsIncludeRestoreAndReplicationFiles(t *testing.T) {
 	}
 }
 
-// spec: 25.12 ("The `ManagementMCPAdapter` lives in `lenny-ops` at
-//
-//	`/mcp/management` on port 8090." spec/25_agent-operability.md); tests/README.md
+// spec: 25.12 (the `ManagementMCPAdapter` in `lenny-ops` at
+// `/mcp/management`, spec/25_agent-operability.md); tests/README.md
 //	("`spec-map-exceptions.yaml` | Spec sections explicitly exempt from the
 //	'every section has at least one test' rule, with justifications.")
 //

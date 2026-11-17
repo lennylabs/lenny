@@ -139,7 +139,7 @@ want() {
   return 1
 }
 
-# ---- Core (tiers 0-4) ----
+# ---- Core (static to integration tiers) ----
 
 if want core; then
   check_simple go        go        version          '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_GO"             core
@@ -226,7 +226,7 @@ if want cloud; then
   fi
 fi
 
-# ---- Load and chaos (tiers 7-8) ----
+# ---- Load and chaos (load and chaos tiers) ----
 
 if want load; then
   check_simple k6              k6              version        '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_K6"        load

@@ -104,8 +104,7 @@ func t5ReadFixture(t *testing.T, rel string) []byte {
 
 // spec: 15 ("Built-in adapter inventory": OpenAICompletionsAdapter at
 // `/v1/chat/completions`, protocol "OpenAI Chat Completions", status
-// V1; "Built-in (compiled in): MCP, OpenAI Completions, Open Responses.
-// Always available, configurable via admin API."; "Built-in adapter
+// V1, built in and always available; "Built-in adapter
 // single-shot compute model": the request claims a warm pod, dispatches
 // the turn, and releases the pod within one HTTP call), 15.2.1 (REST/MCP
 // Consistency Contract: the shared session-creation service through
@@ -172,10 +171,8 @@ func TestOpenAIChatCompletionsConformsToPublishedSchemaOnDeployedGateway(t *test
 }
 
 // spec: 15 ("Built-in adapter inventory": OpenResponsesAdapter at
-// `/v1/responses`, protocol "Open Responses Specification", status V1;
-// "OpenResponsesAdapter covers both Open Responses-compliant clients
-// and OpenAI Responses API clients ... OpenAI's Responses API is a
-// proper superset of Open Responses."), 15 (Open Responses conversation
+// `/v1/responses`, protocol "Open Responses Specification", status V1,
+// serving Open Responses and OpenAI Responses API clients), 15 (Open Responses conversation
 // sessions: the request creates a session through the shared
 // session-creation service, a response id is the session id, a `.`, and
 // the turn's ordinal, and a session whose continuity is "platform" on a

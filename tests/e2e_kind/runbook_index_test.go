@@ -17,12 +17,9 @@
 // docs/runbooks payload at all, so the deployed pod's default flag
 // value pointed at a nonexistent directory and s.runbooks stayed nil.
 //
-// spec: §25.7 ("The index is built at startup by scanning the bundled
-// docs/runbooks/*.md files and parsing their front matter. No Postgres
-// storage — runbooks are read-only artifacts shipped with the
-// binary."); §25.7 Path A ("GET /v1/admin/runbooks | List all runbooks
-// with full front matter", "GET /v1/admin/runbooks/{name} | Get full
-// runbook content (rendered markdown)").
+// spec: §25.7 (the runbook index built at startup from the bundled
+// docs/runbooks/*.md files); §25.7 Path A (`GET /v1/admin/runbooks` and
+// `GET /v1/admin/runbooks/{name}`).
 package e2ekind_test
 
 import (

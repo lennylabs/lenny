@@ -79,7 +79,7 @@ func flattenQuotation(s string) string {
 // bullet ends at the next bullet, the next finding heading, or a blank line.
 func specDocBullets(t testing.TB, root string) []specDocBullet {
 	t.Helper()
-	body := readDocPage(t, filepath.Join(root, "TEST-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "TEST-GAPS.md"))
 
 	var bullets []specDocBullet
 	var current *specDocBullet

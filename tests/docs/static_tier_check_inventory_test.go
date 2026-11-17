@@ -35,7 +35,7 @@ import (
 // staticTierSectionHeading opens the TESTING.md section that enumerates
 // the static-tier checks. The section runs to the next heading of the same
 // level.
-const staticTierSectionHeading = "### 12.0 Tier 0 — Static"
+const staticTierSectionHeading = "### 12.0 Static (`static`)"
 
 // harnessCheckTableFile holds the check table the static tier composes.
 const harnessCheckTableFile = "cmd/lenny-test/cmd_run.go"

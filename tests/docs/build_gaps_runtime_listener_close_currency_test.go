@@ -55,7 +55,7 @@ type openFinding struct {
 // unticked checkbox.
 func openBuildGapsFindings(t testing.TB, root string) []openFinding {
 	t.Helper()
-	body := readDocPage(t, filepath.Join(root, "BUILD-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "BUILD-GAPS.md"))
 
 	var findings []openFinding
 	var current *openFinding

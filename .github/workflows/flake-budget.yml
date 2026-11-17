@@ -55,7 +55,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
         continue-on-error: true
-      - name: Stress the tier-7a pod-coordination race cases (50 iterations)
+      - name: Stress the load_local pod-coordination race cases (50 iterations)
         # The unit sweep above selects ./pkg/..., so the load_local-tier cases that
         # drive two concurrent adapter calls from a rendezvous are outside
         # it. They carry a stress budget in their own file headers; this is
@@ -70,7 +70,7 @@ jobs:
             --timeout-seconds 600 \
             | tee stress-tier7a.log
           {
-            echo "## Tier-7a pod-coordination race sweep"
+            echo "## load_local pod-coordination race sweep"
             echo ""
             echo '```'
             tail -100 stress-tier7a.log

@@ -77,7 +77,7 @@ export EMBEDDED_MANIFEST_HEADER
 generate: ## Regenerate DeepCopy + CRD manifests + bundled alerting rules + embedded manifests
 	@echo "  controller-gen object → pkg/apis DeepCopy"
 	@$(GOPATH_BIN)/controller-gen object:headerFile=hack/boilerplate.go.txt paths=./pkg/apis/lenny/v1alpha1/...
-	@# controller-gen leaves the meta/v1 import unaliased, and the tier-0
+	@# controller-gen leaves the meta/v1 import unaliased, and the static-tier
 	@# goimports check (which covers generated files) wants the alias, so the
 	@# generated file is formatted here rather than by hand (F-10.5.16).
 	@echo "  goimports → pkg/apis DeepCopy"

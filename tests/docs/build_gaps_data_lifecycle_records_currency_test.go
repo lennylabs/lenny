@@ -280,7 +280,7 @@ var filedLifecycleFindings = []filedLifecycleFinding{
 // identifier, merge them.
 func TestDataLifecycleFiledFindingsAreFiledOnce(t *testing.T) {
 	root := repoRoot(t)
-	body := readDocPage(t, filepath.Join(root, "BUILD-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "BUILD-GAPS.md"))
 	findings := buildGapsFindingsByID(t, root)
 	for _, c := range filedLifecycleFindings {
 		t.Run(c.id, func(t *testing.T) {
@@ -328,7 +328,7 @@ func dataLifecyclePlanEntry(plan string) string {
 // records it summarizes.
 func TestRemediationPlanRecordsTheDataLifecycleProposal(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	entry := dataLifecyclePlanEntry(plan)
 	if entry == "" {
 		t.Fatal("gateway-runtime-comms-remediation.md: the data-lifecycle item is not ticked with its implementation date")
@@ -564,7 +564,7 @@ var secondHalfDepartures = []secondHalfDeparture{
 func TestDataLifecycleSecondHalfDeparturesKeepTheirBounds(t *testing.T) {
 	root := repoRoot(t)
 	findings := buildGapsFindingsByID(t, root)
-	deviations := readDocPage(t, filepath.Join(root, filepath.FromSlash(secondHalfDeviations)))
+	deviations := readRecord(t, filepath.Join(root, filepath.FromSlash(secondHalfDeviations)))
 	for _, d := range secondHalfDepartures {
 		t.Run(d.id+" "+d.deviation, func(t *testing.T) {
 			f := requireFinding(t, findings, d.id)
@@ -632,8 +632,8 @@ var secondHalfFilings = []secondHalfFiling{
 // identifier.
 func TestDataLifecycleSecondHalfFilingsAreFiledOnceWithTheirOwners(t *testing.T) {
 	root := repoRoot(t)
-	body := readDocPage(t, filepath.Join(root, "BUILD-GAPS.md"))
-	deviations := readDocPage(t, filepath.Join(root, filepath.FromSlash(secondHalfDeviations)))
+	body := readRecord(t, filepath.Join(root, "BUILD-GAPS.md"))
+	deviations := readRecord(t, filepath.Join(root, filepath.FromSlash(secondHalfDeviations)))
 	findings := buildGapsFindingsByID(t, root)
 	for _, c := range secondHalfFilings {
 		t.Run(c.id, func(t *testing.T) {
@@ -695,7 +695,7 @@ func planEntry(plan string, item *regexp.Regexp) string {
 // filed. Restore the Outcome from the BUILD-GAPS.md records it summarizes.
 func TestRemediationPlanRecordsTheDataLifecycleSecondHalf(t *testing.T) {
 	root := repoRoot(t)
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	entry := planEntry(plan, secondHalfPlanItem)
 	if entry == "" {
 		t.Fatal("gateway-runtime-comms-remediation.md: the P5b item is not ticked with its implementation date")
@@ -752,7 +752,7 @@ var testGapsHeading = regexp.MustCompile(`^### - \[( |x)\] (T-[0-9.]+) `)
 func testGapsEntry(t *testing.T, root, id string) (resolved bool, body string) {
 	t.Helper()
 	var in bool
-	for _, line := range strings.Split(readDocPage(t, filepath.Join(root, "TEST-GAPS.md")), "\n") {
+	for _, line := range strings.Split(readRecord(t, filepath.Join(root, "TEST-GAPS.md")), "\n") {
 		if m := testGapsHeading.FindStringSubmatch(line); m != nil {
 			if in {
 				return resolved, body

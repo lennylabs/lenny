@@ -177,7 +177,7 @@ func TestPodNoJWTFiledDefectRecordsAreCurrent_spec_10_2(t *testing.T) {
 			t.Errorf("BUILD-GAPS.md:%d %s\n  cites the proposal by an internal label (%q)", f.line, f.heading, m)
 		}
 	}
-	plan := readDocPage(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
+	plan := readRecord(t, filepath.Join(root, "gateway-runtime-comms-remediation.md"))
 	_, section, ok := strings.Cut(plan, podNoJWTPlanDefects)
 	if !ok {
 		t.Fatalf("gateway-runtime-comms-remediation.md no longer records %q", podNoJWTPlanDefects)

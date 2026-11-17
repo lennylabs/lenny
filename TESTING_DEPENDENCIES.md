@@ -8,13 +8,13 @@ Companion to [`TESTING.md`](TESTING.md). This file lists every tool the test inf
 2. [Platforms and resource sizing](#2-platforms-and-resource-sizing)
 3. [Setup scripts](#3-setup-scripts)
 4. [Tier-to-tool map](#4-tier-to-tool-map)
-5. [Core toolchain (tiers 0–4)](#5-core-toolchain-tiers-04)
-6. [Kubernetes toolchain (e2e_kind tier)](#6-kubernetes-toolchain-tier-5)
-7. [Cloud provider toolchain (e2e_cloud tier)](#7-cloud-provider-toolchain-tier-6)
-8. [Performance and chaos toolchain (tiers 7–8)](#8-performance-and-chaos-toolchain-tiers-78)
-9. [Security toolchain (security tier)](#9-security-toolchain-tier-9)
+5. [Core toolchain (static to integration)](#5-core-toolchain-static-to-integration)
+6. [Kubernetes toolchain (e2e_kind)](#6-kubernetes-toolchain-e2e_kind)
+7. [Cloud provider toolchain (e2e_cloud)](#7-cloud-provider-toolchain-e2e_cloud)
+8. [Performance and chaos toolchain (load and chaos tiers)](#8-performance-and-chaos-toolchain-load-and-chaos-tiers)
+9. [Security toolchain (security)](#9-security-toolchain-security)
 10. [SDK and language toolchains (TESTING.md §14.13)](#10-sdk-and-language-toolchains-1413)
-11. [Documentation toolchain (docs tier)](#11-documentation-toolchain-tier-11)
+11. [Documentation toolchain (docs)](#11-documentation-toolchain-docs)
 12. [Optional convenience tools](#12-optional-convenience-tools)
 13. [Cloud authentication setup](#13-cloud-authentication-setup)
 14. [Verification](#14-verification)
@@ -34,7 +34,7 @@ git clone https://github.com/lennylabs/lenny.git
 cd lenny
 git checkout test-infrastructure
 
-# 2. Install core dependencies (tiers 0–4) AND lenny-test itself.
+# 2. Install core dependencies (static to integration tiers) AND lenny-test itself.
 #    setup-dev.sh installs the harness into $(go env GOPATH)/bin
 #    after the external toolchain is set up.
 ./scripts/setup-dev.sh
@@ -52,15 +52,15 @@ lenny-test infra up --profile containers
 lenny-test --group pr-fast
 ```
 
-`scripts/setup-dev.sh` covers tiers 0–4 by default. For higher tiers, run with explicit groups:
+`scripts/setup-dev.sh` covers the tiers from static to integration by default. For higher tiers, run with explicit groups:
 
 ```bash
-./scripts/setup-dev.sh --include kubernetes      # adds tier 5 tools
-./scripts/setup-dev.sh --include cloud           # adds tier 6 tools (all three providers)
-./scripts/setup-dev.sh --include security        # adds tier 9 tools
+./scripts/setup-dev.sh --include kubernetes      # adds e2e_kind tools
+./scripts/setup-dev.sh --include cloud           # adds e2e_cloud tools (all three providers)
+./scripts/setup-dev.sh --include security        # adds security tools
 ./scripts/setup-dev.sh --include sdk-python      # adds Python SDK toolchain
 ./scripts/setup-dev.sh --include sdk-typescript  # adds TypeScript SDK toolchain
-./scripts/setup-dev.sh --include docs            # adds tier 11 tools
+./scripts/setup-dev.sh --include docs            # adds docs tools
 ./scripts/setup-dev.sh --include all             # everything except cloud
 ```
 
@@ -85,19 +85,19 @@ The script is idempotent. Re-running it upgrades pinned versions and skips alrea
 
 | Workload | CPU | RAM | Disk | Notes |
 |:---------|:---:|:---:|:----:|:------|
-| Tiers 0–1 (static, unit) | 2 cores | 4 GB | 5 GB | Native execution; minimal containers |
-| Tiers 2–3 (component, contract) with `lenny-test-cached` warm | 4 cores | 8 GB | 15 GB | Postgres, Redis, MinIO, OIDC stub, KMS stub, OTLP collector all running |
-| Tier 4 (integration via compose) | 6 cores | 12 GB | 25 GB | Full compose stack plus stores |
-| The e2e_kind tier (e2e on Kind) | 8 cores | 16 GB | 40 GB | Kind cluster with control plane, two workers, cert-manager, metrics-server |
-| Tier 7 load smoke | 8 cores | 16 GB | 40 GB | k6 plus full stack; sustained runs prefer cloud |
+| static and unit | 2 cores | 4 GB | 5 GB | Native execution; minimal containers |
+| component and contract with `lenny-test-cached` warm | 4 cores | 8 GB | 15 GB | Postgres, Redis, MinIO, OIDC stub, KMS stub, OTLP collector all running |
+| integration (via compose) | 6 cores | 12 GB | 25 GB | Full compose stack plus stores |
+| e2e_kind (e2e on Kind) | 8 cores | 16 GB | 40 GB | Kind cluster with control plane, two workers, cert-manager, metrics-server |
+| load_kind smoke | 8 cores | 16 GB | 40 GB | k6 plus full stack; sustained runs prefer cloud |
 
-A 16 GB MacBook Pro runs everything through the e2e_kind tier. The e2e_cloud tier runs on managed clusters provisioned by CI; developers do not bring up cloud clusters in routine work.
+A 16 GB MacBook Pro runs everything up to the e2e_kind tier. The e2e_cloud tier runs on managed clusters provisioned by CI; developers do not bring up cloud clusters in routine work.
 
 ### Docker resource allocation
 
-Docker Desktop, Colima, and OrbStack default to conservative limits. Increase them before running Tier 2 or higher:
+Docker Desktop, Colima, and OrbStack default to conservative limits. Increase them before running the component tier or a later tier:
 
-| Setting | Tier 2–3 | Tier 4 | The e2e_kind tier |
+| Setting | component and contract | integration | e2e_kind |
 |:--------|:--------:|:------:|:------:|
 | CPUs | 4 | 6 | 8 |
 | Memory | 6 GB | 10 GB | 14 GB |
@@ -159,24 +159,24 @@ Provisions a fresh Kind cluster with the Lenny test profile (single control plan
 Use this table to identify the minimum dependency set for the tier you intend to run.
 
 | Tier | Tools required |
-|:----:|:---------------|
-| 0 — Static | Go, golangci-lint, gofumpt, goimports, buf, jq, helm, helm-unittest, conftest, markdown-link-check, vale (optional) |
-| 1 — Unit | Go (only) |
-| 2 — Component | Go, Docker, testcontainers (Go library; no extra install), migrate |
-| 3 — Contract | Go, Docker, docker compose, protoc, buf |
-| 4 — Integration | Go, Docker, docker compose, jq |
-| 5 — E2E on Kind | Tier 0–4 plus kubectl, Kind, Helm, helm-unittest, cmctl, optionally kuttl and stern |
-| 6 — E2E on cloud | The e2e_kind tier plus gcloud SDK, aws CLI v2, az CLI, eksctl, kubectl auth plugins, optionally terraform |
-| 7 — Load and SLO | Tier 4 plus k6, optionally vegeta |
-| 8 — Chaos | Tier 4 or 5 plus toxiproxy; cloud scenarios require chaos-mesh (installed in the cluster, no local CLI) |
-| 9 — Security | The e2e_kind tier plus OWASP ZAP, kubeaudit, kube-bench, trivy, cosign |
-| 10 — Conformance | Tier 4 plus `lenny-compliance` binary (built from this repo, no external install) |
-| 11 — Documentation | Ruby 3.2, Jekyll, Node, markdown-link-check |
-| SDK contract tests | Tier 3 plus Python 3.11 with pytest/tox/ruff/mypy and Node 20 LTS with vitest/eslint/prettier |
+|:-----|:---------------|
+| `static` | Go, golangci-lint, gofumpt, goimports, buf, jq, helm, helm-unittest, conftest, markdown-link-check, vale (optional) |
+| `unit` | Go (only) |
+| `component` | Go, Docker, testcontainers (Go library; no extra install), migrate |
+| `contract` | Go, Docker, docker compose, protoc, buf |
+| `integration` | Go, Docker, docker compose, jq |
+| `e2e_kind` | The tiers from static to integration plus kubectl, Kind, Helm, helm-unittest, cmctl, optionally kuttl and stern |
+| `e2e_cloud` | `e2e_kind` plus gcloud SDK, aws CLI v2, az CLI, eksctl, kubectl auth plugins, optionally terraform |
+| `load_local`, `load_kind`, and `load_cloud` | `integration` plus k6, optionally vegeta |
+| `chaos` | `integration` or `e2e_kind` plus toxiproxy; cloud scenarios require chaos-mesh (installed in the cluster, no local CLI) |
+| `security` | `e2e_kind` plus OWASP ZAP, kubeaudit, kube-bench, trivy, cosign |
+| `conformance` | `integration` plus `lenny-compliance` binary (built from this repo, no external install) |
+| `docs` | Ruby 3.2, Jekyll, Node, markdown-link-check |
+| SDK contract tests | `contract` plus Python 3.11 with pytest/tox/ruff/mypy and Node 20 LTS with vitest/eslint/prettier |
 
 ---
 
-## 5. Core toolchain (tiers 0–4)
+## 5. Core toolchain (static to integration)
 
 ### Go 1.22+
 
@@ -347,7 +347,7 @@ Policy testing for Helm-rendered manifests.
 
 ---
 
-## 6. Kubernetes toolchain (tier 5)
+## 6. Kubernetes toolchain (e2e_kind)
 
 ### kubectl 1.27+
 
@@ -372,7 +372,7 @@ Local Kubernetes via Docker-in-Docker.
 
 ### Helm 3.12+
 
-Chart install for e2e_kind.
+Chart install for the e2e_kind tier.
 
 - macOS: `brew install helm`
 - Linux:
@@ -427,7 +427,7 @@ Multi-pod log tailing.
 
 ---
 
-## 7. Cloud provider toolchain (tier 6)
+## 7. Cloud provider toolchain (e2e_cloud)
 
 The e2e_cloud tier runs against three providers (GKE, EKS, AKS). The CLIs below are required if you want to run cloud tests locally; otherwise CI handles them.
 
@@ -513,7 +513,7 @@ Reproducible cluster bring-up across providers.
 
 ---
 
-## 8. Performance and chaos toolchain (tiers 7–8)
+## 8. Performance and chaos toolchain (load and chaos tiers)
 
 ### k6 0.50+
 
@@ -557,7 +557,7 @@ curl -fsSL https://mirrors.chaos-mesh.org/v2.7.0/install.sh | sh
 
 ---
 
-## 9. Security toolchain (tier 9)
+## 9. Security toolchain (security)
 
 ### OWASP ZAP 2.14+
 
@@ -703,7 +703,7 @@ See §11.
 
 ---
 
-## 11. Documentation toolchain (tier 11)
+## 11. Documentation toolchain (docs)
 
 ### Ruby 3.2+
 
@@ -844,7 +844,7 @@ CI uses workload identity federation. Long-lived keys are not stored in reposito
 
 ```bash
 ./scripts/preflight.sh                  # all tools
-./scripts/preflight.sh --group core     # tiers 0–4
+./scripts/preflight.sh --group core     # the tiers from static to integration
 ./scripts/preflight.sh --group kubernetes
 ./scripts/preflight.sh --group cloud
 ./scripts/preflight.sh --group sdk

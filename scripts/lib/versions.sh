@@ -16,7 +16,7 @@
 # xcode-select git), prefer the platform default unless we have a feature
 # justification.
 
-# ---- Core toolchain (tiers 0-4) ----
+# ---- Core toolchain (static to integration tiers) ----
 LENNY_VERSION_GO="1.22"                # range-over-func, slices/maps stable
 LENNY_VERSION_DOCKER="24.0"            # threshold for Compose v2 as a plugin
 LENNY_VERSION_DOCKER_COMPOSE="2.20"
@@ -47,7 +47,7 @@ LENNY_VERSION_AZ_CLI="2.60"
 LENNY_VERSION_KUBELOGIN="0.1.0"
 LENNY_VERSION_TERRAFORM="1.5"
 
-# ---- Load & chaos toolchain (tiers 7-8) ----
+# ---- Load & chaos toolchain (load and chaos tiers) ----
 LENNY_VERSION_K6="0.50"
 LENNY_VERSION_VEGETA="12.11"
 LENNY_VERSION_TOXIPROXY="2.7"

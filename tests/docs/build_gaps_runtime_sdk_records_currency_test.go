@@ -57,7 +57,7 @@ var findingHeading = regexp.MustCompile(`^### - \[( |x)\] (F-[0-9.]+) `)
 // keyed by its identifier.
 func buildGapsFindingsByID(t testing.TB, root string) map[string]gapFinding {
 	t.Helper()
-	body := readDocPage(t, filepath.Join(root, "BUILD-GAPS.md"))
+	body := readRecord(t, filepath.Join(root, "BUILD-GAPS.md"))
 	out := map[string]gapFinding{}
 	var id string
 	for i, line := range strings.Split(body, "\n") {
