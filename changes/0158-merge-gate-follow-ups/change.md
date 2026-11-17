@@ -1,6 +1,6 @@
 # Merge gate follow-ups
 
-Status: `In progress`, revision 1, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `In progress`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
 
 ## Problem
 
