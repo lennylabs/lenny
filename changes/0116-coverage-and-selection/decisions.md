@@ -2,40 +2,12 @@
 
 ## Open decisions
 
-**O1. What satisfies the coverage gate.** The gate of CS-3 checks every requirement a branch adds or modifies. An area change writes its pages at the target state, so it adds requirements whose code steps have not landed and which no test can verify yet.
-
-- (a) Only a test whose annotation cites the requirement directly. An area change then lands only the requirements the tree already carries out and tests, or it waits for the code steps of every change touching the area.
-- (b) A test that cites the requirement directly, or an open or planned issue under `issues/<CODE>/` that names the requirement in its `requirements` list. A requirement with no test lands with a record of the gap, and the issue closes when the step that implements and tests it lands.
-- (c) As (b), and also a test that cites a numbered section whose successor stub lists the requirement.
-
-**Recommendation: (b).** It lets an area land at the target state, as the v1 program requires, while every untested requirement stays visible as an issue that a step has to close. (a) blocks area changes on unrelated code steps. (c) counts a citation that names a whole section as evidence for one requirement inside it, and the area's exit removes those citations anyway.
-
-**O2. The claim register.** `tests/claim-map.json` holds 102 rows for §28: 61 `WIRED`, 23 `UNWIRED`, and 18 `ABSENT`. §28.4 requires it, and 16 tier-0 tests and a generator hold it.
-
-- (a) In this change, file the 41 rows that are not `WIRED` as issues under the page code that will own each statement, triaged against the v1 member changes, retire the 61 `WIRED` rows with the file, and rewrite §28.4 to say that issues hold the record (CS-8).
-- (b) Freeze `tests/claim-map.json` as a historical record beside `BUILD-GAPS.md`, take it out of the gates, rewrite §28.4 the same way, and file its open rows when each channel page migrates.
-- (c) Keep the claim register and its gates until the channel area migrates, and retire only the spec map and the change graph here.
-
-**Recommendation: (a).** The 41 open rows are few enough to file once, each issue then carries the requirement it names when the area lands, and the gates that only hold the register's format retire now. (b) leaves a frozen record that nothing checks while code changes under it, and (c) keeps 16 tests and a generator alive for a record that issues already replace.
-
-**O3. Selection inside the single-package tiers.** The integration tier is one Go package of 171 test files, and the chaos tier one of 67. The import graph reaches the integration package from 292 of the 479 packages under `pkg/`, where the change graph selected it for 82. The merge gate of 0154 runs the integration tier as `--changed` selects it.
-
-- (a) Run the whole package whenever an import reaches it.
-- (b) Narrow to the test functions declared in files whose own imports reach the changed package, and run the whole package when a file shared by the package's tests reaches it. Measured on the integration package, a change to a `pkg/` package selects a median of 37 of the 171 files when it selects any.
-- (c) Run the whole package now, and split the integration and chaos tiers into one Go package per area as each area migrates, so package selection narrows them.
-
-**Recommendation: (c).** (a) is sound and is what the merge gate runs on the first day. (b) is unsound: a test calls helpers in other files of its package, and the file-level reading misses an import a helper makes. Splitting by area gives the import graph packages to select, and each area change already edits its tests. The time the whole package takes on the merge gate is measured first (see "Validation owed" in `steps.md`), and if it exceeds the gate's budget, the split moves ahead of the areas.
-
-The design settles every other choice without an owner decision. Each is stated in `change.md`:
-
-- The index is computed on each run and never committed, and `survey`'s site finder reads it (CS-1).
-- Numbered sections are outside the coverage gate, the 102 exceptions retire with no successor, and headings with no citing test are reported (CS-2, CS-3).
-- Unit selection walks the full closure of dependents, as 0154's merge gate states, with `--rdeps-depth` kept as an operator flag (CS-4).
-- A specification edit selects tests by the identifiers or headings its hunks touch, and the code citing a changed identifier counts as changed (CS-5).
-- Inputs outside Go packages live in `tests/non-go-inputs.yaml`, checked for dead rows rather than for completeness (CS-6).
-- `--max-tier` is removed, `--gate` and a list-valued `--tier` bound a selection, and `run --changed` without a bound runs only the tiers that need no infrastructure (CS-7).
-- §28.4 keeps its number under the heading "Implementation status" (CS-8).
-- Every test in the tiers `validate-diagnosis` covers carries an annotation, replacing the rule that each such file appear in the spec map (CS-9).
-- Existing test names with section numbers are renamed by each area, and the v1 program's area exit says so (CS-10).
+None.
 
 ## Decisions
+
+Settled by the owner on 2026-11-17 ("go with all your recommendations, except ..."); the questions as framed are in `review-history.md`.
+
+1. **Coverage gate.** A requirement a diff adds or modifies passes when a test cites it or an open issue names it.
+2. **Claim register.** Its 41 rows that are not `WIRED` are filed as issues now, and `tests/claim-map.json` retires.
+3. **Single-package tiers.** The integration and chaos tiers run whole when selected now, and are split per area as areas migrate.
