@@ -40,6 +40,7 @@ No definition block names this page yet.
 
 | Setting | Default | Summary |
 | :-- | :-- | :-- |
+| [`maxSurge`](../capabilities/pools/pool-sizing.md#setting-maxsurge) | 1 | The pods a pool creates above its target during a rollout. |
 | [`minWarm`](../capabilities/pools/warm-pools.md#setting-minwarm) | 0 | The number of idle pods a pool keeps. |
 | [`recycle.mode`](../capabilities/pools/warm-pools.md#setting-recycle-mode) | never | Whether a pod serves a second session. |
 

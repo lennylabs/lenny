@@ -21,11 +21,27 @@
 //     refuses a duplicate anchor, and refuses a page code that no page
 //     registers, naming the file and the line of each problem.
 //   - specshift defs generate writes the catalogs under spec/catalogs/, the
-//     generated sections of the pages that carry marker comments, and the
-//     index.md of every folder of the tree. With --check it writes nothing
-//     and fails when a generated file differs from a fresh run.
+//     generated sections of the pages that carry marker comments, the
+//     index.md of every folder of the tree, and the generated regions of the
+//     documentation's reference pages under docs/reference/. With --check it
+//     writes nothing and fails when a generated file differs from a fresh
+//     run.
 //   - specshift defs schemas prints the schema reference in Markdown, which
 //     SCHEMAS.md in this directory holds.
+//
+// A reference page that lists catalog entries for readers, such as the
+// metrics reference, carries one region per kind it lists, between
+// <!-- generated:reference-metrics --> and its closing marker, placed after
+// the page's hand-written list. The region holds only the blocks whose
+// owner page has landed (its status is neither placeholder nor partial),
+// grouped under one heading per capability area, component folder, or
+// page, in the table layout the hand-written sections use, with page codes
+// replaced by page titles and links reduced to their text. The hand-written
+// rows of an area stay until the change that lands the area deletes them,
+// so a reader sees one list: hand-written sections followed by generated
+// sections of the same layout, with no name in both. The package names
+// the pages and their regions, and check refuses a named page that lacks
+// one.
 //
 // Generation is a pure function of the tree: the same tree always produces
 // byte-identical output, because every list is sorted and every table has a

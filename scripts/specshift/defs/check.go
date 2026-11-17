@@ -12,7 +12,8 @@ import (
 
 // Check validates the tree: every block against its kind's schema, every
 // anchor unique, every page code it names registered, every page code
-// registered once, and every generated-section marker well formed. It
+// registered once, every generated-section marker well formed, and every
+// reference page of the documentation carrying the regions it lists. It
 // returns the problems sorted by file and line.
 func Check(t *Tree) []Problem {
 	problems := append([]Problem(nil), t.Problems...)
@@ -23,6 +24,7 @@ func Check(t *Tree) []Problem {
 	}
 	problems = append(problems, checkAnchors(t)...)
 	problems = append(problems, checkRegions(t)...)
+	problems = append(problems, checkRefPages(t)...)
 	sortProblems(problems)
 	return problems
 }

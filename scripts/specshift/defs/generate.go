@@ -16,7 +16,8 @@ import (
 
 // Generate computes every generated file of the tree and returns its
 // content by repo-relative path: the catalogs, the pages whose generated
-// sections it fills, and the folder indexes. It refuses a tree that fails
+// sections it fills, the folder indexes, and the documentation reference
+// pages whose regions it fills. It refuses a tree that fails
 // Check, because a catalog built from invalid blocks would list them.
 func Generate(t *Tree) (map[string]string, []Problem) {
 	if problems := Check(t); len(problems) > 0 {
@@ -25,6 +26,7 @@ func Generate(t *Tree) (map[string]string, []Problem) {
 	out := map[string]string{}
 	pages := generateCatalogs(t, out)
 	generateSections(t, pages, out)
+	generateRefPages(t, out)
 	problems := generateIndexes(pages, out)
 	sortProblems(problems)
 	if len(problems) > 0 {

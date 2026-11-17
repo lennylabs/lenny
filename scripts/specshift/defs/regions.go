@@ -51,11 +51,17 @@ type region struct {
 	open, close int
 }
 
-// findRegions locates the marker pairs of a body outside code fences. It
-// reports an unknown name, a nested or unclosed opening marker, a closing
-// marker with no opening, and a name used twice. bodyLine is the file line
-// of the body's first line.
+// findRegions locates the marker pairs of a specification page's body
+// outside code fences. It reports an unknown name, a nested or unclosed
+// opening marker, a closing marker with no opening, and a name used twice.
+// bodyLine is the file line of the body's first line.
 func findRegions(path, body string, bodyLine int) ([]region, []Problem) {
+	return findNamedRegions(path, body, bodyLine, regionNames)
+}
+
+// findNamedRegions is findRegions over a given set of region names, so a
+// documentation page and a specification page each accept only their own.
+func findNamedRegions(path, body string, bodyLine int, names []string) ([]region, []Problem) {
 	lines := strings.Split(body, "\n")
 	var out []region
 	var problems []Problem
@@ -72,8 +78,8 @@ func findRegions(path, body string, bodyLine int) ([]region, []Problem) {
 		t := strings.TrimSpace(lines[i])
 		if m := regionOpen.FindStringSubmatch(t); m != nil {
 			switch {
-			case !contains(regionNames, m[1]):
-				at(i, "unknown generated section %q; the sections are %s", m[1], strings.Join(regionNames, ", "))
+			case !contains(names, m[1]):
+				at(i, "unknown generated section %q; the sections are %s", m[1], strings.Join(names, ", "))
 			case openAt >= 0:
 				at(i, "generated section %q opens inside %q", m[1], openName)
 			default:
@@ -103,7 +109,8 @@ func findRegions(path, body string, bodyLine int) ([]region, []Problem) {
 
 // replaceRegions returns the body with each region's content replaced by
 // what fill returns for its name. The markers stay, and the content sits
-// between them with one blank line on either side.
+// between them with one blank line on either side. Empty content leaves
+// one blank line between the markers.
 func replaceRegions(body string, regions []region, fill func(name string) string) string {
 	if len(regions) == 0 {
 		return body
@@ -114,8 +121,10 @@ func replaceRegions(body string, regions []region, fill func(name string) string
 	for _, r := range regions {
 		sb.WriteString(strings.Join(lines[last:r.open+1], "\n"))
 		sb.WriteString("\n\n")
-		sb.WriteString(strings.TrimRight(fill(r.name), "\n"))
-		sb.WriteString("\n\n")
+		if content := strings.TrimRight(fill(r.name), "\n"); content != "" {
+			sb.WriteString(content)
+			sb.WriteString("\n\n")
+		}
 		last = r.close
 	}
 	sb.WriteString(strings.Join(lines[last:], "\n"))

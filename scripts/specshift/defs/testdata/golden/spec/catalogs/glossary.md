@@ -11,4 +11,5 @@ summary: Lists every owned term with a one-sentence gloss and a link to its owne
 | Term | Gloss | Owner |
 | :-- | :-- | :-- |
 | [Pod set](../capabilities/pools/warm-pools.md#pod-set) | The pods of one pool that share a pod hash. | [Warm pools](../capabilities/pools/warm-pools.md) |
+| [Surge](../capabilities/pools/pool-sizing.md#surge) | The pods a pool creates above its target during a rollout. | [Pool sizing](../capabilities/pools/pool-sizing.md) |
 | [Warm pool](../capabilities/pools/warm-pools.md#warm-pool) | A set of pods kept ready. | [Warm pools](../capabilities/pools/warm-pools.md) |

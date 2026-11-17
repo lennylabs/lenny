@@ -84,6 +84,15 @@ func (p *Page) BodyLine() int { return p.bodyLine }
 // IsPlaceholder reports whether the page is a placeholder.
 func (p *Page) IsPlaceholder() bool { return p.Front.Status == "placeholder" }
 
+// Landed reports whether the page's content has been written: its status
+// is neither placeholder nor partial. The documentation gates and the
+// generated reference pages read only landed pages.
+func (p *Page) Landed() bool { return Landed(p.Front.Status) }
+
+// Landed reports whether a page status is one of a written page: neither
+// placeholder nor partial. A page written in full carries no status.
+func Landed(status string) bool { return status != "placeholder" && status != "partial" }
+
 // Block is one definition block.
 type Block struct {
 	// Page is the page that holds the block.
@@ -159,6 +168,9 @@ type Tree struct {
 	Pages []*Page
 	// Problems are the problems found while reading the pages.
 	Problems []Problem
+	// RefPages are the documentation's reference pages, which carry the
+	// generated regions that list catalog entries for readers.
+	RefPages []*RefPage
 }
 
 // PageByPath returns the page at a repo-relative path.
@@ -224,6 +236,9 @@ func LoadTree(root string) (*Tree, error) {
 		return nil, fmt.Errorf("walk %s: %w", specRoot, err)
 	}
 	sort.Slice(t.Pages, func(i, j int) bool { return t.Pages[i].Path < t.Pages[j].Path })
+	if t.RefPages, err = loadRefPages(root); err != nil {
+		return nil, err
+	}
 	return t, nil
 }
 

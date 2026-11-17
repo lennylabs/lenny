@@ -10,6 +10,7 @@ summary: Lists every setting with its type, default, range, scopes, the componen
 
 | Setting | Type | Default | Range or values | Unit | Scopes | Read by | Summary |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
+| [`maxSurge`](../capabilities/pools/pool-sizing.md#setting-maxsurge) | integer | 1 |  |  | pool | [WPC](../components/warm-pool-controller.md) | The pods a pool creates above its target during a rollout. |
 | [`minWarm`](../capabilities/pools/warm-pools.md#setting-minwarm) | integer | 0 | [0, 10000] |  | pool | [WPC](../components/warm-pool-controller.md), [GWCLAIM](../components/gateway/pod-claimer.md) | The number of idle pods a pool keeps. |
 | [`recycle.mode`](../capabilities/pools/warm-pools.md#setting-recycle-mode) | enum | never | `never`, `always` |  | pool | [WPC](../components/warm-pool-controller.md) | Whether a pod serves a second session. |
 

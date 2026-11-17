@@ -402,6 +402,7 @@ name: example
 | `CONV` | conventions | [`conventions.md`](conventions.md) | How the fixture specification is written. |
 | `CAPS` | index | [`capabilities/index.md`](capabilities/index.md) | Lists the capability areas. |
 | `RTPOOL` | index | [`capabilities/pools/index.md`](capabilities/pools/index.md) | Lists the capabilities that keep pods warm. |
+| `PSIZE` | capability | [`capabilities/pools/pool-sizing.md`](capabilities/pools/pool-sizing.md) | Sizes a pool. The page is being written, so its blocks stay off the documentation's reference pages. |
 | `POOL` | capability | [`capabilities/pools/warm-pools.md`](capabilities/pools/warm-pools.md) | Keeps a pool's pods warm. This page defines the pool and its settings. |
 | `CATALERT` | catalog | [`catalogs/alerts.md`](catalogs/alerts.md) | Lists every alert with its severity, the requirements whose breach it detects, and its owner block. |
 | `CATOPS` | catalog | [`catalogs/api-operations.md`](catalogs/api-operations.md) | Lists every interface operation with its identifier, method, path, and owner block. |

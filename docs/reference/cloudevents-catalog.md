@@ -114,6 +114,11 @@ Every event carries these CloudEvents attributes:
 | `dev.lenny.lock_split_brain_detected` | `scope`, `resolution` |
 | `dev.lenny.operation_progressed` | `operation_id`, `kind`, `prev_status`, `new_status`, `progress` |
 
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-events -->
+
+<!-- /generated:reference-events -->
+
 ---
 
 ## Sample event
