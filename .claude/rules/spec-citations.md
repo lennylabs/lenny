@@ -19,6 +19,7 @@ The naming law in the communication-channels section of the specification states
 
 The rule applies to the domain the citation gates read, which `scripts/specshift/scope/scope.go` defines. The following are outside it:
 
+- The `changes/` directory. A change records a proposed or historical state, and an archived change is not edited, so its citations are evidence of what the specification said when it was written.
 - The `proposals/` directory. A draft proposal cites specification lines as evidence of what the tree said when it was written, and an implemented proposal is a historical record that is not edited (`spec-driven-development.md`). The staged edits of a proposal locate their targets by heading and quoted text, never by line number, because the implementor applies them against a specification that other proposals have changed since.
 - The audit records `BUILD-GAPS.md`, `TEST-GAPS.md`, `gateway-runtime-comms.md`, and `gateway-runtime-comms-remediation.md`, which record findings as they were written.
 - The citation registers `tests/registers/line-citations.yaml` and `tests/registers/line-citation-resolution.yaml`, which are the baselines the gates consume.
