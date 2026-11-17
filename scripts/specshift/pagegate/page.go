@@ -71,7 +71,7 @@ func keyLine(front, key string) int {
 var numberedExpr = regexp.MustCompile(`^spec/\d{2}_[^/]*\.md$`)
 
 // numberedHeadingExpr matches the heading of a numbered section, such as
-// "## 4.6 Pod Lifecycle Controllers".
+// a level-two heading whose title starts with "4.6 ".
 var numberedHeadingExpr = regexp.MustCompile(`(?m)^#{1,6} \d+(?:\.\d+)*\.? `)
 
 // StubbedNumberedFile reports whether every numbered section of a numbered
