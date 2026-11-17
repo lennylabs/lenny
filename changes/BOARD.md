@@ -9,8 +9,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 1 |
-| Ready | 5 |
-| Waiting on decisions | 41 |
+| Ready | 6 |
+| Waiting on decisions | 40 |
 | Blocked | 148 |
 | Cancelled | 1 |
 
@@ -26,7 +26,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Ready |  |
 | [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Ready |  |
 | [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Ready |  |
-| [0158.S1](0158-merge-gate-follow-ups/steps.md#0158s1-secret-scan-in-the-gate-and-the-review-rule-for-gate-changes) | Secret scan in the gate and the review rule for gate changes | Waiting on decisions | 0158 is `Draft` |
+| [0158.S1](0158-merge-gate-follow-ups/steps.md#0158s1-secret-scan-in-the-gate-and-the-review-rule-for-gate-changes) | Secret scan in the gate and the review rule for gate changes | Ready |  |
 | [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Blocked | 0116.S1 |
 | [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Blocked | 0116.S1 |
 | [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3 |
@@ -280,4 +280,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |
-| [0158](0158-merge-gate-follow-ups/change.md) | Merge gate follow-ups | `Draft` | 0 of 1 | 1 |
+| [0158](0158-merge-gate-follow-ups/change.md) | Merge gate follow-ups | `Decided` | 0 of 1 | 0 |

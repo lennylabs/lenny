@@ -1,6 +1,6 @@
 # Merge gate follow-ups
 
-Status: `Draft`, revision 1, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Decided`, revision 1, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
 
 ## Problem
 
@@ -9,7 +9,7 @@ The security review of the merge gate (change 0154, archived at [`changes/archiv
 ## Scope
 
 - **In scope.** `gitleaks` in the gate's static tier, pinned in the gate image, with a reviewed allowlist for the repository's test fixtures; and the rule that a diff to `cmd/lenny-test/`, `tests/gate/`, or `tests/flake-budget.yaml` is reviewed before it merges, in `.claude/rules/git-workflow.md` and the `review` and `build` skills.
-- **Out of scope.** Building the harness from the merge base, which the owner declined. Isolating the gate from the host waits on open decision 1.
+- **Out of scope.** Building the harness from the merge base, and isolating the gate with a Docker sidecar, which the owner declined (decisions 1 and 4).
 
 ## Documentation
 
