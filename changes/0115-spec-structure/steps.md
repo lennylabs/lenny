@@ -13,7 +13,7 @@
 - status: Planned
 - lanes: [specification, documentation]
 
-`spec/README.md` as the root map, `spec/conventions.md` from TAXONOMY version 2 and the spike's draft, the code registry with the map's 277 codes, and a placeholder page for each page of the map (decision O3), with front matter, a summary, and the numbered sections that hold its content. Contributor documentation names the layout.
+`spec/README.md` as the root map, `spec/conventions.md` from TAXONOMY version 2 and the spike's draft, the code registry with the map's 277 codes, and a placeholder page for each page of the map (decision 8), with front matter, a summary, and the numbered sections that hold its content. Contributor documentation names the layout.
 
 ### 0115.S2 The reference tool
 - status: Planned
@@ -48,14 +48,14 @@ The tier-0 gates of "Gates" in `change.md`, applied to pages of the new tree and
 - lanes: [code, documentation]
 - depends-on: [0115.S3, 0115.S4]
 
-The extension of `doc-content.md`, the front-matter, catalog-name, and documentation-impact gates, and the generator of reference pages from the catalogs, turned on for a page as decision O6 states.
+The extension of `doc-content.md`, the front-matter, catalog-name, and documentation-impact gates, and the generator of reference pages from the catalogs, turned on for a page once the area it describes has landed (decision 11).
 
 ### 0115.S7 Successor stubs and the frozen reference
 - status: Planned
 - lanes: [specification, code]
 - depends-on: [0115.S2]
 
-The stub format in `conventions.md`, a `specshift ref stub` command that replaces migrated paragraphs with a successor list, `lookup` of a `§` citation through the stub, and the frozen reference in the form decision O2 sets.
+The stub format in `conventions.md`, a `specshift ref stub` command that replaces migrated paragraphs with a successor list, `lookup` of a `§` citation through the stub, and the `spec-frozen` tag (decision 7), created when the first area change starts.
 
 ### 0115.S8 Helpers that read the structure
 - status: Planned
@@ -69,4 +69,4 @@ The `digest`, `where`, and `since` skills and their commands, and `docs/about/st
 - lanes: [specification, code, documentation]
 - depends-on: [0115.S8]
 
-Remove `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md`, and the sections decision O4 names, and edit §28, the rules, the scope and its tests, the scripts, the pull request template, and the pages listed under "Retiring the root plan files" in `change.md`. It follows 0115.S8 so the status page exists before the roadmap goes.
+Remove `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md`, §18 and §21, move §23 to `docs/about/` (decision 9), and edit §28, the rules, the scope and its tests, the scripts, the pull request template, and the pages listed under "Retiring the root plan files" in `change.md`. It follows 0115.S8 so the status page exists before the roadmap goes.

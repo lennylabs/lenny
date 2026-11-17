@@ -2,12 +2,7 @@
 
 ## Open decisions
 
-1. **Where the new tree lives during the migration.** Options: (a) inside `spec/`, beside the numbered files, which turn into successor stubs as areas migrate, so the gates, the citation tools, and agents see one tree; (b) under `spec-next/`, swapped in for `spec/` when the last area lands. Recommendation: (a), because links never need rewriting at a swap and every area change edits one tree.
-2. **Form of the frozen reference.** Options: (a) a git tag at the commit before the first area migrates, read through `specshift ref lookup §N.M`, with the successor stubs in place; (b) a copy of the numbered files under `spec/frozen/`. Recommendation: (a), because a second copy of 493,000 words in the tree doubles what every search and every agent reads, and the stubs already keep each `§` citation resolving.
-3. **Placeholders for every page now.** Options: (a) create all 277 pages of the map as placeholders in this change, with their codes registered, so area changes and cross-area links target real codes from the start; (b) create each area's pages when it migrates. Recommendation: (a), because codes are then fixed once and a link across areas never waits on the other area.
-4. **The plan-like numbered sections.** §18 (build sequence) and §21 (planned post-v1) are plans, which TAXONOMY sends to programs and the status page. §19 (resolved decisions), §20 (open questions), §22 (explicit non-decisions), and §23 (competitive landscape) go to rationale on owner pages, issues, and `docs/about/`. Options: (a) this change retires §18 and §21 with the root plan files and moves §23 to `docs/about/`, and the area changes distribute §19, §20, and §22 as they reach each item; (b) all of them leave in one later clean-up change. Recommendation: (a), because §18 and §21 are the same plans as the root files, and §23 belongs to no area.
-5. **§26, the reference runtime catalog.** The owner decided it leaves the specification for the reference runtime repositories and the runtime author guide (TAXONOMY, "Owner decisions", 4). Options: (a) in the area change for runtimes; (b) in this change. Recommendation: (a), because the runtime protocol and its conformance suite stay in that area and the move has to keep them apart.
-6. **Front matter on every documentation page now.** Options: (a) add `spec:` front matter to all 228 pages in this change, mapped from the placeholder codes, and turn on the documentation gates; (b) add it per area, and turn on each gate for a page once its area has landed. Recommendation: (b), because the codes a page describes are only certain once those pages are written, and a wrong mapping now would pass the gate and mislead it.
+None.
 
 ## Decisions
 
@@ -18,3 +13,13 @@ Settled by the owner on 2026-11-16 during the specification structure spike, rec
 3. The nine items from the migration spike, including generic contribution blocks and operation identifiers in each interface's own operation names.
 4. Migration by area at the target state (option C), with the structure landing first.
 5. New code cites the specification far less than the current code, under a project rule, and documentation is part of every change, with a gate.
+
+Settled by the owner on 2026-11-16 ("go with all your recommendations"), on the questions framed in revision 2, which `review-history.md` keeps:
+
+6. **The new tree lives inside `spec/`**, beside the numbered files, which turn into successor stubs as areas migrate.
+7. **The frozen reference is a git tag**, `spec-frozen`, on the commit before the first area migrates, read through `specshift ref lookup`. No copy of the numbered files stays in the tree.
+8. **Every page of the map is created as a placeholder in this change**, with its code registered.
+9. **§18 and §21 retire in this change** with the root plan files, and §23 moves to `docs/about/`. The area changes distribute §19, §20, and §22 as they reach each item.
+10. **§26 moves in the runtimes area change**, beside the runtime protocol and its conformance suite.
+11. **Documentation front matter is added per area.** Each documentation gate turns on for a page once the area it describes has landed.
+

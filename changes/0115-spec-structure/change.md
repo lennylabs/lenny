@@ -1,6 +1,6 @@
 # Specification structure
 
-Status: `Draft`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Decided`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M1.
 
 ## Problem
 
@@ -41,7 +41,7 @@ The owner settled a structure organized by capability on 2026-11-16, after a spi
 | Numbered file | One of the current files `spec/01_*.md` to `spec/29_*.md`. |
 | Successor stub | What remains of a numbered section once its content has migrated: the heading and a list of links to the identifiers that now hold its content. |
 | Frozen reference | The specification as it stood before the first area migrated, kept so that a `§` citation can be read in its original context. |
-| Labels | The open decisions of this change carry O-n, and its steps carry `0115.Sn`. |
+| Labels | The steps of this change carry `0115.Sn`. |
 
 ## High-level design
 
@@ -96,7 +96,7 @@ The gate that every added or modified requirement has a test citing it needs cov
 
 ### Documentation rule
 
-[draft-rules/doc-spec-links.md](evidence/spike/draft-rules/doc-spec-links.md) extends `.claude/rules/doc-content.md`: every page under `docs/` names in front matter the specification pages it describes (`spec: [POOL, CLAIM]`, or `spec: []`), names and values it quotes come from the catalogs, the reference pages that list catalog entries are generated, and a change carries its documentation. The gates that check it turn on as decision O6 sets. The generated reference pages replace the hand-written lists of `docs/reference/` area by area, as the catalogs fill; until an area's blocks exist, its rows stay hand-written.
+[draft-rules/doc-spec-links.md](evidence/spike/draft-rules/doc-spec-links.md) extends `.claude/rules/doc-content.md`: every page under `docs/` names in front matter the specification pages it describes (`spec: [POOL, CLAIM]`, or `spec: []`), names and values it quotes come from the catalogs, the reference pages that list catalog entries are generated, and a change carries its documentation. Front matter is added per area, and each gate turns on for a page once the area it describes has landed (decision 11). The generated reference pages replace the hand-written lists of `docs/reference/` area by area, as the catalogs fill; until an area's blocks exist, its rows stay hand-written.
 
 ### Helpers that read the structure
 
@@ -109,7 +109,7 @@ Each is a skill over a command of `scripts/changes/changes.py` or `scripts/specs
 
 ### Successor stubs and the frozen reference
 
-An area change replaces each migrated paragraph of a numbered section with a successor list under the same heading ([legacy-stubs.md](evidence/spike-migration/spec-next/legacy-stubs.md) shows the format), so a `§` citation still resolves to its heading and the heading names where the content went. `specshift ref lookup §N.M` follows the stub. The frozen reference keeps the original text readable; its form is open decision O2.
+An area change replaces each migrated paragraph of a numbered section with a successor list under the same heading ([legacy-stubs.md](evidence/spike-migration/spec-next/legacy-stubs.md) shows the format), so a `§` citation still resolves to its heading and the heading names where the content went. `specshift ref lookup §N.M` follows the stub. The frozen reference keeps the original text readable: the git tag `spec-frozen` marks the commit before the first area migrates, and `lookup` prints the section's text from that tag (decision 7).
 
 ### Retiring the root plan files
 
@@ -125,7 +125,7 @@ An area change replaces each migrated paragraph of a numbered section with a suc
 
 ## Specification and non-specification changes
 
-- Specification: `spec/README.md` as the root map, `spec/conventions.md`, the placeholder pages and generated indexes of the new tree, `spec/registry.json`, and `spec/catalogs/` (empty catalogs until areas add blocks). §28's naming law N3 and N8 lose the root plan files. Decision O4 decides whether §18 and §21 also leave in this change.
+- Specification: `spec/README.md` as the root map, `spec/conventions.md`, the placeholder pages and generated indexes of the new tree, `spec/registry.json`, and `spec/catalogs/` (empty catalogs until areas add blocks). §28's naming law N3 and N8 lose the root plan files. §18 and §21 retire, and §23 moves to `docs/about/` (decision 9).
 - Rules: `.claude/rules/spec-annotations.md` (new), `spec-citations.md`, `spec-driven-development.md`, `code-best-practices.md`, `doc-content.md`, and `channel-naming.md`.
 - Code: `scripts/specshift` gains the reference pass, the block parser and generators, and the gates; `scripts/changes/changes.py` gains `digest` and `since`; tier-0 tests in `tests/tier0_static/`.
 - Skills: `digest`, `where`, and `since`.
@@ -135,7 +135,7 @@ An area change replaces each migrated paragraph of a numbered section with a suc
 
 - Contributors: `CONTRIBUTING.md` and `docs/about/contributing.md` describe the specification's layout and point at `spec/README.md`; `docs/about/governance.md` names the programs in place of the roadmap.
 - Every reader of `docs/about/status.md`: the page becomes generated from the program's milestones, with the same purpose.
-- Pages under `docs/` gain front matter that names the specification pages they describe, as decision O6 sets. Readers see no change, because the renderer does not show it.
+- Pages under `docs/` gain front matter that names the specification pages they describe, area by area (decision 11). Readers see no change, because the renderer does not show it.
 
 ## Tests
 
