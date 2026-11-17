@@ -10,20 +10,20 @@
 ## Steps
 
 ### 0115.S1 Conventions, the code registry, and placeholder pages
-- status: Planned
+- status: Building
 - lanes: [specification, documentation]
 
 `spec/README.md` as the root map, `spec/conventions.md` from TAXONOMY version 2 and the spike's draft, the code registry with the map's 277 codes, and a placeholder page for each page of the map (decision 8), with front matter, a summary, and the numbered sections that hold its content. Contributor documentation names the layout.
 
 ### 0115.S2 The reference tool
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0115.S1]
 
 The `ref` pass of `scripts/specshift`: `registry`, `check`, `fix`, and `lookup`, the committed `spec/registry.json`, and tier-0 tests with planted errors and a move.
 
 ### 0115.S3 Definition blocks and generators
-- status: Planned
+- status: Building
 - lanes: [specification, code]
 - depends-on: [0115.S1]
 
@@ -37,7 +37,7 @@ The `lenny-def` schemas per kind, the parser, the generators of `spec/catalogs/`
 The tier-0 gates of "Gates" in `change.md`, applied to pages of the new tree and to stubbed numbered sections, each with a failing and a passing fixture, and the scope of `scripts/specshift/scope/scope.go` extended to the new tree.
 
 ### 0115.S5 Annotation rule and its lint
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0115.S2]
 
