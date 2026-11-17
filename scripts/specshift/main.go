@@ -63,6 +63,15 @@
 //	specshift defs schemas
 //
 // The defs package documents what each command reads and writes.
+//
+// The pages subcommand runs the gates that read the text of the
+// specification tree's pages, and the gate that holds the contribution
+// blocks against the rendered chart:
+//
+//	specshift pages [-root <path>] check
+//	specshift pages [-root <path>] contributions -manifests <rendered.yaml>
+//
+// The pagegate package documents each gate.
 package main
 
 import (
@@ -80,6 +89,7 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
+	"github.com/lennylabs/lenny/scripts/specshift/pagegate"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -199,8 +209,8 @@ func passNames() string {
 }
 
 // run parses the command line and executes one pass, prints one pass's
-// write domain, or hands a ref or defs command to its package. Those two
-// subcommands are dispatched before the flags are parsed, because they are
+// write domain, or hands a ref, defs, or pages command to its package.
+// Those subcommands are dispatched before the flags are parsed, because they are
 // driven by the generated registry and the definition blocks rather than by
 // a register, and take commands of their own.
 func run(ctx context.Context, args []string, out io.Writer) error {
@@ -209,6 +219,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == defs.Command {
 		return defs.Run(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == pagegate.Command {
+		return pagegate.Run(ctx, args[1:], out)
 	}
 	return runWith(ctx, builtPasses, args, out)
 }
