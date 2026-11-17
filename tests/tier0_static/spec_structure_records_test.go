@@ -46,8 +46,18 @@ func readRecord(t *testing.T, root string, candidates ...string) string {
 func TestSpecStructureRecordsMatchTheTree(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
+	// The change folder moves to changes/archive/<date>-0115-spec-structure
+	// when the change is archived, so both places are tried.
+	archived, _ := filepath.Glob(filepath.Join(root, "changes", "archive", "*-0115-spec-structure"))
 	folder := func(name string) []string {
-		return []string{"changes/0115-spec-structure/" + name, "changes/archive/0115-spec-structure/" + name}
+		out := []string{"changes/0115-spec-structure/" + name}
+		for _, a := range archived {
+			rel, err := filepath.Rel(root, a)
+			if err == nil {
+				out = append(out, filepath.ToSlash(rel)+"/"+name)
+			}
+		}
+		return out
 	}
 	cases := []struct {
 		file      []string

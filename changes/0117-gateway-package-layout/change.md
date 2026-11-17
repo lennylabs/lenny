@@ -4,14 +4,14 @@ Status: `Draft`, revision 1, 2026-11-16. Programs: [v1](../programs/v1.md), mile
 
 ## Problem
 
-The specification is moving to pages organized by capability and component (0115), and the owner settled how the gateway appears in it: one binary partitioned into seams, a session core, parts that apply to the whole replica, and a seam interface page that names the operations between each seam and the core ([TAXONOMY.md](../0115-spec-structure/evidence/spike/TAXONOMY.md), "Gateway seams" and "Items from the migration spike", item 9). The Go tree does not follow that model, so a reader cannot go from a component page to its code, and nothing in the tree holds a seam to its boundary.
+The specification is moving to pages organized by capability and component (0115), and the owner settled how the gateway appears in it: one binary partitioned into seams, a session core, parts that apply to the whole replica, and a seam interface page that names the operations between each seam and the core ([TAXONOMY.md](../archive/2026-11-16-0115-spec-structure/evidence/spike/TAXONOMY.md), "Gateway seams" and "Items from the migration spike", item 9). The Go tree does not follow that model, so a reader cannot go from a component page to its code, and nothing in the tree holds a seam to its boundary.
 
 - `pkg/gateway` holds 251 packages in 30 group directories, 199,258 lines of non-test Go and 287,993 lines of tests. Proposal 0020 chose the groups and mapped each to a numbered section of the specification. The groups import each other along 128 edges, 19 pairs of them in both directions ("Current state").
 - `pkg/gateway/sessionserver` is one package of 109 files and 29,882 lines that holds the session core, the upload handler, the stream proxy, part of the platform tools seam, API plumbing, and domain logic for experiments, pools, and quotas. It imports 64 gateway packages from 20 groups.
 - The seams and the core import each other directly: under the assignment of "SP-1", 25 import edges cross from a seam to the core, from the core to a seam, or from one seam to another. The specification states that each seam has its own concurrency limits and breaker, and nothing states or checks which code belongs to which seam.
 - Domain stores and their logic sit inside the gateway, and 15 packages and binaries of other components import them, among them `lenny-ops`, the Token Service, the controller, and the adapter binary.
 
-The migration spike moved one gateway package, the pod claimer, and measured the cost: 102 files and 593 lines changed each way, most of it from renaming the package and from registers keyed by path ([FINDINGS-code.md](../0115-spec-structure/evidence/spike-migration/FINDINGS-code.md), "Moving the package"). It recommended settling the gateway layout once, before areas move code, and the v1 program places that in milestone M2.
+The migration spike moved one gateway package, the pod claimer, and measured the cost: 102 files and 593 lines changed each way, most of it from renaming the package and from registers keyed by path ([FINDINGS-code.md](../archive/2026-11-16-0115-spec-structure/evidence/spike-migration/FINDINGS-code.md), "Moving the package"). It recommended settling the gateway layout once, before areas move code, and the v1 program places that in milestone M2.
 
 ## Scope
 
@@ -34,7 +34,7 @@ The migration spike moved one gateway package, the pod claimer, and measured the
 
 | Term | Meaning |
 | :-- | :-- |
-| Seam | A part of the gateway that can be extracted into its own service when its load outgrows the shared process: the stream proxy, the upload handler, the platform tools seam (named MCP Fabric in §4.1), and the metering proxy (named LLM Proxy in §4.1). Each has its own concurrency limits, breaker, metrics, and extraction thresholds ([TAXONOMY.md](../0115-spec-structure/evidence/spike/TAXONOMY.md), "Gateway seams"). |
+| Seam | A part of the gateway that can be extracted into its own service when its load outgrows the shared process: the stream proxy, the upload handler, the platform tools seam (named MCP Fabric in §4.1), and the metering proxy (named LLM Proxy in §4.1). Each has its own concurrency limits, breaker, metrics, and extraction thresholds ([TAXONOMY.md](../archive/2026-11-16-0115-spec-structure/evidence/spike/TAXONOMY.md), "Gateway seams"). |
 | Session core | The work of the gateway that is not a seam: session coordination, the pod claimer, the checkpoint barrier, and the session operations they serve (create, start, bind, resume, suspend, terminate). |
 | Replica-level part | A part that applies to the whole replica and is not a seam: the API front, drain, scaling and capacity, and the ops endpoints. |
 | API front | The replica-level part that owns the request pipeline: middleware order, authentication, rate limiting, handler registration, and request scope (`components/gateway/api-front.md`, code `GWAPI`). |

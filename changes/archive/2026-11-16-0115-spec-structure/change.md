@@ -1,6 +1,6 @@
 # Specification structure
 
-Status: `In progress`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Implemented`, revision 3, 2026-11-16. Programs: [v1](../../programs/v1.md), milestone M1.
 
 ## Problem
 
