@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -142,6 +143,9 @@ type AgentResult struct {
 	NumTurns     int     `json:"numTurns"`
 	FinalText    string  `json:"finalText"`
 	Duration     string  `json:"duration"`
+	// ExitCode is the docker process's exit status, -1 when it did not
+	// exit on its own.
+	ExitCode int `json:"exitCode"`
 }
 
 // Agent runs the journey agent. The runner depends on this interface so
@@ -277,7 +281,14 @@ func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error)
 
 	cmd := exec.CommandContext(capCtx, c.Docker, c.DockerArgs(run)...)
 	cmd.Env = c.dockerEnv(run)
-	cmd.Stderr = run.Stderr
+	// The tail of standard error explains an agent that fails before it
+	// writes a result, such as Claude Code refusing to start.
+	tail := &tailWriter{max: 4096}
+	if run.Stderr != nil {
+		cmd.Stderr = io.MultiWriter(run.Stderr, tail)
+	} else {
+		cmd.Stderr = tail
+	}
 	// docker run proxies SIGTERM to the container, where tini passes it
 	// to claude; the deferred cleanup covers a container that outlives
 	// the docker process.
@@ -295,7 +306,10 @@ func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error)
 	capHit, readErr := c.consume(stdout, meter, run.Transcript, stopForCap)
 	waitErr := cmd.Wait()
 
-	res := AgentResult{Duration: time.Since(start).Round(time.Second).String()}
+	res := AgentResult{Duration: time.Since(start).Round(time.Second).String(), ExitCode: -1}
+	if cmd.ProcessState != nil {
+		res.ExitCode = cmd.ProcessState.ExitCode()
+	}
 	res.CostUSD, res.CostReported = meter.Cost()
 	res.Tokens = meter.Tokens()
 	if r := meter.Result; r != nil {
@@ -303,6 +317,11 @@ func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error)
 		res.FinalText = r.Result
 	}
 	res.Stop, res.StopDetail = classifyStop(ctx, limitCtx, capHit, meter, waitErr, readErr, c.RunCapUSD)
+	if res.Stop == StopAgentError {
+		if line := tail.lastLine(); line != "" {
+			res.StopDetail += "; stderr: " + line
+		}
+	}
 	return res, nil
 }
 
@@ -370,7 +389,7 @@ func classifyStop(parent, limitCtx context.Context, capHit bool, meter *Meter, w
 	}
 	detail := []string{}
 	if r != nil {
-		detail = append(detail, "result "+r.Subtype+": "+strings.Join(r.Errors, "; "))
+		detail = append(detail, "result "+r.Subtype+": "+strings.Join(append(append([]string{}, r.Errors...), clip(r.Result)), "; "))
 	} else {
 		detail = append(detail, "no result message")
 	}
@@ -381,4 +400,29 @@ func classifyStop(parent, limitCtx context.Context, capHit bool, meter *Meter, w
 		detail = append(detail, "read: "+readErr.Error())
 	}
 	return StopAgentError, strings.Join(detail, "; ")
+}
+
+// tailWriter keeps the last max bytes written to it.
+type tailWriter struct {
+	mu  sync.Mutex
+	max int
+	buf []byte
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > t.max {
+		t.buf = t.buf[len(t.buf)-t.max:]
+	}
+	return len(p), nil
+}
+
+// lastLine returns the last non-empty line written.
+func (t *tailWriter) lastLine() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	lines := strings.Split(strings.TrimSpace(string(t.buf)), "\n")
+	return clip(lines[len(lines)-1])
 }

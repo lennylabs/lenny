@@ -64,15 +64,16 @@ COPY agent-entrypoint.sh /usr/local/bin/journey-entrypoint
 # Claude Code's documented settings for a restricted network: no update
 # check or update path, no telemetry, no error reporting, and no other
 # nonessential traffic, so the agent needs only the hosts the egress proxy
-# allows. CLAUDE_CODE_SUBPROCESS_ENV_SCRUB strips credentials from the
-# environment of the commands Claude Code runs; the harness does not rely
-# on it, since the agent's shell is limited to kubectl, helm, and lenny-ctl.
+# allows. The image leaves CLAUDE_CODE_SUBPROCESS_ENV_SCRUB unset: on
+# Linux it needs bubblewrap, which cannot create namespaces in a container
+# without capabilities, and with it set Claude Code 2.1.326 refuses to
+# start ("bubblewrap is required for subprocess env scrubbing"). The agent's
+# shell is limited to kubectl, helm, and lenny-ctl in any case.
 ENV HOME=/home/agent \
     DISABLE_AUTOUPDATER=1 \
     DISABLE_UPDATES=1 \
     DISABLE_TELEMETRY=1 \
     DISABLE_ERROR_REPORTING=1 \
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
-    CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 WORKDIR /workspace
 ENTRYPOINT ["/usr/local/bin/journey-entrypoint"]

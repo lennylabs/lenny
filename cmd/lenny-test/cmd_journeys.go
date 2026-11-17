@@ -253,16 +253,25 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 		return journeysFail(err)
 	}
 	defer transcript.Close()
+	stderrPath := filepath.Join(resultsDir, "probe-"+runID+".stderr.log")
+	stderr, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return journeysFail(err)
+	}
+	defer stderr.Close()
 	home, _ := os.UserHomeDir()
 	target := journeys.NewKindTarget(root, runID)(filepath.Join(scratch, "probe", "target"))
 	rep, code, probeErr := journeys.RunProbe(ctx, agentCfg, journeys.ProbeInput{
 		Target: target, RunID: runID, Scratch: filepath.Join(scratch, "probe"), HostHome: home,
 		HostContexts: journeys.HostContexts(filepath.Join(home, ".kube", "config")),
-		Transcript:   transcript, Redactor: journeys.NewRedactor(agentCfg.Token), Log: os.Stdout,
+		Transcript:   transcript, Stderr: stderr, Redactor: journeys.NewRedactor(agentCfg.Token), Log: os.Stdout,
 	}, ledger)
 	out, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(out))
-	fmt.Printf("Transcript: %s\n", transcriptPath)
+	fmt.Printf("Transcript: %s\nAgent standard error: %s\n", transcriptPath, stderrPath)
+	if rep.Stop == journeys.StopAgentError {
+		fmt.Printf("lenny-test: journeys: agent error (exit %d): %s\n", rep.ExitCode, rep.StopDetail)
+	}
 	if probeErr != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe: %v\n", probeErr)
 	}

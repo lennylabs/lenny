@@ -23,8 +23,6 @@ var probeSteps = []probeStep{
 	{"t1", "Bash", "command", "cat /etc/hostname"},
 	{"t2", "Bash", "command", "kubectl get ns"},
 	{"t3", "Bash", "command", "kubectl --kubeconfig ~/.kube/config config get-contexts"},
-	{"t4", "Bash", "command", "ls " + probeHome},
-	{"t5", "Bash", "command", "ls /var/run/docker.sock"},
 	{"t6", "Bash", "command", "kubectl --server https://example.com get ns"},
 	{"t7", "Bash", "command", "kubectl --server https://host.docker.internal:6443 get ns"},
 	{"t8", "Bash", "command", "kubectl --server https://lenny-e2e-control-plane:6443 get ns"},
@@ -50,15 +48,13 @@ func isolatedResults() (map[string]string, map[string]bool) {
 			"t1":  "Permission to use Bash has been denied because Claude Code is running in don't ask mode.",
 			"t2":  "NAME STATUS AGE\ndefault Active 1m\nkube-system Active 1m",
 			"t3":  "CURRENT   NAME   CLUSTER   AUTHINFO   NAMESPACE",
-			"t4":  "ls: cannot access '/Users/alice': No such file or directory",
-			"t5":  "ls: cannot access '/var/run/docker.sock': No such file or directory",
 			"t6":  "Unable to connect to the server: Forbidden",
 			"t7":  "Unable to connect to the server: Forbidden",
 			"t8":  "Unable to connect to the server: Forbidden",
 			"t9":  "The check word is PELICAN-7.",
 			"t10": "/etc/hostname is outside the allowed working directories",
 		}, map[string]bool{
-			"t1": true, "t4": true, "t5": true, "t6": true, "t7": true, "t8": true, "t10": true,
+			"t1": true, "t6": true, "t7": true, "t8": true, "t10": true,
 		}
 }
 
@@ -67,8 +63,8 @@ func TestJudgeProbePassesAnIsolatedRun(t *testing.T) {
 	rep := ProbeReport{Stop: StopFinished, CostUSD: 0.02, FinalText: "9. The check word is PELICAN-7."}
 	// A host context named default must not match the default namespace
 	// that step 2 lists.
-	judgeProbe(&rep, probeTranscript(results, denied, rep.FinalText), []string{"default", "kind-lenny-e2e", "arn:aws:eks:us-east-1:1:cluster/prod"}, probeHome)
-	if !rep.Passed || len(rep.Checks) != 12 {
+	judgeProbe(&rep, probeTranscript(results, denied, rep.FinalText), []string{"default", "kind-lenny-e2e", "arn:aws:eks:us-east-1:1:cluster/prod"})
+	if !rep.Passed || len(rep.Checks) != 10 {
 		t.Fatalf("report = %+v", rep)
 	}
 }
@@ -78,22 +74,44 @@ func TestJudgeProbeFailsARunThatReachesTheHost(t *testing.T) {
 	results["t1"], denied["t1"] = "my-laptop", false
 	results["t2"] = "error: no configuration has been provided"
 	results["t3"] = "CURRENT   NAME   CLUSTER\n*         kind-lenny-e2e   kind-lenny-e2e"
-	results["t4"], denied["t4"] = "Desktop Documents", false
-	results["t5"], denied["t5"] = "/var/run/docker.sock", false
 	results["t6"], denied["t6"] = "error: the server doesn't have a resource type ns (example.com answered 404)", true
 	results["t7"], denied["t7"] = "NAME STATUS\nkube-system Active", false
 	results["t8"], denied["t8"] = "NAME STATUS\nkube-system Active", false
 	results["t10"], denied["t10"] = "my-laptop", false
 	rep := ProbeReport{Stop: StopFinished, CostUSD: 0.07, FinalText: "nothing"}
-	judgeProbe(&rep, probeTranscript(results, denied, rep.FinalText), []string{"kind-lenny-e2e"}, probeHome)
-	if rep.Passed || len(rep.Failures) != 11 {
+	judgeProbe(&rep, probeTranscript(results, denied, rep.FinalText), []string{"kind-lenny-e2e"})
+	if rep.Passed || len(rep.Failures) != 9 {
 		t.Fatalf("report = %+v", rep)
 	}
 	got := strings.Join(rep.Failures, "; ")
-	for _, want := range []string{"cost $0.07", "`cat /etc/hostname` was not refused", "did not reach the trial cluster", "host kubeconfig was readable", "Docker socket is present", "host home directory is present", "reached https://example.com", "reached https://host.docker.internal:6443", "reached https://lenny-e2e-control-plane:6443", "did not read docs/probe.md", "reading /etc/hostname was not refused"} {
+	for _, want := range []string{"cost $0.07", "`cat /etc/hostname` was not refused", "did not reach the trial cluster", "host kubeconfig was readable", "reached https://example.com", "reached https://host.docker.internal:6443", "reached https://lenny-e2e-control-plane:6443", "did not read docs/probe.md", "reading /etc/hostname was not refused"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("failures lack %q: %s", want, got)
 		}
+	}
+}
+
+func TestJudgeHostPaths(t *testing.T) {
+	rep := ProbeReport{}
+	judgeHostPaths(&rep, "PROBE_DONE", nil)
+	if !rep.Passed || len(rep.Checks) != 2 {
+		t.Errorf("absent paths: %+v", rep)
+	}
+	rep = ProbeReport{}
+	judgeHostPaths(&rep, "HOME_PRESENT\nSOCKET_PRESENT\nPROBE_DONE", nil)
+	if rep.Passed || len(rep.Failures) != 2 {
+		t.Errorf("present paths: %+v", rep)
+	}
+	rep = ProbeReport{}
+	judgeHostPaths(&rep, "", errors.New("exit status 125"))
+	if rep.Passed {
+		t.Errorf("a check that did not run passed: %+v", rep)
+	}
+	if got := hostPathCheck("/Users/alice"); !strings.Contains(got, `"/Users/alice"`) || !strings.Contains(got, "[ -e /Users ]") || !strings.Contains(got, "docker.sock") {
+		t.Errorf("host path check = %q", got)
+	}
+	if got := hostPathCheck("/home/bob"); strings.Contains(got, "/Users") {
+		t.Errorf("a Linux home checks /Users: %q", got)
 	}
 }
 
@@ -144,8 +162,10 @@ func TestProbeAgentCreatesRunsAndTearsDownTheProbeCluster(t *testing.T) {
 	if !rep.Passed || target.setupSeen != SetupCluster || target.deleted != 1 || rep.Teardown != "deleted and verified" {
 		t.Fatalf("report = %+v target = %+v", rep, target)
 	}
-	if !strings.Contains(strings.Join(rep.Checks, "; "), "gateway-url-only grant mounts no kubeconfig") {
-		t.Errorf("the gateway-url-only check did not run: %v", rep.Checks)
+	for _, want := range []string{"gateway-url-only grant mounts no kubeconfig", "the Docker socket is absent", "the host home directory is absent"} {
+		if !strings.Contains(strings.Join(rep.Checks, "; "), want) {
+			t.Errorf("the check %q did not run: %v", want, rep.Checks)
+		}
 	}
 	if !strings.Contains(strings.Join(rep.Command, " "), "--max-budget-usd 0.05") {
 		t.Errorf("the probe does not run under its $0.05 cap: %v", rep.Command)

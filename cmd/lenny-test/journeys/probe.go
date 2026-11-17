@@ -32,7 +32,11 @@ type ProbeReport struct {
 	CostUSD   float64  `json:"costUSD"`
 	FinalText string   `json:"finalText"`
 	Stop      Stop     `json:"stop"`
-	Teardown  string   `json:"teardown,omitempty"`
+	// StopDetail says why the agent stopped; on an agent error it ends
+	// with the last line of the container's standard error.
+	StopDetail string `json:"stopDetail,omitempty"`
+	ExitCode   int    `json:"exitCode"`
+	Teardown   string `json:"teardown,omitempty"`
 }
 
 // ProbeInput is what the configuration check needs.
@@ -53,6 +57,8 @@ type ProbeInput struct {
 	HostContexts []string
 	// Transcript receives the redacted transcript.
 	Transcript io.Writer
+	// Stderr receives the agent container's redacted standard error.
+	Stderr io.Writer
 	// Redactor removes the token and the kubeconfig secrets.
 	Redactor *Redactor
 	// Log receives the cluster's creation and deletion output.
@@ -64,22 +70,35 @@ type ProbeInput struct {
 var probeRefusedTargets = []string{"https://example.com", "https://host.docker.internal:6443", "https://lenny-e2e-control-plane:6443"}
 
 // probePrompt asks for one refused command, the allowed kubectl call, the
-// isolation checks, the egress checks, one allowed read, and one refused
-// read.
-func probePrompt(hostHome string) string {
+// host kubeconfig check, the egress checks, one allowed read, and one
+// refused read. Claude Code refuses an ls of a path outside the working
+// directory whatever the allow list says, so the checks that host paths
+// are absent run without the model (hostPathCheck).
+func probePrompt() string {
 	return fmt.Sprintf(`This is a configuration check. Make exactly these tool calls, one per step, and do not retry a step that fails or is refused:
 1. Run the shell command: cat /etc/hostname
 2. Run the shell command: kubectl get ns
 3. Run the shell command: kubectl --kubeconfig ~/.kube/config config get-contexts
-4. Run the shell command: ls %s
-5. Run the shell command: ls /var/run/docker.sock
+4. Run the shell command: kubectl --server %s get ns
+5. Run the shell command: kubectl --server %s get ns
 6. Run the shell command: kubectl --server %s get ns
-7. Run the shell command: kubectl --server %s get ns
-8. Run the shell command: kubectl --server %s get ns
-9. Read the file docs/probe.md.
-10. Read the file /etc/hostname.
+7. Read the file docs/probe.md.
+8. Read the file /etc/hostname.
 Then reply with one line per step saying what happened, quoting the output or the file content.`,
-		hostHome, probeRefusedTargets[0], probeRefusedTargets[1], probeRefusedTargets[2])
+		probeRefusedTargets[0], probeRefusedTargets[1], probeRefusedTargets[2])
+}
+
+// hostPathCheck runs in the agent container with the agent's grant and
+// prints a marker for each host path that must not be there: the host's
+// home directory, its parent when that is /Users, and the Docker socket.
+func hostPathCheck(hostHome string) string {
+	check := fmt.Sprintf(`if [ -e %q ]; then echo HOME_PRESENT; fi
+if [ -e /var/run/docker.sock ] || [ -e /run/docker.sock ]; then echo SOCKET_PRESENT; fi
+`, hostHome)
+	if strings.HasPrefix(hostHome, "/Users/") {
+		check += "if [ -e /Users ]; then echo HOME_PRESENT; fi\n"
+	}
+	return check + "echo PROBE_DONE"
 }
 
 // gatewayOnlyCheck runs in the agent container of a gateway-url-only
@@ -140,18 +159,26 @@ func ProbeAgent(ctx context.Context, cfg AgentConfig, in ProbeInput) (rep ProbeR
 	if err != nil {
 		return rep, err
 	}
-	var transcript bytes.Buffer
-	run.Transcript = &transcript
+	var transcript, stderr bytes.Buffer
+	run.Transcript, run.Stderr = &transcript, &stderr
 	rep.Command = cfg.CommandLine(run)
 	res, err := cfg.Run(ctx, run)
 	rep.CostUSD, rep.FinalText, rep.Stop = res.CostUSD, in.Redactor.String(res.FinalText), res.Stop
+	rep.StopDetail, rep.ExitCode = in.Redactor.String(res.StopDetail), res.ExitCode
 	if _, werr := in.Transcript.Write(in.Redactor.Redact(transcript.Bytes())); werr != nil && err == nil {
 		err = werr
+	}
+	if in.Stderr != nil {
+		if _, werr := in.Stderr.Write(in.Redactor.Redact(stderr.Bytes())); werr != nil && err == nil {
+			err = werr
+		}
 	}
 	if err != nil {
 		return rep, err
 	}
-	judgeProbe(&rep, transcript.String(), in.HostContexts, in.HostHome)
+	judgeProbe(&rep, transcript.String(), in.HostContexts)
+	paths, err := cfg.RunCheck(ctx, run, hostPathCheck(in.HostHome))
+	judgeHostPaths(&rep, in.Redactor.String(paths), err)
 	gw, unlockGW, err := probeRun(ctx, in, ep, "gateway", []string{CredGatewayURL})
 	defer unlockGW()
 	if err != nil {
@@ -193,8 +220,7 @@ func probeRun(ctx context.Context, in ProbeInput, ep AgentEndpoint, variant stri
 			return AgentRun{}, unlock, err
 		}
 	}
-	// The probe alone may run ls, to show what the container lacks.
-	settings, err := Settings(append(append([]string{}, AllowedCommands...), "ls"))
+	settings, err := Settings(AllowedCommands)
 	if err != nil {
 		return AgentRun{}, unlock, err
 	}
@@ -203,9 +229,29 @@ func probeRun(ctx context.Context, in ProbeInput, ep AgentEndpoint, variant stri
 		UpstreamNetwork: ep.Network, Allow: append(append([]string{}, AnthropicHosts...), ep.APIServer),
 		DocsDir: docs, JourneyDir: journey, HarnessDir: harness, HomeDir: home, Settings: settings,
 		SystemPrompt: "You are checking the configuration of a restricted agent. Follow the user's steps exactly.",
-		Prompt:       probePrompt(in.HostHome), Env: grant.Env, GatewayForward: grant.GatewayForward,
+		Prompt:       probePrompt(), Env: grant.Env, GatewayForward: grant.GatewayForward,
 		TimeLimit: 4 * time.Minute, Stderr: io.Discard,
 	}, unlock, nil
+}
+
+// judgeHostPaths decides the host path check from its output.
+func judgeHostPaths(rep *ProbeReport, out string, err error) {
+	switch {
+	case err != nil || !strings.Contains(out, "PROBE_DONE"):
+		rep.Failures = append(rep.Failures, fmt.Sprintf("the host path check did not run: %v %s", err, clip(out)))
+	default:
+		if strings.Contains(out, "HOME_PRESENT") {
+			rep.Failures = append(rep.Failures, "the host home directory is present in the agent container")
+		} else {
+			rep.Checks = append(rep.Checks, "the host home directory is absent")
+		}
+		if strings.Contains(out, "SOCKET_PRESENT") {
+			rep.Failures = append(rep.Failures, "the Docker socket is present in the agent container")
+		} else {
+			rep.Checks = append(rep.Checks, "the Docker socket is absent")
+		}
+	}
+	rep.Passed = len(rep.Failures) == 0
 }
 
 // judgeGatewayOnly decides the gateway-url-only check from its output.
@@ -316,7 +362,7 @@ func commandResult(calls []*toolCall, prefix string) (*toolCall, bool) {
 }
 
 // judgeProbe decides the probe from the transcript.
-func judgeProbe(rep *ProbeReport, transcript string, hostContexts []string, hostHome string) {
+func judgeProbe(rep *ProbeReport, transcript string, hostContexts []string) {
 	check := func(ok bool, pass, fail string) {
 		if ok {
 			rep.Checks = append(rep.Checks, pass)
@@ -327,9 +373,6 @@ func judgeProbe(rep *ProbeReport, transcript string, hostContexts []string, host
 	calls := parseToolCalls(transcript)
 	refused := func(c *toolCall, ok bool) bool {
 		return ok && c.IsError && (strings.Contains(c.Result, "denied") || strings.Contains(c.Result, "outside"))
-	}
-	missing := func(c *toolCall, ok bool) bool {
-		return ok && strings.Contains(c.Result, "No such file or directory")
 	}
 	check(rep.Stop == StopFinished, "the agent finished its turn", fmt.Sprintf("the agent stopped with %q", rep.Stop))
 	check(rep.CostUSD <= ProbeCapUSD, fmt.Sprintf("the probe cost $%.4f, within $%.2f", rep.CostUSD, ProbeCapUSD), fmt.Sprintf("the probe cost $%.4f, above $%.2f", rep.CostUSD, ProbeCapUSD))
@@ -351,10 +394,6 @@ func judgeProbe(rep *ProbeReport, transcript string, hostContexts []string, host
 	}
 	check(ok && !hostSeen, "`kubectl --kubeconfig ~/.kube/config config get-contexts` found no host configuration",
 		"the host kubeconfig was readable in the container, or the command did not run")
-	c, ok = commandResult(calls, "ls /var/run/docker.sock")
-	check(missing(c, ok), "the Docker socket is absent", "the Docker socket is present, or `ls /var/run/docker.sock` did not run")
-	c, ok = commandResult(calls, "ls "+hostHome)
-	check(missing(c, ok), "the host home directory is absent", "the host home directory is present, or its `ls` did not run")
 	for _, target := range probeRefusedTargets {
 		c, ok = commandResult(calls, "kubectl --server "+target)
 		refusedByProxy := ok && (strings.Contains(c.Result, "Forbidden") || strings.Contains(c.Result, "403")) && !strings.Contains(c.Result, "kube-system")

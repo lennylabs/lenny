@@ -175,6 +175,9 @@ func (r *Runner) runAll(ctx context.Context, scenarios []*Scenario, sum *RunSumm
 			rec := r.trial(ctx, s, n, target, scratch)
 			sum.Trials = append(sum.Trials, rec)
 			r.logf("    verdict %s: %s (agent $%.4f)", rec.Verdict.Outcome, rec.Verdict.Reason, rec.Agent.CostUSD)
+			if rec.Agent.Stop == StopAgentError {
+				r.logf("    agent error (exit %d): %s", rec.Agent.ExitCode, rec.Agent.StopDetail)
+			}
 			entry.AgentUSD, entry.AgentCostReported = rec.Agent.CostUSD, rec.Agent.CostReported
 			entry.InfraUSD, entry.Verdict, entry.At = rec.InfraCostUSD, rec.Verdict.Outcome, r.now()
 			if err := r.Ledger.Settle(entry); err != nil {
