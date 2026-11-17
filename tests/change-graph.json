@@ -1182,6 +1182,9 @@
     "scripts/lint-queries.sh": {
       "static": ["scripts/lint-queries.sh"]
     },
+    "scripts/changes/": {
+      "static": ["tests/tier0_static/changes_records_test.go"]
+    },
     "scripts/specshift": {
       "static": ["tests/tier0_static/..."],
       "unit": ["scripts/specshift/..."],

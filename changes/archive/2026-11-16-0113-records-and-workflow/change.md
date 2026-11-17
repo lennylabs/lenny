@@ -1,10 +1,10 @@
 # Records and workflow
 
-Status: `Implemented`, revision 4, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `Implemented`, revision 4, 2026-11-16. Programs: [v1](../../programs/v1.md), milestone M0.
 
 ## Problem
 
-Lenny's planned work is spread over records that do not share identifiers. The 36 designs under `designs/` each state their own "Proposal split and order", with ordering across designs in prose. The proposals under `proposals/` stage spec edits as quoted text and carry no link to the design they implement. `BUILD-PLAN.md` and `BUILD-PROGRESS.md` predate the designs, so no record holds a plan that spans them. The owner settled a replacement on 2026-11-16 after a spike: one folder per change under `changes/`, issues under `issues/`, and programs that order changes ([`WORKFLOW.md`](../0115-spec-structure/evidence/spike/WORKFLOW.md), "Owner decisions").
+Lenny's planned work is spread over records that do not share identifiers. The 36 designs under `designs/` each state their own "Proposal split and order", with ordering across designs in prose. The proposals under `proposals/` stage spec edits as quoted text and carry no link to the design they implement. `BUILD-PLAN.md` and `BUILD-PROGRESS.md` predate the designs, so no record holds a plan that spans them. The owner settled a replacement on 2026-11-16 after a spike: one folder per change under `changes/`, issues under `issues/`, and programs that order changes ([`WORKFLOW.md`](../../0115-spec-structure/evidence/spike/WORKFLOW.md), "Owner decisions").
 
 The design evidence also fails tier 0 today: `TestResidualGateCertifiesTheTree` reports 1,665 files under `designs/evidence/` that the change-graph coverage register does not classify.
 

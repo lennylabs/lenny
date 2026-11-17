@@ -1,6 +1,6 @@
 # Helpers
 
-Status: `Decided`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `In progress`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
 
 ## Problem
 
@@ -86,7 +86,7 @@ The rule keeps its principle: the specification is the source of truth, code imp
 - `.claude/tools/`: `proposal-status.mjs`, `cp-state.mjs`, `cp-round-boundary.sh`, `spec-lease.mjs`, `check-proposal-split.mjs`, `classify-diff.mjs`, and `register-row.mjs` serve the pipeline. `lookup.mjs`, `lookup-mcp.mjs`, and `lookup-embed.py` serve the `lookup` MCP server in `.mcp.json`.
 - `.claude/agents/cp-writer.md`, `.claude/proposal-pipeline-rework-plan.md` (2,478 lines), and `.claude/tests/` (26 files, of which `lookup.test.mjs` alone is not specific to the pipeline; `lint-workflows.mjs` lints the workflows that retire).
 - `tests/registers/residual-change-graph-coverage.yaml` lists 45 paths under `.claude/`.
-- `changes/0113-records-and-workflow/evidence/steps.py` and `restructure.py` hold the step checker, the board generator, and the link rewriter.
+- `changes/archive/2026-11-16-0113-records-and-workflow/evidence/steps.py` and `restructure.py` held the step checker, the board generator, and the link rewriter.
 
 ## Specification and non-specification changes
 

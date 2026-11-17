@@ -15,7 +15,7 @@ Settled by the owner on 2026-11-16 in answer to this change's open decisions:
 
 7. **Numbering.** 0114 and 0115 as decided, 0116 for coverage derived from annotations, 0117 for the gateway package layout, and the designs from 0118 to 0153 in alphabetical order of their file names.
 8. **Status of the moved designs.** Every moved design keeps the status `Draft`, because the owner runs a final cross-review of them before any is `Decided`. The status line keeps the design's revision and its date.
-9. **Reading a program's changes.** The owner's working rule of treating designs as implemented applies to this refactor and is not a general rule. It becomes reading guidance on the v1 program ("Reading the program" in [`v1.md`](../programs/v1.md)), and `AGENTS.md` points to it. The changes README lets any program state such guidance.
+9. **Reading a program's changes.** The owner's working rule of treating designs as implemented applies to this refactor and is not a general rule. It becomes reading guidance on the v1 program ("Reading the program" in [`v1.md`](../../programs/v1.md)), and `AGENTS.md` points to it. The changes README lets any program state such guidance.
 10. **Prose that names `designs/`.** Each path is rewritten to its new location, and each sentence that names the folder as a concept names changes instead. Each moved change records the edit in its review history.
 
 Settled by the owner on 2026-11-16, after the move showed that each moved design plans several proposals:
