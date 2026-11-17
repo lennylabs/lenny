@@ -35,6 +35,7 @@ func fixtureLint(t *testing.T) Lint {
 	if err != nil {
 		t.Fatalf("load the fixture registry: %v", err)
 	}
+	reg.AddIssuePaths([]string{"issues/CLAIM/CLAIM-I4.md"})
 	return Lint{Registry: reg, Spec: NewSpecText(string(readFixture(t, "lint", "spec.md")))}
 }
 

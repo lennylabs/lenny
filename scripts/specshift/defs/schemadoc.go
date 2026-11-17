@@ -86,7 +86,7 @@ var regionDocs = [][2]string{
 	{RegionEventsEmitted, "The event types whose `emitter` names the page's code."},
 	{RegionRBACGrants, "The page's own `grant` blocks and the `rbac-grant` blocks whose `unit` names the page's code."},
 	{RegionNetworkRules, "The `network-rule` blocks whose `unit` names the page's code."},
-	{RegionIndex, "On a folder's `index.md` whose type is not `index`, the table of the folder's pages. An `index.md` of type `index` is generated whole, and a folder index with no such section gets one appended under a Pages heading."},
+	{RegionIndex, "On every folder's `index.md`, the table of the folder's pages. The `index.md` keeps its hand-written sections, and only the text between its `index` markers is generated. A folder index with no such section gets one appended under a Pages heading."},
 	{RegionDefinitionKinds, "This reference."},
 	{RegionCodeRegistry, "On the conventions page, the code registry: every page's code, type, path, and summary, read from the pages' front matter."},
 }

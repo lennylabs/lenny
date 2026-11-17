@@ -28,7 +28,7 @@ Lists the interfaces, the parties on each side, and the page that owns each.
 | [Kubernetes](kubernetes/index.md) | `KAPI` | Lenny's Kubernetes API conventions: the API group and version, the shipped CRDs and their schema version, field ownership, validation, and how an admission refusal reaches a client. |
 | [Ops API](ops-api/index.md) | `OPSAPI` | The ops API served by the gateway and lenny-ops: terminology, envelopes, pagination, rate limits, and the operation groups. |
 | [Runtime protocol](runtime-protocol/index.md) | `RTP` | The runtime protocol between the adapter and a runtime: transports, capabilities in place of integration levels, versioning, and the frame families. |
-| [Stored schemas](stored-schemas/index.md) | `STOR` | The stored schemas that must stay compatible across versions, and the compatibility rules for each store. |
+| [Stored schemas](stored-schemas/index.md) | `STOR` | The stored schemas that are kept compatible across versions, and the compatibility rules for each store. |
 | [Workspace plan](workspace-plan.md) | `WSPLANIF` | The WorkspacePlan schema with every field, and its versioning. |
 
 <!-- /generated:index -->

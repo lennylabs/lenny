@@ -14,14 +14,17 @@
 //   - the gloss rule: a borrowed term's row in a page's Terms table holds
 //     no number and no normative keyword in its gloss, and exactly one
 //     link;
-//   - walkthroughs: a page of type walkthrough holds no normative keyword;
+//   - normative keywords: a page of type overview, walkthrough, index, or
+//     catalog holds no normative keyword;
 //   - documentation style: a page holds none of the banned words and
 //     phrases of .claude/rules/doc-style.md that a pattern can find, and
 //     no heading that names a count, except that the headings of a
 //     numbered file's successor stubs keep the wording their citations
 //     reach them by;
-//   - review comments: a page whose status is neither placeholder nor
-//     partial holds no src, judgment, or unresolved review comment.
+//   - review comments: a capability page whose area has landed (no page
+//     under its spec/capabilities/<area>/ folder is a placeholder), and a
+//     page in no area whose status is neither placeholder nor partial,
+//     hold no src, judgment, or unresolved review comment.
 //
 // A normative keyword is a BCP 14 keyword in upper case, or one of the
 // lower-case words "must", "shall", and "should", as the conventions page

@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/lennylabs/lenny/scripts/specshift/ref"
 )
 
 // Rule names one refusal of the lint.
@@ -28,6 +30,9 @@ const (
 	// UnresolvedIdentifier is an identifier citation the registry does
 	// not carry.
 	UnresolvedIdentifier Rule = "identifier citation that does not resolve"
+	// RetiredIdentifier is a citation of an identifier the registry
+	// records as retired; the finding names its successor.
+	RetiredIdentifier Rule = "citation of a retired identifier"
 )
 
 // Finding is one refusal at one line.
@@ -268,11 +273,24 @@ func (l Lint) identifiers(f ChangedFile) []Finding {
 				continue
 			}
 			kind, _ := Classify(id)
+			if rt, ok := l.Registry.Retired(id); ok {
+				out = append(out, Finding{f.Path, a.Line, RetiredIdentifier, retiredDetail(id, kind, rt)})
+				continue
+			}
 			out = append(out, Finding{f.Path, a.Line, UnresolvedIdentifier,
 				fmt.Sprintf("%s (%s) is not in %s", id, kind, RegistryPath)})
 		}
 	}
 	return out
+}
+
+// retiredDetail names what replaced a retired identifier: the successor
+// to cite instead, or the record of its removal.
+func retiredDetail(id string, kind IdentifierKind, rt ref.Retired) string {
+	if rt.Successor != "" {
+		return fmt.Sprintf("%s (%s) is retired in %s; cite its successor %s", id, kind, rt.File, rt.Successor)
+	}
+	return fmt.Sprintf("%s (%s) is retired in %s with no successor (%s); remove the citation", id, kind, rt.File, rt.Removed)
 }
 
 // touches reports whether a changed line falls inside the annotation.

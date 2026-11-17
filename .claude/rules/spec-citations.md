@@ -39,7 +39,7 @@ The annotation lint and the section-citation ratchet in `scripts/specshift/annot
 
 1. When citing the specification, name the section number and heading, or link the anchor.
 2. When the section is long, name the bold paragraph label, or, outside code and tests, quote the sentence rather than giving a line.
-3. In code and tests, cite the identifier once the page exists, and `§N.M (heading)` until then.
+3. In code and tests, cite an identifier or `§N.M (heading)` as "Transition" in `spec-annotations.md` states.
 4. In a proposal, a line citation is allowed as evidence, and every staged edit locates its target by heading and quoted text.
 5. When moving content out of a section, leave a successor pointer naming the heading that now owns it.
 

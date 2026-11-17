@@ -25,7 +25,7 @@ Write the digest of one step, or of several steps that share a branch, so the ow
    It writes `changes/<folder>/digests/<step>.md` and refuses to replace a digest that exists, because the session fills in parts of it by hand. Pass `-force` to regenerate one, then fill it in again. Pass `-base <rev>` for `--base` and `-stdout` for `--stdout`.
 2. Read the generated sections and act on what they show:
    - A retired item whose page records no successor and no removal fails `specshift ref check`. Add the record to the page's `retired` front matter.
-   - A touched specification page whose documentation page is marked "Edited on the branch: no" needs that page edited, or a statement in the change's Documentation section that no reader-facing behavior changes.
+   - A touched specification page whose documentation page is marked "Edited on the branch: no" needs that page edited, or the line `No reader-facing behavior changes: CODE` in the change's Documentation section, naming that page's code.
    - A catalog name the documentation still uses after the branch renamed or removed it needs each listed line edited.
    - A requirement cited from more than three functions needs a check that only one of them makes the decision and the others pass its result along. Move the annotation off the ones that do not decide.
 3. Fill in the three sections the generator leaves as "Not filled in yet":

@@ -32,9 +32,10 @@ An annotation tells a reader which requirement a test verifies, or which code ma
 
 The specification moves to identifier-addressed pages area by area, and code follows its area.
 
+- New or changed code, tests included, cites identifiers once the page it implements has landed, which is when that page's `status` is neither `placeholder` nor `partial`. Before that, it may cite `§N.M (heading)`. The placement, test-name, and quoted-text parts of this rule apply to both forms.
 - Existing `§` annotations stay valid until their area migrates. They resolve through the successor stubs of the numbered sections, and the area's change replaces them before its milestone exits.
-- New or changed code cites identifiers once the page it implements exists.
-- Until that page exists, new code in an area that has not migrated may cite `§N.M (heading)` as before. The placement, test-name, and quoted-text parts of this rule apply to it already.
+
+The other rules that mention section citations in code point here rather than restating this trigger.
 
 ## Gate
 
@@ -43,11 +44,11 @@ A tier-0 lint, `TestSpecAnnotationLintPassesOnTheBranchDiff` and `TestSpecAnnota
 - a `// spec:` annotation inside a function body or a function literal, and one on a struct field, as a doc comment or a trailing comment, in test and non-test files alike;
 - a section number in the name of a test function, such as `_spec_4_7` or `Spec16_5`, and a `§` or `spec N.M` in a subtest name;
 - specification text in a comment, which is a quoted span of five words or more that appears in `spec/` word for word, other than a heading or a bold paragraph label, or a run of twelve words that appears in `spec/` word for word;
-- an identifier citation (a requirement `CODE-Rn`, an issue `CODE-In`, an operation `CODE-<operation>`, a definition-block anchor `<kind>-<slug>`, or a page code) that `spec/registry.json` does not carry. An issue also resolves through a record under `issues/<CODE>/` whose name opens with its identifier. Channel identifiers under `LNK-`, `CH-`, and `REG-` are not page identifiers and are not checked.
+- an identifier citation (a requirement `CODE-Rn`, an issue `CODE-In`, an operation `CODE-<operation>`, a definition-block anchor `<kind>-<slug>`, or a page code) that `spec/registry.json` does not carry as a live code, requirement, operation, term, or block anchor. A retired identifier fails with a message that names its successor or its removal record, and the author updates the citation. An issue also resolves through a record under `issues/<CODE>/` whose name opens with its identifier. Channel identifiers under `LNK-`, `CH-`, and `REG-` are not page identifiers and are not checked.
 
 The lint skips with a reason when the branch has no merge base with the integration branch, and the identifier check skips with a reason while the tree carries no `spec/registry.json`.
 
-A ratchet, `TestSpecSectionCitationRatchetHoldsEachPackage`, counts the section-number citations (the `§N.M` form and the bare `N.M` form) in the `// spec:` annotations of each Go package directory and compares the count with `tests/registers/spec-section-citations.yaml`. Packages stand in for areas until areas map to packages. The ratchet fails a package whose count rises above its registered count and a package with a citation and no entry. While a package's area has not migrated, new code there may add a `§` citation, and the author raises the package's count in the register in the same commit so the rise is visible in review. When a count falls, the run writes the lower count back to the register and fails, and the author commits the lowered register with the change. Once an area has migrated, the counts of its packages are strict and may only fall; the area change that migrates them records the switch.
+A ratchet, `TestSpecSectionCitationRatchetHoldsEachPackage`, counts the section-number citations (the `§N.M` form and the bare `N.M` form) in the `// spec:` annotations of each Go package directory and compares the count with `tests/registers/spec-section-citations.yaml`. Packages stand in for areas until areas map to packages. The ratchet fails a package whose count rises above its registered count and a package with a citation and no entry. When new code there adds a `§` citation, as "Transition" above allows, the author raises the package's count in the register in the same commit so the rise is visible in review. When a count falls, the run writes the lower count back to the register and fails, and the author commits the lowered register with the change. Once an area has migrated, the counts of its packages are strict and may only fall; the area change that migrates them records the switch.
 
 Review holds the parts of the rule that the lint cannot read: that only deciding code cites a requirement, that a comment does not paraphrase the specification, and that a package's `doc.go` ends with its page codes. The coverage gate that every changed requirement has a test citing it lands with the coverage derived from annotations.
 

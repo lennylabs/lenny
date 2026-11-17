@@ -31,7 +31,7 @@ func TestSpecAnnotationLintPassesOnTheBranchDiff(t *testing.T) {
 	rep := lintBranch(t)
 	var findings []string
 	for _, f := range rep.Findings {
-		if f.Rule != annotation.UnresolvedIdentifier {
+		if f.Rule != annotation.UnresolvedIdentifier && f.Rule != annotation.RetiredIdentifier {
 			findings = append(findings, f.String())
 		}
 	}
@@ -55,7 +55,7 @@ func TestSpecAnnotationIdentifiersResolveOnTheBranchDiff(t *testing.T) {
 	}
 	var findings []string
 	for _, f := range rep.Findings {
-		if f.Rule == annotation.UnresolvedIdentifier {
+		if f.Rule == annotation.UnresolvedIdentifier || f.Rule == annotation.RetiredIdentifier {
 			findings = append(findings, f.String())
 		}
 	}

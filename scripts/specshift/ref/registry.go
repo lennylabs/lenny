@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/lennylabs/lenny/scripts/specshift/defs"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // registryVersion is the format version of spec/registry.json.
@@ -129,7 +131,7 @@ func (r *Registry) Encode() ([]byte, error) {
 // LoadCommitted reads the committed registry. A tree with no committed
 // registry has no history, so it reads as an empty registry.
 func LoadCommitted(t *Tree) (*Registry, error) {
-	b, err := os.ReadFile(t.abs(RegistryPath))
+	b, err := scope.ReadChecked(t.Root, RegistryPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return emptyRegistry(), nil
 	}
@@ -240,18 +242,37 @@ func (b *builder) addPage(d pageDoc) {
 }
 
 // addBlocks registers the definition blocks of a page and returns their
-// anchors.
+// anchors. The blocks are read by the definition-block parser of
+// scripts/specshift/defs, so the registry names each block by its kind's
+// name field (name, key, or type) and anchors it as defs.AnchorFor does.
+// An operation block registers the operation identifier <CODE>-<name>,
+// whose anchor carries the page code, so two interface pages may each
+// define an operation with the same name.
 func (b *builder) addBlocks(d pageDoc) map[string]bool {
 	out := map[string]bool{}
-	for _, blk := range defBlocks(d.content) {
-		if blk.kind == "" || blk.name == "" {
-			b.findings = append(b.findings, Finding{File: d.path, Line: blk.line, Message: "definition block has no kind: or name: line"})
+	page, _ := defs.ParsePage(d.path, d.content)
+	if page == nil {
+		return out
+	}
+	for _, blk := range page.Blocks {
+		switch {
+		case blk.Kind == "":
+			b.findings = append(b.findings, Finding{File: d.path, Line: blk.Line, Message: "definition block has no kind: line"})
+			continue
+		case blk.Schema == nil:
+			b.findings = append(b.findings, Finding{File: d.path, Line: blk.Line, Message: fmt.Sprintf("definition block kind %q is not a defined kind", blk.Kind)})
+			continue
+		case blk.Anchor == "":
+			b.findings = append(b.findings, Finding{File: d.path, Line: blk.Line, Message: fmt.Sprintf("definition block of kind %s has no %s: line", blk.Kind, blk.Schema.NameField)})
 			continue
 		}
-		anchor := blk.kind + "-" + blockSlug(blk.name)
-		b.reg.Blocks = append(b.reg.Blocks, Block{Kind: blk.kind, Name: blk.name, Anchor: anchor, File: d.path})
-		b.claim(anchor, d.path, blk.line)
-		out[anchor] = true
+		if blk.Kind == defs.KindOperation {
+			b.reg.Operations = append(b.reg.Operations, Identifier{ID: d.fm.Code + "-" + blk.Name, Anchor: blk.Anchor, File: d.path})
+		} else {
+			b.reg.Blocks = append(b.reg.Blocks, Block{Kind: blk.Kind, Name: blk.Name, Anchor: blk.Anchor, File: d.path})
+		}
+		b.claim(blk.Anchor, d.path, blk.Line)
+		out[blk.Anchor] = true
 	}
 	return out
 }

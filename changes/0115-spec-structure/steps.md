@@ -34,7 +34,7 @@ The `lenny-def` schemas per kind, the parser, the generators of `spec/catalogs/`
 - lanes: [code]
 - depends-on: [0115.S2, 0115.S3]
 
-The tier-0 gates of "Gates" in `change.md`, applied to pages of the new tree and to stubbed numbered sections, each with a failing and a passing fixture, and the scope of `scripts/specshift/scope/scope.go` extended to the new tree.
+The tier-0 gates of "Gates" in `change.md`, applied to pages of the new tree and to a numbered file once every numbered section in it is a full stub, each with a failing and a passing fixture, and the scope of `scripts/specshift/scope/scope.go` extended to the new tree.
 
 ### 0115.S5 Annotation rule and its lint
 - status: Building

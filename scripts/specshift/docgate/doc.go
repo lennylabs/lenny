@@ -41,9 +41,9 @@
 // as the annotation lint finds it. A requirement, operation, or definition
 // block the diff adds, modifies, or retires on a landed specification page
 // requires that the diff also edits a documentation page whose front
-// matter names that page, or that a change folder the diff touches states
-// in the Documentation section of its change.md that no reader-facing
-// behavior changes. A page that has not landed is listed as not checked
+// matter names that page, or that a change folder the diff touches waives
+// the page by its code in the Documentation section of its change.md, with
+// a line `No reader-facing behavior changes: POOL, CLAIM`. A page that has not landed is listed as not checked
 // yet. The gate skips with a reason when there is no merge base.
 //
 // The generated reference pages are held by specshift defs generate

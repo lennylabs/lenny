@@ -21,7 +21,7 @@ const Command = "pages"
 const usage = `usage: specshift pages [-root <path>] <command>
 
 commands:
-  check                          run the gloss, walkthrough, style, and review-comment gates,
+  check                          run the gloss, normative-keyword, style, and review-comment gates,
                                  and report the pages over their word budget
   contributions -manifests <f>   hold the contribution blocks and the unit register against
                                  the rendered chart in <f>, the output of helm template

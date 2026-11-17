@@ -28,9 +28,23 @@ const changesDir = "changes"
 // changeFolder matches a change folder's path prefix.
 var changeFolder = regexp.MustCompile(`^changes/([0-9]{4}-[^/]+)/`)
 
-// noReaderChange matches the statement that a change alters no
-// reader-facing behavior.
-var noReaderChange = regexp.MustCompile(`(?i)no reader-facing behaviou?r changes?`)
+// waiverLine matches the line of a Documentation section that waives the
+// documentation-impact gate for the pages it names by code:
+//
+//	No reader-facing behavior changes: POOL, CLAIM
+//
+// The line may open with a list marker and end with a period. The phrase in
+// any other sentence waives nothing, so a waiver always names its pages.
+var waiverLine = regexp.MustCompile(`(?m)^[ \t]*(?:[-*][ \t]+)?No reader-facing behavior changes:[ \t]*([A-Z]{2,9}(?:[ \t]*,[ \t]*[A-Z]{2,9})*)[ \t]*\.?[ \t]*$`)
+
+// Waiver is one change folder's statement that the diff changes no
+// reader-facing behavior on the pages it names.
+type Waiver struct {
+	// Folder is the change folder, such as changes/0300-pools.
+	Folder string
+	// Codes are the page codes the waiver lines name.
+	Codes []string
+}
 
 // documentationHeading matches the Documentation section of change.md.
 var documentationHeading = regexp.MustCompile(`(?m)^##\s+Documentation\s*$`)
@@ -44,9 +58,9 @@ type ImpactReport struct {
 	// NotYet are the codes of the pages the diff touches that have not
 	// landed, which the gate does not check yet.
 	NotYet []string
-	// Waivers are the change folders whose Documentation section states
-	// that no reader-facing behavior changes.
-	Waivers []string
+	// Waivers are the waiver lines of the change folders the diff touches,
+	// each naming the page codes it waives.
+	Waivers []Waiver
 	// Problems name each landed page whose documentation the diff leaves
 	// unedited.
 	Problems []Problem
@@ -95,6 +109,12 @@ func CheckImpact(ctx context.Context, root string) (ImpactReport, error) {
 	if rep.Waivers, err = waivers(root, changed); err != nil {
 		return rep, err
 	}
+	waived := map[string]bool{}
+	for _, w := range rep.Waivers {
+		for _, c := range w.Codes {
+			waived[c] = true
+		}
+	}
 	codes := make([]string, 0, len(touched))
 	for c := range touched {
 		codes = append(codes, c)
@@ -107,7 +127,7 @@ func CheckImpact(ctx context.Context, root string) (ImpactReport, error) {
 			continue
 		}
 		rep.Checked = append(rep.Checked, code)
-		if len(rep.Waivers) > 0 {
+		if waived[code] {
 			continue
 		}
 		naming, anyEdited := describing(pages, code, edited)
@@ -180,16 +200,16 @@ func missingDocs(code string, tp *touchedPage, naming []string) Problem {
 	}
 	return Problem{Path: tp.path, Message: fmt.Sprintf(
 		"the diff changes %s on %s and edits no documentation page whose front matter names %s (%s); "+
-			"edit the documentation that describes the change, or state under the Documentation section of the change's change.md that no reader-facing behavior changes",
-		strings.Join(tp.items, ", "), code, code, which)}
+			"edit the documentation that describes the change, or add the line `No reader-facing behavior changes: %s` to the Documentation section of the change's change.md",
+		strings.Join(tp.items, ", "), code, code, which, code)}
 }
 
-// waivers returns the change folders the diff touches whose change.md
-// states, in its Documentation section, that no reader-facing behavior
-// changes.
-func waivers(root string, changed []string) ([]string, error) {
+// waivers returns the waiver lines in the Documentation sections of the
+// change folders the diff touches, one Waiver per folder with every code
+// its waiver lines name.
+func waivers(root string, changed []string) ([]Waiver, error) {
 	seen := map[string]bool{}
-	var out []string
+	var out []Waiver
 	for _, p := range changed {
 		m := changeFolder.FindStringSubmatch(p)
 		if m == nil || seen[m[1]] {
@@ -203,11 +223,18 @@ func waivers(root string, changed []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		if noReaderChange.MatchString(documentationSection(string(b))) {
-			out = append(out, changesDir+"/"+m[1])
+		var codes []string
+		for _, line := range waiverLine.FindAllStringSubmatch(documentationSection(string(b)), -1) {
+			for _, c := range strings.Split(line[1], ",") {
+				codes = append(codes, strings.TrimSpace(c))
+			}
+		}
+		if len(codes) > 0 {
+			sort.Strings(codes)
+			out = append(out, Waiver{Folder: changesDir + "/" + m[1], Codes: codes})
 		}
 	}
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Folder < out[j].Folder })
 	return out, nil
 }
 

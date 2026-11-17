@@ -43,7 +43,7 @@ The template fixes the order of the sections of `change.md`, and a change keeps 
 | Worked example | One scenario traced through the change | No |
 | Limits, and alternatives rejected | What the change does not guarantee, and the options it turned down | No |
 | Specification and non-specification changes | The specification pages, packages, charts, and schemas the change edits | Yes, as a list |
-| Documentation | Each documentation page the change adds, edits, or removes, with its reader (client, operator, runtime author, or contributor) and what changes for that reader, or a statement that no reader-facing behavior changes | Yes |
+| Documentation | Each documentation page the change adds, edits, or removes, with its reader (client, operator, runtime author, or contributor) and what changes for that reader, or, for each specification page whose readers see no change, a line `No reader-facing behavior changes: CODE, CODE` naming those pages by code | Yes |
 | Tests | The tests by tier and the requirement each verifies | Yes |
 
 The specification, the code, and the documentation are edited on the change's branch, and the diff is the record of the edit. A change does not stage edits.
@@ -152,7 +152,7 @@ A change moves through these activities. Their order is typical rather than fixe
 4. **Review.** Check the result, confirm or refute each finding, fix what needs no decision, and raise the rest as open decisions or issues.
 5. **Land.** Merge the step, close the issues it lists, and update the status. Archive the change after its last step, or when it is cancelled.
 
-The first area change of the specification migration creates the git tag `spec-frozen` on the commit before its first specification edit. The tag keeps the numbered files readable after their sections become successor stubs, as "Frozen reference" in [`spec/conventions.md`](../spec/conventions.md) states.
+The git tag `spec-frozen` is created on the last commit of `main` before change 0115 (specification structure) merges, so it holds the original text of every numbered section, including §18, §21, and §23, which 0115 retires or moves. The tag keeps the numbered files readable after their sections become successor stubs, as "Frozen reference" in [`spec/conventions.md`](../spec/conventions.md) states.
 
 ## Helpers
 
@@ -184,5 +184,5 @@ These checks run on every commit and cost no model tokens. 0115 builds them; unt
 - Documentation stays in step with the specification, under "Documentation and the specification" in `.claude/rules/doc-content.md`. Each check applies to a page once the area it describes has landed:
   - every documentation page names in its front matter the specification pages it describes, and each code resolves (`go run ./scripts/specshift docs check`);
   - every setting, metric, alert, error, label, annotation, event, and CLI command a documentation page names exists in the catalogs, and a default, limit, or unit it quotes matches the definition block (`go run ./scripts/specshift docs check`, which reports what it cannot decide without failing);
-  - a diff that adds, modifies, or retires a requirement, an operation, or a definition block on a specification page either edits a documentation page that names that page, or the change's Documentation section states that no reader-facing behavior changes (`go run ./scripts/specshift docs impact`);
+  - a diff that adds, modifies, or retires a requirement, an operation, or a definition block on a specification page either edits a documentation page that names that page, or the change's Documentation section waives that page with a line of the form `No reader-facing behavior changes: POOL, CLAIM`, which names each waived page by its code (`go run ./scripts/specshift docs impact`);
   - the reference pages' regions generated from the catalogs are current (`go run ./scripts/specshift defs generate --check`).

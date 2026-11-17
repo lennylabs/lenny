@@ -150,7 +150,7 @@ A page carries a generated section between the marker comments `<!-- generated:<
 | `events-emitted` | The event types whose `emitter` names the page's code. |
 | `rbac-grants` | The page's own `grant` blocks and the `rbac-grant` blocks whose `unit` names the page's code. |
 | `network-rules` | The `network-rule` blocks whose `unit` names the page's code. |
-| `index` | On a folder's `index.md` whose type is not `index`, the table of the folder's pages. An `index.md` of type `index` is generated whole, and a folder index with no such section gets one appended under a Pages heading. |
+| `index` | On every folder's `index.md`, the table of the folder's pages. The `index.md` keeps its hand-written sections, and only the text between its `index` markers is generated. A folder index with no such section gets one appended under a Pages heading. |
 | `definition-kinds` | This reference. |
 | `code-registry` | On the conventions page, the code registry: every page's code, type, path, and summary, read from the pages' front matter. |
 
@@ -530,7 +530,7 @@ The tree is reorganized after it lands. These rules make a move a mechanical ste
 - **Every link targets an identifier.** A link into the specification ends at a page, by its path, or at an identifier anchor: a requirement (`#pool-r5`), an owned term (`#reserved-hold`), an operation (`#kpclaim-create`), or a definition block (`#setting-maxidleseconds`). No link from another page targets a heading anchor. Template headings such as "Requirements" are never link targets.
 - **The path is derived data.** Links are ordinary relative Markdown links, so a reader follows them without a resolver. A reference tool builds the registry of identifiers from front matter and anchors, and it rewrites the path of every link whose target or fragment is a registered identifier. Moving a page is `git mv` followed by one run of the tool.
 - **Code carries no paths.** Annotations in code, test names, issue front matter, and change records cite identifiers, so a page move changes no code.
-- **Moving one requirement.** A requirement that moves to another page takes that page's next number. The old identifier is retired with a successor pointer, and the registry records the move. The tool rewrites every citation from that record, code included.
+- **Moving one requirement.** A requirement that moves to another page takes that page's next number. The old identifier is retired with a successor pointer, and the registry records the move. `specshift ref fix` rewrites every Markdown link to the old identifier from that record. A `// spec:` citation of a retired identifier in code fails the annotation lint, which names the successor, and the author updates the citation.
 - **Merging and renaming pages.** A merged page keeps one code. The other code stays in the registry as an alias and resolves indefinitely.
 - **Domain.** The tool rewrites the tracked tree except the archives: `changes/archive/`, `proposals/`, and the frozen gap records. Those keep the paths they were written with, and their identifiers resolve through the tool's lookup command.
 - **The published site.** The documentation site has a redirect for each moved page, generated from the registry's history of moves.
@@ -575,7 +575,7 @@ The paragraphs that have not migrated.
 
 ## Frozen reference
 
-The git tag `spec-frozen` marks the commit before the first area change edits the specification, and that change creates the tag. The numbered files at the tag are the frozen reference: they hold the original text of every numbered section after its content has migrated. No copy of the numbered files stays in the tree.
+The git tag `spec-frozen` marks the last commit of `main` before the change that introduced this structure merged, and it is created on that commit. The numbered files at the tag are the frozen reference: they hold the original text of every numbered section, including §18, §21, and §23, which that change retired or moved, and of every section after its content has migrated. No copy of the numbered files stays in the tree.
 
 Run `specshift ref lookup §N.M` to read a section citation. The command prints the section's file and anchor, states whether the section is a full stub, a partial stub, or not yet migrated, lists the successors its stub names, and prints the section's text at `spec-frozen`. Before the tag exists, the command states that the tag does not exist yet. To read a whole numbered file as it stood, run `git show spec-frozen:spec/NN_file-name.md`.
 
@@ -622,7 +622,7 @@ The front matter field `status` records how much of a page is written.
 - `status: partial` marks a page written in part. The front matter or the body names what is missing.
 - `status: placeholder` marks a page that is not yet written. A placeholder holds its front matter, its title, and a "Content today" section that links the numbered sections holding its content and the changes whose content lands on it. It registers no identifier.
 
-No link into a placeholder carries a fragment. When a placeholder becomes a full page, the reference tool lists the page-level links into it so that each can move to an identifier.
+`specshift ref check` reports a requirement, operation, term, or definition block registered on a placeholder. No link into a placeholder carries a fragment. When a placeholder becomes a full page, `specshift ref links-into <code>` lists the page-level links into it so that each can move to an identifier.
 
 ## Review comments during migration
 
@@ -632,7 +632,7 @@ While an area migrates, its pages may carry review comments that the renderer dr
 - `<!-- judgment: ... -->` records a placement or a reading that needed semantic judgment.
 - `<!-- unresolved: ... -->` records a fact the sources do not settle.
 
-These comments exist only while the area migrates. Before the area lands, each `unresolved` comment becomes an issue or an open decision on the area's change, and the `src` and `judgment` comments move into the migration record in the change's `evidence/` folder. The gates refuse all three on a page whose `status` is neither `placeholder` nor `partial`.
+These comments exist only while the area migrates. Before the area lands, each `unresolved` comment becomes an issue or an open decision on the area's change, and the `src` and `judgment` comments move into the migration record in the change's `evidence/` folder. The gates refuse all three on a capability page once its area has landed, which is when no page under its `capabilities/<area>/` folder has `status: placeholder`. On a page in no area, the gates refuse all three when the page's own `status` is neither `placeholder` nor `partial`.
 
 ## Page size
 
@@ -937,7 +937,7 @@ The table lists every page code with its page type, its path relative to `spec/`
 | `RTPTOOL` | interface | [`interfaces/runtime-protocol/platform-tools.md`](interfaces/runtime-protocol/platform-tools.md) | The platform tools a runtime calls, through frames or the reference MCP bridge, with schemas including the delegation tools and the task result. |
 | `RTPOPS` | interface | [`interfaces/runtime-protocol/runtime-ops.md`](interfaces/runtime-protocol/runtime-ops.md) | The runtime-ops channel frames: quiesce, interrupt acknowledgement, and the remaining rotation frames. |
 | `RTPSDK` | interface | [`interfaces/runtime-protocol/runtime-sdks.md`](interfaces/runtime-protocol/runtime-sdks.md) | The runtime author SDKs: packages, what each adds to the protocol, and what each leaves to the runtime. |
-| `STOR` | index | [`interfaces/stored-schemas/index.md`](interfaces/stored-schemas/index.md) | The stored schemas that must stay compatible across versions, and the compatibility rules for each store. |
+| `STOR` | index | [`interfaces/stored-schemas/index.md`](interfaces/stored-schemas/index.md) | The stored schemas that are kept compatible across versions, and the compatibility rules for each store. |
 | `STOROBJ` | interface | [`interfaces/stored-schemas/object-store-layout.md`](interfaces/stored-schemas/object-store-layout.md) | The object key layout and the checkpoint pack format. |
 | `STORPG` | interface | [`interfaces/stored-schemas/postgres.md`](interfaces/stored-schemas/postgres.md) | The Postgres tables other versions read: sessions, tasks, pod state, billing, audit, and operations tables. |
 | `STORREDIS` | interface | [`interfaces/stored-schemas/redis-keys.md`](interfaces/stored-schemas/redis-keys.md) | The Redis key patterns and their tenant prefixing. |

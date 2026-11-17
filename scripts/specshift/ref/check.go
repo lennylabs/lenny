@@ -16,6 +16,8 @@ import (
 //     identifier or term anchor registered on that page;
 //   - a link that targets a heading anchor on another new-tree page;
 //   - a link with a fragment into a page whose status is placeholder;
+//   - a requirement, operation, term, or block registered on a page whose
+//     status is placeholder;
 //   - a duplicate code, anchor, or block, and a code that differs from
 //     another only by a one-letter suffix;
 //   - a retired identifier with no successor or removed record, or whose
@@ -40,6 +42,7 @@ func Check(ctx context.Context, t *Tree) ([]Finding, error) {
 	}
 	findings = append(findings, retiredFindings...)
 	findings = append(findings, checkVanished(committed, x)...)
+	findings = append(findings, checkPlaceholders(reg, x)...)
 	linkFindings, err := checkLinks(ctx, t, x)
 	if err != nil {
 		return nil, err
@@ -83,6 +86,31 @@ func checkVanished(committed *Registry, x *index) []Finding {
 				out = append(out, Finding{File: id.File, Message: fmt.Sprintf("identifier %s left the tree with no retired record naming a successor or its removal", id.ID)})
 			}
 		}
+	}
+	return out
+}
+
+// checkPlaceholders reports a requirement, operation, term, or definition
+// block registered on a page whose status is placeholder, because a
+// placeholder registers no identifier until it is written.
+func checkPlaceholders(reg *Registry, x *index) []Finding {
+	var out []Finding
+	report := func(file, what string) {
+		if p, ok := x.pageByPath[file]; ok && p.Status == "placeholder" {
+			out = append(out, Finding{File: file, Message: fmt.Sprintf("%s is registered on %s, which is a placeholder; a placeholder registers no identifier", what, p.Code)})
+		}
+	}
+	for _, id := range reg.Requirements {
+		report(id.File, "requirement "+id.ID)
+	}
+	for _, id := range reg.Operations {
+		report(id.File, "operation "+id.ID)
+	}
+	for _, t := range reg.Terms {
+		report(t.File, "term #"+t.Anchor)
+	}
+	for _, b := range reg.Blocks {
+		report(b.File, "definition block #"+b.Anchor)
 	}
 	return out
 }

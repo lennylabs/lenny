@@ -18,15 +18,16 @@ type Problem = defs.Problem
 // path and line order.
 func Check(pages []*Page) []Problem {
 	var out []Problem
+	migrating := migratingAreas(pages)
 	for _, p := range pages {
 		if p.Type != typeNumbered {
 			out = append(out, checkGlosses(p)...)
 		}
-		if p.Type == typeWalkthrough {
-			out = append(out, checkWalkthrough(p)...)
+		if nonNormativeTypes[p.Type] {
+			out = append(out, checkNoNormativeKeyword(p)...)
 		}
 		out = append(out, checkStyle(p)...)
-		out = append(out, checkReviewComments(p)...)
+		out = append(out, checkReviewComments(p, migrating)...)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Path != out[j].Path {
@@ -54,13 +55,24 @@ func normativeKeyword(text string) string {
 	return lowerKeyword.FindString(text)
 }
 
-// checkWalkthrough reports every normative keyword of a walkthrough page.
-func checkWalkthrough(p *Page) []Problem {
+// nonNormativeTypes are the page types that "Normative language" in the
+// conventions says carry no normative keyword: overview, walkthrough,
+// index, and catalog pages. Glosses are held by the gloss gate.
+var nonNormativeTypes = map[string]bool{
+	typeOverview:    true,
+	typeWalkthrough: true,
+	typeIndex:       true,
+	typeCatalog:     true,
+}
+
+// checkNoNormativeKeyword reports every normative keyword of a page whose
+// type carries none.
+func checkNoNormativeKeyword(p *Page) []Problem {
 	var out []Problem
 	for _, l := range proseLines(p) {
 		if k := normativeKeyword(l.Text); k != "" {
 			out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
-				"a walkthrough holds no normative keyword, and this line uses %q; state the rule on its owner page and link it", k)})
+				"a page of type %s holds no normative keyword, and this line uses %q; state the rule on its owner page and link it", p.Type, k)})
 		}
 	}
 	return out
@@ -69,18 +81,58 @@ func checkWalkthrough(p *Page) []Problem {
 // reviewComment matches the opening of a review comment.
 var reviewComment = regexp.MustCompile(`<!--\s*(src|judgment|unresolved)\s*:`)
 
-// checkReviewComments reports a review comment on a page whose status is
-// neither placeholder nor partial. A comment quoted in a code span is
-// text about the comment rather than the comment.
-func checkReviewComments(p *Page) []Problem {
-	if p.Status == statusPlaceholder || p.Status == statusPartial {
-		return nil
+// capabilityArea returns the area of a capability page, the folder
+// spec/capabilities/<area>/ it lies under, or "" for a page in no area.
+func capabilityArea(p string) string {
+	rest, ok := strings.CutPrefix(p, "spec/capabilities/")
+	if !ok {
+		return ""
+	}
+	area, _, found := strings.Cut(rest, "/")
+	if !found {
+		return ""
+	}
+	return area
+}
+
+// migratingAreas returns the capability areas that have not landed: those
+// with at least one page under spec/capabilities/<area>/ whose status is
+// placeholder.
+func migratingAreas(pages []*Page) map[string]bool {
+	out := map[string]bool{}
+	for _, p := range pages {
+		if area := capabilityArea(p.Path); area != "" && p.Status == statusPlaceholder {
+			out[area] = true
+		}
+	}
+	return out
+}
+
+// checkReviewComments reports a review comment that the landing rule
+// refuses. On a capability page the rule follows the area: the comments
+// are refused once the area has landed, meaning no page under its
+// spec/capabilities/<area>/ folder is a placeholder. On a page in no area
+// they are refused when the page's own status is neither placeholder nor
+// partial. A comment quoted in a code span is text about the comment
+// rather than the comment.
+func checkReviewComments(p *Page, migrating map[string]bool) []Problem {
+	reason := ""
+	if area := capabilityArea(p.Path); area != "" {
+		if migrating[area] {
+			return nil
+		}
+		reason = fmt.Sprintf("stands on a page of the area %s, which has landed (no page under spec/capabilities/%s/ is a placeholder)", area, area)
+	} else {
+		if p.Status == statusPlaceholder || p.Status == statusPartial {
+			return nil
+		}
+		reason = "stands on a page whose status is neither placeholder nor partial"
 	}
 	var out []Problem
 	for _, l := range bodyLines(p) {
 		for _, m := range reviewComment.FindAllStringSubmatch(codeSpan.ReplaceAllString(l.Text, " "), -1) {
 			out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
-				"a %q review comment stands on a page whose status is neither placeholder nor partial; move it into the migration record or an issue", m[1])})
+				"a %q review comment %s; move it into the migration record or an issue", m[1], reason)})
 		}
 	}
 	return out
