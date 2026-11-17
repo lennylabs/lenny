@@ -20,8 +20,10 @@
 //     no heading that names a count, except that the headings of a
 //     numbered file's successor stubs keep the wording their citations
 //     reach them by;
-//   - review comments: a page whose status is neither placeholder nor
-//     partial holds no src, judgment, or unresolved review comment.
+//   - review comments: a capability page whose area has landed (no page
+//     under its spec/capabilities/<area>/ folder is a placeholder), and a
+//     page in no area whose status is neither placeholder nor partial,
+//     hold no src, judgment, or unresolved review comment.
 //
 // A normative keyword is a BCP 14 keyword in upper case, or one of the
 // lower-case words "must", "shall", and "should", as the conventions page

@@ -632,7 +632,7 @@ While an area migrates, its pages may carry review comments that the renderer dr
 - `<!-- judgment: ... -->` records a placement or a reading that needed semantic judgment.
 - `<!-- unresolved: ... -->` records a fact the sources do not settle.
 
-These comments exist only while the area migrates. Before the area lands, each `unresolved` comment becomes an issue or an open decision on the area's change, and the `src` and `judgment` comments move into the migration record in the change's `evidence/` folder. The gates refuse all three on a page whose `status` is neither `placeholder` nor `partial`.
+These comments exist only while the area migrates. Before the area lands, each `unresolved` comment becomes an issue or an open decision on the area's change, and the `src` and `judgment` comments move into the migration record in the change's `evidence/` folder. The gates refuse all three on a capability page once its area has landed, which is when no page under its `capabilities/<area>/` folder has `status: placeholder`. On a page in no area, the gates refuse all three when the page's own `status` is neither `placeholder` nor `partial`.
 
 ## Page size
 
