@@ -2,7 +2,7 @@
 code: CONV
 type: conventions
 summary: >-
-  How the specification is read and written: page types, the placement procedure, owners of enumerable facts, definition blocks, identifiers, references and moves, the gloss rule, the page template, page status, normative language, and the code registry.
+  How the specification is read and written: page types, the placement procedure, owners of enumerable facts, definition blocks, identifiers, references and moves, successor stubs and the frozen reference, the gloss rule, the page template, page status, normative language, and the code registry.
 ---
 
 # Conventions
@@ -180,7 +180,48 @@ The tree is reorganized after it lands. These rules make a move a mechanical ste
 - **The published site.** The documentation site has a redirect for each moved page, generated from the registry's history of moves.
 - **Gates.** Every link into the specification resolves. Every fragment is a registered identifier. No code is registered twice, and no identifier is retired without a successor or an explicit removal record.
 
-A section-number citation of a numbered file resolves through the successor stub at the section's heading once the section's content has migrated.
+A section-number citation of a numbered file resolves through the successor stub at the section's heading once the section's content has migrated, as "Successor stubs" states.
+
+## Successor stubs
+
+An area change that migrates the content of a numbered section turns the section into a successor stub. The stub keeps the section's heading and anchor, and a successor list that links the pages and identifiers now holding the content replaces the migrated paragraphs. A section citation (`§N.M`) therefore reaches the same heading before and after the migration, and the heading names where the content went.
+
+The heading and the anchor of a numbered section do not change while any section citation points at them. A stub edits the body of a section and leaves its heading as it was.
+
+**Full stub.** A section whose content has all moved carries the marker line `<!-- successor-stub -->` directly under its heading, followed by the successor list and no other text. The gates and the citation tools read the marker to tell a full stub from a section that still holds content.
+
+```markdown
+### N.M Section title
+
+<!-- successor-stub -->
+
+The content of this section has moved to these pages and identifiers:
+
+- [POOL-R5](capabilities/runtimes-and-pools/warm-pools.md#pool-r5): Pool and pod-set labels are required and immutable.
+- [POOL](capabilities/runtimes-and-pools/warm-pools.md): Warm pools
+```
+
+**Partial stub.** A section that keeps part of its content carries no marker. Its successor list opens the section, and the kept text follows the list unchanged until its own area migrates.
+
+```markdown
+### N.M Section title
+
+Part of the content of this section has moved to these pages and identifiers:
+
+- [CLAIM-R10](capabilities/runtimes-and-pools/pod-claims.md#claim-r10): Title of the requirement.
+
+The paragraphs that have not migrated.
+```
+
+**Successor list.** Each entry links one page or identifier by a path relative to the numbered file and gives its title: the bold title of a requirement, the heading of a page, the kind and name of a definition block, or the text of an owned term. Every entry targets a page or an identifier anchor, as "References and moves" requires of every link into the tree.
+
+**Writing a stub.** Run `specshift ref stub §N.M --to <identifier>[,<identifier>...]` to write a full stub, and add `--keep` to write a partial stub. An entry of `--to` is a page code or alias, a page path, a requirement or operation identifier, or a term or definition-block anchor. The command builds the list from the registry and refuses a name the registry does not hold or holds only as a retired identifier. It refuses a section with subsections unless `--recursive` is given, and with `--recursive` every heading under the section becomes a stub with the same list. Stubbing a section that already carries a list adds the new entries to that list, and stubbing a partial stub without `--keep` removes the kept text and writes the marker.
+
+## Frozen reference
+
+The git tag `spec-frozen` marks the commit before the first area change edits the specification, and that change creates the tag. The numbered files at the tag are the frozen reference: they hold the original text of every numbered section after its content has migrated. No copy of the numbered files stays in the tree.
+
+Run `specshift ref lookup §N.M` to read a section citation. The command prints the section's file and anchor, states whether the section is a full stub, a partial stub, or not yet migrated, lists the successors its stub names, and prints the section's text at `spec-frozen`. Before the tag exists, the command states that the tag does not exist yet. To read a whole numbered file as it stood, run `git show spec-frozen:spec/NN_file-name.md`.
 
 ## Gloss rule
 

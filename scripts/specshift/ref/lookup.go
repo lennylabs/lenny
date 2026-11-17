@@ -121,36 +121,25 @@ func lookupSection(ctx context.Context, t *Tree, number string, out io.Writer) e
 	if !sectionNumberExpr.MatchString(number) {
 		return fmt.Errorf("§%s is not a section number", number)
 	}
-	files, err := t.Files(ctx)
+	found, content, err := locateSection(ctx, t, number)
 	if err != nil {
 		return err
 	}
-	var found numberedSection
-	ok := false
-	for _, f := range files {
-		if !isNumbered(f) {
-			continue
-		}
-		content, err := t.Read(f)
-		if err != nil {
-			return err
-		}
-		if found, ok = findSection(f, content, number); ok {
-			break
-		}
-	}
-	if !ok {
-		return fmt.Errorf("no numbered heading §%s in the numbered files", number)
+	full := false
+	for _, s := range FullStubs(content) {
+		full = full || s.Line == found.heading.line
 	}
 	fmt.Fprintf(out, "§%s: %s#%s\n", found.heading.title, found.file, found.heading.linkAnchor())
-	printSuccessors(found, out)
+	printSuccessors(found, number, full, out)
 	return printFrozen(ctx, t, found, number, out)
 }
 
-// printSuccessors prints the links into the new tree, and the rows of a
-// successor table, that the section's own text lists. A section with
-// neither has not become a successor stub.
-func printSuccessors(s numberedSection, out io.Writer) {
+// printSuccessors states whether the section's content has migrated and
+// prints the links into the new tree, and the rows of a successor table,
+// that the section's own text lists. A full stub carries the stub marker,
+// a section that lists successors without the marker keeps part of its
+// text, and a section that lists none has not migrated.
+func printSuccessors(s numberedSection, number string, full bool, out io.Writer) {
 	var lines []string
 	body := strings.Join(s.body, "\n")
 	for _, l := range links(body) {
@@ -172,8 +161,13 @@ func printSuccessors(s numberedSection, out io.Writer) {
 			lines = append(lines, "  "+trimmed)
 		}
 	}
-	if len(lines) == 0 {
-		fmt.Fprintln(out, "not a successor stub: the section lists no successor")
+	switch {
+	case full:
+		fmt.Fprintf(out, "successor stub: the content of §%s has migrated\n", number)
+	case len(lines) > 0:
+		fmt.Fprintf(out, "partial successor stub: part of the content of §%s has migrated, and the rest stays under the heading\n", number)
+	default:
+		fmt.Fprintf(out, "not a successor stub: the content of §%s has not migrated\n", number)
 		return
 	}
 	fmt.Fprintln(out, "successors:")
