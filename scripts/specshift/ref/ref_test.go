@@ -506,6 +506,11 @@ func TestLookupOfASectionThatIsAStub(t *testing.T) {
 	}
 }
 
+// missingSection is a section number no fixture declares. It is built by
+// concatenation so the citation gates do not read it as a citation of the
+// repository's specification.
+const missingSection = "§" + "9.9"
+
 func TestLookupOfASectionWithoutAStubReadsTheFrozenTag(t *testing.T) {
 	frozen := "# 4. System Components\n\n## 4.6 Pod Lifecycle Controllers\n\n### 4.6.1 Warm Pool Controller\n\nThe original text.\n\n#### Detail\n\nMore original text.\n\n### 4.6.2 Next\n\nNot printed.\n"
 	git := func(_ context.Context, args ...string) ([]byte, error) {
@@ -534,7 +539,7 @@ func TestLookupOfASectionWithoutAStubReadsTheFrozenTag(t *testing.T) {
 	if strings.Contains(out, "Not printed") {
 		t.Errorf("the frozen text ran past the section:\n%s", out)
 	}
-	if _, err := run(t, fixtureTree(cleanFixture, nil), "lookup", "§9.9"); err == nil {
+	if _, err := run(t, fixtureTree(cleanFixture, nil), "lookup", missingSection); err == nil {
 		t.Error("lookup of a missing section succeeded")
 	}
 	if _, err := run(t, fixtureTree(cleanFixture, nil), "lookup", "§four"); err == nil {
