@@ -110,6 +110,7 @@ var citationDocumentExcluded = []string{
 	"TEST-GAPS.md",
 	"PROPOSAL-QUEUE.md",
 	"proposals/",
+	"changes/",
 	".claude/",
 	"dist/",
 	"tests/registers/",
