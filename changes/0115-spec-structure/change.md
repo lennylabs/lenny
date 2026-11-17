@@ -19,7 +19,7 @@ The owner settled a structure organized by capability on 2026-11-16, after a spi
   - The annotation rule for code and the documentation rule, with their lints.
   - The helpers that read the structure: `digest`, `where`, and `since`, and the status page generated from the programs.
   - The successor-stub format for the numbered files and the frozen reference for old citations.
-  - The retirement of `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md`, which the naming law in §28, `spec-citations.md`, three tests, and several pages name.
+  - The retirement of `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md`, which the naming law in §28, `spec-citations.md`, tests in tiers 0, 4, 8, and 9, three load baselines, and several pages and scripts name.
 - **Out of scope.**
   - Writing the content of any area. Each area migrates in its own change, one milestone each.
   - Coverage derived from annotations, which replaces `tests/spec-map.json` (0116).
@@ -113,7 +113,7 @@ An area change replaces each migrated paragraph of a numbered section with a suc
 
 ### Retiring the root plan files
 
-`BUILD-PLAN.md` and `BUILD-PROGRESS.md` give way to the v1 program and the board, and `ROADMAP.md` to the program's milestones and the generated status page. The naming law's N3 domain and N8 in §28, `spec-citations.md`, `channel-naming.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `README.md`, `CONTRIBUTING.md`, `docs/about/governance.md`, `docs/about/status.md`, `scripts/specshift/scope/scope.go` with its tests, and the scripts under `scripts/review-migration-diff/` and `scripts/restore-requirement-ids.py` stop naming them. `CHANGELOG.md`, `BUILD-GAPS.md`, `TEST-GAPS.md`, and `CODE-REVIEW.md` keep the words they were written with.
+`BUILD-PLAN.md` and `BUILD-PROGRESS.md` give way to the v1 program and the board, and `ROADMAP.md` to the program's milestones and the generated status page. The naming law's N3 domain and N8 in §28, `spec-citations.md`, `channel-naming.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `README.md`, `CONTRIBUTING.md`, `docs/about/governance.md`, `docs/about/status.md`, `scripts/specshift/scope/scope.go` with its tests and test data, the scripts under `scripts/review-migration-diff/` and `scripts/restore-requirement-ids.py`, `tests/tier0_static/citation_document_test.go` and `naming_lint_test.go`, the scaffold tests of tiers 4, 8, and 9, and the three tier-7b load baselines that name them stop naming them. `CHANGELOG.md`, `BUILD-GAPS.md`, `TEST-GAPS.md`, and `CODE-REVIEW.md` keep the words they were written with.
 
 ## Current state
 
@@ -121,7 +121,7 @@ An area change replaces each migrated paragraph of a numbered section with a suc
 - `scripts/specshift` has passes for anchors, citations, gates, identifiers, line citations, names, registers, and scope. The anchor pass rewrites retired anchors from a hand-written move map and fails closed on a site the map does not cover.
 - 18,912 annotation lines cite the specification by section number, 12,075 in tests and 6,837 in other code.
 - `docs/` holds 228 Markdown pages. `docs/reference/` lists settings, metrics, errors, events, and state machines by hand.
-- `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md` sit at the repository root, and 19 tracked files outside `changes/` and `proposals/` name them.
+- `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `ROADMAP.md` sit at the repository root, and 30 tracked files outside `changes/` and `proposals/` name them.
 
 ## Specification and non-specification changes
 
