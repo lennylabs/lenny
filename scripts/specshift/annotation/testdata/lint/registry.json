@@ -1,15 +1,77 @@
 {
-  "aliases": {},
-  "anchors": {
-    "claim-r4": "capabilities/runtimes-and-pools/pod-claims.md",
-    "claim-r9": "capabilities/runtimes-and-pools/pod-claims.md",
-    "kpclaim-create": "interfaces/kubernetes/podclaim.md",
-    "setting-claimholdttlseconds": "capabilities/runtimes-and-pools/pod-claims.md"
-  },
-  "codes": {
-    "CLAIM": "capabilities/runtimes-and-pools/pod-claims.md",
-    "GWCLAIM": "components/gateway/pod-claimer.md",
-    "KPCLAIM": "interfaces/kubernetes/podclaim.md"
-  },
-  "issues": ["CLAIM-I4"]
+  "version": 1,
+  "pages": [
+    {
+      "code": "CLAIM",
+      "path": "spec/capabilities/runtimes-and-pools/pod-claims.md",
+      "type": "capability",
+      "status": ""
+    },
+    {
+      "code": "GWCLAIM",
+      "path": "spec/components/gateway/pod-claimer.md",
+      "type": "component",
+      "status": ""
+    },
+    {
+      "code": "KPCLAIM",
+      "path": "spec/interfaces/kubernetes/podclaim.md",
+      "type": "interface",
+      "status": ""
+    }
+  ],
+  "requirements": [
+    {
+      "id": "CLAIM-R4",
+      "anchor": "claim-r4",
+      "file": "spec/capabilities/runtimes-and-pools/pod-claims.md"
+    },
+    {
+      "id": "CLAIM-R9",
+      "anchor": "claim-r9",
+      "file": "spec/capabilities/runtimes-and-pools/pod-claims.md"
+    }
+  ],
+  "operations": [
+    {
+      "id": "KPCLAIM-create",
+      "anchor": "kpclaim-create",
+      "file": "spec/interfaces/kubernetes/podclaim.md"
+    }
+  ],
+  "terms": [
+    {
+      "anchor": "reserved-hold",
+      "file": "spec/capabilities/runtimes-and-pools/pod-claims.md"
+    }
+  ],
+  "blocks": [
+    {
+      "kind": "setting",
+      "name": "claimHoldTTLSeconds",
+      "anchor": "setting-claimholdttlseconds",
+      "file": "spec/capabilities/runtimes-and-pools/pod-claims.md"
+    }
+  ],
+  "retired": [
+    {
+      "id": "CLAIM-R2",
+      "anchor": "claim-r2",
+      "file": "spec/capabilities/runtimes-and-pools/pod-claims.md",
+      "successor": "CLAIM-R9"
+    },
+    {
+      "id": "CLAIM-R3",
+      "anchor": "claim-r3",
+      "file": "spec/capabilities/runtimes-and-pools/pod-claims.md",
+      "removed": "removed: the hold no longer expires"
+    }
+  ],
+  "moves": [
+    {
+      "id": "CLAIM-R7",
+      "from": "spec/capabilities/runtimes-and-pools/pod-claims.md",
+      "to": "spec/components/gateway/pod-claimer.md"
+    }
+  ]
 }

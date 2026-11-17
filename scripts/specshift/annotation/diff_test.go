@@ -109,8 +109,9 @@ func TestLintBranchResolvesIdentifiersOnceTheRegistryExists(t *testing.T) {
 	t.Parallel()
 	root := gitRepo(t, "main", map[string]string{
 		"spec/claims.md":     string(readFixture(t, "lint", "spec.md")),
-		"spec/registry.json": string(readFixture(t, "lint", "registry.json")),
-		"pkg/claim/claim.go": "package claim\n",
+		"spec/registry.json":       string(readFixture(t, "lint", "registry.json")),
+		"issues/CLAIM/CLAIM-I4.md": "# CLAIM-I4\n",
+		"pkg/claim/claim.go":       "package claim\n",
 	})
 	writeFile(t, root, "pkg/claim/claim.go", string(readFixture(t, "lint", "identifiers.go.txt")))
 	rep, err := LintBranch(context.Background(), root)

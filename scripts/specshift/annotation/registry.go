@@ -3,6 +3,7 @@
 package annotation
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
@@ -24,16 +26,20 @@ const issuesDir = "issues/"
 // identifier cannot be resolved and the check that needs one is skipped.
 var ErrNoRegistry = errors.New("the tree carries no " + RegistryPath)
 
-// Registry answers whether an identifier is registered.
+// Registry answers whether an identifier a `// spec:` annotation cites is
+// live.
 //
-// It reads the registry without depending on its schema: every object
-// key and every string value in the document is a registered name,
-// compared in lower case, because an identifier's anchor is its
-// lower-cased form. A page code, a requirement or operation anchor, a
-// term, and a definition block's anchor therefore all resolve whether
-// the registry holds them as keys or as values.
+// It reads spec/registry.json by the schema the reference tool writes
+// (ref.Registry). An identifier resolves only when it is a live page code
+// or alias, requirement, operation, owned term anchor, or definition block
+// anchor, or an issue an issue record names. A retired identifier does not
+// resolve: the lint reports it with the successor or the removal its
+// retirement records. File paths, move records, and the anchors of
+// retired identifiers are never registered names. Names compare in lower
+// case, because an identifier's anchor is its lower-cased form.
 type Registry struct {
-	names map[string]bool
+	names   map[string]bool
+	retired map[string]ref.Retired
 }
 
 // LoadRegistry reads the registry at file. A registry the tree does not
@@ -46,33 +52,46 @@ func LoadRegistry(read scope.FileReader, file string) (*Registry, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the identifier registry %s: %w", file, err)
 	}
-	var doc any
-	if err := json.Unmarshal(data, &doc); err != nil {
+	var doc ref.Registry
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&doc); err != nil {
 		return nil, fmt.Errorf("parse the identifier registry %s: %w", file, err)
 	}
-	r := &Registry{names: map[string]bool{}}
-	r.collect(doc)
+	r := &Registry{names: map[string]bool{}, retired: map[string]ref.Retired{}}
+	add := func(name string) {
+		if name != "" {
+			r.names[strings.ToLower(name)] = true
+		}
+	}
+	for _, p := range doc.Pages {
+		add(p.Code)
+		for _, a := range p.Aliases {
+			add(a)
+		}
+	}
+	for _, ids := range [][]ref.Identifier{doc.Requirements, doc.Operations} {
+		for _, id := range ids {
+			add(id.ID)
+			add(id.Anchor)
+		}
+	}
+	for _, t := range doc.Terms {
+		add(t.Anchor)
+	}
+	for _, b := range doc.Blocks {
+		add(b.Anchor)
+	}
+	for _, rt := range doc.Retired {
+		r.retired[strings.ToLower(rt.ID)] = rt
+		if rt.Anchor != "" {
+			r.retired[strings.ToLower(rt.Anchor)] = rt
+		}
+	}
 	if len(r.names) == 0 {
 		return nil, fmt.Errorf("the identifier registry %s registers no name", file)
 	}
 	return r, nil
-}
-
-// collect adds every key and string value of a decoded JSON value.
-func (r *Registry) collect(v any) {
-	switch t := v.(type) {
-	case map[string]any:
-		for k, child := range t {
-			r.names[strings.ToLower(k)] = true
-			r.collect(child)
-		}
-	case []any:
-		for _, child := range t {
-			r.collect(child)
-		}
-	case string:
-		r.names[strings.ToLower(t)] = true
-	}
 }
 
 // AddIssuePaths registers the issue identifiers the issue records name.
@@ -104,7 +123,14 @@ func leadingIssue(name string) string {
 	return parts[0] + "-" + parts[1]
 }
 
-// Has reports whether the identifier is registered.
+// Has reports whether the identifier is a live registered name.
 func (r *Registry) Has(id string) bool {
 	return r.names[strings.ToLower(id)]
+}
+
+// Retired returns the retirement record of an identifier the registry
+// records as retired, and false for any other identifier.
+func (r *Registry) Retired(id string) (ref.Retired, bool) {
+	rt, ok := r.retired[strings.ToLower(id)]
+	return rt, ok
 }
