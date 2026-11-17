@@ -1082,19 +1082,93 @@ Helper resident memory: 20 to 33 MB for 100,000 files in `tar.gz`, 61 to 75 MB i
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| WM-A | The supervisor's asynchronous worker and `setup` with descriptors, log pipes, cancellation by close, the process-group kill, `env`, `cwd`, `RLIMIT_FSIZE`, the refusal rule, and the adapter's per-slot run queue. | SI-A (slot containers) and SI-C (D6's `setup`). |
-| WM-B | `lenny-materialize` for `inlineFile`, `mkdir`, and `uploadFile`; per-source staging, the content socket and done pipes, `spoolSizeLimitBytes` with the shared staging space, its wait, its admission floor, and the gateway's refusal at upload, reflink clones of staged files, the plan memfd, and result validation; staging in `/lenny/bin`; pre-start `materialize` with the working-directory check through the broker. | WM-A, SI-B (the broker), and PL-B. |
-| WM-C | Archive extraction in the helper and its removal from the gateway; the §7.4 and §13.4 rewrite. | WM-B. |
-| WM-D | Git in the helper: the pinned git, `gitClone`, the tree-size check, the index refresh, `capture-copy`, and `restore-complete`. | WM-B, EG proposal 3, DR-11, the IC change for the capture copy, and the egress proposal that carries the fetch grant. |
-| WM-E | Mid-session `overlay` for uploads and child-file imports, `discard`, and the checkpoint's skip of the reserved names. | WM-B, IC-1, and the MD-26 proposal. |
-| WM-F | Resume, derive, and the snapshotless rebuild through the helper. | WM-B, WM-D, IC-5, and SD-1. |
-| WM-G | `runtimes.minSlotMemoryBytes` and writeback pacing. | The validation of "Validation owed", and billing decision 7's mapping. |
-| WM-H | The warm-up checkout: `prestage` of the `gitRepository` entries with `prestage: true`, adoption at bind by the first source of each repository, the background `discard`, and the reflink rebuild. | WM-D, WM-I, PL-D (no pre-launch), DR-11, and the RV proposal that adds `prestage` (D29 of that design). |
-| WM-I | `lenny-store-fill`: the init container, the store fill and the pristine trees moved out of the adapter, the adapter's delete-only use of the store volume, and `netagent`'s attribution of the fill's UID. | PL-B and the egress proposal that carries decision 61. |
+### 0153.S1 Asynchronous worker and setup
+- status: Planned
+- aliases: [WM-A, WM-3, WM-11]
+- lanes: [specification, code, documentation]
+- depends-on: [0145.S1, 0145.S3]
 
-WM-C and WM-D can land in either order after WM-B. The gateway's extraction stays until WM-C lands, so nothing breaks between proposals. WM-H lands after pre-launched runtimes are gone, because a pre-launched process could hold a staged tree open.
+The supervisor's asynchronous worker and `setup` with descriptors, log pipes, cancellation by close, the process-group kill, `env`, `cwd`, `RLIMIT_FSIZE`, the refusal rule, and the adapter's per-slot run queue.
+
+The step needs SI-A (slot containers, [0145.S1](../0145-session-isolation/change.md#steps)) and SI-C (D6's `setup`, [0145.S3](../0145-session-isolation/change.md#steps)).
+
+### 0153.S2 lenny-materialize for files and uploads
+- status: Planned
+- aliases: [WM-B, WM-1, WM-2, WM-4, WM-5, WM-6, WM-7, WM-8, WM-16]
+- lanes: [specification, code, documentation]
+- depends-on: [0153.S1, 0145.S2, 0118.S4]
+
+`lenny-materialize` for `inlineFile`, `mkdir`, and `uploadFile`; per-source staging, the content socket and done pipes, `spoolSizeLimitBytes` with the shared staging space, its wait, its admission floor, and the gateway's refusal at upload, reflink clones of staged files, the plan memfd, and result validation; staging in `/lenny/bin`; pre-start `materialize` with the working-directory check through the broker.
+
+The step needs SI-B (the broker, [0145.S2](../0145-session-isolation/change.md#steps)) and PL-B ([0118.S4](../0118-agent-pod-layout/change.md#steps)).
+
+### 0153.S3 Archive extraction in the helper
+- status: Planned
+- aliases: [WM-C, WM-9]
+- lanes: [specification, code, documentation]
+- depends-on: [0153.S2]
+
+Archive extraction in the helper and its removal from the gateway; the §7.4 and §13.4 rewrite. The gateway's extraction stays until 0153.S3 lands, so nothing breaks between steps.
+
+### 0153.S4 Git in the helper
+- status: Planned
+- aliases: [WM-D, WM-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0153.S2, 0127.S3, 0147.S8, 0131.S1]
+
+Git in the helper: the pinned git, `gitClone`, the tree-size check, the index refresh, `capture-copy`, and `restore-complete`.
+
+The step needs EG proposal 3 ([0127.S3](../0127-egress-and-git/change.md#steps)), which is also the egress step that carries the fetch grant, DR-11 ([0147.S8](../0147-tenant-derived-runtimes/change.md#steps)), and the IC change for the capture copy, which is IC-1's "Git repositories" ([0131.S1](../0131-incremental-checkpoint/change.md#steps)). 0153.S3 and 0153.S4 can land in either order after 0153.S2.
+
+### 0153.S5 Mid-session overlay
+- status: Planned
+- aliases: [WM-E, WM-12]
+- lanes: [specification, code, documentation]
+- depends-on: [0153.S2, 0131.S1, 0135.S5]
+
+Mid-session `overlay` for uploads and child-file imports, `discard`, and the checkpoint's skip of the reserved names.
+
+The step needs IC-1 ([0131.S1](../0131-incremental-checkpoint/change.md#steps)) and the MD-26 proposal ([0135.S5](../0135-message-delivery/change.md#steps)).
+
+### 0153.S6 Resume, derive, and snapshotless rebuild
+- status: Planned
+- aliases: [WM-F, WM-13]
+- lanes: [specification, code, documentation]
+- depends-on: [0153.S2, 0153.S4, 0131.S5, 0144.S1]
+
+Resume, derive, and the snapshotless rebuild through the helper.
+
+The step needs IC-5 ([0131.S5](../0131-incremental-checkpoint/change.md#steps)) and SD-1 ([0144.S1](../0144-session-derive/change.md#steps)).
+
+### 0153.S7 Slot memory floor and writeback pacing
+- status: Planned
+- aliases: [WM-G, WM-14]
+- lanes: [specification, code, documentation]
+- depends-on: [0121.S1]
+
+`runtimes.minSlotMemoryBytes` and writeback pacing.
+
+The step waits on the validation of "Validation owed", and on billing decision 7's mapping, which BR-1 ([0121.S1](../0121-billing-resource-attribution/change.md#steps)) carries.
+
+### 0153.S8 Warm-up checkout
+- status: Planned
+- aliases: [WM-H, WM-15]
+- lanes: [specification, code, documentation]
+- depends-on: [0153.S4, 0153.S9, 0118.S2, 0147.S8, 0140.S1]
+
+The warm-up checkout: `prestage` of the `gitRepository` entries with `prestage: true`, adoption at bind by the first source of each repository, the background `discard`, and the reflink rebuild.
+
+The step needs PL-D (no pre-launch, [0118.S2](../0118-agent-pod-layout/change.md#steps)), DR-11 ([0147.S8](../0147-tenant-derived-runtimes/change.md#steps)), and the RV proposal that adds `prestage` (D29 of that design, [0140.S1](../0140-runtime-revisions/change.md#steps)). It lands after pre-launched runtimes are gone, because a pre-launched process could hold a staged tree open.
+
+### 0153.S9 lenny-store-fill
+- status: Planned
+- aliases: [WM-I]
+- lanes: [specification, code, documentation]
+- depends-on: [0118.S4, 0127.S5]
+
+`lenny-store-fill`: the init container, the store fill and the pristine trees moved out of the adapter, the adapter's delete-only use of the store volume, and `netagent`'s attribution of the fill's UID.
+
+The step needs PL-B ([0118.S4](../0118-agent-pod-layout/change.md#steps)) and the egress proposal that carries decision 61, which is EG-5 ([0127.S5](../0127-egress-and-git/change.md#steps)).
 
 ## Sources
 

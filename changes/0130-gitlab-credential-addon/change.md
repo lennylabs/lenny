@@ -290,13 +290,31 @@ Tenant `initech` runs `gitlab.initech.internal` at 19.4, Premium, and S13 has pa
 - Erin leaves the project: the sweep refuses, the binding change flushes, and the Token Service revokes the session's token through the durable pending-revocation record.
 - On GitLab 18.x or on a VCS pool with `prAuthoring: bot`, the same `glab` commands run under a project token, and the MR author is the bot. There the preset alone stops approval and merge, and Erin can approve the bot's MR unless "Prevent approvals by users who add commits" excludes her through a commit author the agent can edit.
 
-## Dependencies
+## Steps
 
-| Proposal | Depends on | Why |
-| :-- | :-- | :-- |
-| GL-1 (the kind and the check) | [UG-1](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds), [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization), and [UC-7](../0151-user-credential-delivery/change.md#uc-7-add-ons) | The VCS kind rules, the release check, and the kind registry. |
-| GL-2 (user-authored merge requests) | GL-1, [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring), and S13 and S17 passing. S13 runs before GL-2 starts. | The token path and the preset's behaviour on a live host. |
-| GL-3 (`gitlab-deny`) | [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) and [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) | The rule evaluator, the preset format, and the default preset on a VCS pool's API host. |
+### 0130.S1 The gitlab kind
+- status: Planned
+- aliases: [GL-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0152.S1, 0152.S2, 0151.S7]
+
+The design is in [GL-1](#gl-1-the-gitlab-kind), which covers the kind and the repository check. The dependencies cover the VCS kind rules, the release check, and the kind registry.
+
+### 0130.S2 User-authored merge requests
+- status: Planned
+- aliases: [GL-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0130.S1, 0152.S3]
+
+The design is in [GL-2](#gl-2-user-authored-merge-requests). The dependencies cover the token path and the preset's behaviour on a live host. The spikes S13 and S17 under ["Validation owed"](#validation-owed) have to pass, and S13 runs before the step starts.
+
+### 0130.S3 The gitlab-deny preset
+- status: Planned
+- aliases: [GL-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0151.S4, 0152.S3]
+
+The design is in [GL-3](#gl-3-the-gitlab-deny-preset). The dependencies cover the rule evaluator, the preset format, and the default preset on a VCS pool's API host.
 
 ## Documentation
 

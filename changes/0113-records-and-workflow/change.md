@@ -1,6 +1,6 @@
 # Records and workflow
 
-Status: `In progress`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `In progress`, revision 3, 2026-11-16. Every step has landed; the status becomes `Implemented` when the owner merges the branch. Programs: [v1](../programs/v1.md), milestone M0.
 
 ## Problem
 
@@ -110,7 +110,7 @@ A script moves each design and its evidence, splits out the review history, rena
 Update `scope.go`, the residual registers, `AGENTS.md`, and the contribution page, and run tier 0 and the link check.
 
 ### 0113.S4 Convert the moved designs' proposals into steps, and generate the board
-- status: Building
+- status: Landed
 - lanes: [non-specification]
 - depends-on: [0113.S3]
 

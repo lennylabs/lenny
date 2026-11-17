@@ -597,12 +597,38 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| CR-A | The removal (CR-1), including the D7 refusals, the successor pointers, and the records. | Nothing. CA-0 lands before it or with it. |
-| CR-B | The identity assertion (CR-2), with the tenant key sets, the deployment key set, the reference verifier, and the pod refusal of D11. | The egress design's binding and Token Service proposals, and the proposal that lands UC-3's pod refusal and `retireOnRelease`, which D11 extends. |
-| CR-C | The egress halt at suspension (CR-4), with `CH-EGRESSHALT` and `HaltSessionEgress`. | The session lifecycle design's SL proposals, and the egress design's fetch-grant channel. |
-| CR-D | Documentation of CR-3. | CR-A and CR-B. |
+### 0124.S1 Connector removal
+- status: Planned
+- aliases: [CR-A, CR-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0123.S1]
+- closes: [F-4.3.1]
+
+The removal (CR-1), including the D7 refusals, the successor pointers, and the records. CA-0 (0123.S1) lands before it or with it.
+
+### 0124.S2 Identity assertion
+- status: Planned
+- aliases: [CR-B, CR-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S4, 0127.S10, 0151.S3]
+
+The identity assertion (CR-2), with the tenant key sets, the deployment key set, the reference verifier, and the pod refusal of D11. It depends on the egress design's binding and Token Service steps, which the egress design's dependency table names as EG-2, EG-4, and EG-10: the pod credential API, `pkg/binding`, and slot attribution; the typed `secret` union and `inject`; and the `credential.mint` stream. It also depends on the step that lands UC-3's pod refusal and `retireOnRelease`, because D11 extends them.
+
+### 0124.S3 Egress halt at suspension
+- status: Planned
+- aliases: [CR-C, CR-4]
+- lanes: [specification, code, documentation]
+- depends-on: [0146.S1, 0146.S2, 0127.S2, 0127.S3]
+
+The egress halt at suspension (CR-4), with `CH-EGRESSHALT` and `HaltSessionEgress`. It depends on the session lifecycle design's SL steps and on the egress design's fetch-grant channel, which EG-3 adds and `CH-EGRESSHALT` follows. The egress design's dependency table also names EG-2, for slot attribution.
+
+### 0124.S4 Documentation of external services
+- status: Planned
+- aliases: [CR-D, CR-3]
+- lanes: [documentation]
+- depends-on: [0124.S1, 0124.S2]
+
+Documentation of CR-3.
 
 ## Sources
 

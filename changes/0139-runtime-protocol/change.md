@@ -850,11 +850,33 @@ The owner asked on 2026-11-13 that every design's documentation list every setti
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| RP-A | The handshake per slot with its refusal handling, the capability catalog with its dependency rules, the bind check at the gateway and the slot, versioning, conformance by capability, the removal of the integration levels from the specification, and the session-from-connection rule of RPR-18 with `sessionId` on `session_start` alone, with O7 and O9 as decided. AR's proposal AR-C removes `startId` in the same release. | MD-E, so the frame tables change once; SL-A, so the lifecycle's level statements are restated once; SI-A, for per-slot endpoints, the slot binding, and per-slot manifests; and SI-C, for one session per runtime process, on which RPR-18 and the refusal handling rest. |
-| RP-B | Tool calls on frames, tool connections under O3, the platform tools on every pod, availability with `UpdateAvailability`, manifest version 2, the retirement of the MCP channels under O11, the removal of the adapter-local tools under D5, and the reference bridge section. | RP-A, SI-A, DA-A, and EG-3. It supersedes the intra-pod part of MP-5. CA-E, CA-H, and CA-I are withdrawn with connectors by [`0124-connector-removal`](../0124-connector-removal/change.md). |
-| RP-C | The SDKs' handshake and bridge, the subprocess executor with its tool socket, the sample runtimes, the reference runtimes' wrappers, and the documentation. | RP-A and RP-B. |
+### 0139.S1 Handshake, capabilities, and versioning
+- status: Planned
+- aliases: [RP-A, RP-1, RP-2, RP-6, RP-7, RP-8]
+- lanes: [specification, code, documentation]
+- depends-on: [0135.S5, 0146.S1, 0145.S1, 0145.S3]
+
+The handshake per slot with its refusal handling, the capability catalog with its dependency rules, the bind check at the gateway and the slot, versioning, conformance by capability, the removal of the integration levels from the specification, and the session-from-connection rule of RPR-18 with `sessionId` on `session_start` alone, with O7 and O9 as decided. AR's proposal AR-C (0119.S3) removes `startId` in the same release.
+
+It lands after 0135.S5 (MD-E), so the frame tables change once; after 0146.S1 (SL-A), so the lifecycle's level statements are restated once; after 0145.S1 (SI-A), for per-slot endpoints, the slot binding, and per-slot manifests; and after 0145.S3 (SI-C), for one session per runtime process, on which RPR-18 and the refusal handling rest.
+
+### 0139.S2 Tool calls on frames and the reference bridge
+- status: Planned
+- aliases: [RP-B, RP-3, RP-4, RP-5]
+- lanes: [specification, code, documentation]
+- depends-on: [0139.S1, 0145.S1, 0126.S1, 0127.S3]
+
+Tool calls on frames, tool connections under O3, the platform tools on every pod, availability with `UpdateAvailability`, manifest version 2, the retirement of the MCP channels under O11, the removal of the adapter-local tools under D5, and the reference bridge section.
+
+It supersedes the intra-pod part of MP-5 (0134.S3). CA-E, CA-H, and CA-I are withdrawn with connectors by [`0124-connector-removal`](../0124-connector-removal/change.md).
+
+### 0139.S3 SDKs, executor, and reference runtimes
+- status: Planned
+- aliases: [RP-C]
+- lanes: [code, documentation]
+- depends-on: [0139.S1, 0139.S2]
+
+The SDKs' handshake and bridge, the subprocess executor with its tool socket, the sample runtimes, the reference runtimes' wrappers, and the documentation.
 
 ## Sources
 

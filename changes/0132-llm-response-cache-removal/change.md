@@ -401,12 +401,16 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| RC-A | The removal: RC-1 to RC-4. | Nothing. It rebases on CA-G if CA-G lands first. |
-| RC-B | Moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): the §4.9 passthrough statement under this design's D2 ("RC-5"), the usage count, the billing fields, and the closure of F-11.2.38. | That design's own order, and the owner's settlement D2 for the passthrough statement. It is independent of RC-A. |
+### 0132.S1 Removal of the LLM response cache
+- status: Planned
+- aliases: [RC-A, RC-1, RC-2, RC-3, RC-4]
+- lanes: [specification, code, documentation]
 
-RC-A can land first because it removes behaviour and adds none. RC-B fixes a metering gap that exists with or without the semantic cache.
+The removal: RC-1 to RC-4. It rebases on CA-G (0123.S2) if CA-G lands first. 0132.S1 can land first because it removes behaviour and adds none.
+
+### Notes on the steps
+
+RC-B moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), where 0133.S1 (LU-A) absorbs it: the §4.9 passthrough statement under this change's D2 ("RC-5"), the usage count, the billing fields, and the closure of F-11.2.38. It follows that change's own order, and the owner's settlement D2 for the passthrough statement. It is independent of 0132.S1. RC-B fixes a metering gap that exists with or without the semantic cache.
 
 ## Sources
 

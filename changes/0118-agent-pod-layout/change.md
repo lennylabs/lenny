@@ -1037,16 +1037,54 @@ The owner asked on 2026-11-13 that every design's documentation list every setti
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| PL-A | Removal of the embedded deployment model: the field, the CRD rules, the pod builder's branch, the in-process runtime and its pre-launched variant, the RuntimeReconciler validation, every specification branch, the echo runtime and the Embedded Mode seed on the Go SDK, and `command` required on every runtime. | IC-9 in the same release or earlier, because IC-9 removes the `SIGSTOP` path and the `embedded` level. |
-| PL-D | Removal of pre-launched runtimes from the pod and the pool ("PL-8"), with RP D6's removal of the capability. | PL-A, and RP's proposal for D6 in the same release. |
-| PL-E | The renames and `acknowledgeSharedPod` of "PL-9", across the specification, the schemas, the code, the charts, and the documentation. | None; it can land first, because it changes names only. |
-| PL-B | The layout and volumes: the paths of "PL-3", the reserved names, the volumes of "PL-5", `lenny-bin-stage`, the reserved root, the `/adapter` view, the removal of `/artifacts` and `slotlayout`, the canary order, the disk watch with its three methods, the Kata block-plain exception, the eviction and ephemeral-storage rules, `lenny-store-fill`, the pod-wide spool, `slot-<n>-netcred`, and O3, O6, O7, and O8. | PL-A, and SI-A in the same release, because SI-A renders the per-slot volumes this design names; WM's spool change and the egress design's decision 61 in the same release. |
-| PL-C | The runtime-facing environment and the contract: O1, O2, and O4, the SDKs, the reference runtimes' `env`, §26, §24.18, and the runtime author guide. | PL-B. |
-| PL-F | Project quotas ("PL-10", D25): `lenny-quota-agent` with its image, DaemonSet, rights, seccomp profile and its installer, Landlock restriction (D28), admission policy, and chart values, the adapter's quota-bound method, the status annotation with the metrics and the alert that `lenny-ops` derives from it (D29), posture's `diskQuota`, and the node requirements in the documentation. | PL-B, for the disk watch; placement's PM-C, for the named node agents and `lenny-node-agents`. |
+### 0118.S1 Removal of the embedded deployment model
+- status: Planned
+- aliases: [PL-A, PL-2]
+- lanes: [specification, code, documentation]
 
-PL-A goes first because it removes a branch from every file PL-B and SI-A rewrite. PL-E touches the same files as most other proposals, so landing it first keeps their diffs on the new names.
+Removal of the embedded deployment model: the field, the CRD rules, the pod builder's branch, the in-process runtime and its pre-launched variant, the RuntimeReconciler validation, every specification branch, the echo runtime and the Embedded Mode seed on the Go SDK, and `command` required on every runtime. IC-9 ([0131.S9](../0131-incremental-checkpoint/change.md#steps)) lands in the same release or earlier, because IC-9 removes the `SIGSTOP` path and the `embedded` level.
+
+This step goes first because it removes a branch from every file that 0118.S4 (PL-B) and SI-A rewrite.
+
+### 0118.S2 Removal of pre-launched runtimes
+- status: Planned
+- aliases: [PL-D, PL-8]
+- lanes: [specification, code, documentation]
+- depends-on: [0118.S1]
+
+Removal of pre-launched runtimes from the pod and the pool ("PL-8"), with RP D6's removal of the capability. RP's proposal for D6 lands in the same release.
+
+### 0118.S3 Renames and acknowledgeSharedPod
+- status: Planned
+- aliases: [PL-E, PL-9]
+- lanes: [specification, code, documentation]
+- depends-on: [0119.S2]
+
+The renames and `acknowledgeSharedPod` of "PL-9", across the specification, the schemas, the code, the charts, and the documentation. It waits for AR-B ([0119.S2](../0119-agent-runtimes-only/change.md#steps)) so that it renames no service-mode field, and it can land before this change's other steps, because it changes names only. It touches the same files as most other proposals, so landing it first keeps their diffs on the new names.
+
+### 0118.S4 Layout and volumes
+- status: Planned
+- aliases: [PL-B, PL-3, PL-4, PL-5]
+- lanes: [specification, code, documentation]
+- depends-on: [0118.S1]
+
+The layout and volumes: the paths of "PL-3", the reserved names, the volumes of "PL-5", `lenny-bin-stage`, the reserved root, the `/adapter` view, the removal of `/artifacts` and `slotlayout`, the canary order, the disk watch with its three methods, the Kata block-plain exception, the eviction and ephemeral-storage rules, `lenny-store-fill`, the pod-wide spool, `slot-<n>-netcred`, and O3, O6, O7, and O8. SI-A ([0145.S1](../0145-session-isolation/change.md#steps)) lands in the same release, because SI-A renders the per-slot volumes this design names. WM's spool change and the egress design's decision 61 land in the same release.
+
+### 0118.S5 Runtime-facing environment and contract
+- status: Planned
+- aliases: [PL-C, PL-6]
+- lanes: [specification, code, documentation]
+- depends-on: [0118.S4]
+
+The runtime-facing environment and the contract: O1, O2, and O4, the SDKs, the reference runtimes' `env`, §26, §24.18, and the runtime author guide.
+
+### 0118.S6 Project quotas
+- status: Planned
+- aliases: [PL-F, PL-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0118.S4, 0136.S3]
+
+Project quotas ("PL-10", D25): `lenny-quota-agent` with its image, DaemonSet, rights, seccomp profile and its installer, Landlock restriction (D28), admission policy, and chart values, the adapter's quota-bound method, the status annotation with the metrics and the alert that `lenny-ops` derives from it (D29), posture's `diskQuota`, and the node requirements in the documentation. It needs 0118.S4 for the disk watch, and placement's PM-C for the named node agents and `lenny-node-agents`.
 
 ## Sources
 

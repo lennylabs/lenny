@@ -888,44 +888,92 @@ The `audit_range` row under "Problem" is already recorded: F-12.8.7 and F-12.8.2
 
 ## Steps
 
-| Label | Proposal | Contents |
-| :-- | :-- | :-- |
-| FE-0 | Cases and custody | The case record, the `forensics.*` events, the `platform-forensics` role, and the `lenny-ctl` subsection. |
-| FE-1 | Quarantine | The API, the row and label, the binding state's writer, the phase, every retirement path, the preservation RPC, the `keepalive` container, the freeze, the policy selectors, the webhook rules, the PDB, and release. |
-| FE-2 | Mirror store hold | The store APIs, the flag's setter, sealing with a fresh generation, the snapshot, and purge. |
-| FE-3 | Security holds and the retention class | The hold API and basis, separate records, continuous copy, the audit segments, the marker's setter, the GC guard and `EnsureCopied`, the §12.8 ledger change, deferred erasure, escrow of evidence and keys, and the retention class. |
-| FE-4 | Reconciler | `pod.address`, `lenny-evidence-reconcile`, the rules, `evidence.reconcile`, imports, and the API. |
-| FE-5 | Capture runbook and abuse workflow | The unbound role, the published capture image, capture registration, `attribute`, export and verify, and the runbooks. |
-| FE-6a | Tool activity | `agent.activity.tool`, the key store, the SDK and adapter report, the coverage API, the read API, and redaction. |
-| FE-6b | Process and file activity | The collector, `activityMonitoring` and the monitored class, `agent.activity.exec`, `.exec.args`, and `.file`, the producer contract, and the Tetragon reference forwarder. It starts with the spike under "Validation owed". |
+### 0128.S1 Cases and custody
+- status: Planned
+- aliases: [FE-0]
+- lanes: [specification, code, documentation]
 
-| Proposal | Depends on | Why |
-| :-- | :-- | :-- |
-| FE-0 | None | It adds records and a role. |
-| FE-1 | FE-0, [EG-2](../0127-egress-and-git/change.md#steps), [EG-7](../0127-egress-and-git/change.md#steps), [IC-9](../0131-incremental-checkpoint/change.md#ic-9-removal-of-the-embedded-sigstop-checkpoint-path), the slot containers and slot release of [`0145-session-isolation`](../0145-session-isolation/change.md), and the `setup` protocol of [WM-3](../0153-workspace-materialization/change.md#wm-3-the-protocol) | The case record, the `quarantined` binding state, which EG-2 adds and EG-7 carries to level 1's tenant policies, the removal of the §4.4.3 liveness rule of the `SIGSTOP` checkpoint path, the per-slot `CH-SUPERVISE` that carries `freeze`, the slot release that the preservation state suppresses, and the cancel pipe |
-| FE-2 | FE-0, FE-3, [EG-5](../0127-egress-and-git/change.md#steps) | The case record, the `security_holds` row that purge reads, and the held flag |
-| FE-3 | FE-0, [EG-10](../0127-egress-and-git/change.md#steps) | The case record, the held marker, and `EvidenceStore` |
-| FE-4 | [EG-2](../0127-egress-and-git/change.md#steps), [EG-3](../0127-egress-and-git/change.md#steps), [EG-5](../0127-egress-and-git/change.md#steps), [EG-10](../0127-egress-and-git/change.md#steps), FE-1 | The streams it reconciles, and the quarantine rule |
-| FE-5 | FE-0, FE-1, FE-2, FE-3, FE-4, [EG-8](../0127-egress-and-git/change.md#steps) | The procedures it documents, the `pod.address` and `egress.accesslog` checks in `attribute`, and the cross-tenant query |
-| FE-6a | [EG-9](../0127-egress-and-git/change.md#steps), [EG-10](../0127-egress-and-git/change.md#steps), FE-3 for its hold behaviour | The named permissions, the envelope, ingest, the key field, and the marker. It needs FE-3 only for the hold rule, and a release before FE-3 ships without that rule. |
-| FE-6b | FE-6a, [EG-11](../0127-egress-and-git/change.md#steps), the named node agents of [PM-5](../0136-placement/change.md#pm-5-rendering) and the `lenny-node-agents` namespace of [PM-9](../0136-placement/change.md#pm-9-namespaces) | The streams and keys, the PKI, and the collector's tolerations and namespace |
-| FE-4's `R-ACTIVITY` rule | FE-6b | It lands with FE-6b, so FE-4 does not wait. |
+The case record, the `forensics.*` events, the `platform-forensics` role, and the `lenny-ctl` subsection. It depends on no step, because it adds records and a role.
 
-The table in [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) lists FE-1, FE-2, FE-3, FE-4, and FE-6 with their EG dependencies, and the rows above add FE-5, FE-6a, and FE-6b to it. That table lists EG-2 alone for FE-1, while the egress design's `quarantined` hook names EG-2 and EG-7, so the FE-1 row above adds EG-7. No shared queue file exists, and proposals from different designs interleave as long as these hold.
+[SO-4a](../0142-security-oversight/change.md#so-4a-mirror-to-the-tenant-chain) of [`0142-security-oversight`](../0142-security-oversight/change.md) (0142.S4) must exclude the `forensics.*` prefix from what it mirrors to a tenant, unless a case discloses it. If SO-4a lands first, this step adds the exclusion.
+
+### 0128.S2 Quarantine
+- status: Planned
+- aliases: [FE-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0128.S1, 0127.S2, 0127.S7, 0131.S9, 0145.S1, 0145.S3, 0153.S1]
+
+The API, the row and label, the binding state's writer, the phase, every retirement path, the preservation RPC, the `keepalive` container, the freeze, the policy selectors, the webhook rules, the PDB, and release.
+
+It needs the case record; the `quarantined` binding state, which [EG-2](../0127-egress-and-git/change.md#steps) adds and [EG-7](../0127-egress-and-git/change.md#steps) carries to level 1's tenant policies; the removal of the §4.4.3 liveness rule of the `SIGSTOP` checkpoint path by [IC-9](../0131-incremental-checkpoint/change.md#ic-9-removal-of-the-embedded-sigstop-checkpoint-path); the slot containers and the per-slot `CH-SUPERVISE` of [`0145-session-isolation`](../0145-session-isolation/change.md), which carries `freeze`; that design's slot release, which the preservation state suppresses; and the cancel pipe of the `setup` protocol of [WM-3](../0153-workspace-materialization/change.md#wm-3-the-protocol). The table in [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) lists EG-2 alone for FE-1, while the egress design's `quarantined` hook names EG-2 and EG-7, so this step also depends on EG-7.
+
+A rollout's deletion of a pod set under [RV-3](../0140-runtime-revisions/change.md#rv-3-pods) and [RV-4](../0140-runtime-revisions/change.md#rv-4-rollout) of [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) skips a quarantined `AgentPod` and its `PodSet`, which that design stages as its RVR-10, and the "Retirement paths" row for `Contracting` records it here. Neither this step nor 0140.S1 waits for the other, because the skip reads a label that nothing sets until this step lands.
+
+### 0128.S3 Mirror store hold
+- status: Planned
+- aliases: [FE-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0128.S1, 0128.S4, 0127.S5]
+
+The store APIs, the flag's setter, sealing with a fresh generation, the snapshot, and purge. It needs the case record, the `security_holds` row that purge reads, and the held flag of [EG-5](../0127-egress-and-git/change.md#steps).
+
+### 0128.S4 Security holds and the retention class
+- status: Planned
+- aliases: [FE-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0128.S1, 0127.S10]
+
+The hold API and basis, separate records, continuous copy, the audit segments, the marker's setter, the GC guard and `EnsureCopied`, the §12.8 ledger change, deferred erasure, escrow of evidence and keys, and the retention class. It needs the case record, and the held marker and `EvidenceStore` of [EG-10](../0127-egress-and-git/change.md#steps).
+
+[IC-6](../0131-incremental-checkpoint/change.md#ic-6-retention-garbage-collection-erasure-and-legal-hold) of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) defines a security hold's copy of a checkpoint snapshot, with every session pack and platform pack it references, and calls `EnsureCopied` before it deletes a snapshot, a session pack, or a platform pack.
+
+### 0128.S5 Reconciler
+- status: Planned
+- aliases: [FE-4]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S3, 0127.S5, 0127.S10, 0128.S2]
+
+`pod.address`, `lenny-evidence-reconcile`, the rules, `evidence.reconcile`, imports, and the API. It needs the streams it reconciles, from [EG-2](../0127-egress-and-git/change.md#steps), [EG-3](../0127-egress-and-git/change.md#steps), [EG-5](../0127-egress-and-git/change.md#steps), and [EG-10](../0127-egress-and-git/change.md#steps), and the quarantine rule of 0128.S2. Its `R-ACTIVITY` rule lands with 0128.S8, so this step does not wait for 0128.S8.
+
+### 0128.S6 Capture runbook and abuse workflow
+- status: Planned
+- aliases: [FE-5]
+- lanes: [specification, code, documentation]
+- depends-on: [0128.S1, 0128.S2, 0128.S3, 0128.S4, 0128.S5, 0127.S8]
+
+The unbound role, the published capture image, capture registration, `attribute`, export and verify, and the runbooks. It needs the procedures it documents, the `pod.address` and `egress.accesslog` checks in `attribute`, and the cross-tenant query of [EG-8](../0127-egress-and-git/change.md#steps).
+
+This step adds no right to `lenny-ops`, so it does not conflict with the narrowing of [SO-7](../0142-security-oversight/change.md#so-7-f-25440-lenny-ops-rights) (0142.S9).
+
+### 0128.S7 Tool activity
+- status: Planned
+- aliases: [FE-6a, FE-6 (part)]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S9, 0127.S10]
+
+`agent.activity.tool`, the key store, the SDK and adapter report, the coverage API, the read API, and redaction. It needs the named permissions of [EG-9](../0127-egress-and-git/change.md#steps), and the envelope, ingest, the key field, and the marker of [EG-10](../0127-egress-and-git/change.md#steps). It uses 0128.S4 for its hold behaviour only, and a release before 0128.S4 ships without that rule.
+
+[SO-1](../0142-security-oversight/change.md#so-1-security-roles)'s `security-auditor` holds an activity read permission only through `auditorStreamGrants`. Neither this step nor 0142.S1 waits for the other, because `tenant-admin` holds the read permissions throughout. A per-tenant SIEM under [SO-3](../0142-security-oversight/change.md#so-3-per-tenant-siem-destination) receives activity streams through its export. This step states what crosses it, and SO-3 states the destination.
+
+### 0128.S8 Process and file activity
+- status: Planned
+- aliases: [FE-6b, FE-6 (part)]
+- lanes: [specification, code, documentation]
+- depends-on: [0128.S7, 0127.S11, 0136.S3, 0136.S2]
+
+The collector, `activityMonitoring` and the monitored class, `agent.activity.exec`, `.exec.args`, and `.file`, the producer contract, and the Tetragon reference forwarder. It starts with the spike under "Validation owed". It needs the streams and keys of 0128.S7, the PKI of [EG-11](../0127-egress-and-git/change.md#steps), and the collector's tolerations and namespace from the named node agents of [PM-5](../0136-placement/change.md#pm-5-rendering) and the `lenny-node-agents` namespace of [PM-9](../0136-placement/change.md#pm-9-namespaces). The `R-ACTIVITY` rule of 0128.S5 lands with this step.
+
+### Notes on the steps
+
+The table in [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) lists FE-1, FE-2, FE-3, FE-4, and FE-6 with their EG dependencies, and the steps above add FE-5, FE-6a, and FE-6b to it. No shared queue file exists, and steps from different changes interleave as long as these dependencies hold.
 
 | Other design | Relationship |
 | :-- | :-- |
-| [`0142-security-oversight`](../0142-security-oversight/change.md) [SO-1](../0142-security-oversight/change.md#so-1-security-roles) | SO-1's `security-auditor` holds an activity read permission only through `auditorStreamGrants`. Neither waits for the other, because `tenant-admin` holds them throughout. |
-| [SO-3](../0142-security-oversight/change.md#so-3-per-tenant-siem-destination) | A per-tenant SIEM receives activity streams through its export. FE-6a states what crosses it, and SO-3 states the destination. |
-| [SO-4](../0142-security-oversight/change.md#so-4-operator-access-transparency) | SO-4 must exclude the `forensics.*` prefix from what it mirrors to a tenant, unless a case discloses it. If SO-4 lands first, FE-0 adds the exclusion. |
-| [SO-7](../0142-security-oversight/change.md#so-7-f-25440-lenny-ops-rights) | FE-5 adds no right to `lenny-ops`, so it does not conflict with SO-7's narrowing. |
 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) [TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) | Holds and streams use the tenant, and an environment filter can be added to reads later. No dependency. |
 | [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) | Its `quarantined` handling needs nothing here. FE-6 takes nothing from `leakScan`. A link's `link_ref`, under ["Stored links"](../0151-user-credential-delivery/change.md#stored-links) in [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), follows "Delivered user tokens". |
 | [`0129-github-credential-addon`](../0129-github-credential-addon/change.md) | Child tokens, under [GH-2](../0129-github-credential-addon/change.md#gh-2-pull-request-authoring-on-github), follow "Delivered user tokens". No dependency in either direction. |
-| [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) [RV-3](../0140-runtime-revisions/change.md#rv-3-pods) and [RV-4](../0140-runtime-revisions/change.md#rv-4-rollout) | A rollout's deletion of a pod set skips a quarantined `AgentPod` and its `PodSet`, which that design stages as its RVR-10, and the "Retirement paths" row for `Contracting` records it here. Neither waits for the other, because the skip reads a label that nothing sets until FE-1 lands. |
-| [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) [IC-6](../0131-incremental-checkpoint/change.md#ic-6-retention-garbage-collection-erasure-and-legal-hold) and [IC-9](../0131-incremental-checkpoint/change.md#ic-9-removal-of-the-embedded-sigstop-checkpoint-path) | IC-6 defines a security hold's copy of a checkpoint snapshot, with every session pack and platform pack it references, and calls `EnsureCopied` before it deletes a snapshot, a session pack, or a platform pack. FE-1 depends on IC-9, as the table above states. |
-| [`0145-session-isolation`](../0145-session-isolation/change.md), [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), and [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) | They define the slot containers, the per-slot `CH-SUPERVISE` and its slot release, the volumes FE-5 copies, `keepalive`'s place in the pod blueprint, and the `setup` protocol with its cancel pipe. FE-1 and FE-5 read them as fixed inputs. |
-| [`0136-placement`](../0136-placement/change.md) | It places the collector and the capture Job as named node agents, owns their namespaces, and skips a quarantined pod in its drift drain. FE-6b depends on it, as the table above states. |
+| [`0145-session-isolation`](../0145-session-isolation/change.md), [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), and [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) | They define the slot containers, the per-slot `CH-SUPERVISE` and its slot release, the volumes FE-5 copies, `keepalive`'s place in the pod blueprint, and the `setup` protocol with its cancel pipe. FE-1 (0128.S2) and FE-5 (0128.S6) read them as fixed inputs. |
+| [`0136-placement`](../0136-placement/change.md) | It places the collector and the capture Job as named node agents, owns their namespaces, and skips a quarantined pod in its drift drain. 0128.S8 depends on its PM-5 and PM-9 steps. |
 | [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) | Its tenant key state decides which key wraps an evidence data key, its recorded tenant deletion deadline bounds the worked example's teardown, and its data classes name the classes this design uses. Decision 28 asked it for one change, which its revision 4 applies. Its `storage.platformChunkReuse` decides whether a tenant's snapshots reference platform packs that a hold must copy. |
 
 ## Changes requested of 0127-egress-and-git

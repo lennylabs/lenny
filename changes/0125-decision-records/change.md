@@ -211,7 +211,17 @@ Every test carries the `// spec:` annotation for the section it verifies, and te
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| REC-A | The specification changes. | Nothing. PLC-A of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) edits the same §4.6.1 paragraph, §19 row 14, and §23.2 paragraph in other phrases, so either lands first. The rows above state what each section reads under either order. |
-| REC-B | The deletions, the renames, the comments, the tests, the registers, and the documentation. | REC-A, so every `// spec:` citation and every document points to the new text. |
+### 0125.S1 Specification changes
+- status: Planned
+- aliases: [REC-A, REC-1 (part)]
+- lanes: [specification]
+
+The specification changes. PLC-A of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) edits the same §4.6.1 paragraph, §19 row 14, and §23.2 paragraph in other phrases, so either lands first. The rows under "Specification changes" state what each section reads under either order.
+
+### 0125.S2 Deletions, renames, comments, tests, registers, and documentation
+- status: Planned
+- aliases: [REC-B, REC-1 (part)]
+- lanes: [code, documentation]
+- depends-on: [0125.S1]
+
+The deletions, the renames, the comments, the tests, the registers, and the documentation. It lands after 0125.S1 so every `// spec:` citation and every document points to the new text.

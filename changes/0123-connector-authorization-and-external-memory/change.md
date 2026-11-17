@@ -914,20 +914,40 @@ Each test carries its `// spec:` annotation once the specification lands.
 
 > **Revised in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** CA-0 and CA-G stay live. CA-A to CA-F, CA-H, and CA-I are withdrawn with the connectors they land. CA-G no longer waits on CA-A to CA-F: it depends on CR-A of the removal design, so that the documented egress pattern replaces built-in memory when memory goes. The table keeps the earlier order as the record.
 
+### 0123.S1 Shared OAuth link flow
+- status: Planned
+- aliases: [CA-0]
+- lanes: [specification, code, documentation]
+- closes: [F-9.3.18]
+
+Shared OAuth link flow ([CA-0](#ca-0-shared-oauth-link-flow)) in `pkg/connectoroauth`, with today's §9.3 handlers converted to it. Closes the account-link defect. It lands first, and [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) depends on it.
+
+[`0151-user-credential-delivery`, "Defects found while verifying"](../0151-user-credential-delivery/change.md#defects-found-while-verifying) rates the account-link defect High wherever a connector is a confidential client, which is why this step comes first.
+
+### 0123.S2 Memory removal and external pattern documentation
+- status: Planned
+- aliases: [CA-G, CA-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0124.S1]
+
+Memory removal ([CA-10](#ca-10-removing-built-in-memory)) and the external pattern documentation. It depends on CR-A of the removal design so that the documented egress pattern replaces built-in memory when memory goes. Before revision 17 it depended on CA-A through CA-F, so that the documented replacement worked when memory went.
+
+### Notes on the steps
+
+The withdrawn proposals keep their rows below as the record, in the earlier order, between 0123.S1 (CA-0) and 0123.S2 (CA-G) for CA-A to CA-F and after 0123.S2 for CA-H and CA-I. None of them is a step.
+
 | Proposal | Content | Depends on |
 | :-- | :-- | :-- |
-| CA-0 | Shared OAuth link flow ([CA-0](#ca-0-shared-oauth-link-flow)) in `pkg/connectoroauth`, with today's §9.3 handlers converted to it. Closes the account-link defect. | Nothing. It lands first, and [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) depends on it. |
-| CA-A | Connector routes ([CA-1](#ca-1-link-flow)), and the removal of the admin OAuth routes. | CA-0 |
+| CA-A | Connector routes ([CA-1](#ca-1-link-flow)), and the removal of the admin OAuth routes. | 0123.S1 (CA-0) |
 | CA-B | Refresh, lease, and endpoint binding ([CA-2](#ca-2-token-lifecycle)). | CA-A |
 | CA-C | Default deny and environment on children and derived sessions ([CA-3](#ca-3-connector-access-and-environment)). | The [tenant-scoping decision](../0149-tenant-scoping-identity/change.md#decisions) |
 | CA-D | Typed error and connector prompts ([CA-5](#ca-5-propagating-the-failure)). | CA-A |
-| CA-E | Link check at create, derive, and external adapters, plus `deferConnectors` and the combined missing-links response ([CA-4](#ca-4-link-check)). | CA-A, CA-C, and the interceptor contract proposal of [`0141-runtime-routing`](../0141-runtime-routing/change.md#steps), which adds the post-chain point |
+| CA-E | Link check at create, derive, and external adapters, plus `deferConnectors` and the combined missing-links response ([CA-4](#ca-4-link-check)). | CA-A, CA-C, and the interceptor contract proposal of [`0141-runtime-routing`](../0141-runtime-routing/change.md#steps), 0141.S1, which adds the post-chain point |
 | CA-F | Resume and restart rules ([CA-6](#ca-6-resume-and-restart)), and delegation ([CA-7](#ca-7-delegated-children)). | CA-D, CA-E |
-| CA-G | Memory removal ([CA-10](#ca-10-removing-built-in-memory)) and the external pattern documentation. | CA-A through CA-F, so the documented replacement works when memory goes |
 | CA-H | The Claude Code and Codex wrappers' MCP configuration from `toolServers`, with `lenny-mcp-bridge` in their images ([CA-9](#ca-9-stdio-bridge)). The bridge itself lands in the runtime protocol design's proposals. | The reference bridge of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#steps), and ships with the Claude Code and Codex integrations |
 | CA-I | The `deferredToolDiscovery` true path: the link callback's `UpdateAvailability` call through `CH-HOLDERFORWARD`, and the compliance check ([CA-8](#ca-8-runtime-capability-and-late-tools)). The field and its `false` default land in CA-E. | The availability notice of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#steps), and the stock CLI spike or a runtime asking for it |
 
-[`0151-user-credential-delivery`, "Defects found while verifying"](../0151-user-credential-delivery/change.md#defects-found-while-verifying) rates the account-link defect High wherever a connector is a confidential client, which is why CA-0 comes first. CA-C's default deny and the child environment fix close a capability-filter bypass that exists today, and they also stand alone.
+CA-C's default deny and the child environment fix close a capability-filter bypass that exists today, and they also stand alone.
 
 ## Sources
 

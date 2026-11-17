@@ -1731,90 +1731,197 @@ Region and tenant key fields on mirror stores and evidence objects are in scope 
 
 ## Steps
 
-Proposal 0, the service-mode tenant pin, is withdrawn (decision 62). [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) removes service mode in its proposal AR-B, which closes F-5.2.65 and F-5.2.66 by removal and lands before the proposals of this design that touch the pod, so no proposal here rewrites service-mode code.
+Proposal 0, the service-mode tenant pin, is withdrawn (decision 62). [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) removes service mode in 0119.S2 (AR-B), which closes F-5.2.65 and F-5.2.66 by removal and lands before the steps of this change that touch the pod, so no step here rewrites service-mode code.
 
-1. **Git prerequisites**: GitHub App minting with provider capability levels and the token cache (F-4.9.44), repository identifiers, the shared repository-path canonicalizer, repository routing, and write-scope checks. The `github` provider keeps accepting a stored `token` until proposal 3 removes its consumers, so proposal 1 lands without breaking `gitClone`.
-2. **Pod network agent and proxied egress**: the `tenant_id` pattern, the removal of `provider-direct`, server TLS on the proxy hop and the pod binding API and mTLS on the egress decision API, that API's operations by client SAN, with the chart's reload, readiness, mount, CPU, and alert rules, the producers of `egress.decision`, `egress.tunnel`, `egress.local`, and `credential.mint`, the `quarantined` binding state, typed route targets and the per-kind validator, the Token Service's mint path through `lenny-egress`, the binding push and cache rule for credential pins, `netagent`, service account identity, `lenny-egress` on Envoy, `lenny-egress-authz` with the egress decision API and the pod binding API, the binding feed with fan-out and the read-scoped provisional resume binding (§7.3), the owner label on tenant-owned pods at creation (§5.2), port scoping, the Kubernetes issuer verifier, the pod credential API listener, the `pkg/binding` resolution package with each session's slot index, slot attribution and the per-slot scopes of decision 60 with their fallback, and the Token Service's new RBAC and ingress rows, the CA bundle assembly, the tunnel lifetime menu, quotas, the `proxied` egress profile, and the DNS resolver for pods with `egressProfile: proxied`.
-3. **Pod git path** (F-26.2.11): GitLab token reuse, the `git.operation` stream from `netagent`, `allowedRefPatterns`, commit identity, `gitAccess` and its effective-policy formula, the covered host set with its push and its alias data, the per-pod CA and its name constraints, termination and the git path on the egress endpoint with its fail-closed rules and LFS response handling, the terminated marker for covered hosts in decisions and in the decision cache's key, the coordination generation wait before materialization, the pod trust bundle in git's trust, push with minted tokens, `writableRepositories`, the rendered git config and per-host `sshForms` rules, the `origin` remote, LFS, redirect handling, `gc.auto=0` and `maintenance.auto=false` in the rendered configuration, slot attribution and the fetch grant with `CH-FETCHGRANT`, `netagent`'s handling of the helper's fetches, the gateway's Go `ls-refs` resolver through `lenny-egress`, the removal of the gateway clone path (which closes F-14.1.37), and the removal of `git-credential-lenny` and `lenny/vcs_token`. The pod-side clone itself, the pinned git, and the helper's git steps land with [`0153-workspace-materialization`](../0153-workspace-materialization/change.md)'s proposals, and the workspace ownership item needs no fix of its own (decision 51).
-4. **Credential delivery**: credential bindings with `inject` delivery (plain-HTTP upgrade, and EG-3's termination extended to bound hosts), `federation` delivery with the Token Service as OIDC issuer and the AWS, GCP, and Azure templates, `metadata` delivery with the AWS plugin, and `file` delivery with the generic directory and the `netrc` projection. It also covers the network descriptor, the SDK network accessor, and tenant client config files.
-5. **Git mirror and warm fill**: the store fill in `lenny-store-fill` with `netagent`'s attribution of its UID (decision 61), `prestage: true` on a `gitRepository` warm entry (decision 67), the held flag and region and key fields on stores, the `git.operation` stream from the mirror, `lenny-git-mirror` serving TLS, with its anti-affinity, `gitMirror.hostUsers` and its start check, the ID ranges and fetch UID reuse rule, its sandbox and capability exception, per-store ownership, the fetch retry window, the mirror prefetch resource, and the rewritten 0111.
-6. **Per-tenant routing and replacement** (F-13.2.28): upstream registrations and chaining, private destination pinning, egress groups with API assignment, exclusivity, and the `lenny.dev/egress-group` label, per-endpoint and per-binding CAs, tenant-registered public services, and deployer CA trust distribution.
-7. **Level 1 replacement**: identities and their rotation, the policy document, its host grammar, the EDL endpoint, the reference Squid renderer, the decision call and tunnel reports on the pod binding API, the `netagent` server-name check, the service identities for the ref resolver and the mirror, the Helm-rendered private destination grants and tenant-scoped policies, the direct path for `netagent`, the ref resolver, and the mirror, the validators' refusals, the acknowledgement, the install order with its preflight and post-install probe, the canary, and the documentation of its limits.
-8. **Tenant visibility**: decision queries and export, the effective-policy read, the shadow policy, the egress address read, and fixed-name files for more registries.
-9. **Egress policy objects** (F-5.2.67 and F-26.2.12): pool ownership (`ownerTenantId`, taken from draft 0111 because the formulas depend on it), ceilings, warm-up policies, tenant egress policy, session `egress.allowedHosts`, tenant pool overlays, host sets, the client proxy profile, the removal of category-keyed defaults from §26.2, the `egressProfile` write restriction, the per-class gate grants, one write path for opt-ins, and named permissions on the new reads.
-10. **Evidence ingest**: the envelope, `lenny-evidence`, `EvidenceStore`, the compactor, the chain anchor, retention, erasure, the held marker, and the regulated write-ahead path.
-11. **Egress PKI**: the egress CA, its Issuer and leaves with their `lenny.dev/doctor-optout` annotation, the `lenny-egress-ca` ConfigMap, and the rotation procedure, with no consumer until the others use it.
-12. **Exfiltration controls**: `credentialPinned` and read-only hosts, added to EG-3's terminated marker, and name constraints that cover those hosts. The other proposals do not wait for it, and until it lands the opaque-tunnel limits under "Residual risks and limits" apply to every host EG-3 does not cover.
+### 0127.S1 Git prerequisites
+- status: Planned
+- aliases: [EG-1, proposal 1]
+- lanes: [specification, code, documentation]
+- closes: [F-4.9.44]
 
-Proposals 1, 9, and 11 are independent of one another. Proposal 10 depends on proposal 11 for its certificates and lands with no producer until the others use it, so a decision service never ships without its evidence format. Proposal 2 depends on proposals 1, 9, 10, and 11, and on AR-B, since its Token Service minting path needs proposal 1, and it lands the pod credential API, `pkg/binding`, and that API's listener with no pod-side caller until proposals 3 and 4 use them, which its tests cover through a test client. Proposal 3 depends on proposals 1, 2, and 9. Proposals 4, 5, and 6 depend on proposals 2 and 9, and proposals 4 and 5 also depend on proposal 3. Proposal 8 depends on proposals 4, 6, and 10. Proposal 12 depends on proposals 2, 3, and 4, because it adds credential-pinned and read-only hosts to EG-3's terminated marker. The shared gateway key-source proposal, which fixes F-7.1.31 (each gateway process seeds its own `uploadToken` HMAC key ring, so another replica refuses an upload token it issued), is unaffected and can run first.
+GitHub App minting with provider capability levels and the token cache (F-4.9.44), repository identifiers, the shared repository-path canonicalizer, repository routing, and write-scope checks. The `github` provider keeps accepting a stored `token` until 0127.S3 removes its consumers, so 0127.S1 lands without breaking `gitClone`.
 
-Proposal 7 depends on proposals 2 and 3, and on proposal 5 only for the mirror's service identity. Later work: push forwarding through the mirror, and GCP and Azure `metadata` plugins. R14 is a separate remediation step that this design does not absorb.
+Requests from other changes: 0127.S1 carries the pre-mint step and the flavour refusal.
 
-**Requests from other designs on the proposals above.** EG-1 carries the pre-mint step and the flavour refusal. EG-2 carries `cacheUntil`, the asserted route and its level 2 contract row, with its level 1 decision call in EG-7, the readable entries, `pkg/binding`'s user fields, the provisional exclusion, the link provider endpoints, and the head read deadline. EG-3 carries the push option refusal, client-visible remotes, and the exception for a session under `allowRuntimeHeldCredentials`. EG-4 carries `handling`, the asserted route and its pod credential API fields, the inspection stage, the typed `secret`, the one-binding rule, and the granted-entries rule on a binding mint. EG-5 carries the repository in the egress decision API check. EG-9 carries the `userCredentialDelivery` gate, the delegated child exception, and `lockEgressToHosts`. EG-12 carries a VCS pool with `userAuthorization: required` as a credential pin source. From [`0141-runtime-routing`](../0141-runtime-routing/change.md) and [`0140-runtime-revisions`](../0140-runtime-revisions/change.md), EG-3 and EG-9 run their pool checks at the post-chain point ("Effective policy", **Where the pool checks run**), and EG-5 and EG-9 key the warm list, its hosts, and the readable set before binding on pool and revision. Neither creates a dependency: until RT-2's post-chain point lands, the checks run on the final pool where the create path checks it today, and until revisions land every runtime has one revision. From [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#changes-requested-of-0127-egress-and-git), EG-5 carries the mirror's fill causes and the prefetch record's pool, EG-2 carries the Token Service's own check of each cause ("Git mirror (`lenny-git-mirror`)", **Fill causes**), and EG-3 carries the gateway cause assertion and ref resolution after the post-chain point ("Credentials", **The gateway runs no git.**). Until RT-2's post-chain point lands, ref resolution runs after the last `PreRoute` segment and the experiment rewrite, where TS-1 runs its final-row checks.
+### 0127.S2 Pod network agent and proxied egress
+- status: Planned
+- aliases: [EG-2, proposal 2]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S1, 0127.S9, 0127.S10, 0127.S11, 0119.S2]
 
-**Requests still open.** These requests from other designs are recorded here and land with the proposal named:
+The `tenant_id` pattern, the removal of `provider-direct`, server TLS on the proxy hop and the pod binding API and mTLS on the egress decision API, that API's operations by client SAN, with the chart's reload, readiness, mount, CPU, and alert rules, the producers of `egress.decision`, `egress.tunnel`, `egress.local`, and `credential.mint`, the `quarantined` binding state, typed route targets and the per-kind validator, the Token Service's mint path through `lenny-egress`, the binding push and cache rule for credential pins, `netagent`, service account identity, `lenny-egress` on Envoy, `lenny-egress-authz` with the egress decision API and the pod binding API, the binding feed with fan-out and the read-scoped provisional resume binding (§7.3), the owner label on tenant-owned pods at creation (§5.2), port scoping, the Kubernetes issuer verifier, the pod credential API listener, the `pkg/binding` resolution package with each session's slot index, slot attribution and the per-slot scopes of decision 60 with their fallback, and the Token Service's new RBAC and ingress rows, the CA bundle assembly, the tunnel lifetime menu, quotas, the `proxied` egress profile, and the DNS resolver for pods with `egressProfile: proxied`.
 
-| Request | From | Proposal |
-| :-- | :-- | :-- |
-| The decision service honours the outbound gateway's assertion for a tenant's outbound hosts on a probe, and for an instance named by the same identity. | [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git) | EG-2, with OC-3 |
-| The 1.5-second CONNECT reply budget of the ref resolver depends on the route target kind, if the outbound connector's spike shows that wide-area dials exceed it. | The same | EG-3, after that spike |
-| `tenantOverride.outboundHosts` joins the overlay table under "Tenant pool overlays". | The same | EG-9, with OC-2 |
-| The outbound gateway's namespace becomes a target of the `lenny-egress-ca` ConfigMap, with the leaf copy and its narrow Secret rights. | The same | EG-11, with OC-1 |
-| A binding with `secret: {kind: none}` is refused on a covered or credential-pinned host. | The same | EG-4, with OC-2 |
-| `pkg/binding`'s informer covers the outbound gateway's namespace, for the decision service alone. | The same | EG-2, with OC-1 |
-| The ref resolver maps a certificate failure after the CONNECT's 200 to `GIT_CLONE_REF_RESOLVE_TRANSIENT`, which **Errors** under "Credentials" omits. | The same | EG-3, with OC-1 |
-| The chart renders an egress PKI leaf for the outbound gateway and one for PgBouncer, whose hop from the outbound gateway uses TLS with `verify-full` ("Transport security", **The egress PKI.**). | The same | EG-11, with OC-1 |
+Its Token Service minting path needs 0127.S1. It lands the pod credential API, `pkg/binding`, and that API's listener with no pod-side caller until 0127.S3 and 0127.S4 use them, which its tests cover through a test client. 0119.S2 (AR-B) of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) lands before it, an ordering that holds since 2026-11-13, because AR-B removes service mode and withdraws this change's proposal 0, so `pkg/binding` reads no service-mode pin record and no step here changes service-mode code.
+
+Requests from other changes: 0127.S2 carries `cacheUntil`, the asserted route and its level 2 contract row, with its level 1 decision call in 0127.S7, the readable entries, `pkg/binding`'s user fields, the provisional exclusion, the link provider endpoints, and the head read deadline. From [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#changes-requested-of-0127-egress-and-git), 0127.S2 carries the Token Service's own check of each cause ("Git mirror (`lenny-git-mirror`)", **Fill causes**).
+
+Requests still open from [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git), which land with this step and with 0148.S3 (OC-3) or 0148.S1 (OC-1) as named:
+
+- With OC-3: the decision service honours the outbound gateway's assertion for a tenant's outbound hosts on a probe, and for an instance named by the same identity.
+- With OC-1: `pkg/binding`'s informer covers the outbound gateway's namespace, for the decision service alone.
+
+### 0127.S3 Pod git path
+- status: Planned
+- aliases: [EG-3, proposal 3]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S1, 0127.S2, 0127.S9]
+- closes: [F-26.2.11, F-14.1.37]
+
+GitLab token reuse, the `git.operation` stream from `netagent`, `allowedRefPatterns`, commit identity, `gitAccess` and its effective-policy formula, the covered host set with its push and its alias data, the per-pod CA and its name constraints, termination and the git path on the egress endpoint with its fail-closed rules and LFS response handling, the terminated marker for covered hosts in decisions and in the decision cache's key, the coordination generation wait before materialization, the pod trust bundle in git's trust, push with minted tokens, `writableRepositories`, the rendered git config and per-host `sshForms` rules, the `origin` remote, LFS, redirect handling, `gc.auto=0` and `maintenance.auto=false` in the rendered configuration, slot attribution and the fetch grant with `CH-FETCHGRANT`, `netagent`'s handling of the helper's fetches, the gateway's Go `ls-refs` resolver through `lenny-egress`, the removal of the gateway clone path (which closes F-14.1.37), and the removal of `git-credential-lenny` and `lenny/vcs_token`. The pod-side clone itself, the pinned git, and the helper's git steps land with [`0153-workspace-materialization`](../0153-workspace-materialization/change.md)'s proposals, and the workspace ownership item needs no fix of its own (decision 51).
+
+0127.S3 lands before 0139.S2 (RP-B) of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md), an ordering that holds since 2026-11-12, because `cmd/git-credential-lenny` dials the platform MCP socket, which RP-B removes, and 0127.S3 removes `git-credential-lenny`. The fetch grant of 0127.S3 lands with 0153.S2 (WM-B), the `lenny-materialize` step of [`0153-workspace-materialization`](../0153-workspace-materialization/change.md), an ordering that holds since 2026-11-12, because the helper's fetches need the grant's treatment, and the grant has no caller without the helper.
+
+Requests from other changes: 0127.S3 carries the push option refusal, client-visible remotes, and the exception for a session under `allowRuntimeHeldCredentials`. From [`0141-runtime-routing`](../0141-runtime-routing/change.md) and [`0140-runtime-revisions`](../0140-runtime-revisions/change.md), 0127.S3 runs its pool checks at the post-chain point ("Effective policy", **Where the pool checks run**). This request creates no dependency: until RT-2's post-chain point lands, the checks run on the final pool where the create path checks it today. From [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#changes-requested-of-0127-egress-and-git), 0127.S3 carries the gateway cause assertion and ref resolution after the post-chain point ("Credentials", **The gateway runs no git.**). Until RT-2's post-chain point lands, ref resolution runs after the last `PreRoute` segment and the experiment rewrite, where TS-1 runs its final-row checks.
+
+Requests still open from [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git), which land with this step as named:
+
+- After the outbound connector's spike: the 1.5-second CONNECT reply budget of the ref resolver depends on the route target kind, if that spike shows that wide-area dials exceed it.
+- With 0148.S1 (OC-1): the ref resolver maps a certificate failure after the CONNECT's 200 to `GIT_CLONE_REF_RESOLVE_TRANSIENT`, which **Errors** under "Credentials" omits.
+
+### 0127.S4 Credential delivery
+- status: Planned
+- aliases: [EG-4, proposal 4]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S3, 0127.S9]
+
+Credential bindings with `inject` delivery (plain-HTTP upgrade, and EG-3's termination extended to bound hosts), `federation` delivery with the Token Service as OIDC issuer and the AWS, GCP, and Azure templates, `metadata` delivery with the AWS plugin, and `file` delivery with the generic directory and the `netrc` projection. It also covers the network descriptor, the SDK network accessor, and tenant client config files.
+
+Requests from other changes: 0127.S4 carries `handling`, the asserted route and its pod credential API fields, the inspection stage, the typed `secret`, the one-binding rule, and the granted-entries rule on a binding mint.
+
+Requests still open from [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git), which land with this step and with 0148.S2 (OC-2): a binding with `secret: {kind: none}` is refused on a covered or credential-pinned host.
+
+### 0127.S5 Git mirror and warm fill
+- status: Planned
+- aliases: [EG-5, proposal 5]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S3, 0127.S9]
+
+The store fill in `lenny-store-fill` with `netagent`'s attribution of its UID (decision 61), `prestage: true` on a `gitRepository` warm entry (decision 67), the held flag and region and key fields on stores, the `git.operation` stream from the mirror, `lenny-git-mirror` serving TLS, with its anti-affinity, `gitMirror.hostUsers` and its start check, the ID ranges and fetch UID reuse rule, its sandbox and capability exception, per-store ownership, the fetch retry window, the mirror prefetch resource, and the rewritten 0111.
+
+The store fill of 0127.S5 lands with the `lenny-store-fill` container of [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), which 0118.S4 (PL-B) carries, an ordering that holds since 2026-11-13, because the fill runs in that container (decision 61), and `netagent` attributes its UID as the warm fill.
+
+Requests from other changes: 0127.S5 carries the repository in the egress decision API check. From [`0141-runtime-routing`](../0141-runtime-routing/change.md) and [`0140-runtime-revisions`](../0140-runtime-revisions/change.md), 0127.S5 keys the warm list, its hosts, and the readable set before binding on pool and revision. This request creates no dependency: until revisions land, every runtime has one revision. From [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#changes-requested-of-0127-egress-and-git), 0127.S5 carries the mirror's fill causes and the prefetch record's pool.
+
+### 0127.S6 Per-tenant routing and replacement
+- status: Planned
+- aliases: [EG-6, proposal 6]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S9]
+- closes: [F-13.2.28]
+
+Upstream registrations and chaining, private destination pinning, egress groups with API assignment, exclusivity, and the `lenny.dev/egress-group` label, per-endpoint and per-binding CAs, tenant-registered public services, and deployer CA trust distribution.
+
+### 0127.S7 Level 1 replacement
+- status: Planned
+- aliases: [EG-7, proposal 7]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S3, 0127.S5]
+
+Identities and their rotation, the policy document, its host grammar, the EDL endpoint, the reference Squid renderer, the decision call and tunnel reports on the pod binding API, the `netagent` server-name check, the service identities for the ref resolver and the mirror, the Helm-rendered private destination grants and tenant-scoped policies, the direct path for `netagent`, the ref resolver, and the mirror, the validators' refusals, the acknowledgement, the install order with its preflight and post-install probe, the canary, and the documentation of its limits.
+
+0127.S7 depends on 0127.S5 only for the mirror's service identity.
+
+Requests from other changes: 0127.S7 carries the level 1 decision call for the asserted route that 0127.S2 carries.
+
+### 0127.S8 Tenant visibility
+- status: Planned
+- aliases: [EG-8, proposal 8]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S4, 0127.S6, 0127.S10]
+
+Decision queries and export, the effective-policy read, the shadow policy, the egress address read, and fixed-name files for more registries.
+
+### 0127.S9 Egress policy objects
+- status: Planned
+- aliases: [EG-9, proposal 9]
+- lanes: [specification, code, documentation]
+- closes: [F-5.2.67, F-26.2.12]
+
+Pool ownership (`ownerTenantId`, taken from draft 0111 because the formulas depend on it), ceilings, warm-up policies, tenant egress policy, session `egress.allowedHosts`, tenant pool overlays, host sets, the client proxy profile, the removal of category-keyed defaults from §26.2, the `egressProfile` write restriction, the per-class gate grants, one write path for opt-ins, and named permissions on the new reads.
+
+Requests from other changes: 0127.S9 carries the `userCredentialDelivery` gate, the delegated child exception, and `lockEgressToHosts`. From [`0141-runtime-routing`](../0141-runtime-routing/change.md) and [`0140-runtime-revisions`](../0140-runtime-revisions/change.md), 0127.S9 runs its pool checks at the post-chain point ("Effective policy", **Where the pool checks run**), and it keys the warm list, its hosts, and the readable set before binding on pool and revision. Neither request creates a dependency: until RT-2's post-chain point lands, the checks run on the final pool where the create path checks it today, and until revisions land every runtime has one revision.
+
+Requests still open from [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git), which land with this step and with 0148.S2 (OC-2): `tenantOverride.outboundHosts` joins the overlay table under "Tenant pool overlays".
+
+### 0127.S10 Evidence ingest
+- status: Planned
+- aliases: [EG-10, proposal 10]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S11]
+
+The envelope, `lenny-evidence`, `EvidenceStore`, the compactor, the chain anchor, retention, erasure, the held marker, and the regulated write-ahead path.
+
+0127.S10 needs 0127.S11 for its certificates. It lands with no producer until the others use it, so a decision service never ships without its evidence format.
+
+### 0127.S11 Egress PKI
+- status: Planned
+- aliases: [EG-11, proposal 11]
+- lanes: [specification, code, documentation]
+
+The egress CA, its Issuer and leaves with their `lenny.dev/doctor-optout` annotation, the `lenny-egress-ca` ConfigMap, and the rotation procedure, with no consumer until the others use it.
+
+Requests still open from [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git), which land with this step and with 0148.S1 (OC-1):
+
+- The outbound gateway's namespace becomes a target of the `lenny-egress-ca` ConfigMap, with the leaf copy and its narrow Secret rights.
+- The chart renders an egress PKI leaf for the outbound gateway and one for PgBouncer, whose hop from the outbound gateway uses TLS with `verify-full` ("Transport security", **The egress PKI.**).
+
+### 0127.S12 Exfiltration controls
+- status: Planned
+- aliases: [EG-12, proposal 12]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S3, 0127.S4]
+
+`credentialPinned` and read-only hosts, added to EG-3's terminated marker, and name constraints that cover those hosts. The other steps do not wait for it, and until it lands the opaque-tunnel limits under "Residual risks and limits" apply to every host EG-3 does not cover.
+
+0127.S12 depends on 0127.S3 because it adds credential-pinned and read-only hosts to EG-3's terminated marker.
+
+Requests from other changes: 0127.S12 carries a VCS pool with `userAuthorization: required` as a credential pin source.
+
+### Notes on the steps
+
+0127.S1, 0127.S9, and 0127.S11 are independent of one another. Apart from the dependency of 0127.S2 on 0119.S2 and the orderings that 0127.S3 and 0127.S5 state, no step of this change depends on a step of another change.
+
+The shared gateway key-source proposal, which fixes F-7.1.31 (each gateway process seeds its own `uploadToken` HMAC key ring, so another replica refuses an upload token it issued), is unaffected and can run first. R14 is a separate remediation step that this change does not absorb. Later work covers push forwarding through the mirror and the GCP and Azure `metadata` plugins.
 
 The outbound connector design's request that a ceiling of `*` match outbound connector hosts, which its pool-ceiling decision settled, is applied under "Terms" and "An open ceiling".
 
-**Labels and dependencies across designs.** These proposals are EG-1 to EG-12 in other design documents, and each document states its own dependencies, which govern where this table is shorter. Proposals from different design documents can interleave, as long as these hold:
+**Labels and dependencies across designs.** Other design documents name these steps EG-1 to EG-12, and each document states its own dependencies, which govern where this table is shorter. Steps from different changes can interleave, as long as these hold:
 
-| Proposal | Depends on | Why |
+| Step | Depends on | Why |
 | :-- | :-- | :-- |
-| [SO-1](../0142-security-oversight/change.md#so-1-security-roles) (`security-auditor` role) | EG-8, EG-9 | The named permissions on the new reads |
-| [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (tenant guardrails) | EG-9, EG-2, EG-4, [SO-1](../0142-security-oversight/change.md#so-1-security-roles) | One write path for opt-ins, the suspended state, and the role that writes the record |
-| [SO-3](../0142-security-oversight/change.md#so-3-per-tenant-siem-destination) (per-tenant SIEM) | EG-8, EG-10 | The evidence export |
-| [SO-5b](../0142-security-oversight/change.md#so-5b-repository-write-approvals) (repository write approvals) | SO-5a, EG-3 | The store and the writable set records |
-| [FE-1](../0128-forensics-evidence-preservation/change.md#fe-1-quarantine) (quarantine) | EG-2, EG-7 | The `quarantined` binding state, and the same selector exclusion in level 1's tenant policies |
-| [FE-2](../0128-forensics-evidence-preservation/change.md#fe-2-mirror-store-hold) (mirror store hold) | EG-5 | The held flag |
-| [FE-3](../0128-forensics-evidence-preservation/change.md#fe-3-platform-only-holds-and-a-security-retention-class) (platform-only holds) | EG-10 | The held marker on manifests |
-| [FE-4](../0128-forensics-evidence-preservation/change.md#fe-4-reconciler) (reconciler) | EG-2, EG-3, EG-5, EG-10 | The streams it reconciles |
-| [FE-6](../0128-forensics-evidence-preservation/change.md#fe-6-agent-activity-streams) (agent activity) | EG-10 | The envelope, ingest, and key field |
-| [TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) (environment scoping) | EG-1, EG-2, EG-3, EG-4, EG-9, and [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing); EG-5 for its mirror steps, EG-6 for its route step, and EG-8 with EG-10's envelope field for its read filters | The objects it scopes, the tenant-object resolver, the git inputs, and a dependable session environment |
-| [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) (session environment), its evidence field step | EG-10 | Both environments on `credential.mint` and on evidence |
-| [OC-1](../0148-tenant-outbound-connector/change.md#steps) (connector) | EG-2, EG-6, EG-8, EG-9, EG-10, EG-11 | Typed route targets, the mint path, the forwarded route template, evidence, and certificates |
-| [OC-2](../0148-tenant-outbound-connector/change.md#steps) (registration) | EG-4, EG-6, EG-8, EG-9, [OC-1](../0148-tenant-outbound-connector/change.md#steps) | The typed `secret` union and termination of bound hosts for `secret: {kind: none}`, the endpoint record, the visibility reads, the policy objects, and the outbound gateway |
-| [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) (tenant runtime records) | DR-1, EG-9, [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) | The write path and gate model |
-| [DR-5](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools) (owned pools) | DR-2, DR-4, EG-9 | `ownerTenantId` with the label rule |
-| [DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) (default git clones) | DR-3, DR-4, DR-5, EG-2, EG-3, and the plan check of [SD-1](../0144-session-derive/change.md#sd-1-one-route) | The slot `sizeLimit`, the pod-side clone, and an owned pool's git path |
-| DR-11 (shared assets and warm stores) | DR-9, EG-2, EG-5 | The slot `sizeLimit`, and the rewritten 0111's warm list, store, slot repository, capture copy, and restore completion |
-| [UG-1](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds) (VCS link kinds) | [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), [UC-7](../0151-user-credential-delivery/change.md#uc-7-add-ons), EG-1, EG-2, EG-9 | The link flow, the kind registry, VCS pool hosts, the mint path, and the write path |
-| [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization) (authorization) | [UG-1](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds), [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), [UC-7](../0151-user-credential-delivery/change.md#uc-7-add-ons), EG-1, EG-2, EG-3, EG-5, [TS-4](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9) | The session input check, `retireOnRelease`, the release check point, the mint path, `pkg/binding`, entries, the mirror, and the lifecycle hook |
-| [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) (PR authoring) | [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization), [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets), [UC-7](../0151-user-credential-delivery/change.md#uc-7-add-ons), EG-3 with git path T | The binding, its rules, the add-on extension points, and `gh`'s remotes |
-| [UG-4](../0152-user-git-identity/change.md#ug-4-independent-approval-check) (approval check) | [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), EG-3, EG-10 | The link and `git.operation` |
-| [GL-2](../0130-gitlab-credential-addon/change.md#gl-2-user-authored-merge-requests) (GitLab user-authored merge requests) | [GL-1](../0130-gitlab-credential-addon/change.md#gl-1-the-gitlab-kind), [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) | The kind, the token path, and spikes [S13](../0130-gitlab-credential-addon/change.md#validation-owed) and [S17](../0130-gitlab-credential-addon/change.md#validation-owed) |
-| [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) (types and `registered`) | EG-9 | The write path |
-| [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) (`oauth2Link` and account linking) | [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source), EG-1, EG-2, EG-9, [TS-6](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9), and [OC-1](../0148-tenant-outbound-connector/change.md#steps) and [OC-2](../0148-tenant-outbound-connector/change.md#steps) for a private host | The digest format, the mint path, the write path, and the login path |
-| [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding) (`userCredential` binding) | [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source), EG-2, EG-4, [TS-4](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9) | Bindings, the pod credential API, `pkg/binding`, and the invalidation level |
-| [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) (request rules) | [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), EG-4 | The stage |
-| [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) (`file`) | [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), EG-4, EG-9 | The mechanics and the gate |
-| [UC-6](../0151-user-credential-delivery/change.md#leak-scanning-uc-6) (leak scanning) | [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) | Optional |
-| [UC-7](../0151-user-credential-delivery/change.md#uc-7-add-ons) (add-ons) | [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) | The kind block, the registry, and the extension points those proposals call |
-| CR-B of [`0124-connector-removal`](../0124-connector-removal/change.md#steps) (identity assertion) | EG-2, EG-4, EG-10 | The pod credential API, `pkg/binding`, and slot attribution; the typed `secret` union and `inject`; and the `credential.mint` stream |
-| CR-C of [`0124-connector-removal`](../0124-connector-removal/change.md#steps) (egress halt) | EG-2, EG-3 | Slot attribution, and the fetch-grant channel that `CH-EGRESSHALT` follows |
+| [0142.S1 (SO-1)](../0142-security-oversight/change.md#so-1-security-roles) (`security-auditor` role) | 0127.S8 (EG-8), 0127.S9 (EG-9) | The named permissions on the new reads |
+| [0142.S2 (SO-2)](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (tenant guardrails) | 0127.S9 (EG-9), 0127.S2 (EG-2), 0127.S4 (EG-4), [0142.S1 (SO-1)](../0142-security-oversight/change.md#so-1-security-roles) | One write path for opt-ins, the suspended state, and the role that writes the record |
+| [0142.S3 (SO-3)](../0142-security-oversight/change.md#so-3-per-tenant-siem-destination) (per-tenant SIEM) | 0127.S8 (EG-8), 0127.S10 (EG-10) | The evidence export |
+| [0142.S7 (SO-5b)](../0142-security-oversight/change.md#so-5b-repository-write-approvals) (repository write approvals) | 0142.S6 (SO-5a), 0127.S3 (EG-3) | The store and the writable set records |
+| [0128.S2 (FE-1)](../0128-forensics-evidence-preservation/change.md#fe-1-quarantine) (quarantine) | 0127.S2 (EG-2), 0127.S7 (EG-7) | The `quarantined` binding state, and the same selector exclusion in level 1's tenant policies |
+| [0128.S3 (FE-2)](../0128-forensics-evidence-preservation/change.md#fe-2-mirror-store-hold) (mirror store hold) | 0127.S5 (EG-5) | The held flag |
+| [0128.S4 (FE-3)](../0128-forensics-evidence-preservation/change.md#fe-3-platform-only-holds-and-a-security-retention-class) (platform-only holds) | 0127.S10 (EG-10) | The held marker on manifests |
+| [0128.S5 (FE-4)](../0128-forensics-evidence-preservation/change.md#fe-4-reconciler) (reconciler) | 0127.S2 (EG-2), 0127.S3 (EG-3), 0127.S5 (EG-5), 0127.S10 (EG-10) | The streams it reconciles |
+| [0128.S7 and 0128.S8 (FE-6)](../0128-forensics-evidence-preservation/change.md#fe-6-agent-activity-streams) (agent activity) | 0127.S10 (EG-10) | The envelope, ingest, and key field |
+| [0149.S1 (TS-1)](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) (environment scoping) | 0127.S1 (EG-1), 0127.S2 (EG-2), 0127.S3 (EG-3), 0127.S4 (EG-4), 0127.S9 (EG-9), and [0149.S3 (TS-3)](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing); 0127.S5 (EG-5) for its mirror steps, 0127.S6 (EG-6) for its route step, and 0127.S8 (EG-8) with the envelope field of 0127.S10 (EG-10) for its read filters | The objects it scopes, the tenant-object resolver, the git inputs, and a dependable session environment |
+| [0149.S3 (TS-3)](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) (session environment), its evidence field step | 0127.S10 (EG-10) | Both environments on `credential.mint` and on evidence |
+| [0148.S1 (OC-1)](../0148-tenant-outbound-connector/change.md#steps) (connector) | 0127.S2 (EG-2), 0127.S6 (EG-6), 0127.S8 (EG-8), 0127.S9 (EG-9), 0127.S10 (EG-10), 0127.S11 (EG-11) | Typed route targets, the mint path, the forwarded route template, evidence, and certificates |
+| [0148.S2 (OC-2)](../0148-tenant-outbound-connector/change.md#steps) (registration) | 0127.S4 (EG-4), 0127.S6 (EG-6), 0127.S8 (EG-8), 0127.S9 (EG-9), [0148.S1 (OC-1)](../0148-tenant-outbound-connector/change.md#steps) | The typed `secret` union and termination of bound hosts for `secret: {kind: none}`, the endpoint record, the visibility reads, the policy objects, and the outbound gateway |
+| [0147.S4 (DR-4)](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) (tenant runtime records) | 0147.S1 (DR-1), 0127.S9 (EG-9), [0149.S3 (TS-3)](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) | The write path and gate model |
+| [0147.S5 (DR-5)](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools) (owned pools) | 0147.S2 (DR-2), 0147.S4 (DR-4), 0127.S9 (EG-9) | `ownerTenantId` with the label rule |
+| [0147.S7 (DR-9)](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) (default git clones) | 0147.S3 (DR-3), 0147.S4 (DR-4), 0147.S5 (DR-5), 0127.S2 (EG-2), 0127.S3 (EG-3), and the plan check of [0144.S1 (SD-1)](../0144-session-derive/change.md#sd-1-one-route) | The slot `sizeLimit`, the pod-side clone, and an owned pool's git path |
+| 0147.S8 (DR-11) (shared assets and warm stores) | 0147.S7 (DR-9), 0127.S2 (EG-2), 0127.S5 (EG-5) | The slot `sizeLimit`, and the rewritten 0111's warm list, store, slot repository, capture copy, and restore completion |
+| [0152.S1 (UG-1)](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds) (VCS link kinds) | [0151.S2 (UC-2)](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), [0151.S7 (UC-7)](../0151-user-credential-delivery/change.md#uc-7-add-ons), 0127.S1 (EG-1), 0127.S2 (EG-2), 0127.S9 (EG-9) | The link flow, the kind registry, VCS pool hosts, the mint path, and the write path |
+| [0152.S2 (UG-2)](../0152-user-git-identity/change.md#ug-2-repository-authorization) (authorization) | [0152.S1 (UG-1)](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds), [0151.S3 (UC-3)](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), [0151.S7 (UC-7)](../0151-user-credential-delivery/change.md#uc-7-add-ons), 0127.S1 (EG-1), 0127.S2 (EG-2), 0127.S3 (EG-3), 0127.S5 (EG-5), [0149.S4 (TS-4)](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9) | The session input check, `retireOnRelease`, the release check point, the mint path, `pkg/binding`, entries, the mirror, and the lifecycle hook |
+| [0152.S3 (UG-3)](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) (PR authoring) | [0152.S2 (UG-2)](../0152-user-git-identity/change.md#ug-2-repository-authorization), [0151.S2 (UC-2)](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), [0151.S3 (UC-3)](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), [0151.S4 (UC-4)](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets), [0151.S7 (UC-7)](../0151-user-credential-delivery/change.md#uc-7-add-ons), 0127.S3 (EG-3) with git path T | The binding, its rules, the add-on extension points, and `gh`'s remotes |
+| [0152.S4 (UG-4)](../0152-user-git-identity/change.md#ug-4-independent-approval-check) (approval check) | [0151.S2 (UC-2)](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), 0127.S3 (EG-3), 0127.S10 (EG-10) | The link and `git.operation` |
+| [0130.S2 (GL-2)](../0130-gitlab-credential-addon/change.md#gl-2-user-authored-merge-requests) (GitLab user-authored merge requests) | [0130.S1 (GL-1)](../0130-gitlab-credential-addon/change.md#gl-1-the-gitlab-kind), [0152.S3 (UG-3)](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) | The kind, the token path, and spikes [S13](../0130-gitlab-credential-addon/change.md#validation-owed) and [S17](../0130-gitlab-credential-addon/change.md#validation-owed) |
+| [0151.S1 (UC-1)](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) (types and `registered`) | 0127.S9 (EG-9) | The write path |
+| [0151.S2 (UC-2)](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) (`oauth2Link` and account linking) | [0151.S1 (UC-1)](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source), 0127.S1 (EG-1), 0127.S2 (EG-2), 0127.S9 (EG-9), [0149.S6 (TS-6)](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9), and [0148.S1 (OC-1)](../0148-tenant-outbound-connector/change.md#steps) and [0148.S2 (OC-2)](../0148-tenant-outbound-connector/change.md#steps) for a private host | The digest format, the mint path, the write path, and the login path |
+| [0151.S3 (UC-3)](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding) (`userCredential` binding) | [0151.S1 (UC-1)](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source), 0127.S2 (EG-2), 0127.S4 (EG-4), [0149.S4 (TS-4)](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9) | Bindings, the pod credential API, `pkg/binding`, and the invalidation level |
+| [0151.S4 (UC-4)](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) (request rules) | [0151.S3 (UC-3)](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), 0127.S4 (EG-4) | The stage |
+| [0151.S5 (UC-5)](../0151-user-credential-delivery/change.md#uc-5-delivery-file) (`file`) | [0151.S3 (UC-3)](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), 0127.S4 (EG-4), 0127.S9 (EG-9) | The mechanics and the gate |
+| [0151.S6 (UC-6)](../0151-user-credential-delivery/change.md#leak-scanning-uc-6) (leak scanning) | [0151.S5 (UC-5)](../0151-user-credential-delivery/change.md#uc-5-delivery-file) | Optional |
+| [0151.S7 (UC-7)](../0151-user-credential-delivery/change.md#uc-7-add-ons) (add-ons) | [0151.S2 (UC-2)](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), [0151.S3 (UC-3)](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding), [0151.S4 (UC-4)](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) | The kind block, the registry, and the extension points those proposals call |
+| [0124.S2 (CR-B)](../0124-connector-removal/change.md#steps) of `0124-connector-removal` (identity assertion) | 0127.S2 (EG-2), 0127.S4 (EG-4), 0127.S10 (EG-10) | The pod credential API, `pkg/binding`, and slot attribution; the typed `secret` union and `inject`; and the `credential.mint` stream |
+| [0124.S3 (CR-C)](../0124-connector-removal/change.md#steps) of `0124-connector-removal` (egress halt) | 0127.S2 (EG-2), 0127.S3 (EG-3) | Slot attribution, and the fetch-grant channel that `CH-EGRESSHALT` follows |
 
-The other GitHub and GitLab add-on proposals depend on UC and UG proposals and on no EG proposal directly. [`0129-github-credential-addon`, "Dependencies"](../0129-github-credential-addon/change.md#dependencies) and [`0130-gitlab-credential-addon`, "Dependencies"](../0130-gitlab-credential-addon/change.md#dependencies) state their dependencies.
-
-These orderings with other designs hold, the first two since 2026-11-12 and the last two since 2026-11-13:
-
-| Order | Why |
-| :-- | :-- |
-| EG-3 lands before RP-B of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) | `cmd/git-credential-lenny` dials the platform MCP socket, which RP-B removes, and EG-3 removes `git-credential-lenny`. |
-| EG-3's fetch grant lands with the `lenny-materialize` proposal of [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) | The helper's fetches need the grant's treatment, and the grant has no caller without the helper. |
-| AR-B of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) lands before EG-2 | AR-B removes service mode and withdraws this design's proposal 0, so EG-2's `pkg/binding` reads no service-mode pin record and no proposal here changes service-mode code. |
-| EG-5's store fill lands with the `lenny-store-fill` container of [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) | The fill runs in that container (decision 61), and `netagent` attributes its UID as the warm fill. |
-
-No other proposal in this design depends on a proposal in another design, apart from the rows above.
+The other GitHub and GitLab add-on steps depend on UC and UG steps and on no EG step directly. [`0129-github-credential-addon`, "Steps"](../0129-github-credential-addon/change.md#steps) and [`0130-gitlab-credential-addon`, "Steps"](../0130-gitlab-credential-addon/change.md#steps) state their dependencies.
 
 ## Documentation
 

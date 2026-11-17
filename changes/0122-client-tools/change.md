@@ -755,10 +755,21 @@ Further observations surfaced while verifying. They bear on this design and are 
 
 > **Adapter-facing section.** CT-A still governs Lenny for the runtime contract, the gateway core, and REST. Its MCP surface and its Chat Completions and Responses mappings of "CT-6", and all of CT-B, move to the adapters. The parts that move govern the adapters rather than Lenny, stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification, under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md).
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| CT-A | The runtime contract and the gateway core (CT-1 to CT-5, CT-7 to CT-10), REST, and the Chat Completions and Responses mappings of CT-6. It turns AM-A's refusal of `tools` on the OpenAI translators into the mapping for declaring revisions, and lands alongside the F-15.1.82 fix. | AM-A of the Messages design. |
-| CT-B | The Messages API rows of CT-6, replacing AM-E. | CT-A, and the Messages design's continuity proposal AM-C. |
+### 0122.S1 Runtime contract and gateway core
+- status: Planned
+- aliases: [CT-A, CT-1, CT-2, CT-3, CT-4, CT-5, CT-6 (part), CT-7, CT-8, CT-9, CT-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0120.S1]
+
+The runtime contract and the gateway core (CT-1 to CT-5, CT-7 to CT-10), REST, and the Chat Completions and Responses mappings of CT-6. It turns AM-A's refusal of `tools` on the OpenAI translators into the mapping for declaring revisions, and lands alongside the F-15.1.82 fix.
+
+### 0122.S2 Messages API mapping
+- status: Planned
+- aliases: [CT-B, CT-6 (part)]
+- lanes: [code, documentation]
+- depends-on: [0122.S1, 0120.S2, 0120.S3]
+
+The Messages API rows of CT-6, replacing AM-E.
 
 ## Sources
 

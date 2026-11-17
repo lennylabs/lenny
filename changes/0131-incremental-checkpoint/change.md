@@ -1338,6 +1338,72 @@ The requests of revisions 13 to 16 that the named designs had applied by 2026-11
 | [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) | PL-5 states the disk watch's coverage that IC-1, "Change tracker" gives: the directories the tracker does not watch are walked at each 10 s interval, and a degraded tracker puts the whole volume on the walk, except on a volume that a project quota bounds, which PL-10 reads with `fstatfs`. The BarrierAck floor and the gateway's preStop wait scale with the slot count (IC-7, "Drain caps"). | IC-1, IC-7. |
 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) | A staged tree's contribution goes to the source of the warm-list entry that staged it, so a tenant's entry never feeds a platform-owned set; a session of a tenant-derived runtime is eligible for its base's assets source and for its own runtime's tenant-owned assets source. | IC-4, "Platform chunk sets". |
 
+## Steps
+
+### 0131.S1 Capture in passes
+- status: Planned
+- aliases: [IC-1]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-1](#ic-1-capture-in-passes).
+
+### 0131.S2 Storage format
+- status: Planned
+- aliases: [IC-2]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-2](#ic-2-storage-format).
+
+### 0131.S3 Checkpoint stream
+- status: Planned
+- aliases: [IC-3]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-3](#ic-3-checkpoint-stream).
+
+### 0131.S4 Catalog, reference closure, and quota
+- status: Planned
+- aliases: [IC-4]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-4](#ic-4-catalog-reference-closure-and-quota).
+
+### 0131.S5 Restore, derive, download, and seal
+- status: Planned
+- aliases: [IC-5]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-5](#ic-5-restore-derive-download-and-seal).
+
+### 0131.S6 Retention, garbage collection, erasure, and legal hold
+- status: Planned
+- aliases: [IC-6]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-6](#ic-6-retention-garbage-collection-erasure-and-legal-hold).
+
+### 0131.S7 Size limits and drain budgets
+- status: Planned
+- aliases: [IC-7]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-7](#ic-7-size-limits-and-drain-budgets). Whichever of EG-2 ([0127.S2](../0127-egress-and-git/change.md#steps)) and this step lands second keeps the other's rendering and applies its own part.
+
+### 0131.S8 Checkpoint policy, interval, and change tracker
+- status: Planned
+- aliases: [IC-8]
+- lanes: [specification, code, documentation]
+- depends-on: [0131.S1]
+
+The design is in [IC-8](#ic-8-checkpoint-policy-interval-and-change-tracker). The interval override lands together with 0131.S1 or after it, and never before it.
+
+### 0131.S9 Removal of the embedded SIGSTOP checkpoint path
+- status: Planned
+- aliases: [IC-9]
+- lanes: [specification, code, documentation]
+
+The design is in [IC-9](#ic-9-removal-of-the-embedded-sigstop-checkpoint-path). It depends on no other step of this change and can land first. It lands together with the removal of the embedded deployment model under PL-2 (0118.S1) or before it.
+
 ## Costs
 
 - **Postgres.** Each attempt writes one row per new pack and one row per referenced pack. A 5 GiB workspace in 16 MiB packs references about 320 packs per snapshot.

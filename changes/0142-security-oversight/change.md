@@ -854,47 +854,105 @@ These exist in today's tree independent of this design and are filed in `BUILD-G
 
 The outline's items keep their labels. SO-4 and SO-5 each split, because their parts have different dependencies.
 
-| Label | Content |
-| :-- | :-- |
-| SO-1 | The security roles, `tenant_security_principals`, the resolver rules in the gateway and `lenny-ops`, reserved role names, protected subjects, the introspection exemption, `audit.read` and `audit.recover`, the `lenny-ops` ceiling, security-owned subscriptions, and the audit catalog review. |
-| SO-2 | The tenant security record with its `placement` section, its applier for both this record and the tenant security settings, delayed principal changes, the `identityProvider` write rule, the guardrail check, suspension, and the posture read with its placement fields and its `securitySettings` section. |
-| SO-3 | `lenny-siem-forwarder`, destinations, cursors, the retention hold, the compliance gate, and evidence delivery. |
-| SO-4a | The mirror, `impersonated_by`, and the operator reference. Closes F-13.3.25 and F-12.3.30. |
-| SO-4b | Operator access requests, the approval gate, and the emergency path. |
-| SO-5a | `security_approvals`, the approvals API, and the tool hold at MCP dispatch and on relayed frames. Addresses F-7.2.46. |
-| SO-5b | Repository write approvals. |
-| SO-6 | F-25.6.9: the windows, the remedy with its `certificates/status` rule, and the CA finding. |
-| SO-7 | F-25.4.40: the rights, the version source, the §25.4 reconciliation, and the skip removal. |
+### 0142.S1 Security roles
+- status: Planned
+- aliases: [SO-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S8 (part), 0127.S9 (part)]
 
-| Proposal | Depends on | Why |
-| :-- | :-- | :-- |
-| SO-1 | [EG-8](../0127-egress-and-git/change.md#steps) and [EG-9](../0127-egress-and-git/change.md#steps) for the evidence grants only | The named permissions on the new reads. The role and audit reads can land first, and the grants follow as one change. |
-| SO-2 | [EG-9](../0127-egress-and-git/change.md#steps), [EG-2](../0127-egress-and-git/change.md#steps), and [EG-4](../0127-egress-and-git/change.md#steps) (the requested fields), and SO-1. `identityBinding.forbidUnverified` needs [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), `userAuthorization` needs [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization), with `.forbidRuntimeHeld` needing [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) and the [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) it builds on, `tokenTrust` needs [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) and, for link providers, [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), `requestRules` needs [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets), and `userCredential.file` needs [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file). | The write path, the suspended state, and the role that writes the record. The posture sections on egress need [EG-2](../0127-egress-and-git/change.md#steps) and [EG-9](../0127-egress-and-git/change.md#steps) and otherwise report `unknown`. |
-| SO-3 | SO-1 and SO-2, and [EG-8](../0127-egress-and-git/change.md#steps), [EG-10](../0127-egress-and-git/change.md#steps), and [EG-11](../0127-egress-and-git/change.md#steps) for evidence delivery | The role, the delay on creating, changing, and removing a destination, the export, and the leaf. Audit delivery can land before the EG proposals, with the `lenny-siem-forwarder` row added when [EG-10](../0127-egress-and-git/change.md#steps) lands. |
-| SO-4a | None | It can land at any point. |
-| SO-4b | SO-1, SO-2, SO-4a, and SO-5a | The approver role, the setting, the mirror, and the store. |
-| SO-5a | SO-1 and SO-2 | The role and the rules. |
-| SO-5b | SO-5a, [EG-2](../0127-egress-and-git/change.md#steps), and [EG-3](../0127-egress-and-git/change.md#steps) | The store, the mint checks and the writable set entry states the binding feed carries, and the writable set records. |
-| SO-2 (posture fields for tenant scoping) | [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing), [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6), [TS-8](../0149-tenant-scoping-identity/change.md#scim-server-ts-8), and [TS-9](../0149-tenant-scoping-identity/change.md#directory-groups-ts-9), each for its own fields | Sharing paths, identity sources and their issuers, SCIM credentials and directory rows, and directory groups. Until the TS proposal that adds a record lands, the fields that read it report `unknown`. |
-| SO-2 (posture `interceptors`) and SO-4a (registration mirror) | [RT-6](../0141-runtime-routing/change.md#rt-6-tenant-scoped-interceptors), whichever lands second adding the case | The `tenants` list on an interceptor registration. |
-| SO-2 (`placement` section and the posture's placement fields) and SO-4a (offering grant mirror) | The placement requirements of [PM-4](../0136-placement/change.md#pm-4-placement-requirements) and the offerings of [PM-3](../0136-placement/change.md#pm-3-placement-offerings-and-per-pool-nodeplacement) | The filter the section feeds, and the grant the mirror records. |
-| SO-2 (applier for the settings, the `securitySettings` posture section) and SO-4a (settings events) | The settings model and admin API of [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#steps) | The version table the applier activates, the view the posture section repeats, and the events the mirror carries. Whichever lands second adds the case. |
-| SO-6 | None | It can land at any point. |
-| SO-7 | SO-6 | SO-7 removes the Secret delete and the Certificate patch that today's remedy uses. |
+The security roles, `tenant_security_principals`, the resolver rules in the gateway and `lenny-ops`, reserved role names, protected subjects, the introspection exemption, `audit.read` and `audit.recover`, the `lenny-ops` ceiling, security-owned subscriptions, and the audit catalog review.
 
-The outline stated that SO-4, SO-5, and SO-7 depend on nothing. The approval parts of SO-4 and SO-5 need the approver role, and SO-7 needs the new remedy, so this table corrects it. Proposals from different designs interleave, and each design states its own dependencies, with no shared queue file.
+The evidence grants need [EG-8](../0127-egress-and-git/change.md#steps) and [EG-9](../0127-egress-and-git/change.md#steps), for the named permissions on the new reads. The role and audit reads can land first, and the grants follow as one change.
 
-**Other designs that depend on this one.**
+[FE-6](../0128-forensics-evidence-preservation/change.md#fe-6-agent-activity-streams) of [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) does not depend on this step: `tenant-admin` holds its read permissions until this step lands, and neither waits for the other, as that design says. Decision 19 states the auditor's grants.
 
-| Proposal | Depends on | Why |
-| :-- | :-- | :-- |
-| [FE-6](../0128-forensics-evidence-preservation/change.md#fe-6-agent-activity-streams) | None | `tenant-admin` holds its read permissions until SO-1 lands, and neither proposal waits, as that design says. Decision 19 states the auditor's grants. |
-| [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) | None | `crossEnvironmentSharing` acts on [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing)'s setting and declarations. Whichever lands second adds that case. |
-| [TS-4](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4) and [TS-8](../0149-tenant-scoping-identity/change.md#scim-server-ts-8) | None | `lifecycleSubjects` lets a worker or a SCIM credential act on a protected subject. Whichever lands second adds that case. |
-| [TS-2](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9) and [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6) | None in either direction | This design works with a broker or with a customer's issuer. `securityRoleSource` is where they meet, and [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6)'s activation takes SO-2's delay at a tenant with a `security-admin` row in any state. |
-| [OC-2](../0148-tenant-outbound-connector/change.md#steps) | None | A connector registration passes the guardrail check as a tenant-registered service, and whichever of [OC-2](../0148-tenant-outbound-connector/change.md#steps) and SO-2 lands second adds that case. |
-| [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source), [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets), [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) | None | Their fields pass the guardrail check through [EG-9](../0127-egress-and-git/change.md#steps). The guardrails named under "User credentials and request rules" land with SO-2 or with the UC proposal, whichever is later. |
-| [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization), [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) | None | The same, for `userAuthorization` and `allowRuntimeHeldCredentials`. |
+### 0142.S2 Tenant security record and posture
+- status: Planned
+- aliases: [SO-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0142.S1, 0127.S2, 0127.S4, 0127.S9, 0136.S5 (part), 0136.S6 (part), 0151.S1 (part), 0151.S2 (part), 0151.S4 (part), 0151.S5 (part), 0152.S2 (part), 0152.S3 (part)]
+
+The tenant security record with its `placement` section, its applier for both this record and the tenant security settings, delayed principal changes, the `identityProvider` write rule, the guardrail check, suspension, and the posture read with its placement fields and its `securitySettings` section.
+
+It needs the write path, the suspended state, and the role that writes the record. [EG-9](../0127-egress-and-git/change.md#steps), [EG-2](../0127-egress-and-git/change.md#steps), and [EG-4](../0127-egress-and-git/change.md#steps) carry the requested fields. The posture sections on egress need [EG-2](../0127-egress-and-git/change.md#steps) and [EG-9](../0127-egress-and-git/change.md#steps) and otherwise report `unknown`. The `placement` section and the posture's placement fields work with the placement requirements of [PM-4](../0136-placement/change.md#pm-4-placement-requirements) and the offerings of [PM-3](../0136-placement/change.md#pm-3-placement-offerings-and-per-pool-nodeplacement), because the section feeds PM-4's filter. 0136.S6 (PM-4) in turn depends on this step under O7, for the record that holds the section, so the `placement` section and 0136.S6 land together.
+
+Some record fields need steps of the user credential and user git identity changes. `identityBinding.forbidUnverified` needs [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), `userAuthorization` needs [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization), with `.forbidRuntimeHeld` needing [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) and the [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) it builds on, `tokenTrust` needs [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) and, for link providers, [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking), `requestRules` needs [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets), and `userCredential.file` needs [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file). Each of these fields lands with this step or with the step it needs, whichever is later. The fields of [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source), [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets), and [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) pass the guardrail check through [EG-9](../0127-egress-and-git/change.md#steps), and the guardrails named under "User credentials and request rules" land with this step or with the UC step, whichever is later. The same holds for `userAuthorization` and `allowRuntimeHeldCredentials` with [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization) and [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring).
+
+The posture fields for tenant scoping need [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing), [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6), [TS-8](../0149-tenant-scoping-identity/change.md#scim-server-ts-8), and [TS-9](../0149-tenant-scoping-identity/change.md#directory-groups-ts-9), each for its own fields: sharing paths, identity sources and their issuers, SCIM credentials and directory rows, and directory groups. Until the TS step that adds a record lands, the fields that read it report `unknown`.
+
+The posture `interceptors` section needs the `tenants` list on an interceptor registration from [RT-6](../0141-runtime-routing/change.md#rt-6-tenant-scoped-interceptors), and whichever of this step and RT-6 lands second adds the case. The applier for the settings and the `securitySettings` posture section need the settings model and admin API of [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#steps), for the version table the applier activates and the view the posture section repeats. Whichever of this step and that step lands second adds the case.
+
+The following steps do not depend on this step, and whichever lands second adds the case:
+
+- `crossEnvironmentSharing` acts on [TS-3](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing)'s setting and declarations.
+- `lifecycleSubjects` lets a worker of [TS-4](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4) or a SCIM credential of [TS-8](../0149-tenant-scoping-identity/change.md#scim-server-ts-8) act on a protected subject.
+- A connector registration of [OC-2](../0148-tenant-outbound-connector/change.md#steps) passes the guardrail check as a tenant-registered service.
+
+### 0142.S3 Per-tenant SIEM destination
+- status: Planned
+- aliases: [SO-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0142.S1, 0142.S2, 0127.S8 (part), 0127.S10 (part), 0127.S11 (part)]
+
+`lenny-siem-forwarder`, destinations, cursors, the retention hold, the compliance gate, and evidence delivery. It needs the role, the delay on creating, changing, and removing a destination, the export, and the leaf. Evidence delivery needs [EG-8](../0127-egress-and-git/change.md#steps), [EG-10](../0127-egress-and-git/change.md#steps), and [EG-11](../0127-egress-and-git/change.md#steps). Audit delivery can land before the EG steps, with the `lenny-siem-forwarder` row added when [EG-10](../0127-egress-and-git/change.md#steps) lands.
+
+### 0142.S4 Mirror to the tenant chain
+- status: Planned
+- aliases: [SO-4a, SO-4 (part)]
+- lanes: [specification, code, documentation]
+- depends-on: [0136.S5 (part)]
+- closes: [F-13.3.25, F-12.3.30]
+
+The mirror, `impersonated_by`, and the operator reference. Apart from its offering grant mirror, it depends on no step and can land at any point.
+
+Its registration mirror records the `tenants` list on an interceptor registration from [RT-6](../0141-runtime-routing/change.md#rt-6-tenant-scoped-interceptors), and its settings events carry the events of the settings model and admin API of [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#steps). For each, whichever of this step and the other lands second adds the case. Its offering grant mirror needs the offerings of [PM-3](../0136-placement/change.md#pm-3-placement-offerings-and-per-pool-nodeplacement), for the grant the mirror records.
+
+### 0142.S5 Operator access approval
+- status: Planned
+- aliases: [SO-4b, SO-4 (part)]
+- lanes: [specification, code, documentation]
+- depends-on: [0142.S1, 0142.S2, 0142.S4, 0142.S6]
+
+Operator access requests, the approval gate, and the emergency path. It needs the approver role, the setting, the mirror, and the store.
+
+### 0142.S6 Tool-use approvals
+- status: Planned
+- aliases: [SO-5a, SO-5 (part)]
+- lanes: [specification, code, documentation]
+- depends-on: [0142.S1, 0142.S2]
+
+`security_approvals`, the approvals API, and the tool hold at MCP dispatch and on relayed frames. It needs the role and the rules. It addresses F-7.2.46.
+
+### 0142.S7 Repository write approvals
+- status: Planned
+- aliases: [SO-5b, SO-5 (part)]
+- lanes: [specification, code, documentation]
+- depends-on: [0142.S6, 0127.S2, 0127.S3]
+
+Repository write approvals. It needs the store, the mint checks and the writable set entry states that the binding feed carries, and the writable set records.
+
+### 0142.S8 Certificate windows and the remedy
+- status: Planned
+- aliases: [SO-6]
+- lanes: [specification, code, documentation]
+- closes: [F-25.6.9]
+
+The windows, the remedy with its `certificates/status` rule, and the CA finding. It depends on no step and can land at any point.
+
+### 0142.S9 lenny-ops rights
+- status: Planned
+- aliases: [SO-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0142.S8]
+- closes: [F-25.4.40]
+
+The rights, the version source, the §25.4 reconciliation, and the skip removal. It lands after the new remedy, because it removes the Secret delete and the Certificate patch that today's remedy uses.
+
+### Notes on the steps
+
+The outline stated that SO-4, SO-5, and SO-7 depend on nothing. The approval parts of SO-4 and SO-5 need the approver role, and SO-7 needs the new remedy, so the dependencies above correct it. Steps from different changes interleave, and each change states its own dependencies, with no shared queue file.
+
+[TS-2](../0149-tenant-scoping-identity/change.md#identity-model-ts-2-ts-4-and-ts-6-to-ts-9) and [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6) have no dependency on this change in either direction. This design works with a broker or with a customer's issuer. `securityRoleSource`, which 0142.S1 adds, is where they meet, and [TS-6](../0149-tenant-scoping-identity/change.md#identity-source-record-ts-6)'s activation takes 0142.S2's delay at a tenant with a `security-admin` row in any state.
 
 ## Documentation
 

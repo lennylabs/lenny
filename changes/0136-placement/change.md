@@ -988,16 +988,55 @@ The operator guide's placement chapter owns what this design adds, and `namespac
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| PM-A | Removal of `allowCrossTenantReuse`. | Nothing. |
-| PM-B | The component table, the priority class scheme with one agent priority class per class and the class quotas, the `lenny-ops` settlement, and the namespaces with O3. | Nothing. |
-| PM-C | Classes, presets, rendering of agent and system pods, user namespaces on the standard class, named node agents, admission, preflight, the continuous check, and removal of the T4 placement mechanism. | PM-B for the priority classes; SI's userns decision. |
-| PM-D | Node tenancy and single-tenant pools. | PM-C; DR-5 for owned pools and the `lenny.dev/served` reader; TSS-B, which stores `securitySettings.placement.nodeTenancy`. |
-| PM-E | Offerings, the admin API, the pool `placement` block, the routing check, owned-pool choice, and the reserved overlay. | PM-D; RT-2's post-chain point; DR-10. |
-| PM-F | Placement requirements with `allowReusedPod`, `sessionIsolationLevel` fields, and region placement. | PM-E; RT-2; TS-1; SO-2 under O7. TSS-C lands the operator's placement settings as sources once PM-D and PM-F are in. |
+### 0136.S1 Removal of allowCrossTenantReuse
+- status: Planned
+- aliases: [PM-A]
+- lanes: [specification, code, documentation]
 
-PM-A and PM-B can land first and in either order. PM-C to PM-F land in order.
+Removal of `allowCrossTenantReuse`.
+
+### 0136.S2 Components, priority classes, and namespaces
+- status: Planned
+- aliases: [PM-B, PM-8, PM-9]
+- lanes: [specification, code, documentation]
+
+The component table, the priority class scheme with one agent priority class per class and the class quotas, the `lenny-ops` settlement, and the namespaces with O3.
+
+### 0136.S3 Classes, presets, rendering, and enforcement
+- status: Planned
+- aliases: [PM-C, PM-1, PM-5, PM-6]
+- lanes: [specification, code, documentation]
+- depends-on: [0136.S2]
+
+Classes, presets, rendering of agent and system pods, user namespaces on the standard class, named node agents, admission, preflight, the continuous check, and removal of the T4 placement mechanism. It depends on 0136.S2 for the priority classes, and on SI's userns decision.
+
+### 0136.S4 Node tenancy and single-tenant pools
+- status: Planned
+- aliases: [PM-D, PM-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0136.S3, 0147.S5, 0150.S2]
+
+Node tenancy and single-tenant pools. It depends on DR-5 (0147.S5) for owned pools and the `lenny.dev/served` reader, and on TSS-B (0150.S2), which stores `securitySettings.placement.nodeTenancy`.
+
+### 0136.S5 Offerings and the pool placement block
+- status: Planned
+- aliases: [PM-E, PM-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0136.S4, 0141.S1, 0147.S9]
+
+Offerings, the admin API, the pool `placement` block, the routing check, owned-pool choice, and the reserved overlay. It depends on RT-2's post-chain point, which 0141.S1 lands, and on DR-10 (0147.S9).
+
+### 0136.S6 Placement requirements and region placement
+- status: Planned
+- aliases: [PM-F, PM-4, PM-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0136.S5, 0141.S1, 0149.S1, 0142.S2]
+
+Placement requirements with `allowReusedPod`, `sessionIsolationLevel` fields, and region placement. It depends on RT-2 (0141.S1), on TS-1 (0149.S1), and on SO-2 (0142.S2) under O7. 0150.S3 (TSS-C) lands the operator's placement settings as sources once 0136.S4 and 0136.S6 are in.
+
+### Notes on the steps
+
+0136.S1 and 0136.S2 can land first and in either order. 0136.S3 to 0136.S6 land in order.
 
 ## Sources
 

@@ -1136,16 +1136,55 @@ The owner asked on 2026-11-13 that every design's documentation list every setti
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| SI-A | Slot containers, per-slot names for runtime and tool connections, two-way checks, the listener drain, dead slots and the recorded slot count, per-slot credentials and manifests, the canary, and the webhook rules. | PL-A, and PL-B in the same release, because PL-B renders the per-slot volumes. |
-| SI-B | The supervisor broker with `statat`, the parallel stat walk's broker rules, and the adapter's checkpoint, restore, export, and tracker through it, with the `metadata_only` record. | SI-A, and IC's matching changes in the same release. |
-| SI-C | The asynchronous worker and the whole `CH-SUPERVISE` protocol, the release with the Sweep fixes and the emptiness check, the launch at bind, and the retirement of `keep`. | SI-A, and WM's helper in the same release. |
-| SI-D | The resource mapping and detection of "SI-9". | SI-A, and the billing design's container mapping. |
-| SI-E | User namespaces on runc pools by default, the `uid_map` check, and the Kata `block-plain` volume GID. | SI-A, and PM's rendering of `hostUsers`. |
-| SI-F | Recycling after the release: the one-slot disposition, the **Runtime refused** retirement in place of "Runtime not live", dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration, and the scrub profiles `standard` and `vm-restart` (D36 to D39). | SI-A and SI-C, and PM-A's removal of `allowCrossTenantReuse` in the same release. |
+### 0145.S1 Slot containers
+- status: Planned
+- aliases: [SI-A, SI-1, SI-2, SI-4, SI-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0118.S1]
 
-RP's tool connections follow SI-A.
+Slot containers, per-slot names for runtime and tool connections, two-way checks, the listener drain, dead slots and the recorded slot count, per-slot credentials and manifests, the canary, and the webhook rules. PL-B ([0118.S4](../0118-agent-pod-layout/change.md#steps)) lands in the same release, because PL-B renders the per-slot volumes.
+
+RP's tool connections follow this step. They land in RP-B ([0139.S2](../0139-runtime-protocol/change.md#steps)).
+
+### 0145.S2 Supervisor file-descriptor broker
+- status: Planned
+- aliases: [SI-B, SI-5, SI-6]
+- lanes: [specification, code, documentation]
+- depends-on: [0145.S1]
+
+The supervisor broker with `statat`, the parallel stat walk's broker rules, and the adapter's checkpoint, restore, export, and tracker through it, with the `metadata_only` record. IC's matching changes land in the same release.
+
+### 0145.S3 Asynchronous worker and the CH-SUPERVISE protocol
+- status: Planned
+- aliases: [SI-C, SI-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0145.S1]
+
+The asynchronous worker and the whole `CH-SUPERVISE` protocol, the release with the Sweep fixes and the emptiness check, the launch at bind, and the retirement of `keep`. WM's helper lands in the same release.
+
+### 0145.S4 Resource mapping and detection
+- status: Planned
+- aliases: [SI-D, SI-9]
+- lanes: [specification, code, documentation]
+- depends-on: [0145.S1, 0121.S1]
+
+The resource mapping and detection of "SI-9". It needs the billing design's container mapping, which BR-1 lands.
+
+### 0145.S5 User namespaces on runc pools
+- status: Planned
+- aliases: [SI-E, SI-11]
+- lanes: [specification, code, documentation]
+- depends-on: [0145.S1, 0136.S3]
+
+User namespaces on runc pools by default, the `uid_map` check, and the Kata `block-plain` volume GID. It needs PM's rendering of `hostUsers`, which PM-C lands.
+
+### 0145.S6 Recycling after the release
+- status: Planned
+- aliases: [SI-F]
+- lanes: [specification, code, documentation]
+- depends-on: [0145.S1, 0145.S3]
+
+Recycling after the release: the one-slot disposition, the **Runtime refused** retirement in place of "Runtime not live", dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration, and the scrub profiles `standard` and `vm-restart` (D36 to D39). PM-A's removal of `allowCrossTenantReuse` lands in the same release.
 
 ## Sources
 

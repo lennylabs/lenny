@@ -688,9 +688,21 @@ These designs refer to the removed subsystem, the `PreRoute` chain, derive, the 
 
 ## Steps
 
-Two proposals, in order:
+The steps land in order.
 
-1. **Interceptor contract and scope.** "RT-2" without the route interceptor, "RT-5", and "RT-6". It stands alone: it corrects the delegation path and the phase payloads, adds the session context and the last modifier, closes the plaintext dial, and gives SaaS providers tenant scope while the `ExperimentRouter` still exists. If [`0144-session-derive`](../0144-session-derive/change.md) lands first, this proposal adds `kind: derive` to its create path. Otherwise the derive proposal adopts the payload this one lands.
-2. **Runtime routes and removal.** "RT-1", "RT-3", "RT-4", and "RT-7". It depends on the first proposal's payload and single chain. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) depends on the second proposal's shared bucketing function and lands after it.
+### 0141.S1 Interceptor contract and scope
+- status: Planned
+- aliases: [proposal 1, first proposal, interceptor contract proposal, RT-2, RT-5, RT-6]
+- lanes: [specification, code, documentation]
 
-Within the second proposal, the specification edits land first, then routes and routing labels with their tests, then the removal and the migration, then the documentation and records.
+"RT-2" without the route interceptor, "RT-5", and "RT-6". It stands alone: it corrects the delegation path and the phase payloads, adds the session context and the last modifier, closes the plaintext dial, and gives SaaS providers tenant scope while the `ExperimentRouter` still exists. If [`0144-session-derive`](../0144-session-derive/change.md) lands first, this proposal adds `kind: derive` to its create path. Otherwise the derive proposal adopts the payload this one lands.
+
+### 0141.S2 Runtime routes and removal
+- status: Planned
+- aliases: [proposal 2, second proposal, RT-1, RT-3, RT-4, RT-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0141.S1]
+
+"RT-1", "RT-3", "RT-4", and "RT-7". It uses the payload and the single chain of 0141.S1. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) depends on the shared bucketing function of 0141.S2 and lands after it.
+
+Within 0141.S2, the specification edits land first, then routes and routing labels with their tests, then the removal and the migration, then the documentation and records.

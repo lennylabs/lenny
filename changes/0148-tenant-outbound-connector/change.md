@@ -625,35 +625,51 @@ Tenant `acme` runs a self-managed GitLab at `gitlab.acme.internal` on a private 
 
 Proposals carry these labels, and each runs through the change-proposal pipeline. Until OC-3 lands, the chart's refusal under "Deployment and network rules" keeps the feature out of production.
 
-| Label | Contents |
-| :-- | :-- |
-| OC-1 Gateway, agent, and identity | The proto, the agent's dial, TLS identity, reversed roles, allowlist, DNS, grant check, and attestations. The replica's handling of replica sessions, HTTP/2 limits, grant check, and server-name check. The tables `outbound_connector`, `outbound_agent_instance`, `outbound_enrollment_token`, `outbound_grant_key`, and `outbound_grant_key_revocation`, `REG-SITEATTACH` with its sweep, the restricted database logins in the chart and preflight, and the connector, enrollment token, instance, and agent API routes, including enrollment, rotation, reuse detection, retirement, reaping, and revocation. The grant signer in the decision service, attestation verification, replica selection, the group filter, and the route target's resolution. The Envoy cluster and routes. `outbound.*` evidence producers, the static hard limits, network rows, the public Service, and the agent's image and chart. The validator refuses the kind until OC-2, so OC-1's tests insert host records directly into [EG-6](../0127-egress-and-git/change.md#steps)'s endpoint table. |
-| OC-2 Hosts and policy | The outbound host validator, the reserved set at registration and at each decision, the outbound host API routes, `tenantOverride.outboundHosts`, `allowMirror`, the secret-less binding, the outbound grant, permissions, and `lenny-ctl outbound` commands. |
-| OC-3 Operations | The liveness read and its states, events, tenant quotas, metering, metrics, alerts, the probe with its tenant and instance assertions, `lenny-outbound-agent check`, the revoke API routes, runbooks, and the removal of the chart's refusal of `outboundGateway.enabled: true`. |
-| OC-4 Exclusive gateway groups | Chart-rendered dedicated Deployments, the outbound group label, group filtering of snapshots and the trust response, assignment by admin API, and validators. It lands after the others. |
+### 0148.S1 Gateway, agent, and identity
+- status: Planned
+- aliases: [OC-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S2, 0127.S6, 0127.S8, 0127.S9, 0127.S10, 0127.S11]
 
-### Dependencies
+The proto, the agent's dial, TLS identity, reversed roles, allowlist, DNS, grant check, and attestations. The replica's handling of replica sessions, HTTP/2 limits, grant check, and server-name check. The tables `outbound_connector`, `outbound_agent_instance`, `outbound_enrollment_token`, `outbound_grant_key`, and `outbound_grant_key_revocation`, `REG-SITEATTACH` with its sweep, the restricted database logins in the chart and preflight, and the connector, enrollment token, instance, and agent API routes, including enrollment, rotation, reuse detection, retirement, reaping, and revocation. The grant signer in the decision service, attestation verification, replica selection, the group filter, and the route target's resolution. The Envoy cluster and routes. `outbound.*` evidence producers, the static hard limits, network rows, the public Service, and the agent's image and chart. The validator refuses the kind until OC-2, so OC-1's tests insert host records directly into [EG-6](../0127-egress-and-git/change.md#steps)'s endpoint table.
 
-Each design states its own dependencies, and proposals from different designs may interleave as long as these hold.
+The step needs the decision service, typed route targets, and the mint path of [0127.S2](../0127-egress-and-git/change.md#steps) (EG-2). It needs the forwarded CONNECT route and selector peers of [0127.S6](../0127-egress-and-git/change.md#steps) (EG-6), which are the NetworkPolicy peers that admit an in-cluster service by pod and namespace selector. It needs the envelope and `lenny-evidence` of [0127.S10](../0127-egress-and-git/change.md#steps) (EG-10), and the outbound gateway's egress PKI leaf of [0127.S11](../0127-egress-and-git/change.md#steps) (EG-11). It needs the named permissions and the single opt-in write path of [0127.S8](../0127-egress-and-git/change.md#steps) (EG-8) and [0127.S9](../0127-egress-and-git/change.md#steps) (EG-9), which its connector and instance API routes use.
 
-| Proposal | Depends on | Why |
-| :-- | :-- | :-- |
-| OC-1 | [EG-2](../0127-egress-and-git/change.md#steps) | Decision service, typed route targets, and the mint path |
-| OC-1 | [EG-6](../0127-egress-and-git/change.md#steps) | Forwarded CONNECT route and selector peers, the NetworkPolicy peers that admit an in-cluster service by pod and namespace selector |
-| OC-1 | [EG-10](../0127-egress-and-git/change.md#steps) | Envelope and `lenny-evidence` |
-| OC-1 | [EG-11](../0127-egress-and-git/change.md#steps) | The outbound gateway's egress PKI leaf |
-| OC-1 | [EG-8](../0127-egress-and-git/change.md#steps), [EG-9](../0127-egress-and-git/change.md#steps) | Named permissions and the single opt-in write path, which its connector and instance API routes use |
-| OC-2 | OC-1 | The outbound gateway, the agent, and the tables |
-| OC-2 | [EG-4](../0127-egress-and-git/change.md#steps) | The typed `secret` union and termination of bound hosts, for `kind: none` |
-| OC-2 | [EG-6](../0127-egress-and-git/change.md#steps) | Endpoint registration with per-endpoint CA, and the per-kind validator's tenant-registered path |
-| OC-2 | [EG-8](../0127-egress-and-git/change.md#steps) | The effective-policy read and decision queries |
-| OC-2 | [EG-9](../0127-egress-and-git/change.md#steps) | The overlay, one write path, and named permissions |
-| [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) for a private host | OC-1, OC-2 | The token path to a link provider on an outbound host. A public provider needs neither. |
-| OC-3 | OC-1, OC-2 | The resources it reports on |
-| OC-3 | [EG-8](../0127-egress-and-git/change.md#steps) | Decision reads used in debugging |
-| OC-4 | OC-1, OC-2 | The outbound gateway and assignment |
-| End-to-end scenarios in OC-3's tiers | [EG-1](../0127-egress-and-git/change.md#steps), [EG-3](../0127-egress-and-git/change.md#steps), [EG-4](../0127-egress-and-git/change.md#steps) | Minting, the pod git path, and `inject`. Scenario tests land with whichever of these lands last. |
-| [FE-1](../0128-forensics-evidence-preservation/change.md#fe-1-quarantine) | None here | A `quarantined` binding is refused at the decision, so no grant is signed |
+### 0148.S2 Hosts and policy
+- status: Planned
+- aliases: [OC-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0148.S1, 0127.S4, 0127.S6, 0127.S8, 0127.S9]
+
+The outbound host validator, the reserved set at registration and at each decision, the outbound host API routes, `tenantOverride.outboundHosts`, `allowMirror`, the secret-less binding, the outbound grant, permissions, and `lenny-ctl outbound` commands.
+
+The step needs the outbound gateway, the agent, and the tables of 0148.S1. It needs the typed `secret` union and termination of bound hosts of [0127.S4](../0127-egress-and-git/change.md#steps) (EG-4), for `kind: none`. It needs the endpoint registration with per-endpoint CA and the per-kind validator's tenant-registered path of [0127.S6](../0127-egress-and-git/change.md#steps) (EG-6), the effective-policy read and decision queries of [0127.S8](../0127-egress-and-git/change.md#steps) (EG-8), and the overlay, one write path, and named permissions of [0127.S9](../0127-egress-and-git/change.md#steps) (EG-9).
+
+### 0148.S3 Operations
+- status: Planned
+- aliases: [OC-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0148.S1, 0148.S2, 0127.S8]
+
+The liveness read and its states, events, tenant quotas, metering, metrics, alerts, the probe with its tenant and instance assertions, `lenny-outbound-agent check`, the revoke API routes, runbooks, and the removal of the chart's refusal of `outboundGateway.enabled: true`.
+
+The step reports on the resources of 0148.S1 and 0148.S2, and it uses the decision reads of [0127.S8](../0127-egress-and-git/change.md#steps) (EG-8) in debugging. The end-to-end scenarios in this step's test tiers need the minting of [0127.S1](../0127-egress-and-git/change.md#steps) (EG-1), the pod git path of [0127.S3](../0127-egress-and-git/change.md#steps) (EG-3), and the `inject` of [0127.S4](../0127-egress-and-git/change.md#steps) (EG-4). Those scenario tests land with whichever of these steps lands last.
+
+### 0148.S4 Exclusive gateway groups
+- status: Planned
+- aliases: [OC-4]
+- lanes: [specification, code, documentation]
+- depends-on: [0148.S1, 0148.S2, 0148.S3]
+
+Chart-rendered dedicated Deployments, the outbound group label, group filtering of snapshots and the trust response, assignment by admin API, and validators. It lands after the others, and it needs the outbound gateway and the assignment of 0148.S1 and 0148.S2.
+
+### Notes on the steps
+
+Each change states its own dependencies, and steps from different changes may interleave as long as the `depends-on` fields hold.
+
+[UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) (0151.S2) depends on 0148.S1 and 0148.S2 for a private host, for the token path to a link provider on an outbound host. A public provider needs neither step.
+
+[FE-1](../0128-forensics-evidence-preservation/change.md#fe-1-quarantine) (0128.S2) has no dependency here. A `quarantined` binding is refused at the decision, so no grant is signed.
 
 [TS-1](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) does not scope outbound connectors or outbound hosts below the tenant: [`0149-tenant-scoping-identity` decision 4](../0149-tenant-scoping-identity/change.md#decisions) leaves them out of the scoped objects, so neither design depends on the other. A route that names an outbound connector can sit under `environmentPolicies` once OC-2 lands, with no OC change.
 

@@ -421,13 +421,31 @@ Tenant `acme` runs `ghes.acme.internal` behind connector `acme-dc1`. The link pr
 
 - `POST /repos/a/b/pulls/1/r%65views`, `.../reviews.json`, `POST /graphq%6C`, and `POST /graphql/x` on a host under `github-deny`: refused **[measured]**, and the stub proves forwarding only. `.../reviews.x` and `POST /repos/a/b/graphql`: refused **[measured]**.
 
-## Dependencies
+## Steps
 
-| Proposal | Depends on | Why |
-| :-- | :-- | :-- |
-| GH-1 (kinds and the check) | [UG-1](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds), [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization), and [UC-7](../0151-user-credential-delivery/change.md#uc-7-add-ons) | The VCS kind rules, the release check, and the kind registry. |
-| GH-2 (authoring on GitHub) | GH-1, [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring), and [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking). S1, S2, S3, S3c, and S15 passing. | The template, the attach rule, and the child tokens. |
-| GH-3 (`github-deny`) | [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) and [UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring) | The rule evaluator, the preset format, and the default preset on a VCS pool's API host. |
+### 0129.S1 The github and github-enterprise kinds
+- status: Planned
+- aliases: [GH-1]
+- lanes: [specification, code, documentation]
+- depends-on: [0152.S1, 0152.S2, 0151.S7]
+
+The design is in [GH-1](#gh-1-the-github-and-github-enterprise-kinds), which covers the kinds and the repository check. The dependencies cover the VCS kind rules, the release check, and the kind registry.
+
+### 0129.S2 Pull request authoring on GitHub
+- status: Planned
+- aliases: [GH-2]
+- lanes: [specification, code, documentation]
+- depends-on: [0129.S1, 0152.S3, 0151.S2]
+
+The design is in [GH-2](#gh-2-pull-request-authoring-on-github). The dependencies cover the template, the attach rule, and the child tokens. The spikes S1, S2, S3, S3c, and S15 under ["Validation owed"](#validation-owed) must pass before the step starts.
+
+### 0129.S3 The github-deny preset
+- status: Planned
+- aliases: [GH-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0151.S4, 0152.S3]
+
+The design is in [GH-3](#gh-3-the-github-deny-preset). The dependencies cover the rule evaluator, the preset format, and the default preset on a VCS pool's API host.
 
 ## Documentation
 

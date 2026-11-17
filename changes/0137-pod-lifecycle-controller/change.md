@@ -779,14 +779,46 @@ The list holds 143 sites in 14 designs, 11 of them in history sections. It was f
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| PLC-A | The specification changes of PLC-1, PLC-3, PLC-4, PLC-5's §17.1 and §4.6.1 names, and PLC-2's names and label rules in the specification (§4.6.1 **Disruption protection for agent pods:**, §17.2 items 5 and 9), with the documentation. | D6 and D7, which settled O3 and O4. The designs' own §4.6.1 and §5.2 edits for the fields PLC-4 names: AR-2's removals, PL-9's rename, SI-4's slot count, and BR-1's class configuration. PLC-A lands with or after them, so §4.6.1's new text describes the final fields, and the later pass of "Instructions for other designs" renames their staged text before they land. |
-| PLC-B | The kinds, the merge, the fields, and the identifiers of PLC-2, the table rename, the pool and pod-set labels with the per-`PodSet` PDB and the label checks of PLCR-13 and PLCR-14, the `PodSet` names of PLCR-17, the claim scope and the `agent_pod_state.pod_set` column of PLCR-18, and `spec.slotCount` and the pod set's `maxConcurrentSessionsPerPod` of PLC-4, with their tests. The label rules ride with the merge because the scoping fault exists only once a pool has several `PodSet` objects. | PLC-A for the specification text that names the kinds and fields. PL-9's code for `maxConcurrentSessionsPerPod`, and SI-4's code for the slot count's reader. RV-3's code for `spec.podHash` and `spec.podSetKey`, which the names of PLCR-17 and the claim of PLCR-18 read, and RV-2's revision selection, which gives the claim its pod hash. PLC-B and RV-3 land together or RV-3 first. |
-| PLC-C | The Go type renames of PLC-5. | PLC-A for the §17.1 and §4.6.1 names. It is independent of PLC-B. |
-| PLC-D | The pool-name and runtime-name rule of "PLC-7": the §5.2 **Pool name.** and §5.1 **Runtime name.** paragraphs, the §15.1 refusals, `poolstore.ValidateName`, `runtimestore.ValidateName`, the tenant-derived runtime create's name check, the pool name of `lenny runtime apply`, the `docs/api/admin.md` and runtime configuration reference rows, and the tests of PLCR-15 and PLCR-16. | Nothing. It fixes today's defects, a pool or a runtime that is stored while its pool never warms, under today's kind names, so it can land before PLC-A. Its §5.2 paragraph names the pod-set label only once PLC-A has landed, and states the pool label alone if it lands first. Its §5.1 paragraph names the tenant-derived runtime create only once DR-4 has landed, as "Specification changes" states. If PLC-D lands first, DR-4's route calls the new `runtimestore.ValidateName` when it lands. It and DR-1 each limit runtime names to 63 characters, and whichever lands first closes F-5.1.31. |
+### 0137.S1 Specification changes
+- status: Planned
+- aliases: [PLC-A, PLC-1, PLC-2 (part), PLC-3, PLC-4 (part), PLC-5 (part)]
+- lanes: [specification, documentation]
+- depends-on: [0119.S2, 0118.S3, 0145.S1, 0121.S1]
 
-PLC-B and PLC-C can land in either order once PLC-A is in, and PLC-D lands at any point. None of them depends on [`0125-decision-records`](../0125-decision-records/change.md). PLC-A and that design's REC-1 edit one §4.6.1 paragraph and the same §19 and §23.2 rows in separate phrases, so either lands first: PLC-A renames the kind in the paragraph's label and REC-1 drops its "ADR-007: " prefix ("PLC-4"), and PLC-A restates the license criterion that names upstream while REC-1 restates the phrases that name ADR-008.
+The specification changes of PLC-1, PLC-3, PLC-4, PLC-5's §17.1 and §4.6.1 names, and PLC-2's names and label rules in the specification (§4.6.1 **Disruption protection for agent pods:**, §17.2 items 5 and 9), with the documentation.
+
+The step rests on D6 and D7, which settled O3 and O4. It follows the designs' own §4.6.1 and §5.2 edits for the fields PLC-4 names: AR-2's removals in [0119.S2](../0119-agent-runtimes-only/change.md#steps), PL-9's rename in [0118.S3](../0118-agent-pod-layout/change.md#steps), SI-4's slot count in [0145.S1](../0145-session-isolation/change.md#steps), and BR-1's class configuration in [0121.S1](../0121-billing-resource-attribution/change.md#steps). 0137.S1 lands with or after them, so §4.6.1's new text describes the final fields, and the later pass of "Instructions for other designs" renames their staged text before they land.
+
+### 0137.S2 Kinds, fields, labels, and identifiers
+- status: Planned
+- aliases: [PLC-B, PLC-2 (part), PLC-4 (part)]
+- lanes: [code, documentation]
+- depends-on: [0137.S1, 0118.S3, 0145.S1, 0140.S1]
+
+The kinds, the merge, the fields, and the identifiers of PLC-2, the table rename, the pool and pod-set labels with the per-`PodSet` PDB and the label checks of PLCR-13 and PLCR-14, the `PodSet` names of PLCR-17, the claim scope and the `agent_pod_state.pod_set` column of PLCR-18, and `spec.slotCount` and the pod set's `maxConcurrentSessionsPerPod` of PLC-4, with their tests. The label rules ride with the merge because the scoping fault exists only once a pool has several `PodSet` objects.
+
+The step needs 0137.S1 for the specification text that names the kinds and fields. It needs PL-9's code in [0118.S3](../0118-agent-pod-layout/change.md#steps) for `maxConcurrentSessionsPerPod`, and SI-4's code in [0145.S1](../0145-session-isolation/change.md#steps) for the slot count's reader. It needs RV-3's code in [0140.S1](../0140-runtime-revisions/change.md#steps) for `spec.podHash` and `spec.podSetKey`, which the names of PLCR-17 and the claim of PLCR-18 read, and RV-2's revision selection in the same step, which gives the claim its pod hash. 0137.S2 and RV-3 land together or RV-3 first.
+
+### 0137.S3 Go type renames
+- status: Planned
+- aliases: [PLC-C, PLC-5 (part)]
+- lanes: [code, documentation]
+- depends-on: [0137.S1]
+
+The Go type renames of PLC-5. The step needs 0137.S1 for the §17.1 and §4.6.1 names. It is independent of 0137.S2.
+
+### 0137.S4 Pool and runtime name rule
+- status: Planned
+- aliases: [PLC-D, PLC-7]
+- lanes: [specification, code, documentation]
+
+The pool-name and runtime-name rule of "PLC-7": the §5.2 **Pool name.** and §5.1 **Runtime name.** paragraphs, the §15.1 refusals, `poolstore.ValidateName`, `runtimestore.ValidateName`, the tenant-derived runtime create's name check, the pool name of `lenny runtime apply`, the `docs/api/admin.md` and runtime configuration reference rows, and the tests of PLCR-15 and PLCR-16.
+
+The step depends on nothing. It fixes today's defects, a pool or a runtime that is stored while its pool never warms, under today's kind names, so it can land before 0137.S1. Its §5.2 paragraph names the pod-set label only once 0137.S1 has landed, and states the pool label alone if it lands first. Its §5.1 paragraph names the tenant-derived runtime create only once DR-4 ([0147.S4](../0147-tenant-derived-runtimes/change.md#steps)) has landed, as "Specification changes" states. If 0137.S4 lands first, DR-4's route calls the new `runtimestore.ValidateName` when it lands. It and DR-1 ([0147.S1](../0147-tenant-derived-runtimes/change.md#steps)) each limit runtime names to 63 characters, and whichever lands first closes F-5.1.31.
+
+### Notes on the steps
+
+0137.S2 and 0137.S3 can land in either order once 0137.S1 is in, and 0137.S4 lands at any point. None of them depends on [`0125-decision-records`](../0125-decision-records/change.md). 0137.S1 and that design's REC-1 edit (0125.S1) edit one §4.6.1 paragraph and the same §19 and §23.2 rows in separate phrases, so either lands first: 0137.S1 renames the kind in the paragraph's label and REC-1 drops its "ADR-007: " prefix ("PLC-4"), and 0137.S1 restates the license criterion that names upstream while REC-1 restates the phrases that name ADR-008.
 
 ## Sources
 

@@ -932,13 +932,39 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| LU-A | Metering corrections: token classes with cache writes by lifetime, the parsers and streaming rules of "Usage normalization", the `llm_usage` records, the class counts on `token_usage.checkpoint`, and the correction fields. The client-facing usage of the Open Responses and Chat Completions surfaces, which revision 6 placed here, moves to the provider adapters under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which read R3. Closes F-11.2.38 and absorbs RC-B and O2 of the cache removal design. | Nothing. It runs on today's proxy and records the pool in place of the upstream until LU-B. |
-| LU-B | Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4, LU-8, LU-9, LU-10, and LU-11, with the specification rewrite of §4.9's LLM half and every section of "Specification changes" that the removal reaches. It includes the `google-generate` format with its routes, its parser, and the `gemini-api` channel, Google Cloud workload identity beside the AWS and Azure exchangers, the §26 format declarations with `gemini-cli` on `google-generate`, and the statement of calls outside the proxy. Closes F-4.9.48 and resolves the lease findings. | LU-A, and EG-2 for the removal of `provider-direct`. |
-| LU-C | Rate cards and credit budgets: LU-5 with the fallback entry, LU-6 with the input estimate and best-effort bounds, and the estimated cost of LU-7, with §8.3, §8.6, §11.2, and §11.2.1 in credits. Closes F-11.2.34. | LU-B. |
+### 0133.S1 Metering corrections
+- status: Planned
+- aliases: [LU-A]
+- lanes: [specification, code, documentation]
+- closes: [F-11.2.38]
 
-LU-A lands first because it fixes a metering defect that exists today. LU-B and LU-C can merge into one proposal if the owner prefers to change budgets in the same step as their anchor. Revision 2's LU-D, which carried the gate, the guardrail, and the posture entries of the unmetered path, and its LU-E, which carried `google-generate` and Google Cloud workload identity, are retired: OD-8 removes LU-D's mechanisms and LU-B carries the statement of calls outside the proxy, and OD-9 moves LU-E's content into LU-B. The labels are not reused.
+Metering corrections: token classes with cache writes by lifetime, the parsers and streaming rules of "Usage normalization", the `llm_usage` records, the class counts on `token_usage.checkpoint`, and the correction fields. The client-facing usage of the Open Responses and Chat Completions surfaces, which revision 6 placed here, moves to the provider adapters under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which read R3. It absorbs RC-B and O2 of the cache removal design.
+
+It has no dependency. It runs on today's proxy and records the pool in place of the upstream until 0133.S2. It lands first because it fixes a metering defect that exists today.
+
+### 0133.S2 Upstreams and removal
+- status: Planned
+- aliases: [LU-B, LU-1, LU-2, LU-3, LU-4, LU-8, LU-9, LU-10, LU-11]
+- lanes: [specification, code, documentation]
+- depends-on: [0133.S1, 0127.S2]
+- closes: [F-4.9.48]
+
+Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4, LU-8, LU-9, LU-10, and LU-11, with the specification rewrite of §4.9's LLM half and every section of "Specification changes" that the removal reaches. It includes the `google-generate` format with its routes, its parser, and the `gemini-api` channel, Google Cloud workload identity beside the AWS and Azure exchangers, the §26 format declarations with `gemini-cli` on `google-generate`, and the statement of calls outside the proxy. It resolves the lease findings.
+
+It needs EG-2 for the removal of `provider-direct`.
+
+### 0133.S3 Rate cards and credit budgets
+- status: Planned
+- aliases: [LU-C, LU-5, LU-6, LU-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0133.S2]
+- closes: [F-11.2.34]
+
+Rate cards and credit budgets: LU-5 with the fallback entry, LU-6 with the input estimate and best-effort bounds, and the estimated cost of LU-7, with §8.3, §8.6, §11.2, and §11.2.1 in credits.
+
+### Notes on the steps
+
+0133.S2 and 0133.S3 can merge into one step if the owner prefers to change budgets in the same step as their anchor. Revision 2's LU-D, which carried the gate, the guardrail, and the posture entries of the unmetered path, and its LU-E, which carried `google-generate` and Google Cloud workload identity, are retired: OD-8 removes LU-D's mechanisms and 0133.S2 (LU-B) carries the statement of calls outside the proxy, and OD-9 moves LU-E's content into 0133.S2. The labels are not reused.
 
 ## Sources
 

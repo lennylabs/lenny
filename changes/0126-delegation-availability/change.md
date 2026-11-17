@@ -564,11 +564,19 @@ Revision 2 files these in `BUILD-GAPS.md`, at the owner's request of 2026-11-09,
 
 ## Steps
 
-1. **DA-A**, after TS-3's proposal, whose calling-session parent, allow-list, `DELEGATION_DISABLED`, and stored `maxDepth` it extends: the specification edits; the levels, the resolver, and the refusal; the per-session list and its rules; the `delegation` and `questions` values for the availability of "RP-4"; the derived runtime rule and the tenant runtime entry; the derive narrowing; the explicit-zero per-hop switch and the extension rule; and the removal of the `approvalMode` argument and `DELEGATION_DENIED` with the proto reservation. Three parts land with or after the proposals that add what they read: the guardrail row of the resolution with the SO-2 proposal of [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture), which adds the record; the provider-surface rules for `lenny/request_input` and `ask_question` with MD-B of [`0135-message-delivery`](../0135-message-delivery/change.md#steps), which lands "MD-8"; and the `capabilities.childSessions` condition and the tool names with MD-E of the same design, which lands "MD-22" and "MD-23".
+### 0126.S1 Delegation availability
+- status: Planned
+- aliases: [DA-A, DA-1, DA-2, DA-3, DA-4, DA-5, DA-6, DA-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0149.S3]
 
-Revision 3's DA-B, the notification work, is withdrawn under O4. The notice, the bridge's cache hints, and its `-32602` mapping land with the runtime protocol design's RP-B, which depends on DA-A.
+The step extends the calling-session parent, the allow-list, `DELEGATION_DISABLED`, and the stored `maxDepth` that 0149.S3 (TS-3) adds. It carries the specification edits; the levels, the resolver, and the refusal; the per-session list and its rules; the `delegation` and `questions` values for the availability of "RP-4"; the derived runtime rule and the tenant runtime entry; the derive narrowing; the explicit-zero per-hop switch and the extension rule; and the removal of the `approvalMode` argument and `DELEGATION_DENIED` with the proto reservation. Three parts land with or after the steps that add what they read: the guardrail row of the resolution with 0142.S2 (the SO-2 proposal) of [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture), which adds the record; the provider-surface rules for `lenny/request_input` and `ask_question` with 0135.S2 (MD-B) of [`0135-message-delivery`](../0135-message-delivery/change.md#steps), which lands "MD-8"; and the `capabilities.childSessions` condition and the tool names with 0135.S5 (MD-E) of the same design, which lands "MD-22" and "MD-23".
 
-The defect that `start_child_session` does not apply `DelegationPolicy` rules (F-8.3.14) is independent of both and takes its own proposal.
+### Notes on the steps
+
+Revision 3's DA-B, the notification work, is withdrawn under O4. The notice, the bridge's cache hints, and its `-32602` mapping land with the runtime protocol design's RP-B (0139.S2), which depends on 0126.S1.
+
+The defect that `start_child_session` does not apply `DelegationPolicy` rules (F-8.3.14) is independent of 0126.S1 and DA-B and takes its own proposal.
 
 ## Sources
 

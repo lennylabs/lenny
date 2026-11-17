@@ -834,12 +834,19 @@ Every test carries the `// spec:` annotation, and tests at tier 2 and above carr
 
 ## Steps
 
-One proposal, after the second proposal of [`0141-runtime-routing`](../0141-runtime-routing/change.md), whose shared bucketing function it uses:
+### 0140.S1 Runtime revisions
+- status: Planned
+- aliases: [RV-1, RV-2, RV-3, RV-4, RV-5, RV-6, RV-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0141.S2, 0139.S1]
+- closes: [F-5.1.36]
+
+The step lands after 0141.S2 of [`0141-runtime-routing`](../0141-runtime-routing/change.md), whose shared bucketing function it uses. It runs these tasks in order:
 
 1. Land the specification edits.
 2. Move `runtimeOptionsSchema` inline on the `Runtime` resource, ship the reference schemas as files, compile schemas at write, and move options validation to the post-chain point and their delivery to `session_start`. These close the defects under "Session options" in "Current state" and need no revision.
 3. Make `isolationProfile` a live floor and narrow the per-tenant capability override. These close F-5.1.36 and need no revision. F-5.1.35 and F-6.1.29 close with the removal of pre-launched runtimes (D21), and F-5.1.37 with the removal of integration levels (D23).
 4. Add the revision record, the hash, and the pod hash on both registration paths, with every runtime at one revision, and move the pod builder to the revision.
-5. Add pod sets per pod-set key, the warm split, selection, discovery by revision, `agentInterface` published per caller, and the revision read of the capability check at bind, after the runtime protocol design's proposal adds that check.
+5. Add pod sets per pod-set key, the warm split, selection, discovery by revision, `agentInterface` published per caller, and the revision read of the capability check at bind. The runtime protocol design's 0139.S1 adds that check, so this task lands after it.
 6. Move the rollout procedure to the runtime and retire the pool-level endpoints.
 7. Update the documentation and records.

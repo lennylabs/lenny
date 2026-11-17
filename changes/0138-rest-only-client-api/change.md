@@ -881,16 +881,59 @@ The tests that leave Lenny are listed under "Root records and tests"; each moves
 
 ## Steps
 
-| Proposal | Content | Depends on |
-| :-- | :-- | :-- |
-| RO-A | The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, and R19, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. | MD-E's events, SL's routes, CT-A, and AM-A, so the message and conversation members exist. |
-| RO-B | R9 and the rules of "RO-4": the adapter registry, computed identifiers, audiences, metadata, challenges, narrowing, evaluation, leaf enforcement, minting refusals, the refusal code, the adapter listener, and their tests. | TS-2 and TS-7; RO-A for R7's tags and R5's key scope. |
-| RO-C | R6 webhook subscriptions with their target, capability, and lifetime rules, and `callbackUrl` as a subscription under O2. | RO-A and RO-B. |
-| RO-D | Lenny's clients on REST: SDKs, CLI, and playground ("RO-7"). | RO-A. |
-| RO-E | The conformance kit, the umbrella chart's dependencies and routes, and the creation of the adapter repositories with their first releases. | RO-A and RO-B; RO-C for the A2A adapter. |
-| RO-F | The removal of "RO-11" from the specification, the code, the chart, and the documentation, and the BUILD-GAPS closures. | RO-D, and RO-E for the MCP adapter, so a default deployment serves MCP throughout. |
+### 0138.S1 REST additions
+- status: Planned
+- aliases: [RO-A, RO-2, R1, R2, R3, R4, R5, R7, R8, R12, R13, R14, R15, R16, R17, R19]
+- lanes: [specification, code, documentation]
+- depends-on: [0135.S5, 0146.S1, 0122.S1, 0120.S1]
 
-RO-A goes first because every adapter and every Lenny client depends on it. RO-F goes last so that the MCP surface and the playground never disappear between proposals, although Lenny has no deployments to protect.
+The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, and R19, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. It needs MD-E's events, SL's routes, CT-A, and AM-A, so that the message and conversation members exist.
+
+This step goes first because every adapter and every Lenny client depends on it.
+
+### 0138.S2 Authorization of adapter requests
+- status: Planned
+- aliases: [RO-B, RO-4, R9]
+- lanes: [specification, code, documentation]
+- depends-on: [0149.S2, 0149.S7, 0138.S1]
+- closes: [F-10.2.39]
+
+R9 and the rules of "RO-4": the adapter registry, computed identifiers, audiences, metadata, challenges, narrowing, evaluation, leaf enforcement, minting refusals, the refusal code, the adapter listener, and their tests. It needs 0138.S1 for R7's tags and R5's key scope.
+
+### 0138.S3 Webhook subscriptions
+- status: Planned
+- aliases: [RO-C, R6]
+- lanes: [specification, code, documentation]
+- depends-on: [0138.S1, 0138.S2]
+
+R6 webhook subscriptions with their target, capability, and lifetime rules, and `callbackUrl` as a subscription under O2.
+
+### 0138.S4 Lenny's clients on REST
+- status: Planned
+- aliases: [RO-D, RO-7]
+- lanes: [specification, code, documentation]
+- depends-on: [0138.S1]
+
+Lenny's clients on REST: SDKs, CLI, and playground ("RO-7").
+
+### 0138.S5 Conformance kit, chart, and adapter repositories
+- status: Planned
+- aliases: [RO-E, RO-5, RO-6, RO-8, RO-9, RO-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0138.S1, 0138.S2, 0138.S3]
+
+The conformance kit, the umbrella chart's dependencies and routes, and the creation of the adapter repositories with their first releases. It needs 0138.S3 for the A2A adapter.
+
+### 0138.S6 Removal of the surfaces that leave Lenny
+- status: Planned
+- aliases: [RO-F, RO-11]
+- lanes: [specification, code, documentation]
+- depends-on: [0138.S4, 0138.S5]
+- closes: [F-15.1.80, F-15.1.81, F-15.1.82, F-15.1.83, F-15.2.27, F-15.2.28, F-15.2.30, F-15.2.31]
+
+The removal of "RO-11" from the specification, the code, the chart, and the documentation, and the BUILD-GAPS closures. It needs 0138.S5 for the MCP adapter, so that a default deployment serves MCP throughout.
+
+This step goes last so that the MCP surface and the playground never disappear between steps, although Lenny has no deployments to protect.
 
 ## Sources
 
