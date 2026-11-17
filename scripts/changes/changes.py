@@ -654,6 +654,9 @@ def cmd_step(tree, sid, status):
     c = changes[s['change']]
     states = [status if x == sid else steps[x]['status'] for x in c['steps']]
     p = status_problem(c['status'], states)
+    others = [st for x, st in zip(c['steps'], states) if not steps[x].get('ruled_ready')]
+    if p and c['status'] == 'Draft' and not status_problem('Draft', others):
+        p = None
     return f'{c["dir"]}: change status `{c["status"]}` now disagrees with its steps ({p}); set it with `status`' if p else None
 
 
