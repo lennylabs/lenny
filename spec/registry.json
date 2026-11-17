@@ -1,0 +1,1685 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "code": "ACTSTR",
+      "path": "spec/capabilities/security-and-compliance/agent-activity-streams.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADAPTER",
+      "path": "spec/components/agent-pod/adapter.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADDON",
+      "path": "spec/capabilities/credentials/credential-add-ons.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMAN",
+      "path": "spec/interfaces/adapter-manifest.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMBILL",
+      "path": "spec/interfaces/admin-api/billing.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMCOMP",
+      "path": "spec/interfaces/admin-api/compliance.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMCRED",
+      "path": "spec/interfaces/admin-api/credentials-and-upstreams.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMIAM",
+      "path": "spec/interfaces/admin-api/identity-and-access.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMIN",
+      "path": "spec/interfaces/admin-api/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMIT",
+      "path": "spec/capabilities/policy-and-controls/admission-and-fairness.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMPOL",
+      "path": "spec/interfaces/admin-api/policies.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMRT",
+      "path": "spec/interfaces/admin-api/runtimes.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ADMTEN",
+      "path": "spec/interfaces/admin-api/tenants-and-environments.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "AGDNS",
+      "path": "spec/components/agent-dns.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "ALERTSLO",
+      "path": "spec/capabilities/observability-and-operations/alerting-and-slos.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "APICONV",
+      "path": "spec/cross-cutting/api-conventions.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "APOD",
+      "path": "spec/capabilities/runtimes-and-pools/agent-pod-lifecycle.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "APOOLS",
+      "path": "spec/interfaces/admin-api/pools.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ARCH",
+      "path": "spec/overview/architecture.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "ARTIFACT",
+      "path": "spec/capabilities/workspaces-and-files/artifacts.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ATTR",
+      "path": "spec/capabilities/billing-and-usage/resource-attribution.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "AUDIT",
+      "path": "spec/capabilities/security-and-compliance/audit-log.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "AUTHN",
+      "path": "spec/capabilities/tenancy-and-access/authentication.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "AUTHZ",
+      "path": "spec/capabilities/tenancy-and-access/authorization.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "AVAIL",
+      "path": "spec/cross-cutting/availability-and-degradation.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "BACKUP",
+      "path": "spec/capabilities/deployment-and-lifecycle/backup-and-restore.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "BILLAREA",
+      "path": "spec/capabilities/billing-and-usage/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "BILLEV",
+      "path": "spec/capabilities/billing-and-usage/billing-events.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "BKJOB",
+      "path": "spec/components/lenny-ops/backup-jobs.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "BREAKER",
+      "path": "spec/capabilities/policy-and-controls/circuit-breakers.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "BROWSER",
+      "path": "spec/capabilities/tenancy-and-access/browser-sessions.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "BUDGET",
+      "path": "spec/capabilities/billing-and-usage/budgets.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPI",
+      "path": "spec/interfaces/client-api/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPICRED",
+      "path": "spec/interfaces/client-api/credentials-and-links.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPIDISC",
+      "path": "spec/interfaces/client-api/discovery-and-usage.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPIEVT",
+      "path": "spec/interfaces/client-api/event-stream.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPIFILE",
+      "path": "spec/interfaces/client-api/files-and-artifacts.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPIMSG",
+      "path": "spec/interfaces/client-api/messages.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPISES",
+      "path": "spec/interfaces/client-api/sessions.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPMAP",
+      "path": "spec/overview/capability-map.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "CAPS",
+      "path": "spec/capabilities/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "CATALERT",
+      "path": "spec/catalogs/alerts.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATCHAN",
+      "path": "spec/catalogs/channels.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATCRD",
+      "path": "spec/catalogs/custom-resources.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATERR",
+      "path": "spec/catalogs/errors.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATEVENT",
+      "path": "spec/catalogs/events.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATGLOSS",
+      "path": "spec/catalogs/glossary.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATIDX",
+      "path": "spec/catalogs/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "CATLABEL",
+      "path": "spec/catalogs/labels.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATLIMIT",
+      "path": "spec/catalogs/limits.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATMETRIC",
+      "path": "spec/catalogs/metrics.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATOPS",
+      "path": "spec/catalogs/api-operations.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATREQ",
+      "path": "spec/catalogs/requirements.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATSET",
+      "path": "spec/catalogs/settings.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CATSTATE",
+      "path": "spec/catalogs/state-machines.md",
+      "type": "catalog",
+      "status": "placeholder"
+    },
+    {
+      "code": "CDELIV",
+      "path": "spec/capabilities/credentials/credential-delivery.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CERTM",
+      "path": "spec/components/external/cert-manager.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHAN",
+      "path": "spec/interfaces/channels/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHCTRL",
+      "path": "spec/interfaces/channels/control-plane.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHEGRESS",
+      "path": "spec/interfaces/channels/pod-egress.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHGWPOD",
+      "path": "spec/interfaces/channels/gateway-to-pod.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHINTRA",
+      "path": "spec/interfaces/channels/intra-pod.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHPODGW",
+      "path": "spec/interfaces/channels/pod-to-gateway.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHREPLICA",
+      "path": "spec/interfaces/channels/inter-replica.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CHSTORE",
+      "path": "spec/interfaces/channels/gateway-to-store.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CKIDX",
+      "path": "spec/capabilities/sessions/checkpoints/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "CKPASS",
+      "path": "spec/capabilities/sessions/checkpoints/capture-passes.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CKPT",
+      "path": "spec/capabilities/sessions/checkpoints/checkpoint-capture.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CKSTORE",
+      "path": "spec/capabilities/sessions/checkpoints/checkpoint-storage.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLAIM",
+      "path": "spec/capabilities/runtimes-and-pools/pod-claims.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLI",
+      "path": "spec/interfaces/cli/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLIADM",
+      "path": "spec/interfaces/cli/admin-commands.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLIINST",
+      "path": "spec/interfaces/cli/install-and-local.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLIOPS",
+      "path": "spec/interfaces/cli/ops-commands.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLISCAF",
+      "path": "spec/interfaces/cli/runtime-scaffolding.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "CLONE",
+      "path": "spec/capabilities/workspaces-and-files/default-clones.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "COMPAT",
+      "path": "spec/cross-cutting/upgrade-and-compatibility.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "COMPS",
+      "path": "spec/components/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "CONV",
+      "path": "spec/conventions.md",
+      "type": "conventions",
+      "status": ""
+    },
+    {
+      "code": "CPOOL",
+      "path": "spec/capabilities/credentials/credential-pools.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CREDAREA",
+      "path": "spec/capabilities/credentials/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "CREQ",
+      "path": "spec/capabilities/credentials/credential-request-rules.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CTOOL",
+      "path": "spec/capabilities/messaging/client-tools.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "CTX",
+      "path": "spec/overview/purpose-and-context.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "DATACLASS",
+      "path": "spec/cross-cutting/data-classification-and-retention.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "DAVAIL",
+      "path": "spec/capabilities/delegation/delegation-availability.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DCFG",
+      "path": "spec/interfaces/deployment-configuration/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "DCFGANS",
+      "path": "spec/interfaces/deployment-configuration/answer-files.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "DCFGSEED",
+      "path": "spec/interfaces/deployment-configuration/bootstrap-seed.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "DCFGTIER",
+      "path": "spec/interfaces/deployment-configuration/tier-presets.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "DEPAREA",
+      "path": "spec/capabilities/deployment-and-lifecycle/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "DERIVED",
+      "path": "spec/capabilities/runtimes-and-pools/tenant-derived-runtimes.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DIAG",
+      "path": "spec/capabilities/observability-and-operations/health-and-diagnostics.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DLG",
+      "path": "spec/capabilities/delegation/delegation.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DLGAREA",
+      "path": "spec/capabilities/delegation/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "DNS",
+      "path": "spec/capabilities/network-and-egress/dns.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DPOL",
+      "path": "spec/capabilities/delegation/delegation-policy.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DRIFT",
+      "path": "spec/capabilities/observability-and-operations/configuration-drift.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "DTREE",
+      "path": "spec/capabilities/delegation/tree-recovery-and-cascade.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "EGAUTHZ",
+      "path": "spec/components/egress-decision-service.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "EGDEC",
+      "path": "spec/capabilities/network-and-egress/egress-decisions.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "EGDEF",
+      "path": "spec/capabilities/network-and-egress/egress-defaults.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "EGPROXY",
+      "path": "spec/components/egress-proxy.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "EGRESS",
+      "path": "spec/capabilities/network-and-egress/egress-policy.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ENV",
+      "path": "spec/capabilities/tenancy-and-access/environments.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ERASE",
+      "path": "spec/capabilities/security-and-compliance/erasure.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ERR",
+      "path": "spec/cross-cutting/error-model.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "EVT",
+      "path": "spec/interfaces/events/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "EVTAUD",
+      "path": "spec/interfaces/events/audit-records.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "EVTBILL",
+      "path": "spec/interfaces/events/billing-events.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "EVTHOOK",
+      "path": "spec/interfaces/events/session-webhooks.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "EVTOPS",
+      "path": "spec/interfaces/events/operational-events.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "EXT",
+      "path": "spec/interfaces/extension-points.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "EXTIDX",
+      "path": "spec/components/external/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "FILEMSG",
+      "path": "spec/capabilities/workspaces-and-files/files-in-messages.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "FILEX",
+      "path": "spec/capabilities/workspaces-and-files/file-export.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "FORENSIC",
+      "path": "spec/capabilities/security-and-compliance/quarantine-and-evidence.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "GIT",
+      "path": "spec/capabilities/network-and-egress/git-access.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "GITMIR",
+      "path": "spec/components/git-mirror.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GOALS",
+      "path": "spec/overview/principles-and-non-goals.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "GW",
+      "path": "spec/components/gateway/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWAPI",
+      "path": "spec/components/gateway/api-front.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWBARRIER",
+      "path": "spec/components/gateway/checkpoint-barrier.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWCLAIM",
+      "path": "spec/components/gateway/pod-claimer.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWCOORD",
+      "path": "spec/components/gateway/session-coordination.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWDRAIN",
+      "path": "spec/components/gateway/drain.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWLLM",
+      "path": "spec/components/gateway/metering-proxy.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWOPS",
+      "path": "spec/components/gateway/ops-endpoints.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWSCALE",
+      "path": "spec/components/gateway/scaling-and-capacity.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWSEAM",
+      "path": "spec/interfaces/gateway-seams.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWSTREAM",
+      "path": "spec/components/gateway/stream-proxy.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWTOOLS",
+      "path": "spec/components/gateway/platform-tools.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "GWUPLOAD",
+      "path": "spec/components/gateway/upload-handler.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "HOLD",
+      "path": "spec/capabilities/security-and-compliance/legal-hold.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "IFMAP",
+      "path": "spec/overview/interface-map.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "IFS",
+      "path": "spec/interfaces/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "IMSG",
+      "path": "spec/capabilities/messaging/inter-session-messaging.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "INBOX",
+      "path": "spec/capabilities/messaging/inbox-and-custody.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "INPUT",
+      "path": "spec/capabilities/messaging/input-requests.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "INSTALL",
+      "path": "spec/capabilities/deployment-and-lifecycle/installation.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "INTCPT",
+      "path": "spec/capabilities/policy-and-controls/request-interceptors.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "INTCPTIF",
+      "path": "spec/interfaces/interceptor-protocol.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "ISO",
+      "path": "spec/capabilities/runtimes-and-pools/isolation-profiles.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "KADMIT",
+      "path": "spec/interfaces/kubernetes/admission.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "KAPI",
+      "path": "spec/interfaces/kubernetes/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "KAPOD",
+      "path": "spec/interfaces/kubernetes/agentpod.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "KLABEL",
+      "path": "spec/interfaces/kubernetes/labels-and-annotations.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "KMS",
+      "path": "spec/components/external/kms.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "KPCLAIM",
+      "path": "spec/interfaces/kubernetes/podclaim.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "KPSET",
+      "path": "spec/interfaces/kubernetes/podset.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "KRUNTIME",
+      "path": "spec/interfaces/kubernetes/runtime.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "KUBE",
+      "path": "spec/components/external/kubernetes.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "LEASE",
+      "path": "spec/capabilities/delegation/delegation-lease.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "LEASEXT",
+      "path": "spec/capabilities/delegation/lease-extension.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "LINK",
+      "path": "spec/capabilities/credentials/account-links.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "LLMUP",
+      "path": "spec/capabilities/network-and-egress/llm-upstreams.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "LOCALDEV",
+      "path": "spec/capabilities/deployment-and-lifecycle/local-development.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "LOPS",
+      "path": "spec/components/lenny-ops/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "LOPSAGG",
+      "path": "spec/components/lenny-ops/gateway-fan-out.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "LOPSKRES",
+      "path": "spec/components/lenny-ops/kubernetes-resources.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "LOPSSVC",
+      "path": "spec/components/lenny-ops/hosted-services.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "MATER",
+      "path": "spec/capabilities/workspaces-and-files/materialization.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "MSG",
+      "path": "spec/capabilities/messaging/message-delivery.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "MSGAREA",
+      "path": "spec/capabilities/messaging/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "NAMING",
+      "path": "spec/cross-cutting/naming.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "NETAGENT",
+      "path": "spec/components/agent-pod/netagent.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "NETAREA",
+      "path": "spec/capabilities/network-and-egress/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "NETISO",
+      "path": "spec/capabilities/network-and-egress/network-isolation.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "OBJ",
+      "path": "spec/components/external/object-store.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "OBSCONV",
+      "path": "spec/cross-cutting/observability-conventions.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSAPI",
+      "path": "spec/interfaces/ops-api/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSAREA",
+      "path": "spec/capabilities/observability-and-operations/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSAUD",
+      "path": "spec/interfaces/ops-api/audit-and-drift.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSEV",
+      "path": "spec/capabilities/observability-and-operations/operational-events.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSHEALTH",
+      "path": "spec/interfaces/ops-api/health-and-diagnostics.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSHOOK",
+      "path": "spec/interfaces/ops-api/events-and-webhooks.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSLIFE",
+      "path": "spec/interfaces/ops-api/backup-and-upgrades.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSMCP",
+      "path": "spec/interfaces/ops-api/mcp-management.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSME",
+      "path": "spec/interfaces/ops-api/caller-identity.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSREM",
+      "path": "spec/interfaces/ops-api/remediation-and-operations.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "OPSVC",
+      "path": "spec/capabilities/network-and-egress/operator-services.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "OUTAGT",
+      "path": "spec/components/outbound-agent.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "OUTCONN",
+      "path": "spec/capabilities/network-and-egress/outbound-connector.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "OUTGW",
+      "path": "spec/components/outbound-gateway.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "OVW",
+      "path": "spec/overview/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "OWNPOOL",
+      "path": "spec/capabilities/runtimes-and-pools/owned-pools-and-reservations.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "PG",
+      "path": "spec/components/external/postgres.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "PKI",
+      "path": "spec/cross-cutting/mtls-and-pki.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "PLACE",
+      "path": "spec/capabilities/runtimes-and-pools/placement.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "PLAY",
+      "path": "spec/components/web-playground.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "POD",
+      "path": "spec/components/agent-pod/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "PODINIT",
+      "path": "spec/components/agent-pod/init-and-support-containers.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "PODVOL",
+      "path": "spec/components/agent-pod/volumes-and-quotas.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "POLAREA",
+      "path": "spec/capabilities/policy-and-controls/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "POOL",
+      "path": "spec/capabilities/runtimes-and-pools/warm-pools.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "PRAUTH",
+      "path": "spec/capabilities/credentials/pull-request-authoring.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "PREFLT",
+      "path": "spec/components/preflight-job.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "PRINC",
+      "path": "spec/capabilities/tenancy-and-access/principals.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "PROM",
+      "path": "spec/components/external/prometheus.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "PSC",
+      "path": "spec/components/pool-scaling-controller.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "PSEUDO",
+      "path": "spec/capabilities/security-and-compliance/pseudonymization-and-receipts.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "QUOTA",
+      "path": "spec/capabilities/policy-and-controls/quotas-and-rate-limits.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RATE",
+      "path": "spec/capabilities/billing-and-usage/rate-cards.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RCLASS",
+      "path": "spec/capabilities/runtimes-and-pools/resource-classes.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "README",
+      "path": "spec/README.md",
+      "type": "conventions",
+      "status": ""
+    },
+    {
+      "code": "REDIS",
+      "path": "spec/components/external/redis.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "REMED",
+      "path": "spec/capabilities/observability-and-operations/remediation-and-escalation.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "REPO",
+      "path": "spec/capabilities/workspaces-and-files/repository-stores.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "REPOAUTH",
+      "path": "spec/capabilities/credentials/repository-authorization.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RESID",
+      "path": "spec/capabilities/security-and-compliance/data-residency.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RESTORE",
+      "path": "spec/capabilities/sessions/checkpoints/restore.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RESUME",
+      "path": "spec/capabilities/sessions/retry-and-resume.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "REV",
+      "path": "spec/capabilities/runtimes-and-pools/runtime-revisions.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "ROUTE",
+      "path": "spec/capabilities/runtimes-and-pools/runtime-routes.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTP",
+      "path": "spec/interfaces/runtime-protocol/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPCONF",
+      "path": "spec/interfaces/runtime-protocol/conformance.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPFS",
+      "path": "spec/interfaces/runtime-protocol/filesystem-and-environment.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPHAND",
+      "path": "spec/interfaces/runtime-protocol/handshake-and-capabilities.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPMSG",
+      "path": "spec/interfaces/runtime-protocol/messages.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPOOL",
+      "path": "spec/capabilities/runtimes-and-pools/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "RTPOPS",
+      "path": "spec/interfaces/runtime-protocol/runtime-ops.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPPART",
+      "path": "spec/interfaces/runtime-protocol/message-parts.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPSDK",
+      "path": "spec/interfaces/runtime-protocol/runtime-sdks.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RTPTOOL",
+      "path": "spec/interfaces/runtime-protocol/platform-tools.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "RUNBOOK",
+      "path": "spec/capabilities/observability-and-operations/runbooks.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "RUNTIME",
+      "path": "spec/capabilities/runtimes-and-pools/runtime-registry.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SACRED",
+      "path": "spec/capabilities/credentials/service-account-credentials.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SCREATE",
+      "path": "spec/capabilities/sessions/session-lifecycle/session-creation.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SCRUB",
+      "path": "spec/capabilities/sessions/pod-reuse-and-scrub.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SCRUBPROC",
+      "path": "spec/capabilities/sessions/scrub-procedure.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SDERIVE",
+      "path": "spec/capabilities/sessions/derive.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SECAREA",
+      "path": "spec/capabilities/security-and-compliance/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "SECMODEL",
+      "path": "spec/cross-cutting/security-model.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "SECOV",
+      "path": "spec/capabilities/security-and-compliance/security-oversight.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SECROLE",
+      "path": "spec/capabilities/tenancy-and-access/security-roles-and-approvers.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SEND",
+      "path": "spec/capabilities/sessions/session-lifecycle/session-end.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SESAREA",
+      "path": "spec/capabilities/sessions/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "SESLC",
+      "path": "spec/capabilities/sessions/session-lifecycle/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "SESS",
+      "path": "spec/capabilities/sessions/session-lifecycle/session-states.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SETUP",
+      "path": "spec/capabilities/sessions/setup-commands.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SIEM",
+      "path": "spec/capabilities/security-and-compliance/siem-export.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SLOT",
+      "path": "spec/capabilities/sessions/session-isolation.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SLOTOPS",
+      "path": "spec/capabilities/sessions/slot-assignment-and-failure.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "STOR",
+      "path": "spec/interfaces/stored-schemas/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "STOROBJ",
+      "path": "spec/interfaces/stored-schemas/object-store-layout.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "STORPG",
+      "path": "spec/interfaces/stored-schemas/postgres.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "STORREDIS",
+      "path": "spec/interfaces/stored-schemas/redis-keys.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "STREAM",
+      "path": "spec/capabilities/messaging/event-stream.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "SUPV",
+      "path": "spec/components/agent-pod/runtime-supervisor.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "SUSP",
+      "path": "spec/capabilities/sessions/session-lifecycle/suspension-and-dormancy.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "TENANT",
+      "path": "spec/capabilities/tenancy-and-access/tenants.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "TENAREA",
+      "path": "spec/capabilities/tenancy-and-access/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "TENISO",
+      "path": "spec/cross-cutting/tenant-isolation.md",
+      "type": "cross-cutting",
+      "status": "placeholder"
+    },
+    {
+      "code": "TIER",
+      "path": "spec/capabilities/deployment-and-lifecycle/capacity-tiers.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "TIMEOUT",
+      "path": "spec/capabilities/sessions/session-lifecycle/timeouts.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "TOKSVC",
+      "path": "spec/components/token-service.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "TOKX",
+      "path": "spec/capabilities/tenancy-and-access/token-exchange.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "TSET",
+      "path": "spec/capabilities/tenancy-and-access/tenant-settings.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "UCRED",
+      "path": "spec/capabilities/credentials/user-credentials.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "UPGRADE",
+      "path": "spec/capabilities/deployment-and-lifecycle/platform-upgrades.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "UPLOAD",
+      "path": "spec/capabilities/workspaces-and-files/uploads.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "USAGE",
+      "path": "spec/capabilities/billing-and-usage/usage-records.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "WALK",
+      "path": "spec/overview/walkthroughs/index.md",
+      "type": "index",
+      "status": "placeholder"
+    },
+    {
+      "code": "WEBHOOK",
+      "path": "spec/components/admission-webhooks.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKCKPT",
+      "path": "spec/overview/walkthroughs/checkpoint-capture.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKCOTEN",
+      "path": "spec/overview/walkthroughs/shared-pod-co-tenancy.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKDRAIN",
+      "path": "spec/overview/walkthroughs/gateway-drain.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKEVICT",
+      "path": "spec/overview/walkthroughs/pod-eviction.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKHANDOFF",
+      "path": "spec/overview/walkthroughs/coordinator-handoff.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKMSG",
+      "path": "spec/overview/walkthroughs/interactive-message.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKOPS",
+      "path": "spec/overview/walkthroughs/ops-remediation.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKRESUME",
+      "path": "spec/overview/walkthroughs/restore-and-resume.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKSTART",
+      "path": "spec/overview/walkthroughs/session-start.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WKSTOP",
+      "path": "spec/overview/walkthroughs/interrupt-terminate-delete.md",
+      "type": "overview",
+      "status": "placeholder"
+    },
+    {
+      "code": "WPC",
+      "path": "spec/components/warm-pool-controller.md",
+      "type": "component",
+      "status": "placeholder"
+    },
+    {
+      "code": "WSAREA",
+      "path": "spec/capabilities/workspaces-and-files/index.md",
+      "type": "index",
+      "status": ""
+    },
+    {
+      "code": "WSPLAN",
+      "path": "spec/capabilities/workspaces-and-files/workspace-plan.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "WSPLANIF",
+      "path": "spec/interfaces/workspace-plan.md",
+      "type": "interface",
+      "status": "placeholder"
+    },
+    {
+      "code": "XC",
+      "path": "spec/cross-cutting/index.md",
+      "type": "index",
+      "status": ""
+    }
+  ],
+  "requirements": [],
+  "operations": [],
+  "terms": [],
+  "blocks": [],
+  "retired": [],
+  "moves": []
+}

@@ -1188,6 +1188,13 @@
     "scripts/specindex/": {
       "static": ["tests/tier0_static/spec_folder_index_test.go"]
     },
+    "scripts/specshift/ref": {
+      "static": ["tests/tier0_static/spec_reference_test.go"],
+      "unit": ["scripts/specshift/ref/..."]
+    },
+    "spec/registry.json": {
+      "static": ["tests/tier0_static/spec_reference_test.go"]
+    },
     "scripts/specshift": {
       "static": ["tests/tier0_static/..."],
       "unit": ["scripts/specshift/..."],

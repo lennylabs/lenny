@@ -43,6 +43,12 @@
 // both flags as optional and prints the whole write domain when neither
 // is given, so an operator measures a confinement before applying it.
 //
+// The ref subcommand is the reference pass over the new specification
+// tree, documented in the ref subpackage:
+//
+//	specshift ref [-root <path>] registry [-check] | check | fix |
+//	  lookup <identifier | code | §N.M>
+//
 // A run of a pass reports the confinement it ran under, the files it
 // planned, and the register entries it deferred because their files lie
 // outside that confinement, so an entry the complementary run still owes
@@ -64,6 +70,7 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
+	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
@@ -181,8 +188,13 @@ func passNames() string {
 }
 
 // run parses the command line and executes one pass, or prints one
-// pass's write domain.
+// pass's write domain. The ref subcommand is dispatched before the flags
+// are parsed, because the reference pass is driven by the generated
+// registry rather than by a register and takes commands of its own.
 func run(ctx context.Context, args []string, out io.Writer) error {
+	if len(args) > 0 && args[0] == "ref" {
+		return ref.Main(ctx, args[1:], out)
+	}
 	return runWith(ctx, builtPasses, args, out)
 }
 

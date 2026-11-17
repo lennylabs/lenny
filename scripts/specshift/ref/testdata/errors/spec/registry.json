@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "code": "GONE",
+      "path": "spec/pages/gone.md",
+      "type": "capability",
+      "status": ""
+    }
+  ],
+  "requirements": [
+    {
+      "id": "POOL-R7",
+      "anchor": "pool-r7",
+      "file": "spec/pages/warm-pools.md"
+    }
+  ],
+  "operations": [],
+  "terms": [],
+  "blocks": [],
+  "retired": [],
+  "moves": []
+}
