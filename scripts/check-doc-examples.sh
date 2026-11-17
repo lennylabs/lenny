@@ -13,7 +13,7 @@
 #
 # Today this script is a thin wrapper: it confirms the directory
 # layout exists and reports the count. When go-based deep validation
-# is needed, tests/static/schemas_test.go handles it; this
+# is needed, tests/static/build/schemas_test.go handles it; this
 # script is the shell-level entry point for the static tier and CI.
 #
 # Exit code:

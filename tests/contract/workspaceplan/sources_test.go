@@ -130,7 +130,7 @@ func TestParserAcceptsCanonicalPlans(t *testing.T) {
 // fixture-drift guard for F-CS5: it routes all six canonical
 // schemas/examples/ fixtures through the parser and asserts each
 // accept/reject matches the static-tier schema validator's expectValid flag
-// in tests/static/schemas_test.go (TestWorkspacePlanExamplesValidate),
+// in tests/static/build/schemas_test.go (TestWorkspacePlanExamplesValidate),
 // so a fixture file can no longer drift from the parser uncaught.
 // The setuid, unknown-field, and unknown-source-type fixtures reach the
 // parser only through this table; previously they were exercised solely

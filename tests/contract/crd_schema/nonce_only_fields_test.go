@@ -7,7 +7,7 @@
 // contract: the kube-apiserver validates and serves objects against the
 // committed/served schema, and clients (kubectl, the chart, the §4.7
 // nonce-only activation path) depend on the field names and types it
-// exposes. The static-tier drift check (tests/static/crds_test.go) only
+// exposes. The static-tier drift check (tests/static/build/crds_test.go) only
 // catches divergence between the Go API types and the manifest; this
 // suite pins the served field/type contract the manifest publishes, so a
 // field rename or a type change that survives a coordinated Go+manifest

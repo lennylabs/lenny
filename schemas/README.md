@@ -11,7 +11,7 @@ Phase 1 the static tier runs these checks:
 ```bash
 lenny-test --tier static                # the full static tier
 buf lint                                # proto only
-# JSON Schema example round-trips: tests/static/schemas_test.go
+# JSON Schema example round-trips: tests/static/build/schemas_test.go
 ```
 
 `buf breaking` runs against the prior commit on `main` in CI to catch wire-incompatible changes that aren't covered by an explicit version bump.

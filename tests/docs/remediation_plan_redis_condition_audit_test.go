@@ -255,7 +255,7 @@ func TestRedisConditionAuditCoversEveryRedisPackage_spec_12_4(t *testing.T) {
 	if strings.Join(audit.header, "|") != strings.Join(conditionAuditColumns, "|") {
 		t.Fatalf("condition audit header = %q, want %q", audit.header, conditionAuditColumns)
 	}
-	gate, err := os.ReadFile(filepath.Join(root, "tests/static/redis_cluster_safety_test.go"))
+	gate, err := os.ReadFile(filepath.Join(root, "tests/static/lint/redis_cluster_safety_test.go"))
 	if err != nil {
 		t.Fatalf("read tier-0 Redis cluster safety test: %v", err)
 	}
@@ -264,7 +264,7 @@ func TestRedisConditionAuditCoversEveryRedisPackage_spec_12_4(t *testing.T) {
 			t.Errorf("condition audit does not cite %s", name)
 		}
 		if !strings.Contains(string(gate), "func "+name+"(") {
-			t.Errorf("condition audit cites %s, which tests/static/redis_cluster_safety_test.go no longer declares", name)
+			t.Errorf("condition audit cites %s, which tests/static/lint/redis_cluster_safety_test.go no longer declares", name)
 		}
 	}
 

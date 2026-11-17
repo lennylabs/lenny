@@ -1007,16 +1007,16 @@ entries:
   - file: tests/spec-map.json
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/static/schemas_test.go
+  - file: tests/static/build/schemas_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/static/schemas_test.go
+  - file: tests/static/build/schemas_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/static/schemas_test.go
+  - file: tests/static/build/schemas_test.go
     occurrence: 3
     channel: CH-RUNTIMEOPS
-  - file: tests/static/schemas_test.go
+  - file: tests/static/build/schemas_test.go
     occurrence: 4
     channel: CH-RUNTIMEOPS
   - file: tests/conformance/token_service_unavailability_guard_conformance_test.go

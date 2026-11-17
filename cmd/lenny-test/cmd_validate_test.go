@@ -1353,11 +1353,11 @@ func TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness(t *testi
 	globs := mustReadChangeGraphGlobs(t)
 	want := map[string]map[string]string{
 		"supervisor/": {
-			"static": "tests/static/supervisor_binary_test.go",
+			"static": "tests/static/build/supervisor_binary_test.go",
 			"unit":   "tests/tier1_unit/supervisor/...",
 		},
 		"Dockerfile.supervisor": {
-			"static": "tests/static/supervisor_binary_test.go",
+			"static": "tests/static/build/supervisor_binary_test.go",
 		},
 	}
 	for key, tiers := range want {

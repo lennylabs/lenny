@@ -658,22 +658,22 @@ sites:
       site: 1
       call: Skipf
       reason: 'tokenservice.SkipUnlessAvailable: go not on PATH: %v'
-    - path: tests/static/crds_test.go
+    - path: tests/static/build/crds_test.go
       function: TestCRDManifestsInSyncWithGoTypes
       site: 1
       call: Skip
       reason: controller-gen not installed; run scripts/setup-dev.sh — drift check skipped
-    - path: tests/static/gateway_admin_tls_listener_test.go
+    - path: tests/static/chart/gateway_admin_tls_listener_test.go
       function: TestGatewayAdminTLSListenerDistinctFromLLMProxy
       site: 1
       call: Skip
       reason: gateway admin-API-over-TLS listener on internalTLSPort is unimplemented and collides with llmProxyPort; TEST-GAPS finding open pending a spec proposal
-    - path: tests/static/ops_rbac_spec_sync_test.go
+    - path: tests/static/chart/ops_rbac_spec_sync_test.go
       function: TestOpsRBACMatchesSpecCanonicalBlock
       site: 1
       call: Skip
       reason: §25.4 canonical RBAC block has not been reconciled with the chart's already-shipped secrets/cert-manager.io/endpoints grants; awaiting a spec-proposal update
-    - path: tests/static/upgrade_channel_key_render_test.go
+    - path: tests/static/chart/upgrade_channel_key_render_test.go
       function: TestUpgradeChannelKeyDisablesReleaseChannelURL
       site: 2
       call: Skip

@@ -387,7 +387,7 @@
       ]
     },
     "tests/testinfra/testtmp/": {
-      "static": ["tests/static/test_fixture_temp_root_test.go"],
+      "static": ["tests/static/lint/test_fixture_temp_root_test.go"],
       "unit": ["tests/testinfra/testtmp/...", "cmd/lenny-test/...", "cmd/lenny-compliance/...", "pkg/adapter/...", "pkg/gateway/session/executor/..."],
       "contract": ["tests/contract/adapter_jsonl/...", "tests/contract/adapter_supervise/..."],
       "conformance": ["tests/conformance/..."]
@@ -505,12 +505,12 @@
       "contract": ["tests/contract/sdks/..."]
     },
     "supervisor/": {
-      "static": ["tests/static/supervisor_binary_test.go"],
+      "static": ["tests/static/build/supervisor_binary_test.go"],
       "unit": ["tests/tier1_unit/supervisor/...", "tests/testinfra/supervisorbuild/..."],
       "e2e_cloud": ["tests/e2e_cloud/runtime_supervisor_isolation_test.go"]
     },
     "Dockerfile.supervisor": {
-      "static": ["tests/static/supervisor_binary_test.go"]
+      "static": ["tests/static/build/supervisor_binary_test.go"]
     },
     "pkg/ctlcli/preflight_supervisor.go": {
       "unit": ["pkg/ctlcli/..."],
@@ -531,7 +531,7 @@
       "e2e_kind": ["tests/e2e_kind/audit_test.go"]
     },
     "tests/testinfra/supervisorbuild": {
-      "static": ["tests/static/supervisor_binary_test.go"],
+      "static": ["tests/static/build/supervisor_binary_test.go"],
       "unit": ["tests/testinfra/supervisorbuild/...", "tests/tier1_unit/supervisor/..."]
     },
     "tests/tier1_unit/supervisor": {
@@ -657,8 +657,8 @@
     },
     "pkg/controller/sandbox": {
       "static": [
-        "tests/static/deployment_boundary_test.go",
-        "tests/static/deployment_boundary_render_test.go"
+        "tests/static/chart/deployment_boundary_test.go",
+        "tests/static/chart/deployment_boundary_render_test.go"
       ],
       "unit": ["pkg/controller/sandbox/..."],
       "component": [
@@ -674,8 +674,8 @@
     },
     "cmd/lenny-controller": {
       "static": [
-        "tests/static/controller_chart_flags_test.go",
-        "tests/static/dev_profile_render_test.go"
+        "tests/static/chart/controller_chart_flags_test.go",
+        "tests/static/chart/dev_profile_render_test.go"
       ],
       "unit": ["cmd/lenny-controller/..."]
     },
@@ -992,7 +992,7 @@
       "e2e_kind": ["tests/e2e_kind/runbook_index_test.go"]
     },
     "pkg/redisconn": {
-      "static": ["tests/static/redis_cluster_safety_test.go"],
+      "static": ["tests/static/lint/redis_cluster_safety_test.go"],
       "unit": ["pkg/redisconn/...", "pkg/gateway/storage/rediskeys/..."],
       "integration": ["tests/integration/redis_cluster_smoke_test.go"]
     },
@@ -1140,8 +1140,8 @@
     },
     "pkg/adapter/prestop": {
       "static": [
-        "tests/static/prestop_image_path_test.go",
-        "tests/static/deployment_boundary_test.go"
+        "tests/static/chart/prestop_image_path_test.go",
+        "tests/static/chart/deployment_boundary_test.go"
       ],
       "unit": [
         "pkg/adapter/prestop/...",
@@ -1169,7 +1169,7 @@
       "static": [
         "scripts/lint-schema.sh",
         "scripts/lint-queries.sh",
-        "tests/static/migration_numbers_unique_test.go"
+        "tests/static/build/migration_numbers_unique_test.go"
       ],
       "component": [
         "tests/component/migrations/...",
@@ -1183,14 +1183,14 @@
       "static": ["scripts/lint-queries.sh"]
     },
     "scripts/changes/": {
-      "static": ["tests/static/changes_records_test.go"]
+      "static": ["tests/static/build/changes_records_test.go"]
     },
     "scripts/specshift/ref": {
-      "static": ["tests/static/spec_reference_test.go"],
+      "static": ["tests/static/structure/spec_reference_test.go"],
       "unit": ["scripts/specshift/ref/..."]
     },
     "spec/registry.json": {
-      "static": ["tests/static/spec_reference_test.go"]
+      "static": ["tests/static/structure/spec_reference_test.go"]
     },
     "scripts/specshift": {
       "static": ["tests/static/..."],
@@ -1198,15 +1198,15 @@
       "docs": ["tests/docs/..."]
     },
     "scripts/specshift/defs/": {
-      "static": ["tests/static/spec_defs_test.go"],
+      "static": ["tests/static/structure/spec_defs_test.go"],
       "unit": ["scripts/specshift/defs/..."]
     },
     "scripts/specshift/pagegate/": {
-      "static": ["tests/static/spec_page_gates_test.go"],
+      "static": ["tests/static/structure/spec_page_gates_test.go"],
       "unit": ["scripts/specshift/pagegate/..."]
     },
     "scripts/specshift/docgate/": {
-      "static": ["tests/static/doc_spec_gates_test.go"],
+      "static": ["tests/static/structure/doc_spec_gates_test.go"],
       "unit": ["scripts/specshift/docgate/..."]
     },
     "tests/testinfra/containers": {
@@ -1223,7 +1223,7 @@
     },
     "schemas/lenny-adapter.proto": {
       "static": [
-        "tests/static/schemas_test.go"
+        "tests/static/build/schemas_test.go"
       ],
       "unit": ["pkg/adapter/..."],
       "contract": [
@@ -1237,11 +1237,11 @@
       "contract": ["tests/contract/tokenservice_secret_read/..."]
     },
     "schemas/lenny-interceptor.proto": {
-      "static": ["tests/static/schemas_test.go"],
+      "static": ["tests/static/build/schemas_test.go"],
       "contract": ["tests/contract/interceptor_proto/..."]
     },
     "schemas/lenny-adapter-jsonl.schema.json": {
-      "static": ["tests/static/schemas_test.go"],
+      "static": ["tests/static/build/schemas_test.go"],
       "contract": [
         "tests/contract/adapter_jsonl/...",
         "tests/contract/adapter_artifact_scope/..."
@@ -1249,17 +1249,17 @@
       "conformance": ["tests/conformance/..."]
     },
     "schemas/messagepart.schema.json": {
-      "static": ["tests/static/schemas_test.go"],
+      "static": ["tests/static/build/schemas_test.go"],
       "unit": ["pkg/output/..."],
       "contract": ["tests/contract/rest_openai_chat/..."]
     },
     "schemas/workspaceplan-v1.json": {
-      "static": ["tests/static/schemas_test.go"],
+      "static": ["tests/static/build/schemas_test.go"],
       "unit": ["pkg/workspaceplan/..."],
       "contract": ["tests/contract/workspaceplan/..."]
     },
     "schemas/examples/": {
-      "static": ["tests/static/schemas_test.go"]
+      "static": ["tests/static/build/schemas_test.go"]
     },
     "pkg/session/state": {
       "unit": ["pkg/session/state/..."]
@@ -1321,17 +1321,17 @@
       "integration": ["tests/integration/backup_binary_test.go"]
     },
     "buf.yaml": {
-      "static": ["tests/static/schemas_test.go"]
+      "static": ["tests/static/build/schemas_test.go"]
     },
     "charts/lenny/": {
       "static": [
         "charts/lenny/tests/...",
         "tests/static/helm_lint_test.go",
-        "tests/static/airgap_registry_render_test.go",
-        "tests/static/upgrade_channel_key_render_test.go",
-        "tests/static/ops_rbac_spec_sync_test.go",
-        "tests/static/gateway_multi_tenant_render_test.go",
-        "tests/static/self_managed_postgres_path_render_test.go"
+        "tests/static/chart/airgap_registry_render_test.go",
+        "tests/static/chart/upgrade_channel_key_render_test.go",
+        "tests/static/chart/ops_rbac_spec_sync_test.go",
+        "tests/static/chart/gateway_multi_tenant_render_test.go",
+        "tests/static/chart/self_managed_postgres_path_render_test.go"
       ],
       "component": ["tests/component/pgbouncerchart/..."],
       "integration": ["tests/integration/token_service_chart_datastores_test.go"],
@@ -1357,7 +1357,7 @@
     },
     "cmd/lenny-compliance/": {
       "unit": ["cmd/lenny-compliance/..."],
-      "static": ["tests/static/compliance_check_channel_naming_test.go"],
+      "static": ["tests/static/structure/compliance_check_channel_naming_test.go"],
       "conformance": [
         "tests/conformance/basic/...",
         "tests/conformance/standard/...",
@@ -1373,7 +1373,7 @@
       "integration": ["tests/integration/streaming_reconnect_test.go"]
     },
     "schemas/runtime-ops-events.schema.json": {
-      "static": ["tests/static/schemas_test.go"],
+      "static": ["tests/static/build/schemas_test.go"],
       "contract": ["tests/contract/adapter_artifact_scope/..."],
       "conformance": ["cmd/lenny-compliance/..."]
     },
@@ -1407,19 +1407,19 @@
       "conformance": ["tests/conformance/..."]
     },
     "docs/": {
-      "static": ["tests/static/doc_spec_gates_test.go"],
+      "static": ["tests/static/structure/doc_spec_gates_test.go"],
       "docs": ["tests/docs/..."]
     },
     "docs/reference/": {
-      "static": ["tests/static/spec_defs_test.go", "tests/static/doc_spec_gates_test.go"],
+      "static": ["tests/static/structure/spec_defs_test.go", "tests/static/structure/doc_spec_gates_test.go"],
       "docs": ["tests/docs/..."]
     },
     "spec/": {
-      "static": ["tests/static/spec_link_check_test.go", "tests/static/spec_defs_test.go", "tests/static/spec_reference_test.go", "tests/static/spec_page_gates_test.go", "tests/static/fragment_link_test.go", "tests/static/doc_spec_gates_test.go"],
+      "static": ["tests/static/spec_link_check_test.go", "tests/static/structure/spec_defs_test.go", "tests/static/structure/spec_reference_test.go", "tests/static/structure/spec_page_gates_test.go", "tests/static/structure/fragment_link_test.go", "tests/static/structure/doc_spec_gates_test.go"],
       "docs": ["tests/docs/..."]
     },
     "spec/catalogs/": {
-      "static": ["tests/static/spec_defs_test.go"]
+      "static": ["tests/static/structure/spec_defs_test.go"]
     },
     "proposals/": {
       "docs": ["tests/docs/..."]

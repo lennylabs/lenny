@@ -344,7 +344,7 @@ Conventions:
   },
   "migrations/": {
     "component": ["tests/component/stores/...", "tests/component/rls/..."],
-    "static": ["tests/static/schemas_test.go"]
+    "static": ["tests/static/build/schemas_test.go"]
   },
   "charts/lenny/": {
     "static": ["charts/lenny/tests/...", "tests/static/helm_lint_test.go"],
@@ -1613,7 +1613,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure delivered in Phase 2.8.**
 - `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a CH-RUNTIMEOPS client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/runtime-ops-events.schema.json` is the JSON Schema for the CH-RUNTIMEOPS envelope. Example fixtures live under `schemas/examples/runtime-ops.*.json` and are validated by `tests/static/schemas_test.go::TestRuntimeOpsEventExamplesValidate`, whose fixture list `tests/static/schemas_test.go::TestRuntimeOpsEventExamplesBijection` holds to the set committed under `schemas/examples`.
+- `schemas/runtime-ops-events.schema.json` is the JSON Schema for the CH-RUNTIMEOPS envelope. Example fixtures live under `schemas/examples/runtime-ops.*.json` and are validated by `tests/static/build/schemas_test.go::TestRuntimeOpsEventExamplesValidate`, whose fixture list `tests/static/build/schemas_test.go::TestRuntimeOpsEventExamplesBijection` holds to the set committed under `schemas/examples`.
 - `cmd/lenny-compliance --level full` adds the Full-level conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). The harness opens a Unix-socket lifecycle server, writes a manifest pointing the runtime at it, and asserts each event round-trip.
 - `streaming-echo` passes both `lenny-compliance --level basic` (7/7) and `lenny-compliance --level full` (12/12).
 

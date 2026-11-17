@@ -71,7 +71,7 @@ Every `docs/adr/NNNN-<slug>.md` file must be referenced from `docs/adr/index.md`
 
 ## JSON-schema example validation
 
-When `docs/examples/<schema-name>/*.json` exists, the matching schema must live at `schemas/<schema-name>.json` (or `<schema-name>-v1.json`). Each example must parse as valid JSON and validate against the schema. The shell script (`scripts/check-doc-examples.sh`) wraps this; the schema test (`tests/static/schemas_test.go`) validates the schemas themselves.
+When `docs/examples/<schema-name>/*.json` exists, the matching schema must live at `schemas/<schema-name>.json` (or `<schema-name>-v1.json`). Each example must parse as valid JSON and validate against the schema. The shell script (`scripts/check-doc-examples.sh`) wraps this; the schema test (`tests/static/build/schemas_test.go`) validates the schemas themselves.
 
 ## Adding a new doc
 

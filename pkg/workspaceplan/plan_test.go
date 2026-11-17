@@ -200,7 +200,7 @@ func TestParseSkipsUnknownSourceTypeWithWarning(t *testing.T) {
 // table is the unit-tier fixture-drift guard for F-CS5: it routes all
 // six schemas/examples/ fixtures through the parser and asserts each
 // accept/reject matches the static-tier schema validator's expectValid flag
-// in tests/static/schemas_test.go. expectValid mirrors that
+// in tests/static/build/schemas_test.go. expectValid mirrors that
 // static-tier truth table; the unknown-source-type fixture is accepted by
 // both surfaces (the open-string discriminator passes it through with a
 // warning).
