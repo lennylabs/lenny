@@ -1,0 +1,252 @@
+package	part	note	go_files	code_lines	test_lines	import_sites_outside_package
+pkg/gateway/audit/auditretention	domain	audit	1	382	414	7
+pkg/gateway/audit/auditscope	domain	audit	2	232	206	8
+pkg/gateway/audit/auditstore	domain	audit	11	2899	873	53
+pkg/gateway/audit/auditstore/auditbatch	domain	audit	1	178	203	7
+pkg/gateway/audit/jwtaudit	domain	audit	1	147	206	8
+pkg/gateway/billing/billingcheckpoint	domain	billing	1	148	97	2
+pkg/gateway/billing/billingfanout	domain	billing	1	262	217	11
+pkg/gateway/billing/billingretention	domain	billing	1	207	177	3
+pkg/gateway/billing/billingsink	domain	billing	2	495	384	2
+pkg/gateway/billing/billingstore	domain	billing	2	781	936	66
+pkg/gateway/billing/billingstore/failover	domain	billing	2	805	1028	6
+pkg/gateway/billing/billingstore/failover/redisstream	domain	billing	2	669	616	4
+pkg/gateway/billing/billingstore/pgstore	domain	billing	1	598	0	4
+pkg/gateway/billing/correctionstore	domain	billing	1	276	164	10
+pkg/gateway/billing/correctionstore/pgstore	domain	billing	1	281	144	1
+pkg/gateway/billing/usagestore	domain	billing	1	166	114	16
+pkg/gateway/billing/usagestore/pgstore	domain	billing	1	298	51	2
+pkg/gateway/callercheck	domain	auth	1	147	215	8
+pkg/gateway/checkpoint/checkpointer	core		5	2752	5521	18
+pkg/gateway/checkpoint/checkpointretention	domain	checkpoint	1	284	339	10
+pkg/gateway/checkpoint/checkpointretention/pgstore	domain	checkpoint	1	249	0	3
+pkg/gateway/checkpoint/partialmanifeststore	domain	checkpoint	1	700	827	61
+pkg/gateway/checkpoint/partialmanifeststore/pgstore	domain	checkpoint	1	529	0	8
+pkg/gateway/checkpoint/resumechunks	core		1	299	401	24
+pkg/gateway/connectors/connectorauthz	removed	0124	1	145	159	7
+pkg/gateway/connectors/connectorcredstore	removed	0124	1	355	414	22
+pkg/gateway/connectors/connectorcredstore/pgstore	removed	0124	2	731	0	4
+pkg/gateway/connectors/connectorinvoke	removed	0124	6	1267	1590	15
+pkg/gateway/connectors/connectorsecret	removed	0124	1	100	99	2
+pkg/gateway/connectors/connectorstore	removed	0124	2	534	488	48
+pkg/gateway/connectors/connectorstore/pgstore	removed	0124	1	413	0	4
+pkg/gateway/connectors/connectortools	removed	0124	1	207	202	4
+pkg/gateway/coordination/barrier	core		2	397	885	5
+pkg/gateway/coordination/coordfence	core		1	248	224	4
+pkg/gateway/coordination/coordination	core		1	749	1908	11
+pkg/gateway/coordination/coordlease	core		1	184	135	14
+pkg/gateway/coordination/coordlease/pgstore	core		1	121	0	4
+pkg/gateway/coordination/gatewayleader	replica		1	229	200	5
+pkg/gateway/coordination/pdbwatcher	replica		1	132	166	1
+pkg/gateway/core/semver	domain	common	1	61	47	2
+pkg/gateway/core/subsystem	seammodel		4	769	912	26
+pkg/gateway/credentials/credassign	removed	0133	4	1307	2500	42
+pkg/gateway/credentials/credcache	domain	credential	1	66	150	38
+pkg/gateway/credentials/credentialpoolstore	domain	credential	2	744	767	84
+pkg/gateway/credentials/credentialpoolstore/pgstore	domain	credential	1	423	0	8
+pkg/gateway/credentials/credentialserver	domain	credential	1	396	638	5
+pkg/gateway/credentials/credentialstore	domain	credential	1	414	432	19
+pkg/gateway/credentials/credentialstore/pgstore	domain	credential	2	712	0	4
+pkg/gateway/credentials/credfallback	removed	0133	2	298	272	6
+pkg/gateway/credentials/credleasestore	removed	0133	1	281	419	57
+pkg/gateway/credentials/credleasestore/pgstore	removed	0133	1	548	73	4
+pkg/gateway/credentials/credrenewal	removed	0133	1	417	691	10
+pkg/gateway/credentials/credrenewal/propagator	removed	0133	1	252	484	7
+pkg/gateway/credentials/denylist	domain	credential	1	110	228	20
+pkg/gateway/credentials/denylist/propagator	domain	credential	1	193	153	3
+pkg/gateway/credentials/impersonation	domain	credential	2	525	592	8
+pkg/gateway/credentials/impersonation/impersonationtest	domain	credential	1	244	0	3
+pkg/gateway/credentials/leaserevoke	removed	0133	1	75	149	5
+pkg/gateway/credentials/revocation	domain	credential	1	208	245	12
+pkg/gateway/credentials/revocation/propagator	domain	credential	1	120	124	16
+pkg/gateway/credentials/usercreds	domain	credential	1	286	341	5
+pkg/gateway/deployment/devmode	replica		1	77	140	1
+pkg/gateway/environment/customrolestore	domain	tenancy	1	250	255	28
+pkg/gateway/environment/customrolestore/pgstore	domain	tenancy	1	256	0	4
+pkg/gateway/environment/deploymentconfigstore	domain	tenancy	1	90	42	9
+pkg/gateway/environment/deploymentconfigstore/pgstore	domain	tenancy	1	86	0	2
+pkg/gateway/environment/envaccess	domain	tenancy	1	246	372	4
+pkg/gateway/environment/environmentstore	domain	tenancy	1	493	471	56
+pkg/gateway/environment/environmentstore/pgstore	domain	tenancy	1	275	0	4
+pkg/gateway/environment/tenantaccessstore	domain	tenancy	1	156	173	27
+pkg/gateway/environment/tenantaccessstore/pgstore	domain	tenancy	1	184	0	4
+pkg/gateway/environment/tenantstore	domain	tenancy	2	717	512	285
+pkg/gateway/environment/tenantstore/pgstore	domain	tenancy	1	499	102	13
+pkg/gateway/environment/tenantstore/tenantstoretest	domain	tenancy	1	85	0	3
+pkg/gateway/environment/transcriptstore	domain	tenancy	2	292	214	48
+pkg/gateway/environment/transcriptstore/pgstore	domain	tenancy	1	258	0	5
+pkg/gateway/environment/translator	removed	0138	6	2048	4110	22
+pkg/gateway/environment/userstore	domain	tenancy	3	464	440	90
+pkg/gateway/environment/userstore/pgstore	domain	tenancy	1	409	0	14
+pkg/gateway/eventbuffer	domain	events	3	491	967	57
+pkg/gateway/experiment/evalstore	removed	0141	2	363	265	19
+pkg/gateway/experiment/evalstore/pgstore	removed	0141	1	442	0	4
+pkg/gateway/experiment/experimentprovider	removed	0141	1	308	220	5
+pkg/gateway/experiment/experimentsticky	removed	0141	1	211	401	7
+pkg/gateway/experiment/experimentstore	removed	0141	1	286	236	34
+pkg/gateway/experiment/experimentstore/pgstore	removed	0141	1	328	0	5
+pkg/gateway/experiment/ofrep	removed	0141	1	156	185	2
+pkg/gateway/externalapi/admin	api		66	25444	38951	103
+pkg/gateway/externalapi/admintoken	api		1	543	599	11
+pkg/gateway/externalapi/admintoken/k8ssecret	api		1	75	0	2
+pkg/gateway/externalapi/admintoken/reclaimer	api		1	179	238	2
+pkg/gateway/externalapi/errorclassify	domain	apierrors	1	486	342	18
+pkg/gateway/externalapi/openapi	domain	apierrors	1	285	1734	13
+pkg/gateway/externalapi/openapi/internal/genopsschemas	domain	apierrors	1	326	0	0
+pkg/gateway/externalapi/outputpartfidelity	removed	0138	4	475	403	1
+pkg/gateway/externalapi/pagination	domain	apierrors	1	327	309	26
+pkg/gateway/gatewaycontrol/inputwaitrecovery	tools		3	425	624	7
+pkg/gateway/gatewaycontrol/platformtools	tools		1	158	154	7
+pkg/gateway/llmproxy/credrouter	removed	0133	2	291	311	33
+pkg/gateway/llmproxy/llmproxy	metering		11	2154	3357	30
+pkg/gateway/llmproxy/proxycache	removed	0132	1	142	166	2
+pkg/gateway/llmproxy/semanticcache	removed	0132	3	548	298	13
+pkg/gateway/llmproxy/semanticcache/redisstore	removed	0132	1	230	118	2
+pkg/gateway/mcpfabric/delegation	tools		2	2471	5352	48
+pkg/gateway/mcpfabric/delegation/export	tools		1	423	429	13
+pkg/gateway/mcpfabric/delegation/exportwire	tools		1	123	82	1
+pkg/gateway/mcpfabric/delegation/fileexport	tools		1	146	162	5
+pkg/gateway/mcpfabric/delegationbudget	tools		3	555	382	9
+pkg/gateway/mcpfabric/delegationbudget/pgstore	tools		1	152	0	7
+pkg/gateway/mcpfabric/delegationpolicystore	domain	delegation	3	635	635	45
+pkg/gateway/mcpfabric/delegationpolicystore/pgstore	domain	delegation	1	311	0	2
+pkg/gateway/mcpfabric/delegationtree/deadlock	tools		3	792	721	7
+pkg/gateway/mcpfabric/delegationtree/leasecontrol	tools		13	4148	6544	41
+pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg	tools		1	237	0	7
+pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit	tools		1	322	343	3
+pkg/gateway/mcpfabric/delegationtree/orphancleanup	tools		1	494	1243	11
+pkg/gateway/mcpfabric/delegationtree/resultrollup	tools		1	343	412	12
+pkg/gateway/mcpfabric/delegationtree/treearchive	tools		2	424	596	27
+pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore	tools		1	291	51	4
+pkg/gateway/mcpfabric/delegationtree/treebudget	tools		2	654	1053	23
+pkg/gateway/mcpfabric/delegationtree/treerecovery	tools		1	282	532	2
+pkg/gateway/mcpfabric/elicitationfloor	tools		1	182	181	7
+pkg/gateway/mcpfabric/mcp	tools		9	2641	3207	103
+pkg/gateway/mcpfabric/mcpruntimes	removed	0119	1	360	460	2
+pkg/gateway/mcpfabric/mcpschemagen	removed	0138	1	457	465	3
+pkg/gateway/mcpfabric/mcptools	tools		10	7364	17170	40
+pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas	removed	0138	1	106	0	0
+pkg/gateway/mcpfabric/playground	playground		11	3595	3563	11
+pkg/gateway/metrics/capacityplanning	replica		1	55	52	1
+pkg/gateway/metrics/extractionthreshold	seammodel		1	108	150	2
+pkg/gateway/metrics/gatewaymetrics	replica		19	6191	2898	30
+pkg/gateway/metrics/gcpause	replica		1	234	228	1
+pkg/gateway/middleware/auth	domain	auth	2	1011	2521	254
+pkg/gateway/middleware/circuitbreaker	api		2	440	331	7
+pkg/gateway/middleware/circuitbreaker/breakerstore	api		1	136	128	12
+pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore	api		1	164	150	4
+pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore	api		1	219	125	3
+pkg/gateway/middleware/correlation	api		1	225	408	3
+pkg/gateway/middleware/deprecation	api		1	101	124	1
+pkg/gateway/middleware/environment	domain	environment	1	254	461	5
+pkg/gateway/middleware/idempotency	domain	idempotency	2	787	1087	13
+pkg/gateway/middleware/idempotency/pgstore	domain	idempotency	1	286	0	3
+pkg/gateway/middleware/ratelimit	api		1	642	949	3
+pkg/gateway/middleware/recover	api		1	135	168	2
+pkg/gateway/operability/health	replica	opsendpoints	6	1009	1190	16
+pkg/gateway/operability/health/backends	replica	opsendpoints	1	413	235	5
+pkg/gateway/operability/recommendations	domain	recommendations	4	944	825	9
+pkg/gateway/pki/carotation	domain	mtls	1	217	143	3
+pkg/gateway/pki/carotationstore	domain	mtls	1	123	67	6
+pkg/gateway/pki/carotationstore/pgstore	domain	mtls	1	154	80	1
+pkg/gateway/pki/tlsprobe	replica		1	203	233	1
+pkg/gateway/podlifecycle/bindrelease	core		1	157	241	6
+pkg/gateway/podlifecycle/drainreadiness	replica	drain	1	216	214	4
+pkg/gateway/podlifecycle/podclaim	core		4	1936	4537	56
+pkg/gateway/podlifecycle/podsession	core		25	5258	12526	207
+pkg/gateway/podlifecycle/prestop	replica	drain	3	677	791	4
+pkg/gateway/podlifecycle/slotreaper	core		1	391	738	5
+pkg/gateway/policy/interceptor	domain	policy	6	1727	2812	76
+pkg/gateway/policy/interceptor/interceptorstore	domain	policy	1	319	151	13
+pkg/gateway/policy/interceptor/interceptorstore/pgstore	domain	policy	1	224	0	2
+pkg/gateway/policy/policy	domain	policy	10	1255	1216	38
+pkg/gateway/policy/ratelimit	domain	policy	1	59	71	30
+pkg/gateway/policy/ratelimit/redisstore	domain	policy	1	54	35	2
+pkg/gateway/provisioning/envblock	domain	workspaceplan	1	102	93	1
+pkg/gateway/provisioning/gitref	domain	workspaceplan	4	439	449	2
+pkg/gateway/provisioning/vcscred	domain	workspaceplan	1	164	167	17
+pkg/gateway/quota/quotabudget	domain	quota	2	466	472	4
+pkg/gateway/quota/quotacheckpoint	domain	quota	5	884	984	10
+pkg/gateway/quota/quotacheckpoint/pgstore	domain	quota	1	190	334	3
+pkg/gateway/quota/quotaerasure	domain	quota	1	105	117	1
+pkg/gateway/quota/quotafailopen	domain	quota	1	278	290	13
+pkg/gateway/quota/quotastore	domain	quota	2	491	423	26
+pkg/gateway/quota/storagequota	domain	quota	3	487	601	18
+pkg/gateway/quota/storagequota/redisstore	domain	quota	1	111	43	3
+pkg/gateway/runtime/adapter	core		1	38	62	9
+pkg/gateway/runtime/adapterclient	core		2	1146	2678	105
+pkg/gateway/runtime/adapterregistry	removed	0138	3	681	783	1
+pkg/gateway/runtime/agentcard	removed	0138	1	113	127	2
+pkg/gateway/runtime/capabilityinference	domain	runtime	1	204	206	21
+pkg/gateway/runtime/externaladapterstore	removed	0138	1	274	212	8
+pkg/gateway/runtime/poolstore	domain	runtime	1	1171	2015	85
+pkg/gateway/runtime/poolstore/pgstore	domain	runtime	1	484	499	6
+pkg/gateway/runtime/runtimecapoverride	domain	runtime	2	194	214	19
+pkg/gateway/runtime/runtimecapoverride/pgstore	domain	runtime	1	125	0	2
+pkg/gateway/runtime/runtimestore	domain	runtime	5	2226	2161	218
+pkg/gateway/runtime/runtimestore/pgstore	domain	runtime	1	553	0	7
+pkg/gateway/runtime/sdkwarm	removed	0119	1	95	88	2
+pkg/gateway/runtime/slothealth	core		1	280	326	16
+pkg/gateway/runtime/statelessproxy	removed	0119	1	185	179	2
+pkg/gateway/runtime/statelessrouting	removed	0119	1	216	182	1
+pkg/gateway/runtime/tenantaffinity	removed	0119	2	354	401	6
+pkg/gateway/runtime/watchdog	core		3	2100	4625	30
+pkg/gateway/serviceidentity	api		1	165	152	4
+pkg/gateway/session/budgetstate	core		1	177	481	3
+pkg/gateway/session/executor	core		7	1894	3484	165
+pkg/gateway/session/inputwait	tools		1	300	435	34
+pkg/gateway/session/interactionstore	domain	session	1	294	398	53
+pkg/gateway/session/interactionstore/pgstore	domain	session	1	371	0	9
+pkg/gateway/session/memorystore	removed	0123	4	901	1016	25
+pkg/gateway/session/memorystore/memorystoretest	removed	0123	1	191	0	2
+pkg/gateway/session/memorystore/pgstore	removed	0123	1	606	0	5
+pkg/gateway/session/messagerouting	core		1	171	179	2
+pkg/gateway/session/orphansession	core		1	488	702	6
+pkg/gateway/session/recycle	core		3	1967	3303	6
+pkg/gateway/session/routingcache	core		1	194	250	0
+pkg/gateway/session/sessionage	core		1	90	180	2
+pkg/gateway/session/sessionbudget	metering		1	417	611	21
+pkg/gateway/session/sessioncallback	core		4	729	497	8
+pkg/gateway/session/sessioncheckpointmeta	domain	session	1	146	121	9
+pkg/gateway/session/sessioncheckpointmeta/pgstore	domain	session	1	124	163	4
+pkg/gateway/session/sessionevents	stream		2	800	745	69
+pkg/gateway/session/sessionidle	core		1	262	301	9
+pkg/gateway/session/sessioninbox	core		4	1168	968	41
+pkg/gateway/session/sessionlogstore	domain	session	2	325	325	3
+pkg/gateway/session/sessionstore	domain	session	7	2013	1126	714
+pkg/gateway/session/sessionstore/memstore	domain	session	3	1123	3305	477
+pkg/gateway/session/sessionstore/pgstore	domain	session	2	2419	409	44
+pkg/gateway/session/sessionusage	domain	billing	1	109	139	17
+pkg/gateway/session/sessionusage/pgstore	domain	billing	1	148	199	1
+pkg/gateway/session/tokenanomaly	removed	0133	1	290	317	5
+pkg/gateway/session/toolapproval	tools		1	121	124	10
+pkg/gateway/sessionserver	core		108	29859	69236	161
+pkg/gateway/storage/deadletterredaction	domain	storage	2	341	329	5
+pkg/gateway/storage/derivelock	core		1	347	313	5
+pkg/gateway/storage/dualstore	core		1	247	274	5
+pkg/gateway/storage/erasure	domain	storage	3	475	745	28
+pkg/gateway/storage/erasurejob	domain	storage	8	1883	3285	35
+pkg/gateway/storage/erasurejob/pgstore	domain	storage	1	435	0	6
+pkg/gateway/storage/erasurejob/saltlockpg	domain	storage	1	124	18	3
+pkg/gateway/storage/eventbus	domain	storage	4	1342	1048	17
+pkg/gateway/storage/evictionfallback	core		3	758	861	2
+pkg/gateway/storage/evictionstatestore	domain	storage	1	312	216	10
+pkg/gateway/storage/evictionstatestore/pgstore	domain	storage	1	282	0	3
+pkg/gateway/storage/failopen	domain	storage	5	765	632	8
+pkg/gateway/storage/issuedtokenstore	domain	storage	3	1306	738	59
+pkg/gateway/storage/leasestore	core		2	389	337	44
+pkg/gateway/storage/leasestore/pgstore	core		1	228	0	5
+pkg/gateway/storage/legalholdreconciler	domain	storage	1	339	518	2
+pkg/gateway/storage/partitionmaint	domain	storage	2	511	557	1
+pkg/gateway/storage/pgnotify	domain	storage	1	119	102	1
+pkg/gateway/storage/pgtenant	domain	storage	1	274	216	68
+pkg/gateway/storage/pubsub	domain	storage	1	93	61	22
+pkg/gateway/storage/rediskeys	domain	storage	1	256	149	22
+pkg/gateway/storage/redistopology	domain	storage	1	136	144	7
+pkg/gateway/storage/retentiongc	domain	storage	1	345	647	4
+pkg/gateway/storage/slotcounter	core		3	1341	2652	42
+pkg/gateway/storage/sqlitestore	domain	storage	1	235	536	4
+pkg/gateway/upgrade/runtimeupgrade	domain	runtime	1	427	326	5
+pkg/gateway/upgrade/runtimeupgradeguard	domain	runtime	1	91	143	1
+pkg/gateway/upgrade/runtimeupgradestore	domain	runtime	1	198	127	10
+pkg/gateway/upgrade/runtimeupgradestore/pgstore	domain	runtime	1	206	125	1
