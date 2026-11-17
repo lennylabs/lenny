@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/annotation"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // changesDir is the folder of the change records.
@@ -529,24 +530,26 @@ func cell(text string) string {
 
 // WriteDigest builds the digest and writes it to the step's digest file,
 // refusing to replace a file that exists unless force is set, because the
-// session fills in parts of it by hand. It returns the path written.
+// session fills in parts of it by hand. It returns the path written. It
+// writes through scope.WriteChecked, which refuses a digest path that is a
+// symbolic link or whose directory resolves outside the repository.
 func WriteDigest(ctx context.Context, root string, opts DigestOptions, force bool) (string, error) {
 	p, err := DigestPath(root, opts.Step)
 	if err != nil {
 		return "", err
 	}
-	abs := filepath.Join(root, filepath.FromSlash(p))
-	if _, err := os.Stat(abs); err == nil && !force {
+	abs, err := scope.CheckedPath(root, p)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(abs); err == nil && !force {
 		return "", fmt.Errorf("%s exists and may hold text filled in by hand; pass -force to replace it", p)
 	}
 	text, err := Digest(ctx, root, opts)
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(abs, []byte(text), 0o644); err != nil {
+	if err := scope.WriteChecked(root, p, []byte(text), 0o644); err != nil {
 		return "", err
 	}
 	return p, nil

@@ -146,7 +146,7 @@ func (t *Tree) abs(p string) string { return filepath.Join(t.Root, filepath.From
 
 // Read returns the content of a repository path.
 func (t *Tree) Read(p string) (string, error) {
-	b, err := os.ReadFile(t.abs(p))
+	b, err := scope.ReadChecked(t.Root, p)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p, err)
 	}

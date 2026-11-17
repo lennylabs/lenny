@@ -9,12 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/defs"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // registryVersion is the format version of spec/registry.json.
@@ -131,7 +131,7 @@ func (r *Registry) Encode() ([]byte, error) {
 // LoadCommitted reads the committed registry. A tree with no committed
 // registry has no history, so it reads as an empty registry.
 func LoadCommitted(t *Tree) (*Registry, error) {
-	b, err := os.ReadFile(t.abs(RegistryPath))
+	b, err := scope.ReadChecked(t.Root, RegistryPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return emptyRegistry(), nil
 	}

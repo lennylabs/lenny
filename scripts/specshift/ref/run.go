@@ -118,7 +118,7 @@ func runRegistry(ctx context.Context, t *Tree, check bool, out io.Writer) error 
 		return err
 	}
 	if check {
-		current, err := os.ReadFile(t.abs(RegistryPath))
+		current, err := scope.ReadChecked(t.Root, RegistryPath)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("read %s: %w", RegistryPath, err)
 		}

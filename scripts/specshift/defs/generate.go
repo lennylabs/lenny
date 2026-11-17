@@ -7,11 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // Generate computes every generated file of the tree and returns its
@@ -182,11 +182,13 @@ func blocksNaming(t *Tree, kind, field, code string) []*Block {
 
 // Stale compares generated content with the files under root and returns
 // the repo-relative paths whose content differs or that do not exist,
-// sorted.
+// sorted. It reads each file through scope.ReadChecked, so a generated
+// path that is a symbolic link, or whose directory resolves outside root,
+// is an error rather than a file read from elsewhere.
 func Stale(root string, generated map[string]string) ([]string, error) {
 	var stale []string
 	for p, want := range generated {
-		got, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p)))
+		got, err := scope.ReadChecked(root, p)
 		if errors.Is(err, fs.ErrNotExist) {
 			stale = append(stale, p)
 			continue
@@ -203,19 +205,17 @@ func Stale(root string, generated map[string]string) ([]string, error) {
 }
 
 // Write writes the generated files that differ from the tree under root
-// and returns their repo-relative paths, sorted.
+// and returns their repo-relative paths, sorted. It writes through
+// scope.WriteChecked, which refuses a symbolic link and a directory that
+// resolves outside root.
 func Write(root string, generated map[string]string) ([]string, error) {
 	stale, err := Stale(root, generated)
 	if err != nil {
 		return nil, err
 	}
 	for _, p := range stale {
-		target := filepath.Join(root, filepath.FromSlash(p))
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return nil, fmt.Errorf("create the folder of %s: %w", p, err)
-		}
-		if err := os.WriteFile(target, []byte(generated[p]), 0o644); err != nil {
-			return nil, fmt.Errorf("write %s: %w", p, err)
+		if err := scope.WriteChecked(root, p, []byte(generated[p]), 0o644); err != nil {
+			return nil, err
 		}
 	}
 	return stale, nil
