@@ -11,7 +11,7 @@
 `gitleaks` pinned in `tests/gate/Dockerfile` with a checked download, a static-tier check that runs it over tracked files with a reviewed allowlist for test fixtures, a test with a planted secret, and the review rule for diffs to the gate's harness in `git-workflow.md`, the `review` and `build` skills, and `TESTING.md`.
 
 ### 0158.S2 Skipped paths, wider review rule, and reviewed binary files
-- status: Planned
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0158.S1]
 

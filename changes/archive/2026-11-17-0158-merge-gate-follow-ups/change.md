@@ -1,10 +1,10 @@
 # Merge gate follow-ups
 
-Status: `In progress`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Implemented`, revision 2, 2026-11-17. Programs: [v1](../../programs/v1.md), milestone M1.
 
 ## Problem
 
-The security review of the merge gate (change 0154, archived at [`changes/archive/2026-11-17-0154-merge-gate/`](../archive/2026-11-17-0154-merge-gate/change.md)) raised three questions that only the owner could settle, and the owner settled them on 2026-11-17 (`decisions.md`). Two of the answers need work: no secret scan runs before a push, and the gate builds its own harness from the branch under test, so a branch that edits the harness can turn a check off and still pass.
+The security review of the merge gate (change 0154, archived at [`changes/archive/2026-11-17-0154-merge-gate/`](../2026-11-17-0154-merge-gate/change.md)) raised three questions that only the owner could settle, and the owner settled them on 2026-11-17 (`decisions.md`). Two of the answers need work: no secret scan runs before a push, and the gate builds its own harness from the branch under test, so a branch that edits the harness can turn a check off and still pass.
 
 ## Scope
 
