@@ -8,10 +8,10 @@ This folder holds every change to Lenny that is planned or in progress: what is 
 ```text
 changes/
   README.md                          this file
-  BOARD.md                           generated: active changes, open decisions, programs, and milestone status
+  BOARD.md                           generated: steps ready, building, and blocked, by milestone
   0113-pod-lifecycle-controller/
     change.md                        the change, in the template below
-    digest.md                        generated at the end of each step
+    digests/                         one digest per landed step, such as 0113.S2.md
     review-history.md                one entry per review or revision
     evidence/                        spikes and test runs the change cites, with a README
   programs/
@@ -44,36 +44,52 @@ A change reads standalone. Terms come first, a label from another change is link
 | Documentation | Each documentation page the change adds, edits, or removes, with its reader (client, operator, runtime author, or contributor) and what changes for that reader, or a statement that no reader-facing behavior changes | Yes |
 | Tests | The tests by tier and the requirement each verifies | Yes |
 | Validation owed | What has to be measured or run before the change is trusted | When there is any |
-| Steps | The numbered steps with their dependencies | Yes |
+| Steps | The steps, each with its status and dependencies | Yes |
 
 The specification, the code, and the documentation are edited on the change's branch, and the diff is the record of the edit. A change does not stage edits.
 
 ### Steps
 
-Each step is numbered `<change>.S<n>` and states its lane (specification, code, or documentation), the issues it closes, and the steps it depends on, in any change. A code step that changes what a reader can observe carries its documentation edits in the same step, or names the documentation step that follows it:
+A change decides once and lands in steps. A step is the unit that is built, reviewed, and merged: one branch, carrying the specification edits, then the code and the tests, then the documentation that the step needs. A large change has many steps, and a small one has one.
+
+Each step is a heading `<change>.S<n> <title>` followed by these fields, then the step's description:
 
 ```markdown
-### 0113.S4 Add pod sets per pod-set key and scope claims to the revision
-- lane: code
-- depends-on: [0113.S1, 0118.S2]
-- closes: [GWCLAIM-I3]
+### 0127.S3 Pod git path
+- status: Planned
+- aliases: [EG-3]
+- lanes: [specification, code, documentation]
+- depends-on: [0127.S1, 0127.S2, 0127.S9, 0119.S2]
+- closes: [F-26.2.11, F-14.1.37]
+
+GitLab token reuse, the `git.operation` stream from `netagent`, ...
 ```
+
+- `status` is `Planned`, `Building`, `Landed`, or `Cancelled`.
+- `aliases` lists the labels that other text uses for the step. Text written before steps existed names a step by its old proposal label, such as EG-3 or AR-B, or as "proposal 3" of its change; the alias resolves it.
+- `lanes` lists the kinds of edit the step makes, in the order they land.
+- `depends-on` lists steps of any change that must land first. A reason for an edge, when it is not obvious, goes in the description.
+- `closes` lists the issues the step closes. Until a finding migrates to `issues/`, its legacy identifier from `BUILD-GAPS.md` or `TEST-GAPS.md` stands in.
+
+A step can be built while its change is `Draft` when none of the change's open decisions touches it. Several small steps may share a branch and a digest. A step that needs decisions or evidence of its own, such as one gated on a spike, may get its own change folder, which names the parent change in its status line and is listed by the step as an alias.
 
 ### Status
 
 | Status | Meaning |
 | :-- | :-- |
-| `Draft` | The change is being written, or it has open decisions. |
-| `Decided` | Every decision is settled, and no step has landed. |
-| `Spec landed` | The specification steps have landed, and code steps remain. |
-| `Implemented` | Every step has landed, the documentation included. The folder moves to `archive/`. |
+| `Draft` | The change is being written, or it has open decisions, and no step has started. |
+| `Decided` | Every decision is settled, and no step has started. |
+| `In progress` | At least one step is `Building` or `Landed`. Open decisions that arise during the build are listed in the change and on the board. |
+| `Implemented` | Every step is `Landed` or `Cancelled`. The folder moves to `archive/`. |
 | `Cancelled` | The change will not be done. The reason is in `review-history.md`, and the folder moves to `archive/`. |
+
+The change's status follows from its decisions and its steps' statuses.
 
 After a change is implemented, the specification holds what it decided, and each decision's reason becomes rationale on the page that owns it. The archive keeps the history, the alternatives, and the evidence.
 
-## `digest.md`
+## `digests/`
 
-The digest is generated from the branch at the end of each step and committed with the step. It lists:
+A digest is generated from the branch at the end of each step and committed with the step as `digests/<step>.md`. Steps that share a branch share a digest named for the range, such as `0113.S1-S3.md`. It lists:
 
 - each requirement the step added, modified, or retired, with old and new text side by side;
 - the code sites and the tests of each requirement, from the annotations;
@@ -84,7 +100,7 @@ Because it is generated from the diff, it states what the tree holds.
 
 ## `review-history.md`
 
-One entry per review or revision, newest last. An entry has the date, what triggered it (a review, an owner decision, or a revision), what was found, and what changed. `change.md` carries no history.
+One entry per review or revision, newest last. An entry has the date, the step it concerns when it concerns one, what triggered it (a review, an owner decision, or a revision), what was found, and what changed. `change.md` carries no history.
 
 ## Edits that need no change
 
@@ -92,7 +108,7 @@ An edit that changes no requirement, no defined value, and no operation lands as
 
 ## Programs
 
-A program is a plan over several changes: its goal, its member changes, milestones with exit criteria, and the current milestone. Members stay in their own folders, and the program lists them by number, so a change can belong to two programs or move between them. A program changes whenever the plan does, including after implementation starts; git history records each revision. Dependency edges live in the changes' steps, and `BOARD.md` computes the step graph and the status of each milestone from them. A program may also state how agents read its member changes together while it runs, such as which state counts as the target and how a conflict between members is raised; agent instructions point to the active program's guidance.
+A program is a plan over several changes: its goal, its member changes, milestones with exit criteria, and the current milestone. Members stay in their own folders, and the program lists them by number, so a change can belong to two programs or move between them. A program changes whenever the plan does, including after implementation starts; git history records each revision. Dependency edges live in the changes' steps. `BOARD.md` is generated from the steps and the program and is never edited by hand: for each milestone it lists the steps ready to start (every dependency landed and no open decision touching them), the steps building, and the blocked steps with what blocks them, and it lists the open decisions by change. A program may also state how agents read its member changes together while it runs, such as which state counts as the target and how a conflict between members is raised; agent instructions point to the active program's guidance.
 
 ```yaml
 ---
@@ -133,10 +149,10 @@ The helpers are skills and workflows that any of these activities can use, in an
 | `build` | Carries out a change's steps on a branch: the specification first, then the code and the tests, iterating with `lenny-test --changed`, then the documentation pages the change names and any page the documentation check flags. It stops on a choice the change does not settle and records it as an open decision. | Bound |
 | `change` | Creates a change folder from the template, sets its status, and archives it. | Bound |
 | `issue` | Files an issue, links it to a change, and closes it. | Bound |
-| `digest` | Generates `digest.md` for a step or a branch. | Bound |
+| `digest` | Generates the digest of a step or a branch under `digests/`. | Bound |
 | `where` | Shows a requirement's text, its code sites, its tests, the documentation pages that describe its page, its open issues, and the last change that touched it, and answers follow-up questions about how the code meets it. | Bound |
 | `since` | Lists the requirements added, modified, and retired since a date or a commit, and the packages changed under each area. | Bound |
-| `board` | Regenerates `BOARD.md`. | Bound |
+| `board` | Checks every step entry and regenerates `BOARD.md`. | Bound |
 
 ## Gates
 
