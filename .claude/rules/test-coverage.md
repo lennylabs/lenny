@@ -67,7 +67,7 @@ Coverage is a floor, not the goal. Cover the empty, error, concurrent, boundary,
 
 ## Test conventions
 
-- Every test that verifies a requirement carries a `// spec:` annotation in its doc comment naming the requirements it verifies, in the form `spec-annotations.md` gives (`// spec: POOL-R5`, or `// spec: §N.M (section heading)` in an area that has not migrated). The harness maps tests to requirements through this annotation.
+- Every test that verifies a requirement carries a `// spec:` annotation in its doc comment naming the requirements it verifies, in the form `spec-annotations.md` gives (`// spec: POOL-R5`, or `// spec: §N.M (section heading)` while the page has not landed, as "Transition" in `spec-annotations.md` states). The harness maps tests to requirements through this annotation.
 - Every tier-2-and-higher test carries a `// diagnosis:` comment immediately above the function declaration, stating what a failure means. The harness surfaces it in the verdict.
 - Name tests for the behavior they check rather than for the function under test alone. A test name carries no section number and no identifier (`spec-annotations.md`).
 

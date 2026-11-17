@@ -9,7 +9,7 @@ All new code aligns to the spec. Every behavior in `pkg/`, `cmd/`, `sdks/`, `mig
 ## The spec is the source of truth
 
 - Implement what the spec says. When code and spec disagree, the spec is right and the code is the defect, unless the spec itself is wrong (see below).
-- Cite the spec on the code that makes a decision the spec states, with a `// spec:` annotation in the form `spec-annotations.md` gives: a requirement or operation identifier once the page the code implements exists, and `§N.M (heading)` in an area that has not migrated. A reviewer traces any behavior to its requirement through that citation.
+- Cite the spec on the code that makes a decision the spec states, with a `// spec:` annotation in the form `spec-annotations.md` gives: a requirement or operation identifier, or `§N.M (heading)` while the page the code implements has not landed, as its "Transition" section states. A reviewer traces any behavior to its requirement through that citation.
 - Do not edit `spec/` ad hoc to match code you want to write. A specification change goes through a change, as below.
 
 ## When the spec is silent, wrong, or contradictory
