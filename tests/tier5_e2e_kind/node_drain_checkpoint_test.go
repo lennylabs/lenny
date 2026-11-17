@@ -32,7 +32,7 @@
 // eviction-checkpoint trigger mechanism is an undecided product-design
 // decision (a gateway-side pod-eviction watcher that drives the
 // Checkpoint RPC, an adapter self-checkpoint from its own preStop hook,
-// or another design), routed through the change-proposal pipeline. Once
+// or another design), routed through a change under changes/. Once
 // that wiring lands, the skip below lifts and the assertions are
 // written; the skip names the exact blocker.
 

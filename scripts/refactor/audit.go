@@ -138,7 +138,7 @@ func (d *driver) auditGoFiles() (aborts, warns []string, err error) {
 // any pre-move token as a non-fatal warning. The driver does not rewrite prose,
 // and spec/ markdown is handled by the staged spec edits, so a stale prose
 // reference is recorded for a manual sweep rather than aborting. The spec/ tree
-// is excluded because its path edits land through implement-proposal, not this
+// is excluded because its path edits land through a change's build step, not this
 // driver.
 func (d *driver) auditProseFiles() ([]string, error) {
 	var warns []string

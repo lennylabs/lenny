@@ -77,7 +77,7 @@ func TestWebhookDeliveredFromGatewayBufferDuringDualOutage(t *testing.T) {
 	// lenny-ops should source gateway-buffered events for webhook delivery
 	// during a Redis outage (the §25.15 promise) is a product-behavior
 	// change whose mechanism the spec under-specifies; it is left for
-	// human review through the change-proposal pipeline. Un-skip once the
+	// human review through a change under changes/. Un-skip once the
 	// gateway-buffer delivery path is implemented.
 	t.Skip("§25.15 dual-outage webhook delivery from the gateway event buffer is not wired in lenny-ops (the webhook worker's only event source is the Redis stream); pending a human decision on the delivery mechanism")
 

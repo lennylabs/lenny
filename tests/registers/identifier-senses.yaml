@@ -92,9 +92,6 @@ entries:
   # spelling as data, either as a path inside a synthetic fixture tree
   # the test builds or as a naming-table row the case feeds the loader,
   # so the spelling names the fixture rather than the mechanism.
-  - file: .claude/workflows/change-proposal.js
-    occurrence: 1
-    channel: CH-RUNTIMEOPS
   - file: TESTING.md
     occurrence: 1
     channel: CH-RUNTIMEOPS
