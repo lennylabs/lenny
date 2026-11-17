@@ -70,15 +70,8 @@ const (
 	// whose environment lacks it, or whose marker names another tag, is
 	// not in the gate image.
 	gateImageMarker = "/etc/lenny-gate/image"
-	// gateTmpDir is the fixture root inside the worktree, relative to
-	// the repository root. The worktree is mounted at its host path, so
-	// a test that bind-mounts a temporary directory into a testcontainer
-	// names a path the host daemon can resolve. The leading dot keeps
-	// the directory out of `./...` package patterns, and git ignores
-	// tests/results/, so the directory never makes the tree dirty.
-	gateTmpDir = gateResultsDir + "/.gate-tmp"
 	// gateGoTmpDir is where go build keeps its work directories inside
-	// the container. It stays off the bind mount, where compiling is
+	// the container. It stays off the fixture root's bind mount, where compiling is
 	// slower, and off /tmp (testtmp.UnderTmp).
 	gateGoTmpDir = "/var/tmp/lenny-go"
 	// gateContainerSocket is where the container sees the Docker socket.
@@ -243,11 +236,12 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
 		return 2
 	}
-	if err := os.MkdirAll(filepath.Join(root, gateTmpDir), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: create %s: %v\n", gateTmpDir, err)
+	tmp, err := gateHostTmpDir(root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
 		return 2
 	}
-	h := gateHost{root: root, image: image, imageID: id, passArgs: passArgs}
+	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: passArgs}
 	if common, err := gitCommonDir(root); err == nil {
 		h.gitCommonDir = common
 	} else {
@@ -344,6 +338,27 @@ func (s gateImageStore) save(tag, id string) error {
 	return writeFileAtomic(s.path(tag), []byte(id+"\n"), 0o644)
 }
 
+// gateHostTmpDir creates and returns the host directory that serves as
+// the container's fixture root for the worktree at root. It lies under
+// the user cache directory, one per worktree, and the container mounts
+// it at the same path. A test that bind-mounts a temporary directory
+// into a testcontainer then names a path the host daemon resolves. It
+// lies outside the worktree, because the static checks that walk the
+// tree (goimports, gofumpt, and the tier-0 tree scans) run while other
+// checks create and remove fixtures, and would read them half-written.
+func gateHostTmpDir(root string) (string, error) {
+	d, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("locate the cache directory for the gate's fixture root: %w", err)
+	}
+	sum := sha256.Sum256([]byte(root))
+	tmp := filepath.Join(d, "lenny-test", "gate-tmp", hex.EncodeToString(sum[:])[:12])
+	if err := os.MkdirAll(tmp, 0o755); err != nil {
+		return "", fmt.Errorf("create the gate's fixture root: %w", err)
+	}
+	return tmp, nil
+}
+
 // gateImageTag derives the image reference from the Dockerfile content.
 func gateImageTag(dockerfile []byte) string {
 	sum := sha256.Sum256(dockerfile)
@@ -365,6 +380,7 @@ type gateHost struct {
 	gitCommonDir string // "" when it lies inside root or is unknown
 	image        string
 	imageID      string // "" runs the image by its tag
+	tmpDir       string // host directory mounted at its own path as TMPDIR
 	dockerSocket string // "" when the container gets no Docker socket
 	passArgs     []string
 }
@@ -375,17 +391,16 @@ type gateHost struct {
 // tree, in git's worktree metadata, and in tool output mean the same
 // thing inside and outside the container. A linked worktree keeps its
 // git metadata in the main checkout's git directory, which is mounted
-// read-only at its host path for the same reason. TMPDIR points at
-// gateTmpDir inside the worktree, so a temporary directory that a test
-// bind-mounts into a testcontainer is a path the host daemon resolves.
-// The module and build caches live in named volumes, so only the first
-// run downloads and compiles from cold. The container runs the image by
-// the ID the gate recorded, checks the module cache against go.sum with
-// `go mod verify`, builds lenny-test from the mounted tree, and runs
-// `lenny-test gate --here`, so the gate always runs the harness of the
-// commit under test.
+// read-only at its host path for the same reason. The fixture root
+// (gateHostTmpDir) is mounted at its host path too, and TMPDIR points at
+// it, so a temporary directory that a test bind-mounts into a
+// testcontainer is a path the host daemon resolves. The module and build
+// caches live in named volumes, so only the first run downloads and
+// compiles from cold. The container runs the image by the ID the gate
+// recorded, checks the module cache against go.sum with `go mod verify`,
+// builds lenny-test from the mounted tree, and runs `lenny-test gate
+// --here`, so the gate always runs the harness of the commit under test.
 func gateDockerRunArgs(h gateHost) []string {
-	tmp := filepath.Join(h.root, gateTmpDir)
 	args := []string{
 		"run", "--rm", "--init",
 		"-v", h.root + ":" + h.root,
@@ -399,10 +414,16 @@ func gateDockerRunArgs(h gateHost) []string {
 		"-v", gateModVolume+":/go/pkg/mod",
 		"-v", gateBuildVolume+":/root/.cache/go-build",
 		"-e", gateEnvImage+"="+h.image,
-		"-e", "TMPDIR="+tmp,
-		"-e", testtmp.EnvRoot+"="+tmp,
 		"-e", "GOTMPDIR="+gateGoTmpDir,
 	)
+	if h.tmpDir != "" {
+		args = append(
+			args,
+			"-v", h.tmpDir+":"+h.tmpDir,
+			"-e", "TMPDIR="+h.tmpDir,
+			"-e", testtmp.EnvRoot+"="+h.tmpDir,
+		)
+	}
 	if h.imageID != "" {
 		args = append(args, "-e", gateEnvImageID+"="+h.imageID)
 	}
@@ -421,7 +442,7 @@ func gateDockerRunArgs(h gateHost) []string {
 	// earlier run leaves its fixtures behind, and verifies the module
 	// cache before it compiles the harness from it.
 	script := `set -e
-find "$TMPDIR" -mindepth 1 -delete
+if [ -n "${LENNY_TEST_TMPDIR:-}" ]; then find "$LENNY_TEST_TMPDIR" -mindepth 1 -delete; fi
 mkdir -p "$GOTMPDIR"
 go mod verify
 go build -o /usr/local/bin/lenny-test ./cmd/lenny-test

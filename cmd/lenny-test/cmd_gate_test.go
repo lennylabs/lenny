@@ -252,13 +252,13 @@ func TestGateDockerRunArgsOmitTheSocketAndAGitDirInsideTheTree(t *testing.T) {
 }
 
 // TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath checks that TMPDIR
-// inside the container is a directory under the worktree, which the
-// container sees at its host path, so a temporary directory a test
-// bind-mounts into a testcontainer resolves on the host daemon. go build
-// keeps its work directories off the bind mount.
+// inside the container is a host directory mounted at its own path, so a
+// temporary directory a test bind-mounts into a testcontainer resolves
+// on the host daemon. go build keeps its work directories off the mount.
 func TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath(t *testing.T) {
 	root := "/Users/alice/lenny"
-	argv := gateDockerRunArgs(gateHost{root: root, image: "lenny-gate:x"})
+	want := "/Users/alice/Library/Caches/lenny-test/gate-tmp/0123456789ab"
+	argv := gateDockerRunArgs(gateHost{root: root, image: "lenny-gate:x", tmpDir: want})
 	env := map[string]string{}
 	mounts := map[string]bool{}
 	for i := 0; i+1 < len(argv); i++ {
@@ -270,18 +270,44 @@ func TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath(t *testing.T) {
 			mounts[argv[i+1]] = true
 		}
 	}
-	want := root + "/tests/results/.gate-tmp"
 	if env["TMPDIR"] != want || env[testtmp.EnvRoot] != want {
 		t.Errorf("TMPDIR %q and %s %q; want both %q", env["TMPDIR"], testtmp.EnvRoot, env[testtmp.EnvRoot], want)
 	}
-	if !mounts[root+":"+root] || !pathWithin(want, root) {
-		t.Errorf("the fixture root %q is not under the worktree mounted at its host path %v", want, mounts)
+	if !mounts[want+":"+want] {
+		t.Errorf("the fixture root %q is not mounted at its host path: %v", want, mounts)
 	}
-	if g := env["GOTMPDIR"]; g == "" || pathWithin(g, root) || testtmp.UnderTmp(g) {
-		t.Errorf("GOTMPDIR %q; want a container path outside the worktree and /tmp", g)
+	if g := env["GOTMPDIR"]; g == "" || pathWithin(g, root) || pathWithin(g, want) || testtmp.UnderTmp(g) {
+		t.Errorf("GOTMPDIR %q; want a container path off the mounts and off /tmp", g)
 	}
-	if !strings.Contains(strings.Join(argv, " "), `find "$TMPDIR" -mindepth 1 -delete`) {
+	if !strings.Contains(strings.Join(argv, " "), `find "$LENNY_TEST_TMPDIR" -mindepth 1 -delete`) {
 		t.Error("the container does not empty the fixture root before the run")
+	}
+	bare := strings.Join(gateDockerRunArgs(gateHost{root: root, image: "lenny-gate:x"}), " ")
+	if strings.Contains(bare, " -e TMPDIR=") {
+		t.Errorf("a run with no fixture root sets TMPDIR:\n%s", bare)
+	}
+}
+
+// TestGateHostTmpDirIsOutsideTheWorktreeAndPerWorktree keeps the fixture
+// root out of the trees the static checks walk, and apart for two
+// worktrees.
+func TestGateHostTmpDirIsOutsideTheWorktreeAndPerWorktree(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	t.Setenv("HOME", cache)
+	a, err := gateHostTmpDir("/work/a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := gateHostTmpDir("/work/b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b || pathWithin(a, "/work/a") {
+		t.Errorf("fixture roots %q and %q", a, b)
+	}
+	if fi, err := os.Stat(a); err != nil || !fi.IsDir() {
+		t.Errorf("the fixture root was not created: %v", err)
 	}
 }
 
