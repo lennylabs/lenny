@@ -16,7 +16,7 @@ On 2026-11-16 the tree held 18,912 annotation lines: 12,075 in tests and 6,837 i
 - **Test names.** A test name describes the behavior it checks. It carries no section number and no identifier.
 - **Packages.** The package doc comment, in `doc.go`, says in prose what the package implements, and ends with a line naming the page codes: `// spec: GWCLAIM, CLAIM`. It appears once per package.
 - **Deciding code.** A function, method, or type that makes the decision a requirement states cites that requirement in its doc comment. That code is the branch that refuses, the computation of a limit, or the selection a requirement constrains. Callers, wrappers, and code that passes a value along do not cite. A requirement that several functions carry out together, such as the state writes of one state machine, is cited on each of them.
-- **Operations.** The function that maps an interface operation's outcomes to behavior cites the operation: `// spec: kubernetes#podclaim.create`.
+- **Operations.** The function that maps an interface operation's outcomes to behavior cites the operation: `// spec: KPCLAIM-create`.
 - **Defined values.** A constant or default whose value a definition block defines cites the block by its anchor: `// spec: setting-maxidleseconds`. That way, a change to the value finds the code.
 - **Partial conformance.** Code that carries out a requirement only in part cites it and names the open issue: `// spec: CLAIM-R4 (partial: CLAIM-I4)`.
 - **Code awaiting removal.** Code that a change removes, but that cannot be removed yet because of code outside the package, cites the issue that tracks the removal: `// spec: removal pending CLAIM-I2`.
@@ -37,7 +37,7 @@ The digest lists each requirement cited from more than three functions, so a rev
 
 ## Tooling
 
-- Interface operation identifiers contain `#` and `.`, and `kubernetes#podclaim.create` reads like a Go selector. Rename and move tools treat a `<folder>#...` token as opaque. In the spike, a package rename rewrote six of them. Whether the operation format changes is an open item in TAXONOMY.md.
+- Operation identifiers have the form `<CODE>-<operation name>` (TAXONOMY.md, item 8 of "Items from the migration spike"). The earlier form `kubernetes#podclaim.create` read like a Go selector, and a package rename in the spike rewrote six of them.
 - The reference tool matches identifiers as whole tokens. In the spike, a substring search matched `CLAIM` inside `TENANT_CLAIM_MISSING`.
 
 ## How to apply when writing code

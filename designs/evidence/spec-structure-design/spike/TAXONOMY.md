@@ -116,8 +116,8 @@ Metrics carry `emitter:`, events carry `emitter:`, and settings carry `read-by:`
 - Every page has a code of two to nine upper-case letters with no hyphen, registered in `conventions.md` before use. A gate refuses a duplicate and a code that differs from an existing one only by a suffix (`DERIVE` beside `DERIVED`).
 - Requirements are numbered per page and carry a title: `**POOL-R5. Pool and pod-set labels are required and immutable.**` Numbers are never reused, and a retired requirement keeps its number with a successor pointer.
 - Each requirement and each owned term carries an explicit anchor equal to its lower-cased identifier or term slug (`#pool-r5`, `#reserved-hold`).
-- Interface operations carry identifiers of the form `<interface folder>#<resource>.<verb>`: `admin-api#pools.create`, `kubernetes#podclaim.create`.
-- Code cites requirements or operations: `// spec: POOL-R5`, `// spec: admin-api#pools.create`. An identifier survives any move of its page.
+- Interface operations carry identifiers of the form `<CODE>-<operation name>`, where the operation name is the interface's own ("Items from the migration spike", item 8): `ADMPOOLS-createPool`, `KPCLAIM-create`.
+- Code cites requirements or operations: `// spec: POOL-R5`, `// spec: ADMPOOLS-createPool`. An identifier survives any move of its page.
 
 ## References and moves
 
@@ -192,16 +192,16 @@ Version 1's parts list mixed the seams with mechanisms that run in every replica
 
 ## Items from the migration spike
 
-The migration spike ([../spike-migration/FINDINGS-spec.md](../spike-migration/FINDINGS-spec.md), [../spike-migration/FINDINGS-code.md](../spike-migration/FINDINGS-code.md)) found gaps in version 2. The owner settled them on 2026-11-16 except where an item says otherwise.
+The migration spike ([../spike-migration/FINDINGS-spec.md](../spike-migration/FINDINGS-spec.md), [../spike-migration/FINDINGS-code.md](../spike-migration/FINDINGS-code.md)) found gaps in version 2. The owner settled each of them on 2026-11-16.
 
 1. **Anchors for definition blocks.** A block's anchor is `<kind>-<slug>`, where the slug is the defined name lower-cased with each run of other characters replaced by `-`: `setting-maxidleseconds`. `conventions.md` fixes the kinds (setting, metric, alert, error, admission refusal, label, annotation, event, register, state, and grant). The registry refuses two blocks with the same anchor.
 2. **Term anchors.** A term anchor is unique across the specification. Two concepts that would share a word each take a qualified name (`pod-phase`, `claim-phase`).
 3. **Pages linked before they are written.** A page not yet migrated exists as `status: placeholder`, with its code, its summary, and a pointer to the current sections that still hold its content. A page written in part is `status: partial`. No link into a placeholder carries a fragment, and when a placeholder becomes a full page, the reference tool lists the page-level links into it so they can move to identifiers.
 4. **Registers.** The narrowest page that covers every writer owns a register: the page of one part of a component if only that part writes it, the component's index if several of its parts write it, `interfaces/gateway-seams.md` if it crosses a gateway seam, and an interface page if it crosses components.
 5. **Admission refusals with no code.** Migration states the designed target and adds no behavior, so it invents no error code. A refusal that carries a message and no code is an `admission-refusal` definition block, keyed by name, with its exact message. A machine-readable code for it is a change of its own.
-6. **Facts a component's parts contribute.** Decided in principle (each part states the RBAC grants it needs, and the component's table is generated); whether the mechanism is generic is pending the owner's answer.
+6. **Facts a component's parts contribute.** Generic. When several part pages of one running unit each need something from it, each part states its need in a contribution block that names the requirement behind it, and the unit's page carries the generated table. Settings (`read-by`) and metrics (`emitter`) already follow this pattern. The first new kinds are RBAC grants and network rules, each checked by a gate against the chart's rendered Role and NetworkPolicy. Listeners and ports, flags and environment variables, and volumes and mounts join when a page needs them.
 7. **Review comments in pages.** `src`, `judgment`, and `unresolved` comments exist only while an area migrates. Before the area lands, each `unresolved` becomes an issue or an open decision on the area's change, `src` and `judgment` move into the migration record in the change's `evidence/`, and the landing gate refuses all three.
-8. **Format of operation identifiers.** Pending the owner's answer.
+8. **Format of operation identifiers.** An operation's identifier is the page code, a hyphen, and the operation's own name in its interface: the gRPC method name (`ADAPTERRPC-ReportPodScrub`), the OpenAPI `operationId` (`ADMPOOLS-createPool`), the Kubernetes API verb (`KPCLAIM-create`, `KPCLAIM-updateStatus`), or the CLI command words (`CLIPOOL-poolCreate`). The anchor is the identifier lower-cased (`#kpclaim-create`). Every identifier then has the grammar `CODE-<suffix>`: `R` and a number is a requirement, `I` and a number is an issue, and any other suffix is an operation. The registry refuses a collision. Each REST operation gets an `operationId` in the specification, which the generated OpenAPI document and SDKs use.
 9. **The gateway's API surface and the domain stores.** The gateway's request pipeline (middleware order, authentication, rate limiting, handler registration, and request scope) is a replica-level part page, `components/gateway/api-front.md`, which is not a seam. The domain stores need no new page type: their rules live on capability pages, their schemas on the stored-schema interface page, and their stores under `components/external/`. In code, packages follow components for running units and capability areas for domain logic that several components share, so shared stores leave `pkg/gateway`.
 
 ## Owner decisions
