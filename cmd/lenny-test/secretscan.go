@@ -178,7 +178,7 @@ func readCommittedScan(root, work string) (*committedScan, error) {
 			return nil
 		}
 		scan.files++
-		return scan.tree.place(b.path, content)
+		return scan.tree.place(b.path, content, textNamedLikeArchive(b.path, scan.facts[b.path]))
 	})
 	if err != nil {
 		return nil, err

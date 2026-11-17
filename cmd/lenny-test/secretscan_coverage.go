@@ -32,7 +32,11 @@ import (
 // versions gitleaks v8.30.1 pins, the same way, and adds git's own rules
 // for a binary file: a NUL byte in the first 8,000 bytes, or the `binary`
 // attribute set or the `diff` attribute unset. A symbolic link is not
-// read either, because its content is a path. Two registers under
+// read either, because its content is a path. A text file that gitleaks
+// would skip only because its name matches an archive's is renamed in the
+// scan tree so gitleaks reads it, and needs no entry; a file whose content
+// carries an archive magic number, or whose archive name goes with binary
+// content, is an archive. Two registers under
 // tests/registers, which the review rule of .claude/rules/git-workflow.md
 // covers, hold the entries:
 //
@@ -113,24 +117,69 @@ func gitleaksReads(rel string, content []byte) (string, bool) {
 }
 
 // blobFacts classifies one committed file and records its size and
-// SHA-256. A symbolic link's content is its target path.
+// SHA-256. A symbolic link's content is its target path. A file whose
+// name alone makes gitleaks take it for an archive, such as a step digest
+// named 0158.S2.md, is text when its content carries no archive magic
+// number and is not binary: the scan tree renames it so gitleaks reads
+// it (scanTree.place), and it needs no register entry. A file is an
+// archive when its content carries an archive magic number, or when its
+// name is an archive's and its content is binary.
 func blobFacts(rel, mode string, content []byte, attrBinary bool) trackedFileFacts {
 	sum := sha256.Sum256(content)
 	f := trackedFileFacts{size: int64(len(content)), sha256: hex.EncodeToString(sum[:])}
-	head := content[:min(len(content), binarySniffLen)]
-	switch {
-	case mode == gitModeSymlink:
+	if mode == gitModeSymlink {
 		f.class = classSymlink
-	case gitleaksIdentifiesArchive(rel):
+		return f
+	}
+	head := content[:min(len(content), binarySniffLen)]
+	_, mimeSkip := gitleaksMIMESkip(content)
+	binary := attrBinary || bytes.IndexByte(head, 0) >= 0 || mimeSkip
+	switch {
+	case hasArchiveMagic(head):
 		f.class = classArchive
-	case attrBinary || bytes.IndexByte(head, 0) >= 0:
+	case binary && gitleaksIdentifiesArchive(rel):
+		f.class = classArchive
+	case binary:
 		f.class = classBinary
-	default:
-		if _, skip := gitleaksMIMESkip(content); skip {
-			f.class = classBinary
-		}
 	}
 	return f
+}
+
+// textNamedLikeArchive reports whether gitleaks would skip a text file
+// only because of its name, so the scan tree renames it.
+func textNamedLikeArchive(rel string, f trackedFileFacts) bool {
+	return f.class == "" && gitleaksIdentifiesArchive(rel)
+}
+
+// hasArchiveMagic reports whether head starts with the magic number of an
+// archive or compression format github.com/mholt/archives reads: gzip,
+// zip, bzip2, xz, zstd, 7z, RAR, LZ4, lzip, the snappy framing format, or
+// tar (its "ustar" marker at offset 257). Brotli and zlib streams carry no
+// reliable magic number; a renamed file of either kind is read by gitleaks
+// as raw bytes.
+func hasArchiveMagic(head []byte) bool {
+	magics := [][]byte{
+		{0x1f, 0x8b},
+		[]byte("PK\x03\x04"),
+		[]byte("PK\x05\x06"),
+		[]byte("PK\x07\x08"),
+		{0xfd, '7', 'z', 'X', 'Z', 0x00},
+		{0x28, 0xb5, 0x2f, 0xfd},
+		{'7', 'z', 0xbc, 0xaf, 0x27, 0x1c},
+		[]byte("Rar!\x1a\x07"),
+		{0x04, 0x22, 0x4d, 0x18},
+		[]byte("LZIP"),
+		{0xff, 0x06, 0x00, 0x00, 's', 'N', 'a', 'P', 'p', 'Y'},
+	}
+	for _, m := range magics {
+		if bytes.HasPrefix(head, m) {
+			return true
+		}
+	}
+	if len(head) >= 10 && bytes.HasPrefix(head, []byte("BZh")) && head[3] >= '1' && head[3] <= '9' && bytes.Equal(head[4:10], []byte{0x31, 0x41, 0x59, 0x26, 0x53, 0x59}) {
+		return true
+	}
+	return len(head) >= 262 && bytes.Equal(head[257:262], []byte("ustar"))
 }
 
 // checkSecretScanCoverage holds the committed files gitleaks does not read

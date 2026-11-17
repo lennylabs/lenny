@@ -139,19 +139,55 @@ func TestSecretScanReadsOnlyTheFirst8000BytesForBinariness(t *testing.T) {
 	requireCoveragePasses(t, root)
 }
 
-// TestSecretScanFailsOnAnUnlistedArchiveOrApplicationFile pins gitleaks's
-// own rules: a name gitleaks identifies as an archive, including a
-// substring match, and content whose first chunk has an `application` MIME
-// type each need an entry.
+// tarHeader returns a minimal tar header block for one file, which carries
+// the "ustar" magic number at offset 257.
+func tarHeader(name string) string {
+	b := make([]byte, 512)
+	copy(b, name)
+	copy(b[257:], "ustar\x0000")
+	return string(b)
+}
+
+// TestSecretScanFailsOnAnUnlistedArchiveOrApplicationFile pins the files
+// that need an entry: content with an archive magic number, whatever its
+// name; binary content under an archive name; and content whose first
+// chunk has an `application` MIME type.
 func TestSecretScanFailsOnAnUnlistedArchiveOrApplicationFile(t *testing.T) {
 	root := newSecretScanFixtureRepo(t)
-	writeScopeFile(t, filepath.Join(root, "fixtures/bundle.zip"), "not really a zip\n")
-	writeScopeFile(t, filepath.Join(root, "config/kafka.brokers.yaml"), "brokers: []\n")
+	writeScopeFile(t, filepath.Join(root, "fixtures/bundle.zip"), "PK\x03\x04\x14\x00\x00\x00")
+	writeScopeFile(t, filepath.Join(root, "fixtures/payload"), tarHeader("a.txt"))
+	writeScopeFile(t, filepath.Join(root, "fixtures/data.s2.bin.txt"), nulBody)
 	commitFile(t, root, "fixtures/report.txt", "%PDF-1.4\ntext\n")
 	requireScanFails(t, root,
 		"fixtures/bundle.zip: committed archive",
-		"config/kafka.brokers.yaml: committed archive",
+		"fixtures/payload: committed archive",
+		"fixtures/data.s2.bin.txt: committed archive",
 		"fixtures/report.txt: committed binary file")
+}
+
+// TestSecretScanReadsTextFilesNamedLikeArchives pins that a text file
+// gitleaks would skip only because its name matches an archive's needs no
+// entry and is scanned under a renamed path: a planted key in notes.S2.md
+// is reported at its repository path, a clean kafka.brokers.yaml passes,
+// and a real tar archive still needs an entry.
+func TestSecretScanReadsTextFilesNamedLikeArchives(t *testing.T) {
+	root := newSecretScanFixtureRepo(t)
+	writeScopeFile(t, filepath.Join(root, "config/kafka.brokers.yaml"), "brokers: []\n")
+	commitFile(t, root, "notes/notes.S2.md", "# Notes\n")
+	requireCoveragePasses(t, root)
+	if !gitleaksIdentifiesArchive("notes/notes.S2.md") {
+		t.Fatal("the fixture name no longer matches an archive's; pick another")
+	}
+	commitFile(t, root, "fixtures/archive.tar", tarHeader("a.txt"))
+	requireScanFails(t, root, "fixtures/archive.tar: committed archive")
+	gitIn(t, root, "rm", "-q", "fixtures/archive.tar")
+	commitAll(t, root)
+
+	if _, err := exec.LookPath("gitleaks"); err != nil {
+		t.Skip("blocked: precondition not met: gitleaks not on PATH (the gate image installs it)")
+	}
+	commitFile(t, root, "notes/notes.S2.md", "# Notes\n\n"+plantedLine)
+	requireScanFails(t, root, "notes/notes.S2.md:3", "aws-access-token")
 }
 
 // TestSecretScanTreatsAttributeBinaryAsBinary pins the attribute half of

@@ -14,15 +14,18 @@
 # entry that names a file the commit does not hold or that is no longer of
 # those kinds (change 0158, decision 7).
 #
-# The class follows gitleaks v8.30.1 and git. A file is an archive when
-# github.com/mholt/archives identifies its name as one, which includes a
-# substring such as ".br" or ".s2" anywhere in the name. A file is binary
-# when gitleaks would stop reading it at a chunk that
-# github.com/h2non/filetype gives an `application` MIME type, which
-# gitleaks checks for each chunk until a newline has appeared, when its
-# first 8,000 bytes hold a NUL byte, or when git reports the `binary`
-# attribute set or the `diff` attribute unset. A
-# symbolic link's size and SHA-256 are those of its target path. A file of
+# The class follows gitleaks v8.30.1 and git. A file is binary when
+# gitleaks would stop reading it at a chunk that github.com/h2non/filetype
+# gives an `application` MIME type, which gitleaks checks for each chunk
+# until a newline has appeared, when its first 8,000 bytes hold a NUL
+# byte, or when git reports the `binary` attribute set or the `diff`
+# attribute unset. A file is an archive when its content starts with an
+# archive's magic number, or when it is binary and
+# github.com/mholt/archives identifies its name as an archive's, which
+# includes a substring such as ".br" or ".s2" anywhere in the name. A text
+# file with such a name is not listed here: the scan renames it so
+# gitleaks reads it. A symbolic link's size and SHA-256 are those of its
+# target path. A file of
 # these kinds under a path the default gitleaks allowlist skips is named
 # here alone, rather than also in secret-scan-skipped-paths.yaml.
 #

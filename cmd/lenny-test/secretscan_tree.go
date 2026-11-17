@@ -34,8 +34,9 @@ const (
 
 // renamedScanDir is the directory of the scan tree that holds the files
 // placed under a name other than their repository path: a file under a
-// path the default gitleaks allowlist skips, so that gitleaks reads it; a
-// root .gitleaksignore, so that gitleaks does not apply it; and a file
+// path the default gitleaks allowlist skips, or a text file whose name
+// gitleaks takes for an archive's, so that gitleaks reads it; a root
+// .gitleaksignore, so that gitleaks does not apply it; and a file
 // whose path collides by case with another on a case-insensitive file
 // system. A committed path under this directory fails the check, so the
 // two never meet.
@@ -217,19 +218,21 @@ func newScanTree(dir string) *scanTree {
 }
 
 // place writes one committed regular file into the scan tree. A file
-// gitleaks would skip by its path, a root .gitleaksignore, and a file
+// gitleaks would skip by its path, a text file gitleaks would skip because
+// its name looks like an archive's (nameIsArchive), a root .gitleaksignore,
+// and a file
 // whose path collides by case with one already placed go under
 // renamedScanDir, at the first of renamedScanCandidates that is free;
 // every other file keeps its repository path, so the path rules of the
 // configuration match it. A path that is not a plain relative path inside
 // the tree fails, so a crafted tree entry cannot write outside the scan
 // tree.
-func (t *scanTree) place(rel string, content []byte) error {
+func (t *scanTree) place(rel string, content []byte, nameIsArchive bool) error {
 	if !committedPathIsLocal(rel) {
 		return fmt.Errorf("secret scan: the committed path %q is not a plain relative path", rel)
 	}
 	target := rel
-	if _, _, skipped := skippedByDefaultAllowlist(rel); skipped || rel == ".gitleaksignore" || t.folded[strings.ToLower(rel)] {
+	if _, _, skipped := skippedByDefaultAllowlist(rel); skipped || nameIsArchive || rel == ".gitleaksignore" || t.folded[strings.ToLower(rel)] {
 		candidates, err := renamedScanCandidates(rel)
 		if err != nil {
 			return err
