@@ -16,12 +16,13 @@ import (
 )
 
 // These tests exercise contributor tooling and carry no spec annotation.
-// They run a fake claude, a shell script that prints recorded stream-json
-// lines, so no model is called.
+// They run a fake docker, a shell script that prints recorded stream-json
+// lines, so no container starts and no model is called.
 
-// fakeClaude writes a script that prints lines and then either exits
-// with code or, when hang is set, replaces itself with a long sleep so
-// only the harness's signal ends it.
+// fakeClaude writes a fake docker that answers `docker rm` at once and
+// otherwise records the token it received, prints lines, and then either
+// exits with code or, when hang is set, replaces itself with a long sleep
+// so only the harness's signal ends it.
 func fakeClaude(t *testing.T, lines []string, code int, hang bool) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -33,8 +34,9 @@ func fakeClaude(t *testing.T, lines []string, code int, hang bool) string {
 	if hang {
 		tail = "exec sleep 30"
 	}
-	script := filepath.Join(dir, "claude")
-	body := fmt.Sprintf("#!/bin/sh\ncat %q\n%s\n", data, tail)
+	script := filepath.Join(dir, "docker")
+	body := fmt.Sprintf("#!/bin/sh\n[ \"$1\" = rm ] && exit 0\nprintf '%%s' \"$CLAUDE_CODE_OAUTH_TOKEN\" > %q\ncat %q\n%s\n",
+		filepath.Join(dir, "token-seen"), data, tail)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -56,8 +58,9 @@ func agentRun(t *testing.T, limit time.Duration) (AgentRun, *bytes.Buffer) {
 	t.Helper()
 	var transcript bytes.Buffer
 	return AgentRun{
-		Workspace: t.TempDir(), SettingsPath: "settings.json", Prompt: "p", SystemPrompt: "s",
-		Env: BuildEnv(os.Environ(), "", nil), TimeLimit: limit, Transcript: &transcript, Stderr: &bytes.Buffer{},
+		Name: "agent", Network: KindNetwork, DocsDir: "/d", JourneyDir: "/j", HomeDir: "/h",
+		Settings: []byte("{}"), Prompt: "p", SystemPrompt: "s",
+		TimeLimit: limit, Transcript: &transcript, Stderr: &bytes.Buffer{},
 	}, &transcript
 }
 
@@ -67,7 +70,7 @@ func TestAgentStopsWhenTheRunningCostReachesTheCap(t *testing.T) {
 	lines = append(lines, response("msg_1", 2.5)...)
 	lines = append(lines, response("msg_2", 2.5)...)
 	lines = append(lines, response("msg_3", 2.5)...)
-	cfg := AgentConfig{Binary: fakeClaude(t, lines, 0, true), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
+	cfg := AgentConfig{Docker: fakeClaude(t, lines, 0, true), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
 	run, transcript := agentRun(t, time.Minute)
 	start := time.Now()
 	res, err := cfg.Run(context.Background(), run)
@@ -94,7 +97,7 @@ func TestAgentStopsWhenTheRunningCostReachesTheCap(t *testing.T) {
 func TestAgentRecordsAFinishedRunWithItsReportedCost(t *testing.T) {
 	lines := append([]string{`{"type":"system","subtype":"init"}`}, response("msg_1", 0.5)...)
 	lines = append(lines, `{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.51,"num_turns":3,"result":"Done: the pool is ready."}`)
-	cfg := AgentConfig{Binary: fakeClaude(t, lines, 0, false), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
+	cfg := AgentConfig{Docker: fakeClaude(t, lines, 0, false), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
 	run, _ := agentRun(t, time.Minute)
 	res, err := cfg.Run(context.Background(), run)
 	if err != nil {
@@ -107,7 +110,7 @@ func TestAgentRecordsAFinishedRunWithItsReportedCost(t *testing.T) {
 
 func TestAgentReportsClaudeCodesOwnBudgetStopAsTheCostCap(t *testing.T) {
 	lines := []string{`{"type":"result","subtype":"error_max_budget_usd","is_error":true,"total_cost_usd":6.02,"errors":["Reached maximum budget ($6)"]}`}
-	cfg := AgentConfig{Binary: fakeClaude(t, lines, 1, false), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
+	cfg := AgentConfig{Docker: fakeClaude(t, lines, 1, false), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
 	run, _ := agentRun(t, time.Minute)
 	res, err := cfg.Run(context.Background(), run)
 	if err != nil {
@@ -119,7 +122,7 @@ func TestAgentReportsClaudeCodesOwnBudgetStopAsTheCostCap(t *testing.T) {
 }
 
 func TestAgentStopsAtTheTimeLimit(t *testing.T) {
-	cfg := AgentConfig{Binary: fakeClaude(t, []string{`{"type":"system","subtype":"init"}`}, 0, true), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
+	cfg := AgentConfig{Docker: fakeClaude(t, []string{`{"type":"system","subtype":"init"}`}, 0, true), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
 	run, _ := agentRun(t, 300*time.Millisecond)
 	res, err := cfg.Run(context.Background(), run)
 	if err != nil {
@@ -131,7 +134,7 @@ func TestAgentStopsAtTheTimeLimit(t *testing.T) {
 }
 
 func TestAgentReportsAnOutsideCancellationAsInterrupted(t *testing.T) {
-	cfg := AgentConfig{Binary: fakeClaude(t, []string{`{"type":"system","subtype":"init"}`}, 0, true), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
+	cfg := AgentConfig{Docker: fakeClaude(t, []string{`{"type":"system","subtype":"init"}`}, 0, true), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
 	run, _ := agentRun(t, time.Minute)
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
@@ -145,7 +148,7 @@ func TestAgentReportsAnOutsideCancellationAsInterrupted(t *testing.T) {
 }
 
 func TestAgentErrorsWithoutAResultAreAgentErrors(t *testing.T) {
-	cfg := AgentConfig{Binary: fakeClaude(t, []string{`{"type":"system","subtype":"init"}`}, 3, false), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
+	cfg := AgentConfig{Docker: fakeClaude(t, []string{`{"type":"system","subtype":"init"}`}, 3, false), Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates}
 	run, _ := agentRun(t, time.Minute)
 	res, err := cfg.Run(context.Background(), run)
 	if err != nil {
@@ -156,7 +159,7 @@ func TestAgentErrorsWithoutAResultAreAgentErrors(t *testing.T) {
 	}
 
 	lines := []string{`{"type":"result","subtype":"error_during_execution","is_error":true,"total_cost_usd":0.1,"errors":["API Error: 529 overloaded"]}`}
-	cfg.Binary = fakeClaude(t, lines, 1, false)
+	cfg.Docker = fakeClaude(t, lines, 1, false)
 	res, err = cfg.Run(context.Background(), run)
 	if err != nil {
 		t.Fatal(err)
@@ -165,7 +168,7 @@ func TestAgentErrorsWithoutAResultAreAgentErrors(t *testing.T) {
 		t.Fatalf("an error result: %+v", res)
 	}
 
-	cfg.Binary = filepath.Join(t.TempDir(), "no-such-claude")
+	cfg.Docker = filepath.Join(t.TempDir(), "no-such-claude")
 	res, err = cfg.Run(context.Background(), run)
 	if err != nil {
 		t.Fatal(err)
@@ -175,13 +178,30 @@ func TestAgentErrorsWithoutAResultAreAgentErrors(t *testing.T) {
 	}
 }
 
+func TestAgentPassesTheTokenThroughTheEnvironmentOnly(t *testing.T) {
+	lines := []string{`{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.01}`}
+	docker := fakeClaude(t, lines, 0, false)
+	cfg := AgentConfig{Docker: docker, Image: "img", Model: DefaultModel, RunCapUSD: 6, Rates: SonnetRates, Token: "sk-ant-oat-secret-token"}
+	run, _ := agentRun(t, time.Minute)
+	if _, err := cfg.Run(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+	seen, err := os.ReadFile(filepath.Join(filepath.Dir(docker), "token-seen"))
+	if err != nil || string(seen) != "sk-ant-oat-secret-token" {
+		t.Fatalf("the docker process saw token %q, %v", seen, err)
+	}
+	if strings.Contains(strings.Join(cfg.CommandLine(run), " "), "sk-ant-oat") {
+		t.Error("the token appears on the command line")
+	}
+}
+
 func TestAgentArgsRestrictTheToolsAndCapTheBudget(t *testing.T) {
-	cfg := AgentConfig{Binary: "claude", Model: DefaultModel, RunCapUSD: 6}
-	args := cfg.Args(AgentRun{Prompt: "goal", SystemPrompt: "persona", SettingsPath: "/t/settings.json"})
+	cfg := AgentConfig{Docker: "docker", Model: DefaultModel, RunCapUSD: 6}
+	args := cfg.ClaudeArgs(AgentRun{Prompt: "goal", SystemPrompt: "persona", Settings: []byte(`{"permissions":{}}`)})
 	joined := strings.Join(args, " ")
 	for _, want := range []string{
 		"-p goal", "--model claude-sonnet-5-5", "--output-format stream-json", "--include-partial-messages",
-		"--max-budget-usd 6.00", "--tools Bash,Read,Glob,Grep", "--settings /t/settings.json",
+		"--max-budget-usd 6.00", "--tools Bash,Read,Glob,Grep", `--settings {"permissions":{}}`,
 		"--permission-mode dontAsk", "--permission-prompts none", "--restricted", "--safe-mode",
 		"--strict-mcp-config", "--no-session-persistence", "--append-system-prompt persona",
 	} {
@@ -193,14 +213,57 @@ func TestAgentArgsRestrictTheToolsAndCapTheBudget(t *testing.T) {
 	if i < 0 || !strings.Contains(args[i+1], "WebFetch") || !strings.Contains(args[i+1], "Write") {
 		t.Errorf("the deny list is missing or incomplete: %v", args)
 	}
-	if got := cfg.CommandLine(AgentRun{}); got[0] != "claude" {
-		t.Errorf("the command line starts with %q", got[0])
+}
+
+func TestDockerArgsIsolateTheAgentContainer(t *testing.T) {
+	cfg := AgentConfig{Docker: "docker", Image: "lenny-journeys-agent:abc", Model: DefaultModel, RunCapUSD: 6, UID: 501, GID: 20}
+	run := AgentRun{
+		Name: "agent-1", Network: "kind", DocsDir: "/s/docs", JourneyDir: "/s/journey", HomeDir: "/s/home",
+		Settings: []byte("{}"), Prompt: "p", SystemPrompt: "s", GatewayForward: true,
+		Env: map[string]string{"KUBECONFIG": ContainerKubeconfig, "LENNY_API_TOKEN": "tok-secret-value"},
+	}
+	line := cfg.CommandLine(run)
+	joined := strings.Join(line, " ")
+	if line[0] != "docker" || line[1] != "run" {
+		t.Fatalf("command line = %v", line)
+	}
+	for _, want := range []string{
+		"--rm", "--init", "--name agent-1", "--network kind", "--read-only", "--cap-drop ALL",
+		"--security-opt no-new-privileges", "--user 501:20",
+		"type=bind,source=/s/docs,target=/workspace/docs,readonly",
+		"type=bind,source=/s/journey,target=/journey,readonly",
+		"type=bind,source=/s/home,target=/home/agent",
+		"--workdir /workspace", "--env HOME=/home/agent", "--env CLAUDE_CODE_OAUTH_TOKEN",
+		"--env KUBECONFIG", "--env LENNY_API_TOKEN", "--env JOURNEY_GATEWAY_FORWARD=1",
+		"lenny-journeys-agent:abc claude -p p",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the container command line lacks %q:\n%s", want, joined)
+		}
+	}
+	home, _ := os.UserHomeDir()
+	for _, leak := range []string{"docker.sock", "tok-secret-value", ".kube", ".aws", "--privileged", "-v " + home, "source=" + home + ","} {
+		if strings.Contains(joined, leak) {
+			t.Errorf("the container command line holds %q:\n%s", leak, joined)
+		}
+	}
+	mounts := 0
+	for _, a := range line {
+		if a == "--mount" || a == "-v" || a == "--volume" {
+			mounts++
+		}
+	}
+	if mounts != 3 {
+		t.Errorf("the container has %d mounts, want the documentation, the kubeconfigs, and the home directory", mounts)
+	}
+	env := strings.Join(cfg.dockerEnv(run), "\n")
+	if !strings.Contains(env, "LENNY_API_TOKEN=tok-secret-value") || !strings.Contains(env, TokenEnv+"=") {
+		t.Errorf("the docker process lacks the named values")
 	}
 }
 
 func TestSettingsAllowOnlyTheScenarioCommandsAndTheDocs(t *testing.T) {
-	ws := t.TempDir()
-	b, err := Settings(ws, []string{"kubectl", "lenny-ctl"})
+	b, err := Settings([]string{"kubectl", "lenny-ctl"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +281,7 @@ func TestSettingsAllowOnlyTheScenarioCommandsAndTheDocs(t *testing.T) {
 	if p.DefaultMode != "dontAsk" {
 		t.Errorf("default mode = %q", p.DefaultMode)
 	}
-	for _, want := range []string{"Bash(kubectl)", "Bash(kubectl *)", "Bash(lenny-ctl *)", "Read(./docs/**)"} {
+	for _, want := range []string{"Bash(kubectl)", "Bash(kubectl *)", "Bash(lenny-ctl *)", "Read(./docs/**)", "Read(//workspace/docs/**)"} {
 		if !slices.Contains(p.Allow, want) {
 			t.Errorf("allow lacks %q: %v", want, p.Allow)
 		}
@@ -230,21 +293,5 @@ func TestSettingsAllowOnlyTheScenarioCommandsAndTheDocs(t *testing.T) {
 	}
 	if !slices.Contains(p.Deny, "WebFetch") {
 		t.Errorf("deny lacks WebFetch: %v", p.Deny)
-	}
-}
-
-func TestBuildEnvPassesOnlyTheAllowedVariablesAndTheCredentials(t *testing.T) {
-	host := []string{"HOME=/home/alice", "USER=alice", "PATH=/usr/bin", "ANTHROPIC_API_KEY=sk-secret", "AWS_SECRET_ACCESS_KEY=x", "KUBECONFIG=/home/alice/.kube/config", "LANG=C"}
-	env := BuildEnv(host, "/opt/bin", map[string]string{"KUBECONFIG": "/trial/kubeconfig", "LENNY_API_URL": "http://127.0.0.1:1"})
-	got := strings.Join(env, "\n")
-	for _, want := range []string{"HOME=/home/alice", "USER=alice", "LANG=C", "PATH=/opt/bin" + string(os.PathListSeparator) + "/usr/bin", "KUBECONFIG=/trial/kubeconfig", "LENNY_API_URL=http://127.0.0.1:1"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("env lacks %q:\n%s", want, got)
-		}
-	}
-	for _, leak := range []string{"ANTHROPIC_API_KEY", "AWS_SECRET_ACCESS_KEY", "/home/alice/.kube/config"} {
-		if strings.Contains(got, leak) {
-			t.Errorf("env leaks %q:\n%s", leak, got)
-		}
 	}
 }

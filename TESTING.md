@@ -97,7 +97,7 @@ Lenny's tests run in tiers, and each tier has a name that says what its tests ne
 | `docs` | Documentation | Doc samples, links, code blocks, ADR catalog | Local doc build | Yes | Yes | Yes |
 | `load_cloud` | Load and SLO (cloud) | Cloud-scale load envelope; load generated off-cluster from dedicated VMs against a real managed cluster | EKS / GKE / AKS, managed Postgres + cache, `lenny-loadctl` control plane, `lenny-loadrunner` pool, Prometheus snapshot, S3-resident HTML report | No | No | On-demand and pre-release |
 
-The persona journey tier, `journeys`, is not in this order. A Claude Code agent plays a persona and follows the documentation on a fresh Kind cluster, and deterministic postconditions decide the verdict. Every run costs money, with a cap of $6 a run and $54 for the pilot, so the tier runs only at the release gate and the area gate, outside the merge gate, and `--max-tier` never reaches it. §12.13 describes it.
+The persona journey tier, `journeys`, is not in this order. A Claude Code agent in an isolated container plays a persona and follows the documentation on a fresh Kind cluster, and deterministic postconditions decide the verdict. Every run costs money, with a cap of $6 a run and $54 for the pilot, so the tier runs only at the release gate and the area gate, outside the merge gate, and `--max-tier` never reaches it. §12.13 describes it.
 
 ### Former tier numbers
 
@@ -283,7 +283,7 @@ lenny/
     │   ├── pentest/               # Driver, fixtures, findings store
     │   └── reviews/               # Security-review notes
     ├── conformance/        # Runtime-adapter conformance battery (see tests/conformance/README.md)
-    ├── journeys/           # Persona journey scenarios, one YAML file per journey (§12.13)
+    ├── journeys/           # Persona journey scenarios (one YAML file each) and the agent image (§12.13)
     └── docs/               # No build tag; verification-only doc tests
 ```
 
@@ -409,7 +409,7 @@ lenny-test --spec 4.2,12.3                        # Spec sections
 lenny-test --pkg pkg/store/session                # Explicit package
 
 # Persona journeys (see §12.13); outside --max-tier and the merge gate
-lenny-test --tier journeys --probe                # Check the agent configuration under a $0.05 cap
+lenny-test --tier journeys --probe                # Check the agent container under a $0.05 cap
 lenny-test --tier journeys [--journey <name>] [--trials N]   # Run journeys on fresh Kind clusters
 
 # Merge gate (see "Merge gate" below)
@@ -1572,16 +1572,23 @@ The detailed component layout, terraform module shapes, and operator runbooks fo
 **Running it.**
 
 ```bash
-lenny-test --tier journeys --probe                        # Check the agent configuration under a $0.05 cap
+lenny-test --tier journeys --probe                        # Check the agent container on a bare cluster under a $0.05 cap
 lenny-test --tier journeys --dry-run                      # Print the journeys and the agent command line
 lenny-test --tier journeys --skip-agent --journey <name> --trials 1   # Check a scenario's setup and probes at no model cost
 lenny-test --tier journeys                                # Every journey, three trials each
 lenny-test --tier journeys --journey <name> --trials N    # One journey
 ```
 
-The run needs Docker, `kind`, `kubectl`, `helm`, Go, and Claude Code (`claude`) signed in to the Claude account that pays for the run. The agent uses that login and never an API key: the harness removes every variable but a short list (`HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`, `TERM`, `TMPDIR`, `SHELL`, `CLAUDE_CONFIG_DIR`, and `XDG_CONFIG_HOME`) from the agent's environment, so an `ANTHROPIC_API_KEY` in the shell does not reach it. One journeys run holds `tests/results/journeys/journeys.lock`, because every trial uses the same cluster name.
+The run needs Docker, `kind`, `kubectl`, `helm`, and Go on the host. The agent needs a long-lived token on the owner's Claude subscription. To set it up once:
 
-**Scenario format.** Each journey is one YAML file, `tests/journeys/<name>.yaml`, starting with the SPDX comment. The parser (`cmd/lenny-test/journeys/scenario.go`) refuses unknown fields, and the unit tier parses every committed scenario and checks that its documentation pages exist. The fields:
+1. Run `claude setup-token` and copy the token it prints. The command saves the token nowhere.
+2. Save the token as the only line of `~/.lenny-tmp/journeys/claude-token`, and run `chmod 600 ~/.lenny-tmp/journeys/claude-token`.
+
+`--claude-token-file` names another file. The tier refuses to start when the file is missing, empty, or readable by anyone but its owner. The harness passes the token to the agent container as `CLAUDE_CODE_OAUTH_TOKEN`, by name on the `docker run` command line and by value in the environment of the `docker` process, so the token appears in no command line and no record. `--skip-agent` without `--probe` needs no token.
+
+The host-wide state directory, `~/.lenny-tmp/journeys/` (`--state-dir`), holds the token file, the lock, and the pilot ledgers, whatever `--results-dir` names. One journeys run or probe on a host holds the lock, `journeys.lock`, because every trial uses the same cluster name.
+
+**Scenario format.** Each journey is one YAML file, `tests/journeys/<name>.yaml`, starting with the SPDX comment. The parser (`cmd/lenny-test/journeys/scenario.go`) refuses unknown fields, and the unit tier parses every committed scenario, checks that its documentation pages exist, and checks every resource a postcondition gets with `kubectl` against the CRDs in `charts/lenny/crds` and the built-in kinds. The fields:
 
 | Field | Meaning |
 |:--|:--|
@@ -1590,7 +1597,7 @@ The run needs Docker, `kind`, `kubectl`, `helm`, Go, and Claude Code (`claude`) 
 | `summary` | One sentence for the run summary. |
 | `target` | The cluster target. `kind` is the only target and the default. |
 | `setup` | `prerequisites`: a Kind cluster with the Lenny images loaded, cert-manager, the prometheus-operator CRDs, ingress-nginx, and the data stores with the schema migrated, and no Lenny release. `lenny`: Lenny installed with the echo reference runtime's warm pool, as the e2e_kind tier installs it. |
-| `credentials` | What the agent receives in its environment: `kubeconfig` (`KUBECONFIG`), `gateway-url` (`LENNY_API_URL`, a port-forward to the gateway the harness keeps open during the run), and `admin-token` (`LENNY_API_TOKEN`, from the `lenny-admin-token` Secret). Without `kubeconfig`, `KUBECONFIG` names an empty file, so `kubectl` and `helm` never reach another cluster. |
+| `credentials` | What the agent receives in its container: `kubeconfig` (`KUBECONFIG`, a read-only kubeconfig whose server is the cluster's API server on the Kind network), `gateway-url` (`LENNY_API_URL`, `http://127.0.0.1:8080` inside the container, which the container's entrypoint forwards to the gateway Service through the API server), and `admin-token` (`LENNY_API_TOKEN`, from the `lenny-admin-token` Secret). Without `kubeconfig`, `KUBECONFIG` names an empty file. |
 | `prepare` | Preparation steps the harness runs before the agent starts, for state the persona would find in place. `sessions-allowed:<tenant>` seeds the tenant and sets its `noEnvironmentPolicy` to `allow-all`. |
 | `docs` | The pages the agent starts from, as paths under `docs/`. The agent may read any page under `docs/`, which covers the pages they link to. |
 | `goal` | The goal, in the words a person of the persona would use. |
@@ -1600,7 +1607,7 @@ The run needs Docker, `kind`, `kubectl`, `helm`, Go, and Claude Code (`claude`) 
 | `timeLimit` | The wall-clock limit of one run, as a Go duration. The default is `45m`. |
 | `postconditions` | The checks that decide the verdict, described below. |
 
-`{{nonce}}` in the goal, the steps, the environment, and the postconditions is replaced by eight random hex digits per trial, so a postcondition matches what that trial's agent did. `{{chart}}` is the path of a copy of `charts/lenny` for the `prerequisites` setup, `{{imageTag}}` is the tag of the images loaded on the nodes (`journeys`), and `{{cluster}}` is the cluster name.
+`{{nonce}}` in the goal, the steps, the environment, and the postconditions is replaced by eight random hex digits per trial, so a postcondition matches what that trial's agent did. `{{chart}}` is the path of a copy of `charts/lenny` in the agent's home directory for the `prerequisites` setup, `{{imageTag}}` is the tag of the images loaded on the nodes (`journeys`), `{{echoImage}}` is the digest-pinned echo runtime image the install resolved (the admission plane refuses a runtime image named by a tag), and `{{cluster}}` is the cluster name.
 
 **Postconditions.** Each postcondition runs one probe and checks its output:
 
@@ -1610,34 +1617,53 @@ The run needs Docker, `kind`, `kubectl`, `helm`, Go, and Claude Code (`claude`) 
 - `forAny` runs a second probe once per item that `items` selects from the first output, with `{{item}}` replaced by the item, and holds when one item meets its `expect`.
 - `within` retries the check until it holds or the duration passes, for state that converges after the agent stops.
 
-A probe that errors is a postcondition that does not hold: a gateway the agent never installed answers no request, which is a failed journey.
+A probe that errors is a postcondition that does not hold: a gateway the agent never installed answers no request, which is a failed journey. The harness runs the postconditions from the host, with its own kubeconfig and a port-forward to the gateway; the agent never uses them.
 
 **How a trial runs.** For each trial the harness:
 
-1. Checks the pilot's ledger, and refuses the trial when the pilot's recorded spending plus the run cap would exceed the pilot cap.
-2. Creates the cluster with the scenario's target. The Kind target deletes a `lenny-journeys` cluster an earlier run left, then runs `tests/testinfra/kind/install.sh` with `LENNY_KIND_CLUSTER=lenny-journeys`, a cluster configuration derived from `tests/testinfra/kind/cluster.yaml` without its host port mappings (so the cluster runs beside `lenny-e2e`), the image alias tag `journeys`, and `LENNY_INSTALL_STOP_AFTER=datastores` for the `prerequisites` setup. Journeys never use the shared `lenny-e2e` cluster.
-3. Runs the preparation steps, builds `lenny-ctl` from the tree, copies `docs/` into a workspace outside the repository, and starts the agent there.
+1. Records a pending entry in the pilot's ledger, charged at the run cap, and refuses the trial when that charge would take the pilot past its cap.
+2. Creates the cluster with the scenario's target. The Kind target labels every node with the run's identifier and process, refuses to create over or delete a `lenny-journeys` cluster whose labels name another live run, and deletes one a dead run left. It runs `tests/testinfra/kind/install.sh` with `LENNY_KIND_CLUSTER=lenny-journeys`, a cluster configuration derived from `tests/testinfra/kind/cluster.yaml` without its host port mappings (so the cluster runs beside `lenny-e2e`), the image alias tag `journeys`, the generated files and the resolved image references written under the trial's scratch directory rather than the checkout, and `LENNY_INSTALL_STOP_AFTER=datastores` for the `prerequisites` setup. Journeys never use the shared `lenny-e2e` cluster.
+3. Runs the preparation steps, copies `docs/` and, for `prerequisites`, `charts/lenny` into the trial's scratch directory outside the repository, writes the agent's kubeconfig read-only, and starts the agent container.
 4. Evaluates the postconditions.
-5. Deletes the cluster and verifies the deletion (Kind lists no `lenny-journeys` cluster and Docker holds no container labelled with it). The teardown runs on every path out of the trial, including a failed creation, an interrupt, and a panic, on a context the interrupt does not cancel. A teardown that cannot be verified stops the run.
+5. Deletes the cluster and verifies the deletion (Kind lists no `lenny-journeys` cluster and Docker holds no container labelled with it), and settles the ledger entry at the run's cost. The teardown runs on every path out of the trial, including a failed creation, an interrupt, and a panic, on a context the interrupt does not cancel. The first SIGINT or SIGTERM cancels the run; later ones are ignored while the teardown runs, so it finishes. A teardown that cannot be verified stops the run.
 
-**The agent.** The agent is Claude Code in headless mode with model `claude-sonnet-5-5`. The harness builds this command line, where the prompt and the appended system prompt come from the scenario:
+**The agent container.** The agent is Claude Code 2.1.326 in headless mode with model `claude-sonnet-5-5`, in a container built from `tests/journeys/Dockerfile`. The image holds the native `claude` binary, `kubectl`, `helm`, a `lenny-ctl` the harness cross-compiles from the tree, a shell, and the CA certificates. Its base image is pinned by digest and every download by checksum. Its tag is a digest of the Dockerfile, the entrypoint, and the `lenny-ctl` binary, so the harness builds it when one of them changes. The container runs as the host user, with a read-only root file system, a private `/tmp`, no capabilities, and no new privileges, attached to the Kind network. Its mounts are three:
+
+- the copy of `docs/`, read-only, at `/workspace/docs`, in the working directory `/workspace`;
+- the kubeconfigs, read-only, at `/journey`, holding the internal kubeconfig (`kind get kubeconfig --internal`) when the scenario grants the kubeconfig or the gateway, and an empty file;
+- the trial's scratch home directory, writable, at `/home/agent`, for Claude Code's own files and the chart copy.
+
+The agent can reach the Anthropic API, the journey cluster's API server and nodes on the Kind network, the gateway through the forward when the scenario grants it, and the documentation copy. It cannot reach the host's home directory, the host's kubeconfig and its other clusters, cloud credentials, the Docker socket, the repository, or the specification: none of them is mounted, and the container's environment holds only `HOME`, the token, and the scenario's credentials. The Kind network is shared with the nodes of other Kind clusters on the host, such as `lenny-e2e`, but the agent holds no kubeconfig for them.
+
+The harness builds this command line, where the prompt, the appended system prompt, and the settings come from the scenario:
 
 ```bash
-claude -p "<prompt>" --model claude-sonnet-5-5 --output-format stream-json --verbose \
-  --include-partial-messages --max-budget-usd 6.00 --tools Bash,Read,Glob,Grep \
-  --disallowedTools Write,Edit,NotebookEdit,WebFetch,WebSearch,Agent,Task \
-  --settings <trial>/settings.json --permission-mode dontAsk --permission-prompts none \
+docker run --rm --init --interactive=false --name lenny-journeys-agent-<run>-<journey>-<trial> \
+  --network kind --read-only --tmpfs /tmp:rw,nosuid,size=512m --cap-drop ALL \
+  --security-opt no-new-privileges --user <uid>:<gid> \
+  --mount type=bind,source=<trial>/docs,target=/workspace/docs,readonly \
+  --mount type=bind,source=<trial>/journey,target=/journey,readonly \
+  --mount type=bind,source=<trial>/home,target=/home/agent \
+  --workdir /workspace --env HOME=/home/agent --env CLAUDE_CODE_OAUTH_TOKEN --env KUBECONFIG \
+  lenny-journeys-agent:<digest> claude -p "<prompt>" --model claude-sonnet-5-5 \
+  --output-format stream-json --verbose --include-partial-messages --max-budget-usd 6.00 \
+  --tools Bash,Read,Glob,Grep --disallowedTools Write,Edit,NotebookEdit,WebFetch,WebSearch,Agent,Task \
+  --settings '<settings JSON>' --permission-mode dontAsk --permission-prompts none \
   --restricted --safe-mode --strict-mcp-config --disable-slash-commands \
   --no-session-persistence --append-system-prompt "<persona prompt>"
 ```
 
-The settings file allows `Bash(<command>)` and `Bash(<command> *)` for each of the scenario's tools and `Read` on the workspace's `docs/` directory, and denies the tools in the deny list. In `dontAsk` mode with prompts off, Claude Code refuses every other tool use without asking. `--restricted` confines the file tools to the workspace, which holds only the documentation, and ignores the user's own settings files, and `--safe-mode` turns off the user's `CLAUDE.md`, skills, plugins, hooks, and MCP servers. `lenny-test --tier journeys --probe` runs this configuration with a trivial prompt under a $0.05 cap and checks that `ls /` is refused, `kubectl version --client` runs, a page under `docs/` is readable, and a file beside the workspace is not.
+Inside the container, the restricted tool configuration stays as a second layer. The settings allow `Bash(<command>)` and `Bash(<command> *)` for each of the scenario's tools and `Read` on `docs/`, and deny the tools in the deny list. In `dontAsk` mode with prompts off, Claude Code refuses every other tool use without asking. `--restricted` confines the file tools to the working directory, and `--safe-mode` turns off `CLAUDE.md`, skills, plugins, hooks, and MCP servers.
 
-**Cost cap.** A run's agent cost is capped at $6 and a pilot's at $54 (`--run-cap-usd` and `--pilot-cap-usd`). Claude Code reports a run's cost only in its final result message, so the harness estimates the cost from the token usage each model response reports, at Claude Sonnet 5.5's rates ($2 per million input tokens, $10 per million output tokens, $0.10 per million cache-read tokens, and $2.50 or $4 per million cache-write tokens for the five-minute or one-hour cache), and stops the agent when the estimate reaches the cap. `--max-budget-usd` gives Claude Code the same cap as a second stop. The ledger, `tests/results/journeys/ledger-<pilot>.json`, records each run's agent cost (the reported total, or the estimate for a run the harness stopped) and its infrastructure cost as separate lines, keeps the cap it was started with, and refuses a run that could take the pilot past its cap. `--pilot <name>` starts a new ledger.
+`lenny-test --tier journeys --probe` creates a bare `lenny-journeys` cluster, runs the container with a trivial prompt under a $0.05 cap, deletes and verifies the cluster, and records the cost in the pilot's ledger. It checks that `cat` is refused, `kubectl get ns` reaches the trial cluster, `kubectl --kubeconfig ~/.kube/config config get-contexts` finds none of the host's contexts, the host's home directory and `/var/run/docker.sock` do not exist, a page under `docs/` is readable, and a file outside the working directory is not.
+
+**Cost cap.** A run's agent cost is capped at $6 and a pilot's at $54 (`--run-cap-usd` and `--pilot-cap-usd`). Claude Code reports a run's cost only in its final result message, so the harness estimates the cost from the token usage each model response reports, at Claude Sonnet 5.5's rates ($2 per million input tokens, $10 per million output tokens, $0.10 per million cache-read tokens, and $2.50 or $4 per million cache-write tokens for the five-minute or one-hour cache), and stops the agent when the estimate reaches the cap. `--max-budget-usd` gives Claude Code the same cap as a second stop. The ledger, `~/.lenny-tmp/journeys/ledger-<pilot>.json`, records each run as a pending entry charged at the run cap before the run starts, and settles it at the run's agent cost (the reported total, or the estimate for a run the harness stopped) and its infrastructure cost, on separate lines. A pending entry a crashed run left stays charged, and the next run names it. The ledger keeps the cap it was started with and refuses a run that could take the pilot past its cap. `--pilot <name>` starts a new ledger.
 
 **Verdict.** A trial passes when every postcondition holds and fails when one does not. It is inconclusive when the agent hit the cost cap or the time limit, when the run was interrupted, or on an infrastructure error: the cluster could not be created or prepared, Claude Code failed or reported an error, or the teardown could not be verified. A journey passes only when all its trials pass. It fails when its decided trials all fail, it is unstable when they disagree, and it is inconclusive when no trial was decided or an inconclusive trial stands beside passes. The command exits 0 when every journey passed, 1 when one failed or was unstable, and 2 when one was inconclusive or the run stopped early.
 
-**Records.** Each run writes `tests/results/journeys/<run>/`, which is not committed: `summary.json` and `summary.md` for the run, and for each trial `<journey>/trial-<n>/` with `result.json` (cost, tokens, postcondition results, teardown, and verdict), `transcript.jsonl` (Claude Code's stream-json output without the partial-message events), `prompt.md`, `settings.json`, `provision.log`, `teardown.log`, and `agent-stderr.log`. The step's digest carries `summary.md`.
+**Records.** Each run writes `tests/results/journeys/<run>/`, which is not committed: `summary.json` and `summary.md` for the run, and for each trial `<journey>/trial-<n>/` with `result.json` (cost, tokens, postcondition results, teardown, and verdict), `transcript.jsonl` (Claude Code's stream-json output without the partial-message events), `prompt.md`, `settings.json`, `provision.log`, `teardown.log`, and `agent-stderr.log`. Records are written 0600 in 0700 directories. Before a record is written, the harness removes the Claude token, the admin token, every token, client key, and client certificate of the trial's kubeconfigs, their base64 forms, bearer tokens, and private keys. The step's digest carries `summary.md`.
+
+**Known limit of the pilot.** The development install cannot issue a token for an end user, so the end-user journey's agent holds the gateway's initial platform-admin token and acts as the `lenny-admin` user of the `default` tenant. A journey with a real end-user identity waits on user token issuance.
 
 **Review procedure.** The owner of the area a journey belongs to reviews every failing, unstable, or inconclusive trial from its transcript, and during the pilot the owner of change 0157 does. The reviewer reads `result.json` for the postconditions that did not hold, then the transcript for where the agent went wrong, and classifies the finding:
 
@@ -1649,7 +1675,7 @@ A failure is never resolved by loosening a postcondition until it holds.
 
 **Adding a journey.** Write `tests/journeys/<name>.yaml` from the persona's starting pages, with postconditions that check the system's state rather than the agent's account of it, and name `{{nonce}}` in what the agent creates. Run `lenny-test --tier journeys --skip-agent --journey <name> --trials 1` to check the setup and the probes, and `lenny-test --tier unit --pkg cmd/lenny-test/journeys` to check the parse. A journey that needs behavior the echo runtime lacks adds a test runtime in the change that adds the journey. Journeys beyond the pilot wait on the pilot's measured cost and stability (`changes/0157-persona-journeys/steps.md`, "Validation owed").
 
-**Cluster targets.** Cluster provisioning sits behind the `Target` interface in `cmd/lenny-test/journeys/target.go` (create, kubeconfig, delete, verify-deleted, and the infrastructure cost), and a scenario selects its implementation with `target`. Kind is the only implementation; a cloud target for AWS, GCP, or Azure is a new implementation registered in `cmd/lenny-test/cmd_journeys.go`, and its cost counts against the same ledger.
+**Cluster targets.** Cluster provisioning sits behind the `Target` interface in `cmd/lenny-test/journeys/target.go` (create, kubeconfig, delete, verify-deleted, the agent's network and kubeconfig, the resolved facts, and the infrastructure cost), and a scenario selects its implementation with `target`. Kind is the only implementation; a cloud target for AWS, GCP, or Azure is a new implementation registered in `cmd/lenny-test/cmd_journeys.go` that supplies the network and the kubeconfig the same agent container uses, and its cost counts against the same ledger.
 
 ---
 

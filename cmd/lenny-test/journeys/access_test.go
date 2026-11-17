@@ -140,15 +140,11 @@ func TestClusterAccessPrepareSeedsTheTenantAndAllowsSessions(t *testing.T) {
 	}
 }
 
-func TestClusterAccessCredentialsForwardTheGatewayAndReadTheToken(t *testing.T) {
+func TestClusterAccessReadsTheAdminToken(t *testing.T) {
 	a := accessWithFakeKubectl(t, &gatewayFake{})
-	env, stop, err := a.AgentCredentials(context.Background(), []string{CredGatewayURL, CredAdminToken}, t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer stop()
-	if !strings.HasPrefix(env["LENNY_API_URL"], "http://127.0.0.1:") || env["LENNY_API_TOKEN"] != "admin-token" {
-		t.Fatalf("env = %v", env)
+	tok, err := a.AdminToken(context.Background())
+	if err != nil || tok != "admin-token" {
+		t.Fatalf("token = %q, %v", tok, err)
 	}
 	t.Setenv("FAKE_TOKEN_B64", "")
 	if _, err := a.AdminToken(context.Background()); err == nil {

@@ -180,8 +180,10 @@ Run flags:
                            [--journey <name>] [--trials N] [--pilot <name>]
                            [--run-cap-usd 6] [--pilot-cap-usd 54]
                            [--skip-agent] [--probe] [--dry-run]. It creates a
-                           Kind cluster per trial and runs a Claude Code agent,
-                           so it costs money; --max-tier never reaches it.
+                           Kind cluster per trial and runs a Claude Code agent
+                           in a container on the token in
+                           ~/.lenny-tmp/journeys/claude-token, so it costs
+                           money; --max-tier never reaches it.
   --max-tier <name>        Run all tiers up to and including <name>, in the
                            order the --tier list gives.
   --changed                Run tests affected by uncommitted changes (git diff).

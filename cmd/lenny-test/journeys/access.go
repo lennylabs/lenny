@@ -8,13 +8,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,10 +19,9 @@ import (
 )
 
 // Credentials a scenario may grant its agent, by name, and the
-// environment variable each one arrives in. The agent receives only the
-// credentials its scenario names; KUBECONFIG is always set, to an empty
-// file when the scenario does not grant the kubeconfig, so kubectl and
-// helm never fall back to the user's own clusters.
+// environment variable each one arrives in inside the agent container.
+// The agent receives only the credentials its scenario names
+// (GrantCredentials).
 const (
 	CredKubeconfig = "kubeconfig"
 	CredGatewayURL = "gateway-url"
@@ -50,10 +46,11 @@ const (
 	harnessIdentityID = "lenny-journeys-harness"
 )
 
-// ClusterAccess reaches a journey cluster through kubectl with a
-// kubeconfig. It implements Probe for the postconditions and resolves the
-// credentials a scenario grants its agent. It works with any target's
-// kubeconfig.
+// ClusterAccess is the harness's own access to a journey cluster, from
+// the host, through kubectl with the target's kubeconfig. It implements
+// Probe for the postconditions, runs the preparation steps, and reads the
+// admin token a scenario may grant. The agent never uses it: the agent
+// reaches the cluster from its container (AgentEndpoint).
 type ClusterAccess struct {
 	Kubeconfig string
 	// KubectlBin is the kubectl executable.
@@ -309,41 +306,4 @@ func (a *ClusterAccess) AdminToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("secret %s/%s holds an empty token", GatewayNamespace, AdminTokenSecret)
 	}
 	return string(tok), nil
-}
-
-// AgentCredentials resolves the credentials a scenario grants into the
-// agent's environment variables. scratch holds the empty kubeconfig. The
-// returned stop function ends the gateway port-forward when one was
-// granted; the caller runs it after the agent exits.
-func (a *ClusterAccess) AgentCredentials(ctx context.Context, names []string, scratch string) (map[string]string, func(), error) {
-	env := map[string]string{}
-	stop := func() {}
-	empty := filepath.Join(scratch, "empty-kubeconfig")
-	if err := os.WriteFile(empty, nil, 0o600); err != nil {
-		return nil, stop, err
-	}
-	env["KUBECONFIG"] = empty
-	for _, n := range names {
-		switch n {
-		case CredKubeconfig:
-			env["KUBECONFIG"] = a.Kubeconfig
-		case CredGatewayURL:
-			url, s, err := a.PortForward(ctx)
-			if err != nil {
-				return nil, stop, err
-			}
-			prev := stop
-			stop = func() { s(); prev() }
-			env["LENNY_API_URL"] = url
-		case CredAdminToken:
-			tok, err := a.AdminToken(ctx)
-			if err != nil {
-				return nil, stop, err
-			}
-			env["LENNY_API_TOKEN"] = tok
-		default:
-			return nil, stop, errors.New("unknown credential " + n)
-		}
-	}
-	return env, stop, nil
 }

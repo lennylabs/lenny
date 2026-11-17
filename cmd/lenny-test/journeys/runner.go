@@ -3,6 +3,7 @@
 package journeys
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -25,10 +26,11 @@ const DefaultTrials = 3
 const teardownTimeout = 15 * time.Minute
 
 // Access is what the runner needs from a created cluster: the probes for
-// the postconditions and the credentials for the agent.
+// the postconditions, the preparation steps, and the admin token for the
+// agent's credentials.
 type Access interface {
 	Probe
-	AgentCredentials(ctx context.Context, names []string, scratch string) (map[string]string, func(), error)
+	AdminTokenReader
 	Prepare(ctx context.Context, step string) error
 	Close()
 }
@@ -39,11 +41,11 @@ type Runner struct {
 	// RepoRoot is the checkout the documentation and the chart are
 	// copied from.
 	RepoRoot string
-	// ResultsDir is tests/results/journeys.
+	// ResultsDir is tests/results/journeys. Records are written 0600 in
+	// 0700 directories.
 	ResultsDir string
-	// ScratchDir holds each trial's workspace, outside the repository,
-	// so Claude Code finds no project instructions above the agent's
-	// working directory.
+	// ScratchDir holds each trial's documentation copy, kubeconfigs, and
+	// agent home directory, outside the repository.
 	ScratchDir string
 	// RunID names this run's record directory.
 	RunID string
@@ -59,11 +61,9 @@ type Runner struct {
 	Targets Targets
 	// NewAccess reaches a created cluster through its kubeconfig.
 	NewAccess func(kubeconfig string) Access
-	// BinDir holds the lenny-ctl the agent runs.
-	BinDir string
-	// HostEnv is the harness's environment, from which BuildEnv picks
-	// the variables the agent inherits.
-	HostEnv []string
+	// Secrets are values no record may show whatever the trial, such as
+	// the Claude token.
+	Secrets []string
 	// SkipAgent creates the cluster and evaluates the postconditions
 	// without starting the agent, to check a scenario's setup and
 	// probes at no model cost.
@@ -165,7 +165,8 @@ func (r *Runner) runAll(ctx context.Context, scenarios []*Scenario, sum *RunSumm
 				sum.Stopped = err.Error()
 				return err
 			}
-			if err := r.Ledger.CheckStart(r.maxAgentUSD() + target.MaxCostUSD()); err != nil {
+			entry := LedgerEntry{ID: EntryID(r.RunID, s.Name, n), Run: r.RunID, Journey: s.Name, Trial: n, Target: target.Name(), At: r.now()}
+			if err := r.Ledger.Reserve(entry, r.maxAgentUSD(), target.MaxCostUSD()); err != nil {
 				sum.Stopped = err.Error()
 				return err
 			}
@@ -173,11 +174,9 @@ func (r *Runner) runAll(ctx context.Context, scenarios []*Scenario, sum *RunSumm
 			rec := r.trial(ctx, s, n, target, scratch)
 			sum.Trials = append(sum.Trials, rec)
 			r.logf("    verdict %s: %s (agent $%.4f)", rec.Verdict.Outcome, rec.Verdict.Reason, rec.Agent.CostUSD)
-			if err := r.Ledger.Record(LedgerEntry{
-				Run: r.RunID, Journey: s.Name, Trial: n, Target: target.Name(),
-				AgentUSD: rec.Agent.CostUSD, AgentCostReported: rec.Agent.CostReported,
-				InfraUSD: rec.InfraCostUSD, Verdict: rec.Verdict.Outcome, At: r.now(),
-			}); err != nil {
+			entry.AgentUSD, entry.AgentCostReported = rec.Agent.CostUSD, rec.Agent.CostReported
+			entry.InfraUSD, entry.Verdict, entry.At = rec.InfraCostUSD, rec.Verdict.Outcome, r.now()
+			if err := r.Ledger.Settle(entry); err != nil {
 				sum.Stopped = "ledger: " + err.Error()
 				return err
 			}
@@ -201,13 +200,15 @@ func (r *Runner) maxAgentUSD() float64 {
 
 // trial runs one trial. The cluster is torn down on every path out of
 // it, including a panic, and the teardown's outcome is part of the
-// verdict.
+// verdict. Every string the record carries is redacted before it is
+// written.
 func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, scratch string) (rec TrialRecord) {
 	rec = TrialRecord{
 		Run: r.RunID, Journey: s.Name, Persona: s.Persona, Trial: n, Target: target.Name(),
 		Setup: s.Setup, Nonce: r.nonce(), StartedAt: r.now(), AgentSkipped: r.SkipAgent,
 		Dir: filepath.Join(r.ResultsDir, r.RunID, s.Name, fmt.Sprintf("trial-%d", n)),
 	}
+	red := NewRedactor(r.Secrets...)
 	tornDown := false
 	defer func() {
 		if !tornDown {
@@ -220,7 +221,8 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 		infraErr = r.provision(ctx, target, s, rec.Dir)
 	}
 	if infraErr == nil {
-		infraErr = r.runAgentAndCheck(ctx, s, target, scratch, &rec)
+		red.Add(KubeconfigSecrets(target.Kubeconfig())...)
+		infraErr = r.runAgentAndCheck(ctx, s, target, scratch, &rec, red)
 	}
 	rec.Teardown = r.teardown(target, rec.Dir)
 	tornDown = true
@@ -230,21 +232,58 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 		infraErr = errors.New("teardown: " + rec.Teardown.Error)
 	}
 	rec.Verdict = Decide(infraErr, rec.Agent.Stop, rec.Agent.StopDetail, rec.Postconditions)
+	redactRecord(&rec, red)
 	if err := writeJSON(filepath.Join(rec.Dir, "result.json"), rec); err != nil {
 		r.logf("    cannot write the trial record: %v", err)
 	}
 	return rec
 }
 
+// redactRecord removes secrets from every free-text field of a record.
+func redactRecord(rec *TrialRecord, red *Redactor) {
+	rec.Agent.FinalText = red.String(rec.Agent.FinalText)
+	rec.Agent.StopDetail = red.String(rec.Agent.StopDetail)
+	rec.Verdict.Reason = red.String(rec.Verdict.Reason)
+	rec.Teardown.Error = red.String(rec.Teardown.Error)
+	for i := range rec.Postconditions {
+		rec.Postconditions[i].Detail = red.String(rec.Postconditions[i].Detail)
+	}
+	for i := range rec.Command {
+		rec.Command[i] = red.String(rec.Command[i])
+	}
+}
+
 func (r *Runner) prepareDirs(dir, scratch string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	for _, d := range []string{r.ResultsDir, filepath.Join(r.ResultsDir, r.RunID), filepath.Dir(dir), dir, scratch} {
+		if err := mkdirPrivate(d); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mkdirPrivate creates dir and its parents and sets dir to 0700.
+func mkdirPrivate(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return os.MkdirAll(scratch, 0o755)
+	return os.Chmod(dir, 0o700)
+}
+
+// createPrivate creates a record file at 0600.
+func createPrivate(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+}
+
+func writePrivate(path string, data []byte) error {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(path, 0o600)
 }
 
 func (r *Runner) provision(ctx context.Context, target Target, s *Scenario, dir string) error {
-	log, err := os.Create(filepath.Join(dir, "provision.log"))
+	log, err := createPrivate(filepath.Join(dir, "provision.log"))
 	if err != nil {
 		return err
 	}
@@ -259,13 +298,10 @@ func (r *Runner) provision(ctx context.Context, target Target, s *Scenario, dir 
 // runAgentAndCheck runs the agent against the created cluster and
 // evaluates the postconditions. It returns an infrastructure error only
 // for failures outside the agent and the system under test.
-func (r *Runner) runAgentAndCheck(ctx context.Context, s *Scenario, target Target, scratch string, rec *TrialRecord) error {
+func (r *Runner) runAgentAndCheck(ctx context.Context, s *Scenario, target Target, scratch string, rec *TrialRecord, red *Redactor) error {
 	access := r.NewAccess(target.Kubeconfig())
 	defer access.Close()
-	vars, err := r.trialVars(s, scratch, rec.Nonce)
-	if err != nil {
-		return err
-	}
+	vars := r.trialVars(s, target, rec.Nonce)
 	for _, p := range s.Prepare {
 		r.logf("    preparing %s", p)
 		if err := access.Prepare(ctx, p); err != nil {
@@ -274,7 +310,7 @@ func (r *Runner) runAgentAndCheck(ctx context.Context, s *Scenario, target Targe
 	}
 	if r.SkipAgent {
 		rec.Agent = AgentResult{Stop: StopFinished, StopDetail: "agent skipped"}
-	} else if err := r.runAgent(ctx, s, access, scratch, vars, rec); err != nil {
+	} else if err := r.runAgent(ctx, s, target, access, scratch, vars, rec, red); err != nil {
 		return err
 	}
 	ev := &Evaluator{Probe: access, Vars: vars, Interval: r.Interval, Sleep: r.Sleep}
@@ -283,72 +319,108 @@ func (r *Runner) runAgentAndCheck(ctx context.Context, s *Scenario, target Targe
 	return nil
 }
 
-func (r *Runner) runAgent(ctx context.Context, s *Scenario, access Access, scratch string, vars map[string]string, rec *TrialRecord) error {
-	workspace := filepath.Join(scratch, "workspace")
-	if err := copyTree(filepath.Join(r.RepoRoot, "docs"), filepath.Join(workspace, "docs")); err != nil {
-		return fmt.Errorf("copy the documentation: %w", err)
+// agentDirs are the host directories of one agent container: the
+// documentation copy, the read-only kubeconfig mount, and the home
+// directory.
+type agentDirs struct{ docs, journey, home string }
+
+func (r *Runner) prepareAgentDirs(s *Scenario, scratch string) (agentDirs, error) {
+	d := agentDirs{
+		docs:    filepath.Join(scratch, "docs"),
+		journey: filepath.Join(scratch, "journey"),
+		home:    filepath.Join(scratch, "home"),
 	}
-	settings, err := Settings(workspace, s.Tools)
+	for _, dir := range []string{d.journey, d.home} {
+		if err := mkdirPrivate(dir); err != nil {
+			return d, err
+		}
+	}
+	if err := copyTree(filepath.Join(r.RepoRoot, "docs"), d.docs); err != nil {
+		return d, fmt.Errorf("copy the documentation: %w", err)
+	}
+	if s.Setup == SetupPrerequisites {
+		if err := copyTree(filepath.Join(r.RepoRoot, "charts", "lenny"), filepath.Join(d.home, chartDirName)); err != nil {
+			return d, fmt.Errorf("copy the chart: %w", err)
+		}
+	}
+	return d, nil
+}
+
+// chartDirName is where the operator's copy of the chart sits in the
+// agent's home directory.
+const chartDirName = "lenny-chart"
+
+func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, access Access, scratch string, vars map[string]string, rec *TrialRecord, red *Redactor) error {
+	dirs, err := r.prepareAgentDirs(s, scratch)
 	if err != nil {
 		return err
 	}
-	settingsPath := filepath.Join(scratch, "settings.json")
-	if err := os.WriteFile(settingsPath, settings, 0o600); err != nil {
-		return err
+	ep, err := target.AgentEndpoint(ctx)
+	if err != nil {
+		return fmt.Errorf("agent endpoint: %w", err)
 	}
-	creds, stopCreds, err := access.AgentCredentials(ctx, s.Credentials, scratch)
-	defer stopCreds()
+	grant, err := GrantCredentials(ctx, s.Credentials, ep, dirs.journey, access)
 	if err != nil {
 		return fmt.Errorf("agent credentials: %w", err)
 	}
-	transcript, err := os.Create(filepath.Join(rec.Dir, "transcript.jsonl"))
+	red.Add(grant.Secrets...)
+	if err := LockDir(dirs.journey); err != nil {
+		return err
+	}
+	defer func() { _ = UnlockDir(dirs.journey) }()
+	settings, err := Settings(s.Tools)
+	if err != nil {
+		return err
+	}
+	transcript, err := createPrivate(filepath.Join(rec.Dir, "transcript.jsonl"))
 	if err != nil {
 		return err
 	}
 	defer transcript.Close()
-	stderr, err := os.Create(filepath.Join(rec.Dir, "agent-stderr.log"))
-	if err != nil {
-		return err
-	}
-	defer stderr.Close()
+	var stderr bytes.Buffer
 	run := AgentRun{
-		Workspace: workspace, SettingsPath: settingsPath,
-		SystemPrompt: SystemPrompt(s), Prompt: UserPrompt(s, vars),
-		Env: BuildEnv(r.HostEnv, r.BinDir, creds), TimeLimit: s.Limit(),
-		Transcript: transcript, Stderr: stderr,
+		Name:    fmt.Sprintf("%s-%s-%s-%d", AgentImageRepo, r.RunID, s.Name, rec.Trial),
+		Network: ep.Network, DocsDir: dirs.docs, JourneyDir: dirs.journey, HomeDir: dirs.home,
+		Settings: settings, SystemPrompt: SystemPrompt(s), Prompt: UserPrompt(s, vars),
+		Env: grant.Env, GatewayForward: grant.GatewayForward, TimeLimit: s.Limit(),
+		Transcript: red.Writer(transcript), Stderr: &stderr,
 	}
 	rec.Command = r.Agent.CommandLine(run)
 	prompt := "# System prompt (appended)\n\n" + run.SystemPrompt + "\n\n# Prompt\n\n" + run.Prompt
-	if err := os.WriteFile(filepath.Join(rec.Dir, "prompt.md"), []byte(prompt), 0o644); err != nil {
+	if err := writePrivate(filepath.Join(rec.Dir, "prompt.md"), []byte(prompt)); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(rec.Dir, "settings.json"), settings, 0o644); err != nil {
+	if err := writePrivate(filepath.Join(rec.Dir, "settings.json"), settings); err != nil {
 		return err
 	}
 	r.logf("    running the agent (cap $%.2f, limit %s)", r.RunCapUSD, s.Limit())
-	res, err := r.Agent.Run(ctx, run)
-	if err != nil {
-		return fmt.Errorf("agent: %w", err)
+	res, runErr := r.Agent.Run(ctx, run)
+	if err := writePrivate(filepath.Join(rec.Dir, "agent-stderr.log"), red.Redact(stderr.Bytes())); err != nil && runErr == nil {
+		runErr = err
+	}
+	if runErr != nil {
+		return fmt.Errorf("agent: %w", runErr)
 	}
 	rec.Agent = res
 	return nil
 }
 
-func (r *Runner) trialVars(s *Scenario, scratch, nonce string) (map[string]string, error) {
-	vars := map[string]string{
-		"nonce":    nonce,
-		"cluster":  KindClusterName,
-		"imageTag": KindAliasTag,
-		"journey":  s.Name,
+// trialVars are the values a scenario's goal, steps, environment, and
+// postconditions may name: the trial's nonce, the cluster, the image tag,
+// the chart path inside the agent container, and the target's facts.
+func (r *Runner) trialVars(s *Scenario, target Target, nonce string) map[string]string {
+	vars := map[string]string{}
+	for k, v := range target.Facts() {
+		vars[k] = v
 	}
+	vars["nonce"] = nonce
+	vars["cluster"] = KindClusterName
+	vars["imageTag"] = KindAliasTag
+	vars["journey"] = s.Name
 	if s.Setup == SetupPrerequisites {
-		chart := filepath.Join(scratch, "chart", "lenny")
-		if err := copyTree(filepath.Join(r.RepoRoot, "charts", "lenny"), chart); err != nil {
-			return nil, fmt.Errorf("copy the chart: %w", err)
-		}
-		vars["chart"] = chart
+		vars["chart"] = ContainerHome + "/" + chartDirName
 	}
-	return vars, nil
+	return vars
 }
 
 // teardown deletes the cluster and verifies the deletion on a context
@@ -357,7 +429,7 @@ func (r *Runner) teardown(target Target, dir string) TeardownRecord {
 	ctx, cancel := context.WithTimeout(context.Background(), teardownTimeout)
 	defer cancel()
 	var log io.Writer = io.Discard
-	if f, err := os.OpenFile(filepath.Join(dir, "teardown.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+	if f, err := os.OpenFile(filepath.Join(dir, "teardown.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 		defer f.Close()
 		log = f
 	}
@@ -404,13 +476,15 @@ func summarizeJourneys(scenarios []*Scenario, trials []TrialRecord) []JourneySum
 
 func (r *Runner) writeSummary(sum *RunSummary) error {
 	dir := filepath.Join(r.ResultsDir, r.RunID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
+	for _, d := range []string{r.ResultsDir, dir} {
+		if err := mkdirPrivate(d); err != nil {
+			return err
+		}
 	}
 	if err := writeJSON(filepath.Join(dir, "summary.json"), sum); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "summary.md"), []byte(SummaryMarkdown(sum)), 0o644)
+	return writePrivate(filepath.Join(dir, "summary.md"), []byte(SummaryMarkdown(sum)))
 }
 
 // SummaryMarkdown renders the run summary as the table a step's digest
@@ -433,7 +507,7 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(b, '\n'), 0o644)
+	return writePrivate(path, append(b, '\n'))
 }
 
 func (r *Runner) now() time.Time {

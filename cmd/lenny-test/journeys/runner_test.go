@@ -43,7 +43,14 @@ func (f *fakeTarget) VerifyDeleted(context.Context) error {
 	f.verifyCalledAfterDelete = f.deleted > 0
 	return f.verifyErr
 }
-func (f *fakeTarget) CostUSD() float64    { return f.cost }
+func (f *fakeTarget) CostUSD() float64 { return f.cost }
+func (f *fakeTarget) Facts() map[string]string {
+	return map[string]string{"echoImage": "lenny-runtime-echo:src-1@sha256:ab"}
+}
+
+func (f *fakeTarget) AgentEndpoint(context.Context) (AgentEndpoint, error) {
+	return AgentEndpoint{Network: "kind", Kubeconfig: []byte("users:\n- user:\n    token: kubeconfig-token-secret\n")}, nil
+}
 func (f *fakeTarget) MaxCostUSD() float64 { return f.maxCost }
 
 type fakeAgent struct {
@@ -57,7 +64,8 @@ func (a *fakeAgent) Run(_ context.Context, run AgentRun) (AgentResult, error) {
 	if a.panics {
 		panic("agent exploded")
 	}
-	_, _ = run.Transcript.Write([]byte(`{"type":"result"}` + "\n"))
+	_, _ = run.Transcript.Write([]byte(`{"type":"result","note":"token: kubeconfig-token-secret Bearer abcdefghijklmnop"}` + "\n"))
+	_, _ = run.Stderr.Write([]byte("LENNY_API_TOKEN=admin-token-secret\n"))
 	return a.result, nil
 }
 
@@ -65,15 +73,11 @@ func (a *fakeAgent) CommandLine(run AgentRun) []string { return []string{"claude
 
 type fakeAccess struct {
 	*fakeCluster
-	creds    []string
 	prepared []string
 	closed   bool
 }
 
-func (a *fakeAccess) AgentCredentials(_ context.Context, names []string, _ string) (map[string]string, func(), error) {
-	a.creds = names
-	return map[string]string{"KUBECONFIG": "/k"}, func() {}, nil
-}
+func (a *fakeAccess) AdminToken(context.Context) (string, error) { return "admin-token-secret", nil }
 
 func (a *fakeAccess) Prepare(_ context.Context, step string) error {
 	a.prepared = append(a.prepared, step)
@@ -126,7 +130,7 @@ func newRunnerFixture(t *testing.T, configure func(*fakeTarget)) *runnerFixture 
 			return ft
 		}},
 		NewAccess: func(string) Access { return fx.access },
-		HostEnv:   []string{"PATH=/usr/bin", "HOME=/home/alice", "ANTHROPIC_API_KEY=sk"},
+		Secrets:   []string{"sk-ant-oat-claude-token"},
 		Now:       func() time.Time { return time.Unix(1_800_000_000, 0).UTC() },
 		Nonce:     func() string { return "ab12cd34" },
 		Sleep:     func(context.Context, time.Duration) error { return nil },
@@ -168,20 +172,46 @@ func TestRunnerRunsEachTrialAndRecordsIt(t *testing.T) {
 	if !strings.Contains(run.Prompt, "nonce ab12cd34") || strings.Contains(run.Prompt, "{{chart}}") {
 		t.Errorf("the prompt was not expanded: %s", run.Prompt)
 	}
-	if _, err := os.Stat(filepath.Join(run.Workspace, "docs", "guide", "page.md")); err != nil {
-		t.Errorf("the workspace lacks the documentation: %v", err)
+	if !strings.Contains(run.Prompt, "/home/agent/lenny-chart") {
+		t.Errorf("the prompt does not name the chart inside the container: %s", run.Prompt)
 	}
-	if strings.Contains(strings.Join(run.Env, " "), "ANTHROPIC_API_KEY") {
-		t.Error("the agent's environment carries the host's API key")
+	if _, err := os.Stat(filepath.Join(run.DocsDir, "guide", "page.md")); err != nil {
+		t.Errorf("the documentation copy is missing: %v", err)
 	}
-	if strings.HasPrefix(run.Workspace, fx.r.RepoRoot) {
-		t.Errorf("the workspace %s is inside the repository", run.Workspace)
+	if _, err := os.Stat(filepath.Join(run.HomeDir, "lenny-chart", "Chart.yaml")); err != nil {
+		t.Errorf("the chart copy is missing from the agent's home: %v", err)
+	}
+	if strings.HasPrefix(run.DocsDir, fx.r.RepoRoot) {
+		t.Errorf("the documentation copy %s is inside the repository", run.DocsDir)
+	}
+	if run.Network != "kind" || run.Env["KUBECONFIG"] != ContainerKubeconfig || len(run.Env) != 1 {
+		t.Errorf("the agent run grants %v on %q", run.Env, run.Network)
+	}
+	if fi, err := os.Stat(filepath.Join(run.JourneyDir, "kubeconfig")); err != nil || fi.Mode().Perm() != 0o400 {
+		t.Errorf("the agent kubeconfig: %v, %v", fi, err)
 	}
 
 	trialDir := filepath.Join(fx.results, "run1", "demo", "trial-1")
-	for _, f := range []string{"result.json", "transcript.jsonl", "prompt.md", "settings.json", "provision.log", "teardown.log"} {
-		if _, err := os.Stat(filepath.Join(trialDir, f)); err != nil {
-			t.Errorf("trial record lacks %s: %v", f, err)
+	for _, f := range []string{"result.json", "transcript.jsonl", "prompt.md", "settings.json", "provision.log", "teardown.log", "agent-stderr.log"} {
+		fi, err := os.Stat(filepath.Join(trialDir, f))
+		if err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("trial record %s: %v, %v; want mode 0600", f, fi, err)
+		}
+	}
+	for _, d := range []string{fx.results, filepath.Join(fx.results, "run1"), trialDir} {
+		if fi, err := os.Stat(d); err != nil || fi.Mode().Perm() != 0o700 {
+			t.Errorf("record directory %s: %v, %v; want mode 0700", d, fi, err)
+		}
+	}
+	for _, f := range []string{"transcript.jsonl", "agent-stderr.log"} {
+		b, err := os.ReadFile(filepath.Join(trialDir, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, secret := range []string{"kubeconfig-token-secret", "admin-token-secret", "abcdefghijklmnop"} {
+			if strings.Contains(string(b), secret) {
+				t.Errorf("%s holds the secret %q: %s", f, secret, b)
+			}
 		}
 	}
 	var rec TrialRecord
@@ -355,25 +385,5 @@ func TestParseIdentityAndPrepare(t *testing.T) {
 		if _, _, err := ParsePrepare(bad); err == nil {
 			t.Errorf("preparation %q parsed", bad)
 		}
-	}
-}
-
-func TestAgentCredentialsAlwaysPinTheKubeconfig(t *testing.T) {
-	a := NewClusterAccess("/trial/kubeconfig")
-	scratch := t.TempDir()
-	env, stop, err := a.AgentCredentials(context.Background(), nil, scratch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	stop()
-	if env["KUBECONFIG"] != filepath.Join(scratch, "empty-kubeconfig") {
-		t.Errorf("without the kubeconfig credential KUBECONFIG = %q, want the empty file", env["KUBECONFIG"])
-	}
-	env, _, err = a.AgentCredentials(context.Background(), []string{CredKubeconfig}, scratch)
-	if err != nil || env["KUBECONFIG"] != "/trial/kubeconfig" {
-		t.Errorf("with the kubeconfig credential KUBECONFIG = %q, %v", env["KUBECONFIG"], err)
-	}
-	if _, _, err := a.AgentCredentials(context.Background(), []string{"aws"}, scratch); err == nil {
-		t.Error("an unknown credential was granted")
 	}
 }

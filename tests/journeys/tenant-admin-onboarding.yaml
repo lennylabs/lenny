@@ -16,8 +16,9 @@ docs:
   - docs/operator-guide/lenny-ctl.md
 goal: |
   We are onboarding Globex onto our Lenny platform. Create a tenant for
-  them with the ID globex-{{nonce}}. Make Carol, carol@globex.com, an
-  administrator of that tenant. Then register Globex's Anthropic API key
+  them with the ID globex-{{nonce}}. Make Carol an administrator of that
+  tenant; her Lenny user ID is carol@globex.com, exactly as written, and
+  that ID is how Lenny identifies her. Then register Globex's Anthropic API key
   as a credential their sessions can use, in a credential pool that
   belongs to the tenant. The key is sk-ant-journey-{{nonce}}. It is a
   placeholder for this exercise, so no request to Anthropic will succeed

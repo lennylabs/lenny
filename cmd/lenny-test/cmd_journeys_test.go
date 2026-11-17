@@ -45,6 +45,21 @@ func TestParseJourneysFlagsDefaultsAndRefusals(t *testing.T) {
 	if f.trials != journeys.DefaultTrials || f.runCap != 6 || f.pilotCap != 54 || f.model != "claude-sonnet-5-5" || f.pilot != "pilot" {
 		t.Errorf("defaults = %+v", f)
 	}
+	state, err := journeys.DefaultStateDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.stateDir != state || f.tokenFile != state+"/claude-token" {
+		t.Errorf("the lock, ledger, and token default to %q and %q, want the host-wide %q", f.stateDir, f.tokenFile, state)
+	}
+	f, err = parseJourneysFlags([]string{"--tier", "journeys", "--results-dir", "/tmp/elsewhere"})
+	if err != nil || f.stateDir != state {
+		t.Errorf("--results-dir moved the state directory to %q (%v)", f.stateDir, err)
+	}
+	f, err = parseJourneysFlags([]string{"--tier", "journeys", "--state-dir", "/s", "--claude-token-file", "/t"})
+	if err != nil || f.stateDir != "/s" || f.tokenFile != "/t" {
+		t.Errorf("explicit state and token = %+v, %v", f, err)
+	}
 	f, err = parseJourneysFlags([]string{"--tier=journeys", "--journey", "operator-install,end-user-first-session", "--trials", "1", "--skip-agent"})
 	if err != nil || f.journeys != "operator-install,end-user-first-session" || f.trials != 1 || !f.skipAgent {
 		t.Errorf("parsed = %+v, %v", f, err)

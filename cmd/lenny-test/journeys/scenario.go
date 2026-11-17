@@ -31,6 +31,9 @@ const (
 	// echo reference runtime's warm pool running, as the e2e_kind tier
 	// installs it.
 	SetupLenny = "lenny"
+	// SetupCluster is a bare Kind cluster with nothing installed. The
+	// agent configuration check (--probe) uses it; no scenario does.
+	SetupCluster = "cluster"
 )
 
 // AllowedCommands are the shell commands a journey agent may run. A

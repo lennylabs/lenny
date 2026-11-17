@@ -3,6 +3,13 @@
 # Persona journey: an end user creates a session against the echo
 # reference runtime, sends a message, and reads the result. TESTING.md
 # ("Persona journeys") describes the format.
+#
+# Known limit of the pilot: the development install cannot issue a token
+# for an end user, so this journey's agent holds the gateway's initial
+# platform-admin token (the admin-token credential) and acts as the
+# lenny-admin user of the default tenant. The postconditions read that
+# user's sessions. A journey with a real end-user identity waits on user
+# token issuance.
 name: end-user-first-session
 persona: end-user
 summary: An end user starts a session on the echo runtime, sends a message, and reads the reply.

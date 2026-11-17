@@ -8,7 +8,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -60,7 +59,9 @@ type journeysFlags struct {
 	pilotCap    float64
 	pilot       string
 	model       string
-	claudeBin   string
+	docker      string
+	tokenFile   string
+	stateDir    string
 	skipAgent   bool
 	probe       bool
 	dryRun      bool
@@ -78,11 +79,13 @@ func parseJourneysFlags(args []string) (journeysFlags, error) {
 	fs.Float64Var(&f.pilotCap, "pilot-cap-usd", journeys.DefaultPilotCapUSD, "cost cap of the pilot, in dollars, recorded in the pilot's ledger")
 	fs.StringVar(&f.pilot, "pilot", "pilot", "the pilot whose ledger the run records its cost in")
 	fs.StringVar(&f.model, "model", journeys.DefaultModel, "the journey agent's model")
-	fs.StringVar(&f.claudeBin, "claude", "claude", "the Claude Code executable")
+	fs.StringVar(&f.docker, "docker", "docker", "the docker executable that runs the agent container")
+	fs.StringVar(&f.stateDir, "state-dir", "", "the host-wide directory of the journeys lock, the pilot ledgers, and the token file (default ~/.lenny-tmp/journeys)")
+	fs.StringVar(&f.tokenFile, "claude-token-file", "", "the file holding the `claude setup-token` token, mode 0600 (default <state-dir>/claude-token)")
 	fs.BoolVar(&f.skipAgent, "skip-agent", false, "create each cluster and evaluate the postconditions without starting the agent")
-	fs.BoolVar(&f.probe, "probe", false, "check the agent configuration with a trivial prompt under a $0.05 cap, and create no cluster")
+	fs.BoolVar(&f.probe, "probe", false, "check the agent container on a bare cluster with a trivial prompt under a $0.05 cap")
 	fs.BoolVar(&f.dryRun, "dry-run", false, "print the journeys and the agent command line, and run nothing")
-	fs.StringVar(&f.resultsDir, "results-dir", journeysResultsDir, "where the run records and the ledger are written")
+	fs.StringVar(&f.resultsDir, "results-dir", journeysResultsDir, "where the run records are written")
 	fs.StringVar(&f.scenarioDir, "dir", journeysDir, "the directory of journey scenarios")
 	if err := fs.Parse(args); err != nil {
 		return f, err
@@ -96,6 +99,16 @@ func parseJourneysFlags(args []string) (journeysFlags, error) {
 	if f.runCap <= 0 || f.runCap > f.pilotCap {
 		return f, fmt.Errorf("--run-cap-usd $%.2f must be positive and at most --pilot-cap-usd $%.2f", f.runCap, f.pilotCap)
 	}
+	if f.stateDir == "" {
+		dir, err := journeys.DefaultStateDir()
+		if err != nil {
+			return f, err
+		}
+		f.stateDir = dir
+	}
+	if f.tokenFile == "" {
+		f.tokenFile = filepath.Join(f.stateDir, journeys.TokenFileName)
+	}
 	return f, nil
 }
 
@@ -104,66 +117,88 @@ func parseJourneysFlags(args []string) (journeysFlags, error) {
 func runJourneys(args []string) int {
 	f, err := parseJourneysFlags(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
+		return journeysFail(err)
 	}
 	root := repoRoot()
 	resultsDir := absUnder(root, f.resultsDir)
-	agentCfg := journeys.AgentConfig{Binary: f.claudeBin, Model: f.model, RunCapUSD: f.runCap, Rates: journeys.SonnetRates}
+	agentCfg := journeys.AgentConfig{
+		Docker: f.docker, Model: f.model, RunCapUSD: f.runCap, Rates: journeys.SonnetRates,
+		UID: os.Getuid(), GID: os.Getgid(), Image: "<agent image>",
+	}
+	all, err := journeys.LoadDir(absUnder(root, f.scenarioDir))
+	if err != nil {
+		return journeysFail(err)
+	}
+	selected, err := journeys.Select(all, splitNonEmpty(f.journeys))
+	if err != nil {
+		return journeysFail(err)
+	}
+	if f.dryRun {
+		return printJourneysDryRun(selected, agentCfg, f)
+	}
 
 	interruptOwned.Store(true)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if f.probe {
-		return runJourneysProbe(ctx, agentCfg, resultsDir)
+	if !f.skipAgent || f.probe {
+		tok, err := journeys.ReadTokenFile(f.tokenFile)
+		if err != nil {
+			return journeysFail(err)
+		}
+		agentCfg.Token = tok
 	}
-	all, err := journeys.LoadDir(absUnder(root, f.scenarioDir))
+	lock, err := journeys.AcquireLock(f.stateDir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
-	}
-	selected, err := journeys.Select(all, splitNonEmpty(f.journeys))
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
-	}
-	if f.dryRun {
-		return printJourneysDryRun(selected, agentCfg, f)
-	}
-	return executeJourneys(ctx, root, resultsDir, selected, agentCfg, f)
-}
-
-func executeJourneys(ctx context.Context, root, resultsDir string, selected []*journeys.Scenario, agentCfg journeys.AgentConfig, f journeysFlags) int {
-	lock, err := journeys.AcquireLock(resultsDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
+		return journeysFail(err)
 	}
 	defer func() { _ = lock.Release() }()
-	ledger, err := journeys.OpenLedger(journeys.LedgerPath(resultsDir, f.pilot), f.pilot, f.pilotCap)
+	ledger, err := journeys.OpenLedger(journeys.LedgerPath(f.stateDir, f.pilot), f.pilot, f.pilotCap)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
+		return journeysFail(err)
 	}
+	reportPendingEntries(ledger)
 	scratch, err := testtmp.MkdirTemp("lenny-journeys-")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
+		return journeysFail(err)
 	}
 	defer os.RemoveAll(scratch)
-	binDir := filepath.Join(scratch, "bin")
-	if err := buildLennyCtl(ctx, root, binDir); err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: build lenny-ctl: %v\n", err)
-		return 2
-	}
 	runID := time.Now().UTC().Format("20060102T150405Z")
+	if !f.skipAgent || f.probe {
+		builder := &journeys.ImageBuilder{RepoRoot: root, Dir: scratch, Run: journeys.ExecRunner, Log: os.Stdout}
+		fmt.Println("lenny-test: journeys: building the agent image")
+		if agentCfg.Image, err = builder.Ensure(ctx); err != nil {
+			return journeysFail(err)
+		}
+	}
+	if f.probe {
+		return runJourneysProbe(ctx, root, resultsDir, scratch, runID, agentCfg, ledger)
+	}
+	return executeJourneys(ctx, root, resultsDir, scratch, runID, selected, agentCfg, ledger, f)
+}
+
+func journeysFail(err error) int {
+	fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
+	return 2
+}
+
+// reportPendingEntries names the ledger entries a crashed run left
+// pending. They stay charged at the most their run could spend.
+func reportPendingEntries(l *journeys.Ledger) {
+	_, dead := l.PendingEntries()
+	for _, e := range dead {
+		fmt.Printf("lenny-test: journeys: run %s (%s, trial %d) ended without settling; it stays charged at $%.2f\n",
+			e.Run, e.Journey, e.Trial, e.AgentUSD+e.InfraUSD)
+	}
+}
+
+func executeJourneys(ctx context.Context, root, resultsDir, scratch, runID string, selected []*journeys.Scenario, agentCfg journeys.AgentConfig, ledger *journeys.Ledger, f journeysFlags) int {
 	r := &journeys.Runner{
 		RepoRoot: root, ResultsDir: resultsDir, ScratchDir: scratch, RunID: runID,
 		Trials: f.trials, RunCapUSD: f.runCap, Ledger: ledger, Agent: agentCfg,
-		Targets:   journeys.Targets{journeys.TargetKind: journeys.NewKindTarget(root)},
+		Targets:   journeys.Targets{journeys.TargetKind: journeys.NewKindTarget(root, runID)},
 		NewAccess: func(kubeconfig string) journeys.Access { return journeys.NewClusterAccess(kubeconfig) },
-		BinDir:    binDir, HostEnv: os.Environ(), SkipAgent: f.skipAgent, Out: os.Stdout,
+		Secrets:   []string{agentCfg.Token}, SkipAgent: f.skipAgent, Out: os.Stdout,
 	}
 	fmt.Printf("lenny-test: journeys run %s, %d journey(s), %d trial(s) each, pilot %q at $%.4f of $%.2f\n",
 		runID, len(selected), f.trials, f.pilot, ledger.Spent(), ledger.CapUSD)
@@ -195,26 +230,39 @@ func journeysExitCode(sum *journeys.RunSummary, runErr error) int {
 	return code
 }
 
-func runJourneysProbe(ctx context.Context, agentCfg journeys.AgentConfig, resultsDir string) int {
-	scratch, err := testtmp.MkdirTemp("lenny-journeys-probe-")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
+// runJourneysProbe runs the agent configuration check on a bare journey
+// cluster and records its cost in the pilot's ledger.
+func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID string, agentCfg journeys.AgentConfig, ledger *journeys.Ledger) int {
+	entry := journeys.LedgerEntry{ID: journeys.EntryID(runID, "probe", 1), Run: runID, Journey: "probe", Trial: 1, Target: journeys.TargetKind, At: time.Now().UTC()}
+	if err := ledger.Reserve(entry, journeys.ProbeCapUSD, 0); err != nil {
+		return journeysFail(err)
 	}
-	defer os.RemoveAll(scratch)
-	if err := os.MkdirAll(resultsDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: %v\n", err)
-		return 2
+	if err := os.MkdirAll(resultsDir, 0o700); err != nil {
+		return journeysFail(err)
 	}
-	transcript := filepath.Join(resultsDir, "probe-"+time.Now().UTC().Format("20060102T150405Z")+".jsonl")
-	rep, err := journeys.ProbeAgent(ctx, agentCfg, scratch, "", os.Environ(), transcript)
+	transcriptPath := filepath.Join(resultsDir, "probe-"+runID+".jsonl")
+	transcript, err := os.OpenFile(transcriptPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe: %v\n", err)
-		return 2
+		return journeysFail(err)
+	}
+	defer transcript.Close()
+	home, _ := os.UserHomeDir()
+	target := journeys.NewKindTarget(root, runID)(filepath.Join(scratch, "probe", "target"))
+	rep, probeErr := journeys.ProbeAgent(ctx, agentCfg, journeys.ProbeInput{
+		Target: target, Scratch: filepath.Join(scratch, "probe"), HostHome: home,
+		HostContexts: journeys.HostContexts(filepath.Join(home, ".kube", "config")),
+		Transcript:   transcript, Redactor: journeys.NewRedactor(agentCfg.Token), Log: os.Stdout,
+	})
+	entry.AgentUSD, entry.Verdict, entry.At = rep.CostUSD, fmt.Sprintf("probe passed=%v", rep.Passed), time.Now().UTC()
+	if err := ledger.Settle(entry); err != nil {
+		return journeysFail(err)
 	}
 	out, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(out))
-	fmt.Printf("Transcript: %s\n", transcript)
+	fmt.Printf("Transcript: %s\n", transcriptPath)
+	if probeErr != nil {
+		return journeysFail(probeErr)
+	}
 	if !rep.Passed {
 		return 1
 	}
@@ -222,33 +270,24 @@ func runJourneysProbe(ctx context.Context, agentCfg journeys.AgentConfig, result
 }
 
 func printJourneysDryRun(selected []*journeys.Scenario, agentCfg journeys.AgentConfig, f journeysFlags) int {
-	fmt.Printf("Journeys tier: %d journey(s), %d trial(s) each, run cap $%.2f, pilot %q cap $%.2f.\n\n",
-		len(selected), f.trials, f.runCap, f.pilot, f.pilotCap)
+	fmt.Printf("Journeys tier: %d journey(s), %d trial(s) each, run cap $%.2f, pilot %q cap $%.2f, state %s.\n\n",
+		len(selected), f.trials, f.runCap, f.pilot, f.pilotCap, f.stateDir)
 	for _, s := range selected {
 		fmt.Printf("%s (%s, target %s, setup %s, limit %s, %d postcondition(s))\n",
 			s.Name, s.Persona, s.TargetName(), s.Setup, s.Limit(), len(s.Postconditions))
+		settings, err := journeys.Settings(s.Tools)
+		if err != nil {
+			return journeysFail(err)
+		}
 		run := journeys.AgentRun{
-			Workspace: "<workspace>", SettingsPath: "<trial>/settings.json",
-			SystemPrompt: journeys.SystemPrompt(s), Prompt: "<prompt.md>",
+			Name: journeys.AgentImageRepo + "-<run>-" + s.Name + "-<trial>", Network: journeys.KindNetwork,
+			DocsDir: "<trial>/docs", JourneyDir: "<trial>/journey", HomeDir: "<trial>/home",
+			Settings: settings, SystemPrompt: journeys.SystemPrompt(s), Prompt: "<prompt.md>",
+			Env: map[string]string{"KUBECONFIG": journeys.ContainerKubeconfig},
 		}
 		fmt.Printf("  %s\n\n", shellQuote(agentCfg.CommandLine(run)))
 	}
 	return 0
-}
-
-// buildLennyCtl builds the lenny-ctl the agent runs into binDir.
-func buildLennyCtl(ctx context.Context, root, binDir string) error {
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		return err
-	}
-	cmd := exec.CommandContext(ctx, resolveGoBin("go"), "build", "-o", filepath.Join(binDir, "lenny-ctl"), "./cmd/lenny-ctl")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 func absUnder(root, p string) string {

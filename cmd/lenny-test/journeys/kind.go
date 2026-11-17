@@ -3,6 +3,7 @@
 package journeys
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +26,13 @@ const (
 	// for a journey cluster. The e2e installs move the e2e alias, so the
 	// journey cluster uses its own and leaves that alias where it is.
 	KindAliasTag = "journeys"
+	// KindNetwork is the Docker network Kind attaches its nodes to. The
+	// agent container joins it to reach the cluster's API server.
+	KindNetwork = "kind"
+	// Node labels that record which run created the cluster, so a run
+	// never deletes or creates over a cluster another live run owns.
+	ownerRunLabel = "lenny.dev/journeys-run"
+	ownerPIDLabel = "lenny.dev/journeys-pid"
 )
 
 // CommandRunner runs a command with an environment, writing its combined
@@ -31,22 +40,23 @@ const (
 type CommandRunner func(ctx context.Context, log io.Writer, env []string, dir, name string, args ...string) (string, error)
 
 // ExecRunner runs commands with os/exec. env is appended to the
-// process's own environment.
+// process's own environment. It returns standard output alone, so a
+// warning on standard error never corrupts a kubeconfig or a label the
+// caller parses; standard error goes to log and into the error.
 func ExecRunner(ctx context.Context, log io.Writer, env []string, dir, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
-	var out strings.Builder
-	w := io.Writer(&out)
+	var out, errOut strings.Builder
+	stdout, stderr := io.Writer(&out), io.Writer(&errOut)
 	if log != nil {
-		w = io.MultiWriter(&out, log)
+		stdout, stderr = io.MultiWriter(&out, log), io.MultiWriter(&errOut, log)
 	}
-	cmd.Stdout = w
-	cmd.Stderr = w
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.WaitDelay = 10 * time.Second
-	err := cmd.Run()
-	if err != nil {
-		return out.String(), fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+	if err := cmd.Run(); err != nil {
+		return out.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, clip(errOut.String()))
 	}
 	return out.String(), nil
 }
@@ -58,25 +68,32 @@ type KindTarget struct {
 	// RepoRoot is the repository checkout the script and the cluster
 	// configuration are read from.
 	RepoRoot string
-	// Dir holds the generated cluster configuration and the kubeconfig.
+	// Dir holds the generated cluster configuration, the generated
+	// install files, and the kubeconfig.
 	Dir string
 	// Cluster is the Kind cluster name.
 	Cluster string
+	// RunID and PID identify the run that owns the cluster. Create labels
+	// every node with them.
+	RunID string
+	PID   int
 	// Run runs commands.
 	Run CommandRunner
+	// Alive reports whether a process runs; nil uses processAlive.
+	Alive func(pid int) bool
 }
 
-// NewKindTarget returns the Kind target for one trial.
-func NewKindTarget(repoRoot string) TargetFactory {
+// NewKindTarget returns the Kind target factory for one run.
+func NewKindTarget(repoRoot, runID string) TargetFactory {
 	return func(dir string) Target {
-		return &KindTarget{RepoRoot: repoRoot, Dir: dir, Cluster: KindClusterName, Run: ExecRunner}
+		return &KindTarget{RepoRoot: repoRoot, Dir: dir, Cluster: KindClusterName, RunID: runID, PID: os.Getpid(), Run: ExecRunner}
 	}
 }
 
 // Name implements Target.
 func (k *KindTarget) Name() string { return TargetKind }
 
-// Kubeconfig implements Target. install.sh exports the cluster's
+// Kubeconfig implements Target. install.sh and kind export the cluster's
 // kubeconfig into this file rather than the user's own.
 func (k *KindTarget) Kubeconfig() string { return filepath.Join(k.Dir, "kubeconfig") }
 
@@ -86,35 +103,66 @@ func (k *KindTarget) CostUSD() float64 { return 0 }
 // MaxCostUSD implements Target.
 func (k *KindTarget) MaxCostUSD() float64 { return 0 }
 
-// Create implements Target. It deletes a cluster an earlier, interrupted
-// run left under the same name, writes a cluster configuration without
-// the host port mappings of the e2e configuration (so the journey cluster
-// runs beside lenny-e2e), and runs install.sh, stopping after the data
-// stores for SetupPrerequisites.
-func (k *KindTarget) Create(ctx context.Context, setup string, log io.Writer) error {
-	if err := os.MkdirAll(k.Dir, 0o755); err != nil {
-		return err
-	}
-	exists, err := k.exists(ctx)
+// Facts implements Target: the values install.sh resolved, such as the
+// digest-pinned echo runtime image, read from its facts file.
+func (k *KindTarget) Facts() map[string]string {
+	out := map[string]string{}
+	f, err := os.Open(k.factsPath())
 	if err != nil {
+		return out
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		if name, value, ok := strings.Cut(strings.TrimSpace(sc.Text()), "="); ok && name != "" {
+			out[name] = value
+		}
+	}
+	return out
+}
+
+func (k *KindTarget) factsPath() string { return filepath.Join(k.Dir, "install-facts") }
+
+// AgentEndpoint implements Target: the Kind network and the cluster's
+// internal kubeconfig, whose server is the control-plane node's name on
+// that network.
+func (k *KindTarget) AgentEndpoint(ctx context.Context) (AgentEndpoint, error) {
+	out, err := k.Run(ctx, nil, nil, k.RepoRoot, "kind", "get", "kubeconfig", "--internal", "--name", k.Cluster)
+	if err != nil {
+		return AgentEndpoint{}, err
+	}
+	return AgentEndpoint{Network: KindNetwork, Kubeconfig: []byte(out)}, nil
+}
+
+// Create implements Target. It deletes a cluster an earlier, dead run
+// left under the same name and refuses to touch one a live run owns,
+// writes a cluster configuration without the host port mappings of the
+// e2e configuration (so the journey cluster runs beside lenny-e2e) and
+// with the owner labels on every node, and then either creates the bare
+// cluster (SetupCluster) or runs install.sh, stopping after the data
+// stores for SetupPrerequisites. install.sh writes its generated files
+// under Dir rather than into the checkout.
+func (k *KindTarget) Create(ctx context.Context, setup string, log io.Writer) error {
+	if err := os.MkdirAll(k.Dir, 0o700); err != nil {
 		return err
 	}
-	if exists {
-		fmt.Fprintf(log, "==> deleting the %s cluster an earlier run left\n", k.Cluster)
-		if err := k.Delete(ctx, log); err != nil {
-			return err
-		}
+	if err := k.clearLeftover(ctx, log); err != nil {
+		return err
 	}
 	base, err := os.ReadFile(filepath.Join(k.RepoRoot, "tests", "testinfra", "kind", "cluster.yaml"))
 	if err != nil {
 		return err
 	}
-	cfg, err := JourneyClusterConfig(base, k.Cluster)
+	cfg, err := JourneyClusterConfig(base, k.Cluster, map[string]string{ownerRunLabel: k.RunID, ownerPIDLabel: strconv.Itoa(k.PID)})
 	if err != nil {
 		return err
 	}
 	cfgPath := filepath.Join(k.Dir, "kind-cluster.yaml")
-	if err := os.WriteFile(cfgPath, cfg, 0o644); err != nil {
+	if err := os.WriteFile(cfgPath, cfg, 0o600); err != nil {
+		return err
+	}
+	if setup == SetupCluster {
+		_, err := k.Run(ctx, log, nil, k.RepoRoot, "kind", "create", "cluster", "--name", k.Cluster, "--config", cfgPath, "--kubeconfig", k.Kubeconfig())
 		return err
 	}
 	env, err := k.installEnv(setup, cfgPath)
@@ -125,12 +173,28 @@ func (k *KindTarget) Create(ctx context.Context, setup string, log io.Writer) er
 	return err
 }
 
+// clearLeftover deletes a cluster of the journey name that a dead run
+// left, and refuses when a live run owns it.
+func (k *KindTarget) clearLeftover(ctx context.Context, log io.Writer) error {
+	exists, err := k.exists(ctx)
+	if err != nil || !exists {
+		return err
+	}
+	if err := k.checkNotOwnedByOtherLiveRun(ctx); err != nil {
+		return err
+	}
+	fmt.Fprintf(log, "==> deleting the %s cluster an earlier run left\n", k.Cluster)
+	return k.deleteCluster(ctx, log)
+}
+
 func (k *KindTarget) installEnv(setup, cfgPath string) ([]string, error) {
 	env := []string{
 		"LENNY_KIND_CLUSTER=" + k.Cluster,
 		"LENNY_CLUSTER_CONFIG=" + cfgPath,
 		"KUBECONFIG=" + k.Kubeconfig(),
 		"LENNY_ALIAS_TAG=" + KindAliasTag,
+		"LENNY_INSTALL_GEN_DIR=" + filepath.Join(k.Dir, "gen"),
+		"LENNY_INSTALL_FACTS_FILE=" + k.factsPath(),
 		// The host prune is a maintenance step of the shared e2e
 		// environment; a journey run leaves the host cache alone.
 		"LENNY_SKIP_PRUNE=1",
@@ -145,10 +209,76 @@ func (k *KindTarget) installEnv(setup, cfgPath string) ([]string, error) {
 	return env, nil
 }
 
-// Delete implements Target.
+// Delete implements Target. It refuses to delete a cluster another live
+// run owns.
 func (k *KindTarget) Delete(ctx context.Context, log io.Writer) error {
+	exists, err := k.exists(ctx)
+	if err != nil || !exists {
+		return err
+	}
+	if err := k.checkNotOwnedByOtherLiveRun(ctx); err != nil {
+		return err
+	}
+	return k.deleteCluster(ctx, log)
+}
+
+func (k *KindTarget) deleteCluster(ctx context.Context, log io.Writer) error {
 	_, err := k.Run(ctx, log, []string{"KUBECONFIG=" + k.Kubeconfig()}, k.RepoRoot, "kind", "delete", "cluster", "--name", k.Cluster)
 	return err
+}
+
+// ErrOwnedByLiveRun is returned when the journey cluster belongs to
+// another run whose process is alive.
+var ErrOwnedByLiveRun = errors.New("the journey cluster belongs to another live run")
+
+// checkNotOwnedByOtherLiveRun reads the owner labels of the existing
+// cluster's nodes. A cluster whose labels name another run and a live
+// process is refused. A cluster whose labels cannot be read, or that has
+// none, is a leftover: every run takes the host-wide lock before it
+// creates a cluster, so no live run can be creating one unlabelled.
+func (k *KindTarget) checkNotOwnedByOtherLiveRun(ctx context.Context) error {
+	run, pid, ok := k.owner(ctx)
+	if !ok || run == k.RunID {
+		return nil
+	}
+	alive := k.Alive
+	if alive == nil {
+		alive = processAlive
+	}
+	if pid != k.PID && alive(pid) {
+		return fmt.Errorf("%w: cluster %s was created by run %s, process %d, which is still running", ErrOwnedByLiveRun, k.Cluster, run, pid)
+	}
+	return nil
+}
+
+func (k *KindTarget) owner(ctx context.Context) (string, int, bool) {
+	kc, err := k.Run(ctx, nil, nil, k.RepoRoot, "kind", "get", "kubeconfig", "--name", k.Cluster)
+	if err != nil {
+		return "", 0, false
+	}
+	path := filepath.Join(k.Dir, "owner-kubeconfig")
+	if err := os.MkdirAll(k.Dir, 0o700); err != nil {
+		return "", 0, false
+	}
+	if err := os.WriteFile(path, []byte(kc), 0o600); err != nil {
+		return "", 0, false
+	}
+	defer os.Remove(path)
+	jsonpath := fmt.Sprintf(`jsonpath={.items[0].metadata.labels.%s} {.items[0].metadata.labels.%s}`,
+		strings.ReplaceAll(ownerRunLabel, ".", `\.`), strings.ReplaceAll(ownerPIDLabel, ".", `\.`))
+	out, err := k.Run(ctx, nil, nil, k.RepoRoot, "kubectl", "--kubeconfig", path, "--request-timeout", "20s", "get", "nodes", "-o", jsonpath)
+	if err != nil {
+		return "", 0, false
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return "", 0, false
+	}
+	pid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return "", 0, false
+	}
+	return fields[0], pid, true
 }
 
 // VerifyDeleted implements Target. It checks that Kind lists no cluster
@@ -186,9 +316,10 @@ func (k *KindTarget) exists(ctx context.Context) (bool, error) {
 
 // JourneyClusterConfig derives the journey cluster's Kind configuration
 // from the e2e configuration: the same nodes, images, labels, and
-// networking, under the journey cluster's name and without host port
-// mappings, which would collide with a running lenny-e2e cluster.
-func JourneyClusterConfig(base []byte, name string) ([]byte, error) {
+// networking, under the journey cluster's name, with labels added to
+// every node, and without host port mappings, which would collide with a
+// running lenny-e2e cluster.
+func JourneyClusterConfig(base []byte, name string, labels map[string]string) ([]byte, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(base, &doc); err != nil {
 		return nil, fmt.Errorf("kind cluster configuration: %w", err)
@@ -202,9 +333,22 @@ func JourneyClusterConfig(base []byte, name string) ([]byte, error) {
 		return nil, errors.New("kind cluster configuration has no nodes")
 	}
 	for _, n := range nodes {
-		if node, ok := n.(map[string]any); ok {
-			delete(node, "extraPortMappings")
+		node, ok := n.(map[string]any)
+		if !ok {
+			continue
 		}
+		delete(node, "extraPortMappings")
+		if len(labels) == 0 {
+			continue
+		}
+		nl, _ := node["labels"].(map[string]any)
+		if nl == nil {
+			nl = map[string]any{}
+		}
+		for k, v := range labels {
+			nl[k] = v
+		}
+		node["labels"] = nl
 	}
 	out, err := yaml.Marshal(doc)
 	if err != nil {

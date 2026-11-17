@@ -34,12 +34,28 @@ type Target interface {
 	// runner calls it after Delete on every exit path, and a failure
 	// stops the run, because a leaked cluster keeps costing.
 	VerifyDeleted(ctx context.Context) error
+	// AgentEndpoint returns the Docker network the agent container joins
+	// and a kubeconfig whose server is reachable from that network. The
+	// agent reaches the cluster through it and through nothing on the
+	// host.
+	AgentEndpoint(ctx context.Context) (AgentEndpoint, error)
+	// Facts are values Create resolved that a scenario may name, such as
+	// echoImage, the digest-pinned echo runtime image.
+	Facts() map[string]string
 	// CostUSD is the infrastructure cost of the trial so far. Kind
 	// reports zero.
 	CostUSD() float64
 	// MaxCostUSD is the most one trial's infrastructure may cost. The
 	// ledger reserves it, with the agent's cap, before a trial starts.
 	MaxCostUSD() float64
+}
+
+// AgentEndpoint is how the agent container reaches a cluster.
+type AgentEndpoint struct {
+	// Network is the Docker network the container joins.
+	Network string
+	// Kubeconfig is a kubeconfig valid from that network.
+	Kubeconfig []byte
 }
 
 // TargetFactory builds a target for one trial. dir is the trial's

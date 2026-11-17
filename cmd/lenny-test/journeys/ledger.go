@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 )
 
 // Default spending caps from decision 5 of change 0157: $6 for one run
@@ -25,12 +27,16 @@ const (
 // spending past its cap.
 var ErrPilotBudget = errors.New("pilot budget")
 
-// Ledger records what each run of one pilot spent, in a JSON file under
-// tests/results/journeys/. Before a run starts, the harness checks that
-// the pilot's recorded spending plus the most the run may spend stays
-// within the pilot's cap, and refuses the run otherwise. Agent cost and
-// infrastructure cost are separate lines of each entry, so a target that
-// costs money, such as a cloud cluster, counts against the same cap.
+// Ledger records what each run of one pilot spent, in a JSON file in the
+// host-wide journeys state directory (DefaultStateDir). Before a run
+// starts, the harness checks that the pilot's recorded spending plus the
+// most the run may spend stays within the pilot's cap, refuses the run
+// otherwise, and records a pending entry charged at that most. The entry
+// is settled at the run's cost when the run ends. A pending entry a dead
+// process left stays charged, so a crash never frees budget the crashed
+// run may have spent. Agent cost and infrastructure cost are separate
+// lines of each entry, so a target that costs money, such as a cloud
+// cluster, counts against the same cap.
 type Ledger struct {
 	Pilot   string        `json:"pilot"`
 	CapUSD  float64       `json:"capUSD"`
@@ -39,8 +45,11 @@ type Ledger struct {
 	path string
 }
 
-// LedgerEntry is one finished run.
+// LedgerEntry is one run: pending while it runs, settled when it ends.
 type LedgerEntry struct {
+	// ID identifies the run within the ledger: the run identifier, the
+	// journey, and the trial.
+	ID      string `json:"id"`
 	Run     string `json:"run"`
 	Journey string `json:"journey"`
 	Trial   int    `json:"trial"`
@@ -55,6 +64,28 @@ type LedgerEntry struct {
 	InfraUSD float64   `json:"infraUSD"`
 	Verdict  string    `json:"verdict"`
 	At       time.Time `json:"at"`
+	// Pending marks an entry reserved before its run and not yet
+	// settled; its cost lines hold the most the run may spend. PID is the
+	// process that reserved it.
+	Pending bool `json:"pending,omitempty"`
+	PID     int  `json:"pid,omitempty"`
+}
+
+// EntryID returns the ledger identifier of one trial of a run.
+func EntryID(run, journey string, trial int) string {
+	return fmt.Sprintf("%s/%s/%d", run, journey, trial)
+}
+
+// DefaultStateDir returns the host-wide directory that holds the journeys
+// lock and the pilot ledgers, $HOME/.lenny-tmp/journeys. It is one place
+// per host, so two checkouts or two results directories still share one
+// lock and one ledger per pilot.
+func DefaultStateDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", fmt.Errorf("no home directory for the journeys state: %v", err)
+	}
+	return filepath.Join(home, testtmp.HomeDirName, "journeys"), nil
 }
 
 // LedgerPath returns the ledger file of the named pilot under dir.
@@ -92,7 +123,8 @@ func OpenLedger(path, pilot string, capUSD float64) (*Ledger, error) {
 	return l, nil
 }
 
-// Spent is the pilot's recorded spending, agent and infrastructure.
+// Spent is the pilot's recorded spending, agent and infrastructure,
+// with each pending entry charged at the most its run may spend.
 func (l *Ledger) Spent() float64 {
 	total := 0.0
 	for _, e := range l.Entries {
@@ -118,8 +150,53 @@ func (l *Ledger) Record(e LedgerEntry) error {
 	return l.save()
 }
 
+// Reserve checks that a run may start and records its pending entry,
+// charged at agentMaxUSD and infraMaxUSD, before the run spends anything.
+func (l *Ledger) Reserve(e LedgerEntry, agentMaxUSD, infraMaxUSD float64) error {
+	if e.ID == "" {
+		return errors.New("a ledger reservation needs an ID")
+	}
+	if err := l.CheckStart(agentMaxUSD + infraMaxUSD); err != nil {
+		return err
+	}
+	e.Pending, e.PID = true, os.Getpid()
+	e.AgentUSD, e.InfraUSD = agentMaxUSD, infraMaxUSD
+	return l.Record(e)
+}
+
+// Settle replaces the pending entry with e's ID by e, which carries the
+// run's cost, and writes the ledger. Settling an ID that has no pending
+// entry appends e, so a run's cost is never lost.
+func (l *Ledger) Settle(e LedgerEntry) error {
+	e.Pending, e.PID = false, 0
+	for i := range l.Entries {
+		if l.Entries[i].ID == e.ID && l.Entries[i].Pending {
+			l.Entries[i] = e
+			return l.save()
+		}
+	}
+	return l.Record(e)
+}
+
+// PendingEntries splits the entries still pending by whether the process
+// that reserved each is alive. Both kinds stay charged; the split only
+// tells the operator which runs crashed.
+func (l *Ledger) PendingEntries() (live, dead []LedgerEntry) {
+	for _, e := range l.Entries {
+		if !e.Pending {
+			continue
+		}
+		if processAlive(e.PID) {
+			live = append(live, e)
+		} else {
+			dead = append(dead, e)
+		}
+	}
+	return live, dead
+}
+
 func (l *Ledger) save() error {
-	if err := os.MkdirAll(filepath.Dir(l.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(l.path), 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(l, "", "  ")
@@ -146,20 +223,22 @@ func writeFileAtomic(path string, data []byte) error {
 	return os.Rename(tmp.Name(), path)
 }
 
-// Lock is held for a whole journeys run. Every trial uses the one
-// cluster name lenny-journeys (decision 6), and the ledger is read and
-// written between runs, so two journeys processes must not overlap.
+// Lock is held for a whole journeys run, and for a probe. Every trial
+// uses the one cluster name lenny-journeys (decision 6), and the ledger
+// is read and written during a run, so two journeys processes on one
+// host must not overlap. The lock lives in the host-wide state directory
+// with the ledgers, whatever --results-dir names.
 type Lock struct{ path string }
 
 // AcquireLock creates dir/journeys.lock holding this process's ID. A lock
 // left by a process that no longer runs is taken over.
 func AcquireLock(dir string) (*Lock, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, "journeys.lock")
 	for attempt := 0; attempt < 2; attempt++ {
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err == nil {
 			_, werr := f.WriteString(strconv.Itoa(os.Getpid()) + "\n")
 			cerr := f.Close()

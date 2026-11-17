@@ -11,8 +11,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -21,11 +21,33 @@ import (
 // DefaultModel is the journey agent's model (decision 4 of change 0157).
 const DefaultModel = "claude-sonnet-5-5"
 
-// AgentConfig configures the journey agent: Claude Code in headless mode
-// on the user's existing Claude login.
+// TokenEnv is the variable Claude Code reads a `claude setup-token` token
+// from (Claude Code's authentication documentation, "Generate a
+// long-lived token").
+const TokenEnv = "CLAUDE_CODE_OAUTH_TOKEN"
+
+// Paths inside the agent container. The working directory holds the
+// read-only documentation copy, /journey holds the read-only kubeconfigs,
+// and the home directory is the trial's writable scratch directory.
+const (
+	ContainerWorkspace      = "/workspace"
+	ContainerDocs           = "/workspace/docs"
+	ContainerJourneyDir     = "/journey"
+	ContainerHome           = "/home/agent"
+	ContainerKubeconfig     = "/journey/kubeconfig"
+	ContainerEmptyConfig    = "/journey/empty-kubeconfig"
+	ContainerHarnessConfig  = "/journey/harness-kubeconfig"
+	ContainerGatewayURL     = "http://127.0.0.1:8080"
+	containerGatewayForward = "JOURNEY_GATEWAY_FORWARD"
+)
+
+// AgentConfig configures the journey agent: Claude Code in headless mode,
+// in the journey agent container, on the owner's subscription token.
 type AgentConfig struct {
-	// Binary is the claude executable.
-	Binary string
+	// Docker is the docker executable that starts the container.
+	Docker string
+	// Image is the agent image reference (ImageBuilder.Ensure).
+	Image string
 	// Model is the model the agent runs.
 	Model string
 	// RunCapUSD is the per-run cost cap. The harness stops the agent when
@@ -34,6 +56,13 @@ type AgentConfig struct {
 	RunCapUSD float64
 	// Rates price the running estimate.
 	Rates Rates
+	// Token is the `claude setup-token` token. It reaches the container
+	// through the docker process's environment and `-e TokenEnv`, so it
+	// never appears on a command line or in a record.
+	Token string
+	// UID and GID are the user the container runs as, the owner of the
+	// mounted scratch directory.
+	UID, GID int
 }
 
 // DeniedTools are Claude Code's tools the journey agent never gets. The
@@ -50,18 +79,31 @@ var AgentTools = []string{"Bash", "Read", "Glob", "Grep"}
 
 // AgentRun is one invocation of the agent.
 type AgentRun struct {
-	// Workspace is the agent's working directory. It holds a copy of
-	// docs/ and nothing else.
-	Workspace string
-	// SettingsPath is the settings file written by WriteSettings.
-	SettingsPath string
+	// Name is the container's name.
+	Name string
+	// Network is the Docker network the container joins.
+	Network string
+	// DocsDir is the host directory mounted read-only at ContainerDocs.
+	DocsDir string
+	// JourneyDir is the host directory mounted read-only at
+	// ContainerJourneyDir, holding the kubeconfigs.
+	JourneyDir string
+	// HomeDir is the host scratch directory mounted at ContainerHome.
+	HomeDir string
+	// Settings is the settings JSON, passed inline to --settings.
+	Settings []byte
 	// SystemPrompt is appended to Claude Code's system prompt.
 	SystemPrompt string
 	// Prompt is the user prompt.
 	Prompt string
-	// Env is the agent's whole environment. The harness builds it
-	// explicitly (BuildEnv) rather than inheriting its own.
-	Env []string
+	// Env is the container's environment beyond the image's own: the
+	// credentials the scenario grants. Values reach the container through
+	// the docker process's environment; the command line names only the
+	// variables.
+	Env map[string]string
+	// GatewayForward makes the entrypoint forward the gateway into the
+	// container before the agent starts.
+	GatewayForward bool
 	// TimeLimit bounds the run.
 	TimeLimit time.Duration
 	// Transcript receives every stream-json line except partial-message
@@ -90,8 +132,8 @@ type Agent interface {
 	CommandLine(run AgentRun) []string
 }
 
-// Args returns the claude arguments for a run, without the binary.
-func (c AgentConfig) Args(run AgentRun) []string {
+// ClaudeArgs returns the claude arguments for a run.
+func (c AgentConfig) ClaudeArgs(run AgentRun) []string {
 	return []string{
 		"-p", run.Prompt,
 		"--model", c.Model,
@@ -101,7 +143,7 @@ func (c AgentConfig) Args(run AgentRun) []string {
 		"--max-budget-usd", fmt.Sprintf("%.2f", c.RunCapUSD),
 		"--tools", strings.Join(AgentTools, ","),
 		"--disallowedTools", strings.Join(DeniedTools, ","),
-		"--settings", run.SettingsPath,
+		"--settings", string(run.Settings),
 		"--permission-mode", "dontAsk",
 		"--permission-prompts", "none",
 		"--restricted",
@@ -113,29 +155,69 @@ func (c AgentConfig) Args(run AgentRun) []string {
 	}
 }
 
-// CommandLine returns the full command line for the record.
-func (c AgentConfig) CommandLine(run AgentRun) []string {
-	return append([]string{c.Binary}, c.Args(run)...)
+// DockerArgs returns the docker arguments that run the agent: a
+// read-only root file system, no capabilities, no new privileges, the
+// trial's user, the agent's network, and three mounts (the documentation
+// read-only, the kubeconfigs read-only, and the scratch home directory).
+// No host home directory, Docker socket, or other host path is mounted,
+// and every environment variable is passed by name.
+func (c AgentConfig) DockerArgs(run AgentRun) []string {
+	args := []string{
+		"run", "--rm", "--init", "--interactive=false",
+		"--name", run.Name,
+		"--network", run.Network,
+		"--read-only",
+		"--tmpfs", "/tmp:rw,nosuid,size=512m",
+		"--cap-drop", "ALL",
+		"--security-opt", "no-new-privileges",
+		"--user", strconv.Itoa(c.UID) + ":" + strconv.Itoa(c.GID),
+		"--mount", "type=bind,source=" + run.DocsDir + ",target=" + ContainerDocs + ",readonly",
+		"--mount", "type=bind,source=" + run.JourneyDir + ",target=" + ContainerJourneyDir + ",readonly",
+		"--mount", "type=bind,source=" + run.HomeDir + ",target=" + ContainerHome,
+		"--workdir", ContainerWorkspace,
+		"--env", "HOME=" + ContainerHome,
+		"--env", TokenEnv,
+	}
+	for _, k := range sortedStringKeys(run.Env) {
+		args = append(args, "--env", k)
+	}
+	if run.GatewayForward {
+		args = append(args, "--env", containerGatewayForward+"=1")
+	}
+	args = append(args, c.Image, "claude")
+	return append(args, c.ClaudeArgs(run)...)
 }
 
-// Settings returns the settings file content for a scenario's tools. The
-// allow list names a Bash rule for each allowed command and read rules
-// for the workspace's docs/ directory, by relative and by absolute path.
-// In dontAsk mode with prompts off, any tool use the allow list does not
+// CommandLine returns the full command line for the record. It holds no
+// secret: the token and the credentials pass by name.
+func (c AgentConfig) CommandLine(run AgentRun) []string {
+	return append([]string{c.Docker}, c.DockerArgs(run)...)
+}
+
+// dockerEnv is the docker process's environment: the harness's own, which
+// locates the Docker daemon, plus the values of the variables DockerArgs
+// passes by name. Docker copies only the named variables into the
+// container.
+func (c AgentConfig) dockerEnv(run AgentRun) []string {
+	env := os.Environ()
+	env = append(env, TokenEnv+"="+c.Token)
+	for _, k := range sortedStringKeys(run.Env) {
+		env = append(env, k+"="+run.Env[k])
+	}
+	return env
+}
+
+// Settings returns the settings JSON for a scenario's tools. The allow
+// list names a Bash rule for each allowed command and read rules for the
+// container's docs/ directory, by relative and by absolute path. In
+// dontAsk mode with prompts off, any tool use the allow list does not
 // cover is refused without asking.
-func Settings(workspace string, commands []string) ([]byte, error) {
+func Settings(commands []string) ([]byte, error) {
 	allow := make([]string, 0, 2*len(commands)+4)
 	for _, c := range commands {
 		allow = append(allow, "Bash("+c+")", "Bash("+c+" *)")
 	}
-	abs, err := filepath.Abs(workspace)
-	if err != nil {
-		return nil, err
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = real
-	}
-	allow = append(allow, "Read(./docs/**)", "Read(/"+filepath.ToSlash(abs)+"/docs/**)", "Glob", "Grep")
+	allow = append(allow, "Read(./docs/**)", "Read(/"+ContainerDocs+"/**)", "Glob", "Grep")
 	doc := map[string]any{
 		"permissions": map[string]any{
 			"defaultMode": "dontAsk",
@@ -143,43 +225,7 @@ func Settings(workspace string, commands []string) ([]byte, error) {
 			"deny":        DeniedTools,
 		},
 	}
-	return json.MarshalIndent(doc, "", "  ")
-}
-
-// hostEnvAllowed names the host variables the agent inherits. They
-// locate the user's home directory and Claude login and set the locale.
-// Every other variable, including any API key or cloud credential in the
-// host's environment, stays out: the agent runs on the user's Claude
-// login (decision 4) and receives only the credentials its scenario
-// names.
-var hostEnvAllowed = []string{"HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TERM", "TMPDIR", "SHELL", "CLAUDE_CONFIG_DIR", "XDG_CONFIG_HOME"}
-
-// BuildEnv returns the agent's environment: the allowed host variables,
-// a PATH with binDir first, and the credentials in creds, which the
-// caller selects from what the target provides by the scenario's
-// credentials list.
-func BuildEnv(host []string, binDir string, creds map[string]string) []string {
-	hostVals := map[string]string{}
-	for _, kv := range host {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			hostVals[k] = v
-		}
-	}
-	var env []string
-	for _, k := range hostEnvAllowed {
-		if v, ok := hostVals[k]; ok {
-			env = append(env, k+"="+v)
-		}
-	}
-	path := hostVals["PATH"]
-	if binDir != "" {
-		path = binDir + string(os.PathListSeparator) + path
-	}
-	env = append(env, "PATH="+path)
-	for _, k := range sortedStringKeys(creds) {
-		env = append(env, k+"="+creds[k])
-	}
-	return env
+	return json.Marshal(doc)
 }
 
 func sortedStringKeys(m map[string]string) []string {
@@ -191,20 +237,24 @@ func sortedStringKeys(m map[string]string) []string {
 	return keys
 }
 
-// Run starts Claude Code, streams its output into the meter and the
-// transcript, and stops it when the running cost estimate reaches the
-// cap, the time limit passes, or ctx is cancelled.
+// Run starts the agent container, streams its output into the meter and
+// the transcript, and stops it when the running cost estimate reaches the
+// cap, the time limit passes, or ctx is cancelled. The container is
+// removed on every path out.
 func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error) {
 	start := time.Now()
 	limitCtx, cancelLimit := context.WithTimeout(ctx, run.TimeLimit)
 	defer cancelLimit()
 	capCtx, stopForCap := context.WithCancel(limitCtx)
 	defer stopForCap()
+	defer c.removeContainer(run.Name)
 
-	cmd := exec.CommandContext(capCtx, c.Binary, c.Args(run)...)
-	cmd.Dir = run.Workspace
-	cmd.Env = run.Env
+	cmd := exec.CommandContext(capCtx, c.Docker, c.DockerArgs(run)...)
+	cmd.Env = c.dockerEnv(run)
 	cmd.Stderr = run.Stderr
+	// docker run proxies SIGTERM to the container, where tini passes it
+	// to claude; the deferred removal covers a container that outlives
+	// the docker process.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 15 * time.Second
 	stdout, err := cmd.StdoutPipe()
@@ -228,6 +278,17 @@ func (c AgentConfig) Run(ctx context.Context, run AgentRun) (AgentResult, error)
 	}
 	res.Stop, res.StopDetail = classifyStop(ctx, limitCtx, capHit, meter, waitErr, readErr, c.RunCapUSD)
 	return res, nil
+}
+
+// removeContainer force-removes the agent container. It is a no-op when
+// docker run --rm already removed it.
+func (c AgentConfig) removeContainer(name string) {
+	if name == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, c.Docker, "rm", "-f", name).Run()
 }
 
 // consume reads stdout line by line until it closes. It returns whether

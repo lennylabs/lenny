@@ -44,9 +44,10 @@ environment: |
   The nodes cannot pull images from any registry. Every Lenny image is
   already loaded on every node under the tag {{imageTag}}, for example
   lenny-gateway:{{imageTag}}, lenny-controller:{{imageTag}},
-  lenny-adapter:{{imageTag}}, lenny-supervisor:{{imageTag}}, and the echo
-  runtime lenny-runtime-echo:{{imageTag}}. Use an image pull policy that
-  does not pull.
+  lenny-adapter:{{imageTag}}, and lenny-supervisor:{{imageTag}}. Use an
+  image pull policy that does not pull. Lenny admits a runtime image only
+  by a digest-pinned reference, and the echo runtime's is {{echoImage}}.
+  Every node holds that reference.
 credentials:
   - kubeconfig
 tools:
