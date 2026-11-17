@@ -218,7 +218,11 @@ def check(changes, steps, errors):
         ns = [int(s.split('.S')[1]) for s in c['steps']]
         if ns != list(range(1, len(ns) + 1)):
             errors.append(f'{c["dir"]}: steps are not numbered S1 to S{len(ns)} in order: {ns}')
+        ruled = [s for s in c['steps'] if steps[s].get('ruled_ready')]
+        others = [steps[s]['status'] for s in c['steps'] if s not in ruled]
         p = status_problem(c['status'], [steps[s]['status'] for s in c['steps']])
+        if p and c['status'] == 'Draft' and ruled and not status_problem('Draft', others):
+            p = None  # only steps the owner ruled ready have started
         if p:
             errors.append(f'{c["dir"]}: {p}')
     owner = {}

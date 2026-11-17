@@ -141,6 +141,14 @@ class BoardTest(Fixture):
         C.write(p, C.read(p).replace('ruled-ready: 2026-02-03, names only', 'ruled-ready: soon'))
         self.assertTrue(any('ruled-ready must start with the date' in e for e in self.problems()[0]))
 
+    def test_a_draft_change_may_build_only_its_ruled_ready_steps(self):
+        p = os.path.join(self.root, 'changes', '0101-beta', 'steps.md')
+        C.write(p, C.read(p).replace('- status: Planned', '- status: Building').replace(
+            '- lanes: [specification, code]', '- lanes: [specification, code]\n- ruled-ready: 2026-02-03, names only'))
+        self.assertEqual(self.problems()[0], [])
+        C.write(p, C.read(p).replace('- ruled-ready: 2026-02-03, names only\n', ''))
+        self.assertTrue(any('status Draft but a step has started' in e for e in self.problems()[0]))
+
     def test_board_check_detects_a_stale_board(self):
         self.run_cli('board')
         self.assertEqual(self.run_cli('board', '--check')[0], 0)
