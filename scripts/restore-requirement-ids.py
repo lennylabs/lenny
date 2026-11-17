@@ -48,8 +48,6 @@ SKIP_PREFIX = (
 )
 SKIP_EXACT = {
     "BUILD-GAPS.md",
-    "BUILD-PLAN.md",
-    "BUILD-PROGRESS.md",
     "TEST-GAPS.md",
     "PROPOSAL-QUEUE.md",
     "gateway-runtime-comms.md",

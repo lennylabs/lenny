@@ -1090,7 +1090,7 @@ packages:
     - package: tests/tier10_conformance
       count: 137
     - package: tests/tier11_docs
-      count: 1204
+      count: 1196
     - package: tests/tier12_load_cloud
       count: 13
     - package: tests/tier1_unit/flagdefaults

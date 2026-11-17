@@ -173,13 +173,13 @@ func TestReadableKeepsAPathNamedLikeAFixtureDirectory(t *testing.T) {
 
 // TestWriteDomainExcludesThePlanningRecordsForTheNameAndIdentifierPasses
 // pins the difference between the two write lists. A reserved phrase in
-// a build or queue record is part of what was written at the time, while
+// the queue record is part of what was written at the time, while
 // a line citation in the same file is a pointer that has to keep
 // resolving.
 func TestWriteDomainExcludesThePlanningRecordsForTheNameAndIdentifierPasses(t *testing.T) {
 	t.Parallel()
 	list, read := treeDomain(t)
-	records := []string{"BUILD-PLAN.md", "BUILD-PROGRESS.md", "PROPOSAL-QUEUE.md"}
+	records := []string{"PROPOSAL-QUEUE.md"}
 	for _, p := range []scope.Pass{scope.Name, scope.Identifier} {
 		domain, err := scope.WriteDomain(context.Background(), list, p, read)
 		if err != nil {
@@ -221,7 +221,7 @@ func TestClassReadDomainIsExportedForTheReservedPhraseAndIdentifierClasses(t *te
 	t.Parallel()
 	list, _ := treeDomain(t)
 	records := scope.PlanningRecords()
-	if len(records) != 3 {
+	if len(records) != 1 {
 		t.Fatalf("PlanningRecords() = %v", records)
 	}
 	for _, c := range []scope.Class{scope.ClassReservedPhrase, scope.ClassIdentifier} {
@@ -1843,7 +1843,6 @@ func TestRunPrintsTheWriteDomainOverTheTrackedTree(t *testing.T) {
 	for _, excluded := range []string{
 		"BUILD-GAPS.md",
 		"TEST-GAPS.md",
-		"BUILD-PLAN.md",
 		"PROPOSAL-QUEUE.md",
 		"charts/lenny/values.schema.json",
 		"schemas/ocsf-mapping.yaml",
@@ -6108,8 +6107,8 @@ func TestNamePassLeavesAGeneratedCarrierUnmodified(t *testing.T) {
 
 // TestNamePassLeavesEveryWriteExcludedCarrierByteIdentical pins the
 // write exclusion of this class, which is wider than the citation
-// passes' by the three root build and queue records: a reserved phrase
-// in one of them is part of what was written at the time. Each member of
+// passes' by the root queue record: a reserved phrase in it is part of
+// what was written at the time. Each member of
 // every excluded group is left exactly as it was written and appears in
 // neither the dry-run output nor the applied diff, while an equivalent
 // site in an ordinary carrier in the same run is substituted.
@@ -6125,8 +6124,6 @@ func TestNamePassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T) {
 		"TEST-GAPS.md",
 		"gateway-runtime-comms.md",
 		"gateway-runtime-comms-remediation.md",
-		"BUILD-PLAN.md",
-		"BUILD-PROGRESS.md",
 		"PROPOSAL-QUEUE.md",
 	}
 	before := treeSnapshot(t, root)
@@ -9021,8 +9018,8 @@ func TestIdentifierPassLeavesASingleChannelSpellingAtANonChannelSiteAsItStands(t
 // TestIdentifierPassLeavesEveryWriteExcludedCarrierByteIdentical pins the
 // write exclusion, which no gate reads and no gate could report. A
 // retired spelling in a staged proposal, in either historical audit
-// record, in either root planning document, or in any of the three build
-// and queue records is part of what was written at the time, so the run
+// record, in either root planning document, or in the root queue record
+// is part of what was written at the time, so the run
 // leaves it byte-identical and names it in neither the dry run nor the
 // applied diff, while an equivalent occurrence in an ordinary carrier is
 // rewritten in the same run.
@@ -9038,8 +9035,6 @@ func TestIdentifierPassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T
 		"TEST-GAPS.md",
 		"gateway-runtime-comms.md",
 		"gateway-runtime-comms-remediation.md",
-		"BUILD-PLAN.md",
-		"BUILD-PROGRESS.md",
 		"PROPOSAL-QUEUE.md",
 	}
 	before := treeSnapshot(t, root)

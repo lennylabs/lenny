@@ -63,6 +63,7 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 | **Execution modes**        | session (`sessionPolicy`: recycling, concurrent slots) / service | N/A            | N/A                       | N/A                         | N/A (workflow-based)     | N/A                         | N/A (graph-based)               |
 | **Recursive delegation**   | Yes (gateway-enforced)                     | No                      | No                        | No                          | Via workflows            | No                          | RemoteGraph (no per-hop budget) |
 | **Multi-protocol gateway** | REST + MCP + OpenAI + Open Responses + A2A (post-v1 adapter) | API-only                | API-only                  | API-only                    | gRPC/HTTP                | API-only                    | LangServe/API                   |
+| **Pod security**           | Non-root, all capabilities dropped, read-only root filesystem, default-deny network, no standing credentials | Firecracker isolation   | Sandbox isolation         | Firecracker isolation       | Operator-managed         | Hosted (opaque)             | Operator-managed                |
 | **Enterprise controls**    | Built-in (RBAC, budgets, audit, isolation) | Basic                   | Basic                     | Basic                       | Via add-ons              | Basic                       | LangSmith platform              |
 | **Experimentation**        | Variant pool + routing primitives; basic built-in assigner; integrates with LaunchDarkly/Statsig/Unleash via OpenFeature | No                      | No                        | No                          | No                       | No                          | LangSmith datasets/evals        |
 | **Eval**                   | Not an eval platform; basic score storage only. Compatible with any eval framework (LangSmith, Braintrust, Arize, Langfuse, home-grown). | No           | No                        | No                          | No                       | No                          | Built-in eval framework          |
@@ -87,15 +88,18 @@ Three Apache 2.0 projects launched in Q1 2026 cover adjacent surface area. All t
 | **Released** | Design phase (MIT) | April 2026 (Apache 2.0) | GTC 2026 (Apache 2.0) | March 2026 (Apache 2.0) |
 | **Framing** | K8s-native agent session platform | Multi-agent orchestration testbed | Policy-driven sandbox runtime | General sandbox with unified API |
 | **Workload focus** | Workload-agnostic (coding, chat, MCP hosting, framework adapters) | Coding-CLI harnesses + experimental multi-agent research | AI coding (Claude / OpenCode / Codex / Copilot) | Coding, GUI/computer-use, eval, RL (GUI features are the standout) |
+| **Runtime contract** | Any program that speaks JSON Lines over stdio is a runtime | Pre-built harnesses for the major coding CLIs; no generic runtime contract | Launches pre-configured coding CLIs; no formal adapter contract | SDK-first; programs call the `opensandbox` library |
 | **Implementation** | Go, gateway + CRDs + controllers | Go CLI over containers | Rust CLI + K3s-in-Docker | Python FastAPI + multi-language SDKs |
 | **Laptop-only start** | Yes (`lenny up` single binary) | Yes (`go install`) | Yes (K3s-in-Docker) | Yes (Docker) |
 | **Isolation** | runc / gVisor / Kata via `RuntimeClass` | Containers + per-agent git worktree | Docker container + YAML policy engine | Docker / K8s / gVisor / Kata / Firecracker |
 | **Multi-agent** | Recursive delegation, gateway-enforced across sessions | Emergent coordination via a shared CLI | No cross-sandbox orchestration (alpha: "single-player mode"); in-session subagent spawning mentioned | Not a platform feature |
 | **Token budgets** | Per-subtree, atomic | Not available | Not available | Not available |
+| **Isolation monotonicity** | Enforced on every delegation: a child's isolation profile is the same as its parent's or stricter | Not applicable | Not applicable | Not applicable |
 | **Credentials** | Leased, pod-bound, rotatable | Per-agent separated credentials | "Providers" — env-var injection | `OPEN_SANDBOX_API_KEY` for management-API auth |
 | **Client protocols** | REST + MCP + OpenAI + Open Responses | CLI | CLI | REST + MCP |
 | **Multi-tenancy** | Postgres RLS, RBAC, audit | Not provided | Explicit future work | Design goal for K8s runtime; isolation model undocumented |
 | **Compliance controls** | GDPR erasure, legal holds, audit chain | Not provided | Not provided | Not provided |
+| **Production posture** | Pre-release; built from source | Experimental testbed | Alpha ("single-player mode") | Released March 2026; framed for production |
 | **Standout feature** | Platform-enforced recursive delegation | Emergent multi-agent coordination | Hot-reloadable YAML policy incl. inference routing | VNC desktops + Chromium + code-server in-sandbox |
 
 ---

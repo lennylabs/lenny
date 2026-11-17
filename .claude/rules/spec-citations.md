@@ -24,7 +24,7 @@ The rule applies to the domain the citation gates read, which `scripts/specshift
 - The citation registers `tests/registers/line-citations.yaml` and `tests/registers/line-citation-resolution.yaml`, which are the baselines the gates consume.
 - Every `testdata/` directory, whose fixtures present the retired form verbatim.
 
-The root planning records `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md` are inside the domain. A line citation there is a pointer that has to keep resolving.
+The root queue record `PROPOSAL-QUEUE.md` is inside the domain. A line citation there is a pointer that has to keep resolving.
 
 The specification's naming law states N8 without this domain. The domain above is the one the gates enforce, and stating it in the naming law is owed to the next proposal that edits that section.
 

@@ -139,12 +139,18 @@ func lookupSection(ctx context.Context, t *Tree, number string, out io.Writer) e
 // that the section's own text lists. A full stub carries the stub marker,
 // a section that lists successors without the marker keeps part of its
 // text, and a section that lists none has not migrated.
+//
+// A full stub holds nothing but its successor list, so every link it
+// carries outside the numbered files is a successor, including one to a
+// record outside the specification, such as a program under changes/ or
+// a documentation page. A partial stub keeps text whose links are not
+// successors, so only its links into the new tree are listed.
 func printSuccessors(s numberedSection, number string, full bool, out io.Writer) {
 	var lines []string
 	body := strings.Join(s.body, "\n")
 	for _, l := range links(body) {
 		target, ok := resolve(s.file, l.path)
-		if !ok || !newTreeTarget(target) {
+		if !ok || isNumbered(target) || (!full && !newTreeTarget(target)) {
 			continue
 		}
 		lines = append(lines, "  "+displayTarget(target, l.fragment))

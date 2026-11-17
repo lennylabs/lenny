@@ -506,6 +506,37 @@ func TestLookupOfASectionThatIsAStub(t *testing.T) {
 	}
 }
 
+// TestLookupOfAFullStubListsSuccessorsOutsideTheSpecification pins that
+// a full stub retired in favour of records outside the specification,
+// such as a program and a documentation page, lists them as successors,
+// while a numbered file it links is still left out.
+func TestLookupOfAFullStubListsSuccessorsOutsideTheSpecification(t *testing.T) {
+	root := copyFixture(t, cleanFixture)
+	stub := "# 18. Build Sequence\n\n" + StubMarker + "\n\n" + fullStubLead + "\n\n" +
+		"- [Program v1](../changes/programs/v1.md): the plan.\n" +
+		"- [Status](../docs/about/status.md#planned-after-v1): the work planned after v1.\n" +
+		"- [Pools](04_system-components.md#46-pod-lifecycle-controllers): a numbered file.\n"
+	if err := os.WriteFile(filepath.Join(root, "spec", "18_build-sequence.md"), []byte(stub), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := run(t, fixtureTree(root, nil), "lookup", "§"+"18")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		"successor stub: the content of",
+		"changes/programs/v1.md\n",
+		"docs/about/status.md#planned-after-v1",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("lookup of the stub: output lacks %q:\n%s", w, out)
+		}
+	}
+	if strings.Contains(out, "04_system-components.md#46") {
+		t.Errorf("a link into a numbered file was listed as a successor:\n%s", out)
+	}
+}
+
 // missingSection is a section number no fixture declares. It is built by
 // concatenation so the citation gates do not read it as a citation of the
 // repository's specification.

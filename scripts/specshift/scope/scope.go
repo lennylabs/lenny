@@ -36,9 +36,9 @@ import (
 
 // Pass names one specshift pass. The write domain differs between the
 // name and identifier passes and the anchor and line passes, because a
-// reserved phrase in a build or queue record is part of what was written
-// at the time while a line citation in the same record is a pointer that
-// has to keep resolving.
+// reserved phrase in the root queue record is part of what was written at
+// the time while a line citation in the same record is a pointer that has
+// to keep resolving.
 type Pass string
 
 // The passes specshift carries.
@@ -108,13 +108,11 @@ var readExcludedPrefixes = []string{"proposals/", "changes/"}
 const testdataSegment = "testdata"
 
 // planningRecords are the tracked root-level records the reserved-phrase
-// and identifier classes exclude. A reserved phrase in a build or queue
-// record is part of what was written at the time and rewriting it would
-// edit the record, while a line citation in the same file is a pointer
-// that has to keep resolving.
+// and identifier classes exclude. A reserved phrase in the queue record
+// is part of what was written at the time and rewriting it would edit the
+// record, while a line citation in the same file is a pointer that has to
+// keep resolving.
 var planningRecords = []string{
-	"BUILD-PLAN.md",
-	"BUILD-PROGRESS.md",
 	"PROPOSAL-QUEUE.md",
 }
 

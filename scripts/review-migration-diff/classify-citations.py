@@ -50,8 +50,7 @@ TESTING_NAME = re.compile(r"\bTESTING\.md\b")
 # Files whose citations are historical record rather than live pointers: the
 # audit logs, the queue, and the frozen reference documents.
 RECORD_FILES = {
-    "BUILD-GAPS.md", "BUILD-PLAN.md", "BUILD-PROGRESS.md", "TEST-GAPS.md",
-    "PROPOSAL-QUEUE.md", "CHANGELOG.md", "ROADMAP.md",
+    "BUILD-GAPS.md", "TEST-GAPS.md", "PROPOSAL-QUEUE.md", "CHANGELOG.md",
     "gateway-runtime-comms.md", "gateway-runtime-comms-remediation.md",
 }
 # The migration's own fixtures and drivers cite by construction.

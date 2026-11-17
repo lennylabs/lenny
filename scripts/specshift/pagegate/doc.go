@@ -17,7 +17,9 @@
 //   - walkthroughs: a page of type walkthrough holds no normative keyword;
 //   - documentation style: a page holds none of the banned words and
 //     phrases of .claude/rules/doc-style.md that a pattern can find, and
-//     no heading that names a count;
+//     no heading that names a count, except that the headings of a
+//     numbered file's successor stubs keep the wording their citations
+//     reach them by;
 //   - review comments: a page whose status is neither placeholder nor
 //     partial holds no src, judgment, or unresolved review comment.
 //

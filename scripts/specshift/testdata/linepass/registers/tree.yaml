@@ -6,10 +6,6 @@
 kind: line-citation-count-baseline
 version: 1
 files:
-    - path: BUILD-PLAN.md
-      count: 1
-    - path: BUILD-PROGRESS.md
-      count: 1
     - path: PROPOSAL-QUEUE.md
       count: 1
     - path: compose/keyword.yaml

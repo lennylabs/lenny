@@ -204,8 +204,7 @@ func TestExperimentRouting(t *testing.T) {
 //   - cmd/runtimes/mcp-reference (reference runtime)
 //   - tier-4 mcp_runtime_lifecycle_test.go (live exercise via
 //     the gateway's §15.1 REST surface — type:mcp sessions reuse
-//     the standard /v1/sessions endpoints per BUILD-PROGRESS Phase
-//     12b notes).
+//     the standard /v1/sessions endpoints).
 //
 // The §4.1 dedicated /mcp/runtimes/{name} surface is implemented in
 // pkg/gateway/mcpfabric/mcpruntimes (Handler) and mounted on the gateway mux

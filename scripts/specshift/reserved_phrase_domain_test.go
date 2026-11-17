@@ -13,7 +13,7 @@ import (
 // the domain in two parts: the trees, the Go files, and the root-level
 // markdown documents that carry the prohibition, and the records that sit
 // outside it, which are the historical audit records, the two root
-// planning documents, the build and queue records, the staged proposals,
+// planning documents, the queue record, the staged proposals,
 // and every fixture directory. Each of those records a finding, a plan,
 // or a fixture as it was written rather than the current contract.
 //
@@ -33,8 +33,6 @@ func TestReservedPhraseClassDomainExcludesEveryRecordTheNamingLawNames(t *testin
 	excluded := []string{
 		"BUILD-GAPS.md",
 		"TEST-GAPS.md",
-		"BUILD-PLAN.md",
-		"BUILD-PROGRESS.md",
 		"PROPOSAL-QUEUE.md",
 		"gateway-runtime-comms.md",
 		"gateway-runtime-comms-remediation.md",

@@ -54,7 +54,6 @@ EXCLUDED = (
     "scripts/review-migration-diff/",
     ".claude/",
     "BUILD-GAPS.md",
-    "BUILD-PROGRESS.md",
     "TEST-GAPS.md",
     "PROPOSAL-QUEUE.md",
     "proposals/",

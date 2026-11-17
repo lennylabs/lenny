@@ -1859,8 +1859,8 @@ func residualPlanningPhraseMember(t *testing.T) string {
 
 // TestResidualGateReadsNoPlanningRecordInAClassThatExcludesIt covers the
 // second of the three read exclusions. The reserved-phrase class and the
-// identifier class exclude the root-level build and queue records, so
-// each of those classes ranges over the same domain as its own pass and
+// identifier class exclude the root-level queue record, so each of
+// those classes ranges over the same domain as its own pass and
 // gates, and a phrase or a retired spelling written in a record of what
 // was planned is left as it was written.
 //
@@ -1873,9 +1873,9 @@ func residualPlanningPhraseMember(t *testing.T) string {
 // a case that reports nothing reports it because the file was never
 // opened.
 //
-// spec: §28.1 (N3, the naming law: the build and queue records are
-// outside the prohibition's domain, together with the historical audit
-// records and the planning documents)
+// spec: §28.1 (N3, the naming law: the queue record is outside the
+// prohibition's domain, together with the historical audit records and
+// the planning documents)
 func TestResidualGateReadsNoPlanningRecordInAClassThatExcludesIt(t *testing.T) {
 	t.Parallel()
 	for _, class := range []struct {
