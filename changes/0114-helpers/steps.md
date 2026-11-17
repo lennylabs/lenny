@@ -15,20 +15,20 @@
 `scripts/changes/` with `steps.py`, the board generator, the link rewriter and link checker from 0113's `restructure.py`, and `change.py` with `new`, `status`, `step`, `archive`, `check`, and `board`, with tests run by tier 0. The `change` skill calls it. 0113's evidence keeps its copies as the record of what ran.
 
 ### 0114.S2 Generic skills
-- status: Planned
+- status: Building
 - lanes: [non-specification]
 - depends-on: [0114.S1]
 
 The `tidy`, `fact-check`, `ask`, and `change` skills, and the helpers table in `changes/README.md` naming each helper's file.
 
 ### 0114.S3 The review skill
-- status: Planned
+- status: Building
 - lanes: [non-specification]
 
 `.claude/skills/review/SKILL.md` with its general and security subagents, `--since`, `--fix`, and `--record`. It is tried on one moved design before it is relied on.
 
 ### 0114.S4 The build skill
-- status: Planned
+- status: Building
 - lanes: [non-specification]
 - depends-on: [0114.S1]
 

@@ -1,0 +1,36 @@
+---
+name: build
+description: Carry out one step of a change, or several small steps that share a branch, on its own branch - the specification edits first, then the code and the tests, then the documentation - iterating with lenny-test --changed, writing the step's digest, and stopping on any choice the change does not settle. Bound to the layout in changes/README.md. Use when the owner asks to build a step.
+argument-hint: <step> [<step> ...]
+---
+
+# Build
+
+Build the named steps of a change on one branch, so the owner can review and merge them.
+
+## Before starting
+
+1. Read the change: `change.md`, `decisions.md`, and the step entries in `steps.md`. Read the program's "Reading the program" section if the change belongs to one.
+2. Check that every step in `depends-on` without `(part)` is `Landed`, and that no open decision in `decisions.md` touches the step. If either fails, stop and report what blocks it. A `(part)` dependency that has not landed means the step's description names a part that waits; leave that part out and say so.
+3. Cut the branch from `main`: `change/<step>-<slug>`, such as `change/0127.S3-pod-git-path`, or with the first step's identifier when several steps share it.
+4. Set each step to `Building` with `python3 scripts/changes/changes.py step <step> Building`, set the change to `In progress` if it is not, regenerate the board, and commit.
+
+## Building
+
+Work through the step's lanes in order:
+
+1. **Specification.** Edit `spec/` as the change states: the requirements it adds, modifies, or retires, and the definitions and values it sets. Follow `.claude/rules/spec-citations.md` and `.claude/rules/doc-style.md`. Commit.
+2. **Code and tests.** Implement against the specification as it now stands. Follow `.claude/rules/code-best-practices.md` and `.claude/rules/test-coverage.md`: tests for every tier the step reaches, with their annotations, covering the error, boundary, and concurrent paths. Iterate with `lenny-test --changed --max-tier <tier>` until it passes, and check coverage with `lenny-test coverage --diff main`. Commit in coherent pieces.
+3. **Documentation.** Edit each documentation page the change's "Documentation" section names for this step, and any page that names a setting, metric, error, or command the step adds, renames, or removes. Follow `.claude/rules/doc-content.md` and `.claude/rules/doc-style.md`. Commit.
+
+Run tier 0 and every tier the step reaches before finishing. A failure that also occurs on `main` is recorded in the digest as pre-existing rather than fixed here.
+
+## Stopping on a choice
+
+When a choice comes up that neither the specification nor `decisions.md` settles, do not pick one silently. Add it to "Open decisions" in `decisions.md` with its options and a recommendation, commit, and continue with the work the choice does not touch. Report every such decision at the end.
+
+## Finishing
+
+1. Write the digest at `digests/<step>.md` in the change folder (or `<first>-<last>.md` for shared steps). Until 0115 adds the generator, write it by hand: the steps and their commits, the requirements added, modified, or retired, the documentation pages edited and their readers, the tests and tiers run with their results, the pre-existing failures, and every default applied without asking.
+2. Run `python3 scripts/changes/changes.py check` and `board`, and commit.
+3. Report to the owner: the branch, the digest, the test results, and the open decisions raised. Leave the steps `Building`. When the owner merges the branch, set each step to `Landed`, and the change to `Implemented` when its last step lands.

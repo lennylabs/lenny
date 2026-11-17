@@ -151,22 +151,21 @@ A change moves through these activities. Their order is typical rather than fixe
 
 ## Helpers
 
-The helpers are skills and workflows that any of these activities can use, in any order. Most take their target and their conventions as arguments, so they also work on documents and code outside this folder. Those marked as bound to conventions read the layouts of this folder, `issues/`, and the specification.
+The helpers are skills under `.claude/skills/` that any of these activities can use, in any order. Most take their target and their conventions as arguments, so they also work on documents and code outside this folder. Those marked as bound to conventions read the layouts of this folder, `issues/`, and the specification. The logic of the bound helpers that needs no model is in `scripts/changes/changes.py`, which tier 0 tests.
 
-| Helper | What it does | Generic or bound |
-| :-- | :-- | :-- |
-| `review` | Reviews a target (documents, a diff, or a branch) with a few general-purpose reviewers, each given a short charter, then has a verifier confirm or refute each finding with evidence. It can fix confirmed findings that need no decision, and `--since <revision>` limits it to what changed. Default charters: a tree checker for claims about the code and the specification, an implementer for what is ambiguous or would fail, a reader who checks each edited documentation page against the specification and the code and against `doc-content.md`, and a security reviewer on request. The caller can pass other charters. | Generic |
-| `tidy` | Brings a document into a template given as an argument: section order, terms first, each statement made once, history moved out, and the documentation style applied. A verifier refuses the edit if any decision, requirement, or value changes meaning. | Generic |
-| `fact-check` | Checks each factual claim in a document against the tree and reports the claims it cannot confirm. | Generic |
-| `ask` | Turns the open questions in a document into multiple-choice questions with the recommendation first, and records each answer with its date in the section the caller names. | Generic |
-| `triage` | Classifies a list of items (issues, open items of a design, or review findings) into categories the caller gives, with a verifier for the claims that close an item. | Generic |
-| `build` | Carries out a change's steps on a branch: the specification first, then the code and the tests, iterating with `lenny-test --changed`, then the documentation pages the change names and any page the documentation check flags. It stops on a choice the change does not settle and records it as an open decision. | Bound |
-| `change` | Creates a change folder from the template, sets its status, and archives it. | Bound |
-| `issue` | Files an issue, links it to a change, and closes it. | Bound |
-| `digest` | Generates the digest of a step or a branch under `digests/`. | Bound |
-| `where` | Shows a requirement's text, its code sites, its tests, the documentation pages that describe its page, its open issues, and the last change that touched it, and answers follow-up questions about how the code meets it. | Bound |
-| `since` | Lists the requirements added, modified, and retired since a date or a commit, and the packages changed under each area. | Bound |
-| `board` | Checks every step entry and regenerates `BOARD.md`. | Bound |
+| Helper | What it does | Generic or bound | Available |
+| :-- | :-- | :-- | :-- |
+| `review` | Reviews a target (a change, documents, a diff, or a branch) with two subagents in parallel: a general reviewer, who reviews the target itself and cross-references it against the tree, the documentation, and the other changes of the same program, and a security reviewer. The session checks each finding's evidence before it fixes or reports it. `--since <revision>` limits it to what changed, `--fix` applies the findings that need no decision, and `--record <file>` appends a summary entry. One round. | Generic | Now |
+| `tidy` | Brings a document into a template given as an argument: section order, terms first, each statement made once, history moved out, and the documentation style applied. A verifier refuses the edit if any decision, requirement, value, or dependency changes meaning. | Generic | Now |
+| `fact-check` | Checks each factual claim in a document against the tree, and optionally against live external sources, and reports the claims it cannot confirm. | Generic | Now |
+| `ask` | Turns the open questions in a document into multiple-choice questions with the recommendation first, and records each answer with its date in the section the caller names. | Generic | Now |
+| `triage` | Classifies a list of items (issues, open items of a design, or review findings) into categories the caller gives, with a verifier for the claims that close an item. | Generic | When the first area's findings migrate |
+| `build` | Carries out a change's steps on a branch cut from `main`: the specification first, then the code and the tests, iterating with `lenny-test --changed`, then the documentation pages the change names and any page that names what the step changed. It writes the step's digest and stops on a choice the change does not settle, recording it as an open decision. | Bound | Now |
+| `change` | Creates a change folder from the template, sets a change's or a step's status, archives a change and rewrites the links into it, checks every step entry, and regenerates `BOARD.md`. | Bound | Now |
+| `issue` | Files an issue, links it to a change, and closes it. | Bound | When the first area's findings migrate |
+| `digest` | Generates the digest of a step or a branch under `digests/`. Until it exists, `build` writes the digest by hand. | Bound | With 0115 |
+| `where` | Shows a requirement's text, its code sites, its tests, the documentation pages that describe its page, its open issues, and the last change that touched it, and answers follow-up questions about how the code meets it. | Bound | With 0115 |
+| `since` | Lists the requirements added, modified, and retired since a date or a commit, and the packages changed under each area. | Bound | With 0115 |
 
 ## Gates
 

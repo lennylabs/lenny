@@ -8,10 +8,9 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
-| Ready | 1 |
+| Building | 4 |
 | Waiting on decisions | 40 |
-| Blocked | 135 |
+| Blocked | 133 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -21,9 +20,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
 | [0114.S1](0114-helpers/steps.md#0114s1-move-the-step-checker-board-generator-and-link-rewriter-into-scriptschanges-and-add-the-change-commands) | Move the step checker, board generator, and link rewriter into scripts/changes, and add the change commands | Building |  |
-| [0114.S3](0114-helpers/steps.md#0114s3-the-review-skill) | The review skill | Ready |  |
-| [0114.S2](0114-helpers/steps.md#0114s2-generic-skills) | Generic skills | Blocked | 0114.S1 |
-| [0114.S4](0114-helpers/steps.md#0114s4-the-build-skill) | The build skill | Blocked | 0114.S1 |
+| [0114.S2](0114-helpers/steps.md#0114s2-generic-skills) | Generic skills | Building |  |
+| [0114.S3](0114-helpers/steps.md#0114s3-the-review-skill) | The review skill | Building |  |
+| [0114.S4](0114-helpers/steps.md#0114s4-the-build-skill) | The build skill | Building |  |
 | [0114.S5](0114-helpers/steps.md#0114s5-retire-the-proposal-pipeline-and-rewrite-the-governing-rule) | Retire the proposal pipeline and rewrite the governing rule | Blocked | 0114.S2, 0114.S3, 0114.S4 |
 
 ### M1: Specification structure foundation
