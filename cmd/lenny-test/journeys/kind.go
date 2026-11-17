@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -50,7 +51,10 @@ func ExecRunner(ctx context.Context, log io.Writer, env []string, dir, name stri
 	var out, errOut strings.Builder
 	stdout, stderr := io.Writer(&out), io.Writer(&errOut)
 	if log != nil {
-		stdout, stderr = io.MultiWriter(&out, log), io.MultiWriter(&errOut, log)
+		// os/exec copies the two streams on separate goroutines, so the
+		// log they share is serialized.
+		shared := &lockedWriter{w: log}
+		stdout, stderr = io.MultiWriter(&out, shared), io.MultiWriter(&errOut, shared)
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -59,6 +63,18 @@ func ExecRunner(ctx context.Context, log io.Writer, env []string, dir, name stri
 		return out.String(), fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, clip(errOut.String()))
 	}
 	return out.String(), nil
+}
+
+// lockedWriter serializes writes to w.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
 
 // KindTarget creates the journey cluster with the Kind install script the
