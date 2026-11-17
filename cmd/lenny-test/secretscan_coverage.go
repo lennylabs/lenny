@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/h2non/filetype"
 	"github.com/mholt/archives"
 	"gopkg.in/yaml.v3"
 )
@@ -26,9 +25,10 @@ import (
 // gitleaks v8.30.1 leaves a file unread when its name identifies an
 // archive to github.com/mholt/archives, which matches substrings of the
 // name such as ".br" or ".s2" (the scan passes no --max-archive-depth,
-// because some upload fixtures are archive bombs), or when the first chunk
-// of its content has an `application` MIME type under
-// github.com/h2non/filetype. The check calls the same two libraries at the
+// because some upload fixtures are archive bombs), or stops reading it at
+// a chunk whose type github.com/h2non/filetype gives as an `application`
+// MIME type, which it checks while no newline has appeared
+// (secretscan_chunks.go). The check calls the same two libraries at the
 // versions gitleaks v8.30.1 pins, the same way, and adds git's own rules
 // for a binary file: a NUL byte in the first 8,000 bytes, or the `binary`
 // attribute set or the `diff` attribute unset. A symbolic link is not
@@ -43,10 +43,6 @@ import (
 //     a path the default allowlist skips. The scan renames such a file in
 //     its scan tree so gitleaks reads it (secretscan_tree.go), and the
 //     register records which files are scanned that way.
-//
-// gitleaks re-checks the MIME type of a later chunk while no newline has
-// appeared since the start of the file; the check reads the first chunk
-// alone, so a file whose first 100 kB hold no newline is a gap.
 
 // The two registers, relative to the repository root.
 const (
@@ -56,11 +52,6 @@ const (
 
 // binarySniffLen is how much of a file git reads to decide binariness.
 const binarySniffLen = 8000
-
-// gitleaksChunkLen is the size of the first chunk gitleaks v8.30.1 reads
-// from a file and passes to filetype.Match (defaultBufferSize in its
-// sources/file.go).
-const gitleaksChunkLen = 100 * 1000
 
 // The classes of committed file the binary register holds.
 const (
@@ -107,21 +98,6 @@ type trackedFileFacts struct {
 func gitleaksIdentifiesArchive(name string) bool {
 	format, _, err := archives.Identify(context.Background(), name, nil)
 	return err == nil && format != nil
-}
-
-// gitleaksMIMESkip reports whether gitleaks v8.30.1 skips content as
-// binary: filetype.Match on its first chunk returns a MIME type whose type
-// is `application`. It returns that MIME value.
-func gitleaksMIMESkip(content []byte) (string, bool) {
-	if len(content) == 0 {
-		return "", false
-	}
-	head := content[:min(len(content), gitleaksChunkLen)]
-	kind, err := filetype.Match(head)
-	if err != nil || kind.MIME.Type != "application" {
-		return "", false
-	}
-	return kind.MIME.Value, true
 }
 
 // gitleaksReads reports whether gitleaks v8.30.1 reads the content of a

@@ -203,26 +203,53 @@ func TestSecretScanFailsWithoutItsConfiguration(t *testing.T) {
 	}
 }
 
-// TestSecretScanRefusesAnAllowlistThatSkipsWholeFiles pins the
-// configuration check: an [[allowlists]] entry without targetRules, with
-// another condition, or without regexes, an [allowlist] table, and a
-// rule-level allowlist each fail, and the repository's configuration
-// passes.
-func TestSecretScanRefusesAnAllowlistThatSkipsWholeFiles(t *testing.T) {
-	good := "[[allowlists]]\ndescription = \"ok\"\ncondition = \"AND\"\ntargetRules = [\"generic-api-key\"]\npaths = ['''^a$''']\nregexes = ['''^b$''']\n"
-	if err := checkAllowlistsAreRuleScoped([]byte(good)); err != nil {
-		t.Fatalf("a rule-scoped entry was refused: %v", err)
+// TestSecretScanRefusesAConfigurationThatSkipsOrWeakens pins the
+// configuration check, which decodes the TOML and folds keys as gitleaks
+// does: an allowlist entry with empty or missing targetRules or regexes,
+// or another condition, fails however its header is written; an
+// `allowlist` key fails in any spelling and inline; [extend] must set
+// useDefault = true and nothing else; a [[rules]] entry may not reuse a
+// default rule's id; and the repository's configuration passes.
+func TestSecretScanRefusesAConfigurationThatSkipsOrWeakens(t *testing.T) {
+	const extend = "[extend]\nuseDefault = true\n"
+	const entry = "description = \"ok\"\ncondition = \"AND\"\ntargetRules = [\"generic-api-key\"]\npaths = ['''^a$''']\nregexes = ['''^b$''']\n"
+	good := extend + "[[allowlists]]\n" + entry
+	accepted := map[string]string{
+		"rule-scoped entry":     good,
+		"keys in another case":  extend + "[[AllowLists]]\n" + strings.Replace(strings.Replace(entry, "targetRules", "TARGETRULES", 1), `"AND"`, `"and"`, 1),
+		"custom rule":           good + "[[rules]]\nid = \"acme-token\"\nregex = '''acme_[a-z0-9]{32}'''\n",
+		"header with a comment": extend + "[[allowlists]] # note\n" + entry,
 	}
-	bad := map[string]string{
-		"no targetRules":       strings.Replace(good, "targetRules = [\"generic-api-key\"]\n", "", 1),
-		"condition OR":         strings.Replace(good, `condition = "AND"`, `condition = "OR"`, 1),
-		"no condition":         strings.Replace(good, "condition = \"AND\"\n", "", 1),
-		"no regexes":           strings.Replace(good, "regexes = ['''^b$''']\n", "", 1),
-		"global table":         "[allowlist]\npaths = ['''^a$''']\n",
-		"rule-level allowlist": "[[rules]]\nid = \"x\"\n[[rules.allowlists]]\npaths = ['''^a$''']\n",
+	for name, config := range accepted {
+		if err := checkSecretScanConfig([]byte(config)); err != nil {
+			t.Errorf("%s: refused: %v", name, err)
+		}
 	}
-	for name, config := range bad {
-		if err := checkAllowlistsAreRuleScoped([]byte(config)); err == nil {
+	refused := map[string]string{
+		"empty targetRules":           strings.Replace(good, `targetRules = ["generic-api-key"]`, "targetRules = []", 1),
+		"no targetRules":              strings.Replace(good, "targetRules = [\"generic-api-key\"]\n", "", 1),
+		"empty regexes":               strings.Replace(good, "regexes = ['''^b$''']", "regexes = []", 1),
+		"condition OR":                strings.Replace(good, `condition = "AND"`, `condition = "OR"`, 1),
+		"no condition":                strings.Replace(good, "condition = \"AND\"\n", "", 1),
+		"commented header, no rules":  extend + "[[allowlists]] # note\npaths = ['''^a$''']\nregexes = ['''^b$''']\ncondition = \"AND\"\n",
+		"spaced header, no rules":     extend + "[[ allowlists ]]\npaths = ['''^a$''']\nregexes = ['''^b$''']\ncondition = \"AND\"\n",
+		"inline allowlists":           extend + "allowlists = [{ paths = ['''^a$'''], regexes = ['''^b$'''], condition = \"AND\" }]\n",
+		"inline allowlist":            "allowlist = { paths = ['''^a$'''] }\n" + extend,
+		"allowlist table":             extend + "[allowlist]\npaths = ['''^a$''']\n",
+		"allowlist in another case":   extend + "[AllowList]\npaths = ['''^a$''']\n",
+		"key spelled two ways":        extend + "[[allowlists]]\n" + entry + "[[Allowlists]]\n" + entry,
+		"useDefault false":            strings.Replace(good, "useDefault = true", "useDefault = false", 1),
+		"no extend":                   "[[allowlists]]\n" + entry,
+		"disabledRules":               strings.Replace(good, "useDefault = true\n", "useDefault = true\ndisabledRules = [\"generic-api-key\"]\n", 1),
+		"extend path":                 strings.Replace(good, "useDefault = true\n", "useDefault = true\npath = \"other.toml\"\n", 1),
+		"extend url":                  strings.Replace(good, "useDefault = true\n", "useDefault = true\nurl = \"https://acme.com/x.toml\"\n", 1),
+		"default rule override":       good + "[[rules]]\nid = \"generic-api-key\"\nregex = '''never'''\n",
+		"unknown top-level key":       good + "allowlistz = 1\n",
+		"unknown allowlist entry key": strings.Replace(good, "description = ", "skip = true\ndescription = ", 1),
+		"not TOML":                    good + "[[allowlists\n",
+	}
+	for name, config := range refused {
+		if err := checkSecretScanConfig([]byte(config)); err == nil {
 			t.Errorf("%s: configuration accepted:\n%s", name, config)
 		}
 	}
@@ -230,7 +257,7 @@ func TestSecretScanRefusesAnAllowlistThatSkipsWholeFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkAllowlistsAreRuleScoped(config); err != nil {
+	if err := checkSecretScanConfig(config); err != nil {
 		t.Errorf("the repository's %s is refused: %v", secretScanConfig, err)
 	}
 }

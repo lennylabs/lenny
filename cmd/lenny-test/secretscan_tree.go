@@ -41,9 +41,9 @@ const (
 // two never meet.
 const renamedScanDir = ".lenny-secretscan-renamed"
 
-// maxRenamedNameLen bounds the length of a flattened name, below the
-// 255-byte file name limit of the common file systems. A longer name is
-// replaced by the SHA-256 of the path.
+// maxRenamedNameLen bounds the length of an escaped part of a renamed
+// path, below the 255-byte file name limit of the common file systems. A
+// longer part is replaced by its SHA-256.
 const maxRenamedNameLen = 240
 
 // treeBlob is one entry of the committed tree at HEAD.
@@ -219,15 +219,30 @@ func newScanTree(dir string) *scanTree {
 // place writes one committed regular file into the scan tree. A file
 // gitleaks would skip by its path, a root .gitleaksignore, and a file
 // whose path collides by case with one already placed go under
-// renamedScanDir with a flattened name gitleaks reads; every other file
-// keeps its repository path, so the path rules of the configuration match
-// it.
+// renamedScanDir, at the first of renamedScanCandidates that is free;
+// every other file keeps its repository path, so the path rules of the
+// configuration match it. A path that is not a plain relative path inside
+// the tree fails, so a crafted tree entry cannot write outside the scan
+// tree.
 func (t *scanTree) place(rel string, content []byte) error {
+	if !committedPathIsLocal(rel) {
+		return fmt.Errorf("secret scan: the committed path %q is not a plain relative path", rel)
+	}
 	target := rel
 	if _, _, skipped := skippedByDefaultAllowlist(rel); skipped || rel == ".gitleaksignore" || t.folded[strings.ToLower(rel)] {
-		var err error
-		if target, err = renamedScanPath(rel); err != nil {
+		candidates, err := renamedScanCandidates(rel)
+		if err != nil {
 			return err
+		}
+		target = ""
+		for _, c := range candidates {
+			if !t.folded[strings.ToLower(c)] {
+				target = c
+				break
+			}
+		}
+		if target == "" {
+			return fmt.Errorf("secret scan: no free renamed path for %s", rel)
 		}
 		t.renamed[target] = rel
 	}
@@ -242,6 +257,22 @@ func (t *scanTree) place(rel string, content []byte) error {
 	return nil
 }
 
+// committedPathIsLocal reports whether a committed path is a plain
+// relative path: local to the tree by filepath.IsLocal, with no empty,
+// ".", or ".." component. git refuses such paths in a checkout, but a
+// crafted tree object can still carry one.
+func committedPathIsLocal(rel string) bool {
+	if !filepath.IsLocal(filepath.FromSlash(rel)) {
+		return false
+	}
+	for _, c := range strings.Split(rel, "/") {
+		if c == "" || c == "." || c == ".." {
+			return false
+		}
+	}
+	return true
+}
+
 // repositoryPath maps a path in a gitleaks report back to the repository
 // path of the file it scanned.
 func (t *scanTree) repositoryPath(reported string) string {
@@ -252,24 +283,61 @@ func (t *scanTree) repositoryPath(reported string) string {
 	return reported
 }
 
-// renamedScanPath returns the scan-tree path of a file placed under
-// renamedScanDir: the repository path with "%", "/", and "." escaped as
-// "%25", "%2F", and "%2E", then ".scan", so the name holds one dot and no
-// directory. It refuses a name that a default allowlist path pattern
-// still matches or that gitleaks would identify as an archive, so a
-// renamed file is always one gitleaks reads by path and by name.
-func renamedScanPath(rel string) (string, error) {
-	name := strings.NewReplacer("%", "%25", "/", "%2F", ".", "%2E").Replace(rel) + ".scan"
-	if len(name) > maxRenamedNameLen {
-		sum := sha256.Sum256([]byte(rel))
-		name = "sha256-" + hex.EncodeToString(sum[:]) + ".scan"
+// renamedScanCandidates returns the scan-tree paths a renamed file may
+// take, in order of preference, each under renamedScanDir. "%", "/", and
+// "." are escaped as "%25", "%2F", and "%2E" in the parts that change:
+//
+//  1. The escaped directory, then the file's own name, so a default rule
+//     scoped to a file name or an extension still applies. A file skipped
+//     by a directory, such as one under node_modules, takes this form.
+//  2. The escaped path without its extension, then ".scan", then the
+//     extension, so a rule scoped to the extension still applies. A file
+//     skipped by its own name, such as go.sum or a lockfile, takes this
+//     form.
+//  3. The escaped path, then ".scan".
+//
+// A candidate is kept only when no default allowlist path pattern matches
+// it or a directory above it and gitleaks would not identify it as an
+// archive, so a renamed file is always one gitleaks reads by path and by
+// name. A part longer than maxRenamedNameLen is replaced by its SHA-256.
+func renamedScanCandidates(rel string) ([]string, error) {
+	esc := strings.NewReplacer("%", "%25", "/", "%2F", ".", "%2E")
+	short := func(part string) string {
+		if len(part) <= maxRenamedNameLen {
+			return part
+		}
+		sum := sha256.Sum256([]byte(part))
+		return "sha256-" + hex.EncodeToString(sum[:])
 	}
-	target := path.Join(renamedScanDir, name)
-	if _, pattern, skipped := skippedByDefaultAllowlist(target); skipped {
-		return "", fmt.Errorf("secret scan: the renamed path %s of %s matches the default allowlist pattern %s", target, rel, pattern)
+	dir, base := path.Split(rel)
+	ext := path.Ext(base)
+	if ext == base {
+		ext = ""
 	}
-	if gitleaksIdentifiesArchive(target) {
-		return "", fmt.Errorf("secret scan: gitleaks would identify the renamed path %s of %s as an archive", target, rel)
+	// The escaped directory never holds a "." and the root's stem is
+	// "%2E", so a stem directory never collides with a file of forms 2
+	// and 3, whose names all hold ".scan".
+	stem := esc.Replace(strings.TrimSuffix(dir, "/"))
+	if stem == "" {
+		stem = "%2E"
 	}
-	return target, nil
+	all := []string{
+		path.Join(renamedScanDir, short(stem), base),
+		path.Join(renamedScanDir, short(esc.Replace(strings.TrimSuffix(rel, ext))+".scan")+ext),
+		path.Join(renamedScanDir, short(esc.Replace(rel))+".scan"),
+	}
+	var out []string
+	for _, c := range all {
+		if len(path.Base(c)) > maxRenamedNameLen+len(".scan")+len(ext) {
+			continue
+		}
+		if _, _, skipped := skippedByDefaultAllowlist(c); skipped || gitleaksIdentifiesArchive(c) {
+			continue
+		}
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("secret scan: no renamed path for %s that gitleaks reads", rel)
+	}
+	return out, nil
 }

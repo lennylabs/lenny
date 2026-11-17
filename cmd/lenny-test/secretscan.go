@@ -3,8 +3,6 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -38,8 +36,9 @@ import (
 // Skipped paths. gitleaks skips any file or directory whose path matches
 // the global allowlist of its default configuration, which .gitleaks.toml
 // extends (secretscan_skipped.go). The check writes each committed file
-// under such a path into the scan tree under a flattened name no pattern
-// matches, so gitleaks reads it.
+// under such a path into the scan tree under a renamed path no pattern
+// matches, keeping its name or extension (renamedScanCandidates), so
+// gitleaks reads it and the rules scoped to a name or an extension apply.
 //
 // Allowlist. The allowlist is .gitleaks.toml at HEAD, which is reviewed
 // before it merges (.claude/rules/git-workflow.md). gitleaks skips a
@@ -47,7 +46,8 @@ import (
 // entry, whatever its condition, so the check refuses an entry that
 // names no targetRules: an entry with targetRules joins those rules'
 // allowlists, which gitleaks evaluates per finding with the entry's
-// condition (checkAllowlistsAreRuleScoped). The check passes
+// condition. The check validates the configuration before the scan
+// (secretscan_config.go). The check passes
 // --ignore-gitleaks-allow, so a `gitleaks:allow` comment in a file does
 // not silence a finding, and it points --gitleaks-ignore-path at an empty
 // directory and renames a root .gitleaksignore in the scan tree, so a
@@ -114,7 +114,7 @@ func runSecretScan(root string) (string, error) {
 	if scan.config == nil {
 		return "", fmt.Errorf("secret scan configuration: %s is not in the committed tree", secretScanConfig)
 	}
-	if err := checkAllowlistsAreRuleScoped(scan.config); err != nil {
+	if err := checkSecretScanConfig(scan.config); err != nil {
 		return "", err
 	}
 	bin, err := exec.LookPath("gitleaks")
@@ -148,6 +148,9 @@ func readCommittedScan(root, work string) (*committedScan, error) {
 	}
 	paths := make([]string, 0, len(blobs))
 	for _, b := range blobs {
+		if !committedPathIsLocal(b.path) {
+			return nil, fmt.Errorf("secret scan: the committed path %q is not a plain relative path", b.path)
+		}
 		if strings.HasPrefix(b.path, renamedScanDir+"/") {
 			return nil, fmt.Errorf("secret scan: the committed path %s is under %s, which the scan tree reserves", b.path, renamedScanDir)
 		}
@@ -258,64 +261,4 @@ func formatSecretScanFindings(findings []secretScanFinding) string {
 	}
 	b.WriteString("Remove a real credential from the tree and rotate it. A value that is a fake secret by design, such as a test fixture or a documentation example, gets a narrow entry in " + secretScanConfig + " with the reason, and that file is reviewed before it merges.")
 	return b.String()
-}
-
-// checkAllowlistsAreRuleScoped refuses a gitleaks configuration whose
-// allowlist would skip a whole file. gitleaks v8.30.1 applies the `paths`
-// of every global allowlist (the `[allowlist]` table and each
-// `[[allowlists]]` entry without targetRules) before it reads a file,
-// ignoring the entry's condition and regexes, so a file such an entry
-// names is never scanned. An `[[allowlists]]` entry with targetRules is
-// instead added to those rules and evaluated per finding with its
-// condition. The check therefore requires each `[[allowlists]]` entry to
-// name targetRules, set condition = "AND", and carry regexes, so it can
-// only allow an exact value at a named path, and refuses an `[allowlist]`
-// table and a rule-level allowlist.
-func checkAllowlistsAreRuleScoped(config []byte) error {
-	type block struct {
-		header string
-		line   int
-		keys   map[string]string
-	}
-	var blocks []*block
-	var cur *block
-	sc := bufio.NewScanner(bytes.NewReader(config))
-	sc.Buffer(make([]byte, 1<<16), 1<<20)
-	for n := 1; sc.Scan(); n++ {
-		line := strings.TrimSpace(sc.Text())
-		switch {
-		case strings.HasPrefix(line, "["):
-			cur = &block{header: line, line: n, keys: map[string]string{}}
-			blocks = append(blocks, cur)
-		case cur != nil && line != "" && !strings.HasPrefix(line, "#"):
-			if key, value, ok := strings.Cut(line, "="); ok {
-				cur.keys[strings.TrimSpace(key)] = strings.TrimSpace(value)
-			}
-		}
-	}
-	if err := sc.Err(); err != nil {
-		return fmt.Errorf("%s: %w", secretScanConfig, err)
-	}
-	var problems []string
-	for i, b := range blocks {
-		switch {
-		case b.header == "[allowlist]" || strings.HasPrefix(b.header, "[[rules.allowlist") || strings.HasPrefix(b.header, "[rules.allowlist"):
-			problems = append(problems, fmt.Sprintf("table %s (block %d): a global or rule-level allowlist table skips whole files; use an [[allowlists]] entry with targetRules", b.header, i+1))
-		case b.header == "[[allowlists]]":
-			desc := b.keys["description"]
-			if _, ok := b.keys["targetRules"]; !ok {
-				problems = append(problems, fmt.Sprintf("[[allowlists]] %s: no targetRules, so gitleaks skips every file its paths match", desc))
-			}
-			if b.keys["condition"] != `"AND"` {
-				problems = append(problems, fmt.Sprintf("[[allowlists]] %s: condition is not \"AND\"", desc))
-			}
-			if _, ok := b.keys["regexes"]; !ok {
-				problems = append(problems, fmt.Sprintf("[[allowlists]] %s: no regexes, so it allows every finding at its paths", desc))
-			}
-		}
-	}
-	if len(problems) > 0 {
-		return fmt.Errorf("%s: an allowlist entry would skip whole files or allow more than an exact value:\n  %s", secretScanConfig, strings.Join(problems, "\n  "))
-	}
-	return nil
 }

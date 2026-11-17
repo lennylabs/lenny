@@ -316,31 +316,146 @@ func TestSkippedByDefaultAllowlistMatchesFilesAndDirectories(t *testing.T) {
 	}
 }
 
-// TestRenamedScanPathIsReadByGitleaks pins the renaming of a file under a
-// skipped path: the renamed path keeps the repository path readable,
-// matches no default pattern, is not an archive name, and stays under the
-// file name limit for a long path.
-func TestRenamedScanPathIsReadByGitleaks(t *testing.T) {
-	for _, rel := range []string{"go.sum", ".gitleaks.toml", "web/node_modules/a/b.js", "Database.refactorlog", "vendor/ruby/x", strings.Repeat("deep/", 60) + "go.mod"} {
-		got, err := renamedScanPath(rel)
+// TestRenamedScanCandidatesAreReadByGitleaks pins the renaming of a file
+// under a skipped path: each candidate matches no default pattern and is
+// not an archive name; a file skipped by a directory keeps its own name,
+// a file skipped by its own name keeps its extension, and a long path
+// stays under the file name limit.
+func TestRenamedScanCandidatesAreReadByGitleaks(t *testing.T) {
+	for _, rel := range []string{"go.sum", ".gitleaks.toml", "web/node_modules/a/b.js", "Database.refactorlog", "vendor/ruby/x", "pnpm-lock.yaml", strings.Repeat("deep/", 60) + "go.mod"} {
+		got, err := renamedScanCandidates(rel)
 		if err != nil {
-			t.Errorf("renamedScanPath(%q): %v", rel, err)
+			t.Errorf("renamedScanCandidates(%q): %v", rel, err)
 			continue
 		}
-		if _, _, skipped := skippedByDefaultAllowlist(got); skipped || gitleaksIdentifiesArchive(got) || len(path.Base(got)) > maxRenamedNameLen {
-			t.Errorf("renamedScanPath(%q) = %q, which gitleaks would not read", rel, got)
+		for _, c := range got {
+			if _, _, skipped := skippedByDefaultAllowlist(c); skipped || gitleaksIdentifiesArchive(c) || len(path.Base(c)) > 255 {
+				t.Errorf("renamedScanCandidates(%q) holds %q, which gitleaks would not read", rel, c)
+			}
 		}
 	}
-	if got, _ := renamedScanPath("go.sum"); got != renamedScanDir+"/go%2Esum.scan" {
-		t.Errorf("renamedScanPath(go.sum) = %q", got)
+	first := map[string]string{
+		"go.sum":                  renamedScanDir + "/go.scan.sum",
+		".gitleaks.toml":          renamedScanDir + "/%2Egitleaks.scan.toml",
+		"web/pnpm-lock.yaml":      renamedScanDir + "/web%2Fpnpm-lock.scan.yaml",
+		"web/node_modules/a/b.js": renamedScanDir + "/web%2Fnode_modules%2Fa/b.js",
+		"Notes.txt":               renamedScanDir + "/%2E/Notes.txt",
 	}
+	for rel, want := range first {
+		if got, _ := renamedScanCandidates(rel); len(got) == 0 || got[0] != want {
+			t.Errorf("renamedScanCandidates(%q) = %q, want %q first", rel, got, want)
+		}
+	}
+}
+
+// k8sSecretYAML is a Kubernetes Secret manifest the default
+// kubernetes-secret-yaml rule reports in a file whose name ends in .yaml.
+// The value is assembled at run time, so this file never holds it whole.
+var k8sSecretYAML = "apiVersion: v1\nkind: Secret\nmetadata:\n  name: db\ndata:\n  password: " + "c2VjcmV0" + "dmFsdWUxMjM0NQ==\n"
+
+// TestSecretScanAppliesPathScopedRulesToRenamedFiles pins that a renamed
+// file keeps the name or extension a path-scoped default rule needs: a
+// Kubernetes Secret in a .yaml file under node_modules and in a lockfile
+// named .yaml are both reported by kubernetes-secret-yaml at their
+// repository paths.
+func TestSecretScanAppliesPathScopedRulesToRenamedFiles(t *testing.T) {
+	requireGitleaks(t)
+	root := newSecretScanFixtureRepo(t)
+	writeScopeFile(t, filepath.Join(root, "deploy/node_modules/chart/secret.yaml"), k8sSecretYAML)
+	writeScopeFile(t, filepath.Join(root, "web/pnpm-lock.yaml"), k8sSecretYAML)
+	writeCoverageRegisters(t, root, nil, []skippedPathEntry{
+		{Path: "deploy/node_modules/chart/secret.yaml", Reason: "vendored"},
+		{Path: "web/pnpm-lock.yaml", Reason: "lockfile"},
+	})
+	commitAll(t, root)
+	out, err := runSecretScan(root)
+	if err == nil {
+		t.Fatalf("secret scan passed:\n%s", out)
+	}
+	for _, want := range []string{"deploy/node_modules/chart/secret.yaml", "web/pnpm-lock.yaml"} {
+		found := false
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, want+":") && strings.Contains(line, "kubernetes-secret-yaml") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("no kubernetes-secret-yaml finding at %s:\n%s", want, out)
+		}
+	}
+}
+
+// TestSecretScanRefusesAPathOutsideTheTree pins the path check: a crafted
+// tree entry named "..", or a directory named ".." holding a file, fails
+// the check before anything is written, so it cannot place a file outside
+// the scan tree.
+func TestSecretScanRefusesAPathOutsideTheTree(t *testing.T) {
+	for _, name := range []string{"..", "nested"} {
+		t.Run(name, func(t *testing.T) {
+			root := newSecretScanFixtureRepo(t)
+			blob := gitOut(t, root, "", "hash-object", "-w", "--stdin")
+			listing := gitOut(t, root, "", "ls-tree", "HEAD")
+			entry := "100644 blob " + blob + "\t..\n"
+			if name == "nested" {
+				inner := gitOut(t, root, "100644 blob "+blob+"\tevil\n", "mktree")
+				entry = "040000 tree " + inner + "\t..\n"
+			}
+			tree := gitOut(t, root, listing+"\n"+entry, "mktree")
+			commit := gitOut(t, root, "", "commit-tree", tree, "-p", "HEAD", "-m", "crafted")
+			gitIn(t, root, "update-ref", "HEAD", commit)
+			out, err := runSecretScan(root)
+			if err == nil || !strings.Contains(err.Error(), "not a plain relative path") {
+				t.Fatalf("scan of a tree with a .. entry = %v, want a path refusal:\n%s", err, out)
+			}
+		})
+	}
+	for _, rel := range []string{"..", "../x", "a/../b", "./a", "a//b", "/abs", "a/"} {
+		if committedPathIsLocal(rel) {
+			t.Errorf("committedPathIsLocal(%q) = true", rel)
+		}
+	}
+	if !committedPathIsLocal("a/b.txt") {
+		t.Error("committedPathIsLocal(a/b.txt) = false")
+	}
+}
+
+// gitOut runs git under root with stdin and returns its trimmed output.
+func gitOut(t *testing.T, root, stdin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "user.name=alice", "-c", "user.email=alice@acme.com"}, args...)...)
+	cmd.Dir = root
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestSecretScanAllowsOnlyTheListedElidedTokens pins the documentation
+// entry of .gitleaks.toml: an elided example token it lists passes, and
+// another value with "..." in it at the same path fails.
+func TestSecretScanAllowsOnlyTheListedElidedTokens(t *testing.T) {
+	requireGitleaks(t)
+	root := newSecretScanFixtureRepo(t)
+	// The key name and the values are assembled at run time, so this file,
+	// which the scan of the tree reads, holds no line the rule matches.
+	page := func(token string) string {
+		return "```json\n{\n  \"upload" + "Token\": \"" + token + "\"\n}\n```\n"
+	}
+	commitFile(t, root, "docs/api/mcp.md", page("sess_"+"01J5K9....1712345678.a1b2c3..."))
+	requireScanPasses(t, root)
+	commitFile(t, root, "docs/api/mcp.md", page("sess_"+"q7ZkM2xWr4TnV6pB.1712345678.c9d8e7f6a5b4..."))
+	requireScanFails(t, root, "docs/api/mcp.md:3", "generic-api-key")
 }
 
 // TestSecretScanClassifiesFilesAsGitleaksReadsThem runs the pinned
 // gitleaks over sample files, each holding a planted key, and requires the
 // check's rule for which files gitleaks reads to agree with which files
-// gitleaks reports. The samples cover archive names matched by substring
-// and content whose first bytes carry an `application` file signature.
+// gitleaks reports. The samples cover archive names matched by substring,
+// content whose first bytes carry an `application` file signature, a
+// signature in a later chunk before any newline, and a long line with
+// none.
 func TestSecretScanClassifiesFilesAsGitleaksReadsThem(t *testing.T) {
 	requireGitleaks(t)
 	samples := map[string]string{
@@ -354,6 +469,14 @@ func TestSecretScanClassifiesFilesAsGitleaksReadsThem(t *testing.T) {
 		"ordinary.txt":    "ordinary text\n",
 		"with-nul.txt":    "header\x00\n",
 		"kafka.conf.yaml": "brokers: 1\n",
+		// No newline in the first chunk or its read-ahead, so gitleaks
+		// checks the next chunk's type, finds a PE header, and stops.
+		"late-mz.txt": strings.Repeat("A", 125000) + "MZ ",
+		// The same, after a newline, so gitleaks checks no later chunk.
+		"late-mz-after-newline.txt": "x\n" + strings.Repeat("A", 125000) + "MZ ",
+		// A long single-line JSON file with no file signature, read in
+		// full, as changes/0152-user-git-identity/evidence/gh-history/out/mutations2.json is.
+		"long-line.json": "{\"items\":[" + strings.Repeat("{\"name\":\"value\"},", 20000) + "{}]} ",
 	}
 	dir := t.TempDir()
 	for name, head := range samples {
@@ -391,7 +514,7 @@ func TestSecretScanClassifiesFilesAsGitleaksReadsThem(t *testing.T) {
 			t.Errorf("%s: the check says gitleaks reads it = %v (%s), gitleaks reported a finding = %v", name, reads, why, reported[name])
 		}
 	}
-	if !reported["ordinary.txt"] || reported["x.tar.md"] {
+	if !reported["ordinary.txt"] || reported["x.tar.md"] || reported["late-mz.txt"] || !reported["long-line.json"] {
 		t.Errorf("the samples did not exercise both outcomes: reported %v", reported)
 	}
 }

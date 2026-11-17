@@ -43,6 +43,7 @@ require (
 	github.com/open-feature/go-sdk-contrib/providers/launchdarkly v0.1.6
 	github.com/open-feature/go-sdk-contrib/providers/statsig v0.0.4
 	github.com/open-feature/go-sdk-contrib/providers/unleash v0.1.1-alpha
+	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/prometheus v0.302.1

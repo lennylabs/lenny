@@ -33,11 +33,13 @@ import (
 const gitleaksDefaultsVersion = "8.30.1"
 
 // gitleaksClassifierModules names the modules gitleaks v8.30.1 uses to
-// decide which files it does not read, with the versions its go.mod pins.
-// The check imports the same versions (secretscan_coverage.go).
+// decide which files it does not read and to parse its configuration,
+// with the versions its go.mod pins. The check imports the same versions
+// (secretscan_coverage.go, secretscan_chunks.go, secretscan_config.go).
 var gitleaksClassifierModules = map[string]string{
-	"github.com/mholt/archives": "v0.1.2",
-	"github.com/h2non/filetype": "v1.1.3",
+	"github.com/mholt/archives":       "v0.1.2",
+	"github.com/h2non/filetype":       "v1.1.3",
+	"github.com/pelletier/go-toml/v2": "v2.2.3",
 }
 
 // gitleaksDefaultSkippedPaths lists the `paths` of the default global

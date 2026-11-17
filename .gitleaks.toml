@@ -31,9 +31,12 @@
 # those rules, with condition = "AND": a value is allowed only for those
 # rules, only at the paths the entry names, and only when it matches the
 # entry's regular expression, which is the exact value or a pattern that
-# admits no other kind of value. The check refuses an entry without
-# targetRules, condition = "AND", or regexes. A real credential never gets
-# an entry: it is removed from the tree and rotated.
+# admits no other kind of value. The check decodes this file as gitleaks
+# does and refuses an entry without targetRules, regexes, or condition =
+# "AND", an `allowlist` key, an [extend] table other than
+# useDefault = true, and a [[rules]] entry that reuses a default rule's id
+# (cmd/lenny-test/secretscan_config.go). A real credential never gets an
+# entry: it is removed from the tree and rotated.
 #
 # The entries were built by running the scan on the tree on 2026-11-17
 # (change 0158, step S1) and reviewing every finding. The comment above
@@ -258,12 +261,17 @@ paths = [
 regexes = ['''^anthropic-key-\d$''']
 
 # Example upload tokens and client secrets in the documentation. Each
-# upload token is elided with "..." and so is not a usable value.
+# upload token is elided with "..." and so is not a usable value; the
+# regex lists each elided example exactly.
 # Findings (generic-api-key):
 #   docs/client-guide/session-lifecycle.md:128,151,185,407,502,540
+#     sess_abc123, sess_def456, sess_ghi789, and sess_jkl012, each
+#     followed by .1712345678.a1b2c3d4e5f6...
 #   docs/client-guide/webhooks.md:42
+#     sess_abc123.1712345678.a1b2c3d4e5f6...
 #   docs/tutorials/session-derive-replay.md:82,132
-#   docs/api/mcp.md:370
+#     sess_02....a3f1c7e2d9b8 and sess_03....b4g2d8f3e0c9
+#   docs/api/mcp.md:370   sess_01J5K9....1712345678.a1b2c3...
 #   docs/tutorials/using-connectors.md:42   secret_xyz789
 [[allowlists]]
 description = "Elided upload tokens and an example client secret in the documentation"
@@ -274,7 +282,7 @@ paths = [
   '''^docs/tutorials/(session-derive-replay|using-connectors)\.md$''',
   '''^docs/api/mcp\.md$''',
 ]
-regexes = ['''^(sess_[A-Za-z0-9.]*\.\.\.[A-Za-z0-9.]*|secret_xyz789)$''']
+regexes = ['''^(sess_abc123\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_def456\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_ghi789\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_jkl012\.1712345678\.a1b2c3d4e5f6\.\.\.|sess_02\.\.\.\.a3f1c7e2d9b8|sess_03\.\.\.\.b4g2d8f3e0c9|sess_01J5K9\.\.\.\.1712345678\.a1b2c3\.\.\.|secret_xyz789)$''']
 
 # Identifiers a rule mistakes for keys: a column name and test names.
 # Findings (generic-api-key):
@@ -324,7 +332,7 @@ regexes = ['''^(p50_duration_ms|TestChildMintingProducesA2ADelegation|T4KmsKeyUn
 description = "Module checksums in go.sum next to module paths a rule reads as key names"
 condition = "AND"
 targetRules = ["generic-api-key"]
-paths = ['''^\.lenny-secretscan-renamed/go%2Esum\.scan$''']
+paths = ['''^\.lenny-secretscan-renamed/go\.scan\.sum$''']
 regexes = [
   '''^keo8NaayQZ6wimpNSmW5OPc283g65QNIiLpZnkHRbnc=$''',
   '''^GjE3NoyFXo7ipRPy26PMmg4oRX1Ra8fswH45r16rWV0=$''',
@@ -351,5 +359,5 @@ regexes = [
 description = "Fake values this configuration quotes in its own comments"
 condition = "AND"
 targetRules = ["generic-api-key", "github-app-token"]
-paths = ['''^\.lenny-secretscan-renamed/%2Egitleaks%2Etoml\.scan$''']
+paths = ['''^\.lenny-secretscan-renamed/%2Egitleaks\.scan\.toml$''']
 regexes = ['''^(Z2l0bGFiLWxmczpMRlNUT0tFTi|ghu_invalidsmoketesttoken000000000000000)$''']
