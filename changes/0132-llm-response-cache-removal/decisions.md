@@ -1,5 +1,9 @@
 # Decisions: 0132 LLM response cache removal
 
+## Open decisions
+
+1. **Error detail format for a removed field.** D6 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions) refuses a write that names a removed field with `400 VALIDATION_ERROR` whose `details.field` names it, and 0132's O3 and tests and 0133's D9 repeat that wording. §15.1's `VALIDATION_ERROR` example and `docs/reference/error-catalog.md` put the field in `details.fields[].field` instead. Options: (a) state the refusal as `details.fields[].field` in 0119's D6, 0132's O3 and tier 1 and tier 3 tests, and 0133's D9, matching §15.1; (b) keep `details.field` and change §15.1's format for this refusal. Recommendation: (a), because every other validation error already uses the array. Raised on 2026-11-16 by the review of 0132.
+
 ## Decisions
 
 Settled by the owner on 2026-11-09:
