@@ -104,7 +104,7 @@ func TestBindSDKWarmConfiguresWhenNoBlockingPath_spec_6_1(t *testing.T) {
 	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -142,7 +142,7 @@ func TestBindSDKWarmDemotesOnBlockingPath_spec_6_1(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	var demotedPools []string
 	var teardownSeen bool
@@ -192,7 +192,7 @@ func TestBindSDKWarmDemotionNotSupported_spec_6_1(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -232,7 +232,7 @@ func TestBindSDKWarmDemotionFailureFailsTheBind_spec_6_1(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -265,7 +265,7 @@ func TestBindSDKWarmEmptyBlockingPathsNeverDemotes_spec_6_1(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{

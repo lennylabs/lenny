@@ -13,16 +13,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 )
 
-// nonceOnlyIdleSandbox builds an idle member Sandbox carrying the §4.5
-// nonce-only signals the Sandbox reconciler resolves for a rendered pool:
-// the Sandbox.spec.requireSoPeercred: false carrier and the
+// nonceOnlyIdleAgentPod builds an idle member AgentPod carrying the §4.5
+// nonce-only signals the AgentPod reconciler resolves for a rendered pool:
+// the AgentPod.spec.requireSoPeercred: false carrier and the
 // SOPeercredDisabled=True status condition. The pool-level trigger reads
 // both back without resolving the Runtime CR.
-func nonceOnlyIdleSandbox(ns, name string) *lennyv1.Sandbox {
-	sb := idleSandbox(ns, name)
+func nonceOnlyIdleAgentPod(ns, name string) *lennyv1.AgentPod {
+	sb := idleAgentPod(ns, name)
 	sb.Spec.RequireSoPeercred = ptr.To(false)
 	sb.Status.Conditions = []metav1.Condition{{
-		Type:               lennyv1.SandboxConditionSOPeercredDisabled,
+		Type:               lennyv1.AgentPodConditionSOPeercredDisabled,
 		Status:             metav1.ConditionTrue,
 		Reason:             "RenderedNonceOnly",
 		Message:            "Pod rendered with --require-so-peercred=false.",
@@ -31,9 +31,9 @@ func nonceOnlyIdleSandbox(ns, name string) *lennyv1.Sandbox {
 	return sb
 }
 
-func securityDegradedCondition(t *testing.T, tm lennyv1.SandboxTemplate) (metav1.Condition, bool) {
+func securityDegradedCondition(t *testing.T, tm lennyv1.PodSet) (metav1.Condition, bool) {
 	t.Helper()
-	cond := apimeta.FindStatusCondition(tm.Status.Conditions, lennyv1.SandboxTemplateConditionSecurityDegradedMode)
+	cond := apimeta.FindStatusCondition(tm.Status.Conditions, lennyv1.PodSetConditionSecurityDegradedMode)
 	if cond == nil {
 		return metav1.Condition{}, false
 	}
@@ -41,11 +41,11 @@ func securityDegradedCondition(t *testing.T, tm lennyv1.SandboxTemplate) (metav1
 }
 
 // spec: §4.5 (pool-level SecurityDegradedMode surfacing from member
-// Sandboxes), §4.7 (controller-mediated condition writer + alert gauge),
+// AgentPods), §4.7 (controller-mediated condition writer + alert gauge),
 // §5.3 (acknowledgment gate), §16.5 (alert-support gauge).
 // diagnosis: a failure means the WarmPoolController does not surface the
 // nonce-only degradation an acknowledged sidecar pool runs in. Either the
-// SecurityDegradedMode=True condition is missing from the SandboxTemplate
+// SecurityDegradedMode=True condition is missing from the PodSet
 // status or the lenny_pool_security_degraded gauge does not reflect it, so
 // the bundled alert has no live series and operators are blind to a pool
 // whose adapter-agent SO_PEERCRED enforcement is disabled.
@@ -53,7 +53,7 @@ func TestSecurityDegradedAcknowledgedNonceOnlyPool(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	c := newClient(t, s, template(ns), pool(ns, 2, 10),
-		nonceOnlyIdleSandbox(ns, "sb-a"), nonceOnlyIdleSandbox(ns, "sb-b"))
+		nonceOnlyIdleAgentPod(ns, "sb-a"), nonceOnlyIdleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetSecurityDegradedForTest(testPool) })
@@ -76,7 +76,7 @@ func TestSecurityDegradedAcknowledgedNonceOnlyPool(t *testing.T) {
 // §16.5.
 // diagnosis: a failure means the WarmPoolController marks a pool degraded
 // that runs no nonce-only pods. An unacknowledged pool renders no
-// --require-so-peercred=false flag, so no member Sandbox carries the
+// --require-so-peercred=false flag, so no member AgentPod carries the
 // carrier or the SOPeercredDisabled condition; a spurious
 // SecurityDegradedMode=True would false-alarm operators and contradict the
 // §5.3 acknowledgment gate.
@@ -87,7 +87,7 @@ func TestSecurityDegradedUnacknowledgedPoolNoCondition(t *testing.T) {
 	// (and a CR-applied runtime flip without a pool acknowledgment) leaves
 	// the carrier nil and writes no SOPeercredDisabled condition.
 	c := newClient(t, s, template(ns), pool(ns, 2, 10),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"))
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetSecurityDegradedForTest(testPool) })
@@ -108,17 +108,17 @@ func TestSecurityDegradedUnacknowledgedPoolNoCondition(t *testing.T) {
 // §4.7, §16.5.
 // diagnosis: a failure means the WarmPoolController surfaces nonce-only
 // degradation for a pool whose embedded runtime can never render the flag.
-// The Sandbox reconciler's deployment-model qualifier keeps the carrier off
-// embedded-runtime Sandboxes, so the member-Sandbox trigger reads no signal
+// The AgentPod reconciler's deployment-model qualifier keeps the carrier off
+// embedded-runtime AgentPods, so the member-AgentPod trigger reads no signal
 // and the pool must report a clean posture with gauge 0.
 func TestSecurityDegradedEmbeddedRuntimePoolNoCondition(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	// An embedded runtime never sets the carrier or condition even when the
-	// pool is acknowledged, so its member Sandboxes look exactly like an
+	// pool is acknowledged, so its member AgentPods look exactly like an
 	// enforcing pool's. The pool runs zero nonce-only pods.
 	c := newClient(t, s, template(ns), pool(ns, 2, 10),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"))
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetSecurityDegradedForTest(testPool) })
@@ -149,7 +149,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 	// post-revert reconcile would create. The latch must hold while the
 	// pre-revert pod survives.
 	c := newClient(t, s, template(ns), pool(ns, 1, 10),
-		nonceOnlyIdleSandbox(ns, "sb-nonce"), idleSandbox(ns, "sb-fresh"))
+		nonceOnlyIdleAgentPod(ns, "sb-nonce"), idleAgentPod(ns, "sb-fresh"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetSecurityDegradedForTest(testPool) })
@@ -166,7 +166,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 
 	// The pre-revert nonce-only pod is replaced (deleted); only the
 	// enforcing pod remains. The next reconcile transitions to False.
-	if err := c.Delete(testContext(), &lennyv1.Sandbox{
+	if err := c.Delete(testContext(), &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "sb-nonce", Namespace: ns},
 	}); err != nil {
 		t.Fatalf("delete nonce-only sandbox: %v", err)
@@ -175,7 +175,7 @@ func TestSecurityDegradedRevertLatchTransitionsToFalse(t *testing.T) {
 	reconcile(t, c, s)
 
 	// The explicit False is written only because the pool was previously
-	// True: the live SandboxTemplate carried SecurityDegradedMode, so the
+	// True: the live PodSet carried SecurityDegradedMode, so the
 	// recovery transition fires. A pool that was never degraded would get no
 	// condition at all (TestSecurityDegradedUnacknowledgedPoolNoCondition).
 	cond, ok = securityDegradedCondition(t, getTemplate(t, c))
@@ -201,7 +201,7 @@ func TestSecurityDegradedGaugePublishedEveryReconcile(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	c := newClient(t, s, template(ns), pool(ns, 2, 10),
-		nonceOnlyIdleSandbox(ns, "sb-a"), nonceOnlyIdleSandbox(ns, "sb-b"))
+		nonceOnlyIdleAgentPod(ns, "sb-a"), nonceOnlyIdleAgentPod(ns, "sb-b"))
 
 	warmpool.ForgetSecurityDegradedForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetSecurityDegradedForTest(testPool) })

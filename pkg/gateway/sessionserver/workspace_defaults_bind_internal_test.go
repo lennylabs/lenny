@@ -71,7 +71,7 @@ type wdOpts struct {
 	chain       *interceptor.Chain
 	// claims wires a pod binder over a fake cluster holding one warm pool
 	// per runtime, so a create route that reaches the §7.1 claim writes a
-	// SandboxClaim the test can count.
+	// PodClaim the test can count.
 	claims bool
 }
 
@@ -119,17 +119,17 @@ func wdCluster(t *testing.T, rts []runtimestore.Runtime, writes *kubeWrites) cli
 		pool, tmpl := rt.Name+"-pool", rt.Name+"-tmpl"
 		objs = append(
 			objs,
-			&lennyv1.SandboxWarmPool{
+			&lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: lookupNS},
-				Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+				Spec:       lennyv1.PodSetSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
 			},
-			&lennyv1.SandboxTemplate{
+			&lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: lookupNS},
-				Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: rt.Name, IsolationProfile: string(isolation.ProfileSandboxed)},
+				Spec:       lennyv1.PodSetSpec{RuntimeRef: rt.Name, IsolationProfile: string(isolation.ProfileSandboxed)},
 			},
-			&lennyv1.Sandbox{
+			&lennyv1.AgentPod{
 				ObjectMeta: metav1.ObjectMeta{Name: rt.Name + "-sbx", Namespace: lookupNS, Labels: map[string]string{warmpool.LabelPool: pool}},
-				Status:     lennyv1.SandboxStatus{Phase: "idle", PodIP: "10.244.0.9"},
+				Status:     lennyv1.AgentPodStatus{Phase: "idle", PodIP: "10.244.0.9"},
 			},
 			&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: rt.Name + "-sbx", Namespace: lookupNS}},
 		)
@@ -156,10 +156,10 @@ func wdCluster(t *testing.T, rts []runtimestore.Runtime, writes *kubeWrites) cli
 		}).Build()
 }
 
-// claimCount returns the number of SandboxClaims in the fixture's cluster.
+// claimCount returns the number of PodClaims in the fixture's cluster.
 func (f *wdFixture) claimCount(t *testing.T) int {
 	t.Helper()
-	var claims lennyv1.SandboxClaimList
+	var claims lennyv1.PodClaimList
 	if err := f.cluster.List(context.Background(), &claims, client.InNamespace(lookupNS)); err != nil {
 		t.Fatalf("list claims: %v", err)
 	}
@@ -517,7 +517,7 @@ func (f *wdFixture) assertUnbound(t *testing.T, route, id string) {
 // runtime's base fails every binding request with 503 SERVICE_UNAVAILABLE
 // and Retry-After, and a derived runtime whose base is missing fails it with
 // 500 INTERNAL_ERROR. Each leaves no session state behind, and a
-// rejected create route takes no SandboxClaim.
+// rejected create route takes no PodClaim.
 //
 // spec: 14.1 (WorkspacePlan Schema Versioning), 5.1 (Runtime)
 func TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1(t *testing.T) {
@@ -588,11 +588,11 @@ func TestDefaultsResolveFailureLeavesStateUnchanged_spec_14_1(t *testing.T) {
 }
 
 // assertNoClaim checks that a rejected create route reached no §7.1 pod
-// claim: the cluster holds no SandboxClaim and took no write.
+// claim: the cluster holds no PodClaim and took no write.
 func (f *wdFixture) assertNoClaim(t *testing.T, route string) {
 	t.Helper()
 	if n := f.claimCount(t); n != 0 {
-		t.Errorf("%s left %d SandboxClaims after the rejection, want 0", route, n)
+		t.Errorf("%s left %d PodClaims after the rejection, want 0", route, n)
 	}
 	if n := f.writes.nonDelete(); n != 0 {
 		t.Errorf("%s wrote to the cluster after the rejection: %v", route, f.writes.counts)

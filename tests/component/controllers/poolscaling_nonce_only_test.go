@@ -23,8 +23,8 @@ import (
 // spec: §4.7, §5.3
 // diagnosis: the PoolScalingController (the §4.6.3 Postgres→CRD channel)
 // failed to carry the §5.3 acknowledgeNonceOnlyAuth opt-in onto
-// SandboxTemplate.spec through the real CRD schema. Either the
-// SandboxTemplate CRD manifest in charts/lenny/crds omits the
+// PodSet.spec through the real CRD schema. Either the
+// PodSet CRD manifest in charts/lenny/crds omits the
 // acknowledgeNonceOnlyAuth field (so the API server drops it on write),
 // the PoolStoreSource does not copy the store-row flag into the rendered
 // spec, or the controller's full-spec overwrite clears it. Without the
@@ -36,7 +36,7 @@ import (
 // PoolScalingController Sync from a PoolStoreSource against an envtest API
 // server with the lenny.dev CRDs installed. Unlike the fake-client unit
 // test in pkg/controller/poolscaling, this asserts the field survives a
-// round-trip through the real SandboxTemplate CRD schema and the status
+// round-trip through the real PodSet CRD schema and the status
 // subresource configuration.
 func TestPoolScalingControllerMirrorsNonceOnlyAck(t *testing.T) {
 	env := sharedEnv.Start(t)
@@ -89,7 +89,7 @@ func TestPoolScalingControllerMirrorsNonceOnlyAck(t *testing.T) {
 
 	templateAck := func(name string) bool {
 		t.Helper()
-		var tmpl lennyv1.SandboxTemplate
+		var tmpl lennyv1.PodSet
 		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &tmpl); err != nil {
 			t.Fatalf("get template %q: %v", name, err)
 		}
@@ -97,9 +97,9 @@ func TestPoolScalingControllerMirrorsNonceOnlyAck(t *testing.T) {
 	}
 
 	if !templateAck("nonce-ack") {
-		t.Error("nonce-ack SandboxTemplate.spec.acknowledgeNonceOnlyAuth = false after Sync, want true")
+		t.Error("nonce-ack PodSet.spec.acknowledgeNonceOnlyAuth = false after Sync, want true")
 	}
 	if templateAck("no-ack") {
-		t.Error("no-ack SandboxTemplate.spec.acknowledgeNonceOnlyAuth = true after Sync, want false")
+		t.Error("no-ack PodSet.spec.acknowledgeNonceOnlyAuth = true after Sync, want false")
 	}
 }

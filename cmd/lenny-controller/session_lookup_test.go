@@ -19,7 +19,7 @@ import (
 // and a recovery row whose pod_assignment the failure funnel cleared does not
 // keep its earlier pod active.
 //
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Post-recovery
+// spec: §4.6.1 (Orphaned PodClaim detection), §5.2 (Post-recovery
 // rehydration atomicity)
 func TestPodHasActiveSessionUsesSlotHolders_spec_4_6_1(t *testing.T) {
 	ctx := context.Background()
@@ -49,7 +49,7 @@ func TestPodHasActiveSessionUsesSlotHolders_spec_4_6_1(t *testing.T) {
 // release is recorded or claimOrphanTimeout passes. The store the controller
 // builds carries the orphan timeout the GC loop applies as its cap.
 //
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window)
+// spec: §4.6.1 (Orphaned PodClaim detection), §7.1 (Post-terminal window)
 func TestSessionLookupHoldsThePostTerminalWindow_spec_4_6_1(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
@@ -77,7 +77,7 @@ func TestSessionLookupHoldsThePostTerminalWindow_spec_4_6_1(t *testing.T) {
 // timeout the GC loop applies, the flag value when positive and the §4.6.1
 // default otherwise.
 //
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window)
+// spec: §4.6.1 (Orphaned PodClaim detection), §7.1 (Post-terminal window)
 func TestNewSessionLookupCapsTheWindowAtTheOrphanTimeout_spec_4_6_1(t *testing.T) {
 	for flagValue, want := range map[time.Duration]time.Duration{
 		20 * time.Minute: 20 * time.Minute,

@@ -95,7 +95,7 @@ func TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3(t *testing.T
 
 // The §17.4 echo warm pool is no longer seeded into the bootstrap payload:
 // the no-Postgres development profile registers no PoolScalingController to
-// materialize a poolstore row, so the echo SandboxTemplate/SandboxWarmPool
+// materialize a poolstore row, so the echo PodSet
 // pair is applied directly (echoPoolObjects). The §5.2 single-pod / §13.2
 // cluster-default field mapping the seed used to carry is now asserted on
 // echoPoolObjects in agentplacement_test.go (TestEchoPoolObjects*).
@@ -103,7 +103,7 @@ func TestInstallReferenceRuntimesWarnsOnPlaceholderDigest_spec_26_3(t *testing.T
 // TestBuildBootstrapSeedCarriesNoPool_spec_4_6_2 asserts the §17.4 Embedded
 // Mode bootstrap seed carries no pool. The PoolScalingController that would
 // materialize a seeded poolstore row is unregistered under the no-Postgres
-// development profile, so a seeded pool would never become a SandboxWarmPool
+// development profile, so a seeded pool would never become a PodSet
 // CRD; the echo pool is applied directly instead. The seed therefore declares
 // no pool, only the runtime registry records. spec: §4.6.2 (the
 // PoolScalingController is the Postgres→CRD channel), §17.4 (no-Postgres

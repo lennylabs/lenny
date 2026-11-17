@@ -253,7 +253,7 @@ func TestChartControllerArgsParseAgainstTheirBinaries(t *testing.T) {
 	}
 }
 
-// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle), "Orphaned SandboxClaim
+// spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle), "Orphaned PodClaim
 // detection")
 //
 // TestChartRendersTheOrphanClaimGCInputs pins the inputs lenny-controller

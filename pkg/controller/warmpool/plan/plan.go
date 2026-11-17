@@ -2,8 +2,8 @@
 
 // Package plan holds the pure warm-pool reconcile planner. Given a
 // pool's minWarm and maxWarm bounds and the observed phase of every
-// Sandbox in the pool, Compute decides how many Sandboxes to create
-// and which idle Sandboxes to drain so the pool converges on its
+// AgentPod in the pool, Compute decides how many AgentPods to create
+// and which idle AgentPods to drain so the pool converges on its
 // target warm count.
 //
 // This is the decision core of the §4.6.1 WarmPoolController. It is
@@ -40,7 +40,7 @@
 //     drains a pod whose claim carries live sessions or sits in the
 //     reserved hold window.
 //   - A pinned idle pod (§5.2 "Pinned idle inventory": an idle pod whose
-//     tenant pin is set and that no SandboxClaim holds) is claimable only
+//     tenant pin is set and that no PodClaim holds) is claimable only
 //     by its tenant, so it is not inventory for minWarm. It is counted in
 //     neither WarmCount nor ReadyCount, the create and excess-drain rules
 //     run over unpinned pods only, and it is surfaced in PinnedIdleCount.
@@ -55,15 +55,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
-// Pod is the observed state of one Sandbox in the pool, reduced to the
+// Pod is the observed state of one AgentPod in the pool, reduced to the
 // fields the planner needs.
 type Pod struct {
-	// Name is the Sandbox resource name.
+	// Name is the AgentPod resource name.
 	Name string
-	// Phase is the Sandbox's observed §6.2 lifecycle phase.
+	// Phase is the AgentPod's observed §6.2 lifecycle phase.
 	Phase state.State
 	// Pinned marks an idle pod held for one tenant under §5.2 (its tenant
-	// pin is set and no SandboxClaim holds it). It is ignored in every
+	// pin is set and no PodClaim holds it). It is ignored in every
 	// other phase.
 	Pinned bool
 }
@@ -77,24 +77,24 @@ type Inputs struct {
 	// zero. When MaxWarm is below MinWarm the planner targets MaxWarm,
 	// since the ceiling is the hard bound.
 	MaxWarm int
-	// Pods is every Sandbox currently associated with the pool,
+	// Pods is every AgentPod currently associated with the pool,
 	// regardless of phase.
 	Pods []Pod
 }
 
 // Plan is the planner's decision for one reconcile pass.
 type Plan struct {
-	// Create is the number of new Sandboxes the controller should
-	// create from the pool's SandboxTemplate.
+	// Create is the number of new AgentPods the controller should
+	// create from the pool's PodSet.
 	Create int
-	// Drain lists, in stable order, the idle Sandbox names to
+	// Drain lists, in stable order, the idle AgentPod names to
 	// transition to draining to shed warm pods above the target.
 	Drain []string
 	// WarmCount is the count of unclaimed pods that are warming or
-	// idle. It is written to SandboxWarmPool.status.warmCount.
+	// idle. It is written to PodSet.status.warmCount.
 	WarmCount int
 	// ReadyCount is the count of idle (claimable) pods. It is written
-	// to SandboxWarmPool.status.readyCount.
+	// to PodSet.status.readyCount.
 	ReadyCount int
 	// ReservedCount is the count of pods whose claim is in the §6.2
 	// reserved hold window. Per §4.6.2 these pods are occupied: they are
@@ -106,7 +106,7 @@ type Plan struct {
 	// "Pinned idle inventory"). They are excluded from WarmCount and
 	// ReadyCount and never drained through Drain.
 	PinnedIdleCount int
-	// DrainPinned lists, in sorted order, the pinned idle Sandbox names to
+	// DrainPinned lists, in sorted order, the pinned idle AgentPod names to
 	// drain because the pinned idle pods exceed maxWarm minus the warm
 	// target. It never overlaps Drain.
 	DrainPinned []string

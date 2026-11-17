@@ -85,7 +85,7 @@ export default function () {
   }
 
   // Terminate every claimed child + the parent so the §4.6
-  // SandboxClaims release their pods back to the warm pool. Without
+  // PodClaims release their pods back to the warm pool. Without
   // this, each iteration leaks FANOUT pods and the pool exhausts
   // within ~10 iterations on a Kind cluster sized for smoke runs.
   for (let i = 0; i < childIDs.length; i++) {

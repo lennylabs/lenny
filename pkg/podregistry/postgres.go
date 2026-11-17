@@ -16,7 +16,7 @@ import (
 
 // PostgresPodRegistry is the §12.6 Tier-4 PodRegistry
 // implementation: it reads and writes the agent_pod_state Postgres table
-// directly instead of Sandbox CRD status, eliminating the etcd write
+// directly instead of AgentPod CRD status, eliminating the etcd write
 // pressure the CRD-backed registry incurs at scale. It sits over the
 // same agent_pod_state table the WarmPoolController mirrors in v1 (see
 // pkg/agentpodstate); at Tier 4 that table is the primary store and this
@@ -37,7 +37,7 @@ import (
 // The agent_pod_state schema (§12.6) does not carry the runtime, the
 // workspace plan, or the resource class, so CreatePod records only the
 // columns the table has. A Tier-4 deployment that needs those persisted
-// extends the schema; the §12.6 v1 table is a mirror of Sandbox status,
+// extends the schema; the §12.6 v1 table is a mirror of AgentPod status,
 // which carries them on the CRD spec, not on the mirror.
 type PostgresPodRegistry struct {
 	pool    *pgxpool.Pool

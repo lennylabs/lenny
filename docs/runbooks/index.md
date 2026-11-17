@@ -45,7 +45,7 @@ Every alert listed in [Metrics Reference §Alert rules](../reference/metrics.htm
 | `AuditGrantDrift` | [audit-grant-drift](audit-grant-drift.html) | `audit` |
 | `NetworkPolicyCIDRDrift` | [network-policy-drift](network-policy-drift.html) | `cluster` |
 | `AdmissionWebhookUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
-| `SandboxClaimGuardUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
+| `PodClaimGuardUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
 | `DualStoreUnavailable` | [dual-store-unavailable](dual-store-unavailable.html) | `postgres`, `redis` |
 | `DataResidencyWebhookUnavailable` | [admission-webhook-outage](admission-webhook-outage.html) | `admission` |
 | `DataResidencyViolationAttempt` | [data-residency-violation](data-residency-violation.html) | `gateway` |

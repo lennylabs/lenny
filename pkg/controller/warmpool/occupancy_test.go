@@ -15,33 +15,33 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 )
 
-// occupancyClaim builds a per-pod occupancy SandboxClaim (claim-<podName>)
-// for the named Sandbox. The status (binding phase, rewarm stamp) is seeded
+// occupancyClaim builds a per-pod occupancy PodClaim (claim-<podName>)
+// for the named AgentPod. The status (binding phase, rewarm stamp) is seeded
 // separately via seedClaimStatus because the API server rejects status on
 // create.
-func occupancyClaim(ns, podName, binding string) *lennyv1.SandboxClaim {
-	return &lennyv1.SandboxClaim{
+func occupancyClaim(ns, podName, binding string) *lennyv1.PodClaim {
+	return &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: ns},
-		Spec: lennyv1.SandboxClaimSpec{
-			SandboxRef: podName,
-			TenantID:   "acme",
+		Spec: lennyv1.PodClaimSpec{
+			AgentPodRef: podName,
+			TenantID:    "acme",
 		},
-		Status: lennyv1.SandboxClaimStatus{Phase: binding},
+		Status: lennyv1.PodClaimStatus{Phase: binding},
 	}
 }
 
 // seedClaimStatus writes the claim's binding-state status via SSA Apply under
-// the Gateway field manager (the §4.6.3 owner of SandboxClaim.status), so the
+// the Gateway field manager (the §4.6.3 owner of PodClaim.status), so the
 // occupancy projection observes the same status the gateway writes in
 // production. rewarm, when true, stamps rewarmStartedAt (the preConnect
 // re-warm anchor).
 func seedClaimStatus(t *testing.T, c client.Client, podName, binding string, rewarm bool) {
 	t.Helper()
 	ns := testNamespace(t)
-	patch := &lennyv1.SandboxClaim{
+	patch := &lennyv1.PodClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: lennyv1.GroupVersion.String(),
-			Kind:       "SandboxClaim",
+			Kind:       "PodClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: ns},
 	}
@@ -57,7 +57,7 @@ func seedClaimStatus(t *testing.T, c client.Client, podName, binding string, rew
 }
 
 // reconcileOccupancy runs one occupancy-projection reconcile for the named
-// Sandbox.
+// AgentPod.
 func reconcileOccupancy(t *testing.T, c client.Client, podName string) {
 	t.Helper()
 	ns := testNamespace(t)
@@ -69,26 +69,26 @@ func reconcileOccupancy(t *testing.T, c client.Client, podName string) {
 	}
 }
 
-func sandboxPhase(t *testing.T, c client.Client, podName string) string {
+func agentPodPhase(t *testing.T, c client.Client, podName string) string {
 	t.Helper()
 	ns := testNamespace(t)
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podName}, &sb); err != nil {
 		t.Fatalf("get sandbox %s: %v", podName, err)
 	}
 	return sb.Status.Phase
 }
 
-// occupiedSandbox is a Sandbox seeded into the given coarse phase, so a
+// occupiedAgentPod is a AgentPod seeded into the given coarse phase, so a
 // claim-deletion projection has an occupied phase to act on.
-func occupiedSandbox(ns, name, phase string) *lennyv1.Sandbox {
-	sb := idleSandbox(ns, name)
+func occupiedAgentPod(ns, name, phase string) *lennyv1.AgentPod {
+	sb := idleAgentPod(ns, name)
 	sb.Status.Phase = phase
 	return sb
 }
 
 // diagnosis: a failure means the WarmPoolController is not projecting a bound
-// SandboxClaim onto Sandbox.status.phase = claimed, so the gateway claim path
+// PodClaim onto AgentPod.status.phase = claimed, so the gateway claim path
 // (which reads idle and never re-reads claimed) and every PDB/inventory
 // selector keyed on the coarse phase observe a pod still labeled idle while it
 // serves a session.
@@ -98,12 +98,12 @@ func occupiedSandbox(ns, name, phase string) *lennyv1.Sandbox {
 func TestOccupancyProjectsBoundClaimToClaimed(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, idleSandbox(ns, "pod-1"), occupancyClaim(ns, "pod-1", "bound"))
+	c := newClient(t, s, idleAgentPod(ns, "pod-1"), occupancyClaim(ns, "pod-1", "bound"))
 	seedClaimStatus(t, c, "pod-1", "bound", false)
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "claimed" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "claimed" {
 		t.Errorf("phase = %q, want claimed", got)
 	}
 }
@@ -117,12 +117,12 @@ func TestOccupancyProjectsBoundClaimToClaimed(t *testing.T) {
 func TestOccupancyProjectsRecyclingScrubToClaimed(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "recycling"))
+	c := newClient(t, s, occupiedAgentPod(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "recycling"))
 	seedClaimStatus(t, c, "pod-1", "recycling", false)
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "claimed" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "claimed" {
 		t.Errorf("phase = %q, want claimed (scrub leg held at claimed)", got)
 	}
 }
@@ -136,12 +136,12 @@ func TestOccupancyProjectsRecyclingScrubToClaimed(t *testing.T) {
 func TestOccupancyProjectsRecyclingRewarmToSDKConnecting(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "recycling"))
+	c := newClient(t, s, occupiedAgentPod(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "recycling"))
 	seedClaimStatus(t, c, "pod-1", "recycling", true)
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "sdk_connecting" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "sdk_connecting" {
 		t.Errorf("phase = %q, want sdk_connecting (preConnect re-warm leg)", got)
 	}
 }
@@ -155,12 +155,12 @@ func TestOccupancyProjectsRecyclingRewarmToSDKConnecting(t *testing.T) {
 func TestOccupancyProjectsReservedClaimToReserved(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "sdk_connecting"), occupancyClaim(ns, "pod-1", "reserved"))
+	c := newClient(t, s, occupiedAgentPod(ns, "pod-1", "sdk_connecting"), occupancyClaim(ns, "pod-1", "reserved"))
 	seedClaimStatus(t, c, "pod-1", "reserved", false)
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "reserved" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "reserved" {
 		t.Errorf("phase = %q, want reserved", got)
 	}
 }
@@ -173,12 +173,12 @@ func TestOccupancyProjectsReservedClaimToReserved(t *testing.T) {
 func TestOccupancyProjectsTerminalDispositionToDraining(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "released"))
+	c := newClient(t, s, occupiedAgentPod(ns, "pod-1", "claimed"), occupancyClaim(ns, "pod-1", "released"))
 	seedClaimStatus(t, c, "pod-1", "released", false)
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "draining" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "draining" {
 		t.Errorf("phase = %q, want draining", got)
 	}
 }
@@ -192,11 +192,11 @@ func TestOccupancyProjectsTerminalDispositionToDraining(t *testing.T) {
 func TestOccupancyClaimDeletedOnReservedPodReturnsToIdle(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "reserved"))
+	c := newClient(t, s, occupiedAgentPod(ns, "pod-1", "reserved"))
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "idle" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "idle" {
 		t.Errorf("phase = %q, want idle (hold expiry returns the pod to the pool)", got)
 	}
 }
@@ -211,17 +211,17 @@ func TestOccupancyClaimDeletedOnReservedPodReturnsToIdle(t *testing.T) {
 func TestOccupancyClaimDeletedOnClaimedPodDrains(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, occupiedSandbox(ns, "pod-1", "claimed"))
+	c := newClient(t, s, occupiedAgentPod(ns, "pod-1", "claimed"))
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "draining" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "draining" {
 		t.Errorf("phase = %q, want draining (unscrubbed occupied pod retires)", got)
 	}
 }
 
 // diagnosis: a failure means the projection writes a phase for an unclaimed
-// warm-fill pod, fighting the Sandbox-to-Pod reconciler that owns the
+// warm-fill pod, fighting the AgentPod-to-Pod reconciler that owns the
 // warming/idle/sdk_connecting warm-fill legs.
 //
 // spec: 4.6.1 (occupancy projection), 3.3 (ownership decomposition), 6.2
@@ -229,25 +229,25 @@ func TestOccupancyClaimDeletedOnClaimedPodDrains(t *testing.T) {
 func TestOccupancyLeavesUnclaimedIdlePodUntouched(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, idleSandbox(ns, "pod-1"))
+	c := newClient(t, s, idleAgentPod(ns, "pod-1"))
 
 	reconcileOccupancy(t, c, "pod-1")
 
-	if got := sandboxPhase(t, c, "pod-1"); got != "idle" {
+	if got := agentPodPhase(t, c, "pod-1"); got != "idle" {
 		t.Errorf("phase = %q, want idle (warm-fill writer owns the unclaimed pod)", got)
 	}
 }
 
 // diagnosis: a failure means the claim→sandbox map function does not enqueue
-// the owning Sandbox for a SandboxClaim event, so a gateway binding-state
+// the owning AgentPod for a PodClaim event, so a gateway binding-state
 // change never re-projects the pod phase and occupancy goes stale.
 //
-// spec: 4.6.1 (claim-existence occupancy projection via the SandboxClaim
+// spec: 4.6.1 (claim-existence occupancy projection via the PodClaim
 // watch).
-func TestClaimToSandboxMapsToOwner(t *testing.T) {
+func TestClaimToAgentPodMapsToOwner(t *testing.T) {
 	ns := testNamespace(t)
 	r := &warmpool.OccupancyReconciler{}
-	reqs := r.ClaimToSandboxForTest(context.Background(), occupancyClaim(ns, "pod-7", "bound"))
+	reqs := r.ClaimToAgentPodForTest(context.Background(), occupancyClaim(ns, "pod-7", "bound"))
 	if len(reqs) != 1 {
 		t.Fatalf("got %d requests, want 1", len(reqs))
 	}

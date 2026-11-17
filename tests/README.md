@@ -64,7 +64,7 @@ lenny-test watch --tier unit
 lenny-test watch --changed
 
 # Stress (50 consecutive runs)
-lenny-test stress --test TestSandboxClaim --runs 50
+lenny-test stress --test TestPodClaim --runs 50
 lenny-test stress --pattern 'TestSession.*' --runs 25
 
 # Coverage

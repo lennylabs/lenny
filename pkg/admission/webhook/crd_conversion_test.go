@@ -39,7 +39,7 @@ func postConversion(t *testing.T, body []byte, method string) *httptest.Response
 }
 
 func TestCRDConversionReturnsObjectsUnchanged(t *testing.T) {
-	obj := `{"apiVersion":"lenny.dev/v1alpha1","kind":"Sandbox","metadata":{"name":"sbx-1"}}`
+	obj := `{"apiVersion":"lenny.dev/v1alpha1","kind":"AgentPod","metadata":{"name":"sbx-1"}}`
 	body, err := json.Marshal(conversionReview(obj))
 	if err != nil {
 		t.Fatalf("marshal review: %v", err)
@@ -72,8 +72,8 @@ func TestCRDConversionReturnsObjectsUnchanged(t *testing.T) {
 
 func TestCRDConversionHandlesMultipleObjects(t *testing.T) {
 	body, err := json.Marshal(conversionReview(
-		`{"apiVersion":"lenny.dev/v1alpha1","kind":"Sandbox","metadata":{"name":"a"}}`,
-		`{"apiVersion":"lenny.dev/v1alpha1","kind":"Sandbox","metadata":{"name":"b"}}`,
+		`{"apiVersion":"lenny.dev/v1alpha1","kind":"AgentPod","metadata":{"name":"a"}}`,
+		`{"apiVersion":"lenny.dev/v1alpha1","kind":"AgentPod","metadata":{"name":"b"}}`,
 	))
 	if err != nil {
 		t.Fatalf("marshal review: %v", err)

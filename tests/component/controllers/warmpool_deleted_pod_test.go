@@ -22,7 +22,7 @@ import (
 const deletionHoldFinalizer = "lenny.dev/test-deletion-hold"
 
 // enablePreConnect turns the seeded runtime into a §6.1 preConnect
-// runtime, so the Sandbox-to-Pod reconciler warms through sdk_connecting.
+// runtime, so the AgentPod-to-Pod reconciler warms through sdk_connecting.
 func (e *terminatedAdapterEnv) enablePreConnect() {
 	e.t.Helper()
 	var rt lennyv1.Runtime
@@ -78,12 +78,12 @@ func (e *terminatedAdapterEnv) finishPodDeletion(name string) {
 	}
 }
 
-// reconcileNeverFailed reconciles the Sandbox and fails the test when the
+// reconcileNeverFailed reconciles the AgentPod and fails the test when the
 // resulting phase is failed: a deleted pod must never be recorded as a
 // warm-fill failure.
 func (e *terminatedAdapterEnv) reconcileNeverFailed(name string) state.State {
 	e.t.Helper()
-	e.reconcileSandbox(name)
+	e.reconcileAgentPod(name)
 	got := e.phase(name)
 	if got == state.Failed {
 		e.t.Fatalf("sandbox %s passed through failed after its pod was deleted", name)
@@ -92,7 +92,7 @@ func (e *terminatedAdapterEnv) reconcileNeverFailed(name string) state.State {
 }
 
 // spec: 6.2 (Pod State Machine), 6.1 (What a Pre-Warmed Pod Looks Like)
-// diagnosis: A pod deleted while its Sandbox was in sdk_connecting (a node
+// diagnosis: A pod deleted while its AgentPod was in sdk_connecting (a node
 // drain, an eviction, or a scale-down sending SIGTERM) was recorded as
 // failed, or did not reach terminated, so the §6.2 sdk_connecting →
 // terminated edge is not followed. Check that observePod reads the pod's
@@ -125,7 +125,7 @@ func TestSDKConnectingPodDeletedReachesTerminatedWithoutFailing(t *testing.T) {
 		t.Fatalf("terminated sandbox %s re-created its pod", name)
 	}
 
-	// The terminated Sandbox is not warm inventory; the pool replaces it.
+	// The terminated AgentPod is not warm inventory; the pool replaces it.
 	e.reconcilePool()
 	if got := e.warmCount(); got != 1 {
 		t.Fatalf("warm count after the deleted pod terminated = %d, want minWarm 1", got)
@@ -133,10 +133,10 @@ func TestSDKConnectingPodDeletedReachesTerminatedWithoutFailing(t *testing.T) {
 }
 
 // spec: 6.2 (Pod State Machine), 4.6.1 (Warm Pool Controller (Pod Lifecycle))
-// diagnosis: A pod deleted while its Sandbox was still warming was
+// diagnosis: A pod deleted while its AgentPod was still warming was
 // recorded as failed, was promoted while terminating, or a new pod was
 // created while the old one was still terminating. §6.2 has no warming
-// SIGTERM edge, so the reconciler holds the Sandbox in warming until the
+// SIGTERM edge, so the reconciler holds the AgentPod in warming until the
 // pod is gone and then creates a fresh pod. Check the PodTerminating arm
 // of lifecycle.Decide.
 func TestWarmingPodDeletedHoldsThenRecreatesWithoutFailing(t *testing.T) {
@@ -175,7 +175,7 @@ func TestWarmingPodDeletedHoldsThenRecreatesWithoutFailing(t *testing.T) {
 
 // spec: 6.2 (Pod State Machine), 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 // diagnosis: An idle pod deleted by Kubernetes was recorded as failed, or
-// its Sandbox did not retire through idle → draining → terminated. The
+// its AgentPod did not retire through idle → draining → terminated. The
 // reconciler must also not re-issue the delete while the pod terminates.
 // Check the PodTerminating arms of lifecycle.Decide for idle and draining.
 func TestIdlePodDeletedDrainsToTerminatedWithoutFailing(t *testing.T) {

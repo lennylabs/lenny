@@ -37,9 +37,9 @@ func resumeSlotFixture(t *testing.T, c client.Client, dial func(string) (*adapte
 }
 
 // resumeActiveSlots reads the cardinality of the pod's §5.2 slot set.
-func resumeActiveSlots(t *testing.T, mr *miniredis.Miniredis, sandboxName string) string {
+func resumeActiveSlots(t *testing.T, mr *miniredis.Miniredis, agentPodName string) string {
 	t.Helper()
-	key := "lenny:pod:{" + sandboxName + "}:active_slots"
+	key := "lenny:pod:{" + agentPodName + "}:active_slots"
 	if !mr.Exists(key) {
 		return "0"
 	}
@@ -72,7 +72,7 @@ func TestResumeReservesItsSlotOnTheClaimedPod_spec_5_2(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 	res, err := binder.Resume(context.Background(), resumeRequest(4))
@@ -85,8 +85,8 @@ func TestResumeReservesItsSlotOnTheClaimedPod_spec_5_2(t *testing.T) {
 		t.Errorf("BindResult.SlotID = %q, want the session identifier; it is the key both release paths dispatch on",
 			res.Result.SlotID)
 	}
-	if got := resumeActiveSlots(t, mr, res.Result.SandboxName); got != "1" {
-		t.Errorf("active_slots on %s = %s, want 1", res.Result.SandboxName, got)
+	if got := resumeActiveSlots(t, mr, res.Result.AgentPodName); got != "1" {
+		t.Errorf("active_slots on %s = %s, want 1", res.Result.AgentPodName, got)
 	}
 	if got := resumeActiveSlots(t, mr, "sbx-other"); got != "0" {
 		t.Errorf("active_slots on an unrelated pod = %s, want 0", got)
@@ -105,7 +105,7 @@ func TestResumeOntoAnExclusivePoolReservesNoSlot_spec_5_2(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 	res, err := binder.Resume(context.Background(), resumeRequest(1))
@@ -117,7 +117,7 @@ func TestResumeOntoAnExclusivePoolReservesNoSlot_spec_5_2(t *testing.T) {
 	if res.Result.SlotID != "" {
 		t.Errorf("BindResult.SlotID = %q on an exclusive pool, want empty", res.Result.SlotID)
 	}
-	if got := resumeActiveSlots(t, mr, res.Result.SandboxName); got != "0" {
+	if got := resumeActiveSlots(t, mr, res.Result.AgentPodName); got != "0" {
 		t.Errorf("active_slots = %s, want 0; an exclusive pool keeps no ledger", got)
 	}
 }
@@ -145,7 +145,7 @@ func TestResumeCarriesThePoolRecycleDispositionOntoItsBindResult_spec_5_2(t *tes
 			srv.WorkspaceBase = t.TempDir()
 			srv.Runtime = &fakeRuntime{}
 
-			c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+			c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 			binder, _ := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 			req := resumeRequest(tc.maxConcurrent)
@@ -172,7 +172,7 @@ func TestResumeCarriesThePoolRecycleDispositionOntoItsBindResult_spec_5_2(t *tes
 	}
 }
 
-// getResumePod reads the agent Pod backing a Sandbox.
+// getResumePod reads the agent Pod backing a AgentPod.
 func getResumePod(t *testing.T, c client.Client, name string) corev1.Pod {
 	t.Helper()
 	ns := testNamespace(t)
@@ -195,7 +195,7 @@ func TestResumeStampsMaxPodUptimeOnTheReplacementPod_spec_4_6_1(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), drainAgentPod(ns, "sbx-1"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"), drainAgentPod(ns, "sbx-1"))
 	binder, _ := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 	req := resumeRequest(4)
@@ -228,7 +228,7 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 		// reservation.
 		srv.Runtime = &fakeRuntime{}
 
-		c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+		c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 		binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 
 		if _, err := binder.Resume(context.Background(), resumeRequest(4)); err == nil {
@@ -247,7 +247,7 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 		srv := adapter.New("adapter-test")
 		srv.Runtime = &fakeRuntime{}
 
-		c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+		c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 		binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 		// A sibling slot's occupancy, held by a co-tenant session that
 		// landed on the pod after connect's claim CREATE.
@@ -261,7 +261,7 @@ func TestResumeReleasesItsReservationWhenTheAdapterResumeFails_spec_5_2(t *testi
 		if got := resumeActiveSlots(t, mr, "sbx-1"); got != "1" {
 			t.Errorf("active_slots = %s, want 1 (the sibling's slot survives the release)", got)
 		}
-		var claim lennyv1.SandboxClaim
+		var claim lennyv1.PodClaim
 		if err := c.Get(context.Background(),
 			client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &claim); err != nil {
 			t.Fatalf("the per-pod claim was disposed while a sibling slot remained: %v", err)
@@ -283,7 +283,7 @@ func TestResumeOntoAFullPodReservesAndReleasesNothing_spec_5_2(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder, mr := resumeSlotFixture(t, c, adapterDialer(t, srv))
 	for i := 0; i < 2; i++ {
 		if _, _, err := binder.SlotCounter.Reserve(context.Background(), "sbx-1", fmt.Sprintf("co-%d", i), 2); err != nil {

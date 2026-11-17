@@ -3,7 +3,7 @@
 package v1alpha1
 
 // Annotation keys the PoolScalingController stamps on the pool CRD pair
-// (SandboxTemplate, SandboxWarmPool) so the gateway can compare the
+// (PodSet) so the gateway can compare the
 // CRD-side reconciliation state against the Postgres source of truth.
 // Exported here so both the writer (pkg/controller/poolscaling) and the
 // reader (pkg/gateway/podsession sync-status lookup) share one literal
@@ -28,11 +28,11 @@ const (
 	// the pod crosses the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
 	// slots failed or leaked within the rolling window), when a concurrent
 	// pod's release count reaches maxSessionsPerPod, or when an acquisition
-	// refuses a pinned idle pod that no SandboxClaim holds (§5.2 deployer
+	// refuses a pinned idle pod that no PodClaim holds (§5.2 deployer
 	// acknowledgment). The WarmPoolController consumes the annotation as
 	// the source of the drain transition, so the gateway never writes
-	// Sandbox.status.phase=draining itself: the WarmPoolController is the
-	// sole writer of Sandbox.status (§4.6.3 ownership decomposition). The
+	// AgentPod.status.phase=draining itself: the WarmPoolController is the
+	// sole writer of AgentPod.status (§4.6.3 ownership decomposition). The
 	// gateway's `get`/`patch` on agent Pods grant covers this annotation
 	// write alongside the lenny.dev/tenant-id pin.
 	// spec: spec/04_system-components.md §4.6.3 (gateway stamps
@@ -51,7 +51,7 @@ const (
 	// removes all files from each slot's current tree before reuse regardless of
 	// the annotation. The gateway's `get`/`patch` on agent Pods grant covers
 	// this annotation write alongside the lenny.dev/drain-request stamp and
-	// the lenny.dev/tenant-id pin; the gateway never writes Sandbox.status
+	// the lenny.dev/tenant-id pin; the gateway never writes AgentPod.status
 	// itself (§4.6.3 ownership decomposition).
 	// spec: spec/05_runtime-registry-and-pool-model.md §5.2 (warn policy
 	// returns the pod with a scrub_warning annotation); spec/06_warm-pod-model.md
@@ -70,16 +70,16 @@ const (
 	// stamps it once at pod claim from the poolstore
 	// SessionPolicy.Recycle.MaxPodUptimeSeconds, and the WarmPoolController
 	// reads it to level-trigger the §4.6.1/§4.6.3 uptime drain (the coarse
-	// claimed → draining transition it alone writes on Sandbox.status). An
+	// claimed → draining transition it alone writes on AgentPod.status). An
 	// absent or zero value disables the check: the gateway stamps the
 	// annotation only for a pool that sets maxPodUptimeSeconds, matching the
 	// field's optional status. The gateway's get/patch on agent Pods grant
 	// covers this annotation write alongside the lenny.dev/drain-request
 	// stamp and the lenny.dev/tenant-id pin; the gateway never writes
-	// Sandbox.status itself (§4.6.3 ownership decomposition).
+	// AgentPod.status itself (§4.6.3 ownership decomposition).
 	// spec: spec/04_system-components.md §4.6.1 (CreationTimestamp-derived
 	// uptime drain, WarmPoolController-written), §4.6.3 (the gateway delivers
 	// the cap the controller reads; WarmPoolController is the sole writer of
-	// Sandbox.status).
+	// AgentPod.status).
 	AnnotationMaxPodUptimeSeconds = "lenny.dev/max-pod-uptime-seconds"
 )

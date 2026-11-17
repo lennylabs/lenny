@@ -59,7 +59,7 @@ func (f *releaseFixture) claimPhase(t *testing.T) string {
 	if !f.claimExists(t) {
 		return ""
 	}
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := f.kube.Get(context.Background(), client.ObjectKey{
 		Namespace: releaseNS, Name: podclaim.ClaimName(releasePod),
 	}, &claim); err != nil {

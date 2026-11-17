@@ -131,7 +131,7 @@ func newExitFixture(t *testing.T, opts Options) *exitFixture {
 	const ns = "lenny-agents"
 	inner := memstore.New()
 	hooks := &exitHookStore{Store: inner}
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(exitPod), Namespace: ns},
 	}
 	kube := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(claim).Build()

@@ -47,13 +47,13 @@ func newResumeCredFixture(t *testing.T) *resumeCredFixture {
 	ctx := context.Background()
 	const ns = "lenny-agents"
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
+			Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
 		},
-		&lennyv1.SandboxTemplate{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
-			Spec: lennyv1.SandboxTemplateSpec{
+			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:       "svc-runtime",
 				IsolationProfile: string(isolation.ProfileSandboxed),
 				ExecutionMode:    string(runtimestore.ExecutionModeService),

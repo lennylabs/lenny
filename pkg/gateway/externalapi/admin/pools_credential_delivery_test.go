@@ -79,7 +79,7 @@ func TestCreatePoolCredentialDeliveryRoundTrip_spec_4_9(t *testing.T) {
 // TestCreatePoolRejectsUnknownDeliveryMode_spec_4_9 verifies a non-empty
 // deliveryMode outside {proxy, direct} is rejected with 400 VALIDATION_ERROR
 // at registration, before any store write, so an out-of-enum value never
-// reconciles onto the enum-constrained SandboxTemplate CRD.
+// reconciles onto the enum-constrained PodSet CRD.
 func TestCreatePoolRejectsUnknownDeliveryMode_spec_4_9(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdmin(t)
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "echo"})
@@ -210,7 +210,7 @@ func TestUpdatePoolRejectsUnknownSpiffeBinding_spec_4_9(t *testing.T) {
 // carrying the DirectModeStandardIsolationMultiTenantRejected code, before any
 // store write, even when both deployer opt-ins are set (the opt-in cannot
 // rescue the combination in multi-tenant mode). Before layer 1 existed the
-// combination was admitted and stored, reconciling into a SandboxTemplate the
+// combination was admitted and stored, reconciling into a PodSet the
 // layer-2 webhook would then reject; this asserts the corrected rejection.
 func TestCreatePoolRejectsDirectStandardMultiTenant_spec_4_9(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdminTenancy(t, "multi")
@@ -268,7 +268,7 @@ func TestCreatePoolRejectsProxySpiffeDisabledMultiTenant_spec_4_9(t *testing.T) 
 // NET-006 mutual exclusivity carried through the layer-1 gate: deliveryMode:
 // proxy with egressProfile: provider-direct is rejected in every tenancy mode,
 // including single-tenant, keeping layer 1 a superset of the layer-2 gate so a
-// stored pool never reconciles into a SandboxTemplate the failurePolicy: Fail
+// stored pool never reconciles into a PodSet the failurePolicy: Fail
 // webhook would reject.
 func TestCreatePoolRejectsProxyProviderDirectAnyTenancy_spec_13_2(t *testing.T) {
 	router, store, runtimes, _ := newPoolAdminTenancy(t, "single")
@@ -408,7 +408,7 @@ func TestCreatePoolAllowsProxySpiffeDisabledSingleTenant_spec_4_9(t *testing.T) 
 // TestBootstrapSeedRejectsForbiddenComboMultiTenant_spec_4_9 pins the §17.6
 // seed path layer-1 gate: a bootstrap.pools entry carrying a forbidden
 // combination in multi-tenant mode is recorded as a per-entry SEED_VALIDATION
-// error and is not stored, so the seed path never reconciles a SandboxTemplate
+// error and is not stored, so the seed path never reconciles a PodSet
 // the layer-2 webhook would reject.
 func TestBootstrapSeedRejectsForbiddenComboMultiTenant_spec_4_9(t *testing.T) {
 	tenants := tenantstore.NewMemory()

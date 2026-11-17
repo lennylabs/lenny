@@ -85,7 +85,7 @@ func TestCheckTerminationGracePeriods_spec_5_2_516(t *testing.T) {
 }
 
 // lennyClient builds a fake client with both the clientgo and lenny.dev/v1alpha1
-// schemes registered so SandboxTemplate listing works.
+// schemes registered so PodSet listing works.
 func lennyClient(t *testing.T, objs ...client.Object) client.Client {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -98,10 +98,10 @@ func lennyClient(t *testing.T, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 }
 
-func sandboxTemplate(name string, grace *int64) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func podSet(name string, grace *int64) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "lenny-agents"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:                    "echo",
 			TerminationGracePeriodSeconds: grace,
 		},
@@ -116,7 +116,7 @@ func TestRun_TerminationGraceWarning_spec_5_2_516(t *testing.T) {
 	cfg := preflight.Config{Namespace: preflightNS}
 
 	// A 900s pool warns but does not fail the report.
-	withBig := append([]client.Object{sandboxTemplate("big", ptrInt64(900))}, baseline...)
+	withBig := append([]client.Object{podSet("big", ptrInt64(900))}, baseline...)
 	rep := preflight.Run(context.Background(), lennyClient(t, withBig...), cfg)
 	d := findCheck(t, rep, "pool-termination-grace-period")
 	if !d.Passed {
@@ -127,7 +127,7 @@ func TestRun_TerminationGraceWarning_spec_5_2_516(t *testing.T) {
 	}
 
 	// No over-threshold pool: clean pass, no warning.
-	withOK := append([]client.Object{sandboxTemplate("ok", ptrInt64(120))}, baseline...)
+	withOK := append([]client.Object{podSet("ok", ptrInt64(120))}, baseline...)
 	rep = preflight.Run(context.Background(), lennyClient(t, withOK...), cfg)
 	d = findCheck(t, rep, "pool-termination-grace-period")
 	if !d.Passed || strings.Contains(d.Reason, "WARNING") {
@@ -140,7 +140,7 @@ func TestRun_TerminationGraceWarning_spec_5_2_516(t *testing.T) {
 // advisory pass rather than blocking the install.
 func TestRun_TerminationGraceListErrorAdvisory_spec_5_2_516(t *testing.T) {
 	baseline := append(allBaselineWebhooks(), phaseStampCM(map[string]string{}))
-	// runClient registers only clientgoscheme, so listing SandboxTemplates
+	// runClient registers only clientgoscheme, so listing PodSets
 	// fails; the check must still pass advisory-only.
 	rep := preflight.Run(context.Background(), runClient(t, baseline...), preflight.Config{Namespace: preflightNS})
 	d := findCheck(t, rep, "pool-termination-grace-period")

@@ -61,7 +61,7 @@ spec:
   deploymentModel: sidecar
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-session-template
   namespace: lenny-agents
@@ -71,7 +71,7 @@ spec:
   executionMode: session
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-session-pool
   namespace: lenny-agents
@@ -103,7 +103,7 @@ spec:
   deploymentModel: sidecar
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-cworkspace-template
   namespace: lenny-agents
@@ -113,7 +113,7 @@ spec:
   executionMode: session
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-cworkspace-pool
   namespace: lenny-agents
@@ -142,7 +142,7 @@ spec:
   deploymentModel: sidecar
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-cstateless-template
   namespace: lenny-agents
@@ -154,7 +154,7 @@ spec:
   maxConcurrent: ${LOAD_CSTATELESS_SLOTS}
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-cstateless-pool
   namespace: lenny-agents
@@ -182,7 +182,7 @@ spec:
   deploymentModel: sidecar
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-task-template
   namespace: lenny-agents
@@ -196,7 +196,7 @@ spec:
     onCleanupFailure: warn
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-task-pool
   namespace: lenny-agents
@@ -232,7 +232,7 @@ spec:
     preConnect: true
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-preconnect-template
   namespace: lenny-agents
@@ -242,7 +242,7 @@ spec:
   executionMode: session
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-preconnect-pool
   namespace: lenny-agents

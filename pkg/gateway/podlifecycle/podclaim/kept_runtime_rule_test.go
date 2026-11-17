@@ -24,7 +24,7 @@ import (
 // the per-pod refusal of a `keep` pod on a pool that reuses pods.
 
 // claimOutside runs one Claim with both predicates false for acme.
-func claimOutside(claimer *podclaim.Claimer, pool, session string) (*lennyv1.SandboxClaim, error) {
+func claimOutside(claimer *podclaim.Claimer, pool, session string) (*lennyv1.PodClaim, error) {
 	return claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: pool, SessionID: session, TenantID: "acme",
 	})
@@ -38,15 +38,15 @@ func TestOutsideRuleScanRefusesAndDrainsServedPods_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, "or-drain", "or1-a", "idle"),
-		sandboxIn(ns, "or-drain", "or1-b", "idle"),
-		sandboxIn(ns, "or-drain", "or1-z", "idle"),
+		agentPodIn(ns, "or-drain", "or1-a", "idle"),
+		agentPodIn(ns, "or-drain", "or1-b", "idle"),
+		agentPodIn(ns, "or-drain", "or1-z", "idle"),
 		pinnedPod(ns, "or-drain", "or1-a", "acme"),
 		pinnedPod(ns, "or-drain", "or1-b", "acme"),
 		pinnedPod(ns, "or-drain", "or1-z", ""),
-		sandboxIn(ns, "or-held", "or2-a", "idle"),
-		sandboxIn(ns, "or-held", "or2-b", "idle"),
-		sandboxIn(ns, "or-held", "or2-z", "idle"),
+		agentPodIn(ns, "or-held", "or2-a", "idle"),
+		agentPodIn(ns, "or-held", "or2-b", "idle"),
+		agentPodIn(ns, "or-held", "or2-z", "idle"),
 		pinnedPod(ns, "or-held", "or2-a", "acme"),
 		pinnedPod(ns, "or-held", "or2-b", "acme"),
 		pinnedPod(ns, "or-held", "or2-z", ""),
@@ -59,8 +59,8 @@ func TestOutsideRuleScanRefusesAndDrainsServedPods_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "or1-z" {
-		t.Errorf("bound %q, want the unpinned or1-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "or1-z" {
+		t.Errorf("bound %q, want the unpinned or1-z", claim.Spec.AgentPodRef)
 	}
 	for _, pod := range []string{"or1-a", "or1-b"} {
 		if !claimAbsent(t, base, pod) {
@@ -75,8 +75,8 @@ func TestOutsideRuleScanRefusesAndDrainsServedPods_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "or2-z" {
-		t.Errorf("bound %q, want the unpinned or2-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "or2-z" {
+		t.Errorf("bound %q, want the unpinned or2-z", claim.Spec.AgentPodRef)
 	}
 	for _, pod := range []string{"or2-a", "or2-b"} {
 		if hasDrainRequest(t, base, pod) {
@@ -96,7 +96,7 @@ func TestOutsideRuleEndsReservedHoldInsteadOfRebinding_spec_4_6_1(t *testing.T) 
 		t,
 		reservedIn(ns, "rh-pool", "rh-held", "acme"),
 		pinnedPod(ns, "rh-pool", "rh-held", "acme"),
-		sandboxIn(ns, "rh-pool", "rh-z", "idle"),
+		agentPodIn(ns, "rh-pool", "rh-z", "idle"),
 		pinnedPod(ns, "rh-pool", "rh-z", ""),
 		reservedIn(ns, "rh-solo", "rh2-held", "acme"),
 		pinnedPod(ns, "rh-solo", "rh2-held", "acme"),
@@ -114,8 +114,8 @@ func TestOutsideRuleEndsReservedHoldInsteadOfRebinding_spec_4_6_1(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "rh-z" {
-		t.Errorf("bound %q, want rh-z (no rebind outside the rule)", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "rh-z" {
+		t.Errorf("bound %q, want rh-z (no rebind outside the rule)", claim.Spec.AgentPodRef)
 	}
 	if len(rebound) != 0 {
 		t.Errorf("OnRebind fired for %v", rebound)
@@ -136,7 +136,7 @@ func TestOutsideRuleEndsReservedHoldInsteadOfRebinding_spec_4_6_1(t *testing.T) 
 
 	// The occupancy projection returns the pod to idle; the next acquisition
 	// refuses it and requests its drain.
-	setSandboxPhase(t, base, "rh2-held", "idle")
+	setAgentPodPhase(t, base, "rh2-held", "idle")
 	if _, err := claimOutside(claimer, "rh-solo", "s3"); !errors.Is(err, podclaim.ErrNoIdlePod) {
 		t.Fatalf("second Claim = %v, want ErrNoIdlePod", err)
 	}
@@ -147,7 +147,7 @@ func TestOutsideRuleEndsReservedHoldInsteadOfRebinding_spec_4_6_1(t *testing.T) 
 
 // spec: 4.6.1 (Reserved hold)
 // diagnosis: ending reserved holds disturbs a claim that a rebind already
-// moved off reserved, writes to a pod whose Sandbox projects reserved, or a
+// moved off reserved, writes to a pod whose AgentPod projects reserved, or a
 // lost precondition race deletes a rebound claim.
 func TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1(t *testing.T) {
 	ns := testNamespace(t)
@@ -157,16 +157,16 @@ func TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1(t *
 		pinnedPod(ns, "hp-pool", "hp-bound", "acme"),
 		reservedIn(ns, "hp-pool", "hp-noclaim", "acme"),
 		pinnedPod(ns, "hp-pool", "hp-noclaim", "acme"),
-		sandboxIn(ns, "hp-pool", "hp-z", "idle"),
+		agentPodIn(ns, "hp-pool", "hp-z", "idle"),
 		reservedIn(ns, "hp-race", "hr-held", "acme"),
 		pinnedPod(ns, "hp-race", "hr-held", "acme"),
-		sandboxIn(ns, "hp-race", "hr-z", "idle"),
+		agentPodIn(ns, "hp-race", "hr-z", "idle"),
 	)
 	createBareClaim(t, base, "hp-bound", "acme")
 	if err := podclaim.WriteBoundStatus(context.Background(), base, ns, podclaim.ClaimName("hp-bound")); err != nil {
 		t.Fatalf("seed bound: %v", err)
 	}
-	var before lennyv1.SandboxClaim
+	var before lennyv1.PodClaim
 	if err := base.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName("hp-bound")}, &before); err != nil {
 		t.Fatalf("get bound claim: %v", err)
 	}
@@ -175,10 +175,10 @@ func TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1(t *
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "hp-z" {
-		t.Errorf("bound %q, want hp-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "hp-z" {
+		t.Errorf("bound %q, want hp-z", claim.Spec.AgentPodRef)
 	}
-	var after lennyv1.SandboxClaim
+	var after lennyv1.PodClaim
 	if err := base.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName("hp-bound")}, &after); err != nil {
 		t.Fatalf("the bound claim was removed: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1(t *
 	rec := &pinRecorder{onClaimDelete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
 		if obj.GetName() == podclaim.ClaimName("hr-held") {
 			bump := client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"labels":{"test.lenny.dev/raced":"true"}}}`))
-			if err := cl.Patch(ctx, &lennyv1.SandboxClaim{ObjectMeta: obj.(*lennyv1.SandboxClaim).ObjectMeta}, bump); err != nil {
+			if err := cl.Patch(ctx, &lennyv1.PodClaim{ObjectMeta: obj.(*lennyv1.PodClaim).ObjectMeta}, bump); err != nil {
 				return err
 			}
 		}
@@ -206,8 +206,8 @@ func TestOutsideRuleHoldEndSkipsMovedClaimsAndHonoursPrecondition_spec_4_6_1(t *
 	if err != nil {
 		t.Fatalf("Claim under the precondition race: %v", err)
 	}
-	if claim.Spec.SandboxRef != "hr-z" {
-		t.Errorf("bound %q, want hr-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "hr-z" {
+		t.Errorf("bound %q, want hr-z", claim.Spec.AgentPodRef)
 	}
 	if claimAbsent(t, base, "hr-held") {
 		t.Error("the DELETE deleted a claim whose resourceVersion changed")
@@ -224,10 +224,10 @@ func TestOutsideRuleFailedStampIsLoggedAndRetried_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, "fs-pool", "fs-a", "idle"),
+		agentPodIn(ns, "fs-pool", "fs-a", "idle"),
 		pinnedPod(ns, "fs-pool", "fs-a", "acme"),
-		sandboxIn(ns, "fs-pool", "fs-z", "idle"),
-		sandboxIn(ns, "fs-solo", "fs2-a", "idle"),
+		agentPodIn(ns, "fs-pool", "fs-z", "idle"),
+		agentPodIn(ns, "fs-solo", "fs2-a", "idle"),
 		pinnedPod(ns, "fs-solo", "fs2-a", "acme"),
 	)
 	boom := apierrors.NewInternalError(errors.New("pod patch boom"))
@@ -239,8 +239,8 @@ func TestOutsideRuleFailedStampIsLoggedAndRetried_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "fs-z" {
-		t.Errorf("bound %q, want fs-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "fs-z" {
+		t.Errorf("bound %q, want fs-z", claim.Spec.AgentPodRef)
 	}
 	if !claimAbsent(t, base, "fs-a") {
 		t.Error("a claim was created on the refused pod")
@@ -270,12 +270,12 @@ func TestOutsideRuleClaimReadFailures_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, "cr-pool", "cr-a", "idle"),
+		agentPodIn(ns, "cr-pool", "cr-a", "idle"),
 		pinnedPod(ns, "cr-pool", "cr-a", "acme"),
-		sandboxIn(ns, "cr-pool", "cr-z", "idle"),
+		agentPodIn(ns, "cr-pool", "cr-z", "idle"),
 		reservedIn(ns, "cr-res", "cr2-held", "acme"),
 		pinnedPod(ns, "cr-res", "cr2-held", "acme"),
-		sandboxIn(ns, "cr-res", "cr2-z", "idle"),
+		agentPodIn(ns, "cr-res", "cr2-z", "idle"),
 	)
 	seedReservedClaim(t, base, "cr2-held", "acme", fixedNow, time.Minute)
 	boom := apierrors.NewInternalError(errors.New("claim read boom"))
@@ -287,8 +287,8 @@ func TestOutsideRuleClaimReadFailures_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "cr-z" {
-		t.Errorf("bound %q, want cr-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "cr-z" {
+		t.Errorf("bound %q, want cr-z", claim.Spec.AgentPodRef)
 	}
 	if hasDrainRequest(t, base, "cr-a") {
 		t.Error("a pod whose claim read failed was stamped")

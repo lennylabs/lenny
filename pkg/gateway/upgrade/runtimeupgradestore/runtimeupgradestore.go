@@ -4,7 +4,7 @@
 // machine so an operator-driven runtime image rollout survives a gateway
 // restart and resumes from the recorded phase (spec/10_gateway-internals.md
 // §10.5). One row per pool: the upgrade targets a single
-// SandboxWarmPool, so the table is keyed by pool name. The
+// PodSet, so the table is keyed by pool name. The
 // pkg/gateway/runtimeupgrade Manager loads the row, drives the
 // pkg/runtime/upgrade/state linear state machine, and writes the new
 // phase back here under an optimistic version guard. The durable
@@ -32,7 +32,7 @@ var ErrConflict = errors.New("runtimeupgradestore: version conflict")
 // the per-upgrade knobs (canary, drain-first, schema-version, timeouts,
 // auto-advance).
 type Record struct {
-	// Pool is the SandboxWarmPool name the upgrade targets. Primary key.
+	// Pool is the PodSet name the upgrade targets. Primary key.
 	Pool string
 
 	// Phase is the §10.5 phase: pending, expanding, draining,

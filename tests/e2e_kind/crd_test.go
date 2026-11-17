@@ -43,7 +43,7 @@ func assertCRDEstablished(t *testing.T, c *kind.Cluster, crd string) {
 
 // spec: 13.6
 // diagnosis: the TESTING.md §13.6 warm-pool CRD plane is not installed. The test
-// asserts the sandboxwarmpools.lenny.dev and sandboxtemplates.lenny.dev
+// asserts the podsets.lenny.dev and podsets.lenny.dev
 // CRDs are Established and that the lenny-pool-config-validator
 // admission webhook gating warm-pool writes is scoped to both
 // resources. Pool scaling to a warm floor is exercised by the Warm
@@ -53,14 +53,14 @@ func assertCRDEstablished(t *testing.T, c *kind.Cluster, crd string) {
 func TestWarmPool(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	assertCRDEstablished(t, c, "sandboxwarmpools.lenny.dev")
-	assertCRDEstablished(t, c, "sandboxtemplates.lenny.dev")
+	assertCRDEstablished(t, c, "podsets.lenny.dev")
+	assertCRDEstablished(t, c, "podsets.lenny.dev")
 
 	// The pool-config-validator webhook is the §4.6.3 admission gate
 	// for warm-pool writes; it must cover both warm pools and the
 	// templates they reference.
 	rule := webhookRule(t, c, "lenny-pool-config-validator")
-	for _, res := range []string{"sandboxwarmpools", "sandboxtemplates"} {
+	for _, res := range []string{"podsets", "podsets"} {
 		if !rule.coversResource(res) {
 			t.Errorf("lenny-pool-config-validator does not gate the %q resource (scope: %v)", res, rule.resources)
 		}
@@ -70,42 +70,42 @@ func TestWarmPool(t *testing.T) {
 
 // spec: 13.6
 // diagnosis: the TESTING.md §13.6 sandbox-claim CRD plane is not installed. The
-// test asserts the sandboxclaims.lenny.dev CRD is Established and that
-// the lenny-sandboxclaim-guard admission webhook — the §4.6.1 ADR-007
+// test asserts the podclaims.lenny.dev CRD is Established and that
+// the lenny-podclaim-guard admission webhook — the §4.6.1 ADR-007
 // gate that rejects duplicate claims on CREATE and stale writes on
-// UPDATE — is installed, fail-closed, and scoped to the sandboxclaims
+// UPDATE — is installed, fail-closed, and scoped to the podclaims
 // resource. The concurrent-claim no-double-assignment behaviour runs
 // against the live Warm Pool Controller in the tier-2/8 suites; that
 // workload is not part of the dev-mode control-plane install.
-func TestSandboxClaim(t *testing.T) {
+func TestPodClaim(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	assertCRDEstablished(t, c, "sandboxclaims.lenny.dev")
+	assertCRDEstablished(t, c, "podclaims.lenny.dev")
 
 	out, err := c.KubectlOut(
 		t,
-		"get", "validatingwebhookconfiguration", "lenny-sandboxclaim-guard",
+		"get", "validatingwebhookconfiguration", "lenny-podclaim-guard",
 		"-o", "jsonpath={.webhooks[0].failurePolicy}|{.webhooks[0].rules[0].resources[0]}",
 	)
 	if err != nil {
-		t.Fatalf("the §4.6.1 lenny-sandboxclaim-guard webhook is not installed: %v\n%s", err, out)
+		t.Fatalf("the §4.6.1 lenny-podclaim-guard webhook is not installed: %v\n%s", err, out)
 	}
 	failurePolicy, resource, ok := strings.Cut(out, "|")
 	if !ok {
-		t.Fatalf("unexpected jsonpath output for lenny-sandboxclaim-guard: %q", out)
+		t.Fatalf("unexpected jsonpath output for lenny-podclaim-guard: %q", out)
 	}
 	if failurePolicy != "Fail" {
-		t.Errorf("lenny-sandboxclaim-guard has failurePolicy %q; ADR-007 requires fail-closed (Fail)", failurePolicy)
+		t.Errorf("lenny-podclaim-guard has failurePolicy %q; ADR-007 requires fail-closed (Fail)", failurePolicy)
 	}
-	if resource != "sandboxclaims" {
-		t.Errorf("lenny-sandboxclaim-guard is scoped to resource %q; it must gate sandboxclaims", resource)
+	if resource != "podclaims" {
+		t.Errorf("lenny-podclaim-guard is scoped to resource %q; it must gate podclaims", resource)
 	}
-	t.Logf("sandbox-claim CRD plane established; sandboxclaim-guard failurePolicy=%s", failurePolicy)
+	t.Logf("sandbox-claim CRD plane established; podclaim-guard failurePolicy=%s", failurePolicy)
 }
 
 // spec: 13.6
 // diagnosis: the TESTING.md §13.6 pool-upgrade path cannot be admitted. A pool
-// upgrade is an UPDATE to a SandboxWarmPool or SandboxTemplate spec;
+// upgrade is an UPDATE to a PodSet spec;
 // the lenny-pool-config-validator webhook must gate that UPDATE so an
 // upgrade cannot move the pool into an invalid budget. The test
 // confirms the webhook intercepts the UPDATE operation on both

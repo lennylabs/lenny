@@ -218,7 +218,7 @@ type raceOptions struct {
 }
 
 // raceFixture is one finalize server on the pod-bind fixture: an envtest
-// cluster holding a warm pool and the idle Sandbox sbx-1, an in-process
+// cluster holding a warm pool and the idle AgentPod sbx-1, an in-process
 // adapter over bufconn, a real podsession.Binder with a recording credential
 // assigner, and a hookStore over a memstore.
 type raceFixture struct {
@@ -258,7 +258,7 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 		t,
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	var grpcOpts []grpc.ServerOption
 	if opt.failAssignRPC {
@@ -412,7 +412,7 @@ func (f *raceFixture) row(t *testing.T) sessionstore.Session {
 
 func (f *raceFixture) claimPresent(t *testing.T) bool {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }

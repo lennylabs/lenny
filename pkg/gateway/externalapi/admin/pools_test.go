@@ -563,7 +563,7 @@ func TestGetPoolReadyHasIdleCountNoCondition(t *testing.T) {
 
 // spec: §5.2 — the live-status fields are omitted when no
 // reader is wired (the Postgres-only posture) or when the pool has no
-// reconciled SandboxWarmPool yet (found=false), so a misleading zero is
+// reconciled PodSet yet (found=false), so a misleading zero is
 // never reported.
 func TestGetPoolOmitsLiveStatusWhenUnavailable(t *testing.T) {
 	for _, tc := range []struct {

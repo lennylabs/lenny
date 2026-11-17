@@ -143,7 +143,7 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 		t,
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	ledger := newLeaseLedger()
@@ -193,10 +193,10 @@ func newCredOutageFixture(t *testing.T, id string) *credOutageFixture {
 	return f
 }
 
-// sandboxClaimed reports whether sbx-1 carries a per-pod claim.
-func (f *credOutageFixture) sandboxClaimed(t *testing.T) bool {
+// podClaimed reports whether sbx-1 carries a per-pod claim.
+func (f *credOutageFixture) podClaimed(t *testing.T) bool {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }
@@ -244,7 +244,7 @@ func TestCreateAndStartFailsClosedOnCredentialLookupOutage_spec_4_9(t *testing.T
 	if _, err := f.store.Get(context.Background(), "acme", "sess-cred-outage"); !errors.Is(err, sessionstore.ErrNotFound) {
 		t.Errorf("the refused create persisted a row (err=%v)", err)
 	}
-	if f.sandboxClaimed(t) {
+	if f.podClaimed(t) {
 		t.Error("sbx-1 was claimed for a session refused before the claim")
 	}
 	if n := f.ledger.mintedFor("sess-cred-outage"); n != 0 {
@@ -295,8 +295,8 @@ func TestMaterializeDelegatedChildFailsClosedOnCredentialLookupOutage_spec_8_2(t
 	if row.State != session.StateCreated || row.PodAssignment != "" {
 		t.Errorf("child = %s on %q, want created with no pod", row.State, row.PodAssignment)
 	}
-	if f.sandboxClaimed(t) || f.registry.Len() != 0 {
-		t.Errorf("claimed=%v bindings=%d, want no claim and no binding", f.sandboxClaimed(t), f.registry.Len())
+	if f.podClaimed(t) || f.registry.Len() != 0 {
+		t.Errorf("claimed=%v bindings=%d, want no claim and no binding", f.podClaimed(t), f.registry.Len())
 	}
 	if n := f.ledger.mintedFor("child-outage"); n != 0 {
 		t.Errorf("credential leases minted = %d, want 0", n)
@@ -353,7 +353,7 @@ func TestResumeFailsClosedOnCredentialLookupOutage_spec_7_3(t *testing.T) {
 				i, got.State, got.CoordinationGeneration, got.RetryCount, pending.CoordinationGeneration, pending.RetryCount)
 		}
 	}
-	if f.sandboxClaimed(t) {
+	if f.podClaimed(t) {
 		t.Error("sbx-1 was claimed by an attempt that failed before its claim")
 	}
 	if n := f.ledger.mintedFor("sess-resume-outage"); n != 0 {

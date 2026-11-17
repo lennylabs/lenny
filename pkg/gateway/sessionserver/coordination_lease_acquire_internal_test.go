@@ -190,9 +190,9 @@ func TestRegisterBinding_ForeignHolderPublishesNothing(t *testing.T) {
 	srv, registry, _ := leaseTestServer(t, leases, "replica-a")
 
 	err := srv.registerBinding(context.Background(), &podsession.BindResult{
-		SessionID:   "sess-held",
-		TenantID:    "acme",
-		SandboxName: "sbx-1",
+		SessionID:    "sess-held",
+		TenantID:     "acme",
+		AgentPodName: "sbx-1",
 	})
 	if !errors.Is(err, leasestore.ErrHeld) {
 		t.Fatalf("registerBinding against a foreign holder = %v, want ErrHeld", err)
@@ -214,9 +214,9 @@ func TestRegisterBinding_AcquiresThenPublishes(t *testing.T) {
 	seedRunningRow(t, store, "acme", "sess-fresh")
 
 	err := srv.registerBinding(context.Background(), &podsession.BindResult{
-		SessionID:   "sess-fresh",
-		TenantID:    "acme",
-		SandboxName: "sbx-1",
+		SessionID:    "sess-fresh",
+		TenantID:     "acme",
+		AgentPodName: "sbx-1",
 	})
 	if err != nil {
 		t.Fatalf("registerBinding on an unheld lease: %v", err)
@@ -303,9 +303,9 @@ func TestPublishBindingPublishesWithoutTouchingLease(t *testing.T) {
 	seedRunningRow(t, store, "acme", "sess-pub")
 
 	srv.publishBinding(context.Background(), &podsession.BindResult{
-		SessionID:   "sess-pub",
-		TenantID:    "acme",
-		SandboxName: "sbx-1",
+		SessionID:    "sess-pub",
+		TenantID:     "acme",
+		AgentPodName: "sbx-1",
 	})
 	if _, ok := registry.Get("sess-pub"); !ok {
 		t.Fatal("publishBinding did not publish the binding into the registry")
@@ -327,9 +327,9 @@ func TestRegisterBinding_NoLeaseStorePublishes(t *testing.T) {
 	seedRunningRow(t, store, "acme", "sess-dev")
 
 	err := srv.registerBinding(context.Background(), &podsession.BindResult{
-		SessionID:   "sess-dev",
-		TenantID:    "acme",
-		SandboxName: "sbx-1",
+		SessionID:    "sess-dev",
+		TenantID:     "acme",
+		AgentPodName: "sbx-1",
 	})
 	if err != nil {
 		t.Fatalf("registerBinding with no leaseStore: %v", err)

@@ -567,7 +567,7 @@ func newReportFixture(t *testing.T) *reportFixture {
 
 // bind publishes an exclusive binding for id and gives rep-1 its lease.
 func (f *reportFixture) bind(id string) {
-	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-" + id})
+	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: "pod-" + id})
 	f.leases.holders[clk("acme", id)] = "rep-1"
 }
 

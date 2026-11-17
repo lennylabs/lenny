@@ -559,8 +559,8 @@ spec:
         - port: 8443
           protocol: TCP
   egress:
-    # The §4.6.1 lenny-sandboxclaim-guard webhook reads sibling
-    # SandboxClaims from the kube-apiserver to enforce the ADR-007
+    # The §4.6.1 lenny-podclaim-guard webhook reads sibling
+    # PodClaims from the kube-apiserver to enforce the ADR-007
     # one-claim-per-slot rule, and lenny-drain-readiness reads pod
     # state. Without kube-apiserver egress the webhook handler's API
     # call hangs and the fail-closed webhook times out on every
@@ -1737,15 +1737,15 @@ data:
                 description: 'The RuntimeClass-aware admission policy webhook (OPA/Gatekeeper or Kyverno) has been unreachable for more than 30s. With failurePolicy: Fail, pod admission is denied — no new pods can be scheduled, halting warm pool replenishment.'
                 runbook_url: https://docs.lenny.dev/runbooks/admission-webhook-outage
                 summary: RuntimeClass-aware admission webhook unreachable
-            - alert: SandboxClaimGuardUnavailable
-              expr: up{job="lenny-sandboxclaim-guard"} == 0
+            - alert: PodClaimGuardUnavailable
+              expr: up{job="lenny-podclaim-guard"} == 0
               for: 30s
               labels:
                 severity: critical
               annotations:
-                description: 'The lenny-sandboxclaim-guard ValidatingAdmissionWebhook has been unreachable for more than 30s. With failurePolicy: Fail, every SandboxClaim CREATE is blocked; new pod acquisition is prevented, halting session creation. Double-claim prevention is suspended until the webhook recovers.'
-                runbook_url: https://docs.lenny.dev/runbooks/sandboxclaim-guard-unavailable
-                summary: SandboxClaim guard webhook unreachable
+                description: 'The lenny-podclaim-guard ValidatingAdmissionWebhook has been unreachable for more than 30s. With failurePolicy: Fail, every PodClaim CREATE is blocked; new pod acquisition is prevented, halting session creation. Double-claim prevention is suspended until the webhook recovers.'
+                runbook_url: https://docs.lenny.dev/runbooks/podclaim-guard-unavailable
+                summary: PodClaim guard webhook unreachable
             - alert: DualStoreUnavailable
               expr: lenny_dual_store_unavailable == 1
               labels:
@@ -2259,7 +2259,7 @@ data:
               labels:
                 severity: warning
               annotations:
-                description: 'The lenny-pool-config-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. Manual and reconciliation-driven SandboxTemplate/SandboxWarmPool updates stall until the webhook recovers.'
+                description: 'The lenny-pool-config-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. Manual and reconciliation-driven PodSet updates stall until the webhook recovers.'
                 summary: Pool config validator webhook unreachable
             - alert: PoolScalingAdmissionStuck
               expr: increase(lenny_pool_scaling_admission_denied_total[5m]) >= 10
@@ -2551,13 +2551,13 @@ data:
               annotations:
                 description: Cumulative lenny_warmpool_idle_pod_minutes for a pool exceeds the deployer-configured cost threshold over a rolling 24h window. The minWarm target or scale-to-zero schedule may need adjustment.
                 summary: Warm pool idle cost above the configured threshold
-            - alert: SandboxClaimOrphanRateHigh
+            - alert: PodClaimOrphanRateHigh
               expr: increase(lenny_orphaned_claims_total[15m]) > 10
               labels:
                 severity: warning
               annotations:
                 description: lenny_orphaned_claims_total rate exceeds 10 orphaned claims in any 15-minute window. Indicates potential gateway instability — gateways creating claims but crashing before persisting sessions.
-                summary: SandboxClaim orphan rate high
+                summary: PodClaim orphan rate high
             - alert: OrphanTasksPerTenantHigh
               expr: lenny_orphan_tasks_active_per_tenant > 0.80 * scalar(lenny_max_orphan_tasks_per_tenant)
               labels:
@@ -2611,12 +2611,12 @@ data:
                 description: 'Durable-inbox enqueue is failing because the coordination Redis instance is unreachable; senders with durableInbox: true sessions are receiving error delivery receipts and inter-session coordination messages are being rejected.'
                 summary: Durable-inbox Redis unavailable
             - alert: FinalizerStuck
-              expr: lenny_sandbox_finalizer_terminating_seconds > 300
+              expr: lenny_agentpod_finalizer_terminating_seconds > 300
               labels:
                 severity: warning
               annotations:
-                description: A Sandbox pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
-                summary: A Sandbox pod finalizer is stuck
+                description: A AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
+                summary: A AgentPod pod finalizer is stuck
             - alert: DedicatedDNSDegraded
               expr: kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} > 0 and kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} < scalar(lenny_agent_dns_min_replicas)
               labels:
@@ -2993,7 +2993,7 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxes", "sandboxclaims", "sandboxwarmpools"]
+    resources: ["agentpods", "podclaims", "podsets"]
     verbs: ["get", "list", "watch"]
 ---
 # Source: lenny/templates/backup-job.yaml
@@ -3029,7 +3029,7 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates", "sandboxwarmpools"]
+    resources: ["podsets", "podsets"]
     verbs: ["get", "list", "watch"]
   # Runtimes: the §5.1 RuntimeReconciler watches Runtime resources and
   # mirrors them into the gateway runtime registry. It manages a
@@ -3042,22 +3042,22 @@ rules:
   - apiGroups: ["lenny.dev"]
     resources: ["runtimes/finalizers"]
     verbs: ["update"]
-  # Sandboxes: the WarmPoolController creates idle pods, drains and
-  # recreates pods near cert expiry, and retires pod-failed Sandboxes;
+  # AgentPods: the WarmPoolController creates idle pods, drains and
+  # recreates pods near cert expiry, and retires pod-failed AgentPods;
   # the §4.6.1 cert-expiry replacement and pod-failed retire paths
   # require delete (§4.6.3 RBAC backstop grants create/update/delete).
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxes"]
+    resources: ["agentpods"]
     # patch is required for the WarmPoolController's Server-Side Apply write of
-    # the §4.7 nonce-only render decision onto the Sandbox.spec.requireSoPeercred
-    # carrier (pkg/controller/sandbox/controller.go recordNonceOnlyCarrier /
+    # the §4.7 nonce-only render decision onto the AgentPod.spec.requireSoPeercred
+    # carrier (pkg/controller/agentpod/controller.go recordNonceOnlyCarrier /
     # clearNonceOnlyCarrier); SSA issues an HTTP PATCH, for which `update` is
-    # insufficient — the same reason the sandboxes/status rule below needs patch.
+    # insufficient — the same reason the agentpods/status rule below needs patch.
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # SandboxClaims: the §4.6.1 occupancy projection watches SandboxClaim
-  # resources and computes Sandbox.status.phase as a level-triggered
+  # PodClaims: the §4.6.1 occupancy projection watches PodClaim
+  # resources and computes AgentPod.status.phase as a level-triggered
   # projection of claim existence and binding state, so the
-  # WarmPoolController needs `get`/`watch` here. The Sandbox-to-Pod
+  # WarmPoolController needs `get`/`watch` here. The AgentPod-to-Pod
   # reconciler additionally `get`s the per-pod claim to read the §6.1
   # rewarmStartedAt stamp, which re-anchors the sdk_connecting watchdog
   # clock on the recycle re-warm edge. The §4.6.1 orphaned-claim
@@ -3065,25 +3065,25 @@ rules:
   # live session references (§4.6.3 RBAC backstop grants
   # get/list/watch/delete).
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxclaims"]
+    resources: ["podclaims"]
     verbs: ["get", "list", "watch", "delete"]
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
+    resources: ["podsets/status", "podsets/status", "agentpods/status", "runtimes/status"]
     verbs: ["get", "update", "patch"]
-  # PodDisruptionBudgets: the §4.6.1 per-SandboxTemplate warm-pod PDB
+  # PodDisruptionBudgets: the §4.6.1 per-PodSet warm-pod PDB
   # management owns one PDB per pool (maxUnavailable: 1) and tears it
   # down when the pool is deleted or scaled to zero.
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # Pods: the Sandbox-to-Pod reconciler creates and deletes backing
+  # Pods: the AgentPod-to-Pod reconciler creates and deletes backing
   # pods, and patches the §4.6.1 lenny.dev/state label so the per-pool
   # warm-pod PodDisruptionBudget's idle selector tracks pod lifecycle.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "patch", "delete"]
   # Pods/status: the §6.1 syncReadinessGate flips the
-  # lenny.dev/sandbox-ready pod readiness gate to True once the backing
+  # lenny.dev/agent-pod-ready pod readiness gate to True once the backing
   # pod's containers report ready, which is what makes a warm pod
   # claimable (the kubelet holds Pod.Ready False until the gate is set).
   # The reconciler patches it through the status subresource
@@ -3142,45 +3142,45 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "0.1.0"
 rules:
-  # The gateway reads warm pools and Sandboxes to select a §5 warm pod
+  # The gateway reads warm pools and AgentPods to select a §5 warm pod
   # for a claim and reads pods to resolve the claimed pod's IP for the
-  # adapter dial. It does not write Sandbox.status: under the §4.6.3
+  # adapter dial. It does not write AgentPod.status: under the §4.6.3
   # pod-status ownership decomposition the WarmPoolController is the
-  # sole writer of Sandbox.status and projects occupancy from claim
-  # existence, so the gateway holds only read access on Sandbox.
+  # sole writer of AgentPod.status and projects occupancy from claim
+  # existence, so the gateway holds only read access on AgentPod.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxwarmpools", "sandboxtemplates", "runtimes"]
+    resources: ["podsets", "podsets", "runtimes"]
     verbs: ["get", "list", "watch"]
-  # Sandboxes: read-only for pod selection during claim (§4.6.3). The
+  # AgentPods: read-only for pod selection during claim (§4.6.3). The
   # gateway holds no `patch` or `watch` verb on the main resource and
-  # no `sandboxes/status` grant — the tenant pin lives on the agent
+  # no `agentpods/status` grant — the tenant pin lives on the agent
   # Pod's lenny.dev/tenant-id label (granted via the Pods rule below),
   # and the lenny.dev/state label is a WarmPoolController projection of
   # the coarse occupancy phase rather than a gateway write.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxes"]
+    resources: ["agentpods"]
     verbs: ["get", "list"]
-  # SandboxClaim: the gateway creates the per-pod binding claim CRD that
-  # the §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, gets
+  # PodClaim: the gateway creates the per-pod binding claim CRD that
+  # the §17.2 lenny-podclaim-guard webhook validates on CREATE, gets
   # it to read the binding state and the resourceVersion guarding a
   # hold-expiry DELETE precondition, and deletes it on the claim-lifecycle
   # edges (hold expiry, session-mode Release, and §5.2
-  # SlotClaimer.ReleaseSlot all do Client.Delete on the SandboxClaim).
+  # SlotClaimer.ReleaseSlot all do Client.Delete on the PodClaim).
   # Intra-pod capacity is gated by the §5.2 Redis slot set with
   # a §12.4 Postgres SessionStore.GetActiveSlotsByPod fallback under a
   # per-pod advisory lock during a Redis outage, so the gateway does not
   # list or watch claims to gate capacity. The §4.6.3 grant is
   # create/get/delete.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxclaims"]
+    resources: ["podclaims"]
     verbs: ["get", "create", "delete"]
-  # SandboxClaim status: the gateway is the sole writer of the §4.6.3
+  # PodClaim status: the gateway is the sole writer of the §4.6.3
   # claim binding state. It patches the binding-state phase, the
   # transition time, rewarmStartedAt (preConnect re-warm anchor), and
-  # holdExpiresAt (reserved-hold window) on the sandboxclaims/status
+  # holdExpiresAt (reserved-hold window) on the podclaims/status
   # subresource.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxclaims/status"]
+    resources: ["podclaims/status"]
     verbs: ["get", "patch"]
   # Pods: read to resolve the claimed pod's IP for the adapter dial and
   # the WarmPoolController-projected lenny.dev/host-schedulable label,
@@ -3220,7 +3220,7 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
   # §25.4 — lenny.dev custom resources (Runtime,
-  # SandboxWarmPool, etc.) for drift detection and inventory.
+  # PodSet, etc.) for drift detection and inventory.
   - apiGroups: ["lenny.dev"]
     resources: ["*"]
     verbs: ["get", "list", "watch"]
@@ -3241,17 +3241,17 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/version: "0.1.0"
 rules:
-  # SandboxTemplate and SandboxWarmPool: the §4.6.3 ownership table
+  # PodSet: the §4.6.3 ownership table
   # assigns the PSC create/update/delete on both CRDs (it reconciles the
   # full derived spec from Postgres).
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates", "sandboxwarmpools"]
+    resources: ["podsets", "podsets"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # SandboxWarmPool status: SSA writes to the PSC-owned
+  # PodSet status: SSA writes to the PSC-owned
   # status.sdkWarmCircuitBreaker carve-out require get (read current) and
   # patch (apply partial).
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxwarmpools/status"]
+    resources: ["podsets/status"]
     verbs: ["get", "update", "patch"]
 ---
 # Source: lenny/templates/admission-policies/webhook-rbac.yaml
@@ -4371,7 +4371,7 @@ spec:
             # §4.6.1 reserved hold — gateway.claimHoldTTLSeconds is the
             # deployment-level TTL of the `reserved` claim window. When a
             # recycling pod's occupancy reaches zero the gateway patches
-            # the per-pod SandboxClaim to `reserved` and holds it for this
+            # the per-pod PodClaim to `reserved` and holds it for this
             # many seconds so a back-to-back same-tenant session rebinds
             # (reserved → bound) with no acquisition round trip; on expiry
             # the holder deletes the claim and the pod returns to idle. A

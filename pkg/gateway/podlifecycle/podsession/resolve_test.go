@@ -14,24 +14,24 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 )
 
-func warmPool(ns, name, templateRef string) *lennyv1.SandboxWarmPool {
-	return &lennyv1.SandboxWarmPool{
+func warmPool(ns, name, templateRef string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
 	}
 }
 
-func sandboxTemplate(ns, name, runtimeRef, isolation string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func podSet(ns, name, runtimeRef, isolation string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: runtimeRef, IsolationProfile: isolation},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: isolation},
 	}
 }
 
-func spiffeBindingTemplate(ns, name, runtimeRef, isolation, spiffeBinding string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func spiffeBindingTemplate(ns, name, runtimeRef, isolation, spiffeBinding string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       runtimeRef,
 			IsolationProfile: isolation,
 			SpiffeBinding:    spiffeBinding,
@@ -39,10 +39,10 @@ func spiffeBindingTemplate(ns, name, runtimeRef, isolation, spiffeBinding string
 	}
 }
 
-func serviceTemplate(ns, name, runtimeRef, isolation string, maxConcurrent int32) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func serviceTemplate(ns, name, runtimeRef, isolation string, maxConcurrent int32) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       runtimeRef,
 			IsolationProfile: isolation,
 			ExecutionMode:    "service",
@@ -75,7 +75,7 @@ func (f fakePolicyReader) PoolPolicy(_ context.Context, name string) (podsession
 // through the PoolPolicyReader keyed by the resolved pool name.
 func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "conc-tmpl", "conc-runtime", "microvm")
+	tmpl := podSet(ns, "conc-tmpl", "conc-runtime", "microvm")
 	c := k8sClient(t, warmPool(ns, "conc-pool", "conc-tmpl"), tmpl)
 	slotRetries := 3
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
@@ -118,13 +118,13 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 }
 
 // spec: §10.1.7 / §5.2 — the per-pool checkpointGrantWindow
-// override is declared on the SandboxTemplate, so ResolvePool copies it
+// override is declared on the PodSet, so ResolvePool copies it
 // onto the PoolMatch for the checkpoint driver to prefer over the
 // deployment-wide default. A pool that declares no override leaves the
 // field nil so the driver falls back to the deployment-wide default.
 func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "cp-tmpl", "cp-runtime", "microvm")
+	tmpl := podSet(ns, "cp-tmpl", "cp-runtime", "microvm")
 	window := int32(8)
 	tmpl.Spec.CheckpointGrantWindow = &window
 	c := k8sClient(t, warmPool(ns, "cp-pool", "cp-tmpl"), tmpl)
@@ -146,7 +146,7 @@ func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing
 // driver resolves the deployment-wide default.
 func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "cp-tmpl", "cp-runtime", "microvm")
+	tmpl := podSet(ns, "cp-tmpl", "cp-runtime", "microvm")
 	c := k8sClient(t, warmPool(ns, "cp-pool", "cp-tmpl"), tmpl)
 
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "cp-runtime", "microvm", "")
@@ -163,7 +163,7 @@ func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *t
 // the gateway-enforced pool policy governs the driver's per-pool window.
 func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "cp-tmpl", "cp-runtime", "microvm")
+	tmpl := podSet(ns, "cp-tmpl", "cp-runtime", "microvm")
 	tmplWindow := int32(8)
 	tmpl.Spec.CheckpointGrantWindow = &tmplWindow
 	c := k8sClient(t, warmPool(ns, "cp-pool", "cp-tmpl"), tmpl)
@@ -195,7 +195,7 @@ func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T)
 // reaches the gateway solely through this mirror fold.
 func TestResolvePoolFoldsRecycleForStandardScrubProfile(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "reuse-tmpl", "reuse-runtime", "standard")
+	tmpl := podSet(ns, "reuse-tmpl", "reuse-runtime", "standard")
 	c := k8sClient(t, warmPool(ns, "reuse-pool", "reuse-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"reuse-pool": {Recycle: true},
@@ -275,7 +275,7 @@ func TestResolvePoolRecycleFollowsStoredPolicyOverCRDBlock_spec_5_2(t *testing.T
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ns := testNamespace(t)
-			tmpl := sandboxTemplate(ns, "recycle-tmpl", "recycle-runtime", tc.isolation)
+			tmpl := podSet(ns, "recycle-tmpl", "recycle-runtime", tc.isolation)
 			tmpl.Spec.SessionPolicy = tc.crd
 			c := k8sClient(t, warmPool(ns, "recycle-pool", "recycle-tmpl"), tmpl)
 			var policy podsession.PoolPolicyReader
@@ -306,7 +306,7 @@ func TestResolvePoolRecycleFollowsStoredPolicyOverCRDBlock_spec_5_2(t *testing.T
 // erroring, matching how AllowCrossTenantReuse is folded.
 func TestResolvePoolFoldsCleanupCommands(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "scrub-tmpl", "scrub-runtime", "microvm")
+	tmpl := podSet(ns, "scrub-tmpl", "scrub-runtime", "microvm")
 	c := k8sClient(t, warmPool(ns, "scrub-pool", "scrub-tmpl"), tmpl)
 
 	// A mirror carrying the two cleanup fields folds them onto PoolMatch.
@@ -340,7 +340,7 @@ func TestResolvePoolFoldsCleanupCommands(t *testing.T) {
 // always-empty CRD pair.
 func TestResolvePoolFoldsPoolExhaustionDisposition(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "queue-tmpl", "queue-runtime", "sandboxed")
+	tmpl := podSet(ns, "queue-tmpl", "queue-runtime", "sandboxed")
 	c := k8sClient(t, warmPool(ns, "queue-pool", "queue-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
 		"queue-pool": {OnPoolExhausted: "queue", MaxQueueWaitSeconds: 45},
@@ -364,7 +364,7 @@ func TestResolvePoolFoldsPoolExhaustionDisposition(t *testing.T) {
 // OnPoolExhausted empty, which the start path treats as reject.
 func TestResolvePoolDefaultsToRejectWithoutMirror(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "reject-tmpl", "reject-runtime", "sandboxed")
+	tmpl := podSet(ns, "reject-tmpl", "reject-runtime", "sandboxed")
 	c := k8sClient(t, warmPool(ns, "reject-pool", "reject-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
 
@@ -411,7 +411,7 @@ func TestResolvePoolMirrorOverridesServiceMaxConcurrent(t *testing.T) {
 // falling back to always-zero dispatch fields.
 func TestResolvePoolPropagatesPolicyError(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "err-tmpl", "err-runtime", "sandboxed")
+	tmpl := podSet(ns, "err-tmpl", "err-runtime", "sandboxed")
 	c := k8sClient(t, warmPool(ns, "err-pool", "err-tmpl"), tmpl)
 	policy := fakePolicyReader{err: errors.New("mirror down")}
 
@@ -427,7 +427,7 @@ func TestResolvePoolPropagatesPolicyError(t *testing.T) {
 // dispatch fields at their CRD-derived defaults instead of erroring.
 func TestResolvePoolKeepsCRDDefaultsWhenMirrorAbsent(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "nomirror-tmpl", "nomirror-runtime", "sandboxed")
+	tmpl := podSet(ns, "nomirror-tmpl", "nomirror-runtime", "sandboxed")
 	c := k8sClient(t, warmPool(ns, "nomirror-pool", "nomirror-tmpl"), tmpl)
 	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{}}
 
@@ -477,7 +477,7 @@ func TestResolvePoolSessionModeLeavesDispatchFieldsEmpty(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "session-pool", "session-tmpl"),
-		sandboxTemplate(ns, "session-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "session-tmpl", "claude-code", "sandboxed"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if err != nil {
@@ -527,7 +527,7 @@ func TestResolvePoolSurfacesScrubProfile(t *testing.T) {
 // empty.
 func TestResolvePoolLeavesScrubProfileUnsetWithoutRecycle(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "plain-tmpl", "plain-runtime", "sandboxed")
+	tmpl := podSet(ns, "plain-tmpl", "plain-runtime", "sandboxed")
 	c := k8sClient(t, warmPool(ns, "plain-pool", "plain-tmpl"), tmpl)
 
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "plain-runtime", "sandboxed", "")
@@ -544,7 +544,7 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "claude-pool", "claude-tmpl"),
-		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "", "")
 	if err != nil {
@@ -555,7 +555,7 @@ func TestResolvePoolMatchesByRuntime(t *testing.T) {
 	}
 }
 
-// spec: §4.9 — ResolvePool copies the pool's SandboxTemplate spiffeBinding
+// spec: §4.9 — ResolvePool copies the pool's PodSet spiffeBinding
 // onto the PoolMatch so the session-start credential-delivery gate can pair
 // the bound pod's binding with each resolved CredentialPool's effective
 // deliveryMode. TestResolvePoolCopiesSpiffeBinding pins the populated case.
@@ -575,7 +575,7 @@ func TestResolvePoolCopiesSpiffeBinding(t *testing.T) {
 	}
 }
 
-// spec: §4.9 — a SandboxTemplate that declares no spiffeBinding leaves the
+// spec: §4.9 — a PodSet that declares no spiffeBinding leaves the
 // PoolMatch field at its empty default rather than fabricating a value the
 // credential-delivery gate would misread.
 func TestResolvePoolLeavesSpiffeBindingEmptyByDefault(t *testing.T) {
@@ -583,7 +583,7 @@ func TestResolvePoolLeavesSpiffeBindingEmptyByDefault(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "claude-pool", "claude-tmpl"),
-		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "", "")
 	if err != nil {
@@ -599,7 +599,7 @@ func TestResolvePoolNoMatch(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "claude-pool", "claude-tmpl"),
-		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
 	_, err := podsession.ResolvePool(context.Background(), c, nil, ns, "other-runtime", "", "")
 	if !errors.Is(err, podsession.ErrNoMatchingPool) {
@@ -612,9 +612,9 @@ func TestResolvePoolDisambiguatesByIsolation(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "claude-gvisor", "tmpl-gvisor"),
-		sandboxTemplate(ns, "tmpl-gvisor", "claude-code", "sandboxed"),
+		podSet(ns, "tmpl-gvisor", "claude-code", "sandboxed"),
 		warmPool(ns, "claude-kata", "tmpl-kata"),
-		sandboxTemplate(ns, "tmpl-kata", "claude-code", "microvm"),
+		podSet(ns, "tmpl-kata", "claude-code", "microvm"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "microvm", "")
 	if err != nil {
@@ -632,9 +632,9 @@ func TestResolvePoolAmbiguous(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "pool-a", "tmpl-a"),
-		sandboxTemplate(ns, "tmpl-a", "claude-code", "sandboxed"),
+		podSet(ns, "tmpl-a", "claude-code", "sandboxed"),
 		warmPool(ns, "pool-b", "tmpl-b"),
-		sandboxTemplate(ns, "tmpl-b", "claude-code", "sandboxed"),
+		podSet(ns, "tmpl-b", "claude-code", "sandboxed"),
 	)
 	_, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if !errors.Is(err, podsession.ErrAmbiguousPool) {
@@ -650,7 +650,7 @@ func TestResolvePoolSkipsDanglingTemplateRef(t *testing.T) {
 		t,
 		warmPool(ns, "broken-pool", "missing-tmpl"),
 		warmPool(ns, "claude-pool", "claude-tmpl"),
-		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "claude-tmpl", "claude-code", "sandboxed"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "")
 	if err != nil {
@@ -670,7 +670,7 @@ func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string
 	ns := testNamespace(t)
 	ctx := context.Background()
 
-	var tmpl lennyv1.SandboxTemplate
+	var tmpl lennyv1.PodSet
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: templateName}, &tmpl); err != nil {
 		t.Fatalf("get template %s: %v", templateName, err)
 	}
@@ -689,7 +689,7 @@ func seedPoolStatus(t *testing.T, c client.Client, templateName, poolName string
 		t.Fatalf("seed template status %s: %v", templateName, err)
 	}
 
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: poolName}, &pool); err != nil {
 		t.Fatalf("get pool %s: %v", poolName, err)
 	}
@@ -708,7 +708,7 @@ func TestResolvePoolSurfacesPoolWarmingUp(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "warming-pool", "warming-tmpl"),
-		sandboxTemplate(ns, "warming-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "warming-tmpl", "claude-code", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "warming-tmpl", "warming-pool", 2, 0, true)
 
@@ -731,7 +731,7 @@ func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "ready-pool", "ready-tmpl"),
-		sandboxTemplate(ns, "ready-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "ready-tmpl", "claude-code", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "ready-tmpl", "ready-pool", 3, 3, false)
 
@@ -755,9 +755,9 @@ func TestPoolStatusLookup(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "warming-p", "warming-t"),
-		sandboxTemplate(ns, "warming-t", "rt-warming", "sandboxed"),
+		podSet(ns, "warming-t", "rt-warming", "sandboxed"),
 		warmPool(ns, "ready-p", "ready-t"),
-		sandboxTemplate(ns, "ready-t", "rt-ready", "sandboxed"),
+		podSet(ns, "ready-t", "rt-ready", "sandboxed"),
 	)
 	seedPoolStatus(t, c, "warming-t", "warming-p", 2, 0, true)
 	seedPoolStatus(t, c, "ready-t", "ready-p", 4, 4, false)
@@ -798,9 +798,9 @@ func TestResolvePoolHonorsPinnedPool_spec_7_1(t *testing.T) {
 	c := k8sClient(
 		t,
 		warmPool(ns, "pool-a", "tmpl-a"),
-		sandboxTemplate(ns, "tmpl-a", "claude-code", "sandboxed"),
+		podSet(ns, "tmpl-a", "claude-code", "sandboxed"),
 		warmPool(ns, "pool-b", "tmpl-b"),
-		sandboxTemplate(ns, "tmpl-b", "claude-code", "sandboxed"),
+		podSet(ns, "tmpl-b", "claude-code", "sandboxed"),
 	)
 	got, err := podsession.ResolvePool(context.Background(), c, nil, ns, "claude-code", "sandboxed", "pool-b")
 	if err != nil {
@@ -823,10 +823,10 @@ func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 		t,
 		// A pool backed by claude-code / sandboxed.
 		warmPool(ns, "claude-pool", "claude-tmpl"),
-		sandboxTemplate(ns, "claude-tmpl", "claude-code", "sandboxed"),
+		podSet(ns, "claude-tmpl", "claude-code", "sandboxed"),
 		// A pool backed by a different runtime, isolation microvm.
 		warmPool(ns, "other-pool", "other-tmpl"),
-		sandboxTemplate(ns, "other-tmpl", "other-runtime", "microvm"),
+		podSet(ns, "other-tmpl", "other-runtime", "microvm"),
 	)
 	cases := []struct {
 		name             string
@@ -862,7 +862,7 @@ func TestResolvePoolRejectsUnsatisfiablePin_spec_14_1(t *testing.T) {
 // mirror row or no reader as one that reuses pods.
 func TestResolvePoolCopiesReuseAndAcknowledgmentPredicates_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := sandboxTemplate(ns, "keep-tmpl", "keep-runtime", "sandboxed")
+	tmpl := podSet(ns, "keep-tmpl", "keep-runtime", "sandboxed")
 	c := k8sClient(t, warmPool(ns, "keep-pool", "keep-tmpl"), tmpl)
 
 	for _, tc := range []struct{ reuse, ack bool }{{true, true}, {true, false}, {false, false}} {

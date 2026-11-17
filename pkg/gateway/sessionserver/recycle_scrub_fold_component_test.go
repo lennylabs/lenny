@@ -130,7 +130,7 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 		t,
 		podBindWarmPool(t, "recycle-pool", "recycle-tmpl"),
 		tmpl,
-		podBindIdleSandbox(t, "sbx-r", "recycle-pool", "10.244.3.9"),
+		podBindIdleAgentPod(t, "sbx-r", "recycle-pool", "10.244.3.9"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	binder.RecycleBoundary = &noopRecycleBoundary{}
@@ -193,7 +193,7 @@ func TestRecycleScrubConfigFoldsEndToEnd_spec_5_2(t *testing.T) {
 		t.Fatal("recycle release sent a plain Shutdown, want a RecycleScrub sub-message")
 	}
 	if rc.GetPodId() != "sbx-r" {
-		t.Errorf("RecycleScrub.pod_id = %q, want sbx-r (the folded SandboxName the missing-report timeout keys on)", rc.GetPodId())
+		t.Errorf("RecycleScrub.pod_id = %q, want sbx-r (the folded AgentPodName the missing-report timeout keys on)", rc.GetPodId())
 	}
 	if rc.GetCleanupTimeoutSeconds() != 45 {
 		t.Errorf("RecycleScrub.cleanup_timeout_seconds = %d, want 45", rc.GetCleanupTimeoutSeconds())

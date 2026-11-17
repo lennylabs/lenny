@@ -12,8 +12,8 @@
 // This package validates the §4.6.2 / §4.6.3 semantic budget
 // invariants that are visible at the CRD layer — the relationships
 // between minWarm, maxWarm, bootstrap and schedule overrides on a
-// SandboxWarmPool, and the execution-mode acknowledgment and budget
-// rules on a SandboxTemplate. The §5.2 / §10.1 agent-pod
+// PodSet, and the execution-mode acknowledgment and budget
+// rules on a PodSet. The §5.2 / §10.1 agent-pod
 // `terminationGracePeriodSeconds` floor
 // (`maxConcurrent × max_tiered_checkpoint_cap + 30`) is enforced here
 // against `spec.workspaceSizeLimitBytes`,
@@ -27,7 +27,7 @@
 // pool's effective grace period (the declared value, else the §4.6.1
 // 120s agent default the podspec renders for an omitted field), so an
 // omitted field that under-provisions is rejected fail-closed. The
-// budget rule applies to EVERY SandboxTemplate write regardless of
+// budget rule applies to EVERY PodSet write regardless of
 // execution mode; only a service-mode pool fans the per-slot checkpoint
 // cap across `maxConcurrent` slots, so a session-mode pool uses a
 // multiplier of 1.
@@ -76,7 +76,7 @@ const codeInvalidPoolConfiguration = 422
 
 // ReasonUnauthorizedPoolConfigWrite is the machine-readable failure
 // code the webhook attaches to a rule-set-2 (authorization) rejection.
-// A write to a SandboxTemplate or SandboxWarmPool spec from any
+// A write to a PodSet spec from any
 // principal other than the PoolScalingController ServiceAccount is
 // rejected with this code (spec/04_system-components.md §4.6.3).
 const ReasonUnauthorizedPoolConfigWrite = "UNAUTHORIZED_POOL_CONFIG_WRITE"
@@ -89,27 +89,35 @@ const ReasonUnauthorizedPoolConfigWrite = "UNAUTHORIZED_POOL_CONFIG_WRITE"
 const codeUnauthorizedPoolConfigWrite = 403
 
 // PoolScalingControllerSA is the only principal whose writes to a
-// SandboxTemplate or SandboxWarmPool spec are admitted under rule set
+// PodSet spec are admitted under rule set
 // 2. It is the same ServiceAccount username the lenny-label-immutability
 // webhook references, kept in one place so the two webhooks cannot
 // drift (spec/04_system-components.md §4.6.3).
 const PoolScalingControllerSA = label_immutability.PoolScalingControllerSA
 
 // clockPattern matches a 24-hour HH:MM schedule-window boundary, the
-// same pattern the SandboxWarmPool CRD OpenAPI schema pins on
+// same pattern the PodSet CRD OpenAPI schema pins on
 // ScheduleWindow.Start and ScheduleWindow.End.
 var clockPattern = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
 
-// Kind discriminates the CRD type under admission. The webhook is
-// installed on SandboxWarmPool and SandboxTemplate only.
+// Kind names the CRD type under admission. The webhook is installed on
+// PodSet only.
 type Kind string
 
-const (
-	// KindSandboxWarmPool selects the §4.6.2 warm-count budget rules.
-	KindSandboxWarmPool Kind = "SandboxWarmPool"
-	// KindSandboxTemplate selects the §5.2 execution-mode rules.
-	KindSandboxTemplate Kind = "SandboxTemplate"
-)
+// KindPodSet is the one kind the webhook admits. A PodSet carries both
+// the §4.6.2 warm-count budget fields and the §5.2 pool settings, so
+// DecidePodSet applies both rule sets to it.
+const KindPodSet Kind = "PodSet"
+
+// DecidePodSet applies the warm-count budget rules of DecideWarmTargets
+// and then the pool-setting rules of DecidePoolSettings to one PodSet.
+// The first rejection wins.
+func DecidePodSet(ps *lennyv1.PodSet) Decision {
+	if d := DecideWarmTargets(ps); !d.Allowed {
+		return d
+	}
+	return DecidePoolSettings(ps)
+}
 
 // Decision is the admission outcome of one pool-config validation.
 type Decision struct {
@@ -181,7 +189,7 @@ func rejectBudget(msg string) Decision {
 
 // DecideAuthorization implements rule set 2 of §4.6.3: the
 // userInfo-based authorization backstop. Manual `kubectl edit` or
-// `kubectl apply` writes to a SandboxTemplate or SandboxWarmPool spec
+// `kubectl apply` writes to a PodSet spec
 // are rejected UNLESS the request's userInfo maps to the
 // PoolScalingController ServiceAccount. The API server populates
 // userInfo from the authenticated principal, which cannot be spoofed
@@ -198,7 +206,7 @@ func rejectBudget(msg string) Decision {
 // runs rule set 1 first and rule set 2 only when rule set 1 admits.
 //
 // username is the AdmissionRequest's userInfo.username. The webhook is
-// scoped to the sandboxwarmpools and sandboxtemplates resources (not the
+// scoped to the podsets and podsets resources (not the
 // `/status` subresource), so every request DecideAuthorization sees is a
 // spec write.
 func DecideAuthorization(username string) Decision {
@@ -208,7 +216,7 @@ func DecideAuthorization(username string) Decision {
 	return Decision{
 		Allowed: false,
 		Reason: fmt.Sprintf(
-			"%s: manual writes to SandboxTemplate/SandboxWarmPool spec are not permitted (got user %q); only the "+
+			"%s: manual writes to PodSet spec are not permitted (got user %q); only the "+
 				"PoolScalingController (%s) may write these fields. Pool configuration is Postgres-authoritative — use "+
 				"the admin API to change a pool; a manual edit would be silently overwritten on the next reconciliation.",
 			ReasonUnauthorizedPoolConfigWrite, username, PoolScalingControllerSA,
@@ -217,14 +225,14 @@ func DecideAuthorization(username string) Decision {
 	}
 }
 
-// DecideWarmPool validates a SandboxWarmPool against the §4.6.2 /
+// DecideWarmTargets validates a PodSet's warm targets against the §4.6.2 /
 // §4.6.3 warm-count budget invariants visible at the CRD layer.
 //
 // The invariants, each with its spec citation:
 //
-//   - minWarm and maxWarm are non-negative. The SandboxWarmPool CRD
+//   - minWarm and maxWarm are non-negative. The PodSet CRD
 //     OpenAPI schema pins Minimum=0 on both
-//     (pkg/apis/lenny/v1/sandboxwarmpool_types.go lines 97, 102); the
+//     (pkg/apis/lenny/v1/podset_types.go lines 97, 102); the
 //     webhook re-checks them as a defense-in-depth backstop because a
 //     negative count makes the §4.6.2 scaling formula ill-defined.
 //
@@ -236,7 +244,7 @@ func DecideAuthorization(username string) Decision {
 //
 //   - scalePolicy.bootstrapMinWarm <= maxWarm. bootstrapMinWarm is the
 //     static warm-count target a new pool holds while in bootstrap mode
-//     (spec/04_system-components.md §4.6.2 line ~493 "bootstrap mode"; pkg/apis/lenny/v1/sandboxwarmpool_types.go). A bootstrap
+//     (spec/04_system-components.md §4.6.2 line ~493 "bootstrap mode"; pkg/apis/lenny/v1/podset_types.go). A bootstrap
 //     target above the maxWarm ceiling would have the WarmPoolController
 //     immediately violate maxWarm on the pool's first reconciliation.
 //
@@ -244,9 +252,9 @@ func DecideAuthorization(username string) Decision {
 //     end, a non-empty duration (start != end), and a per-window
 //     minWarm that is non-negative and does not exceed maxWarm. A
 //     schedule window overrides the demand-derived warm count
-//     (spec/04_system-components.md §4.6.1 line ~470 "time-of-day schedules"; pkg/apis/lenny/v1/sandboxwarmpool_types.go). A window minWarm above maxWarm would push the pool past
+//     (spec/04_system-components.md §4.6.1 line ~470 "time-of-day schedules"; pkg/apis/lenny/v1/podset_types.go). A window minWarm above maxWarm would push the pool past
 //     its ceiling whenever the window is active.
-func DecideWarmPool(pool *lennyv1.SandboxWarmPool) Decision {
+func DecideWarmTargets(pool *lennyv1.PodSet) Decision {
 	spec := pool.Spec
 
 	if spec.MinWarm < 0 {
@@ -358,17 +366,17 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 }
 
 // §13.1 CAP_NET_RAW gate (not enforced here): §5.2 names a
-// "SandboxWarmPool CRD validation webhook" rejection for a pool whose
+// "PodSet CRD validation webhook" rejection for a pool whose
 // `maxConcurrentSessions > 1` while the pod template grants CAP_NET_RAW,
 // mitigating cross-slot raw-socket sniffing on the shared network
-// namespace. This webhook decodes only the SandboxTemplate /
-// SandboxWarmPool object. Neither SandboxTemplateSpec nor
-// SandboxWarmPoolSpec models a pod-template securityContext, and the CRD
+// namespace. This webhook decodes only the PodSet /
+// PodSet object. Neither PodSetSpec nor
+// PodSetSpec models a pod-template securityContext, and the CRD
 // carries no maxConcurrentSessions field at all (it lives on the
 // gateway-side sessionPolicy mirror), so the admission object the
 // validator receives carries no CAP_NET_RAW signal to gate on. The gate
 // is therefore enforced where the pod template is materialized: the
-// WarmPoolController pod-builder (pkg/controller/sandbox/podspec) drops
+// WarmPoolController pod-builder (pkg/controller/agentpod/podspec) drops
 // ALL capabilities and adds none on every container, so no agent pod can
 // hold CAP_NET_RAW regardless of maxConcurrentSessions (see
 // TestBuildDropsNetRawOnEveryContainer in that package). Because the
@@ -376,12 +384,12 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 // deployer-supplied), the §13.1 invariant holds without a webhook gate.
 // spec: §13.1 (pod security), §5.2 (concurrent-session acknowledgment).
 
-// DecideTemplate validates a SandboxTemplate against the §5.2
+// DecidePoolSettings validates a PodSet's pool settings against the §5.2
 // execution-mode acknowledgment and budget invariants visible at the
 // CRD layer. The empty execution mode is treated as `session`, which
 // carries no pool-config invariant beyond the CRD OpenAPI schema.
 //
-// The SandboxTemplate models only the cross-tenant scrub-profile
+// The PodSet models only the cross-tenant scrub-profile
 // residual-state gate of the §5.2 sessionPolicy.recycle block; the
 // remaining sessionPolicy acknowledgment derivations
 // (acknowledgeBestEffortScrub when recycling, acknowledgeProcessLevelIsolation
@@ -393,7 +401,7 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 // which the gateway poolstore enforces at admin admission. The CRD type
 // carries no maxConcurrentSessions and no pod-template securityContext, so
 // those derivations and the §13.1 CAP_NET_RAW gate are not reachable from
-// the SandboxTemplate object this webhook decodes.
+// the PodSet object this webhook decodes.
 //
 // The invariants enforced here, each with its spec citation:
 //
@@ -411,7 +419,7 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 //     mode. A service-mode pool fans the per-slot checkpoint cap across
 //     `maxConcurrent` slots; every other mode uses a multiplier of 1. See
 //     decideTerminationBudget. spec: §5.2, §10.1.
-func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
+func DecidePoolSettings(tpl *lennyv1.PodSet) Decision {
 	spec := tpl.Spec
 
 	// spec: §13.2.5 — the §13.2 egress/delivery coherence
@@ -439,7 +447,7 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 	}
 
 	// spec: §5.2, §10.1 — the agent-pod grace-floor rule applies to EVERY
-	// admission request that mutates a SandboxTemplate.spec, not only
+	// admission request that mutates a PodSet.spec, not only
 	// service-mode pools. A session-mode pool that allows a 512 MB
 	// workspace but whose effective terminationGracePeriodSeconds is below
 	// the 90s + 30s floor would be SIGKILL'd mid-checkpoint on drain
@@ -458,7 +466,7 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 // maxConcurrent collapses to a single slot.
 //
 // spec: §10.1, §5.2.
-func effectiveMaxConcurrent(spec lennyv1.SandboxTemplateSpec) int32 {
+func effectiveMaxConcurrent(spec lennyv1.PodSetSpec) int32 {
 	if spec.ExecutionMode == "service" && spec.MaxConcurrent > 1 {
 		return spec.MaxConcurrent
 	}
@@ -479,7 +487,7 @@ func effectiveMaxConcurrent(spec lennyv1.SandboxTemplateSpec) int32 {
 // rejection.
 //
 // spec: §13.2 (NET-006).
-func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
+func decideEgressDeliveryCombo(spec lennyv1.PodSetSpec) Decision {
 	if spec.DeliveryMode == "proxy" && spec.EgressProfile == "provider-direct" {
 		return reject(
 			"InvalidPoolEgressDeliveryCombo: spec.deliveryMode \"proxy\" is mutually exclusive with " +
@@ -522,7 +530,7 @@ func decideEgressDeliveryCombo(spec lennyv1.SandboxTemplateSpec) Decision {
 //
 // spec: §5.2 (deployer acknowledgment for recycling, Kata/microvm scrub
 // variant).
-func decideRecycleScrubProfile(spec lennyv1.SandboxTemplateSpec) Decision {
+func decideRecycleScrubProfile(spec lennyv1.PodSetSpec) Decision {
 	if spec.SessionPolicy == nil || spec.SessionPolicy.Recycle == nil {
 		return allow()
 	}
@@ -588,7 +596,7 @@ const nodeDrainWarnSeconds = 600
 
 // agentDefaultTerminationGraceSeconds is the §4.6.1 agent-pod
 // terminationGracePeriodSeconds default the podspec renders when the
-// SandboxWarmPool/SandboxTemplate field is omitted. The webhook uses it
+// PodSet field is omitted. The webhook uses it
 // as the effective grace period against which the §5.2 agent-pod floor
 // is evaluated for an omitted field, so an omitted field that
 // under-provisions is rejected fail-closed rather than silently
@@ -597,7 +605,7 @@ const agentDefaultTerminationGraceSeconds = 120
 
 // decideTerminationBudget enforces the §5.2 / §10.1 agent-pod
 // `terminationGracePeriodSeconds` floor. It runs for every
-// SandboxTemplate execution mode (DecideTemplate calls it after the
+// PodSet execution mode (DecidePoolSettings calls it after the
 // mode-specific acknowledgment checks); maxConcurrent is the slot
 // multiplier, which effectiveMaxConcurrent collapses to 1 for a
 // session-mode pool and resolves to spec.maxConcurrent for service mode.
@@ -639,7 +647,7 @@ const agentDefaultTerminationGraceSeconds = 120
 //   - When the computed floor exceeds nodeDrainWarnSeconds (600s) without
 //     a maxTerminationGracePeriodSeconds breach, the deployer is asked to
 //     verify the cluster node-drain timeout per §5.2.
-func decideTerminationBudget(spec lennyv1.SandboxTemplateSpec, maxConcurrent int32) Decision {
+func decideTerminationBudget(spec lennyv1.PodSetSpec, maxConcurrent int32) Decision {
 	workspaceLimit := int64(0)
 	if spec.WorkspaceSizeLimitBytes != nil {
 		workspaceLimit = *spec.WorkspaceSizeLimitBytes

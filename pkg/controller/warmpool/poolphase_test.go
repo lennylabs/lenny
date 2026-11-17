@@ -86,10 +86,10 @@ func TestReconcileEmitsPoolStateChangedOnTransition(t *testing.T) {
 
 	// Re-reconcile after marking the freshly-created pods idle. The pool
 	// transitions warming → ready, which must fire one event.
-	for _, sb := range poolSandboxes(t, c) {
+	for _, sb := range poolAgentPods(t, c) {
 		sb.Status.Phase = "idle"
 		if err := applyStatus(testContext(), c, &sb); err != nil {
-			t.Fatalf("set Sandbox %s idle: %v", sb.Name, err)
+			t.Fatalf("set AgentPod %s idle: %v", sb.Name, err)
 		}
 	}
 	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err != nil {
@@ -123,7 +123,7 @@ func TestReconcileNoEmitOnStablePhase(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	c := newClient(t, s, template(ns), pool(ns, 3, 10),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"))
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"), idleAgentPod(ns, "sb-c"))
 	buf := eventbuffer.NewEventBuffer(0)
 	em := eventbuffer.NewEmitter(buf, "test")
 	r := reconcilerWithEvents(c, s, em)

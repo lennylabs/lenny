@@ -4,13 +4,13 @@
 
 // Integration test for the §4.9 session-start credential-delivery
 // gate. The registration and admission layers inspect the
-// warm-pool/SandboxTemplate deliveryMode, which is a denormalized copy that
+// warm-pool/PodSet deliveryMode, which is a denormalized copy that
 // can diverge from the CredentialPool deliveryMode credential leasing
 // actually resolves per session. This test drives the fully wired
 // create → upload → finalize lifecycle through an in-process gateway against
 // a real kube-apiserver (envtest) with a multi-tenant deployment whose
 // resolved CredentialPool declares deliveryMode: proxy while the bound pod's
-// SandboxTemplate carries spiffeBinding: disabled. The finalize barrier must
+// PodSet carries spiffeBinding: disabled. The finalize barrier must
 // reject the session with 422 carrying the guard's
 // ProxyModeSpiffeBindingDisabled code before the credential lease is minted,
 // so the recording assigner observes no AssignProto call.
@@ -51,8 +51,8 @@ import (
 )
 
 // deliveryGateCluster seeds an envtest cluster with a warm pool whose
-// SandboxTemplate carries spiffeBinding: disabled (a warm-pod property absent
-// from the CredentialPool record) plus one idle Sandbox the create handler
+// PodSet carries spiffeBinding: disabled (a warm-pod property absent
+// from the CredentialPool record) plus one idle AgentPod the create handler
 // claims. The isolation profile stays sandboxed so create and pool resolution
 // succeed; the forbidden pairing is proxy delivery against the disabled SPIFFE
 // binding, which does not require standard isolation.
@@ -75,15 +75,15 @@ func deliveryGateCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: eagerNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: eagerNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: eagerNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "echo",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			SpiffeBinding:    "disabled",
@@ -91,7 +91,7 @@ func deliveryGateCluster(t *testing.T) client.Client {
 	}); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sbx-1", Namespace: eagerNS,
 			Labels: map[string]string{warmpool.LabelPool: "echo-pool"},
@@ -102,7 +102,7 @@ func deliveryGateCluster(t *testing.T) client.Client {
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName("sbx-1")
 	u.SetNamespace(eagerNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": "10.244.2.5"}, "status")
@@ -117,7 +117,7 @@ func deliveryGateCluster(t *testing.T) client.Client {
 // spiffeBinding at the finalize lease-mint seam in multi-tenant mode.
 // diagnosis: a failure means the finalize barrier minted a credential lease for
 // a session whose resolved CredentialPool declares deliveryMode: proxy against a
-// pod whose SandboxTemplate disables SPIFFE binding, the cross-pod lease-token
+// pod whose PodSet disables SPIFFE binding, the cross-pod lease-token
 // replay exposure §4.9 forbids in multi-tenant mode. If finalize returns 200 and
 // the assigner records an AssignProto call, the gate did not run at the finalize
 // seam and the lease reached the pod before the delivery-mode check; if the code

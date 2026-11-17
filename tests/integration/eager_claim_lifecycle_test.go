@@ -18,7 +18,7 @@
 //     credential lease, returning ready.
 //   - /start launches only: it assigns no lease and runs no materialization.
 //
-// This crosses the gateway, the datastore (the per-pod SandboxClaim on the
+// This crosses the gateway, the datastore (the per-pod PodClaim on the
 // apiserver), the blob store, and the pod adapter, which is the multi-service
 // surface the integration tier owns.
 
@@ -147,8 +147,8 @@ func (a *recordingAssigner) assignCount() int {
 }
 
 // eagerCluster returns an envtest-backed cluster seeded with a warm pool, its
-// template, and one idle Sandbox the create handler can claim. The seeded
-// Sandbox.status is split by §4.6.3 field ownership: the WarmPoolController
+// template, and one idle AgentPod the create handler can claim. The seeded
+// AgentPod.status is split by §4.6.3 field ownership: the WarmPoolController
 // seeds phase/podIP under its field manager, matching the production Apply
 // path the fake client cannot exercise (no SSA).
 func eagerCluster(t *testing.T) client.Client {
@@ -170,19 +170,19 @@ func eagerCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: eagerNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: eagerNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: eagerNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sbx-1", Namespace: eagerNS,
 			Labels: map[string]string{warmpool.LabelPool: "echo-pool"},
@@ -193,7 +193,7 @@ func eagerCluster(t *testing.T) client.Client {
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName("sbx-1")
 	u.SetNamespace(eagerNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": "10.244.2.5"}, "status")
@@ -295,8 +295,8 @@ func TestEagerClaimLifecycleCreateUploadFinalizeStart(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	// The pod was claimed at create: the per-pod SandboxClaim exists.
-	var claim lennyv1.SandboxClaim
+	// The pod was claimed at create: the per-pod PodClaim exists.
+	var claim lennyv1.PodClaim
 	if err := cluster.Get(ctx, client.ObjectKey{Namespace: eagerNS, Name: "claim-sbx-1"}, &claim); err != nil {
 		t.Fatalf("per-pod claim missing after create (the pod was not claimed at /create): %v", err)
 	}

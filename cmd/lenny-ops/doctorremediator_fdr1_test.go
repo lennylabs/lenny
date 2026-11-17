@@ -48,21 +48,21 @@ func (s stubHelmRenderSource) Monitoring(context.Context) (doctor.RenderedMonito
 	return s.monitoring, s.monOK, nil
 }
 
-// warmPoolObj builds a SandboxWarmPool custom resource referencing the
-// given SandboxTemplate. The pool's own status carries no PoolDrained
+// warmPoolObj builds a PodSet custom resource referencing the
+// given PodSet. The pool's own status carries no PoolDrained
 // condition: the WarmPoolController writes that condition onto the
-// SandboxTemplate, so detection reads the dwell from the template, not from
+// PodSet, so detection reads the dwell from the template, not from
 // the pool.
 func warmPoolObj(name, templateRef string, generation int64) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "lenny.dev/v1alpha1",
-		"kind":       "SandboxWarmPool",
+		"kind":       "PodSet",
 		"metadata":   map[string]any{"namespace": "lenny-system", "name": name, "generation": generation},
 		"spec":       map[string]any{"minWarm": int64(5), "templateRef": templateRef},
 	}}
 }
 
-// templateDrained builds a SandboxTemplate carrying a PoolDrained condition
+// templateDrained builds a PodSet carrying a PoolDrained condition
 // in its True state (the §25.6 zero-in-flight state) with the given
 // transition time, staging the production representation the
 // WarmPoolController writes onto the template status (not onto the pool). The
@@ -72,12 +72,12 @@ func templateDrained(name string, transitioned time.Time) *unstructured.Unstruct
 	return templateWithDrained(name, metav1.ConditionTrue, "Drained", transitioned)
 }
 
-// templateWithDrained builds a SandboxTemplate carrying a PoolDrained
+// templateWithDrained builds a PodSet carrying a PoolDrained
 // condition with the given status, reason, and transition time.
 func templateWithDrained(name string, status metav1.ConditionStatus, reason string, transitioned time.Time) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
 		"apiVersion": "lenny.dev/v1alpha1",
-		"kind":       "SandboxTemplate",
+		"kind":       "PodSet",
 		"metadata":   map[string]any{"namespace": "lenny-system", "name": name},
 		"status": map[string]any{
 			"conditions": []any{map[string]any{
@@ -123,9 +123,9 @@ func demandExceedsSupply(pool string, warming, claimed int) *diagnostics.PoolDia
 func warmPoolDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{
-			sandboxWarmPoolGVR: "SandboxWarmPoolList",
-			sandboxTemplateGVR: "SandboxTemplateList",
-			prometheusRuleGVR:  "PrometheusRuleList",
+			podSetGVR:         "PodSetList",
+			podSetGVR:         "PodSetList",
+			prometheusRuleGVR: "PrometheusRuleList",
 			// detectCertExpiring lists the cert-manager GVR whenever the
 			// dynamic client is set, so the list kind must be registered even
 			// when the test stages no Certificate.
@@ -136,10 +136,10 @@ func warmPoolDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 // spec: §25.6 — warmPoolStuckReplenish fires for a pool the
 // §25.6 diagnosis classifies DEMAND_EXCEEDS_SUPPLY with zero in-flight
 // warm-up claims (no warming, no claimed pods), whose PoolDrained=True
-// condition on the referenced SandboxTemplate has dwelt past the 5m window;
+// condition on the referenced PodSet has dwelt past the 5m window;
 // the fix re-drives the pool by stamping a re-drive annotation so the
 // apiserver emits a watch event and the WarmPoolController reconciles. The
-// condition is staged on the SandboxTemplate, the production representation
+// condition is staged on the PodSet, the production representation
 // the WarmPoolController writes, not on the pool, so this regression pins the
 // real signal rather than a proxy the controller never produces. The apply
 // assertion checks the re-drive annotation the apiserver honors rather than a
@@ -175,7 +175,7 @@ func TestRemediator_WarmPoolStuck_DetectAndApply_spec_25_6_2956(t *testing.T) {
 	if err := rem.Apply(context.Background(), got[0]); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
-	live, err := dyn.Resource(sandboxWarmPoolGVR).Namespace("lenny-system").Get(context.Background(), "echo", metav1.GetOptions{})
+	live, err := dyn.Resource(podSetGVR).Namespace("lenny-system").Get(context.Background(), "echo", metav1.GetOptions{})
 	if err != nil {
 		t.Fatalf("get pool: %v", err)
 	}
@@ -276,13 +276,13 @@ func TestRemediator_WarmPoolStuck_NoDiagnosisSource_NotDetected(t *testing.T) {
 	}
 }
 
-// A pool whose referenced SandboxTemplate is absent yields no finding: the
+// A pool whose referenced PodSet is absent yields no finding: the
 // dwell cannot be read, so detection fails closed rather than re-kicking a
 // pool it cannot confirm is stalled.
 func TestRemediator_WarmPoolStuck_TemplateAbsent_NotDetected(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	pool := warmPoolObj("echo", "missing-tmpl", 3)
-	dyn := warmPoolDynClient(pool) // no SandboxTemplate staged
+	dyn := warmPoolDynClient(pool) // no PodSet staged
 	rem := &k8sDoctorRemediator{
 		dyn: dyn, releaseNS: "lenny-system", now: func() time.Time { return now },
 		poolDx: stubPoolDiagnosis{byPool: map[string]*diagnostics.PoolDiagnosis{
@@ -298,13 +298,13 @@ func TestRemediator_WarmPoolStuck_TemplateAbsent_NotDetected(t *testing.T) {
 	}
 }
 
-// A SandboxTemplate that carries no PoolDrained condition (the controller
+// A PodSet that carries no PoolDrained condition (the controller
 // has not yet written one) yields no finding: the dwell is unknown.
 func TestRemediator_WarmPoolStuck_TemplateNoCondition_NotDetected(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	pool := warmPoolObj("echo", "echo-tmpl", 3)
 	tmpl := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "lenny.dev/v1alpha1", "kind": "SandboxTemplate",
+		"apiVersion": "lenny.dev/v1alpha1", "kind": "PodSet",
 		"metadata": map[string]any{"namespace": "lenny-system", "name": "echo-tmpl"},
 		"status":   map[string]any{}, // no conditions
 	}}
@@ -341,7 +341,7 @@ func TestRemediator_WarmPoolStuck_MalformedTransitionTime_NotDetected(t *testing
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	pool := warmPoolObj("echo", "echo-tmpl", 3)
 	tmpl := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "lenny.dev/v1alpha1", "kind": "SandboxTemplate",
+		"apiVersion": "lenny.dev/v1alpha1", "kind": "PodSet",
 		"metadata": map[string]any{"namespace": "lenny-system", "name": "echo-tmpl"},
 		"status": map[string]any{"conditions": []any{map[string]any{
 			"type": poolDrainedConditionType, "status": "True", "reason": "Drained",
@@ -369,7 +369,7 @@ func TestRemediator_WarmPoolStuck_MalformedTransitionTime_NotDetected(t *testing
 func TestRemediator_WarmPoolStuck_NoTemplateRef_NotDetected(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	pool := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "lenny.dev/v1alpha1", "kind": "SandboxWarmPool",
+		"apiVersion": "lenny.dev/v1alpha1", "kind": "PodSet",
 		"metadata": map[string]any{"namespace": "lenny-system", "name": "echo", "generation": int64(3)},
 		"spec":     map[string]any{"minWarm": int64(5)}, // no templateRef
 	}}
@@ -393,14 +393,14 @@ func TestRemediator_WarmPoolStuck_NoTemplateRef_NotDetected(t *testing.T) {
 // propagates from detection so the run fails rather than reporting "nothing
 // stuck" — the §25.6 fail-safe read contract.
 //
-// diagnosis: a transient SandboxTemplate read error is swallowed, so a
+// diagnosis: a transient PodSet read error is swallowed, so a
 // warm-pool detection pass silently reports no findings during an API
 // outage instead of failing the run.
 func TestRemediator_WarmPoolStuck_TemplateReadError_Propagates(t *testing.T) {
 	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
 	pool := warmPoolObj("echo", "echo-tmpl", 3)
 	dyn := warmPoolDynClient(pool)
-	dyn.PrependReactor("get", "sandboxtemplates", func(k8stesting.Action) (bool, runtime.Object, error) {
+	dyn.PrependReactor("get", "podsets", func(k8stesting.Action) (bool, runtime.Object, error) {
 		return true, nil, errors.New("apiserver unreachable")
 	})
 	rem := &k8sDoctorRemediator{

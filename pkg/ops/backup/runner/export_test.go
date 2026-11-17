@@ -26,7 +26,7 @@ import (
 )
 
 // lennyCRDScheme builds a runtime.Scheme carrying the lenny.dev/v1alpha1
-// Runtime and SandboxWarmPool types the config export lists, for the
+// Runtime and PodSet types the config export lists, for the
 // controller-runtime fake client.
 func lennyCRDScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -38,7 +38,7 @@ func lennyCRDScheme(t *testing.T) *runtime.Scheme {
 }
 
 // crdReaderWith builds a fake CRDReader carrying the given Runtime and
-// SandboxWarmPool custom resources.
+// PodSet custom resources.
 func crdReaderWith(t *testing.T, objs ...client.Object) runner.CRDReader {
 	t.Helper()
 	return crfake.NewClientBuilder().WithScheme(lennyCRDScheme(t)).WithObjects(objs...).Build()
@@ -60,12 +60,12 @@ func runtimeCR(name, typ, image, execMode, isoProfile, level, deployModel string
 	}
 }
 
-// poolCR builds a SandboxWarmPool custom resource with the spec sizing fields
+// poolCR builds a PodSet custom resource with the spec sizing fields
 // the config export snapshots.
-func poolCR(name, templateRef string, minWarm, maxWarm int32, sdkWarmDisabled bool) *lennyv1alpha1.SandboxWarmPool {
-	return &lennyv1alpha1.SandboxWarmPool{
+func poolCR(name, templateRef string, minWarm, maxWarm int32, sdkWarmDisabled bool) *lennyv1alpha1.PodSet {
+	return &lennyv1alpha1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: lennyv1alpha1.SandboxWarmPoolSpec{
+		Spec: lennyv1alpha1.PodSetSpec{
 			TemplateRef:     templateRef,
 			MinWarm:         minWarm,
 			MaxWarm:         maxWarm,
@@ -87,7 +87,7 @@ func poolCR(name, templateRef string, minWarm, maxWarm int32, sdkWarmDisabled bo
 func TestCRDExporterDumpsOnlyLennyGroupCRDs(t *testing.T) {
 	cs := apiextensionsfake.NewSimpleClientset(
 		crd("runtimes.lenny.dev", "lenny.dev"),
-		crd("sandboxwarmpools.lenny.dev", "lenny.dev"),
+		crd("podsets.lenny.dev", "lenny.dev"),
 		crd("certificates.cert-manager.io", "cert-manager.io"),
 	)
 	export := runner.NewCRDExporter(cs)
@@ -108,8 +108,8 @@ func TestCRDExporterDumpsOnlyLennyGroupCRDs(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("exported %d CRDs, want 2 lenny.dev CRDs: %v", len(got), names(got))
 	}
-	if got[0].Name != "runtimes.lenny.dev" || got[1].Name != "sandboxwarmpools.lenny.dev" {
-		t.Fatalf("exported CRDs = %v, want [runtimes.lenny.dev sandboxwarmpools.lenny.dev]", names(got))
+	if got[0].Name != "runtimes.lenny.dev" || got[1].Name != "podsets.lenny.dev" {
+		t.Fatalf("exported CRDs = %v, want [runtimes.lenny.dev podsets.lenny.dev]", names(got))
 	}
 	for _, c := range got {
 		if c.Spec.Group != "lenny.dev" {
@@ -143,12 +143,12 @@ func TestCRDExporterEmptyClusterYieldsEmptyArray(t *testing.T) {
 // TestConfigExporterDumpsRuntimesPoolsTenantsQuotasAndBootstrap is the
 // SEC-BACKUP-1 regression for the config export: the wired export collects
 // all four §25.11 step-2 categories — the Runtime CRDs, the §5.2
-// SandboxWarmPool CRDs, the tenants (with their quota columns) — plus the
+// PodSet CRDs, the tenants (with their quota columns) — plus the
 // §17.6 bootstrap ConfigMap, rather than the pre-fix literal "{}". Per the
 // C4 design it reads runtimes and pools from the K8s API custom resources,
 // reserving Postgres for tenants and quotas.
 //
-// The pool assertions pin the SandboxWarmPool CRD spec fields (templateRef,
+// The pool assertions pin the PodSet CRD spec fields (templateRef,
 // minWarm, maxWarm), which are absent from the Postgres sandbox_warm_pools
 // row the pre-conformance code read: a Postgres-sourced export would emit an
 // empty templateRef and zero min/max, so this test fails against the
@@ -225,12 +225,12 @@ func TestConfigExporterDumpsRuntimesPoolsTenantsQuotasAndBootstrap(t *testing.T)
 	if cfg.Runtimes[0].Type != "agent" || cfg.Runtimes[0].IntegrationLevel != "standard" {
 		t.Errorf("runtime CRD spec fields not exported: %+v", cfg.Runtimes[0])
 	}
-	// The §5.2 SandboxWarmPool CRD registry is the fourth §25.11 category.
+	// The §5.2 PodSet CRD registry is the fourth §25.11 category.
 	// The CRD spec fields (templateRef, minWarm, maxWarm) are absent from
 	// the Postgres row the pre-conformance code read, so a Postgres-sourced
 	// export would leave templateRef empty and min/max zero.
 	if len(cfg.Pools) != 1 {
-		t.Fatalf("pools = %+v, want one default-gvisor pool from the SandboxWarmPool CRD", cfg.Pools)
+		t.Fatalf("pools = %+v, want one default-gvisor pool from the PodSet CRD", cfg.Pools)
 	}
 	p := cfg.Pools[0]
 	if p.Name != "default-gvisor" || p.TemplateRef != "python-template" ||
@@ -317,9 +317,9 @@ func TestConfigExporterRuntimeListErrorSurfaces(t *testing.T) {
 	}
 }
 
-// TestConfigExporterPoolListErrorSurfaces asserts the SandboxWarmPool CRD
+// TestConfigExporterPoolListErrorSurfaces asserts the PodSet CRD
 // list error is wrapped and returned rather than silently producing a config
-// export that omits pools. The reader fails only the SandboxWarmPool list, so
+// export that omits pools. The reader fails only the PodSet list, so
 // the runtime list succeeds first.
 //
 // spec: §25.11.
@@ -475,13 +475,13 @@ func (r errCRDReader) List(context.Context, client.ObjectList, ...client.ListOpt
 	return r.err
 }
 
-// poolErrCRDReader is a runner.CRDReader that fails only the SandboxWarmPool
+// poolErrCRDReader is a runner.CRDReader that fails only the PodSet
 // list, so the runtime list succeeds first and the export reaches the pool
 // read before failing.
 type poolErrCRDReader struct{ err error }
 
 func (r poolErrCRDReader) List(_ context.Context, list client.ObjectList, _ ...client.ListOption) error {
-	if _, ok := list.(*lennyv1alpha1.SandboxWarmPoolList); ok {
+	if _, ok := list.(*lennyv1alpha1.PodSetList); ok {
 		return r.err
 	}
 	return nil

@@ -20,7 +20,7 @@
 //
 // The webhook enforces these two rules only in multi-tenant,
 // non-development mode; in single-tenant or development mode it admits
-// every SandboxTemplate. The chart wires the webhook Deployment's
+// every PodSet. The chart wires the webhook Deployment's
 // enforcement posture from tenancy.mode and global.devMode
 // (charts/lenny/templates/admission-policies/_webhook.tpl passes
 // --tenancy-mode and --dev-mode). The shared e2e install
@@ -71,7 +71,7 @@ func directModeWebhookEnforcementFlags(t *testing.T, c *kind.Cluster) (tenancyMo
 // diagnosis: the §4.9 fail-closed lenny-direct-mode-isolation webhook does
 // not reject the two cross-tenant-risk credential-delivery combinations on a
 // deployed multi-tenant install. The test drives two live AdmissionReviews
-// through the API server against the deployed webhook: a SandboxTemplate with
+// through the API server against the deployed webhook: a PodSet with
 // deliveryMode: direct + isolationProfile: standard, and one with
 // deliveryMode: proxy + spiffeBinding: disabled. Both must be denied by
 // direct-mode-isolation.lenny.dev with the documented rejection codes. A
@@ -105,7 +105,7 @@ func TestAdmissionDirectModeIsolationMultiTenantRejections(t *testing.T) {
 			// deliveryMode: direct + isolationProfile: standard.
 			name: "direct-mode-standard-isolation",
 			template: `apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: e2e-mt-direct-standard
   namespace: lenny-agents
@@ -120,7 +120,7 @@ spec:
 			// deliveryMode: proxy + spiffeBinding: disabled.
 			name: "proxy-mode-spiffe-binding-disabled",
 			template: `apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: e2e-mt-proxy-spiffe-disabled
   namespace: lenny-agents
@@ -142,7 +142,7 @@ spec:
 			// TestAdmissionDirectModeIsolation.
 			out, err := dryRunApply(t, c, tc.template)
 			if err == nil {
-				t.Fatalf("API server admitted a §4.9 %s SandboxTemplate in multi-tenant mode; "+
+				t.Fatalf("API server admitted a §4.9 %s PodSet in multi-tenant mode; "+
 					"the %s webhook did not reject it.\noutput:\n%s", tc.name, webhook, out)
 			}
 			if !strings.Contains(out, "direct-mode-isolation.lenny.dev") {
@@ -151,7 +151,7 @@ spec:
 			if !strings.Contains(out, tc.wantCode) {
 				t.Errorf("rejection lacks the §4.9 %s code.\noutput:\n%s", tc.wantCode, out)
 			}
-			t.Logf("%s rejected the %s SandboxTemplate: %s", webhook, tc.name, strings.TrimSpace(out))
+			t.Logf("%s rejected the %s PodSet: %s", webhook, tc.name, strings.TrimSpace(out))
 		})
 	}
 }

@@ -6,18 +6,18 @@
 // replicas. The suspend case binds one session on each of two gateway
 // replicas, suspends the tenant through one of them, and asserts that every
 // session is terminal, that each session's pod returns to the pool (its
-// claim deleted and its Sandbox out of the occupied phases) within the
+// claim deleted and its AgentPod out of the occupied phases) within the
 // coordination Sweeper interval plus maxWorkspaceSealDurationSeconds, and
 // that a later create on either replica is refused with TENANT_SUSPENDED.
 // The erasure case erases a user whose session is bound on the other
 // replica, with the controller's claimOrphanTimeout at its installed value,
-// and asserts that the session's SandboxClaim is no longer bound (deleted,
+// and asserts that the session's PodClaim is no longer bound (deleted,
 // or in any phase other than bound) within the CH-BINDRELEASE apply window
 // plus maxWorkspaceSealDurationSeconds, which it requires to be below
 // claimOrphanTimeout: the erasure drain publishes the session on
 // CH-BINDRELEASE and the binding replica releases its binding. The erasure
 // case does not require the pod to have returned to the pool: deleting the
-// claim and re-warming or retiring the Sandbox may finish after that bound.
+// claim and re-warming or retiring the AgentPod may finish after that bound.
 //
 // Both cases bootstrap a tenant whose name carries a per-run suffix and
 // sweep, at start, every tenant an earlier killed run left under the same
@@ -148,7 +148,7 @@ type pollClock struct {
 // wallClock is the real clock the Kind cases poll on.
 var wallClock = pollClock{now: time.Now, sleep: time.Sleep}
 
-// claimPollInterval spaces the SandboxClaim reads of one polling round.
+// claimPollInterval spaces the PodClaim reads of one polling round.
 const claimPollInterval = time.Second
 
 // awaitAllBy polls every probe in one loop until each reports done or the
@@ -179,28 +179,28 @@ func awaitAllBy(deadline time.Time, clk pollClock, probes map[string]func() (boo
 }
 
 // podReturnedToPool reports whether a pod's occupancy has ended and its
-// warm-pool slot is free again, from its per-pod SandboxClaim (claimFound
-// and claimPhase) and its Sandbox phase ("" when the Sandbox is gone).
+// warm-pool slot is free again, from its per-pod PodClaim (claimFound
+// and claimPhase) and its AgentPod phase ("" when the AgentPod is gone).
 //
 // The release that ends an occupancy deletes the claim (§4.6.3), so a claim
 // that still exists in any phase holds the pod out of the pool: bound,
 // recycling, and reserved keep it occupied, and released and failed are the
 // retirement dispositions the controller has not yet projected. With the
-// claim gone, the Sandbox must have left the occupied phases (claimed,
+// claim gone, the AgentPod must have left the occupied phases (claimed,
 // reserved, and the re-warm sdk_connecting leg): idle is a pod returned for
-// reuse, and draining, terminated, or a deleted Sandbox is a pod retired
+// reuse, and draining, terminated, or a deleted AgentPod is a pod retired
 // under §4.6.1, whose slot the warm pool refills with a fresh pod. A
 // failed session on a pool that does not recycle, which is every session
 // the drain force-terminates on the echo pool, takes the retire edge.
 //
 // spec: §12.8 (Lifecycle fence and drain: Drain), §4.6.1 (occupancy
-// projection on claim DELETE), §4.6.3 (SandboxClaim binding state)
-func podReturnedToPool(claimFound bool, claimPhase, sandboxPhase string) (bool, string) {
-	state := fmt.Sprintf("claim %s, sandbox %q", claimState(claimFound, claimPhase), sandboxPhase)
+// projection on claim DELETE), §4.6.3 (PodClaim binding state)
+func podReturnedToPool(claimFound bool, claimPhase, agentPodPhase string) (bool, string) {
+	state := fmt.Sprintf("claim %s, sandbox %q", claimState(claimFound, claimPhase), agentPodPhase)
 	if claimFound {
 		return false, state
 	}
-	switch sandboxPhase {
+	switch agentPodPhase {
 	case "", "idle", "draining", "terminated":
 		return true, state
 	default:
@@ -216,25 +216,25 @@ func claimState(found bool, phase string) string {
 	return fmt.Sprintf("present in phase %q", phase)
 }
 
-// claimNoLongerBound reports whether a pod's per-pod SandboxClaim has left
+// claimNoLongerBound reports whether a pod's per-pod PodClaim has left
 // the bound phase, from claimFound and claimPhase. It is the erasure case's
 // condition: a claim that is deleted, or present in any phase other than
 // bound (released and failed included), no longer binds the erased user's
 // session to the pod. Unlike podReturnedToPool it does not wait for the
-// controller to delete the claim or for the Sandbox to leave the occupied
+// controller to delete the claim or for the AgentPod to leave the occupied
 // phases, because the release bound covers only the binding's release.
 //
 // spec: §12.8 (Compliance Interfaces: Lifecycle fence and drain), §11.4
-// step 2 (User Invalidation), §4.6.3 (SandboxClaim binding state)
+// step 2 (User Invalidation), §4.6.3 (PodClaim binding state)
 func claimNoLongerBound(claimFound bool, claimPhase string) (bool, string) {
 	state := "claim " + claimState(claimFound, claimPhase)
 	return !claimFound || claimPhase != "bound", state
 }
 
-// readClaim reads the pod's per-pod SandboxClaim, reporting whether it
+// readClaim reads the pod's per-pod PodClaim, reporting whether it
 // exists and its status.phase.
 func readClaim(t *testing.T, c *kind.Cluster, pod string) (found bool, phase string, err error) {
-	claim, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaim", "claim-"+pod,
+	claim, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "podclaim", "claim-"+pod,
 		"-o", "jsonpath={.metadata.name}{\" \"}{.status.phase}", "--ignore-not-found")
 	if err != nil {
 		return false, "", fmt.Errorf("read claim claim-%s: %w", pod, err)
@@ -244,7 +244,7 @@ func readClaim(t *testing.T, c *kind.Cluster, pod string) (found bool, phase str
 }
 
 // podReturnedProbe reports whether the pod has returned to the pool, as
-// podReturnedToPool defines it, with the claim and Sandbox state it last
+// podReturnedToPool defines it, with the claim and AgentPod state it last
 // read. The suspend case polls it.
 func podReturnedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, string) {
 	return func() (bool, string) {
@@ -252,12 +252,12 @@ func podReturnedProbe(t *testing.T, c *kind.Cluster, pod string) func() (bool, s
 		if err != nil {
 			return false, err.Error()
 		}
-		sandbox, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox", pod,
+		agentPod, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox", pod,
 			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 		if err != nil {
 			return false, fmt.Sprintf("read sandbox: %v", err)
 		}
-		return podReturnedToPool(found, phase, strings.TrimSpace(sandbox))
+		return podReturnedToPool(found, phase, strings.TrimSpace(agentPod))
 	}
 }
 

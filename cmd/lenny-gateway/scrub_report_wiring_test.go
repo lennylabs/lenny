@@ -27,7 +27,7 @@ import (
 )
 
 // scrubWiringScheme registers the clientgo (Pod, Namespace) and lenny.dev
-// (SandboxClaim) types the wiring exercises.
+// (PodClaim) types the wiring exercises.
 func scrubWiringScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -47,7 +47,7 @@ func scrubWiringScheme(t *testing.T) *runtime.Scheme {
 // proves the handlers no longer return Unimplemented (the pre-S26 state),
 // that a session-scrub increments sessions_served on the agent_pod_state
 // mirror, and that a clean whole-pod scrub on a schedulable host drives the
-// recycle disposition onto the SandboxClaim (recycling → reserved).
+// recycle disposition onto the PodClaim (recycling → reserved).
 //
 // spec: §4.7 (ReportSessionScrub/ReportPodScrub gateway side), §5.2 (scrub
 // model), §6.2 (host-node schedulability).
@@ -80,12 +80,12 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 		t.Fatalf("create pod: %v", err)
 	}
 
-	// Seed the per-pod SandboxClaim through bound → recycling, the
+	// Seed the per-pod PodClaim through bound → recycling, the
 	// precondition the recycle disposition patches from.
 	claimName := podclaim.ClaimName(podID)
-	if err := cl.Create(ctx, &lennyv1.SandboxClaim{
+	if err := cl.Create(ctx, &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: claimName, Namespace: scrubWiringNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: podID, TenantID: "acme"},
 	}); err != nil {
 		t.Fatalf("create claim: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestScrubReportServiceWiringDrivesRecycle_spec_4_7(t *testing.T) {
 		}
 		t.Fatalf("ReportPodScrub: %v", err)
 	}
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := cl.Get(ctx, client.ObjectKey{Namespace: scrubWiringNS, Name: claimName}, &got); err != nil {
 		t.Fatalf("get claim: %v", err)
 	}

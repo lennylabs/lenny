@@ -10,11 +10,11 @@ import (
 )
 
 // spec: 4.6.1 (binding states), 4.6.3 (binding-state enumeration)
-// diagnosis: SandboxClaim binding states diverged from spec §4.6.3.
+// diagnosis: PodClaim binding states diverged from spec §4.6.3.
 //
 //	The enumeration is bound, recycling, reserved, released, failed;
 //	only released and failed are terminal. The set must mirror the
-//	SandboxClaim.status.phase CRD enum.
+//	PodClaim.status.phase CRD enum.
 func TestStatesAndTerminals(t *testing.T) {
 	t.Parallel()
 	want := []state.State{state.Bound, state.Recycling, state.Reserved, state.Released, state.Failed}
@@ -54,7 +54,7 @@ func TestStatesAndTerminals(t *testing.T) {
 //
 //	ValidTransitions(). Note: the admission-webhook double-claim
 //	prevention is a separate deliverable in
-//	pkg/admission/sandboxclaim_guard/ that ships alongside this
+//	pkg/admission/podclaim_guard/ that ships alongside this
 //	state machine; it does not change the legal-edge set.
 func TestIsValidCanonicalTransitions(t *testing.T) {
 	t.Parallel()

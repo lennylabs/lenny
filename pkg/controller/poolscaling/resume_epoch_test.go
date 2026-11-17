@@ -25,11 +25,11 @@ func denyingClient(t *testing.T) client.WithWatch {
 	t.Helper()
 	scheme := newScheme(t)
 	return fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
 				return apierrors.NewForbidden(
-					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+					schema.GroupResource{Group: "lenny.dev", Resource: "podsets"},
 					obj.GetName(), errors.New("validator rejected"),
 				)
 			},
@@ -129,7 +129,7 @@ func TestSyncResumeEpochFirstObservationDoesNotClear_spec_4_6_2(t *testing.T) {
 // does not churn the CRD every tick).
 func TestSyncStampsLastReconciledAtOnGenerationChange_spec_4_6_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.Generation = 3
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}

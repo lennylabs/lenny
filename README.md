@@ -30,7 +30,7 @@ Lenny does not suit GPU workloads, because it does not schedule GPUs, or compute
 
 ## Architecture
 
-![Request path in a Lenny cluster. Clients connect to the gateway over REST, MCP, OpenAI Chat Completions, or Open Responses. The gateway connects to the Token Service, Postgres and Redis, and object storage, and connects over mTLS gRPC to agent pods, each of which holds an adapter container and an agent container. Controllers manage the pods through Sandbox resources. A boundary marks the agent namespace and its default-deny network policy, and the only arrows entering the pods start at the gateway.](docs/assets/diagrams/request-path.svg)
+![Request path in a Lenny cluster. Clients connect to the gateway over REST, MCP, OpenAI Chat Completions, or Open Responses. The gateway connects to the Token Service, Postgres and Redis, and object storage, and connects over mTLS gRPC to agent pods, each of which holds an adapter container and an agent container. Controllers manage the pods through AgentPod resources. A boundary marks the agent namespace and its default-deny network policy, and the only arrows entering the pods start at the gateway.](docs/assets/diagrams/request-path.svg)
 
 <!--
 ASCII fallback for the diagram above (request-path):

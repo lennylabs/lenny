@@ -136,7 +136,7 @@ export default function () {
     }
   }
 
-  // Release each claimed child + the parent so the §4.6 SandboxClaims
+  // Release each claimed child + the parent so the §4.6 PodClaims
   // free their pods back to the warm pool. Without this each iteration
   // leaks 1 + FANOUT pod claims and the pool exhausts within a handful
   // of iterations on a smoke-sized Kind cluster — production callers

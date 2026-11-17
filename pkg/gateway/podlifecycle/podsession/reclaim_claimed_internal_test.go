@@ -93,7 +93,7 @@ func newReclaimFixture(t *testing.T) *reclaimFixture {
 		t.Fatalf("AddToScheme: %v", err)
 	}
 	faults := &deleteFault{}
-	c := fake.NewClientBuilder().WithScheme(s).WithObjects(&lennyv1.SandboxClaim{
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(&lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-a"), Namespace: reclaimNS},
 	}).WithInterceptorFuncs(interceptor.Funcs{Delete: faults.intercept}).Build()
 	mr := miniredis.RunT(t)
@@ -106,7 +106,7 @@ func newReclaimFixture(t *testing.T) *reclaimFixture {
 
 func (f *reclaimFixture) claimPresent(t *testing.T) bool {
 	t.Helper()
-	err := f.c.Get(context.Background(), client.ObjectKey{Namespace: reclaimNS, Name: podclaim.ClaimName("pod-a")}, &lennyv1.SandboxClaim{})
+	err := f.c.Get(context.Background(), client.ObjectKey{Namespace: reclaimNS, Name: podclaim.ClaimName("pod-a")}, &lennyv1.PodClaim{})
 	if err == nil {
 		return true
 	}
@@ -149,7 +149,7 @@ func (f *reclaimFixture) members(t *testing.T) []string {
 // the removal is not repeated, and a duplicate release removes nothing and
 // writes no claim. The lease release runs first on every path.
 //
-// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// spec: §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse), §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
 // §7.1 step 23 (lease release)
 func TestReclaimClaimedFailureOutcomes_spec_4_6_3(t *testing.T) {

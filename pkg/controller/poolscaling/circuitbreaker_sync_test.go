@@ -33,7 +33,7 @@ func frozenClock(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-// breakerClient builds a fake client with the SandboxWarmPool status
+// breakerClient builds a fake client with the PodSet status
 // subresource registered, so the §6.1 circuit-breaker status writes
 // (Status().Update) take effect the way they would against a real API
 // server.
@@ -41,7 +41,7 @@ func breakerClient(s *runtime.Scheme, objs ...client.Object) client.Client {
 	return fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(objs...).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		Build()
 }
 
@@ -217,15 +217,15 @@ func TestSyncHonorsPersistedBreakerWithoutDemotionSource(t *testing.T) {
 	minOpenUntil := opened.Add(30 * time.Minute)
 
 	// Seed a pool that already has an open breaker persisted.
-	existing := &lennyv1.SandboxWarmPool{
+	existing := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS},
-		Spec: lennyv1.SandboxWarmPoolSpec{
+		Spec: lennyv1.PodSetSpec{
 			TemplateRef:     testPool,
 			MinWarm:         3,
 			MaxWarm:         10,
 			SDKWarmDisabled: true,
 		},
-		Status: lennyv1.SandboxWarmPoolStatus{
+		Status: lennyv1.PodSetStatus{
 			SDKWarmCircuitBreaker: &lennyv1.SDKWarmCircuitBreakerStatus{
 				OpenedAt:     &metav1.Time{Time: opened},
 				OpenedReason: "demotion_rate_exceeded",

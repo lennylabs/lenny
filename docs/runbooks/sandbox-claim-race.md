@@ -1,26 +1,26 @@
 ---
 layout: default
-title: "sandbox-claim-race"
+title: "pod-claim-race"
 parent: "Runbooks"
 triggers:
-  - alert: SandboxClaimRaceDetected
+  - alert: PodClaimRaceDetected
     severity: critical
 components:
   - platform
 symptoms:
-  - "two replicas raced to CREATE the per-pod SandboxClaim; the §4.6.1 admission webhook rejected the loser"
+  - "two replicas raced to CREATE the per-pod PodClaim; the §4.6.1 admission webhook rejected the loser"
 tags:
   - chaos
 related: []
 ---
 
-# sandbox-claim-race
+# pod-claim-race
 
-Two gateway replicas raced to `CREATE` the per-pod `SandboxClaim` (deterministic name `claim-<podName>`) for the same pod; the §4.6.1 `lenny-sandboxclaim-guard` admission webhook rejected the loser at `CREATE`.
+Two gateway replicas raced to `CREATE` the per-pod `PodClaim` (deterministic name `claim-<podName>`) for the same pod; the §4.6.1 `lenny-podclaim-guard` admission webhook rejected the loser at `CREATE`.
 
 ## Trigger
 
-The `SandboxClaimRaceDetected` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
+The `PodClaimRaceDetected` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
 
 ## Diagnosis
 

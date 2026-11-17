@@ -4,7 +4,7 @@
 
 The content of this section has moved to these pages and identifiers:
 
-- [Comparisons](../docs/about/comparisons.md): Lenny compared with other agent sandboxes, orchestration platforms, and open-source entrants.
+- [Comparisons](../docs/about/comparisons.md): Lenny compared with other agent agentpods, orchestration platforms, and open-source entrants.
 
 #### Feature Comparison Matrix
 
@@ -12,7 +12,7 @@ The content of this section has moved to these pages and identifiers:
 
 The content of this section has moved to these pages and identifiers:
 
-- [Comparisons](../docs/about/comparisons.md): Lenny compared with other agent sandboxes, orchestration platforms, and open-source entrants.
+- [Comparisons](../docs/about/comparisons.md): Lenny compared with other agent agentpods, orchestration platforms, and open-source entrants.
 
 #### 2026 Open-Source Entrants Matrix
 
@@ -20,7 +20,7 @@ The content of this section has moved to these pages and identifiers:
 
 The content of this section has moved to these pages and identifiers:
 
-- [Comparisons](../docs/about/comparisons.md): Lenny compared with other agent sandboxes, orchestration platforms, and open-source entrants.
+- [Comparisons](../docs/about/comparisons.md): Lenny compared with other agent agentpods, orchestration platforms, and open-source entrants.
 
 ### 23.1 Why Lenny?
 

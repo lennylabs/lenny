@@ -22,7 +22,7 @@ import (
 )
 
 // agentNamespace is the §5 namespace the embedded controller materializes the
-// seeded warm-pool/SandboxTemplate CRDs into and the gateway resolves the warm
+// seeded warm-pool/PodSet CRDs into and the gateway resolves the warm
 // pool from for §4.7 placement. It matches the PoolScalingController target
 // (agentNamespaces[0] in cmd/lenny-controller/main.go) and the Kind e2e
 // precedent (tests/testinfra/kind, the lenny-agents agent namespace). The
@@ -43,7 +43,7 @@ const agentNamespace = "lenny-agents"
 const runcRuntimeClassName = "runc"
 
 // The §17.4 echo warm-pool parameters the embedded bring-up applies as a
-// SandboxTemplate/SandboxWarmPool pair. The pool is a §5.2 single-pod hot
+// PodSet pair. The pool is a §5.2 single-pod hot
 // pool (warmCount 1, so minWarm = maxWarm = 1) named echo-pool-embedded,
 // matching the working Kind precedent. It runs `standard` (runc) isolation
 // under the §17.4 local-fidelity disclosure, the `restricted` egress
@@ -55,7 +55,7 @@ const runcRuntimeClassName = "runc"
 // §17.4 (Embedded Mode seed).
 const (
 	// EchoPoolName is the name of the §17.4 echo warm pool the embedded
-	// bring-up applies (the SandboxTemplate and SandboxWarmPool share it).
+	// bring-up applies (the PodSet share it).
 	// It matches the Kind precedent echo-pool-embedded, so the gateway's
 	// ResolvePool resolves the same pool the embedded stack materializes.
 	EchoPoolName = "echo-pool-embedded"
@@ -67,7 +67,7 @@ const (
 	echoPoolDNSPolicy        = "cluster-default"
 )
 
-// applyEchoPool applies the echo SandboxTemplate/SandboxWarmPool pair to the
+// applyEchoPool applies the echo PodSet pair to the
 // cluster reachable through kubeconfigPath. Under the §17.4 no-Postgres
 // development profile no PoolScalingController runs, so the canonical
 // poolstore→CRD projection (poolscaling.PoolStoreSource.toConfig) is
@@ -81,7 +81,7 @@ func applyEchoPool(ctx context.Context, kubeconfigPath, namespace string) error 
 	return ApplyEchoPoolFromConfig(ctx, cfg, namespace)
 }
 
-// ApplyEchoPoolFromConfig applies the echo SandboxTemplate/SandboxWarmPool
+// ApplyEchoPoolFromConfig applies the echo PodSet
 // pair against an already-resolved rest config through the C1 dynamic-apply
 // path (server-side apply under the lenny-embedded field manager; apply.go).
 // It is the no-Postgres pool-materialization path the bring-up runs
@@ -107,55 +107,43 @@ func ApplyEchoPoolFromConfig(ctx context.Context, cfg *rest.Config, namespace st
 	return applyObjects(ctx, cfg, objs)
 }
 
-// echoPoolObjects builds the echo SandboxTemplate and SandboxWarmPool in
-// namespace ns. The field mapping reproduces poolscaling.PoolStoreSource.toConfig
+// echoPoolObject builds the echo PodSet in namespace ns. The field mapping
+// reproduces poolscaling.PoolStoreSource.toConfig
 // (pkg/controller/poolscaling/poolstoresource.go) for a single-pod hot pool:
-// the SandboxTemplate carries the runtimeRef, isolation, egress, DNS-policy,
-// and resource-class fields, and the SandboxWarmPool sets templateRef to the
-// pool name with minWarm = maxWarm = warmCount, so the directly-applied pair
-// matches what the PoolScalingController would have produced from the seed.
+// the PodSet carries the runtimeRef, isolation, egress, DNS-policy, and
+// resource-class fields with minWarm = maxWarm = warmCount, so the
+// directly-applied PodSet matches what the PoolScalingController would have
+// produced from the seed.
 // spec: §4.6.2 (the poolstore→CRD projection), §5.2 (single-pod hot pool).
-func echoPoolObjects(ns string) (*lennyv1alpha1.SandboxTemplate, *lennyv1alpha1.SandboxWarmPool) {
-	tmpl := &lennyv1alpha1.SandboxTemplate{
-		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1alpha1.GroupVersion.String(), Kind: "SandboxTemplate"},
+func echoPoolObject(ns string) *lennyv1alpha1.PodSet {
+	return &lennyv1alpha1.PodSet{
+		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1alpha1.GroupVersion.String(), Kind: "PodSet"},
 		ObjectMeta: metav1.ObjectMeta{Name: EchoPoolName, Namespace: ns},
-		Spec: lennyv1alpha1.SandboxTemplateSpec{
+		Spec: lennyv1alpha1.PodSetSpec{
 			RuntimeRef:       EchoRuntimeName,
 			IsolationProfile: echoPoolIsolationProfile,
 			EgressProfile:    echoPoolEgressProfile,
 			DNSPolicy:        echoPoolDNSPolicy,
 			ResourceClass:    echoPoolResourceClass,
+			MinWarm:          echoPoolWarmCount,
+			MaxWarm:          echoPoolWarmCount,
 		},
 	}
-	pool := &lennyv1alpha1.SandboxWarmPool{
-		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1alpha1.GroupVersion.String(), Kind: "SandboxWarmPool"},
-		ObjectMeta: metav1.ObjectMeta{Name: EchoPoolName, Namespace: ns},
-		Spec: lennyv1alpha1.SandboxWarmPoolSpec{
-			TemplateRef: EchoPoolName,
-			MinWarm:     echoPoolWarmCount,
-			MaxWarm:     echoPoolWarmCount,
-		},
-	}
-	return tmpl, pool
 }
 
-// echoPoolUnstructured builds the echo SandboxTemplate/SandboxWarmPool pair
-// and encodes each as an unstructured.Unstructured carrying its lenny.dev GVK,
-// so the C1 applier (applyObject) can resolve the GVR via the RESTMapper and
-// server-side-apply it. The typed objects keep the canonical
+// echoPoolUnstructured builds the echo PodSet and encodes it as an
+// unstructured.Unstructured carrying its lenny.dev GVK, so the C1 applier
+// (applyObject) can resolve the GVR via the RESTMapper and
+// server-side-apply it. The typed object keeps the canonical
 // poolscaling.PoolStoreSource.toConfig field mapping the field-mapping test
 // pins; the conversion only changes the apply transport. spec: §4.6.2.
 func echoPoolUnstructured(ns string) ([]unstructured.Unstructured, error) {
-	tmpl, pool := echoPoolObjects(ns)
-	tmplU, err := toUnstructured(tmpl)
+	ps := echoPoolObject(ns)
+	u, err := toUnstructured(ps)
 	if err != nil {
-		return nil, fmt.Errorf("embedded echo pool: encode SandboxTemplate %s: %w", tmpl.Name, err)
+		return nil, fmt.Errorf("embedded echo pool: encode PodSet %s: %w", ps.Name, err)
 	}
-	poolU, err := toUnstructured(pool)
-	if err != nil {
-		return nil, fmt.Errorf("embedded echo pool: encode SandboxWarmPool %s: %w", pool.Name, err)
-	}
-	return []unstructured.Unstructured{*tmplU, *poolU}, nil
+	return []unstructured.Unstructured{*u}, nil
 }
 
 // toUnstructured converts a typed runtime.Object into an
@@ -262,7 +250,7 @@ func ensureRuntimeClassFromConfig(ctx context.Context, cfg *rest.Config, name, h
 // applyEchoRuntimeCR applies the cluster-scoped echo Runtime custom resource to
 // the embedded cluster reachable through kubeconfigPath, carrying the
 // import-time-resolved echo-embedded image digest and deploymentModel:
-// embedded. The Sandbox controller resolves the runtime from a Runtime CR by
+// embedded. The AgentPod controller resolves the runtime from a Runtime CR by
 // name (it reads spec.image and spec.deploymentModel off the CR), so the
 // registry-only bootstrap seed alone produces no idle pod; this CR is the
 // missing artifact that lets the §4.7 single-container embedded model render.
@@ -271,12 +259,12 @@ func ensureRuntimeClassFromConfig(ctx context.Context, cfg *rest.Config, name, h
 //
 // The digest the CR carries must equal the digest of the image present in the
 // embedded containerd and the digest the bootstrap seed registers, because the
-// Sandbox pod is digest-pinned with the default IfNotPresent pull policy;
+// AgentPod pod is digest-pinned with the default IfNotPresent pull policy;
 // resolving all three from the same imported image is what guarantees that
 // equality.
 //
 // spec: §4.7 (embedded deployment model), §5.1 (Runtime CR is the declarative
-// source the Sandbox controller resolves by name).
+// source the AgentPod controller resolves by name).
 func applyEchoRuntimeCR(ctx context.Context, kubeconfigPath, image string) error {
 	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {

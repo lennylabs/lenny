@@ -13,7 +13,7 @@
 // TESTING.md §12.9.4 (TestNetworkPolicyAdversarial, TestNetworkPolicyPosture).
 // This file exercises the agent-namespace half: a probe pod scheduled
 // directly into lenny-agents, carrying the same lenny.dev/managed:
-// "true" label and §13.1 hardened SecurityContext a real Sandbox
+// "true" label and §13.1 hardened SecurityContext a real AgentPod
 // reconciler-created pod carries (so the lenny-pod-security and
 // lenny-label-immutability webhooks admit it), with no
 // lenny.dev/egress-profile label — the restricted default every
@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -49,7 +49,7 @@ const cloudMetadataAddress = "169.254.169.254"
 const publicInternetAddress = "1.1.1.1"
 
 // agentEgressProbeNamespace is the namespace the TESTING.md §12.9.4 agent-pod
-// probe schedules into — the same namespace the Sandbox reconciler
+// probe schedules into — the same namespace the AgentPod reconciler
 // places every managed agent pod in.
 const agentEgressProbeNamespace = "lenny-agents"
 
@@ -144,7 +144,7 @@ func TestNetworkPolicyAgentEgress(t *testing.T) {
 // "true" label and §13.1 hardened SecurityContext (fsGroup,
 // supplementalGroups, seccompProfile, dropped capabilities, non-root,
 // and the container-level non-reserved runAsUser and runAsGroup §13.1
-// Container identity requires) a real Sandbox reconciler-created pod
+// Container identity requires) a real AgentPod reconciler-created pod
 // carries, so the
 // lenny-pod-security and lenny-label-immutability webhooks admit it on
 // CREATE the same way they admit a real agent pod. It carries no

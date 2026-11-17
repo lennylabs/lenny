@@ -26,7 +26,7 @@ func mustCreate(t *testing.T, ctx context.Context, c client.Client, obj client.O
 	}
 }
 
-// spec: 12.2.4 (the Warm Pool Controller reconciles a SandboxWarmPool
+// spec: 12.2.4 (the Warm Pool Controller reconciles a PodSet
 //
 //	toward its minWarm target)
 //
@@ -44,7 +44,7 @@ func mustCreate(t *testing.T, ctx context.Context, c client.Client, obj client.O
 //
 // spec: 12.2.4
 // diagnosis: the WarmPoolController in pkg/controller/warmpool failed
-// to converge a SandboxWarmPool toward its minWarm target against a
+// to converge a PodSet toward its minWarm target against a
 // real API server. Either the lenny.dev CRD schema rejected a
 // controller write, the status subresource is misconfigured, owner
 // references are not stamped, or reconcile is not idempotent.
@@ -64,16 +64,16 @@ func TestWarmPoolController(t *testing.T) {
 	const poolName = "claude-worker-small"
 
 	ns := testNamespaces.Create(t, c)
-	mustCreate(t, ctx, c, &lennyv1.SandboxTemplate{
+	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
 		},
 	})
-	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
+	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxWarmPoolSpec{
+		Spec: lennyv1.PodSetSpec{
 			TemplateRef: poolName,
 			MinWarm:     3,
 			MaxWarm:     10,
@@ -86,9 +86,9 @@ func TestWarmPoolController(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 
-	listPool := func() []lennyv1.Sandbox {
+	listPool := func() []lennyv1.AgentPod {
 		t.Helper()
-		var l lennyv1.SandboxList
+		var l lennyv1.AgentPodList
 		if err := c.List(ctx, &l, client.InNamespace(ns),
 			client.MatchingLabels{warmpool.LabelPool: poolName}); err != nil {
 			t.Fatalf("list sandboxes: %v", err)
@@ -96,22 +96,22 @@ func TestWarmPoolController(t *testing.T) {
 		return l.Items
 	}
 
-	sandboxes := listPool()
-	if len(sandboxes) != 3 {
-		t.Fatalf("reconcile created %d sandboxes, want 3", len(sandboxes))
+	agentPods := listPool()
+	if len(agentPods) != 3 {
+		t.Fatalf("reconcile created %d agentpods, want 3", len(agentPods))
 	}
-	for _, sb := range sandboxes {
+	for _, sb := range agentPods {
 		if sb.Spec.RuntimeRef != "claude-code" {
 			t.Errorf("sandbox %s runtimeRef = %q, want claude-code", sb.Name, sb.Spec.RuntimeRef)
 		}
 		if len(sb.OwnerReferences) != 1 ||
-			sb.OwnerReferences[0].Kind != "SandboxWarmPool" ||
+			sb.OwnerReferences[0].Kind != "PodSet" ||
 			sb.OwnerReferences[0].Name != poolName {
-			t.Errorf("sandbox %s owner references = %+v, want one SandboxWarmPool/%s", sb.Name, sb.OwnerReferences, poolName)
+			t.Errorf("sandbox %s owner references = %+v, want one PodSet/%s", sb.Name, sb.OwnerReferences, poolName)
 		}
 	}
 
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if err := c.Get(ctx, req.NamespacedName, &pool); err != nil {
 		t.Fatalf("get pool: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestWarmPoolController(t *testing.T) {
 		t.Errorf("pool status warmCount = %d, want 3", pool.Status.WarmCount)
 	}
 
-	var tmpl lennyv1.SandboxTemplate
+	var tmpl lennyv1.PodSet
 	if err := c.Get(ctx, req.NamespacedName, &tmpl); err != nil {
 		t.Fatalf("get template: %v", err)
 	}
@@ -137,11 +137,11 @@ func TestWarmPoolController(t *testing.T) {
 	}
 
 	// A second reconcile must not create more pods: the three created
-	// Sandboxes are observed as warming and already satisfy minWarm.
+	// AgentPods are observed as warming and already satisfy minWarm.
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		t.Fatalf("second Reconcile: %v", err)
 	}
 	if got := len(listPool()); got != 3 {
-		t.Errorf("after second reconcile have %d sandboxes, want 3 (idempotent)", got)
+		t.Errorf("after second reconcile have %d agentpods, want 3 (idempotent)", got)
 	}
 }

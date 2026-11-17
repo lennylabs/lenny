@@ -639,13 +639,13 @@ func claimAtCreateScheme(t *testing.T) *runtime.Scheme {
 // persists the row with no PodAssignment and never touches the SSA claim.
 func TestClaimAtCreateServiceModeClaimless(t *testing.T) {
 	const ns = "lenny-agents"
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "svc-runtime",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
@@ -708,13 +708,13 @@ func TestClaimAtCreatePreCheckGatesClaim(t *testing.T) {
 	ctx := context.Background()
 	tenants, runtimes, credPools := credPolicyStores(t, credentialpoolstore.CredentialRevoked)
 
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
 	s := &Server{
@@ -749,13 +749,13 @@ func concurrentClaimServer(t *testing.T, ns string, credStatus credentialpoolsto
 	ctx := context.Background()
 	tenants, runtimes, credPools := credPolicyStores(t, credStatus)
 
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: ns},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "claude-code", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
 
@@ -834,13 +834,13 @@ func TestClaimAtCreateConcurrentPoolExhaustionAtCreate(t *testing.T) {
 // Service/EndpointSlice, so /start neither claims nor binds.
 func TestLaunchOnPodServiceModeClaimless(t *testing.T) {
 	const ns = "lenny-agents"
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "svc-runtime",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
@@ -986,8 +986,8 @@ func TestWritePodClaimErrorAssignmentRaceEmitsMetric(t *testing.T) {
 // non-SlotBindError slot failure and skip a SlotBindError, whose member the
 // binder already released.
 func TestCreateClaimNeedsRollback_spec_7_1_28(t *testing.T) {
-	exclusive := &podsession.ClaimResult{SandboxName: "pod-a"} // SlotID == "" → exclusive
-	slot := &podsession.ClaimResult{SandboxName: "pod-a", SlotID: "sess-1"}
+	exclusive := &podsession.ClaimResult{AgentPodName: "pod-a"} // SlotID == "" → exclusive
+	slot := &podsession.ClaimResult{AgentPodName: "pod-a", SlotID: "sess-1"}
 	someErr := errors.New("startOnPod failed")
 	// A pre-bind failure inside startOnPod (the second ResolvePool, the
 	// PoolWarmingUp gate) returns a non-SlotBindError; the create-time slot

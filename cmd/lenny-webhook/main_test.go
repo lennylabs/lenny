@@ -21,8 +21,8 @@ import (
 func TestBuildSchemeRegistersWebhookTypes(t *testing.T) {
 	s := buildScheme()
 	for _, obj := range []runtime.Object{
-		&lennyv1.Sandbox{},
-		&lennyv1.SandboxClaim{},
+		&lennyv1.AgentPod{},
+		&lennyv1.PodClaim{},
 	} {
 		if _, _, err := s.ObjectKinds(obj); err != nil {
 			t.Errorf("%T is not registered with the webhook scheme: %v", obj, err)
@@ -86,9 +86,9 @@ func TestMuxServesLabelImmutability(t *testing.T) {
 // direct-mode-isolation route and confirms the mux dispatches it to the
 // webhook shim, which rejects a multi-tenant direct/standard template.
 func TestMuxServesDirectModeIsolation(t *testing.T) {
-	tmpl := lennyv1.SandboxTemplate{
+	tmpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: "lenny-agents"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			DeliveryMode:     "direct",
 			IsolationProfile: "standard",
@@ -102,7 +102,7 @@ func TestMuxServesDirectModeIsolation(t *testing.T) {
 		Request: &admissionv1.AdmissionRequest{
 			UID:       "review-2",
 			Operation: admissionv1.Create,
-			Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "SandboxTemplate"},
+			Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "PodSet"},
 			Object:    runtime.RawExtension{Raw: tmplRaw},
 		},
 	}

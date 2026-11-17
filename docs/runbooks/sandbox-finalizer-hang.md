@@ -1,26 +1,26 @@
 ---
 layout: default
-title: "sandbox-finalizer-hang"
+title: "agent-pod-finalizer-hang"
 parent: "Runbooks"
 triggers:
-  - alert: SandboxFinalizerHang
+  - alert: AgentPodFinalizerHang
     severity: warning
 components:
   - platform
 symptoms:
-  - "a Sandbox is stuck in finalization beyond the §6.2 grace window"
+  - "a AgentPod is stuck in finalization beyond the §6.2 grace window"
 tags:
   - chaos
 related: []
 ---
 
-# sandbox-finalizer-hang
+# agent-pod-finalizer-hang
 
-a Sandbox is stuck in finalization beyond the §6.2 grace window.
+a AgentPod is stuck in finalization beyond the §6.2 grace window.
 
 ## Trigger
 
-The `SandboxFinalizerHang` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
+The `AgentPodFinalizerHang` alert fires when the §16.5 condition documented in the alert rule holds for its `for:` window. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL.
 
 ## Diagnosis
 

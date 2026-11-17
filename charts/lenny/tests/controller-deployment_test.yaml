@@ -577,7 +577,7 @@ tests:
           content: --cred-readers-gid=70002
 
   # spec: §4.6.1 Warm Pool Controller (Pod Lifecycle), "Orphaned
-  # SandboxClaim detection" — the leader-elected GarbageCollect loop and the
+  # PodClaim detection" — the leader-elected GarbageCollect loop and the
   # agent_pod_state mirror reconciler list the agent namespaces, and the
   # binary registers both only when --agent-namespaces names at least one
   # namespace and LENNY_POSTGRES_DSN is set. The chart never rendered the

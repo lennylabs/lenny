@@ -23,7 +23,7 @@ import (
 
 // TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4 exercises the §17.4
 // no-Postgres pool-materialization path against a real kube-apiserver: the
-// embedded bring-up applies the echo SandboxTemplate/SandboxWarmPool pair
+// embedded bring-up applies the echo PodSet pair
 // directly (no Postgres, no PoolScalingController), and the unconditionally-
 // registered WarmPoolController reconciles the pool to a warm pod when the
 // `runc` RuntimeClass the `standard` isolation profile resolves to is present.
@@ -32,7 +32,7 @@ import (
 // through poolscaling.Reconciler.Sync (the Postgres-gated PoolScalingController
 // path the development profile no longer registers). Here the pool is applied
 // directly through stack.ApplyEchoPoolFromConfigForTest, reproducing the
-// bring-up's no-Postgres path, and the test asserts the SandboxWarmPool CRD is
+// bring-up's no-Postgres path, and the test asserts the PodSet CRD is
 // created without Postgres and the WarmPoolController warms a pod rather than
 // marking the pool Degraded=True and suppressing pod creation (decision.Create=0).
 //
@@ -41,7 +41,7 @@ import (
 // dev profile's runtimeClasses.create=true is load-bearing rather than incidental.
 //
 // diagnosis: a failure means the directly-applied echo pool does not warm a pod.
-// Either the SandboxWarmPool CRD apply did not create the CRD the gateway's
+// Either the PodSet CRD apply did not create the CRD the gateway's
 // ResolvePool lists (so §4.7 placement stays inert), or the WarmPoolController
 // did not pre-warm the single hot-pool pod with the `runc` RuntimeClass present
 // (the pool stayed Degraded and decision.Create was suppressed), so the
@@ -70,7 +70,7 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	claimRuntimeClasses(t, c, "runc")
 
 	// The §4.6.2 direct apply: with no Postgres and no PoolScalingController,
-	// the bring-up applies the echo SandboxTemplate/SandboxWarmPool pair
+	// the bring-up applies the echo PodSet pair
 	// directly. This is the path the embedded stack runs at lenny up.
 	if err := stack.ApplyEchoPoolFromConfig(ctx, env.RESTConfig(), ns); err != nil {
 		t.Fatalf("direct apply echo pool: %v", err)
@@ -79,20 +79,20 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	poolName := stack.EchoPoolName
 	key := client.ObjectKey{Namespace: ns, Name: poolName}
 
-	// The SandboxWarmPool CRD is created without Postgres: this is the CRD the
+	// The PodSet CRD is created without Postgres: this is the CRD the
 	// gateway's ResolvePool lists. minWarm = maxWarm = 1 for the single-pod
 	// hot pool.
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if err := c.Get(ctx, key, &pool); err != nil {
-		t.Fatalf("get directly-applied SandboxWarmPool: %v", err)
+		t.Fatalf("get directly-applied PodSet: %v", err)
 	}
 	if pool.Spec.MinWarm != 1 || pool.Spec.MaxWarm != 1 {
 		t.Errorf("applied pool minWarm/maxWarm = %d/%d, want 1/1 (single-pod hot pool)",
 			pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
-	var tmpl lennyv1.SandboxTemplate
+	var tmpl lennyv1.PodSet
 	if err := c.Get(ctx, key, &tmpl); err != nil {
-		t.Fatalf("get directly-applied SandboxTemplate: %v", err)
+		t.Fatalf("get directly-applied PodSet: %v", err)
 	}
 	if tmpl.Spec.RuntimeRef != stack.EchoRuntimeName {
 		t.Errorf("applied template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, stack.EchoRuntimeName)
@@ -109,7 +109,7 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	if err := stack.ApplyEchoPoolFromConfig(ctx, env.RESTConfig(), ns); err != nil {
 		t.Fatalf("re-apply echo pool: %v", err)
 	}
-	var pools lennyv1.SandboxWarmPoolList
+	var pools lennyv1.PodSetList
 	if err := c.List(ctx, &pools, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list warm pools after re-apply: %v", err)
 	}
@@ -130,14 +130,14 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	if _, err := wpr.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("WarmPoolController Reconcile (no RuntimeClass): %v", err)
 	}
-	var sandboxes lennyv1.SandboxList
-	if err := c.List(ctx, &sandboxes, client.InNamespace(ns),
+	var agentPods lennyv1.AgentPodList
+	if err := c.List(ctx, &agentPods, client.InNamespace(ns),
 		client.MatchingLabels{warmpool.LabelPool: poolName}); err != nil {
 		t.Fatalf("list echo sandboxes (no RuntimeClass): %v", err)
 	}
-	if len(sandboxes.Items) != 0 {
+	if len(agentPods.Items) != 0 {
 		t.Fatalf("WarmPoolController created %d sandboxes with the runc RuntimeClass absent, want 0 (Degraded suppresses creation)",
-			len(sandboxes.Items))
+			len(agentPods.Items))
 	}
 
 	// ----- Positive leg: with the runc RuntimeClass -----
@@ -151,15 +151,15 @@ func TestEmbeddedEchoPoolDirectApplyWarmsPod_spec_17_4(t *testing.T) {
 	if _, err := wpr.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("WarmPoolController Reconcile (with RuntimeClass): %v", err)
 	}
-	if err := c.List(ctx, &sandboxes, client.InNamespace(ns),
+	if err := c.List(ctx, &agentPods, client.InNamespace(ns),
 		client.MatchingLabels{warmpool.LabelPool: poolName}); err != nil {
 		t.Fatalf("list echo sandboxes (with RuntimeClass): %v", err)
 	}
-	if len(sandboxes.Items) != 1 {
+	if len(agentPods.Items) != 1 {
 		t.Fatalf("WarmPoolController created %d echo sandboxes with the runc RuntimeClass present, want exactly 1 (single-pod hot pool)",
-			len(sandboxes.Items))
+			len(agentPods.Items))
 	}
-	sb := sandboxes.Items[0]
+	sb := agentPods.Items[0]
 	if sb.Spec.RuntimeRef != stack.EchoRuntimeName {
 		t.Errorf("warmed sandbox runtimeRef = %q, want %q", sb.Spec.RuntimeRef, stack.EchoRuntimeName)
 	}

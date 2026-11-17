@@ -233,7 +233,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_pool_bootstrap_mode", TypeGauge, "Pool bootstrap mode flag (1 active, 0 converged)"},
 	{"lenny_pool_scaling_admission_denied_total", TypeCounter, "PoolScalingController admission rejections by reason"},
 	{"lenny_pool_termination_budget_exceeded_total", TypeCounter, "Pool config writes rejected on the termination budget"},
-	{"lenny_sandboxclaim_guard_rejections_total", TypeCounter, "SandboxClaim double-claim admission rejections"},
+	{"lenny_podclaim_guard_rejections_total", TypeCounter, "PodClaim double-claim admission rejections"},
 	{"lenny_warmpool_idle_pod_minutes", TypeCounter, "Cumulative warm pool idle pod-minutes"},
 	{"lenny_pod_claim_fallback_total", TypeCounter, "Postgres-backed fallback claim path activations"},
 	{"lenny_agent_pod_state_mirror_lag_seconds", TypeGauge, "Seconds since the last agent_pod_state mirror update"},
@@ -244,7 +244,7 @@ var metricCatalog = []MetricSpec{
 	{"lenny_controller_leader_lease_renewal_age_seconds", TypeGauge, "Seconds since the controller leader last renewed its Lease"},
 	{"lenny_controller_queue_overflow_total", TypeCounter, "Reconciliation events dropped on work-queue overflow"},
 	{"lenny_controller_workqueue_depth", TypeGauge, "Controller reconciliation work-queue depth"},
-	{"lenny_orphaned_claims_total", TypeCounter, "Orphaned SandboxClaims deleted by the GarbageCollect loop"},
+	{"lenny_orphaned_claims_total", TypeCounter, "Orphaned PodClaims deleted by the GarbageCollect loop"},
 	{"lenny_delegation_tree_recovery_duration_seconds", TypeHistogram, "Delegation tree recovery duration by outcome"},
 	{"lenny_delegation_tree_recovery_timeout_total", TypeCounter, "Delegation tree recovery timeouts by timeout type"},
 	{"lenny_orphan_cleanup_runs_total", TypeCounter, "Background orphan cleanup job executions"},
@@ -451,7 +451,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_postgres_write_ceiling_iops", TypeGauge, "Per-tier Postgres sustained write-IOPS ceiling"},
 	{"lenny_postgres_write_burst_iops", TypeGauge, "Observed Postgres burst write IOPS, read by PostgresWriteBurstIops"},
 	{"lenny_postgres_write_burst_ceiling_iops", TypeGauge, "Per-tier Postgres burst write-IOPS ceiling"},
-	{"lenny_sandbox_finalizer_terminating_seconds", TypeGauge, "Seconds a sandbox has been blocked on finalizer cleanup, read by FinalizerStuck"},
+	{"lenny_agentpod_finalizer_terminating_seconds", TypeGauge, "Seconds a sandbox has been blocked on finalizer cleanup, read by FinalizerStuck"},
 
 	// --- §16.5 burn-rate SLO support. The SessionCreationSuccessRate,
 	// SessionCreationLatency, and GatewayAvailability burn-rate alerts

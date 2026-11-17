@@ -14,24 +14,24 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
-// sandboxPhaseOf reads the pod's Sandbox status.phase.
-func sandboxPhaseOf(t *testing.T, c *kind.Cluster, pod string) string {
+// agentPodPhaseOf reads the pod's AgentPod status.phase.
+func agentPodPhaseOf(t *testing.T, c *kind.Cluster, pod string) string {
 	t.Helper()
 	out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandbox", pod, "-o", "jsonpath={.status.phase}")
 	if err != nil {
-		t.Fatalf("read the Sandbox phase of %s: %v\n%s", pod, err, out)
+		t.Fatalf("read the AgentPod phase of %s: %v\n%s", pod, err, out)
 	}
 	return strings.TrimSpace(out)
 }
 
 // requirePodStaysClaimed fails when, over the hold window, the pod's claim
-// leaves `bound` or its Sandbox leaves `claimed`, which is the drain a
+// leaves `bound` or its AgentPod leaves `claimed`, which is the drain a
 // deleted shared claim would start.
 func requirePodStaysClaimed(t *testing.T, c *kind.Cluster, pod string, hold time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(hold)
 	for time.Now().Before(deadline) {
-		claim, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandboxclaim", "claim-"+pod,
+		claim, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "podclaim", "claim-"+pod,
 			"-o", "jsonpath={.status.phase}")
 		if err != nil {
 			t.Fatalf("the claim of %s is gone after the not-started session's terminate: %v\n%s", pod, err, claim)
@@ -39,8 +39,8 @@ func requirePodStaysClaimed(t *testing.T, c *kind.Cluster, pod string, hold time
 		if got := strings.TrimSpace(claim); got != "bound" {
 			t.Fatalf("the claim of %s is %q after the not-started session's terminate, want bound", pod, got)
 		}
-		if phase := sandboxPhaseOf(t, c, pod); phase != "claimed" {
-			t.Fatalf("Sandbox %s is %q after the not-started session's terminate, want claimed", pod, phase)
+		if phase := agentPodPhaseOf(t, c, pod); phase != "claimed" {
+			t.Fatalf("AgentPod %s is %q after the not-started session's terminate, want claimed", pod, phase)
 		}
 		time.Sleep(2 * time.Second)
 	}

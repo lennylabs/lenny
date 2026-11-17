@@ -349,7 +349,7 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 }
 
 // denyLeafCluster returns an envtest-backed cluster seeded with a warm pool,
-// its template, and two idle Sandboxes for the shared-tool runtime, so the
+// its template, and two idle AgentPods for the shared-tool runtime, so the
 // create handler can claim a pod for each of the two children the deny-leaf
 // test finalizes.
 func denyLeafCluster(t *testing.T) client.Client {
@@ -370,21 +370,21 @@ func denyLeafCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: crossEnvNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "shared-pool", Namespace: crossEnvNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "shared-tmpl", MinWarm: 2, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "shared-tmpl", MinWarm: 2, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "shared-tmpl", Namespace: crossEnvNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "shared-tool", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "shared-tool", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
 	for i, ip := range []string{"10.244.2.11", "10.244.2.12"} {
 		name := "sbx-deny-" + string(rune('a'+i))
-		if err := c.Create(ctx, &lennyv1.Sandbox{
+		if err := c.Create(ctx, &lennyv1.AgentPod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name, Namespace: crossEnvNS,
 				Labels: map[string]string{warmpool.LabelPool: "shared-pool"},
@@ -394,7 +394,7 @@ func denyLeafCluster(t *testing.T) client.Client {
 		}
 		u := &unstructured.Unstructured{}
 		u.SetAPIVersion(lennyv1.GroupVersion.String())
-		u.SetKind("Sandbox")
+		u.SetKind("AgentPod")
 		u.SetName(name)
 		u.SetNamespace(crossEnvNS)
 		_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": ip}, "status")

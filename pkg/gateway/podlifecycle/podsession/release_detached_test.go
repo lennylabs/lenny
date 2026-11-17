@@ -99,16 +99,16 @@ func dialReleaseAdapter(t *testing.T, a *releaseAdapter) *adapterclient.Client {
 // fails without applying; a fault "after" applies the write and then reports
 // an error.
 type claimWriteFaults struct {
-	getSandboxErr bool
-	deleteBefore  bool
-	deleteAfter   bool
-	patchBefore   bool
-	patchAfter    bool
+	getAgentPodErr bool
+	deleteBefore   bool
+	deleteAfter    bool
+	patchBefore    bool
+	patchAfter     bool
 
-	mu             sync.Mutex
-	sandboxGetDL   time.Time
-	sandboxGetHasD bool
-	endedWrites    []string
+	mu              sync.Mutex
+	agentPodGetDL   time.Time
+	agentPodGetHasD bool
+	endedWrites     []string
 }
 
 func (f *claimWriteFaults) noteCtx(op string, ctx context.Context) {
@@ -122,19 +122,19 @@ func (f *claimWriteFaults) noteCtx(op string, ctx context.Context) {
 func (f *claimWriteFaults) funcs() interceptor.Funcs {
 	return interceptor.Funcs{
 		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-			if _, ok := obj.(*lennyv1.Sandbox); ok {
+			if _, ok := obj.(*lennyv1.AgentPod); ok {
 				f.mu.Lock()
-				f.sandboxGetDL, f.sandboxGetHasD = ctx.Deadline()
+				f.agentPodGetDL, f.agentPodGetHasD = ctx.Deadline()
 				f.mu.Unlock()
 				f.noteCtx("get sandbox", ctx)
-				if f.getSandboxErr {
+				if f.getAgentPodErr {
 					return errors.New("apiserver unavailable")
 				}
 			}
 			return cl.Get(ctx, key, obj, opts...)
 		},
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); !ok {
+			if _, ok := obj.(*lennyv1.PodClaim); !ok {
 				return cl.Delete(ctx, obj, opts...)
 			}
 			f.noteCtx("delete claim", ctx)
@@ -150,7 +150,7 @@ func (f *claimWriteFaults) funcs() interceptor.Funcs {
 			return nil
 		},
 		SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); !ok {
+			if _, ok := obj.(*lennyv1.PodClaim); !ok {
 				return cl.SubResource(sub).Patch(ctx, obj, patch, opts...)
 			}
 			f.noteCtx("patch claim", ctx)
@@ -168,13 +168,13 @@ func (f *claimWriteFaults) funcs() interceptor.Funcs {
 	}
 }
 
-// seedBoundPod seeds an idle Sandbox and its per-pod claim in `bound`.
+// seedBoundPod seeds an idle AgentPod and its per-pod claim in `bound`.
 func seedBoundPod(t *testing.T, c client.Client, name string) {
 	t.Helper()
 	ns := testNamespace(t)
-	seedObjects(t, c, idleSandbox(ns, name, "10.244.9.9"), &lennyv1.SandboxClaim{
+	seedObjects(t, c, idleAgentPod(ns, name, "10.244.9.9"), &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(name), Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: name, TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: name, TenantID: "acme"},
 	})
 	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, podclaim.ClaimName(name)); err != nil {
 		t.Fatalf("write bound on %s: %v", name, err)
@@ -185,7 +185,7 @@ func seedBoundPod(t *testing.T, c client.Client, name string) {
 func claimPhase(t *testing.T, c client.Client, name string) string {
 	t.Helper()
 	ns := testNamespace(t)
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(name)}, &sc)
 	if apierrors.IsNotFound(err) {
 		return "gone"
@@ -226,7 +226,7 @@ func runReleaseCase(t *testing.T, base client.WithWatch, idx int, tc *releaseCas
 	b := newBinder(ns, interceptor.NewClient(base, faults.funcs()), nil)
 	armer := &fakeRecycleBoundary{}
 	b.RecycleBoundary = armer
-	res := &podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: name, Adapter: dialReleaseAdapter(t, a), Recycle: tc.recycle}
+	res := &podsession.BindResult{SessionID: "sess-1", TenantID: "acme", AgentPodName: name, Adapter: dialReleaseAdapter(t, a), Recycle: tc.recycle}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if tc.callerCtx != nil {
@@ -268,13 +268,13 @@ func alreadyCancelled() (context.Context, context.CancelFunc) {
 
 // TestBinderReleaseClaimWritesOutlastCallerContext_spec_5_2 pins the detached
 // claim writes of Binder.Release: when the adapter Shutdown runs to the
-// caller's deadline, the retire path still reads the Sandbox and deletes the
+// caller's deadline, the retire path still reads the AgentPod and deletes the
 // claim on a context created after the Shutdown returned, and a caller whose
 // context already ended still has its claim deleted or patched to
 // `recycling`. The executor removed the binding before the call, so no path
 // would repeat a release lost to the caller's context.
 //
-// spec: §5.2 (Recycle lifecycle), §4.6.3 (SandboxClaim: a release that ends
+// spec: §5.2 (Recycle lifecycle), §4.6.3 (PodClaim: a release that ends
 // the occupancy without reuse)
 //
 // diagnosis: a failure means a release whose caller's context ended during
@@ -296,13 +296,13 @@ func TestBinderReleaseClaimWritesOutlastCallerContext_spec_5_2(t *testing.T) {
 		returned := a.returnedAt
 		a.mu.Unlock()
 		faults.mu.Lock()
-		dl, has := faults.sandboxGetDL, faults.sandboxGetHasD
+		dl, has := faults.agentPodGetDL, faults.agentPodGetHasD
 		faults.mu.Unlock()
 		if !has {
-			t.Fatalf("the retire path's Sandbox Get carried no deadline, want the detached cleanup bound")
+			t.Fatalf("the retire path's AgentPod Get carried no deadline, want the detached cleanup bound")
 		}
 		if min := returned.Add(podsession.SlotCleanupFloorForTest); dl.Before(min) {
-			t.Errorf("Sandbox Get deadline = %v, want at or after %v (the Shutdown's return plus the per-slot cleanup floor)", dl, min)
+			t.Errorf("AgentPod Get deadline = %v, want at or after %v (the Shutdown's return plus the per-slot cleanup floor)", dl, min)
 		}
 	})
 	t.Run("retire path, caller context already ended", func(t *testing.T) {
@@ -326,13 +326,13 @@ func TestBinderReleaseClaimWritesOutlastCallerContext_spec_5_2(t *testing.T) {
 // TestBinderReleaseFailureOutcomes_spec_5_2 pins each failure outcome of
 // Binder.Release on both dispositions: a recycling patch that fails, or that
 // applies and then errors, returns the error before the timeout is armed and
-// before any Shutdown; a retire path whose Sandbox read or claim delete fails
+// before any Shutdown; a retire path whose AgentPod read or claim delete fails
 // returns the error with the claim left; a delete that applied and then
 // errored returns the error with the claim gone; a claim already gone fails
 // the recycling patch's read and is a no-op for the retire delete; and a
 // failed Shutdown is ignored on both paths.
 //
-// spec: §5.2 (Recycle lifecycle), §4.6.3 (SandboxClaim binding state), §6.2
+// spec: §5.2 (Recycle lifecycle), §4.6.3 (PodClaim binding state), §6.2
 // (a failed session retires its pod)
 //
 // diagnosis: a failure means a release step's failure leaves the claim in a
@@ -352,8 +352,8 @@ func TestBinderReleaseFailureOutcomes_spec_5_2(t *testing.T) {
 			wantErr: true, wantPhase: recycling,
 		},
 		{
-			name: "retire Sandbox read fails", disposition: "completed",
-			faults:  claimWriteFaults{getSandboxErr: true},
+			name: "retire AgentPod read fails", disposition: "completed",
+			faults:  claimWriteFaults{getAgentPodErr: true},
 			wantErr: true, wantPhase: bound, wantSent: []bool{false},
 		},
 		{

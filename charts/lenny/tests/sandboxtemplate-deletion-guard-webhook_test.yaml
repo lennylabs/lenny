@@ -1,9 +1,9 @@
-suite: sandboxtemplate-deletion-guard webhook
+suite: podset-deletion-guard webhook
 release:
   name: lenny
   namespace: lenny-system
 templates:
-  - admission-policies/sandboxtemplate-deletion-guard-webhook.yaml
+  - admission-policies/podset-deletion-guard-webhook.yaml
 tests:
   - it: renders the workload, gateway-egress policy, and webhook config unconditionally (§10.5 key safety invariant)
     asserts:
@@ -40,7 +40,7 @@ tests:
           of: Deployment
       - equal:
           path: spec.template.metadata.labels["lenny.dev/webhook-name"]
-          value: sandboxtemplate-deletion-guard
+          value: podset-deletion-guard
       - equal:
           path: spec.template.metadata.labels["lenny.dev/component"]
           value: admission-webhook
@@ -53,7 +53,7 @@ tests:
   # the deletion-guard pods by the paired canonical + additive selector,
   # egressing to the gateway on the internal port. F-13.2.24. Before this
   # fix no NetworkPolicy rendered and the fail-closed webhook denied a
-  # SandboxTemplate DELETE with a referencing SandboxWarmPool.
+  # PodSet DELETE with a referencing PodSet.
   - it: renders allow-deletion-guard-gateway-egress narrowed to the paired selector, egress-only to the gateway
     documentSelector:
       path: metadata.name
@@ -68,7 +68,7 @@ tests:
           value: admission-webhook
       - equal:
           path: spec.podSelector.matchLabels["lenny.dev/webhook-name"]
-          value: sandboxtemplate-deletion-guard
+          value: podset-deletion-guard
       - equal:
           path: spec.egress[0].to[0].podSelector.matchLabels["lenny.dev/component"]
           value: gateway
@@ -97,7 +97,7 @@ tests:
           path: spec.egress[0].ports[0].port
           value: 9090
 
-  - it: configures the webhook fail-closed with CA injection on DELETE of sandboxtemplates
+  - it: configures the webhook fail-closed with CA injection on DELETE of podsets
     documentIndex: 5
     asserts:
       - isKind:
@@ -107,10 +107,10 @@ tests:
           value: Fail
       - equal:
           path: webhooks[0].clientConfig.service.path
-          value: /sandboxtemplate-deletion-guard
+          value: /podset-deletion-guard
       - equal:
           path: webhooks[0].rules[0].resources[0]
-          value: sandboxtemplates
+          value: podsets
       - contains:
           path: webhooks[0].rules[0].operations
           content: DELETE
@@ -119,4 +119,4 @@ tests:
           value: v1alpha1
       - equal:
           path: metadata.annotations["cert-manager.io/inject-ca-from"]
-          value: lenny-system/lenny-sandboxtemplate-deletion-guard
+          value: lenny-system/lenny-podset-deletion-guard

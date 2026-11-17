@@ -202,13 +202,13 @@ helm() {
 }
 export -f helm
 
-# 1b. Drain any leftover load-* SandboxWarmPools from a prior run, so
+# 1b. Drain any leftover load-* PodSets from a prior run, so
 #     the helm rollout has CPU headroom against the warm-pool
 #     sandboxes. Same contract as scripts/cloud/aws/run-load.sh.
 # Subshell wrap works around a bash 3.2 quirk; see the AWS sibling.
 if (kubectl get namespace lenny-agents >/dev/null 2>&1); then
-  echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
-  kubectl -n lenny-agents delete sandboxwarmpool \
+  echo "==[1b/5] drain leftover load-* PodSets==" >&2
+  kubectl -n lenny-agents delete podset \
     load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool \
     --ignore-not-found
   for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
@@ -294,11 +294,11 @@ spec:
 MIGRATE
 kubectl -n "${LENNY_NAMESPACE}" wait --for=condition=complete job/lenny-load-migrate --timeout=600s
 
-# RuntimeClasses for the §5.3 isolation profiles. The Sandbox
+# RuntimeClasses for the §5.3 isolation profiles. The AgentPod
 # controller pod-create call references runtimeClassName by these
 # names; Kubernetes admission rejects pods whose runtimeClassName
 # does not exist, so these resources must be present before the
-# load fixture creates SandboxWarmPools at step 5. Same pattern as
+# load fixture creates PodSets at step 5. Same pattern as
 # scripts/cloud/aws/run-e2e.sh step 5c.
 kubectl apply -f - <<'RUNTIMECLASSES'
 ---
@@ -354,7 +354,7 @@ if [[ "${LENNY_BENCH_RUNTIME_CLASSES:-runc}" == *gvisor* || "${LENNY_BENCH_RUNTI
 fi
 for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
   echo "  waiting for ${pool} to scale to minWarm..." >&2
-  until [[ "$(kubectl -n lenny-agents get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
+  until [[ "$(kubectl -n lenny-agents get podset "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
     sleep 5
   done
   echo "  ${pool} ready" >&2

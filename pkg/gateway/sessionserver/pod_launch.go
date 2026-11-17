@@ -65,7 +65,7 @@ type startContext struct {
 // own atomicity gates pass.
 //
 // startOnPod no longer registers the binding or persists the
-// SandboxName field itself: the §7.1 atomicity contract
+// AgentPodName field itself: the §7.1 atomicity contract
 // requires the gateway to skip the persist write entirely when an
 // earlier step in steps 2-8 fails, so the caller decides when to
 // publish the binding. The session-mode and concurrent-slot paths
@@ -143,12 +143,12 @@ func (s *Server) startOnPod(ctx context.Context, row sessionstore.Session, plan 
 		return nil, &podsession.PoolWarmingError{Pool: match.Pool, PodsWarming: match.PodsWarming}
 	}
 	// spec: §5.2 — service mode is claimless: there is no workspace
-	// materialization and no SandboxClaim. A service-mode session is a
+	// materialization and no PodClaim. A service-mode session is a
 	// connection handle; the gateway routes each message through the
 	// pool's Kubernetes Service / EndpointSlice with tenant-affinity
 	// routing (statelessproxy + tenantaffinity), pinning each pod to one
 	// tenant. The start path therefore returns a nil BindResult without
-	// touching the claim or slot acquisition paths, so no Sandbox is
+	// touching the claim or slot acquisition paths, so no AgentPod is
 	// claimed and no pod is bound to the session. The session row persists
 	// with execution_mode=service; message routing reads that mode and
 	// dispatches to the stateless data plane rather than a bound pod. On the
@@ -338,7 +338,7 @@ func (s *Server) launchOnPod(ctx context.Context, row sessionstore.Session, plan
 // emitted exactly once (at /create, not re-emitted here).
 // spec: §4.3, §4.4, §4.6, §5 (proposal); §6.3; §7.1 steps 11-13.
 func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest, createPodClaim time.Duration) (*podsession.BindResult, error) {
-	bindReq.SandboxName = row.PodAssignment
+	bindReq.AgentPodName = row.PodAssignment
 	if row.PoolRef != "" {
 		bindReq.Pool = row.PoolRef
 	}
@@ -406,7 +406,7 @@ func (s *Server) prepareAndLaunch(ctx context.Context, row sessionstore.Session,
 // the agent_session_start phase and the end-to-end envelope here.
 // spec: §4.4, §4.6 (proposal); §6.1; §6.3.
 func (s *Server) launchPrepared(ctx context.Context, row sessionstore.Session, match podsession.PoolMatch, bindReq podsession.BindRequest) (*podsession.BindResult, error) {
-	bindReq.SandboxName = row.PodAssignment
+	bindReq.AgentPodName = row.PodAssignment
 	if row.PoolRef != "" {
 		bindReq.Pool = row.PoolRef
 	}

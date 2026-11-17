@@ -36,7 +36,7 @@ import (
 const boundaryModulePrefix = "github.com/lennylabs/lenny/"
 
 // boundaryPodspecImport is the import path of the pod builder.
-const boundaryPodspecImport = boundaryModulePrefix + "pkg/controller/sandbox/podspec"
+const boundaryPodspecImport = boundaryModulePrefix + "pkg/controller/agentpod/podspec"
 
 // boundaryProducerDir is the binary whose closure carries the production
 // podspec.Inputs composite literals the producer check reads.

@@ -50,7 +50,7 @@ func (e *unbindingExecutor) Release(_ context.Context, sessionID string, d execu
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.released = append(e.released, b.SandboxName+":"+string(d))
+	e.released = append(e.released, b.AgentPodName+":"+string(d))
 	return nil
 }
 
@@ -61,7 +61,7 @@ func (e *unbindingExecutor) releases() []string {
 }
 
 // rebindFixture is a pod-backed server for the resume rebind cases. Its
-// cluster serves the echo runtime, with one idle Sandbox, sbx-1, unless
+// cluster serves the echo runtime, with one idle AgentPod, sbx-1, unless
 // noIdlePod is set. The server is replica rep-1 and records executor
 // releases.
 type rebindFixture struct {
@@ -83,7 +83,7 @@ func newRebindFixture(t *testing.T, id string, noIdlePod bool) *rebindFixture {
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	}
 	if !noIdlePod {
-		objs = append(objs, podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"))
+		objs = append(objs, podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"))
 	}
 	f := &rebindFixture{
 		store:    memstore.New(),
@@ -161,7 +161,7 @@ func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
 		t.Parallel()
 		f := newRebindFixture(t, "sess-rebind", false)
 		seedAwaitingSession(t, f.store, sessionstore.Session{UserID: testOwner, ID: "sess-rebind", WorkspaceSnapshot: checkpointed()})
-		f.registry.Put(&podsession.BindResult{SessionID: "sess-rebind", TenantID: "acme", SandboxName: "sbx-old"})
+		f.registry.Put(&podsession.BindResult{SessionID: "sess-rebind", TenantID: "acme", AgentPodName: "sbx-old"})
 		f.setHolder("sess-rebind", "rep-1")
 
 		row := resumeToPending(t, f, "sess-rebind")
@@ -169,7 +169,7 @@ func TestResumeReleasesEarlierBindingBeforeBind_spec_10_1(t *testing.T) {
 		if got := f.exec.releases(); len(got) != 1 || got[0] != "sbx-old:failed" {
 			t.Errorf("releases = %v, want [sbx-old:failed] before the new bind", got)
 		}
-		if b, ok := f.registry.Get("sess-rebind"); !ok || b.SandboxName != "sbx-1" {
+		if b, ok := f.registry.Get("sess-rebind"); !ok || b.AgentPodName != "sbx-1" {
 			t.Errorf("binding = %+v ok=%v, want the new sbx-1 binding published", b, ok)
 		}
 		if h := f.holder("sess-rebind"); h != "rep-1" {
@@ -258,7 +258,7 @@ func TestResumeAgainstForeignLeaseHolderHoldsRow_spec_15_1(t *testing.T) {
 			if h := f.holder(id); h != "rep-2" {
 				t.Errorf("lease holder = %q, want rep-2", h)
 			}
-			var claim lennyv1.SandboxClaim
+			var claim lennyv1.PodClaim
 			err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 			if err == nil && claim.Status.Phase == string(claimstate.Bound) {
 				t.Errorf("claim-sbx-1 bound, want no pod claimed by a replica without the lease")

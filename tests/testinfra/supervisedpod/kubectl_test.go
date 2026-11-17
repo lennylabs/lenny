@@ -147,17 +147,17 @@ func TestPodReadersDecodeWhatKubectlPrints(t *testing.T) {
 // spec: §5.2 (PoolWarmingUp condition), §4.6.1
 //
 // TestClaimableReadersSkipClaimedPodsAndAWarmingPool pins the claimability
-// readers: a pod holding a SandboxClaim is not idle, and a pool whose
+// readers: a pod holding a PodClaim is not idle, and a pool whose
 // template reports PoolWarmingUp is not available.
 func TestClaimableReadersSkipClaimedPodsAndAWarmingPool(t *testing.T) {
 	c, _ := fakeKubectl(
 		t,
-		kubectlRule{match: "sandboxwarmpool p -o jsonpath={.spec.minWarm}", outputs: []string{"1 3"}},
-		kubectlRule{match: "sandboxwarmpool p", outputs: []string{"tmpl-p"}},
-		kubectlRule{match: "sandboxtemplate tmpl-p", outputs: []string{"True", "False"}},
-		kubectlRule{match: "sandboxclaim claim-a --ignore-not-found", outputs: []string{"sandboxclaim/claim-a"}},
-		kubectlRule{match: "sandboxclaim claim-a -o jsonpath={.status.phase}", outputs: []string{"bound", "reserved"}},
-		kubectlRule{match: "sandboxclaim", outputs: []string{""}},
+		kubectlRule{match: "podset p -o jsonpath={.spec.minWarm}", outputs: []string{"1 3"}},
+		kubectlRule{match: "podset p", outputs: []string{"tmpl-p"}},
+		kubectlRule{match: "podset tmpl-p", outputs: []string{"True", "False"}},
+		kubectlRule{match: "podclaim claim-a --ignore-not-found", outputs: []string{"podclaim/claim-a"}},
+		kubectlRule{match: "podclaim claim-a -o jsonpath={.status.phase}", outputs: []string{"bound", "reserved"}},
+		kubectlRule{match: "podclaim", outputs: []string{""}},
 		kubectlRule{match: "get pods -l lenny.dev/pool=p", outputs: []string{podList(podDoc("a", true, false), podDoc("b", true, false), podDoc("c", true, false))}},
 	)
 	if !PoolWarmingUp(t, c, "p") {
@@ -185,8 +185,8 @@ func TestClaimableReadersSkipClaimedPodsAndAWarmingPool(t *testing.T) {
 func TestFreshIdlePodsReturnsOnlyPodsCreatedAfterTheReplacement(t *testing.T) {
 	c, calls := fakeKubectl(
 		t,
-		kubectlRule{match: "sandboxclaim claim-held", outputs: []string{"sandboxclaim/claim-held"}},
-		kubectlRule{match: "sandboxclaim", outputs: []string{""}},
+		kubectlRule{match: "podclaim claim-held", outputs: []string{"podclaim/claim-held"}},
+		kubectlRule{match: "podclaim", outputs: []string{""}},
 		kubectlRule{match: "get pods -l lenny.dev/pool=p", outputs: []string{
 			podList(podDoc("old", true, false), podDoc("held", true, false)),
 			podList(podDoc("held", true, false), podDoc("new", true, false)),

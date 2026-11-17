@@ -133,7 +133,7 @@ func awaitPodRetired(t *testing.T, c *kind.Cluster, pod string, timeout time.Dur
 	claim := "claim-" + pod
 	deadline := time.Now().Add(timeout)
 	for {
-		out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandboxclaim", claim,
+		out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "podclaim", claim,
 			"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 		phase := strings.TrimSpace(out)
 		if err == nil && phase == "" {
@@ -429,7 +429,7 @@ func reportedSessions(ctx context.Context, d *sessiondriver.Driver, tenant strin
 }
 
 // awaitPodGone waits for the pod to be deleted, which the WarmPoolController
-// does once the drain request moves the pod's Sandbox to draining.
+// does once the drain request moves the pod's AgentPod to draining.
 func awaitPodGone(t *testing.T, c *kind.Cluster, pod string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

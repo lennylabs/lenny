@@ -3,30 +3,30 @@
 # Runtime CRs and the runc RuntimeClass for the tier-5/8/9 e2e suite.
 # install.sh applies this after the Lenny chart.
 #
-# Pools (SandboxTemplate + SandboxWarmPool) are NOT defined here. The
+# Pools (PodSet) are NOT defined here. The
 # admission plane treats §5.2 pools as Postgres-authoritative: the
 # pool-config-validator webhook rejects any manual kubectl write to a
-# SandboxTemplate or SandboxWarmPool with UNAUTHORIZED_POOL_CONFIG_WRITE,
+# PodSet with UNAUTHORIZED_POOL_CONFIG_WRITE,
 # because only the §4.6.2 PoolScalingController service account may
 # create them. The pools are therefore seeded into Postgres through the
 # §17.6 bootstrap.pools list in e2e-values.yaml; the PoolScalingController
-# reconciles each Postgres pool row into its SandboxTemplate +
-# SandboxWarmPool CRD pair, keyed by pool name, in the lenny-agents
-# namespace. The Sandbox reconciler then produces real agent pods so the
+# reconciles each Postgres pool row into its PodSet +
+# PodSet CRD pair, keyed by pool name, in the lenny-agents
+# namespace. The AgentPod reconciler then produces real agent pods so the
 # tier-5/8/9 tests that need a live agent pod run against a real workload.
 #
-# The Runtime CRs below stay kubectl-applied: the Sandbox reconciler reads
+# The Runtime CRs below stay kubectl-applied: the AgentPod reconciler reads
 # the Runtime CR's spec.image to build each agent pod (§4.7), so the
 # digest-pinned image must exist as a Kubernetes object. The Runtime CRD
-# is not gated by the pool-config-validator webhook (only SandboxTemplate
-# and SandboxWarmPool are); the §13.1 admin/CRD digest requirement is what
+# is not gated by the pool-config-validator webhook (only PodSet
+# and PodSet are); the §13.1 admin/CRD digest requirement is what
 # rejects a bare :e2e tag. install.sh therefore substitutes each
 # __*_IMAGE__ placeholder below with the runtime image's current
 # `image:e2e@sha256:<digest>` reference (resolved with `docker image
 # inspect`) before `kubectl apply`, so the reference is always pinned to
 # the freshly-built image rather than a stale hardcoded digest.
 #
-# The Sandbox reconciler stamps runtimeClassName onto every agent pod from
+# The AgentPod reconciler stamps runtimeClassName onto every agent pod from
 # the §5.3 isolation profile (standard -> runc). Kind nodes run containerd
 # whose default handler is runc, but no RuntimeClass object named runc
 # exists by default, so this RuntimeClass maps the standard profile onto
@@ -93,7 +93,7 @@ spec:
 # deploymentModel is embedded: cmd/runtimes/preconnect-echo links the
 # adapter into its own process and serves the adapter gRPC contract on
 # :50051 directly (the same single-container embedded model as
-# echo-runtime-embedded). Declaring it sidecar makes the Sandbox reconciler
+# echo-runtime-embedded). Declaring it sidecar makes the AgentPod reconciler
 # inject a separate lenny-adapter container that also binds :50051, so the
 # embedded runtime fails with "address already in use" and the pod never
 # becomes Ready. spec: §4.7.
@@ -162,7 +162,7 @@ spec:
 # profile is sandboxed rather than standard. install.sh's Step 3a
 # (tests/testinfra/kind/install-gvisor.sh) installs runsc on the
 # sandbox-gvisor labelled node and applies the gvisor RuntimeClass
-# before this pod is scheduled, so the Sandbox reconciler's §5.3
+# before this pod is scheduled, so the AgentPod reconciler's §5.3
 # RuntimeClass stamp resolves to a real gVisor-backed pod instead of a
 # Degraded pool. Uses the same distroless echo image as
 # echo-runtime-sidecar: gvisor_isolation_test.go fingerprints the

@@ -71,7 +71,7 @@ func poolRowCount(t *testing.T, ctx context.Context, pg *containers.Postgres, po
 // spec: 4.6.1
 // diagnosis: the Postgres-backed agent_pod_state mirror in
 // pkg/agentpodstate/pgstore did not behave as specified. Sync must
-// bulk-UPSERT the observed Sandbox set keyed on pod_id, a second Sync
+// bulk-UPSERT the observed AgentPod set keyed on pod_id, a second Sync
 // must converge the mirror by updating changed rows and deleting rows
 // no longer observed, the prune DELETE must be scoped to the pool so it
 // never removes another pool's rows, an empty observed set must clear
@@ -605,7 +605,7 @@ func tryLockRow(ctx context.Context, pg *containers.Postgres, podID string) erro
 // in pkg/agentpodstate/pgstore must converge the entire mirror in one
 // transaction across all pools: bulk-UPSERT every observed row keyed on
 // pod_id, and delete every row whose pod_id is absent from observed —
-// including rows for pools that no longer have any live Sandbox. An
+// including rows for pools that no longer have any live AgentPod. An
 // empty observed set must clear the whole table.
 func TestAgentPodStateReconcileAll(t *testing.T) {
 	t.Parallel()
@@ -630,7 +630,7 @@ func TestAgentPodStateReconcileAll(t *testing.T) {
 	}
 
 	t.Run("converges every pool to the observed set", func(t *testing.T) {
-		// The authoritative Sandbox set after a failover: poolA-1 changed
+		// The authoritative AgentPod set after a failover: poolA-1 changed
 		// state, poolA-2 vanished, poolB has no live pods at all, and a new
 		// poolA-3 appeared.
 		observed := []agentpodstate.PodState{
@@ -651,7 +651,7 @@ func TestAgentPodStateReconcileAll(t *testing.T) {
 			t.Error("poolA-2 (vanished) must be pruned")
 		}
 		if n := poolRowCount(t, ctx, pg, poolB); n != 0 {
-			t.Errorf("poolB rows = %d, want 0 (no live Sandbox; cross-pool prune)", n)
+			t.Errorf("poolB rows = %d, want 0 (no live AgentPod; cross-pool prune)", n)
 		}
 	})
 

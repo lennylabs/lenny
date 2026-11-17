@@ -41,7 +41,7 @@ import (
 
 	cv "github.com/lennylabs/lenny/pkg/admission/cosign_verify"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/podsecurity"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )

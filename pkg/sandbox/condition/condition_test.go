@@ -31,7 +31,7 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func newClient(t *testing.T, sb *lennyv1.Sandbox) client.Client {
+func newClient(t *testing.T, sb *lennyv1.AgentPod) client.Client {
 	t.Helper()
 	env := envtest.Start(t)
 	c, err := client.New(env.RESTConfig(), client.Options{Scheme: newScheme(t)})
@@ -52,9 +52,9 @@ func newClient(t *testing.T, sb *lennyv1.Sandbox) client.Client {
 // accumulate as history; they do not overwrite one another because each
 // Type is owned by its own SSA field manager.
 func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-1", Namespace: testNS},
-		Spec:       lennyv1.SandboxSpec{PoolRef: "p"},
+		Spec:       lennyv1.AgentPodSpec{PodSetRef: "p"},
 	}
 	c := newClient(t, sb)
 	ctx := context.Background()
@@ -63,7 +63,7 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 	// is owned by its own SSA field manager, so a second Apply does not
 	// overwrite the first. (The session-terminal and interrupt-suspension
 	// facts moved to the Postgres session model under §7.2 / §8.8; the
-	// remaining Sandbox condition types are controller-written, so this test
+	// remaining AgentPod condition types are controller-written, so this test
 	// exercises the accumulation mechanics with the OrphanClaimReclaimed type
 	// and a second arbitrary type.)
 	if err := sandboxcond.Apply(ctx, c, sb, metav1.Condition{
@@ -77,7 +77,7 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 		t.Fatalf("apply cordoned: %v", err)
 	}
 
-	var got lennyv1.Sandbox
+	var got lennyv1.AgentPod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "pod-1"}, &got); err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -96,9 +96,9 @@ func TestApplyAccumulatesDistinctConditions_spec_6_2_305(t *testing.T) {
 // spec: §6.2 — re-applying the same condition Type updates that
 // entry in place (listType=map keyed by type) rather than duplicating it.
 func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pod-2", Namespace: testNS},
-		Spec:       lennyv1.SandboxSpec{PoolRef: "p"},
+		Spec:       lennyv1.AgentPodSpec{PodSetRef: "p"},
 	}
 	c := newClient(t, sb)
 	ctx := context.Background()
@@ -114,7 +114,7 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 		t.Fatalf("apply 2: %v", err)
 	}
 
-	var got lennyv1.Sandbox
+	var got lennyv1.AgentPod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: testNS, Name: "pod-2"}, &got); err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestApplyUpdatesSameTypeInPlace_spec_6_2_305(t *testing.T) {
 // An empty condition type is rejected so a caller never writes a malformed
 // entry the API server would refuse.
 func TestApplyRejectsEmptyType(t *testing.T) {
-	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: "pod-3", Namespace: testNS}}
+	sb := &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{Name: "pod-3", Namespace: testNS}}
 	if err := sandboxcond.Apply(context.Background(), nil, sb, metav1.Condition{Reason: "x"}); err == nil {
 		t.Error("Apply with empty type must error")
 	}

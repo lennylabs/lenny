@@ -67,7 +67,7 @@ func launchServer(t *testing.T, store sessionstore.Store, id string, maxFinalizi
 		t,
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	registry := podsession.NewRegistry()
 	dial := podBindAdapterDialer(t, adapterSrv, grpc.ChainUnaryInterceptor(probe.intercept))

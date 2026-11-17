@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter/prestop"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -74,14 +74,14 @@ func TestAgentPodPreStopHookExecsTheInstalledBinary(t *testing.T) {
 	}
 }
 
-// idleWorkloadPod returns a warm pod from pool whose backing Sandbox is idle,
+// idleWorkloadPod returns a warm pod from pool whose backing AgentPod is idle,
 // skipping the subtest when the pool has none. An idle pod carries no
 // session, so draining and deleting it loses no work; the warm pool controller
 // replaces it.
 func idleWorkloadPod(t *testing.T, c *kind.Cluster, pods []kind.AgentPod, pool string) string {
 	t.Helper()
 	for _, p := range pods {
-		if p.Pool == pool && sandboxPhaseForPod(t, c, p.Name) == "idle" {
+		if p.Pool == pool && agentPodPhaseForPod(t, c, p.Name) == "idle" {
 			return p.Name
 		}
 	}

@@ -10,9 +10,9 @@ import "errors"
 var (
 	// ErrPoolNotFound reports that GetPoolStatus / ReconcilePool /
 	// ApplyPoolDefinition was called for a pool with no
-	// SandboxTemplate.
+	// PodSet.
 	ErrPoolNotFound = errors.New("podlifecycle: pool not found")
-	// ErrPodNotFound reports that the handle's Sandbox no longer
+	// ErrPodNotFound reports that the handle's AgentPod no longer
 	// exists (deleted, never created, or terminated and GC'd).
 	ErrPodNotFound = errors.New("podlifecycle: pod not found")
 	// ErrPodNotIdle reports that ClaimPod could not find an idle pod
@@ -20,7 +20,7 @@ var (
 	// mirror path or returns POOL_EXHAUSTED to the client.
 	ErrPodNotIdle = errors.New("podlifecycle: no idle pod available in pool")
 	// ErrClaimConflict reports that ClaimPod observed an HTTP 409
-	// resource-version conflict on the Sandbox status update — another
+	// resource-version conflict on the AgentPod status update — another
 	// gateway replica claimed the pod between Read and CAS. The caller
 	// loops back to ClaimPod with a fresh selection. spec:
 	// §4.6.1.

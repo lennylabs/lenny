@@ -65,7 +65,7 @@ func claimAndPrepare(t *testing.T, binder *podsession.Binder, req podsession.Bin
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	if _, err := binder.Prepare(context.Background(), req); err != nil {
 		t.Fatalf("Prepare: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	claim, err := binder.Claim(context.Background(), podsession.BindRequest{
@@ -96,7 +96,7 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.SandboxName != "sbx-1" || claim.PodIP != "10.244.1.7" || claim.Pool != testPool {
+	if claim.AgentPodName != "sbx-1" || claim.PodIP != "10.244.1.7" || claim.Pool != testPool {
 		t.Errorf("claim = %+v, want sbx-1 / 10.244.1.7 / %s", claim, testPool)
 	}
 	if claim.PodClaim <= 0 {
@@ -107,7 +107,7 @@ func TestClaimReservesPodWithoutStarting_spec_7_1(t *testing.T) {
 		t.Errorf("Claim started the runtime %q, want no start (claim only reserves)", rt.started)
 	}
 	// The pod is claimed: the per-pod occupancy claim records `bound`.
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc); err != nil {
 		t.Fatalf("get per-pod claim after Claim: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	req := podsession.BindRequest{
@@ -141,7 +141,7 @@ func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	prep, err := binder.Prepare(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -153,8 +153,8 @@ func TestPhasesReconnectFromBinding_spec_4_6(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	if res.SandboxName != "sbx-1" {
-		t.Errorf("launch result sandbox = %q, want sbx-1", res.SandboxName)
+	if res.AgentPodName != "sbx-1" {
+		t.Errorf("launch result sandbox = %q, want sbx-1", res.AgentPodName)
 	}
 	if res.Adapter == nil {
 		t.Fatal("Launch returned no live adapter connection")
@@ -178,7 +178,7 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &startFailRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
@@ -191,7 +191,7 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	prep, err := binder.Prepare(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -214,7 +214,7 @@ func TestLaunchFailureRevokesAssignedLease_spec_7_1(t *testing.T) {
 		t.Errorf("ReleaseSession calls after launch failure = %v, want [sess-leak]", assigner.released)
 	}
 	// The pod is reclaimed by deleting its per-pod claim.
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after launch failure = %v, want NotFound (claim deleted)", gerr)
@@ -234,7 +234,7 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
@@ -247,7 +247,7 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	if _, err := binder.Prepare(context.Background(), req); err == nil {
 		t.Fatal("Prepare succeeded though FinalizeWorkspace could not run, want a failure")
 	}
@@ -260,7 +260,7 @@ func TestPrepareFailureBeforeCredentialsDoesNotRevoke_spec_4_6(t *testing.T) {
 		t.Errorf("reclaim released %v for a session that holds no lease, want none", assigner.released)
 	}
 	// The pod is still reclaimed by deleting its per-pod claim.
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after prepare failure = %v, want NotFound (claim deleted)", gerr)
@@ -286,7 +286,7 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	// Claim dials once and Prepare dials once; fail the third dial so Launch's
 	// reconnect fails after Prepare assigned the lease.
 	binder := newBinder(ns, c, dialerFailingAfter(2, adapterDialer(t, srv)))
@@ -301,7 +301,7 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	prep, err := binder.Prepare(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -324,7 +324,7 @@ func TestLaunchReconnectFailureReclaimsPodAndLease_spec_4_6(t *testing.T) {
 		t.Errorf("ReleaseSession calls after Launch reconnect failure = %v, want [sess-reconn]", assigner.released)
 	}
 	// The pod is reclaimed by deleting its per-pod claim.
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after Launch reconnect failure = %v, want NotFound (claim deleted)", gerr)
@@ -346,7 +346,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	// Claim dials once; fail the second dial so Prepare's reconnect fails.
 	binder := newBinder(ns, c, dialerFailingAfter(1, adapterDialer(t, srv)))
 	assigner := &fakeAssigner{}
@@ -360,7 +360,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	if _, err := binder.Prepare(context.Background(), req); err == nil {
 		t.Fatal("Prepare succeeded though the reconnect dial fails, want a failure")
 	}
@@ -371,7 +371,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 		t.Errorf("assigner served %d assign calls on a reconnect failure, want 0", len(assigner.calls))
 	}
 	// The pod claimed at /create is reclaimed by deleting its per-pod claim.
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after Prepare reconnect failure = %v, want NotFound (claim deleted)", gerr)
@@ -381,7 +381,7 @@ func TestPrepareReconnectFailureReclaimsPod_spec_4_6(t *testing.T) {
 // spec: §4.6, §7.1 step 23 — ReclaimClaimed
 // releases a pod held by a created/finalizing/ready session that has no live
 // BindResult (the post-terminal hook after a watchdog timeout, a DELETE, or a
-// /terminate) from the persisted SandboxName + sessionID alone: it deletes the
+// /terminate) from the persisted AgentPodName + sessionID alone: it deletes the
 // per-pod claim and revokes the session's §4.9 lease.
 // diagnosis: a failure means the pre-running terminal reclaim leaks the
 // claimed pod or the finalize-assigned credential lease, because the
@@ -393,7 +393,7 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 	srv.CredentialsDir = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
@@ -405,13 +405,13 @@ func TestReclaimClaimedReleasesPodAndLease_spec_4_6(t *testing.T) {
 		CredentialPools: map[string]string{"anthropic": "claude-prod"},
 	})
 
-	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-ttl", false); err != nil {
+	if err := binder.ReclaimClaimed(context.Background(), claim.AgentPodName, "sess-ttl", false); err != nil {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
 	// The pod's per-pod claim is deleted, and the pod's phase then follows
 	// the §4.6.1 occupancy projection.
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after ReclaimClaimed = %v, want NotFound (claim deleted)", gerr)
@@ -435,7 +435,7 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
@@ -448,11 +448,11 @@ func TestReclaimClaimedNoLeaseIsNoOp_spec_4_6(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 
-	if err := binder.ReclaimClaimed(context.Background(), claim.SandboxName, "sess-created", false); err != nil {
+	if err := binder.ReclaimClaimed(context.Background(), claim.AgentPodName, "sess-created", false); err != nil {
 		t.Fatalf("ReclaimClaimed: %v", err)
 	}
 
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	gerr := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &sc)
 	if !apierrors.IsNotFound(gerr) {
 		t.Errorf("per-pod claim get after ReclaimClaimed = %v, want NotFound (claim deleted)", gerr)
@@ -483,7 +483,7 @@ func newCreatedTimeoutFixture(t *testing.T) *createdTimeoutFixture {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
@@ -561,7 +561,7 @@ func (f *createdTimeoutFixture) slotMembers(t *testing.T, pod string) []string {
 }
 
 // spec: §15.1 (created-state expiry), §7.2 (terminal write), §6.2 (pre-running
-// release), §4.6.3 (SandboxClaim end-of-occupancy delete), §5.2 (slot release)
+// release), §4.6.3 (PodClaim end-of-occupancy delete), §5.2 (slot release)
 // — an abandoned `created` session ends as the watchdog's CREATED_TIMEOUT
 // write, and the post-terminal hook's pre-running reclaim releases what the
 // create handler reserved: on an exclusive pool it deletes the per-pod claim,
@@ -584,7 +584,7 @@ func TestCreatedTimeoutReleasesClaimedPod_spec_15_1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	f.seedCreated(t, "sess-excl", claim.SandboxName, "")
+	f.seedCreated(t, "sess-excl", claim.AgentPodName, "")
 
 	// Concurrent-workspace pool, last occupant: the shared claim is deleted.
 	seedBoundPod(t, f.c, "sbx-alone")
@@ -610,7 +610,7 @@ func TestCreatedTimeoutReleasesClaimedPod_spec_15_1(t *testing.T) {
 		f.assertFailedCreatedTimeout(t, id)
 	}
 
-	if got := claimPhase(t, f.c, claim.SandboxName); got != "gone" {
+	if got := claimPhase(t, f.c, claim.AgentPodName); got != "gone" {
 		t.Errorf("exclusive claim after the created-state deadline = %s, want gone (the claim delete drains the pod, §4.6.1)", got)
 	}
 	if got := f.slotMembers(t, "sbx-alone"); len(got) != 0 {
@@ -646,12 +646,12 @@ func TestPrepareWithoutBindingFailsClosed_spec_4_6(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Prepare(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
-		// no SandboxName: the binding was never persisted
+		// no AgentPodName: the binding was never persisted
 	})
 	if err == nil {
 		t.Fatal("Prepare succeeded with no claimed-sandbox binding, want a failure")
@@ -673,14 +673,14 @@ func TestPrepareRejectsIncompatibleAdapterOnReconnect_spec_4_6(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	// The pod exists and carries an IP, so reconnect resolves and dials it;
 	// only the handshake rejects the incompatible version.
 	_, err := binder.Prepare(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
-		SandboxName: "sbx-1",
+		AgentPodName: "sbx-1",
 	})
 	if err == nil {
 		t.Fatal("Prepare succeeded against an incompatible adapter on reconnect, want a failure")
@@ -699,13 +699,13 @@ func TestPrepareFailsWhenBoundPodIsGone_spec_4_6(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	// No Sandbox is seeded, so resolveSandbox cannot find the bound pod.
+	// No AgentPod is seeded, so resolveAgentPod cannot find the bound pod.
 	c := k8sClient(t)
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	_, err := binder.Prepare(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
-		SandboxName: "sbx-gone",
+		AgentPodName: "sbx-gone",
 	})
 	if err == nil {
 		t.Fatal("Prepare succeeded though the bound pod is gone, want a failure")

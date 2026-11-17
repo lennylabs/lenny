@@ -45,7 +45,7 @@ func (c *concurrentSlotBinder) ReleaseSlotReservation(_ context.Context, _, _ st
 	return errors.New("slot cleanup timed out")
 }
 
-func (c *concurrentSlotBinder) DrainSandbox(_ context.Context, _ string) error {
+func (c *concurrentSlotBinder) DrainAgentPod(_ context.Context, _ string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.drained++

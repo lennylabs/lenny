@@ -10,7 +10,7 @@
 // rather than only inspected for its configuration.
 //
 // Each warm agent pod carries lenny.dev/managed=true, an immutable
-// label the Sandbox reconciler stamps. The webhook is installed
+// label the AgentPod reconciler stamps. The webhook is installed
 // fail-closed on Pod CREATE and UPDATE in agent namespaces and rejects
 // any mutation of that label on an existing pod. The test drives a
 // server-side dry-run label mutation against a live pod: a server

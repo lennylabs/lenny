@@ -152,14 +152,14 @@ func TestStreamFailureReportRacesWatchdogReleaseAndSend_spec_28_5_1(t *testing.T
 	outcomes := map[session.State]int{}
 	for attempt := 0; attempt < raceAttempts; attempt++ {
 		id := fmt.Sprintf("sess-report-race-%d", attempt)
-		sandbox := "sbx-" + id
+		agentPod := "sbx-" + id
 		if err := store.Create(ctx, sessionstore.Session{
 			ID: id, TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
-			CoordinationGeneration: 1, PodAssignment: sandbox,
+			CoordinationGeneration: 1, PodAssignment: agentPod,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
-		reg.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: sandbox, Adapter: dial(), CoordinationGeneration: 1})
+		reg.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: agentPod, Adapter: dial(), CoordinationGeneration: 1})
 		if err := heldSend(t, ctx, pe, id, "open"); err != nil {
 			t.Fatalf("open the held stream of %s: %v", id, err)
 		}

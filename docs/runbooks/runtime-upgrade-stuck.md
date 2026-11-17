@@ -73,7 +73,7 @@ kubectl get events -n lenny-agents --sort-by='.lastTimestamp' \
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandboxclaim -A | grep -v Released | head
+kubectl get podclaim -A | grep -v Released | head
 ```
 
 When the phase is `draining`, long-running sessions holding claims on the old pool hold `drainingSessions` above zero. The state machine waits for the old pool to reach `activePodCount == 0` or for `drainTimeoutSeconds` to expire before it advances to `contracting`.
@@ -133,7 +133,7 @@ lenny-ctl admin pools upgrade rollback --pool claude-worker-sandboxed-medium \
   --restore-old-pool
 ```
 
-This is valid only while the old `SandboxTemplate` still exists. The old pool spec is preserved on the record until the upgrade reaches `complete`.
+This is valid only while the old `PodSet` still exists. The old pool spec is preserved on the record until the upgrade reaches `complete`.
 
 ### Step 5 — Verify
 

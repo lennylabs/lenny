@@ -102,8 +102,8 @@ func slotRetryBudget(req podsession.SlotBindRequest) int {
 // tested with a fake binder rather than an envtest cluster.
 type slotBinder interface {
 	BindSlot(ctx context.Context, req podsession.SlotBindRequest) (*podsession.BindResult, error)
-	ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error
-	DrainSandbox(ctx context.Context, sandboxName string) error
+	ReleaseSlotReservation(ctx context.Context, agentPodName, slotID string, leaked bool) error
+	DrainAgentPod(ctx context.Context, agentPodName string) error
 }
 
 // bindSlotWithRetry applies the §5.2 concurrent-workspace slot retry
@@ -196,7 +196,7 @@ func accountSlotFailure(ctx context.Context, binder slotBinder, health *slotheal
 	}
 	// Retire the whole pod: the combined windowed-failure plus persistent-leak
 	// count crossed the §5.2 unhealthy threshold.
-	if drainErr := binder.DrainSandbox(ctx, sbe.Pod); drainErr != nil {
+	if drainErr := binder.DrainAgentPod(ctx, sbe.Pod); drainErr != nil {
 		log.Printf("sessionserver: §5.2 drain unhealthy pod %s: %v", sbe.Pod, drainErr)
 		health.Untrip(sbe.Pod)
 		return
@@ -271,9 +271,9 @@ func (s *Server) accountFailedSlot(ctx context.Context, row sessionstore.Session
 		row.RuntimeRef, string(row.IsolationProfile), row.Pool)
 	if err != nil {
 		log.Printf("sessionserver: §5.2 resolve pool for failed slot of session %s on pod %s: %v",
-			row.ID, bind.SandboxName, err)
-		if !s.slotHealth.Tripped(bind.SandboxName) {
-			s.slotHealth.RecordFailure(bind.SandboxName)
+			row.ID, bind.AgentPodName, err)
+		if !s.slotHealth.Tripped(bind.AgentPodName) {
+			s.slotHealth.RecordFailure(bind.AgentPodName)
 		}
 		return
 	}
@@ -282,11 +282,11 @@ func (s *Server) accountFailedSlot(ctx context.Context, row sessionstore.Session
 		if classification == session.FailureUnknown {
 			errorType = slotFailureUnknownLabel
 		}
-		s.podBinder.SlotFailure(errorType, match.Pool, bind.SandboxName)
+		s.podBinder.SlotFailure(errorType, match.Pool, bind.AgentPodName)
 	}
 	accountSlotFailure(ctx, s.podBinder, s.slotHealth, s.slotStates, s.slotReplacement, s.slotLeakGauge,
 		match.Pool, maxConcurrentSessions(match.MaxConcurrentSessions),
-		&podsession.SlotBindError{Pod: bind.SandboxName, SlotID: bind.SlotID}, false)
+		&podsession.SlotBindError{Pod: bind.AgentPodName, SlotID: bind.SlotID}, false)
 }
 
 // sessionLocks is a per-session mutex whose Lock honors the caller's context.

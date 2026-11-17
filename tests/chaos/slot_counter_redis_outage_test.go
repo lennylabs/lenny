@@ -258,7 +258,7 @@ func newSlotChaos(t *testing.T) *slotChaos {
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	base := ctrlfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxClaim{}).Build()
+	base := ctrlfake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodClaim{}).Build()
 	return &slotChaos{
 		// spec: §7.1 (Post-terminal window) — the store counts a terminal
 		// session with no recorded release as holding its pod for the
@@ -272,14 +272,14 @@ func newSlotChaos(t *testing.T) *slotChaos {
 }
 
 // chaosApplyAsUpdate serves a server-side-apply status patch of a
-// SandboxClaim, which the fake client does not implement, as a status update
+// PodClaim, which the fake client does not implement, as a status update
 // of the phase and transition time the patch sets.
 func chaosApplyAsUpdate(ctx context.Context, cl client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
-	want, ok := obj.(*lennyv1.SandboxClaim)
+	want, ok := obj.(*lennyv1.PodClaim)
 	if !ok || p.Type() != types.ApplyPatchType {
 		return cl.SubResource(sub).Patch(ctx, obj, p, opts...)
 	}
-	var cur lennyv1.SandboxClaim
+	var cur lennyv1.PodClaim
 	if err := cl.Get(ctx, client.ObjectKeyFromObject(want), &cur); err != nil {
 		return err
 	}
@@ -312,9 +312,9 @@ func (c *slotChaos) counter(t *testing.T, hooks ...redis.Hook) *slotcounter.Coun
 func (c *slotChaos) pod(t *testing.T, phase claimstate.State) string {
 	t.Helper()
 	pod := "pod-" + newChaosUUID(t)[:8]
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(pod), Namespace: agentNamespace},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: pod, TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: pod, TenantID: "acme"},
 	}
 	ctx := context.Background()
 	if err := c.kube.Create(ctx, claim); err != nil {
@@ -330,7 +330,7 @@ func (c *slotChaos) pod(t *testing.T, phase claimstate.State) string {
 // claimPhase returns the pod's claim phase, or "" when it is gone.
 func (c *slotChaos) claimPhase(t *testing.T, pod string) string {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := c.kube.Get(context.Background(), client.ObjectKey{Namespace: agentNamespace, Name: podclaim.ClaimName(pod)}, &claim)
 	if apierrors.IsNotFound(err) {
 		return ""

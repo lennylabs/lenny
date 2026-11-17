@@ -88,8 +88,8 @@ const (
 	matRacePool    = "pool-race"
 	matWarmingPool = "pool-warming"
 
-	matOKSandbox   = "sbx-ok"
-	matRaceSandbox = "sbx-race"
+	matOKAgentPod   = "sbx-ok"
+	matRaceAgentPod = "sbx-race"
 )
 
 // materializeFixedClock pins delegate_task response timestamps so the flow is
@@ -148,7 +148,7 @@ func (materializeRaceAssigner) Release(string) error { return nil }
 // materializeCluster boots one envtest control plane and seeds the three warm
 // pools the sub-tests claim from: an assignable pool with an idle pod, an
 // assignment-race pool with its own idle pod, and a still-warming pool with no
-// idle pod whose SandboxTemplate carries the §5.2 PoolWarmingUp condition.
+// idle pod whose PodSet carries the §5.2 PoolWarmingUp condition.
 func materializeCluster(t *testing.T) client.Client {
 	t.Helper()
 	env := envtest.Start(t)
@@ -169,10 +169,10 @@ func materializeCluster(t *testing.T) client.Client {
 	}
 
 	seedMaterializePool(t, c, matOKPool, "tmpl-ok", matOKRuntime)
-	seedMaterializeIdleSandbox(t, c, matOKSandbox, matOKPool, "10.244.3.1")
+	seedMaterializeIdleAgentPod(t, c, matOKAgentPod, matOKPool, "10.244.3.1")
 
 	seedMaterializePool(t, c, matRacePool, "tmpl-race", matRaceRuntime)
-	seedMaterializeIdleSandbox(t, c, matRaceSandbox, matRacePool, "10.244.3.2")
+	seedMaterializeIdleAgentPod(t, c, matRaceAgentPod, matRacePool, "10.244.3.2")
 
 	seedMaterializePool(t, c, matWarmingPool, "tmpl-warming", matWarmingRuntime)
 	seedMaterializeWarming(t, c, "tmpl-warming", matWarmingPool)
@@ -180,32 +180,32 @@ func materializeCluster(t *testing.T) client.Client {
 	return c
 }
 
-// seedMaterializePool creates a SandboxWarmPool and its SandboxTemplate for the
+// seedMaterializePool creates a PodSet for the
 // given runtime under the sandboxed §5.3 profile.
 func seedMaterializePool(t *testing.T, c client.Client, pool, tmpl, runtimeRef string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: crossEnvNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool %s: %v", pool, err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: crossEnvNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
 	}); err != nil {
 		t.Fatalf("create template %s: %v", tmpl, err)
 	}
 }
 
-// seedMaterializeIdleSandbox creates an idle Sandbox in the pool and stamps its
+// seedMaterializeIdleAgentPod creates an idle AgentPod in the pool and stamps its
 // status under the WarmPoolController field owner, matching the production
 // Apply path the create/claim path reads.
-func seedMaterializeIdleSandbox(t *testing.T, c client.Client, name, pool, podIP string) {
+func seedMaterializeIdleAgentPod(t *testing.T, c client.Client, name, pool, podIP string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := c.Create(ctx, &lennyv1.Sandbox{
+	if err := c.Create(ctx, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: crossEnvNS,
 			Labels: map[string]string{warmpool.LabelPool: pool},
@@ -215,7 +215,7 @@ func seedMaterializeIdleSandbox(t *testing.T, c client.Client, name, pool, podIP
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName(name)
 	u.SetNamespace(crossEnvNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": podIP}, "status")
@@ -225,13 +225,13 @@ func seedMaterializeIdleSandbox(t *testing.T, c client.Client, name, pool, podIP
 }
 
 // seedMaterializeWarming stamps the §5.2 PoolWarmingUp condition on the pool's
-// SandboxTemplate and a warm-but-not-ready count on the pool, so ResolvePool
+// PodSet and a warm-but-not-ready count on the pool, so ResolvePool
 // returns the PoolWarmingError the materialization surfaces as
-// RUNTIME_UNAVAILABLE. The pool has no idle Sandbox.
+// RUNTIME_UNAVAILABLE. The pool has no idle AgentPod.
 func seedMaterializeWarming(t *testing.T, c client.Client, tmpl, pool string) {
 	t.Helper()
 	ctx := context.Background()
-	var template lennyv1.SandboxTemplate
+	var template lennyv1.PodSet
 	if err := c.Get(ctx, client.ObjectKey{Namespace: crossEnvNS, Name: tmpl}, &template); err != nil {
 		t.Fatalf("get template %s: %v", tmpl, err)
 	}
@@ -245,7 +245,7 @@ func seedMaterializeWarming(t *testing.T, c client.Client, tmpl, pool string) {
 	if err := c.Status().Update(ctx, &template); err != nil {
 		t.Fatalf("seed warming template status %s: %v", tmpl, err)
 	}
-	var warm lennyv1.SandboxWarmPool
+	var warm lennyv1.PodSet
 	if err := c.Get(ctx, client.ObjectKey{Namespace: crossEnvNS, Name: pool}, &warm); err != nil {
 		t.Fatalf("get warm pool %s: %v", pool, err)
 	}
@@ -537,10 +537,10 @@ func TestDelegateTaskMaterializationAssignmentRaceFailsClosed_spec_8_3(t *testin
 		t.Errorf("retryable = %v, want true", env["retryable"])
 	}
 
-	// The claimed warm pod was released on rollback: its per-pod SandboxClaim
+	// The claimed warm pod was released on rollback: its per-pod PodClaim
 	// is deleted, so no warm pod leaks past the losing assignment.
-	var claim lennyv1.SandboxClaim
-	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: crossEnvNS, Name: "claim-" + matRaceSandbox}, &claim); err == nil {
+	var claim lennyv1.PodClaim
+	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: crossEnvNS, Name: "claim-" + matRaceAgentPod}, &claim); err == nil {
 		t.Error("per-pod claim still present after the assignment race; the claimed warm pod leaked")
 	}
 	// The registry holds no binding for a child that failed materialization,

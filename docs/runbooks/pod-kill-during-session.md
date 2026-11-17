@@ -32,7 +32,7 @@ An active agent pod was killed mid-session. The §4.6 controller detects the dis
 
 The `AgentPodKilledDuringActiveSession` alert fires when:
 
-- an agent pod whose Sandbox is in a non-terminal §6.2 phase transitions to `Failed` or is removed,
+- an agent pod whose AgentPod is in a non-terminal §6.2 phase transitions to `Failed` or is removed,
 - the gateway records a transport-level failure on the affected session, and
 - the §4.6 reconciler observes the kill within the alert's evaluation window.
 
@@ -42,7 +42,7 @@ The `AgentPodKilledDuringActiveSession` alert fires when:
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandbox -n lenny-agents <sandbox-name>
+kubectl get agentpod -n lenny-agents <sandbox-name>
 kubectl logs -n lenny-system deployment/lenny-gateway --tail=200 | grep <session-id>
 ```
 
@@ -64,7 +64,7 @@ lenny-ctl admin session get <session-id> --json | jq '.lastCheckpointAt'
 
 ## Remediation
 
-1. If the kill is OOM, raise the pool's per-pod memory limit and roll a new SandboxTemplate revision.
+1. If the kill is OOM, raise the pool's per-pod memory limit and roll a new PodSet revision.
 2. If the kill is node-drain, follow [node-drain-during-minio-outage.md](node-drain-during-minio-outage.md) for the drain-time procedure.
 3. If the kill is a flapping liveness probe, see the §4.7 adapter health-probe tuning in `charts/lenny/values.yaml` under `agent.livenessProbe`.
 

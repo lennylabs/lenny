@@ -164,7 +164,7 @@ func TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1(t *te
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	rt := &ssSilentRuntime{out: make(chan []byte, 8), received: make(chan struct{})}
 	attach := newSSAttachEndRecorder()

@@ -17,7 +17,7 @@ import (
 //
 // Tests sharing it see each other's objects, so each test isolates itself in
 // its own namespace (testNamespace). The fixtures create only namespaced
-// objects (Pods and SandboxClaims), and the coordinators under test read and
+// objects (Pods and PodClaims), and the coordinators under test read and
 // write only the namespace their Namespace option names, by object name, with
 // no List, so no test reaches another test's objects. No test in this package
 // needs a private control plane.

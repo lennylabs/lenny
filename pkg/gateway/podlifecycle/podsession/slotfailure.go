@@ -49,14 +49,14 @@ func (r SlotFailureReason) NonRetryable() bool {
 
 // SlotBindError wraps a §5.2 concurrent-workspace slot failure that
 // occurred after a slot was reserved on a pod. It carries the pod
-// (SandboxName) and the SlotID the reservation belongs to so the gateway
+// (AgentPodName) and the SlotID the reservation belongs to so the gateway
 // can release the failed slot, record it against the pod's rolling
 // fail/leak window, and decide whether to retry. Err is the underlying
 // stage error; SlotBindError unwraps to it so the existing typed-error
 // handlers (SetupCommandFailure, CredentialAssignmentError) still match
 // through the chain.
 type SlotBindError struct {
-	// Pod is the Sandbox name the slot was reserved on.
+	// Pod is the AgentPod name the slot was reserved on.
 	Pod string
 	// SlotID is the failed slot's identifier (the session id).
 	SlotID string

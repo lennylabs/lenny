@@ -118,7 +118,7 @@ func requireGatewayInstalled(t *testing.T, cli *kubernetes.Clientset) (selector 
 // scheduled under that RuntimeClass — that every container on it
 // drops all Linux capabilities. The EKS default node group does not
 // ship gVisor — an unblocked run requires a cloud sandbox node group
-// running the gVisor runtime and a Lenny SandboxWarmPool whose
+// running the gVisor runtime and a Lenny PodSet whose
 // isolationProfile is sandboxed.
 func TestGvisorIsolation(t *testing.T) {
 	_ = requireCloud(t)
@@ -156,7 +156,7 @@ func TestGvisorIsolation(t *testing.T) {
 		t.Log("TestGvisorIsolation: cluster has no nodes labeled lenny.dev/pool=sandbox-gvisor; provision an EKS sandbox node group with gVisor runtime to unblock")
 		return
 	}
-	t.Logf("TestGvisorIsolation: %d gVisor-labeled node(s) present; SandboxWarmPool selection invariant covered by tier-2 admission tests", len(nodes.Items))
+	t.Logf("TestGvisorIsolation: %d gVisor-labeled node(s) present; PodSet selection invariant covered by tier-2 admission tests", len(nodes.Items))
 
 	assertGvisorPoolPodsCapabilitiesDropped(t, cli, nss.Items)
 }
@@ -178,7 +178,7 @@ func TestGvisorIsolation(t *testing.T) {
 // and return) when the cluster has the gvisor RuntimeClass and a
 // labeled node but no pod has been scheduled there yet: the
 // cloud-sandbox node-pool wiring through scripts/cloud/<provider>/up.sh
-// that would keep a SandboxWarmPool's gVisor-profile pods Ready is not
+// that would keep a PodSet's gVisor-profile pods Ready is not
 // yet built, so a bare cloud-small cluster reaches this point with the
 // RuntimeClass and label present (both provisioned by
 // up-runtimeclass-pools.sh for other purposes) but no
@@ -202,7 +202,7 @@ func assertGvisorPoolPodsCapabilitiesDropped(t *testing.T, cli *kubernetes.Clien
 	}
 	if len(gvisorPods) == 0 {
 		t.Log("TestGvisorIsolation: no pod scheduled under the gvisor RuntimeClass yet; provision the cloud-sandbox node pool " +
-			"(scripts/cloud/<provider>/up.sh cloud-sandbox shape) and a SandboxWarmPool with isolationProfile: sandboxed to unblock")
+			"(scripts/cloud/<provider>/up.sh cloud-sandbox shape) and a PodSet with isolationProfile: sandboxed to unblock")
 		return
 	}
 	for _, pod := range gvisorPods {
@@ -320,7 +320,7 @@ func TestConfidentialContainersIsolation(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("TestConfidentialContainersIsolation: RuntimeClass %q present but no pod scheduled under it yet; provision a SandboxWarmPool whose isolationProfile targets %q to unblock", found, found)
+	t.Logf("TestConfidentialContainersIsolation: RuntimeClass %q present but no pod scheduled under it yet; provision a PodSet whose isolationProfile targets %q to unblock", found, found)
 }
 
 // spec: 17.3 (disaster recovery: zone-local Postgres failover)

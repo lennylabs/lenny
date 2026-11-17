@@ -5,14 +5,14 @@
 // Component test for the §4.6.1 per-pod occupancy claim model on the v1
 // CRD-backed PodRegistry. Unlike the fake-client unit tests in
 // pkg/podregistry, this exercises CRDPodRegistry.ClaimPod against a real
-// kube-apiserver with the lenny.dev CRDs installed, so the SandboxClaim
+// kube-apiserver with the lenny.dev CRDs installed, so the PodClaim
 // OpenAPI schema (the status.phase enum), the status subresource, and the
 // deterministic claim-<podName> name-uniqueness guard are all enforced by
 // the API server rather than mocked.
 //
 // The change under test re-sources the CRD-backed claim onto the per-pod
-// SandboxClaim and stops the gateway from writing Sandbox.status: a claim
-// is now a SandboxClaim CREATE plus a `bound` status patch, and the
+// PodClaim and stops the gateway from writing AgentPod.status: a claim
+// is now a PodClaim CREATE plus a `bound` status patch, and the
 // WarmPoolController projects the coarse pod phase from the claim.
 package stores_test
 
@@ -62,16 +62,16 @@ func claimTestEnv(t *testing.T) (*podregistry.CRDPodRegistry, client.Client, str
 	return r, c, ns
 }
 
-// seedIdleSandbox creates a Sandbox in the idle phase belonging to pool.
-func seedIdleSandbox(t *testing.T, ctx context.Context, c client.Client, ns, name, pool string) {
+// seedIdleAgentPod creates a AgentPod in the idle phase belonging to pool.
+func seedIdleAgentPod(t *testing.T, ctx context.Context, c client.Client, ns, name, pool string) {
 	t.Helper()
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 			Labels:    map[string]string{podregistry.PoolLabel: pool},
 		},
-		Spec: lennyv1.SandboxSpec{RuntimeRef: "echo", PoolRef: pool, IsolationProfile: "sandboxed"},
+		Spec: lennyv1.AgentPodSpec{RuntimeRef: "echo", PoolRef: pool, IsolationProfile: "sandboxed"},
 	}
 	if err := c.Create(ctx, sb); err != nil {
 		t.Fatalf("create sandbox %s: %v", name, err)
@@ -83,20 +83,20 @@ func seedIdleSandbox(t *testing.T, ctx context.Context, c client.Client, ns, nam
 }
 
 // spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
-// Sandbox.status writer), occupancy projection. The CRD-backed
-// ClaimPod creates the deterministic per-pod SandboxClaim with a `bound`
+// AgentPod.status writer), occupancy projection. The CRD-backed
+// ClaimPod creates the deterministic per-pod PodClaim with a `bound`
 // binding state validated by the real CRD OpenAPI schema, and leaves the
-// claimed Sandbox.status untouched for the WarmPoolController to project.
+// claimed AgentPod.status untouched for the WarmPoolController to project.
 //
 // diagnosis: a failure means the CRD-backed ClaimPod either still writes
-// Sandbox.status (a gateway write the §4.6.3 RBAC boundary denies), does
-// not create the per-pod SandboxClaim, or writes a binding-state phase the
-// SandboxClaim OpenAPI enum rejects against a real API server.
+// AgentPod.status (a gateway write the §4.6.3 RBAC boundary denies), does
+// not create the per-pod PodClaim, or writes a binding-state phase the
+// PodClaim OpenAPI enum rejects against a real API server.
 func TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1(t *testing.T) {
 	r, c, ns := claimTestEnv(t)
 	ctx := context.Background()
 	const pool = "echo-pool"
-	seedIdleSandbox(t, ctx, c, ns, "alpha", pool)
+	seedIdleAgentPod(t, ctx, c, ns, "alpha", pool)
 
 	rec, err := r.ClaimPod(ctx, podregistry.ClaimOpts{
 		PoolID: podregistry.PoolID(pool), TenantID: "acme", SessionID: "sess-1",
@@ -112,13 +112,13 @@ func TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1(t *testing.T) {
 	}
 
 	// The per-pod claim exists with the deterministic name, carries
-	// sandboxRef + tenantId, and the API server accepted the `bound` enum.
-	var claim lennyv1.SandboxClaim
+	// agentPodRef + tenantId, and the API server accepted the `bound` enum.
+	var claim lennyv1.PodClaim
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "claim-alpha"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "alpha" || claim.Spec.TenantID != "acme" {
-		t.Errorf("claim spec = %+v, want sandboxRef=alpha tenantId=acme", claim.Spec)
+	if claim.Spec.AgentPodRef != "alpha" || claim.Spec.TenantID != "acme" {
+		t.Errorf("claim spec = %+v, want agentPodRef=alpha tenantId=acme", claim.Spec)
 	}
 	if claim.Status.Phase != "bound" {
 		t.Errorf("claim binding state = %q, want bound", claim.Status.Phase)
@@ -130,18 +130,18 @@ func TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1(t *testing.T) {
 		t.Error("claim BindingStateTransitionTime = nil, want a stamp on the bound write")
 	}
 
-	// The gateway did not write Sandbox.status: the claimed Sandbox's stored
+	// The gateway did not write AgentPod.status: the claimed AgentPod's stored
 	// phase stays idle (the WarmPoolController would project claimed), and no
-	// session/tenant is stamped on Sandbox.status.
-	var sb lennyv1.Sandbox
+	// session/tenant is stamped on AgentPod.status.
+	var sb lennyv1.AgentPod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "alpha"}, &sb); err != nil {
 		t.Fatalf("get claimed sandbox: %v", err)
 	}
 	if sb.Status.Phase != "idle" {
-		t.Errorf("Sandbox.status.phase = %q, want idle (unwritten by the gateway)", sb.Status.Phase)
+		t.Errorf("AgentPod.status.phase = %q, want idle (unwritten by the gateway)", sb.Status.Phase)
 	}
 	if sb.Status.SessionID != "" || sb.Status.TenantID != "" {
-		t.Errorf("Sandbox.status session/tenant = %q/%q, want both empty (§4.6.3)",
+		t.Errorf("AgentPod.status session/tenant = %q/%q, want both empty (§4.6.3)",
 			sb.Status.SessionID, sb.Status.TenantID)
 	}
 }
@@ -160,7 +160,7 @@ func TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1(t *testing.T) {
 	r, c, ns := claimTestEnv(t)
 	ctx := context.Background()
 	const pool = "echo-pool"
-	seedIdleSandbox(t, ctx, c, ns, "alpha", pool)
+	seedIdleAgentPod(t, ctx, c, ns, "alpha", pool)
 
 	if _, err := r.ClaimPod(ctx, podregistry.ClaimOpts{
 		PoolID: podregistry.PoolID(pool), TenantID: "acme", SessionID: "sess-1",
@@ -178,19 +178,19 @@ func TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1(t *testing.T) {
 }
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
-// a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
-// SandboxClaim and writes no Sandbox.status against a real API server.
+// a AgentPod.status writer). ReleasePod deletes the deterministic per-pod
+// PodClaim and writes no AgentPod.status against a real API server.
 // A second release of the same pod is idempotent.
 //
 // diagnosis: a failure means the CRD-backed ReleasePod still writes
-// Sandbox.status (a gateway write the §4.6.3 RBAC boundary denies after S18),
+// AgentPod.status (a gateway write the §4.6.3 RBAC boundary denies after S18),
 // does not delete the per-pod claim, or errors on a missing claim instead of
 // treating release as idempotent.
 func TestCRDPodRegistryReleaseDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	r, c, ns := claimTestEnv(t)
 	ctx := context.Background()
 	const pool = "echo-pool"
-	seedIdleSandbox(t, ctx, c, ns, "alpha", pool)
+	seedIdleAgentPod(t, ctx, c, ns, "alpha", pool)
 
 	// Claim alpha so its per-pod claim exists, then release it.
 	if _, err := r.ClaimPod(ctx, podregistry.ClaimOpts{
@@ -203,23 +203,23 @@ func TestCRDPodRegistryReleaseDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 	}
 
 	// The per-pod claim is gone; the API server reports NotFound.
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "claim-alpha"}, &claim); !apierrors.IsNotFound(err) {
 		t.Errorf("claim still present after release: err = %v, want NotFound", err)
 	}
 
-	// Sandbox.status is untouched: the seeded idle phase persists because the
-	// gateway is not a Sandbox.status writer and the WarmPoolController owns the
+	// AgentPod.status is untouched: the seeded idle phase persists because the
+	// gateway is not a AgentPod.status writer and the WarmPoolController owns the
 	// projection back to idle.
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "alpha"}, &sb); err != nil {
 		t.Fatalf("get released sandbox: %v", err)
 	}
 	if sb.Status.Phase != "idle" {
-		t.Errorf("Sandbox.status.phase = %q, want idle (unwritten by the gateway)", sb.Status.Phase)
+		t.Errorf("AgentPod.status.phase = %q, want idle (unwritten by the gateway)", sb.Status.Phase)
 	}
 	if sb.Status.SessionID != "" || sb.Status.TenantID != "" {
-		t.Errorf("Sandbox.status session/tenant = %q/%q, want both empty (§4.6.3)",
+		t.Errorf("AgentPod.status session/tenant = %q/%q, want both empty (§4.6.3)",
 			sb.Status.SessionID, sb.Status.TenantID)
 	}
 
@@ -256,7 +256,7 @@ func claimTestEnvIntercepted(t *testing.T, patches, updates *int) (*podregistry.
 	// The interceptor records the status-subresource verb each binding-state
 	// write issues. SSA apply lands on the wire as a PATCH (SubResourcePatch);
 	// a regression to Status().Update lands as SubResourceUpdate. The seeding
-	// helper writes Sandbox.status before the registry is built, so only the
+	// helper writes AgentPod.status before the registry is built, so only the
 	// claim's binding-state write is counted.
 	c := interceptor.NewClient(base, interceptor.Funcs{
 		SubResourcePatch: func(ctx context.Context, cl client.Client, sr string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
@@ -276,18 +276,18 @@ func claimTestEnvIntercepted(t *testing.T, patches, updates *int) (*podregistry.
 	if err != nil {
 		t.Fatalf("podregistry.New: %v", err)
 	}
-	// Seed against the raw base client so the Sandbox.status write does not
+	// Seed against the raw base client so the AgentPod.status write does not
 	// inflate the counters the test asserts on.
 	return r, base, ns
 }
 
 // spec: §12.6, §4.6.1 (first `bound` status patch),
-// §4.6.3 (gateway holds `get`/`patch` and no `update` on sandboxclaims/status).
+// §4.6.3 (gateway holds `get`/`patch` and no `update` on podclaims/status).
 //
 // A claim with all the inert §12.6 opts set still succeeds via the per-pod
 // claim, and the binding-state write is a status-subresource PATCH. The
 // gateway ServiceAccount is granted `get`/`patch` and explicitly no `update`
-// on sandboxclaims/status, so a regression to client.Status().Update — which
+// on podclaims/status, so a regression to client.Status().Update — which
 // issues an HTTP PUT the API server authorizes against `update` — would be
 // RBAC-denied in a live cluster. Envtest does not enforce RBAC, so the verb is
 // asserted directly via the interceptor.
@@ -300,7 +300,7 @@ func TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3(t *testing.T) 
 	r, base, ns := claimTestEnvIntercepted(t, &patches, &updates)
 	ctx := context.Background()
 	const pool = "echo-pool"
-	seedIdleSandbox(t, ctx, base, ns, "alpha", pool)
+	seedIdleAgentPod(t, ctx, base, ns, "alpha", pool)
 
 	prio := int32(5)
 	cid := podregistry.ClusterID("east-1")
@@ -319,7 +319,7 @@ func TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3(t *testing.T) 
 	}
 
 	// The binding-state write must be a PATCH; a PUT requires the `update`
-	// verb the gateway is not granted on sandboxclaims/status.
+	// verb the gateway is not granted on podclaims/status.
 	if patches != 1 {
 		t.Errorf("status PATCH count = %d, want 1 (the gateway writes the binding state with a PATCH)", patches)
 	}
@@ -328,7 +328,7 @@ func TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3(t *testing.T) 
 	}
 
 	// The claim landed in `bound` with the binding-state transition stamp.
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := base.Get(ctx, client.ObjectKey{Namespace: ns, Name: "claim-alpha"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim: %v", err)
 	}

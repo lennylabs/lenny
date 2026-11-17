@@ -41,7 +41,7 @@ type ReconciliationResumer interface {
 // and idlePodCount (§5.2) without operators inspecting the CR
 // status directly. condition is "PoolWarmingUp" while the pool is
 // bootstrapping and the empty string otherwise; idlePodCount is the
-// ready-pod count. found is false when no SandboxWarmPool exists for
+// ready-pod count. found is false when no PodSet exists for
 // the pool yet, so the handler omits the live-status fields.
 // The gateway satisfies it with a podsession.PoolStatusLookup.
 type PoolStatusReader interface {
@@ -49,12 +49,12 @@ type PoolStatusReader interface {
 }
 
 // PoolBootstrapStatusReader reads a pool's §17.8.2 cold-start
-// convergence signals from its SandboxWarmPool CRD status and the
+// convergence signals from its PodSet CRD status and the
 // PoolScalingController's demand window: how many hours of traffic data
 // have accumulated and which scaling mode the controller currently
 // operates the pool in (`bootstrap` or `formula`). The admin pool GET
 // uses it to populate the bootstrapStatus object's hoursOfData and
-// estimatedConvergenceAt. found is false when no SandboxWarmPool exists
+// estimatedConvergenceAt. found is false when no PodSet exists
 // for the pool yet, so the handler reports the override-only view.
 // spec: §17.8.2 step 3.
 type PoolBootstrapStatusReader interface {
@@ -83,9 +83,9 @@ type BootstrapStatusPayload struct {
 // §4.6.2.
 type CRDGenerationReader interface {
 	// CRDGeneration returns the generation observed on the pool's
-	// SandboxTemplate annotation, the last successful reconciliation
+	// PodSet annotation, the last successful reconciliation
 	// instant, and ok = true when the CRD pair exists. ok = false
-	// when no SandboxTemplate has been created for the pool yet.
+	// when no PodSet has been created for the pool yet.
 	CRDGeneration(ctx context.Context, poolName string) (generation int64, lastReconciledAt time.Time, ok bool, err error)
 }
 
@@ -104,7 +104,7 @@ type PoolPayload struct {
 	// credential-delivery fields (`proxy`/`direct` and `enabled`/`disabled`)
 	// carried on the warm-pool admin resource so one resource holds the whole
 	// combination the pool-registration and admission layers evaluate against
-	// IsolationProfile. They reconcile onto the SandboxTemplate CRD. spec: §4.9.
+	// IsolationProfile. They reconcile onto the PodSet CRD. spec: §4.9.
 	DeliveryMode  string `json:"deliveryMode,omitempty"`
 	SpiffeBinding string `json:"spiffeBinding,omitempty"`
 
@@ -144,7 +144,7 @@ type PoolPayload struct {
 
 	// PoolCondition and IdlePodCount are the §5.2 live
 	// bootstrap-status fields, populated on GET when the gateway is
-	// wired with a PoolStatusReader and the pool's SandboxWarmPool
+	// wired with a PoolStatusReader and the pool's PodSet
 	// exists. PoolCondition is "PoolWarmingUp" during the bootstrap
 	// window. They are pointers so a legitimate idlePodCount of 0 is
 	// emitted while an unwired reader or an unreconciled pool omits both.
@@ -466,7 +466,7 @@ func validatePoolForStore(p poolstore.Pool) error {
 // NET-006 proxy + provider-direct combination is also rejected (in every
 // tenancy mode), keeping layer 1 a superset of the layer-2 gate rather than
 // admitting a pool the webhook would later reject on the reconciled
-// SandboxTemplate. The two multi-tenant combinations reject only when
+// PodSet. The two multi-tenant combinations reject only when
 // tenancyMode is "multi" and devMode is false; the Request carries no opt-in
 // fields, so an opt-in bool cannot rescue a forbidden combination in
 // multi-tenant mode. spec: §4.9.
@@ -530,7 +530,7 @@ func (r *Router) WithCRDGenerationReader(rdr CRDGenerationReader) *Router {
 
 // isValidDeliveryMode reports whether v is an empty or recognised §4.9
 // deliveryMode. Empty inherits the runtime default; the only non-empty
-// values the SandboxTemplate CRD enum admits are `proxy` and `direct`.
+// values the PodSet CRD enum admits are `proxy` and `direct`.
 // spec: §4.9.
 func isValidDeliveryMode(v string) bool {
 	return v == "" || v == direct_mode_isolation.DeliveryProxy || v == "direct"
@@ -538,7 +538,7 @@ func isValidDeliveryMode(v string) bool {
 
 // isValidSpiffeBinding reports whether v is an empty or recognised §4.9
 // spiffeBinding. Empty inherits the runtime default; the only non-empty
-// values the SandboxTemplate CRD enum admits are `enabled` and `disabled`.
+// values the PodSet CRD enum admits are `enabled` and `disabled`.
 // spec: §4.9.
 func isValidSpiffeBinding(v string) bool {
 	return v == "" || v == "enabled" || v == "disabled"
@@ -555,9 +555,9 @@ func (p PoolPayload) validateEnums() error {
 		return errors.New("egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
 	}
 	// spec: §4.9 — deliveryMode and spiffeBinding are apiserver-enforced
-	// enums on the SandboxTemplate CRD (proxy;direct and enabled;disabled).
+	// enums on the PodSet CRD (proxy;direct and enabled;disabled).
 	// Reject an out-of-enum value at registration so it never reconciles
-	// onto a controller-authored SandboxTemplate the apiserver would reject,
+	// onto a controller-authored PodSet the apiserver would reject,
 	// wedging the PoolScalingController.
 	if !isValidDeliveryMode(p.DeliveryMode) {
 		return errors.New("deliveryMode is not a recognised §4.9 mode (proxy, direct)")
@@ -657,7 +657,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 	// cross-tenant-risky credential-delivery combinations (direct + standard,
 	// proxy + spiffeBinding disabled) in multi-tenant mode, and the §13.2
 	// NET-006 proxy + provider-direct combination in every tenancy mode,
-	// before any store write, so no SandboxTemplate the layer-2 webhook would
+	// before any store write, so no PodSet the layer-2 webhook would
 	// reject is ever reconciled. The decision reuses the canonical Decide.
 	if dec := r.validateCredentialDeliveryCombo(pl); !dec.Allowed {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", dec.Reason, nil)
@@ -962,7 +962,7 @@ func (r *Router) handleGetPool(w http.ResponseWriter, req *http.Request) {
 
 // attachPoolStatus populates the §5.2 live poolCondition and
 // idlePodCount on a pool payload when a PoolStatusReader is wired and
-// the pool has a reconciled SandboxWarmPool. A reader error is swallowed
+// the pool has a reconciled PodSet. A reader error is swallowed
 // so a transient Kubernetes lookup failure never fails the admin GET;
 // the live-status fields are simply omitted. poolCondition is set only
 // while the pool is in the PoolWarmingUp bootstrap window.
@@ -988,7 +988,7 @@ func (r *Router) attachPoolStatus(ctx context.Context, p *PoolPayload) {
 // active and bootstrapMinWarm come from the override column, which is
 // always available. hoursOfData and estimatedConvergenceAt are populated
 // only when a PoolBootstrapStatusReader is wired and the pool has a
-// reconciled SandboxWarmPool; a reader error is swallowed so a transient
+// reconciled PodSet; a reader error is swallowed so a transient
 // Kubernetes lookup never fails the admin GET. A pool with no override
 // omits the object entirely. spec: §17.8.2 step 3.
 func (r *Router) attachBootstrapStatus(ctx context.Context, row poolstore.Pool, p *PoolPayload) {
@@ -1072,7 +1072,7 @@ func (r *Router) buildSyncStatus(ctx context.Context, row poolstore.Pool) PoolSy
 	}
 	crdGen, lastAt, ok, err := r.crdGenerations.CRDGeneration(ctx, row.Name)
 	if err != nil || !ok {
-		// A missing SandboxTemplate is the not-yet-reconciled case; the
+		// A missing PodSet is the not-yet-reconciled case; the
 		// pool exists in Postgres but the controller has yet to write
 		// it to the CRD. Leave crdGeneration=0 inSync=false.
 		return out
@@ -1546,7 +1546,7 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 	}
 	// spec: §4.9 — reject an out-of-enum deliveryMode/spiffeBinding on a PUT,
 	// matching the create-side validateEnums clauses, so an out-of-enum value
-	// never reconciles onto the enum-constrained SandboxTemplate CRD.
+	// never reconciles onto the enum-constrained PodSet CRD.
 	if body.DeliveryMode != nil && !isValidDeliveryMode(*body.DeliveryMode) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"deliveryMode is not a recognised §4.9 mode (proxy, direct)", nil)

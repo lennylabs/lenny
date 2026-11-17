@@ -6,7 +6,7 @@
 // survives a gateway restart; runtimeupgradestore.Memory is the
 // in-memory alternative.
 //
-// One upgrade targets one SandboxWarmPool, so the table is keyed by pool
+// One upgrade targets one PodSet, so the table is keyed by pool
 // name. It is platform-operational state (one cluster runtime catalog)
 // rather than tenant-isolated: no lenny_tenant_guard trigger and no RLS
 // policy, and this store operates on the pool directly. The optimistic

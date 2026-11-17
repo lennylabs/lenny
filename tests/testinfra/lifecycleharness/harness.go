@@ -213,12 +213,12 @@ type Harness struct {
 	// TreeMetrics records every replica's delegation-tree recovery
 	// outcomes.
 	TreeMetrics *TreeMetrics
-	// Claims records every SandboxClaim any replica's binder created.
+	// Claims records every PodClaim any replica's binder created.
 	Claims *ClaimLog
 	// RelaxOrphanClaims applies the crash relaxation of the pods-and-claims
 	// invariant: a bound claim whose pod no session holds (the §7.1 holder
 	// predicate) and no surviving replica binds is accepted, because the claim-orphan GC
-	// reclaims it (§4.6.1 Orphaned SandboxClaim detection, §7.3).
+	// reclaims it (§4.6.1 Orphaned PodClaim detection, §7.3).
 	RelaxOrphanClaims bool
 	// Slots records every slot-set reservation and removal the replicas'
 	// slot counters made.
@@ -232,7 +232,7 @@ type Harness struct {
 	RelaxStaleSlotMembers bool
 	// RelaxEmptySetClaims accepts a bound claim on a pod whose slot set is
 	// empty and that no session holds, which the claim-orphan GC
-	// reclaims (§4.6.1 Orphaned SandboxClaim detection).
+	// reclaims (§4.6.1 Orphaned PodClaim detection).
 	RelaxEmptySetClaims bool
 
 	mu          sync.Mutex
@@ -317,11 +317,11 @@ type Replica struct {
 	// crashed (crashableClient).
 	k8sDown atomic.Bool
 	// claimFault is the fault SetClaimFault arms on the binder's
-	// SandboxClaim writes.
+	// PodClaim writes.
 	claimFault atomic.Pointer[ClaimFault]
 }
 
-// SetClaimFault arms f on every SandboxClaim create, status write, and
+// SetClaimFault arms f on every PodClaim create, status write, and
 // delete the replica's binder makes, so a scenario can fail one of them or
 // hold it against another actor; nil disarms it. The fault runs on the
 // binder's goroutine.

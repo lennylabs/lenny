@@ -13,7 +13,7 @@ import (
 )
 
 func tmplKey(ns, name string) denialKey {
-	return denialKey{namespace: ns, pool: name, crd: crdSandboxTmpl}
+	return denialKey{namespace: ns, pool: name, crd: crdAgentPodTmpl}
 }
 
 // spec: §4.6.2 item 3 (consecutive admission rejections trigger stuck state)
@@ -25,7 +25,7 @@ func TestAdmissionRetryStuckAtCeiling(t *testing.T) {
 	s := newAdmissionRetryState(3)
 	key := tmplKey("lenny-agents", "echo-pool")
 	now := time.Unix(0, 0)
-	forbidden := apierrors.NewForbidden(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"}, "echo-pool", errors.New("validator rejected"))
+	forbidden := apierrors.NewForbidden(schema.GroupResource{Group: "lenny.dev", Resource: "podsets"}, "echo-pool", errors.New("validator rejected"))
 
 	stuck, n := s.recordOutcome(key, forbidden, now)
 	if stuck || n != 1 {
@@ -104,9 +104,9 @@ func TestAdmissionRetryResumePool(t *testing.T) {
 	now := time.Unix(0, 0)
 	forbidden := apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied"))
 
-	stuckTmpl := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdSandboxTmpl}
-	stuckPool := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdSandboxPool}
-	other := denialKey{namespace: "lenny-agents", pool: "other-pool", crd: crdSandboxTmpl}
+	stuckTmpl := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdAgentPodTmpl}
+	stuckPool := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdAgentPodPool}
+	other := denialKey{namespace: "lenny-agents", pool: "other-pool", crd: crdAgentPodTmpl}
 	for _, k := range []denialKey{stuckTmpl, stuckPool, other} {
 		s.recordOutcome(k, forbidden, now)
 		s.recordOutcome(k, forbidden, now)
@@ -161,7 +161,7 @@ func TestAdmissionRetryInvalidStatusCounts(t *testing.T) {
 	s := newAdmissionRetryState(2)
 	key := tmplKey("lenny-agents", "echo-pool")
 	now := time.Unix(0, 0)
-	invalid := apierrors.NewInvalid(schema.GroupKind{Group: "lenny.dev", Kind: "SandboxWarmPool"}, "echo-pool", nil)
+	invalid := apierrors.NewInvalid(schema.GroupKind{Group: "lenny.dev", Kind: "PodSet"}, "echo-pool", nil)
 
 	stuck, n := s.recordOutcome(key, invalid, now)
 	if stuck || n != 1 {
@@ -182,8 +182,8 @@ func TestAdmissionRetryIsolatesPerTuple(t *testing.T) {
 	now := time.Unix(0, 0)
 	forbidden := apierrors.NewForbidden(schema.GroupResource{}, "x", errors.New("denied"))
 
-	stuckTmpl := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdSandboxTmpl}
-	healthyPool := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdSandboxPool}
+	stuckTmpl := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdAgentPodTmpl}
+	healthyPool := denialKey{namespace: "lenny-agents", pool: "stuck-pool", crd: crdAgentPodPool}
 	s.recordOutcome(stuckTmpl, forbidden, now)
 	s.recordOutcome(stuckTmpl, forbidden, now)
 
@@ -202,24 +202,24 @@ func TestAdmissionRetryIsolatesPerTuple(t *testing.T) {
 func TestAdmissionDeniedTotalLabelsAndMonotonic(t *testing.T) {
 	s := newAdmissionRetryState(5)
 	now := time.Unix(0, 0)
-	key := denialKey{namespace: "lenny-agents", pool: "metrics-test-pool", crd: crdSandboxPool}
+	key := denialKey{namespace: "lenny-agents", pool: "metrics-test-pool", crd: crdAgentPodPool}
 	// The validator prefixes its message with the reason code; the API
 	// server wraps it in the admission-webhook envelope.
-	rejected := apierrors.NewForbidden(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"}, "metrics-test-pool",
+	rejected := apierrors.NewForbidden(schema.GroupResource{Group: "lenny.dev", Resource: "podsets"}, "metrics-test-pool",
 		errors.New("admission webhook \"vpool.lenny.dev\" denied the request: INVALID_POOL_CONFIGURATION: warmCount exceeds budget"))
 
-	before := metricValue(t, "metrics-test-pool", crdSandboxPool, "INVALID_POOL_CONFIGURATION")
+	before := metricValue(t, "metrics-test-pool", crdAgentPodPool, "INVALID_POOL_CONFIGURATION")
 	for i := 0; i < 3; i++ {
 		s.recordOutcome(key, rejected, now)
 	}
-	after := metricValue(t, "metrics-test-pool", crdSandboxPool, "INVALID_POOL_CONFIGURATION")
+	after := metricValue(t, "metrics-test-pool", crdAgentPodPool, "INVALID_POOL_CONFIGURATION")
 	if after-before != 3 {
 		t.Errorf("metric delta = %v, want 3 after 3 denials", after-before)
 	}
 
 	// A clean Sync must not roll back the monotonic counter.
 	s.recordOutcome(key, nil, now)
-	stable := metricValue(t, "metrics-test-pool", crdSandboxPool, "INVALID_POOL_CONFIGURATION")
+	stable := metricValue(t, "metrics-test-pool", crdAgentPodPool, "INVALID_POOL_CONFIGURATION")
 	if stable != after {
 		t.Errorf("counter rolled back on success: after=%v after-reset=%v", after, stable)
 	}
@@ -232,13 +232,13 @@ func TestAdmissionDeniedTotalLabelsAndMonotonic(t *testing.T) {
 func TestAdmissionDeniedReasonFallback(t *testing.T) {
 	s := newAdmissionRetryState(5)
 	now := time.Unix(0, 0)
-	key := denialKey{namespace: "lenny-agents", pool: "fallback-pool", crd: crdSandboxTmpl}
+	key := denialKey{namespace: "lenny-agents", pool: "fallback-pool", crd: crdAgentPodTmpl}
 	// NewForbidden builds a message without a reason-code prefix.
 	bare := apierrors.NewForbidden(schema.GroupResource{}, "fallback-pool", errors.New("nope"))
 
-	before := metricValue(t, "fallback-pool", crdSandboxTmpl, defaultReason)
+	before := metricValue(t, "fallback-pool", crdAgentPodTmpl, defaultReason)
 	s.recordOutcome(key, bare, now)
-	if got := metricValue(t, "fallback-pool", crdSandboxTmpl, defaultReason) - before; got != 1 {
+	if got := metricValue(t, "fallback-pool", crdAgentPodTmpl, defaultReason) - before; got != 1 {
 		t.Errorf("admission_denied delta = %v, want 1", got)
 	}
 }

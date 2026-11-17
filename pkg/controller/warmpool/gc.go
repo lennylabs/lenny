@@ -25,8 +25,8 @@ import (
 )
 
 // defaultClaimOrphanTimeout is the §4.6.1 default for --claim-orphan-timeout:
-// a SandboxClaim whose orphan key is older than this with no active session
-// is treated as orphaned. spec: §4.6.1 "Orphaned SandboxClaim detection" —
+// a PodClaim whose orphan key is older than this with no active session
+// is treated as orphaned. spec: §4.6.1 "Orphaned PodClaim detection" —
 // default 15 minutes; §11.5 controls table records the same 900s default. The
 // gateway's stale-slot reaper shares the value as --slot-reaper-terminal-age,
 // and it must exceed the post-terminal slot activity windows §5.2 (Slot
@@ -49,19 +49,19 @@ const defaultReservedHoldGrace = 60 * time.Second
 
 // defaultGCInterval is the §4.6.1 orphan-claim sweep cadence: the leader
 // lists candidate claims every 60 seconds. spec: §4.6.1 "Orphaned
-// SandboxClaim detection" — "every 60 seconds, the leader replica lists
-// all SandboxClaim resources".
+// PodClaim detection" — "every 60 seconds, the leader replica lists
+// all PodClaim resources".
 const defaultGCInterval = 60 * time.Second
 
 // orphanedClaims is the §4.6.1 lenny_orphaned_claims_total counter:
-// orphaned SandboxClaims reclaimed by the GarbageCollect loop, labeled by
-// pool. spec: §16.1 metrics table; drives the SandboxClaimOrphanRateHigh
+// orphaned PodClaims reclaimed by the GarbageCollect loop, labeled by
+// pool. spec: §16.1 metrics table; drives the PodClaimOrphanRateHigh
 // alert. Registered against the controller-runtime registry so it is
 // exposed on the controller's existing /metrics endpoint.
 var orphanedClaims = func() *prometheus.CounterVec {
 	c, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_orphaned_claims_total",
-		Help: "Orphaned SandboxClaims reclaimed by the GarbageCollect loop.",
+		Help: "Orphaned PodClaims reclaimed by the GarbageCollect loop.",
 	}, []string{"pool"})
 	if err != nil {
 		panic(fmt.Sprintf("warmpool: build orphaned-claims counter: %v", err))
@@ -70,9 +70,9 @@ var orphanedClaims = func() *prometheus.CounterVec {
 	return c
 }()
 
-// SessionLookup reports whether a session holds the pod of a SandboxClaim:
+// SessionLookup reports whether a session holds the pod of a PodClaim:
 // a session whose row names the pod and is non-terminal or in its §7.1
-// post-terminal window. spec: §4.6.1 (Orphaned SandboxClaim detection) — the
+// post-terminal window. spec: §4.6.1 (Orphaned PodClaim detection) — the
 // controller reclaims a claim only when no session holds its pod. The
 // per-pod claim (§4.6.3) carries no session identifier, so the check keys
 // on the pod through the Postgres `pod_assignment` binding. The
@@ -80,17 +80,17 @@ var orphanedClaims = func() *prometheus.CounterVec {
 // stays decoupled from the session store package.
 type SessionLookup interface {
 	// PodHasActiveSession reports whether any session holds the named
-	// Sandbox pod: a non-terminal session bound to it, or a terminal one
+	// AgentPod pod: a non-terminal session bound to it, or a terminal one
 	// whose release the gateway has not recorded within the post-terminal
 	// cap (claimOrphanTimeout in the controller). A pod with no holder
 	// reports false (the gateway crashed before persisting the session, or
 	// every session it served released the pod or passed the cap), so its
 	// orphaned claim is reclaimable. spec: §7.1 (Post-terminal window).
-	PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error)
+	PodHasActiveSession(ctx context.Context, agentPodRef string) (bool, error)
 }
 
 // ClaimGarbageCollector is the §4.6.1 GarbageCollect loop: a leader-elected
-// runnable that reclaims orphaned SandboxClaims. A SandboxClaim carries no
+// runnable that reclaims orphaned PodClaims. A PodClaim carries no
 // ownerReference (so the session survives pod deletion and can be
 // reassigned), so Kubernetes never garbage-collects it; this loop does.
 // Running it only in the elected leader keeps the per-tick API list load
@@ -115,7 +115,7 @@ type ClaimGarbageCollector struct {
 	// disabled: without a session source of truth the controller cannot
 	// distinguish an orphan from a live claim and must never delete.
 	Sessions SessionLookup
-	// Namespaces is the set of agent namespaces whose SandboxClaims the
+	// Namespaces is the set of agent namespaces whose PodClaims the
 	// loop sweeps. An empty slice disables the loop.
 	Namespaces []string
 	// OrphanTimeout is the minimum age a live or empty-status claim's
@@ -205,9 +205,9 @@ func (g *ClaimGarbageCollector) sweep(ctx context.Context) error {
 	}
 
 	for _, ns := range g.Namespaces {
-		var claims lennyv1.SandboxClaimList
+		var claims lennyv1.PodClaimList
 		if err := g.Client.List(ctx, &claims, client.InNamespace(ns)); err != nil {
-			return fmt.Errorf("list sandboxclaims in %s: %w", ns, err)
+			return fmt.Errorf("list podclaims in %s: %w", ns, err)
 		}
 		for i := range claims.Items {
 			claim := &claims.Items[i]
@@ -225,7 +225,7 @@ func (g *ClaimGarbageCollector) sweep(ctx context.Context) error {
 // by an active session is left untouched; the §4.6.1 active-session check
 // keys on the pod (not a per-session claim name) and must succeed before any
 // reclaim, so a transient session-lookup failure never deletes a live claim.
-func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.SandboxClaim, now time.Time) error {
+func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.PodClaim, now time.Time) error {
 	if !claim.DeletionTimestamp.IsZero() {
 		return nil
 	}
@@ -235,10 +235,10 @@ func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.San
 	}
 	// Fail closed: only reclaim once Postgres confirms no live session backs
 	// the pod. A lookup error skips the candidate so the next tick retries.
-	active, err := g.Sessions.PodHasActiveSession(ctx, claim.Spec.SandboxRef)
+	active, err := g.Sessions.PodHasActiveSession(ctx, claim.Spec.AgentPodRef)
 	if err != nil {
 		logf.FromContext(ctx).Error(err, "orphan-claim session lookup failed; skipping",
-			"claim", claim.Name, "sandbox", claim.Spec.SandboxRef)
+			"claim", claim.Name, "sandbox", claim.Spec.AgentPodRef)
 		return nil
 	}
 	if active {
@@ -273,10 +273,10 @@ func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.San
 //     the gateway deletes the terminal claim through the normal pod
 //     termination path.
 //
-// spec: §4.6.1 (orphaned SandboxClaim detection, three binding-state
+// spec: §4.6.1 (orphaned PodClaim detection, three binding-state
 // predicates plus the creation-timestamp fallback), §4.6.1
 // (recycling-with-no-holdExpiresAt reclaimed by draining).
-func (g *ClaimGarbageCollector) classify(claim *lennyv1.SandboxClaim, now time.Time) reclaimDisposition {
+func (g *ClaimGarbageCollector) classify(claim *lennyv1.PodClaim, now time.Time) reclaimDisposition {
 	switch claimstate.State(claim.Status.Phase) {
 	case claimstate.Bound, claimstate.Recycling:
 		// The binding-state-transition time replaces creationTimestamp as the
@@ -344,7 +344,7 @@ func (g *ClaimGarbageCollector) orphanTimeout() time.Duration {
 // The controller's session store takes the same value as its §7.1
 // post-terminal cap, so the window the orphan predicates count and the
 // orphan age the loop applies stay one number.
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+// spec: §4.6.1 (Orphaned PodClaim detection), §7.1 (Post-terminal window).
 func ResolveClaimOrphanTimeout(d time.Duration) time.Duration {
 	if d > 0 {
 		return d
@@ -371,8 +371,8 @@ func (g *ClaimGarbageCollector) reservedHoldGrace() time.Duration {
 // spec: §4.6.1 (live-state and empty-status reclaim by draining), §4.6.1
 // (drain rather than return-to-idle; fail-closed on a coordinating-gateway
 // crash), §5.2 (scrub-before-idle invariant).
-func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *lennyv1.SandboxClaim) error {
-	if err := g.drainSandbox(ctx, claim.Namespace, claim.Spec.SandboxRef); err != nil {
+func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *lennyv1.PodClaim) error {
+	if err := g.drainAgentPod(ctx, claim.Namespace, claim.Spec.AgentPodRef); err != nil {
 		return err
 	}
 	if err := g.Client.Delete(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
@@ -394,12 +394,12 @@ func (g *ClaimGarbageCollector) reclaimByDraining(ctx context.Context, claim *le
 //
 // spec: §4.6.1 (precondition-guarded hold-expiry DELETE), §4.6.1
 // (rebind-vs-hold-expiry race: a rebind that lands first aborts the reclaim).
-func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lennyv1.SandboxClaim) error {
+func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lennyv1.PodClaim) error {
 	preconditions := client.Preconditions(metav1.Preconditions{
 		UID:             &claim.UID,
 		ResourceVersion: &claim.ResourceVersion,
 	})
-	del := &lennyv1.SandboxClaim{
+	del := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Namespace: claim.Namespace},
 	}
 	switch err := g.Client.Delete(ctx, del, preconditions); {
@@ -425,18 +425,18 @@ func (g *ClaimGarbageCollector) reclaimReserved(ctx context.Context, claim *lenn
 }
 
 // recordReclaimed records a successful reclaim on the orphaned-claims counter
-// and in the Sandbox condition history. The condition write is best-effort:
+// and in the AgentPod condition history. The condition write is best-effort:
 // the reclaim already succeeded, so a condition-write failure is logged but
 // does not undo it.
-func (g *ClaimGarbageCollector) recordReclaimed(ctx context.Context, claim *lennyv1.SandboxClaim) {
-	pool := poolFromSandboxRef(ctx, g.Client, claim.Namespace, claim.Spec.SandboxRef)
+func (g *ClaimGarbageCollector) recordReclaimed(ctx context.Context, claim *lennyv1.PodClaim) {
+	pool := poolFromAgentPodRef(ctx, g.Client, claim.Namespace, claim.Spec.AgentPodRef)
 	orphanedClaims.WithLabelValues(pool).Inc()
-	g.recordReclaimCondition(ctx, claim.Namespace, claim.Spec.SandboxRef)
+	g.recordReclaimCondition(ctx, claim.Namespace, claim.Spec.AgentPodRef)
 }
 
-// drainSandbox transitions a Sandbox to draining via an SSA status patch
+// drainAgentPod transitions a AgentPod to draining via an SSA status patch
 // under the WarmPoolController field manager. The §4.6.3 retry policy applies
-// on HTTP 409. A Sandbox already absent, already draining, or already terminal
+// on HTTP 409. A AgentPod already absent, already draining, or already terminal
 // is a no-op. Draining from idle is intentional and fail-closed: a live-state
 // or empty-status (CREATE-before-status crash) reclaim cannot know whether the
 // crashed gateway scrubbed or even occupied the pod, so the pod is retired
@@ -444,29 +444,29 @@ func (g *ClaimGarbageCollector) recordReclaimed(ctx context.Context, claim *lenn
 // reserved-claim reclaim returns the pod to idle, through the separate
 // precondition-guarded DELETE and the occupancy projection's reserved → idle
 // edge, and never reaches this helper.
-func (g *ClaimGarbageCollector) drainSandbox(ctx context.Context, namespace, sandboxName string) error {
-	if sandboxName == "" {
+func (g *ClaimGarbageCollector) drainAgentPod(ctx context.Context, namespace, agentPodName string) error {
+	if agentPodName == "" {
 		return nil
 	}
-	key := client.ObjectKey{Namespace: namespace, Name: sandboxName}
+	key := client.ObjectKey{Namespace: namespace, Name: agentPodName}
 	id := ssaretry.ConflictID{
 		Controller: string(ownership.WarmPoolController),
-		CRD:        string(ownership.Sandbox),
+		CRD:        string(ownership.AgentPod),
 		Namespace:  namespace,
-		Name:       sandboxName,
+		Name:       agentPodName,
 	}
 	return ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
-		var live lennyv1.Sandbox
+		var live lennyv1.AgentPod
 		if err := g.Client.Get(ctx, key, &live); err != nil {
 			return client.IgnoreNotFound(err)
 		}
 		if live.Status.Phase == string(state.Draining) || state.IsTerminal(state.State(live.Status.Phase)) {
 			return nil
 		}
-		patch := &lennyv1.Sandbox{
+		patch := &lennyv1.AgentPod{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "Sandbox",
+				Kind:       "AgentPod",
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      live.Name,
@@ -482,47 +482,47 @@ func (g *ClaimGarbageCollector) drainSandbox(ctx context.Context, namespace, san
 	})
 }
 
-// recordReclaimCondition records the orphan-claim reclaim in the Sandbox
+// recordReclaimCondition records the orphan-claim reclaim in the AgentPod
 // condition history so an operator can see the pod was reclaimed from an
 // orphaned claim rather than completing a session. Best-effort: a condition
 // write failure does not undo the reclaim.
 //
 // spec: §6.2 / §4.6.1 — OrphanClaimReclaimed condition on the reclaimed pod.
-func (g *ClaimGarbageCollector) recordReclaimCondition(ctx context.Context, namespace, sandboxName string) {
-	if sandboxName == "" {
+func (g *ClaimGarbageCollector) recordReclaimCondition(ctx context.Context, namespace, agentPodName string) {
+	if agentPodName == "" {
 		return
 	}
-	var live lennyv1.Sandbox
-	if err := g.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: sandboxName}, &live); err != nil {
+	var live lennyv1.AgentPod
+	if err := g.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: agentPodName}, &live); err != nil {
 		return
 	}
 	cond := metav1.Condition{
 		Type:    sandboxcond.OrphanClaimReclaimed,
 		Status:  metav1.ConditionTrue,
 		Reason:  "OrphanedClaimCollected",
-		Message: "orphaned SandboxClaim collected; pod reclaimed",
+		Message: "orphaned PodClaim collected; pod reclaimed",
 	}
 	if err := sandboxcond.Apply(ctx, g.Client, &live, cond); err != nil {
 		logf.FromContext(ctx).Error(err, "record orphan-claim condition", "sandbox", live.Name)
 	}
 }
 
-// poolFromSandboxRef resolves the pool label of a claim's backing Sandbox
-// for the orphaned-claims metric. A missing Sandbox or label yields
+// poolFromAgentPodRef resolves the pool label of a claim's backing AgentPod
+// for the orphaned-claims metric. A missing AgentPod or label yields
 // "unknown" so the counter still increments under a stable series.
-func poolFromSandboxRef(ctx context.Context, c client.Client, namespace, sandboxName string) string {
-	if sandboxName == "" {
+func poolFromAgentPodRef(ctx context.Context, c client.Client, namespace, agentPodName string) string {
+	if agentPodName == "" {
 		return "unknown"
 	}
-	var sb lennyv1.Sandbox
-	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: sandboxName}, &sb); err != nil {
+	var sb lennyv1.AgentPod
+	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: agentPodName}, &sb); err != nil {
 		return "unknown"
 	}
 	if pool := sb.Labels[LabelPool]; pool != "" {
 		return pool
 	}
-	if sb.Spec.PoolRef != "" {
-		return sb.Spec.PoolRef
+	if sb.Spec.PodSetRef != "" {
+		return sb.Spec.PodSetRef
 	}
 	return "unknown"
 }

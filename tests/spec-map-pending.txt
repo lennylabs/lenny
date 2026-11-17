@@ -31,8 +31,8 @@ tests/integration/concurrent_stateless_test.go
 # drift outside the change that added the check. Tracked for repair
 # under TEST-GAPS finding T-MAP-1; drop each line as its section is
 # repointed at the current function name.
-pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchAdmitsWhenSandboxClaimed
-pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed
+pkg/admission/podclaim_guard/guard_test.go::TestPatchAdmitsWhenSandboxClaimed
+pkg/admission/podclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed
 pkg/api/v1/session/session_test.go::TestValidateInterruptAdmitsRunningOnly
 pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeConcurrentModeReducesBothTerms
 pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeTaskModeReducesSteady

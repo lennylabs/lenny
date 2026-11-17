@@ -166,8 +166,8 @@ func TestRuntimePublishJourney(t *testing.T) {
 	// "requires a runnable image digest, an applied Runtime CRD
 	// instance, and a warm pool before it starts." The admin
 	// registration above only wrote the Postgres-side record; the
-	// Sandbox reconciler reads a runtime's image from the CRD object
-	// directly (pkg/controller/sandbox), not from that record.
+	// AgentPod reconciler reads a runtime's image from the CRD object
+	// directly (pkg/controller/agentpod), not from that record.
 	//
 	// The image field carries the tag-stripped `<repo>@sha256:<id>`
 	// form to match pinImageOnNodes' local pin exactly (see its doc
@@ -203,8 +203,8 @@ spec:
 	// Step: create a warm pool for the runtime via POST /v1/admin/pools
 	// (§15.1), the same admin surface an operator uses. The
 	// PoolScalingController reconciles this Postgres-authoritative pool
-	// row into a SandboxTemplate/SandboxWarmPool CRD pair, and the
-	// Sandbox reconciler then produces a real agent pod from it.
+	// row into a PodSet CRD pair, and the
+	// AgentPod reconciler then produces a real agent pod from it.
 	poolPath := filepath.Join(workDir, "pool.json")
 	poolBody := fmt.Sprintf(`{
   "name": %q,
@@ -253,10 +253,10 @@ spec:
 
 	// Step: wait for the pool to reach a real pod. POST /v1/admin/pools
 	// only writes the Postgres-authoritative pool row; the
-	// PoolScalingController reconciles it into a SandboxTemplate/
-	// SandboxWarmPool CRD pair on its own poll interval, and only once
+	// PoolScalingController reconciles it into a PodSet/
+	// PodSet CRD pair on its own poll interval, and only once
 	// that CRD pair exists can the gateway's pool resolver (which lists
-	// SandboxWarmPools, not Postgres rows) find it at all — before then,
+	// PodSets, not Postgres rows) find it at all — before then,
 	// session creation fails closed with the non-retried
 	// "no warm pool matches the runtime" rather than a warming-up
 	// response. Waiting for the pod sidesteps that CRD-propagation
@@ -506,7 +506,7 @@ func stripTag(ref string) string {
 // not require the pod's containers to be Ready (that is the further
 // §5.2 PoolWarmingUp window createAndStartTolerant covers); it only
 // confirms the PoolScalingController has reconciled the pool into a
-// live SandboxTemplate/SandboxWarmPool CRD pair and the Sandbox
+// live PodSet CRD pair and the AgentPod
 // reconciler has scheduled a pod from it.
 func waitForPoolPod(t *testing.T, c *kind.Cluster, poolName string, timeout time.Duration) {
 	t.Helper()
@@ -563,7 +563,7 @@ func createAndStartTolerant(t *testing.T, ctx context.Context, d *sessiondriver.
 // the pool controller rebuild it.
 func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL, keepPool string) {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxwarmpool",
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "podset",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
 	if err != nil {
 		t.Logf("sweep: list warm pools: %v (continuing)", err)
@@ -589,7 +589,7 @@ func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, ap
 }
 
 // journeyPoolReclaim deletes one warm pool through the admin surface the
-// test creates it with and confirms the reconciled SandboxWarmPool
+// test creates it with and confirms the reconciled PodSet
 // object left the cluster. A pool row is authoritative in Postgres, so
 // deleting the CRD alone would let the pool controller rebuild it, and a
 // delete whose failure is discarded leaves a Ready member pod behind
@@ -600,8 +600,8 @@ func sweepStaleJourneyRuntimes(t *testing.T, c *kind.Cluster, lennyCtl, repo, ap
 type journeyPoolReclaim struct {
 	deletePool  func(pool string) (string, error)
 	poolPresent func(pool string) (bool, error)
-	// removeObjects deletes the reconciled SandboxWarmPool and
-	// SandboxTemplate pair directly. It runs only once the admin delete
+	// removeObjects deletes the reconciled PodSet and
+	// PodSet pair directly. It runs only once the admin delete
 	// has removed the authoritative Postgres row, so the pool controller
 	// has nothing left to rebuild the pair from.
 	removeObjects func(pool string) (string, error)
@@ -622,16 +622,16 @@ func newJourneyPoolReclaim(t *testing.T, c *kind.Cluster, lennyCtl, repo, apiURL
 				"admin", "pools", "delete", pool)
 		},
 		poolPresent: func(pool string) (bool, error) {
-			out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxwarmpool", pool,
+			out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "podset", pool,
 				"--ignore-not-found", "-o", "name")
 			if err != nil {
-				return false, fmt.Errorf("read SandboxWarmPool %s back: %w", pool, err)
+				return false, fmt.Errorf("read PodSet %s back: %w", pool, err)
 			}
 			return strings.TrimSpace(out) != "", nil
 		},
 		removeObjects: func(pool string) (string, error) {
 			out, err := c.KubectlOut(t, "-n", "lenny-agents", "delete",
-				"sandboxwarmpool,sandboxtemplate", pool, "--ignore-not-found", "--timeout=60s")
+				"podset,podset", pool, "--ignore-not-found", "--timeout=60s")
 			if err != nil {
 				return out, fmt.Errorf("delete the reconciled objects of pool %s: %w", pool, err)
 			}
@@ -668,7 +668,7 @@ func (r journeyPoolReclaim) reclaim(pool string) bool {
 	// residue no controller will rebuild. Its member pod carries
 	// lenny.dev/managed=true, which later cases read as live workload, so
 	// the pair is removed here rather than left for a later run.
-	r.logf("pool %s: the SandboxWarmPool object is still present after the admin delete; "+
+	r.logf("pool %s: the PodSet object is still present after the admin delete; "+
 		"removing the reconciled objects directly", pool)
 	if out, err := r.removeObjects(pool); err != nil {
 		r.logf("pool %s: %v\n%s (the pool is left on the cluster)", pool, err, out)

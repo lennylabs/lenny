@@ -132,7 +132,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	// §17.4 / §24.18: the `runtime` token is shared. `lenny runtime apply`
 	// is the Embedded Mode CRD-apply verb localcli owns (it materializes a
-	// runtime's Runtime/SandboxTemplate/SandboxWarmPool against the embedded
+	// runtime's Runtime/PodSet against the embedded
 	// kubeconfig), while `runtime init|validate|publish` are the
 	// gateway-and-scaffold runtime-author commands cmdRuntime owns below.
 	// localcli.Local claims the whole `runtime` token, so this disambiguation

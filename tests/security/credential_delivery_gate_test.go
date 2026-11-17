@@ -3,11 +3,11 @@
 //go:build security
 
 // The security tier §4.9 session-start credential-delivery fail-closed probe. The two
-// registration/admission layers inspect the warm-pool/SandboxTemplate
+// registration/admission layers inspect the warm-pool/PodSet
 // deliveryMode, a denormalized copy that can diverge from the CredentialPool
 // deliveryMode credential leasing resolves per session. When a resolved
 // CredentialPool declares deliveryMode: proxy while the bound pod's
-// SandboxTemplate disables SPIFFE binding, minting the lease exposes the
+// PodSet disables SPIFFE binding, minting the lease exposes the
 // gateway-side lease token to cross-pod replay, the exact cross-tenant risk
 // §4.9 forbids in multi-tenant mode. This suite drives the gateway REST
 // create → upload → finalize flow through sessionserver.New against a real
@@ -108,9 +108,9 @@ func deliveryGateDialer(t *testing.T, srv *adapter.Server) func(string) (*adapte
 	}
 }
 
-// deliveryGateCluster seeds a warm pool whose SandboxTemplate disables SPIFFE
+// deliveryGateCluster seeds a warm pool whose PodSet disables SPIFFE
 // binding (a warm-pod property absent from the CredentialPool record) plus one
-// idle Sandbox the create handler claims.
+// idle AgentPod the create handler claims.
 func deliveryGateCluster(t *testing.T) client.Client {
 	t.Helper()
 	envtest.SkipUnlessAvailable(t)
@@ -130,15 +130,15 @@ func deliveryGateCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: deliveryGateNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: deliveryGateNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: deliveryGateNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "echo",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			SpiffeBinding:    "disabled",
@@ -146,14 +146,14 @@ func deliveryGateCluster(t *testing.T) client.Client {
 	}); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+	if err := c.Create(ctx, &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 		Name: "sbx-1", Namespace: deliveryGateNS, Labels: map[string]string{warmpool.LabelPool: "echo-pool"},
 	}}); err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName("sbx-1")
 	u.SetNamespace(deliveryGateNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": "10.244.2.5"}, "status")

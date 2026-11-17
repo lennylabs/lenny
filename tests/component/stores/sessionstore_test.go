@@ -875,7 +875,7 @@ func TestSessionStoreContract(t *testing.T) {
 	// spec: §7.1, §7.2, §8.8 — the §7.1
 	// conversation_continuity envelope half and the §7.2 / §8.8
 	// Terminated/Suspended session-condition facts relocated off
-	// Sandbox.status.conditions must round-trip through pgstore's
+	// AgentPod.status.conditions must round-trip through pgstore's
 	// Create/Update/Get the same way execution_mode/scrub_policy do
 	// (migration 0168). conversation_continuity and the reason strings
 	// are NOT NULL DEFAULT '' columns, and the condition timestamps are

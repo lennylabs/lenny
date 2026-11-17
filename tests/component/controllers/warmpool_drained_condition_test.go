@@ -23,7 +23,7 @@ import (
 )
 
 // spec: 25.6 (Diagnostic Endpoints: warmPoolStuckReplenish keys its dwell off the
-// zero-in-flight state), 5.2 (SandboxTemplate.status conditions owned by the
+// zero-in-flight state), 5.2 (PodSet.status conditions owned by the
 // WarmPoolController).
 //
 // diagnosis: the WarmPoolController does not write the dedicated PoolDrained
@@ -38,7 +38,7 @@ import (
 //
 // TestWarmPoolDrainedConditionWritten drives the WarmPoolController against an
 // envtest apiserver and asserts the PoolDrained condition is present on the
-// SandboxTemplate. The False→True transition semantics are pinned by the
+// PodSet. The False→True transition semantics are pinned by the
 // in-package unit test TestPoolDrainedTracksEntryTransition.
 func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 	env := sharedEnv.Start(t)
@@ -56,16 +56,16 @@ func TestWarmPoolDrainedConditionWritten(t *testing.T) {
 	const poolName = "echo-worker"
 
 	ns := testNamespaces.Create(t, c)
-	mustCreate(t, ctx, c, &lennyv1.SandboxTemplate{
+	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
 		},
 	})
-	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
+	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxWarmPoolSpec{
+		Spec: lennyv1.PodSetSpec{
 			TemplateRef: poolName,
 			MinWarm:     2,
 			MaxWarm:     10,
@@ -125,12 +125,12 @@ func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
 
 	const poolName = "redrive-pool"
 	ns := testNamespaces.Create(t, c)
-	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
+	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: poolName, MinWarm: 1, MaxWarm: 2},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: poolName, MinWarm: 1, MaxWarm: 2},
 	})
 
-	gvr := schema.GroupVersionResource{Group: "lenny.dev", Version: "v1alpha1", Resource: "sandboxwarmpools"}
+	gvr := schema.GroupVersionResource{Group: "lenny.dev", Version: "v1alpha1", Resource: "podsets"}
 	poolClient := dyn.Resource(gvr).Namespace(ns)
 
 	before, err := poolClient.Get(ctx, poolName, metav1.GetOptions{})
@@ -154,7 +154,7 @@ func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
 	}
 
 	// The re-drive annotation write is honored: it advances resourceVersion
-	// and emits a watch Update the WarmPoolController (For(SandboxWarmPool))
+	// and emits a watch Update the WarmPoolController (For(PodSet))
 	// wakes on, so the stalled pool is re-driven.
 	patch := []byte(`{"metadata":{"annotations":{"lenny.dev/doctor-redrive":"2026-07-01T12:00:00Z"}}}`)
 	afterAnn, err := poolClient.Patch(ctx, poolName, types.MergePatchType, patch, metav1.PatchOptions{})
@@ -171,10 +171,10 @@ func TestWarmPoolReDriveWriteIsHonored(t *testing.T) {
 }
 
 // drainedCondition returns the PoolDrained condition the WarmPoolController
-// wrote onto the SandboxTemplate, or nil when absent.
+// wrote onto the PodSet, or nil when absent.
 func drainedCondition(t *testing.T, ctx context.Context, c client.Client, key client.ObjectKey) *metav1.Condition {
 	t.Helper()
-	var tmpl lennyv1.SandboxTemplate
+	var tmpl lennyv1.PodSet
 	if err := c.Get(ctx, key, &tmpl); err != nil {
 		t.Fatalf("get template: %v", err)
 	}

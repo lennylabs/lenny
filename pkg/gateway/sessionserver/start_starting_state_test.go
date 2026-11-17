@@ -211,7 +211,7 @@ func newStartFixture(t *testing.T, id string) *startFixture {
 		t,
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	f := &startFixture{
 		id:       id,
@@ -320,7 +320,7 @@ func (f *startFixture) leaseHolder(t *testing.T) string {
 
 func (f *startFixture) claimBound(t *testing.T) bool {
 	t.Helper()
-	var c lennyv1.SandboxClaim
+	var c lennyv1.PodClaim
 	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &c)
 	if apierrors.IsNotFound(err) {
 		return false
@@ -333,7 +333,7 @@ func (f *startFixture) claimBound(t *testing.T) bool {
 
 func (f *startFixture) claimPresent(t *testing.T) bool {
 	t.Helper()
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &lennyv1.SandboxClaim{})
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &lennyv1.PodClaim{})
 	if apierrors.IsNotFound(err) {
 		return false
 	}
@@ -798,7 +798,7 @@ func TestServiceModeStartTakesNoLease_spec_10_1_1(t *testing.T) {
 		t,
 		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
 		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindIdleAgentPod(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	store := memstore.New()
 	leases := newComponentLeaseStore()

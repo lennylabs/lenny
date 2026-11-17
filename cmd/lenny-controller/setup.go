@@ -78,8 +78,8 @@ func (w *controllerWiring) buildManagerSetup() {
 	}
 	w.resourceClasses = resourceClasses
 
-	// §4.6.1 API server rate limiting: route Create calls for Sandbox
-	// pods and UpdateStatus calls for Sandbox/SandboxWarmPool through two
+	// §4.6.1 API server rate limiting: route Create calls for AgentPod
+	// pods and UpdateStatus calls for AgentPod/PodSet through two
 	// dedicated client-side token buckets so pod creation is never starved
 	// by status-update traffic; all other requests share the default
 	// limiter.

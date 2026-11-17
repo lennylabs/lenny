@@ -10,8 +10,8 @@ import (
 )
 
 // TestProjectOccupancyPhase exercises the §4.6.1 / §4.6.3 claim-driven
-// occupancy projection table: the coarse Sandbox.status.phase computed from
-// the per-pod SandboxClaim binding state, the rewarm stamp, and the pod's
+// occupancy projection table: the coarse AgentPod.status.phase computed from
+// the per-pod PodClaim binding state, the rewarm stamp, and the pod's
 // current phase. It covers the bound/recycling/reserved projections, the
 // preConnect re-warm sdk_connecting leg, the terminal dispositions, the
 // claim-deleted return-to-idle (reserved hold expiry) versus drain (claimed,
@@ -19,7 +19,7 @@ import (
 // leaves to the warm-fill writer.
 //
 // spec: 4.6.1 (occupancy projection), 6.2 (coarse pod state machine, recycle
-// edges), 6.14 (SandboxClaim binding-state enumeration), 3.3 (ownership
+// edges), 6.14 (PodClaim binding-state enumeration), 3.3 (ownership
 // decomposition).
 func TestProjectOccupancyPhase(t *testing.T) {
 	tests := []struct {
@@ -124,7 +124,7 @@ func TestProjectOccupancyPhase(t *testing.T) {
 // the terminal phases. failed leaves only through failed → draining, so a
 // claim that outlives the pod's failure (for example a recycling claim
 // whose SDK re-warm watchdog fired) must not pull the pod back into an
-// occupancy phase and fight the Sandbox-to-Pod reconciler's reclaim. The
+// occupancy phase and fight the AgentPod-to-Pod reconciler's reclaim. The
 // one projection kept is a terminal claim disposition on a failed pod,
 // which is that failed → draining edge. terminated is never re-projected.
 //

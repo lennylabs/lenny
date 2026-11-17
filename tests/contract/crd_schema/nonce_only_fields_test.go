@@ -93,36 +93,36 @@ func TestRuntimeServedSchemaExposesRequireSoPeercred(t *testing.T) {
 	assertBooleanField(t, crd, "requireSoPeercred")
 }
 
-// TestSandboxServedSchemaExposesRequireSoPeercred pins the §4.7
-// resolved-decision carrier on the served Sandbox schema. The
+// TestAgentPodServedSchemaExposesRequireSoPeercred pins the §4.7
+// resolved-decision carrier on the served AgentPod schema. The
 // WarmPoolController writes the resolved render decision here, and the
 // pool-level SecurityDegradedMode trigger reads it back from the member
-// Sandboxes.
+// AgentPods.
 //
 // spec: §4.7 (resolved nonce-only render decision carrier), §6 (CRD
 // schema wire contract).
-// diagnosis: The served Sandbox CRD schema no longer exposes
+// diagnosis: The served AgentPod CRD schema no longer exposes
 // spec.requireSoPeercred as a boolean. The WarmPoolController cannot
 // record the resolved nonce-only render decision, so the pool-level
 // SecurityDegradedMode surfacing loses its source. Regenerate the CRD.
-func TestSandboxServedSchemaExposesRequireSoPeercred(t *testing.T) {
-	crd := loadChartCRD(t, "lenny.dev_sandboxes.yaml")
+func TestAgentPodServedSchemaExposesRequireSoPeercred(t *testing.T) {
+	crd := loadChartCRD(t, "lenny.dev_agentpods.yaml")
 	assertBooleanField(t, crd, "requireSoPeercred")
 }
 
-// TestSandboxTemplateServedSchemaExposesAcknowledgeNonceOnlyAuth pins the
-// §5.3 acknowledgment on the served SandboxTemplate schema. The
+// TestPodSetServedSchemaExposesAcknowledgeNonceOnlyAuth pins the
+// §5.3 acknowledgment on the served PodSet schema. The
 // PoolScalingController mirrors it from the Postgres pool definition, and
 // the WarmPoolController render gate requires it before rendering
 // nonce-only mode.
 //
 // spec: §4.7, §5.3 (nonce-only acknowledgment gate), §6 (CRD schema wire
 // contract).
-// diagnosis: The served SandboxTemplate CRD schema no longer exposes
+// diagnosis: The served PodSet CRD schema no longer exposes
 // spec.acknowledgeNonceOnlyAuth as a boolean. The §4.7 render gate cannot
 // read the PSC-mirrored acknowledgment, so an acknowledged pool can never
 // enter nonce-only mode. Regenerate the CRD.
-func TestSandboxTemplateServedSchemaExposesAcknowledgeNonceOnlyAuth(t *testing.T) {
+func TestPodSetServedSchemaExposesAcknowledgeNonceOnlyAuth(t *testing.T) {
 	crd := loadChartCRD(t, "lenny.dev_sandboxtemplates.yaml")
 	assertBooleanField(t, crd, "acknowledgeNonceOnlyAuth")
 }

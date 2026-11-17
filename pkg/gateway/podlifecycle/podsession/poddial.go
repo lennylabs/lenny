@@ -15,53 +15,53 @@ import (
 )
 
 // reconnect re-establishes the §4.7 adapter connection to a pod claimed at
-// /create from its persisted binding (§4.6): it resolves the Sandbox by the
-// req.SandboxName recorded on the session row, dials the adapter, and re-runs
+// /create from its persisted binding (§4.6): it resolves the AgentPod by the
+// req.AgentPodName recorded on the session row, dials the adapter, and re-runs
 // the §15.5 version handshake. Prepare and Launch each call it so no phase
 // depends on a connection held open by the phase before it. The caller owns
 // cl and closes it on completion or reclaim. spec: §4.6 (proposal),
 // §15.5 (version handshake).
-func (b *Binder) reconnect(ctx context.Context, req BindRequest) (*lennyv1.Sandbox, *adapterclient.Client, negotiated, error) {
-	if req.SandboxName == "" {
+func (b *Binder) reconnect(ctx context.Context, req BindRequest) (*lennyv1.AgentPod, *adapterclient.Client, negotiated, error) {
+	if req.AgentPodName == "" {
 		// Fail closed: a Prepare/Launch with no persisted binding cannot
 		// reconnect to the claimed pod, so reject rather than re-claiming a
 		// fresh one and orphaning the pod claimed at /create.
 		return nil, nil, negotiated{}, fmt.Errorf("podsession: reconnect for session %s has no claimed sandbox binding", req.SessionID)
 	}
-	return b.dialAndNegotiate(ctx, req.SandboxName)
+	return b.dialAndNegotiate(ctx, req.AgentPodName)
 }
 
-// dialAndNegotiate resolves the named Sandbox, dials its adapter, and runs the
+// dialAndNegotiate resolves the named AgentPod, dials its adapter, and runs the
 // §15.5 version handshake, closing the client it opened on a handshake
 // failure. It is the connection step shared by the post-claim handshake and
 // the reconnect from a persisted binding. spec: §15.5 (version handshake).
-func (b *Binder) dialAndNegotiate(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, negotiated, error) {
-	sb, cl, err := b.dialSandbox(ctx, sandboxName)
+func (b *Binder) dialAndNegotiate(ctx context.Context, agentPodName string) (*lennyv1.AgentPod, *adapterclient.Client, negotiated, error) {
+	sb, cl, err := b.dialAgentPod(ctx, agentPodName)
 	if err != nil {
 		return nil, nil, negotiated{}, err
 	}
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err)
+		return nil, nil, negotiated{}, fmt.Errorf("podsession: negotiate version with %s: %w", agentPodName, err)
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
 		return nil, nil, negotiated{}, fmt.Errorf(
-			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", agentPodName,
 		)
 	}
 	return sb, cl, negotiated{WorkspaceBase: resp.GetWorkspaceBase()}, nil
 }
 
-// dialSandbox resolves the Sandbox recorded on a session's persisted binding
+// dialAgentPod resolves the AgentPod recorded on a session's persisted binding
 // (§4.6) and opens the §4.7 adapter connection to it. It runs no handshake and
 // no operational RPC: reconnect layers the §15.5 version handshake on top for
 // the resume path, and ReadoptConnect returns the bare connection so the
 // coordinator-handoff caller can send CoordinatorFence as its first RPC. The
 // caller owns cl and closes it on completion or on failure.
-func (b *Binder) dialSandbox(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, error) {
-	sb, err := b.resolveSandbox(ctx, sandboxName)
+func (b *Binder) dialAgentPod(ctx context.Context, agentPodName string) (*lennyv1.AgentPod, *adapterclient.Client, error) {
+	sb, err := b.resolveAgentPod(ctx, agentPodName)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -75,7 +75,7 @@ func (b *Binder) dialSandbox(ctx context.Context, sandboxName string) (*lennyv1.
 
 // ReadoptConnect re-opens the §4.7 adapter connection to a still-running pod on
 // a coordinator handoff, deliberately WITHOUT the §15.5 version handshake that
-// reconnect runs. It resolves the Sandbox by the name persisted on the session
+// reconnect runs. It resolves the AgentPod by the name persisted on the session
 // binding, dials the adapter, and returns the live client so the caller can
 // send CoordinatorFence as the first RPC over it.
 //
@@ -92,27 +92,27 @@ func (b *Binder) dialSandbox(ctx context.Context, sandboxName string) (*lennyv1.
 // spec: §10.1 (CoordinatorFence is the first RPC to a hold-state pod; the pod
 // rejects every other inbound RPC), §15.5 (version handshake runs after the
 // fence, not before).
-func (b *Binder) ReadoptConnect(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, error) {
-	if sandboxName == "" {
+func (b *Binder) ReadoptConnect(ctx context.Context, agentPodName string) (*lennyv1.AgentPod, *adapterclient.Client, error) {
+	if agentPodName == "" {
 		// Fail closed: a handoff with no persisted binding cannot name the
 		// pod to re-adopt, so reject rather than dialing an empty address.
 		return nil, nil, fmt.Errorf("podsession: readopt has no claimed sandbox binding")
 	}
-	return b.dialSandbox(ctx, sandboxName)
+	return b.dialAgentPod(ctx, agentPodName)
 }
 
-// resolveSandbox reads the claimed Sandbox and verifies it carries a pod
-// address. The Sandbox reconciler records status.podIP once the pod is
+// resolveAgentPod reads the claimed AgentPod and verifies it carries a pod
+// address. The AgentPod reconciler records status.podIP once the pod is
 // running, so a pod that was idle when claimed carries an address. The full
 // object is returned so the caller can read its coarse §6.2 phase and pod
 // address without a re-Get.
-func (b *Binder) resolveSandbox(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, error) {
-	var sb lennyv1.Sandbox
-	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-		return nil, fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
+func (b *Binder) resolveAgentPod(ctx context.Context, agentPodName string) (*lennyv1.AgentPod, error) {
+	var sb lennyv1.AgentPod
+	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: agentPodName}, &sb); err != nil {
+		return nil, fmt.Errorf("podsession: get sandbox %s: %w", agentPodName, err)
 	}
 	if sb.Status.PodIP == "" {
-		return nil, fmt.Errorf("podsession: sandbox %s has no pod IP", sandboxName)
+		return nil, fmt.Errorf("podsession: sandbox %s has no pod IP", agentPodName)
 	}
 	return &sb, nil
 }

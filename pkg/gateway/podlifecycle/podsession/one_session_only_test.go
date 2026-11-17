@@ -23,10 +23,10 @@ import (
 // The §6.1 invariant has two enforcement layers:
 //
 //  1. Gateway side (this file): binder.Release releases the pod by deleting
-//     its per-pod claim; the gateway writes no Sandbox.status (§4.6.3). On a
+//     its per-pod claim; the gateway writes no AgentPod.status (§4.6.3). On a
 //     recycle.enabled:false pool the WarmPoolController projects draining
 //     then terminated from the claim DELETE, after which the planner creates
-//     a fresh idle Sandbox to restore minWarm. The pod is therefore
+//     a fresh idle AgentPod to restore minWarm. The pod is therefore
 //     terminated and a fresh one takes its place; the §6.2 state machine has
 //     no draining → idle edge, so no path can recycle a session-mode pod.
 //
@@ -46,7 +46,7 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 	srv.WorkspaceBase = t.TempDir()
 	srv.Runtime = &fakeRuntime{}
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-orig", "10.244.1.10"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-orig", "10.244.1.10"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	res, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -56,11 +56,11 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 		t.Fatalf("Bind: %v", err)
 	}
 
-	// The gateway no longer writes Sandbox.status; the acquisition is
+	// The gateway no longer writes AgentPod.status; the acquisition is
 	// recorded on the per-pod claim's `bound` binding state, from which the
 	// WPC projects `claimed`. The session reaching `running` is a
 	// session-model state on the Postgres session row, not a CRD phase.
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-orig"}, &claim); err != nil {
 		t.Fatalf("get per-pod claim after bind: %v", err)
 	}
@@ -70,13 +70,13 @@ func TestSessionModeReleaseDeletesClaim_spec_6_1_invariant(t *testing.T) {
 
 	// Drive the §6.2 terminal disposition through Release with the
 	// `completed` disposition. The gateway releases the pod by deleting its
-	// per-pod claim; it does not write Sandbox.status.phase.
+	// per-pod claim; it does not write AgentPod.status.phase.
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 
 	// Gateway side: the per-pod claim is deleted so the WPC projection
-	// reclaims the pod. The gateway wrote no Sandbox.status.phase.
+	// reclaims the pod. The gateway wrote no AgentPod.status.phase.
 	err = c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-orig"}, &claim)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("F-6.1.12: per-pod claim get after Release = %v, want NotFound (gateway deletes the claim)", err)

@@ -121,7 +121,7 @@ func TestIdleSessionOnRecyclingPoolIsSuspendedAndResumed_spec_6_2(t *testing.T) 
 	if got.PodAssignment != "" {
 		t.Errorf("the idle-suspended session still names pod %q, want its pod released", got.PodAssignment)
 	}
-	phase, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandboxclaim", "claim-"+pod,
+	phase, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "podclaim", "claim-"+pod,
 		"-o", "jsonpath={.status.phase}", "--ignore-not-found")
 	if err != nil {
 		t.Fatalf("read the claim of %s: %v", pod, err)

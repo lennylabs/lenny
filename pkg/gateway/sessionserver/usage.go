@@ -31,10 +31,10 @@ import (
 )
 
 // releaseExecutor tears down a terminal session's executor state. When the
-// executor is a §6.2 Sandbox-backed pod executor (SessionReleaser), it records
-// the terminal disposition on the Sandbox before draining the pod; otherwise
+// executor is a §6.2 AgentPod-backed pod executor (SessionReleaser), it records
+// the terminal disposition on the AgentPod before draining the pod; otherwise
 // it falls back to Close (echo, subprocess, and other executors with no
-// Sandbox phase). spec: §6.2.
+// AgentPod phase). spec: §6.2.
 func releaseExecutor(ctx context.Context, exec executor.Executor, sessionID string, disp executor.Disposition) error {
 	return executor.ReleaseSession(ctx, exec, sessionID, disp)
 }
@@ -478,7 +478,7 @@ func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Ses
 
 // isPreRunningClaimState reports whether st is one of the §4.6 pre-running
 // states (created/finalizing/ready/starting) in which a session holds a pod
-// claimed at /create, so the durable binding is the persisted SandboxName. A
+// claimed at /create, so the durable binding is the persisted AgentPodName. A
 // `starting` row is mid-launch: the replica that launched it holds the live
 // BindResult once it publishes, and terminalReclaimPreRunning defers to that
 // binding through the executor release, while a replica without the binding
@@ -514,7 +514,7 @@ func (s *Server) lookupBinding(sessionID string) (*podsession.BindResult, bool) 
 // The discriminator is the pre-terminal state, not the mere absence of a local
 // BindResult: the reclaim is scoped to created/finalizing/ready/starting
 // (fromState),
-// where the §4.6 durable binding is the persisted SandboxName alone. A
+// where the §4.6 durable binding is the persisted AgentPodName alone. A
 // running/resuming session is excluded even when this replica holds no live
 // BindResult: the per-replica registry (registry.go) misses a
 // coordinator-handed-off running session, and a running session always
@@ -539,7 +539,7 @@ func (s *Server) lookupBinding(sessionID string) (*podsession.BindResult, bool) 
 //
 // spec: §15.1; §4.6 (durable binding, created/finalizing/ready/starting
 // scope); §4.6.3
-// (SandboxClaim: a release that ends the occupancy without reuse); §5.2 (Slot
+// (PodClaim: a release that ends the occupancy without reuse); §5.2 (Slot
 // assignment atomicity); §6.2 (pre-attached disposition); §7.1 step 23
 // (lease release).
 func (s *Server) terminalReclaimPreRunning(ctx context.Context, fromState session.State, sess sessionstore.Session) bool {

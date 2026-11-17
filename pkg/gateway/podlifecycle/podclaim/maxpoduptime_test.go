@@ -26,7 +26,7 @@ func maxUptimePod(ns, name string) *corev1.Pod {
 // lenny.dev/max-pod-uptime-seconds annotation onto the agent Pod as a decimal
 // integer of seconds, the §4.6.1 delivery surface the WarmPoolController reads
 // to level-trigger the CreationTimestamp-derived uptime drain.
-// spec: 4.6.1 (gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never Sandbox.status)
+// spec: 4.6.1 (gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never AgentPod.status)
 func TestStampMaxPodUptimeStampsAnnotation_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	cl := fake.NewClientBuilder().
@@ -116,10 +116,10 @@ func TestStampMaxPodUptimePropagatesPatchError_spec_4_6(t *testing.T) {
 // a cap set and asserts the annotation lands, so it fails against the pre-wire
 // code where reserveSlot never called StampMaxPodUptime and the
 // WarmPoolController's reconcileUptime arm always saw the annotation absent.
-// spec: 4.6.1 (the gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never Sandbox.status)
+// spec: 4.6.1 (the gateway delivers the uptime cap the controller reads), 4.6.3 (gateway stamps agent-pod annotations, never AgentPod.status)
 func TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	claimer, c, _ := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	req := slotReq("sess-1", "acme", 8)
@@ -144,7 +144,7 @@ func TestClaimSlotStampsMaxPodUptimeOnPod_spec_4_6(t *testing.T) {
 // spec: 4.6.1 (optional cap; only a pool that sets it is delivered)
 func TestClaimSlotSkipsMaxPodUptimeForNoCapPool_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	claimer, c, _ := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 	mustCreate(t, c, agentPod(ns, "sbx-1", ""))
 
 	// slotReq leaves MaxPodUptimeSeconds at zero (the no-cap pool).

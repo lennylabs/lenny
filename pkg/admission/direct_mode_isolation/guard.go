@@ -3,16 +3,16 @@
 // Package direct_mode_isolation implements the pure-decision logic of
 // the lenny-direct-mode-isolation ValidatingAdmissionWebhook per spec
 // §4.9 and §13.2. The webhook is deployed fail-closed in front of
-// SandboxTemplate resources in agent namespaces and renders
+// PodSet resources in agent namespaces and renders
 // unconditionally (§13.2.5 step 2). The credential-delivery
 // fields it inspects (deliveryMode, isolationProfile, spiffeBinding,
-// egressProfile) are authored only on the SandboxTemplate spec. A
-// SandboxWarmPool references a template by name (templateRef) and
-// carries none of these fields, and the per-session Sandbox CR is a
+// egressProfile) are authored only on the PodSet spec. A
+// PodSet references a template by name (templateRef) and
+// carries none of these fields, and the per-session AgentPod CR is a
 // controller-produced copy-down from an already-validated template, so
-// the SandboxTemplate is the only admitted resource that can carry a
-// forbidden combination. Scoping the chart rule to sandboxtemplates is
-// therefore complete; matching SandboxWarmPool or core Pods would add
+// the PodSet is the only admitted resource that can carry a
+// forbidden combination. Scoping the chart rule to podsets is
+// therefore complete; matching PodSet or core Pods would add
 // rules with no fields to inspect. spec: §17.2. F-17.2.14.
 //
 // In a multi-tenant deployment two credential-delivery configurations
@@ -76,7 +76,7 @@ const DeliveryProxy = "proxy"
 const TenancyMulti = "multi"
 
 // Request is the input to Decide: the platform tenancy configuration
-// plus the credential-delivery fields of the admitted SandboxTemplate
+// plus the credential-delivery fields of the admitted PodSet
 // or CredentialPool resource.
 type Request struct {
 	// TenancyMode is the platform tenancy.mode setting. Enforcement is

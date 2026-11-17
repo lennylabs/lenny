@@ -40,7 +40,7 @@ import (
 // failurePolicy: Fail.
 var expectedAgentWebhooks = []string{
 	"lenny-label-immutability",
-	"lenny-sandboxclaim-guard",
+	"lenny-podclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",
@@ -48,7 +48,7 @@ var expectedAgentWebhooks = []string{
 
 // spec: 13.7
 // diagnosis: TESTING.md §13.7 admission policy is not enforced. The test applies
-// a SandboxWarmPool whose spec.minWarm exceeds spec.maxWarm — a §4.6.3
+// a PodSet whose spec.minWarm exceeds spec.maxWarm — a §4.6.3
 // semantic budget violation — and expects the API server to reject it
 // via the lenny-pool-config-validator webhook with the
 // INVALID_POOL_CONFIGURATION reason. A failure means the webhook
@@ -57,11 +57,11 @@ var expectedAgentWebhooks = []string{
 func TestAdmissionPolicy(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	// A SandboxWarmPool with minWarm > maxWarm. Both fields satisfy the
+	// A PodSet with minWarm > maxWarm. Both fields satisfy the
 	// CRD's `minimum: 0` OpenAPI bound, so the request reaches the
 	// webhook rather than being rejected by schema validation first.
 	const badPool = `apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: e2e-admission-badpool
   namespace: lenny-agents
@@ -74,7 +74,7 @@ spec:
 
 	out, err := c.ApplyStdin(t, badPool)
 	if err == nil {
-		t.Fatalf("API server admitted a SandboxWarmPool with minWarm=5 > maxWarm=2; "+
+		t.Fatalf("API server admitted a PodSet with minWarm=5 > maxWarm=2; "+
 			"the lenny-pool-config-validator webhook did not reject it.\noutput:\n%s", out)
 	}
 	if !strings.Contains(out, "pool-config-validator.lenny.dev") {
@@ -195,7 +195,7 @@ const defaultAgentUID = 65533
 // §13.1 pod-level and container-level control, with its single
 // container, named agent, running at uid with runAsGroup equal to uid.
 // fsGroup 65534 is the lenny-cred-readers GID from
-// pkg/controller/sandbox/podspec. supplementalGroups carries the same
+// pkg/controller/agentpod/podspec. supplementalGroups carries the same
 // GID: §13.1 requires the webhook to validate the presence of both the
 // fsGroup and the supplementalGroups settings, so a pod that sets only
 // the fsGroup is rejected with POD_SPEC_CRED_FSGROUP_MISSING.
@@ -277,8 +277,8 @@ func TestAdmissionInventory(t *testing.T) {
 // invariant does not hold. matchPolicy: Equivalent does not rescue it,
 // because it converts between versions the CRD serves and a
 // single-version CRD has none to convert to. A failure here means at
-// least one guard is inert; the fail-open the sandboxclaim-guard rule
-// produced admitted a second SandboxClaim for a Sandbox that already
+// least one guard is inert; the fail-open the podclaim-guard rule
+// produced admitted a second PodClaim for a AgentPod that already
 // carried one.
 func TestLennyCRDWebhookRulesNameAServedVersion(t *testing.T) {
 	c := kind.InstallLenny(t)
@@ -318,7 +318,7 @@ func TestLennyCRDWebhookRulesNameAServedVersion(t *testing.T) {
 					continue
 				}
 				for _, resource := range rule.Resources {
-					// A subresource rule (sandboxes/status) is keyed on
+					// A subresource rule (agentpods/status) is keyed on
 					// its parent resource's served versions.
 					parent, _, _ := strings.Cut(resource, "/")
 					servedForResource, known := served[parent]
@@ -416,12 +416,12 @@ func TestLabelImmutability(t *testing.T) {
 
 // spec: 13.2 (admission-webhook NetworkPolicy egress sub-rule (c)),
 // 17.2 (deletion-guard HA + additive webhook-name label),
-// 10.5 (runtime-upgrade probe on SandboxTemplate DELETE)
+// 10.5 (runtime-upgrade probe on PodSet DELETE)
 // diagnosis: the §13.2 allow-deletion-guard-gateway-egress NetworkPolicy
 // is missing or the deletion-guard's gateway probe hop is still blocked
-// by the lenny-system default-deny. The test creates a SandboxTemplate
-// and a referencing SandboxWarmPool (no active RuntimeUpgrade), then
-// deletes the template. The fail-closed lenny-sandboxtemplate-deletion-guard
+// by the lenny-system default-deny. The test creates a PodSet
+// and a referencing PodSet (no active RuntimeUpgrade), then
+// deletes the template. The fail-closed lenny-podset-deletion-guard
 // webhook lists the referencing pool and probes
 // GET /internal/runtime-upgrade/active on the gateway internal port; a
 // failure means that probe egress is dropped, so the DELETE times out and
@@ -430,16 +430,16 @@ func TestLabelImmutability(t *testing.T) {
 // referencing pool, because a template with zero referencing pools is
 // Allowed without any gateway hop and would not exercise the restored
 // egress path.
-func TestSandboxTemplateDeleteReachesGatewayProbe(t *testing.T) {
+func TestPodSetDeleteReachesGatewayProbe(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	// A §4.9-compliant SandboxTemplate (deliveryMode proxy with the
+	// A §4.9-compliant PodSet (deliveryMode proxy with the
 	// default spiffeBinding, isolationProfile sandboxed) so the
 	// unconditionally-rendered lenny-direct-mode-isolation webhook admits
 	// the CREATE. This is a real apply: the template must persist so the
 	// DELETE below drives the deletion-guard.
 	const template = `apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: e2e-deletion-guard-template
   namespace: lenny-agents
@@ -449,13 +449,13 @@ spec:
   isolationProfile: sandboxed
 `
 
-	// A SandboxWarmPool whose spec.templateRef names the template above,
+	// A PodSet whose spec.templateRef names the template above,
 	// so the deletion-guard's decider finds a referencing pool and takes
 	// the gateway-probe branch rather than the zero-pool Allow shortcut.
 	// minWarm 0 keeps the poolscaling controller from provisioning agent
 	// pods, and minWarm <= maxWarm satisfies the pool-config-validator.
 	const pool = `apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: e2e-deletion-guard-pool
   namespace: lenny-agents
@@ -472,16 +472,16 @@ spec:
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, pool) })
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, template) })
 
-	// The lenny-pool-config-validator webhook admits SandboxTemplate and
-	// SandboxWarmPool spec writes only from the PoolScalingController
+	// The lenny-pool-config-validator webhook admits PodSet and
+	// PodSet spec writes only from the PoolScalingController
 	// service account (Postgres-authoritative pool config). Impersonate
 	// that principal to seat the fixtures, as the controller does at
 	// runtime.
 	if out, err := applyAsPoolScalingController(t, c, template); err != nil {
-		t.Fatalf("API server rejected the §4.9-compliant SandboxTemplate fixture: %v\noutput:\n%s", err, out)
+		t.Fatalf("API server rejected the §4.9-compliant PodSet fixture: %v\noutput:\n%s", err, out)
 	}
 	if out, err := applyAsPoolScalingController(t, c, pool); err != nil {
-		t.Fatalf("API server rejected the referencing SandboxWarmPool fixture: %v\noutput:\n%s", err, out)
+		t.Fatalf("API server rejected the referencing PodSet fixture: %v\noutput:\n%s", err, out)
 	}
 
 	// No RuntimeUpgrade is created, so the gateway
@@ -489,26 +489,26 @@ spec:
 	// for the referencing pool and the guard admits the delete — provided
 	// the probe hop reaches the gateway. Deleting the template drives the
 	// DELETE through the fail-closed deletion-guard.
-	out, err := c.KubectlOut(t, "delete", "sandboxtemplate", "e2e-deletion-guard-template", "-n", "lenny-agents")
+	out, err := c.KubectlOut(t, "delete", "podset", "e2e-deletion-guard-template", "-n", "lenny-agents")
 	if err != nil {
 		// A dropped probe egress surfaces as a webhook call timeout. Name
 		// the two signatures so a failure points at the missing NetworkPolicy
 		// rather than an unrelated delete error.
 		for _, blocked := range []string{"context deadline exceeded", "deadline", "timeout", "503"} {
 			if strings.Contains(out, blocked) {
-				t.Fatalf("SandboxTemplate DELETE was denied by the fail-closed deletion-guard: the gateway "+
+				t.Fatalf("PodSet DELETE was denied by the fail-closed deletion-guard: the gateway "+
 					"runtime-upgrade probe hop is blocked (allow-deletion-guard-gateway-egress missing or the "+
 					"lenny-system default-deny still drops it).\noutput:\n%s", out)
 			}
 		}
-		t.Fatalf("kubectl delete sandboxtemplate failed: %v\noutput:\n%s", err, out)
+		t.Fatalf("kubectl delete podset failed: %v\noutput:\n%s", err, out)
 	}
 	// The webhook must have been the one to admit the delete: confirm the
 	// object is gone.
 	if !strings.Contains(out, "deleted") {
-		t.Fatalf("delete did not report the SandboxTemplate as deleted; the guard may not have run.\noutput:\n%s", out)
+		t.Fatalf("delete did not report the PodSet as deleted; the guard may not have run.\noutput:\n%s", out)
 	}
-	t.Logf("deletion-guard admitted the SandboxTemplate DELETE through the restored gateway probe path: %s",
+	t.Logf("deletion-guard admitted the PodSet DELETE through the restored gateway probe path: %s",
 		strings.TrimSpace(out))
 }
 
@@ -607,8 +607,8 @@ func dryRunApply(t *testing.T, c *kind.Cluster, manifest string) (string, error)
 }
 
 // poolScalingControllerSA is the only principal the
-// lenny-pool-config-validator webhook admits SandboxTemplate and
-// SandboxWarmPool spec writes from; pool configuration is
+// lenny-pool-config-validator webhook admits PodSet and
+// PodSet spec writes from; pool configuration is
 // Postgres-authoritative and manual writes are rejected with
 // UNAUTHORIZED_POOL_CONFIG_WRITE. It mirrors
 // pkg/admission/label_immutability.PoolScalingControllerSA.
@@ -628,7 +628,7 @@ func applyAsPoolScalingController(t *testing.T, c *kind.Cluster, manifest string
 // applyAsPoolScalingController: it runs the full admission chain
 // impersonating the controller without persisting the object. A
 // positive control that must reach a webhook downstream of the
-// lenny-pool-config-validator (which admits SandboxTemplate spec writes
+// lenny-pool-config-validator (which admits PodSet spec writes
 // only from the PoolScalingController service account) uses this so the
 // pool-config-validator admits the write and the object never lands in
 // etcd.

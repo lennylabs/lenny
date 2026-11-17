@@ -57,7 +57,7 @@ kubectl logs <failing-pod> -n lenny-system --previous --since=10m | tail -100
 Key patterns:
 
 - `runtime: out of memory` → OOM (see Remediation Step 1).
-- `crd \"sandboxes.lenny.dev\" not found` or schema mismatch → CRD drift ([crd-upgrade](crd-upgrade.html)).
+- `crd \"agentpods.lenny.dev\" not found` or schema mismatch → CRD drift ([crd-upgrade](crd-upgrade.html)).
 - `dial tcp ... postgres` → database reachability ([postgres-failover](postgres-failover.html)).
 - `certificate signed by unknown authority` → mTLS chain ([cert-manager-outage](cert-manager-outage.html)).
 

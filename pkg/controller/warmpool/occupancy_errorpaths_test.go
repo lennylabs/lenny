@@ -27,48 +27,48 @@ func reconcileForError(ns string, c client.Client) error {
 	return err
 }
 
-// TestOccupancyReconcileSwallowsSandboxNotFound covers the §4.6.1 occupancy
-// reconciler's Sandbox-Get NotFound branch: a deleted Sandbox (the GC removed
+// TestOccupancyReconcileSwallowsAgentPodNotFound covers the §4.6.1 occupancy
+// reconciler's AgentPod-Get NotFound branch: a deleted AgentPod (the GC removed
 // it between the watch event and the reconcile) is a no-op, not an error, so
 // the work queue does not retry a vanished pod forever.
 //
 // spec: 4.6.1 (occupancy projection), 4.6.3 (ownership decomposition).
-func TestOccupancyReconcileSwallowsSandboxNotFound(t *testing.T) {
+func TestOccupancyReconcileSwallowsAgentPodNotFound(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	// Empty client: the Sandbox does not exist, so Get returns NotFound.
+	// Empty client: the AgentPod does not exist, so Get returns NotFound.
 	c := ctrlfake.NewClientBuilder().WithScheme(s).Build()
 	if err := reconcileForError(ns, c); err != nil {
-		t.Fatalf("reconcile of a missing Sandbox should be a no-op, got %v", err)
+		t.Fatalf("reconcile of a missing AgentPod should be a no-op, got %v", err)
 	}
 }
 
-// TestOccupancyReconcileSkipsDeletingSandbox covers the deletion-timestamp
-// guard: a Sandbox being torn down is the Sandbox-to-Pod reconciler's to drive
+// TestOccupancyReconcileSkipsDeletingAgentPod covers the deletion-timestamp
+// guard: a AgentPod being torn down is the AgentPod-to-Pod reconciler's to drive
 // to terminated, so the occupancy projection leaves it untouched rather than
 // fighting the teardown.
 //
 // spec: 4.6.1 (occupancy projection), 6.2 (teardown is the teardown writer's).
-func TestOccupancyReconcileSkipsDeletingSandbox(t *testing.T) {
+func TestOccupancyReconcileSkipsDeletingAgentPod(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := metav1.Now()
-	sb := occupiedSandbox(ns, "pod-err", "claimed")
+	sb := occupiedAgentPod(ns, "pod-err", "claimed")
 	sb.DeletionTimestamp = &now
 	sb.Finalizers = []string{"lenny.dev/test-hold"} // a deletion timestamp requires a finalizer
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(sb).Build()
 	if err := reconcileForError(ns, c); err != nil {
-		t.Fatalf("reconcile of a deleting Sandbox should be a no-op, got %v", err)
+		t.Fatalf("reconcile of a deleting AgentPod should be a no-op, got %v", err)
 	}
 	// The phase is left as-is; the projection wrote nothing.
-	if got := sandboxPhase(t, c, "pod-err"); got != "claimed" {
-		t.Errorf("deleting Sandbox phase = %q, want unchanged claimed", got)
+	if got := agentPodPhase(t, c, "pod-err"); got != "claimed" {
+		t.Errorf("deleting AgentPod phase = %q, want unchanged claimed", got)
 	}
 }
 
 // TestOccupancyReconcilePropagatesClaimGetError covers observeClaim's
 // non-NotFound error branch: a transient API error reading the per-pod
-// SandboxClaim is wrapped and returned so the work queue retries, rather than
+// PodClaim is wrapped and returned so the work queue retries, rather than
 // being mistaken for the no-claim (NotFound) case that would project an
 // incorrect return-to-idle / drain phase.
 //
@@ -76,12 +76,12 @@ func TestOccupancyReconcileSkipsDeletingSandbox(t *testing.T) {
 func TestOccupancyReconcilePropagatesClaimGetError(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := occupiedSandbox(ns, "pod-err", "claimed")
+	sb := occupiedAgentPod(ns, "pod-err", "claimed")
 	boom := errors.New("apiserver unavailable")
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(sb).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+				if _, ok := obj.(*lennyv1.PodClaim); ok {
 					return boom
 				}
 				return cl.Get(ctx, key, obj, opts...)
@@ -101,24 +101,24 @@ func TestOccupancyReconcilePropagatesClaimGetError(t *testing.T) {
 // wrapped with the sandbox name and returned, so the projection failure
 // surfaces to the work queue rather than being silently dropped.
 //
-// spec: 4.6.1 (occupancy projection), 4.6.3 (WPC SSA-patches Sandbox.status).
+// spec: 4.6.1 (occupancy projection), 4.6.3 (WPC SSA-patches AgentPod.status).
 func TestOccupancyReconcilePropagatesPatchError(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	// A bound claim on a claimed pod projects claimed; seed an idle pod so the
 	// projection differs from the current phase and patchPhase is reached.
-	sb := occupiedSandbox(ns, "pod-err", "idle")
-	claim := &lennyv1.SandboxClaim{
+	sb := occupiedAgentPod(ns, "pod-err", "idle")
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-pod-err", Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "pod-err", TenantID: "acme"},
-		Status:     lennyv1.SandboxClaimStatus{Phase: "bound"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "pod-err", TenantID: "acme"},
+		Status:     lennyv1.PodClaimStatus{Phase: "bound"},
 	}
 	boom := errors.New("status patch denied")
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(sb, claim).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		WithStatusSubresource(&lennyv1.AgentPod{}, &lennyv1.PodClaim{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-				if _, ok := obj.(*lennyv1.Sandbox); ok {
+				if _, ok := obj.(*lennyv1.AgentPod); ok {
 					return boom
 				}
 				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)

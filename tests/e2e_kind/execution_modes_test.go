@@ -86,7 +86,7 @@ const executionModesNamespace = "lenny-agents"
 
 // spec: §5.2 (spec/05_runtime-registry-and-pool-model.md, "Recycle
 // lifecycle (`recycle.enabled: true`)") — "When the pod's occupancy
-// reaches zero, the gateway patches the pod's SandboxClaim to
+// reaches zero, the gateway patches the pod's PodClaim to
 // `recycling`... On a successful scrub on a `standard` or `in-place`
 // pool the pod is held for its tenant through the claim's `reserved`
 // state and serves the next session." And (§5.2, "Lenny scrub
@@ -478,7 +478,7 @@ func TestCountingReadyWarmPodsReportsAFailedQueryRatherThanAnEmptyPool_spec_6_4(
 	}
 }
 
-// waitClaimPhase polls the §4.6.3 binding state on the pod's SandboxClaim
+// waitClaimPhase polls the §4.6.3 binding state on the pod's PodClaim
 // until it equals want or timeout elapses, failing the test on timeout. It
 // observes the §5.2 recycle boundary at the claim, which carries the full
 // binding state (bound, recycling, reserved) rather than the coarse
@@ -496,7 +496,7 @@ func waitClaimPhase(t *testing.T, c *kind.Cluster, pod, want string, timeout tim
 	deadline := time.Now().Add(timeout)
 	var last string
 	for {
-		out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "sandboxclaim", claim,
+		out, err := c.KubectlOut(t, "-n", executionModesNamespace, "get", "podclaim", claim,
 			"-o", "jsonpath={.status.phase}")
 		if err != nil {
 			t.Fatalf("reading the binding state of claim %s: %v\n%s\n(the claim is deleted at "+

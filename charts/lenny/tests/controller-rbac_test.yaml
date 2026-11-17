@@ -52,38 +52,38 @@ tests:
 
   # spec: §4.6.3 (RBAC enforcement) / §4.6.1 (occupancy projection,
   # orphan-claim GC) / §4.7 (nonce-only carrier SSA write) — the
-  # WarmPoolController create/update/delete on Sandbox serves §4.6.1
-  # cert-expiry replacement and pod-failed retire, its patch on Sandbox
+  # WarmPoolController create/update/delete on AgentPod serves §4.6.1
+  # cert-expiry replacement and pod-failed retire, its patch on AgentPod
   # backs the §4.7 nonce-only carrier SSA apply, and its
-  # get/list/watch/delete on SandboxClaim serves both the claim-existence
-  # occupancy projection (the `watch` drives Sandbox.status.phase) and the
+  # get/list/watch/delete on PodClaim serves both the claim-existence
+  # occupancy projection (the `watch` drives AgentPod.status.phase) and the
   # orphan-claim garbage collection (the `list`/`delete`).
-  - it: grants Sandbox create/update/patch/delete and SandboxClaim get/watch+list/delete for §4.6.1 occupancy projection and orphan-claim GC
+  - it: grants AgentPod create/update/patch/delete and PodClaim get/watch+list/delete for §4.6.1 occupancy projection and orphan-claim GC
     documentIndex: 1
     asserts:
       # patch backs the §4.7 nonce-only carrier SSA write of the render
-      # decision onto Sandbox.spec.requireSoPeercred (recordNonceOnlyCarrier /
+      # decision onto AgentPod.spec.requireSoPeercred (recordNonceOnlyCarrier /
       # clearNonceOnlyCarrier); SSA issues an HTTP PATCH, for which update is
-      # insufficient — same reason the sandboxes/status rule below needs patch.
+      # insufficient — same reason the agentpods/status rule below needs patch.
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxes"]
+            resources: ["agentpods"]
             verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxclaims"]
+            resources: ["podclaims"]
             verbs: ["get", "list", "watch", "delete"]
-      # The WarmPoolController retains the sandboxes/status write (it is
-      # the sole writer of Sandbox.status under §4.6.3).
+      # The WarmPoolController retains the agentpods/status write (it is
+      # the sole writer of AgentPod.status under §4.6.3).
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
+            resources: ["podsets/status", "podsets/status", "agentpods/status", "runtimes/status"]
             verbs: ["get", "update", "patch"]
 
   - it: grants PodDisruptionBudget management for per-pool warm-pod PDBs (§4.6.1)
@@ -99,7 +99,7 @@ tests:
   - it: grants Pod and Pod-status writes for backing-pod lifecycle and the §6.1 readiness gate
     documentIndex: 1
     asserts:
-      # The Sandbox-to-Pod reconciler creates/deletes backing pods and
+      # The AgentPod-to-Pod reconciler creates/deletes backing pods and
       # patches the §4.6.1 lenny.dev/state label on the main pods resource.
       - contains:
           path: rules
@@ -107,7 +107,7 @@ tests:
             apiGroups: [""]
             resources: ["pods"]
             verbs: ["get", "list", "watch", "create", "patch", "delete"]
-      # §6.1 syncReadinessGate flips the lenny.dev/sandbox-ready readiness
+      # §6.1 syncReadinessGate flips the lenny.dev/agent-pod-ready readiness
       # gate (a PodCondition write) through the pods/status subresource, a
       # distinct RBAC resource. Without this grant the gate is never set, so
       # every warm pod stays NotReady and the pool never fills.
@@ -139,11 +139,11 @@ tests:
           path: metadata.name
           value: lenny-controller-leader-election
 
-  # spec: §4.6.1 "Orphaned SandboxClaim detection", §4.6.3 "RBAC enforcement
+  # spec: §4.6.1 "Orphaned PodClaim detection", §4.6.3 "RBAC enforcement
   # (coarse-grained backstop)" — the orphan-claim GC lists and deletes
-  # SandboxClaims and drains Sandboxes in every agent namespace, and the
-  # mirror reconciler lists Sandboxes and gets their SandboxWarmPool and
-  # SandboxTemplate. The grant is a ClusterRole bound by a ClusterRoleBinding,
+  # PodClaims and drains AgentPods in every agent namespace, and the
+  # mirror reconciler lists AgentPods and gets their PodSet and
+  # PodSet. The grant is a ClusterRole bound by a ClusterRoleBinding,
   # so it covers every namespace named in agentNamespaces without a
   # per-namespace Role. Adding agent namespaces renders no extra RBAC object.
   - it: covers every agent namespace through the cluster-scoped binding
@@ -179,5 +179,5 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxtemplates", "sandboxwarmpools"]
+            resources: ["podsets", "podsets"]
             verbs: ["get", "list", "watch"]

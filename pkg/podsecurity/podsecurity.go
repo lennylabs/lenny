@@ -256,7 +256,7 @@ func (p RuntimeClassPolicy) relaxations(runtimeClass string) (seccompExempt, pri
 // LennyCredReadersGID is the supplementary GID the §13.1 cross-UID
 // file-delivery path requires on the pod-level fsGroup. Production
 // callers pass podspec.CredReadersGID (the Go constant in
-// pkg/controller/sandbox/podspec); spec §13.1 leaves the specific GID
+// pkg/controller/agentpod/podspec); spec §13.1 leaves the specific GID
 // to the implementation and the constant is the single source of truth
 // shared by the controller's pod builder and this validator.
 //

@@ -133,7 +133,7 @@ func multiTurnBoundExecutor(t *testing.T, rt adapter.RuntimeProcess, sessionID s
 		t.Fatalf("StartSession: %v", err)
 	}
 	reg := podsession.NewRegistry()
-	reg.Put(&podsession.BindResult{SessionID: sessionID, TenantID: "acme", SandboxName: "sbx-" + sessionID, Adapter: cl})
+	reg.Put(&podsession.BindResult{SessionID: sessionID, TenantID: "acme", AgentPodName: "sbx-" + sessionID, Adapter: cl})
 	e := executor.NewPodExecutor(reg, nil)
 	t.Cleanup(func() { e.EvictStream(sessionID) })
 	return e

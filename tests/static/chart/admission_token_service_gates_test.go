@@ -113,7 +113,7 @@ func TestAdmissionWebhooksDefaultRendersFullStack(t *testing.T) {
 	// renders under admissionWebhooks.enabled (no separate feature flag),
 	// re-admitting the runtime-upgrade probe hop the lenny-system
 	// default-deny blocks. Without it the fail-closed webhook denies a
-	// SandboxTemplate DELETE with a referencing SandboxWarmPool. F-13.2.24.
+	// PodSet DELETE with a referencing PodSet. F-13.2.24.
 	if _, ok := m.Find("NetworkPolicy", "allow-deletion-guard-gateway-egress"); !ok {
 		t.Errorf("admissionWebhooks.enabled defaults true: the allow-deletion-guard-gateway-egress NetworkPolicy must render")
 	}
@@ -162,11 +162,11 @@ func TestAdmissionWebhooksDisabledRendersNoCertManagerObject(t *testing.T) {
 	// Certificate; none of the per-webhook workloads may render.
 	for _, name := range []string{
 		"lenny-pod-security",
-		"lenny-sandboxclaim-guard",
+		"lenny-podclaim-guard",
 		"lenny-direct-mode-isolation",
 		"lenny-ephemeral-container-cred-guard",
 		"lenny-pool-config-validator",
-		"lenny-sandboxtemplate-deletion-guard",
+		"lenny-podset-deletion-guard",
 		"lenny-label-immutability",
 		"lenny-crd-conversion",
 	} {

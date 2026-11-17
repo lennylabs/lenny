@@ -439,7 +439,7 @@ ASCII fallback for the diagram above (recycle-lifecycle):
 
 The gateway drives the recycle boundary; your runtime sees only each session's messages, keyed by `sessionId`:
 
-1. When occupancy reaches zero, the gateway patches the pod's `SandboxClaim` to `recycling`, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)); such a release deletes the claim, and steps 2 to 4 do not run.
+1. When occupancy reaches zero, the gateway patches the pod's `PodClaim` to `recycling`, unless the release ends the occupancy without reuse ([Recycle lifecycle](../reference/execution-modes#recycle-lifecycle)); such a release deletes the claim, and steps 2 to 4 do not run.
 2. The adapter purges the credential files. The deployer's `cleanupCommands` then run: in the sidecar model the runtime supervisor runs them at the agent UID in the runtime container, in a process it forks, and in the embedded model the adapter runs them in its own container. On a `restart` pod the supervisor ends the runtime process and every process it started, and removes the agent UID's IPC objects and files from the runtime container's writable volumes, before and again after `cleanupCommands`. The adapter then runs the rest of the whole-pod scrub (files removed, processes in the adapter's container killed, `/tmp` flushed) and reports the outcome and whether your runtime can serve the next session. On a `keep` pod the scrub leaves your runtime process running.
 3. On a `preConnect` pool the SDK re-warm runs after a successful scrub (the pod projects `sdk_connecting`); on other pools the claim moves straight to `reserved`.
 4. The pod is held for its tenant in `reserved` for the hold TTL. A same-tenant session arriving within the window rebinds with no acquisition. When the pool's current configuration no longer admits the pod for reuse, such as after an update that disables recycling or that changes a sequential pool from `keep` to `restart` while the pod is a `keep` pod, the next acquisition ends the hold instead of rebinding it. If the hold expires, the pod returns to `idle`.
@@ -463,7 +463,7 @@ A managed session is bound to a claimed pod for the session's lifetime. Session 
 
 ### Service Mode
 
-The gateway routes each message to any ready tenant-pinned replica through the pool's Kubernetes Service. There is no workspace materialization, no `SandboxClaim`, no per-message lifecycle tracking, and no checkpoint support. Service mode provides no cross-message conversation continuity: every message is self-contained. Your runtime handles requests as they arrive; clients of a `multi_turn` runtime re-inject any needed context into each message's `input`. The deployer is responsible for retry, idempotency, and error-handling logic. `preConnect` is rejected for service-mode pools. This mode is often better served by the external connector model.
+The gateway routes each message to any ready tenant-pinned replica through the pool's Kubernetes Service. There is no workspace materialization, no `PodClaim`, no per-message lifecycle tracking, and no checkpoint support. Service mode provides no cross-message conversation continuity: every message is self-contained. Your runtime handles requests as they arrive; clients of a `multi_turn` runtime re-inject any needed context into each message's `input`. The deployer is responsible for retry, idempotency, and error-handling logic. `preConnect` is rejected for service-mode pools. This mode is often better served by the external connector model.
 
 ---
 

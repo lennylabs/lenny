@@ -214,10 +214,10 @@ func TestDeriveAndReplayGrantedTargetPoolClaimsOnIt_spec_15_1(t *testing.T) {
 				func(o *sessionserver.Options) { o.TenantAccess = poolSelectTenantAccess(t, "echo-pool-b") },
 				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox(t, "sbx-a", "echo-pool", "10.244.2.5"),
+				podBindIdleAgentPod(t, "sbx-a", "echo-pool", "10.244.2.5"),
 				podBindWarmPool(t, "echo-pool-b", "echo-tmpl-b"),
 				podBindTemplate(t, "echo-tmpl-b", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox(t, "sbx-b", "echo-pool-b", "10.244.2.6"),
+				podBindIdleAgentPod(t, "sbx-b", "echo-pool-b", "10.244.2.6"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusCreated {

@@ -177,30 +177,30 @@ func TestEmbeddedCRDsPreserveUnknownFields_spec_10_437(t *testing.T) {
 	}
 }
 
-// TestSandboxClaimDescriptionsStateEndOfOccupancyOutcome_spec_4_6_3 pins
-// the SandboxClaim CRD descriptions that operators read with `kubectl
+// TestPodClaimDescriptionsStateEndOfOccupancyOutcome pins
+// the PodClaim CRD descriptions that operators read with `kubectl
 // explain` to the §4.6.3 end-of-occupancy outcome. The `failed` phase is
 // the scrub-failure retirement under `onScrubFailure: fail` only: a
 // crashed session no longer writes it, because a release that ends the
 // occupancy without reuse deletes the claim instead. The `spec`
 // description lists that delete among the claim's deletion steps. A
 // failure means the generated description drifted from the Go doc
-// comments on SandboxClaimSpec and SandboxClaimStatus.Phase, or those
+// comments on PodClaimSpec and PodClaimStatus.Phase, or those
 // comments regressed to the retired outcome; re-run `make generate` and
 // re-copy the chart manifest.
 //
-// spec: §4.6.3 (SandboxClaim.status.phase enumeration), §4.6.3 (CRD field
+// spec: §4.6.3 (PodClaim.status.phase enumeration), §4.6.3 (CRD field
 // ownership).
-func TestSandboxClaimDescriptionsStateEndOfOccupancyOutcome_spec_4_6_3(t *testing.T) {
+func TestPodClaimDescriptionsStateEndOfOccupancyOutcome(t *testing.T) {
 	var claim *apiextensionsv1.CustomResourceDefinition
 	for _, crd := range embeddedCRDs(t) {
-		if crd.Name == "sandboxclaims.lenny.dev" {
+		if crd.Name == "podclaims.lenny.dev" {
 			claim = &crd
 			break
 		}
 	}
 	if claim == nil || len(claim.Spec.Versions) == 0 || claim.Spec.Versions[0].Schema == nil {
-		t.Fatal("embedded sandboxclaims.lenny.dev CRD with a schema not found")
+		t.Fatal("embedded podclaims.lenny.dev CRD with a schema not found")
 	}
 	root := claim.Spec.Versions[0].Schema.OpenAPIV3Schema
 	specDesc := strings.Join(strings.Fields(root.Properties["spec"].Description), " ")

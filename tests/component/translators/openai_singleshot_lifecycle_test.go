@@ -18,7 +18,7 @@
 // is ended through the session server's post-terminal hook.
 //
 // spec: §15 (single-shot compute model), §15 (Open Responses conversation
-// sessions), §6.2 (release, terminal disposition), §4.6.3 (gateway writes no Sandbox.status), §7.1
+// sessions), §6.2 (release, terminal disposition), §4.6.3 (gateway writes no AgentPod.status), §7.1
 // (create-and-start atomicity), §15.2.1 rule 1, §11.1, §10.6, §4.9.
 package translators_test
 
@@ -143,7 +143,7 @@ func ssScheme(t *testing.T) *runtime.Scheme {
 }
 
 // ssEnvClient starts an envtest kube-apiserver, seeds the agent namespace,
-// and creates each object. A seeded Sandbox.Status is split by §4.6.3 field
+// and creates each object. A seeded AgentPod.Status is split by §4.6.3 field
 // ownership so the WarmPoolController-owned phase/podIP are applied under the
 // WPC field manager, keeping the live claim path conflict-free.
 func ssEnvClient(t *testing.T, objs ...client.Object) client.Client {
@@ -160,9 +160,9 @@ func ssEnvClient(t *testing.T, objs ...client.Object) client.Client {
 	}
 	for _, o := range objs {
 		var seedAfter func()
-		if sb, ok := o.(*lennyv1.Sandbox); ok {
+		if sb, ok := o.(*lennyv1.AgentPod); ok {
 			st := sb.Status
-			sb.Status = lennyv1.SandboxStatus{}
+			sb.Status = lennyv1.AgentPodStatus{}
 			seedAfter = func() {
 				wpc := map[string]interface{}{}
 				if st.Phase != "" {
@@ -176,7 +176,7 @@ func ssEnvClient(t *testing.T, objs ...client.Object) client.Client {
 				}
 				u := &unstructured.Unstructured{}
 				u.SetAPIVersion(lennyv1.GroupVersion.String())
-				u.SetKind("Sandbox")
+				u.SetKind("AgentPod")
 				u.SetName(sb.Name)
 				u.SetNamespace(sb.Namespace)
 				_ = unstructured.SetNestedField(u.Object, wpc, "status")
@@ -196,28 +196,28 @@ func ssEnvClient(t *testing.T, objs ...client.Object) client.Client {
 	return c
 }
 
-func ssWarmPool(name, templateRef string) *lennyv1.SandboxWarmPool {
-	return &lennyv1.SandboxWarmPool{
+func ssWarmPool(name, templateRef string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ssNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: templateRef, MinWarm: 1, MaxWarm: 5},
 	}
 }
 
-func ssTemplate(name, runtimeRef string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func ssTemplate(name, runtimeRef string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ssNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 }
 
-func ssIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
-	return &lennyv1.Sandbox{
+func ssIdleAgentPod(name, pool, podIP string) *lennyv1.AgentPod {
+	return &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ssNS,
 			Labels:    map[string]string{warmpool.LabelPool: pool},
 		},
-		Status: lennyv1.SandboxStatus{Phase: "idle", PodIP: podIP},
+		Status: lennyv1.AgentPodStatus{Phase: "idle", PodIP: podIP},
 	}
 }
 
@@ -315,7 +315,7 @@ func ssSlotBinder(t *testing.T, c client.Client, dial func(string) (*adapterclie
 	return b
 }
 
-// ssPodClaimExists reports whether the per-pod occupancy SandboxClaim exists
+// ssPodClaimExists reports whether the per-pod occupancy PodClaim exists
 // for pod. The per-pod claim is the §5.2 occupancy authority: session-mode
 // Release deletes it, while a per-slot ReleaseSlot keeps it while any sibling
 // slot on the pod still runs.
@@ -462,18 +462,18 @@ func ssDriveChat(t *testing.T, h http.Handler, model string, mutate func(*http.R
 	return rr
 }
 
-func ssClaim(t *testing.T, c client.Client, pod string) (*lennyv1.SandboxClaim, error) {
+func ssClaim(t *testing.T, c client.Client, pod string) (*lennyv1.PodClaim, error) {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: ssNS, Name: podclaim.ClaimName(pod)}, &claim)
 	return &claim, err
 }
 
 func ssLiveClaimCount(t *testing.T, c client.Client) int {
 	t.Helper()
-	var list lennyv1.SandboxClaimList
+	var list lennyv1.PodClaimList
 	if err := c.List(context.Background(), &list, client.InNamespace(ssNS)); err != nil {
-		t.Fatalf("list SandboxClaims: %v", err)
+		t.Fatalf("list PodClaims: %v", err)
 	}
 	return len(list.Items)
 }
@@ -493,7 +493,7 @@ func ssErrCode(t *testing.T, rr *httptest.ResponseRecorder) string {
 
 // spec: §15 (single-shot bind and release), §6.2 (completed terminal
 // disposition selects the clean recycle outcome), §4.6.3 (gateway writes no
-// Sandbox.status).
+// AgentPod.status).
 // diagnosis: the built-in OpenAI adapter must claim a warm pod through the
 // shared create-and-start service, register the binding the PodExecutor reads
 // (so dispatch succeeds rather than 500 "not bound to a pod"), and release it
@@ -507,7 +507,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	binder.RecycleBoundary = ssRecycleBoundary{}
@@ -562,7 +562,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 	}
 	// completed disposition on a recycling pool: the per-pod claim is patched
 	// bound → recycling (§6.2 clean-terminal recycle), not deleted. The
-	// gateway writes no Sandbox.status (§4.6.3).
+	// gateway writes no AgentPod.status (§4.6.3).
 	claim, err := ssClaim(t, cluster, "sbx-1")
 	if err != nil {
 		t.Fatalf("per-pod claim missing after a completed recycle: %v", err)
@@ -574,7 +574,7 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 
 // spec: §15 (single-shot bind and release), §5.2 (per-slot multiplexing:
 // releasing one slot leaves a sibling slot's pod live), §6.2 (per-slot vs
-// session-mode release), §4.6.3 (gateway writes no Sandbox.status).
+// session-mode release), §4.6.3 (gateway writes no AgentPod.status).
 // diagnosis: on a concurrent-workspace pool (maxConcurrentSessions > 1) the
 // single-shot adapter must claim a per-slot reservation, dispatch with the
 // resolved slot identifier stamped on the registry binding, and release that one slot
@@ -590,7 +590,7 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssSlotBinder(t, cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	binder.RecycleBoundary = ssRecycleBoundary{}
@@ -655,7 +655,7 @@ func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *tes
 }
 
 // spec: §15 (synchronous release on dispatch failure), §6.2 (failed terminal
-// disposition retires the pod), §4.6.3 (gateway writes no Sandbox.status).
+// disposition retires the pod), §4.6.3 (gateway writes no AgentPod.status).
 // diagnosis: a dispatch (exec.Send) error must still release the claimed pod
 // within the one HTTP call, and the release must carry the failed
 // disposition, which retires the pod (deletes the per-pod claim) even on a
@@ -668,7 +668,7 @@ func TestSingleShotReleasesAndRetiresOnDispatchError_spec_15(t *testing.T) {
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	binder.RecycleBoundary = ssRecycleBoundary{}
@@ -726,7 +726,7 @@ func TestSingleShotReleaseDrainsOnDetachedContextAfterTimeout_spec_15(t *testing
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	binder.RecycleBoundary = ssRecycleBoundary{}
@@ -783,7 +783,7 @@ func TestSingleShotReleaseDrainsOnDetachedContextAfterTimeout_spec_15(t *testing
 // failure. A failure here means the adapter emitted a generic server_error,
 // dropped the Retry-After, or dispatched against an unclaimed pod.
 func TestSingleShotPoolExhaustionReturnsRetryableEnvelope_spec_7_1(t *testing.T) {
-	// A warm pool and template exist, but no idle Sandbox: the claim finds no
+	// A warm pool and template exist, but no idle AgentPod: the claim finds no
 	// pod and reports pool exhaustion.
 	cluster := ssEnvClient(
 		t,
@@ -836,7 +836,7 @@ func TestSingleShotCredentialExhaustionHasNoRetryAfter_spec_4_9(t *testing.T) {
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	registry := podsession.NewRegistry()
@@ -952,13 +952,13 @@ func ssRunningRow(id, tenant, user, rt string) sessionstore.Session {
 // the adapter, or the adapter dispatched despite the denial.
 func TestSingleShotAdmissionGateDenialsFailClosed_spec_15_2_1(t *testing.T) {
 	// One envtest cluster and binder shared across the gate cases: every gate
-	// rejects before the claim, so the idle Sandbox is never consumed and each
+	// rejects before the claim, so the idle AgentPod is never consumed and each
 	// case asserts zero live claims.
 	cluster := ssEnvClient(
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	registry := podsession.NewRegistry()
@@ -1114,7 +1114,7 @@ func TestHeldResponsesSessionFailedWarmTurnDrainsTheInbox_spec_15(t *testing.T) 
 		t,
 		ssWarmPool("echo-pool", "echo-tmpl"),
 		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.9"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.9"),
 	)
 	binder := ssBinder(cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
 	binder.RecycleBoundary = ssRecycleBoundary{}

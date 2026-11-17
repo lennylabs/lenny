@@ -62,7 +62,7 @@ var (
 	// fresh envtest control plane per test and ran for 1700 to 1960 seconds
 	// under the race detector on a loaded host. That package, together with
 	// pkg/gateway/podlifecycle/podclaim, pkg/controller/warmpool,
-	// pkg/controller/sandbox, pkg/gateway/session/recycle,
+	// pkg/controller/agentpod, pkg/gateway/session/recycle,
 	// pkg/embedded/stack, pkg/gateway/sessionserver, and cmd/lenny-gateway,
 	// now shares one control plane per test binary (TEST-GAPS T-17.4.22,
 	// T-17.4.26, T-17.4.28, T-17.4.23, T-17.4.27, and T-17.4.25); podsession

@@ -15,19 +15,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 )
 
-// seedWarmPool returns a SandboxWarmPool object with the given spec and
+// seedWarmPool returns a PodSet object with the given spec and
 // status.readyCount, for pre-loading into the fake client.
-func seedWarmPool(minWarm, maxWarm, readyCount int32) *lennyv1.SandboxWarmPool {
-	return &lennyv1.SandboxWarmPool{
+func seedWarmPool(minWarm, maxWarm, readyCount int32) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: testNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: testPool, MinWarm: minWarm, MaxWarm: maxWarm},
-		Status:     lennyv1.SandboxWarmPoolStatus{ReadyCount: readyCount},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: testPool, MinWarm: minWarm, MaxWarm: maxWarm},
+		Status:     lennyv1.PodSetStatus{ReadyCount: readyCount},
 	}
 }
 
 func warmPoolExists(t *testing.T, c client.Client) bool {
 	t.Helper()
-	var p lennyv1.SandboxWarmPool
+	var p lennyv1.PodSet
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: testPool}, &p)
 	if apierrors.IsNotFound(err) {
 		return false
@@ -43,7 +43,7 @@ func warmPoolExists(t *testing.T, c client.Client) bool {
 // naturally and the CRD is retained.
 func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.ForceZeroMinWarm = true
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -58,7 +58,7 @@ func TestSyncForceZeroMinWarmPinsPausedVariantToZero(t *testing.T) {
 	if pool.Spec.MaxWarm != 10 {
 		t.Errorf("paused variant maxWarm = %d, want 10 (unchanged)", pool.Spec.MaxWarm)
 	}
-	// The SandboxTemplate is retained so the pool can be restored on
+	// The PodSet is retained so the pool can be restored on
 	// re-activation.
 	_ = getTemplate(t, c)
 }
@@ -69,7 +69,7 @@ func TestSyncDrainAndDeleteDrainsWhileReady(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(seedWarmPool(3, 10, 4)).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		Build()
 	cfg := config()
 	cfg.DrainAndDelete = true
@@ -85,17 +85,17 @@ func TestSyncDrainAndDeleteDrainsWhileReady(t *testing.T) {
 	if pool.Spec.MinWarm != 0 || pool.Spec.MaxWarm != 0 {
 		t.Errorf("draining pool min/max = %d/%d, want 0/0", pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
-	// The SandboxTemplate is not deleted.
+	// The PodSet is not deleted.
 	_ = getTemplate(t, c)
 }
 
 // spec: §10.7 — once status.readyCount reaches 0 the
-// SandboxWarmPool CRD is deleted; the SandboxTemplate is retained.
+// PodSet CRD is deleted; the PodSet is retained.
 func TestSyncDrainAndDeleteDeletesWhenDrained(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(seedWarmPool(0, 0, 0)).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		Build()
 	cfg := config()
 	cfg.DrainAndDelete = true
@@ -107,17 +107,17 @@ func TestSyncDrainAndDeleteDeletesWhenDrained(t *testing.T) {
 	if warmPoolExists(t, c) {
 		t.Fatal("warm pool not deleted after readyCount reached 0")
 	}
-	// SandboxTemplate retained per §10.7.
+	// PodSet retained per §10.7.
 	_ = getTemplate(t, c)
 }
 
 // A concluded experiment whose variant pool was already reclaimed must
 // not be recreated: drain-and-delete on an absent pool is a no-op, and
-// the SandboxTemplate is still reconciled.
+// the PodSet is still reconciled.
 func TestSyncDrainAndDeleteAbsentPoolIsNoOp(t *testing.T) {
 	s := newScheme(t)
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		Build()
 	cfg := config()
 	cfg.DrainAndDelete = true
@@ -127,7 +127,7 @@ func TestSyncDrainAndDeleteAbsentPoolIsNoOp(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 	if warmPoolExists(t, c) {
-		t.Fatal("drain-and-delete recreated an absent SandboxWarmPool")
+		t.Fatal("drain-and-delete recreated an absent PodSet")
 	}
 	_ = getTemplate(t, c)
 }

@@ -123,7 +123,7 @@ var (
 // sessionIsolationLevel envelope half, and the
 // terminated_at/terminated_reason and suspended_at/suspended_reason
 // columns are the §7.2 / §8.8 session-condition facts relocated off
-// Sandbox.status.conditions, all added in migration 0168. The nullable
+// AgentPod.status.conditions, all added in migration 0168. The nullable
 // condition timestamps COALESCE to NULL: a zero timestamp means the
 // condition has not fired. spec: §7.1; §7.2;
 // §8.8.
@@ -441,7 +441,7 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 			// §7.1.
 			sess.ConversationContinuity,
 			// $53-$54 — §7.2 / §8.8 Terminated session-condition fact
-			// relocated off Sandbox.status.conditions. terminated_at passes
+			// relocated off AgentPod.status.conditions. terminated_at passes
 			// through NullTime so a zero time persists as SQL NULL per the
 			// "condition has not fired" sentinel. spec: §7.2; §8.8.
 			pgtenant.NullTime(sess.TerminatedAt), sess.TerminatedReason,
@@ -1405,7 +1405,7 @@ func (s *Store) DeleteSlotReservation(ctx context.Context, podID, sessionID stri
 // session moved and the release's deletion did not finish). The NOT EXISTS reads sessions by primary key, so each
 // candidate costs one index probe.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
-// §4.6.1 (Orphaned SandboxClaim detection).
+// §4.6.1 (Orphaned PodClaim detection).
 func (s *Store) ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error) {
 	var deleted int
 	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {

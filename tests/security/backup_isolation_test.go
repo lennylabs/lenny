@@ -127,7 +127,7 @@ func TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11(t *testing.T) {
 		// steps 2-3 CRD/platform-config snapshot).
 		{name: "get-configmaps-allowed", verb: "get", resource: "configmaps", namespaced: true, allowed: true},
 		{name: "get-crds-allowed", verb: "get", resource: "customresourcedefinitions.apiextensions.k8s.io", namespaced: false, allowed: true},
-		{name: "list-sandboxes-allowed", verb: "list", resource: "sandboxes.lenny.dev", namespaced: true, allowed: true},
+		{name: "list-sandboxes-allowed", verb: "list", resource: "agentpods.lenny.dev", namespaced: true, allowed: true},
 	}
 
 	for _, tc := range cases {

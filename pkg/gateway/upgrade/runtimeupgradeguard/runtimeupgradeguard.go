@@ -4,8 +4,8 @@
 // /internal/runtime-upgrade/active endpoint. Two §10.5 cluster-side
 // safety controls read it:
 //
-//   - The lenny-sandboxtemplate-deletion-guard ValidatingAdmissionWebhook
-//     queries it before admitting a SandboxTemplate DELETE, so the old
+//   - The lenny-podset-deletion-guard ValidatingAdmissionWebhook
+//     queries it before admitting a PodSet DELETE, so the old
 //     template cannot be deleted while a RuntimeUpgrade record that
 //     references its pool is still active (§10.5, the "key
 //     safety invariant").
@@ -55,7 +55,7 @@ type activeResponse struct {
 
 // ServeHTTP reports whether the pool named in the `pool` query parameter
 // has an active RuntimeUpgrade. A store read failure returns HTTP 503 so
-// the calling webhook denies the SandboxTemplate deletion fail-closed
+// the calling webhook denies the PodSet deletion fail-closed
 // rather than admitting a delete it could not verify against the safety
 // invariant.
 //

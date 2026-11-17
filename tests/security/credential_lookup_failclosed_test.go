@@ -65,8 +65,8 @@ const (
 	lookupOutageToolRuntime   = "outage-tool"
 	lookupOutageAgentPool     = "outage-agent-pool"
 	lookupOutageToolPool      = "outage-tool-pool"
-	lookupOutageAgentSandbox  = "sbx-outage-agent"
-	lookupOutageToolSandbox   = "sbx-outage-tool"
+	lookupOutageAgentPod      = "sbx-outage-agent"
+	lookupOutageToolAgentPod  = "sbx-outage-tool"
 	lookupOutageCredPool      = "outage-claude-prod"
 )
 
@@ -252,7 +252,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 		if _, err := store.Get(ctx, "acme", "sess-outage-top"); !errors.Is(err, sessionstore.ErrNotFound) {
 			t.Errorf("the refused start persisted a row (err=%v)", err)
 		}
-		assertLookupOutageUnclaimed(t, cluster, lookupOutageAgentSandbox)
+		assertLookupOutageUnclaimed(t, cluster, lookupOutageAgentPod)
 
 		rr = post()
 		if rr.Code != http.StatusCreated && rr.Code != http.StatusOK {
@@ -315,7 +315,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 				t.Errorf("child %s is %s on %q during the outage; it ran without its credential", r.ID, r.State, r.PodAssignment)
 			}
 		}
-		assertLookupOutageUnclaimed(t, cluster, lookupOutageToolSandbox)
+		assertLookupOutageUnclaimed(t, cluster, lookupOutageToolAgentPod)
 
 		resp = denyLeakageDelegate(t, mcpSrv, "sess_parent_outage", lookupOutageToolRuntime, "independent")
 		result, _ = resp["result"].(map[string]any)
@@ -329,15 +329,15 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	})
 }
 
-func assertLookupOutageUnclaimed(t *testing.T, c client.Client, sandbox string) {
+func assertLookupOutageUnclaimed(t *testing.T, c client.Client, agentPod string) {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: deliveryGateNS, Name: "claim-" + sandbox}, &claim)
+	var claim lennyv1.PodClaim
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: deliveryGateNS, Name: "claim-" + agentPod}, &claim)
 	switch {
 	case err == nil:
-		t.Errorf("%s was claimed by a request refused before its claim", sandbox)
+		t.Errorf("%s was claimed by a request refused before its claim", agentPod)
 	case !apierrors.IsNotFound(err):
-		t.Fatalf("get claim of %s: %v", sandbox, err)
+		t.Fatalf("get claim of %s: %v", agentPod, err)
 	}
 }
 
@@ -362,8 +362,8 @@ func lookupOutageCluster(t *testing.T) client.Client {
 		t.Fatalf("create namespace: %v", err)
 	}
 	seedMaterializeCredPool(t, c, lookupOutageAgentPool, lookupOutageAgentPool+"-tmpl", lookupOutageAgentRuntime)
-	seedMaterializeCredSandbox(t, c, lookupOutageAgentSandbox, lookupOutageAgentPool, "10.244.6.21")
+	seedMaterializeCredAgentPod(t, c, lookupOutageAgentPod, lookupOutageAgentPool, "10.244.6.21")
 	seedMaterializeCredPool(t, c, lookupOutageToolPool, lookupOutageToolPool+"-tmpl", lookupOutageToolRuntime)
-	seedMaterializeCredSandbox(t, c, lookupOutageToolSandbox, lookupOutageToolPool, "10.244.6.22")
+	seedMaterializeCredAgentPod(t, c, lookupOutageToolAgentPod, lookupOutageToolPool, "10.244.6.22")
 	return c
 }

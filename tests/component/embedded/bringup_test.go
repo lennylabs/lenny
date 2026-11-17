@@ -49,10 +49,10 @@ import (
 // established through the host-rewritten kubeconfig.
 var expectedCRDs = []string{
 	"runtimes.lenny.dev",
-	"sandboxes.lenny.dev",
-	"sandboxclaims.lenny.dev",
-	"sandboxtemplates.lenny.dev",
-	"sandboxwarmpools.lenny.dev",
+	"agentpods.lenny.dev",
+	"podclaims.lenny.dev",
+	"podsets.lenny.dev",
+	"podsets.lenny.dev",
 }
 
 // requireDockerDaemon skips the test when no Docker daemon is reachable.

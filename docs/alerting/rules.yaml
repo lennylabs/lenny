@@ -168,15 +168,15 @@ groups:
             description: 'The RuntimeClass-aware admission policy webhook (OPA/Gatekeeper or Kyverno) has been unreachable for more than 30s. With failurePolicy: Fail, pod admission is denied — no new pods can be scheduled, halting warm pool replenishment.'
             runbook_url: https://docs.lenny.dev/runbooks/admission-webhook-outage
             summary: RuntimeClass-aware admission webhook unreachable
-        - alert: SandboxClaimGuardUnavailable
-          expr: up{job="lenny-sandboxclaim-guard"} == 0
+        - alert: PodClaimGuardUnavailable
+          expr: up{job="lenny-podclaim-guard"} == 0
           for: 30s
           labels:
             severity: critical
           annotations:
-            description: 'The lenny-sandboxclaim-guard ValidatingAdmissionWebhook has been unreachable for more than 30s. With failurePolicy: Fail, every SandboxClaim CREATE is blocked; new pod acquisition is prevented, halting session creation. Double-claim prevention is suspended until the webhook recovers.'
-            runbook_url: https://docs.lenny.dev/runbooks/sandboxclaim-guard-unavailable
-            summary: SandboxClaim guard webhook unreachable
+            description: 'The lenny-podclaim-guard ValidatingAdmissionWebhook has been unreachable for more than 30s. With failurePolicy: Fail, every PodClaim CREATE is blocked; new pod acquisition is prevented, halting session creation. Double-claim prevention is suspended until the webhook recovers.'
+            runbook_url: https://docs.lenny.dev/runbooks/podclaim-guard-unavailable
+            summary: PodClaim guard webhook unreachable
         - alert: DualStoreUnavailable
           expr: lenny_dual_store_unavailable == 1
           labels:
@@ -690,7 +690,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: 'The lenny-pool-config-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. Manual and reconciliation-driven SandboxTemplate/SandboxWarmPool updates stall until the webhook recovers.'
+            description: 'The lenny-pool-config-validator ValidatingAdmissionWebhook (failurePolicy: Fail) has been unreachable for more than 30s. Manual and reconciliation-driven PodSet updates stall until the webhook recovers.'
             summary: Pool config validator webhook unreachable
         - alert: PoolScalingAdmissionStuck
           expr: increase(lenny_pool_scaling_admission_denied_total[5m]) >= 10
@@ -982,13 +982,13 @@ groups:
           annotations:
             description: Cumulative lenny_warmpool_idle_pod_minutes for a pool exceeds the deployer-configured cost threshold over a rolling 24h window. The minWarm target or scale-to-zero schedule may need adjustment.
             summary: Warm pool idle cost above the configured threshold
-        - alert: SandboxClaimOrphanRateHigh
+        - alert: PodClaimOrphanRateHigh
           expr: increase(lenny_orphaned_claims_total[15m]) > 10
           labels:
             severity: warning
           annotations:
             description: lenny_orphaned_claims_total rate exceeds 10 orphaned claims in any 15-minute window. Indicates potential gateway instability — gateways creating claims but crashing before persisting sessions.
-            summary: SandboxClaim orphan rate high
+            summary: PodClaim orphan rate high
         - alert: OrphanTasksPerTenantHigh
           expr: lenny_orphan_tasks_active_per_tenant > 0.80 * scalar(lenny_max_orphan_tasks_per_tenant)
           labels:
@@ -1042,12 +1042,12 @@ groups:
             description: 'Durable-inbox enqueue is failing because the coordination Redis instance is unreachable; senders with durableInbox: true sessions are receiving error delivery receipts and inter-session coordination messages are being rejected.'
             summary: Durable-inbox Redis unavailable
         - alert: FinalizerStuck
-          expr: lenny_sandbox_finalizer_terminating_seconds > 300
+          expr: lenny_agentpod_finalizer_terminating_seconds > 300
           labels:
             severity: warning
           annotations:
-            description: A Sandbox pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
-            summary: A Sandbox pod finalizer is stuck
+            description: A AgentPod pod has been in Terminating state with the lenny.dev/session-cleanup finalizer present for more than 5 min. The warm pool controller could not confirm session checkpoint and safe finalizer removal.
+            summary: A AgentPod pod finalizer is stuck
         - alert: DedicatedDNSDegraded
           expr: kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} > 0 and kube_deployment_status_replicas_ready{deployment="lenny-agent-dns"} < scalar(lenny_agent_dns_min_replicas)
           labels:

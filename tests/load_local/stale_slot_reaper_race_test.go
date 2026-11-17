@@ -208,7 +208,7 @@ func (f *reapRace) lateRelease(t *testing.T, round int, stale string) {
 		return
 	}
 	if err := f.late.ReleaseSlot(context.Background(), &podsession.BindResult{
-		SessionID: stale, SandboxName: slotRacePod, Adapter: cl,
+		SessionID: stale, AgentPodName: slotRacePod, Adapter: cl,
 	}); err != nil {
 		t.Errorf("round %d: late release: %v", round, err)
 	}

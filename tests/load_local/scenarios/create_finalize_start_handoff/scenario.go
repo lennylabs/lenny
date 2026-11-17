@@ -6,9 +6,9 @@
 // handoff during the §7.1 create → finalize → start window under
 // concurrency. Proposal 0007 claims the warm pod at /create and assigns the
 // credential lease at /finalize, persisting the pod↔session binding (the
-// SandboxName + pool on the session row) so any gateway replica can reconnect
+// AgentPodName + pool on the session row) so any gateway replica can reconnect
 // from it (§4.6). A handoff mid-window must therefore reconstruct the binding
-// and release both the pod (the per-pod SandboxClaim) and the lease (the
+// and release both the pod (the per-pod PodClaim) and the lease (the
 // credential's active-session counter) when the session is retired, so the
 // reclaim does not orphan the pod or leak the lease.
 //
@@ -97,10 +97,10 @@ func claimName(pod string) string { return "claim-" + pod }
 // from.
 func (s *Scenario) claimOnReplicaA(pod, session string, finalize bool) (binding, error) {
 	if err := s.store.Create(&fakekube.Object{
-		Kind:        "SandboxClaim",
+		Kind:        "PodClaim",
 		Namespace:   "lenny-agents",
 		Name:        claimName(pod),
-		Annotations: map[string]string{"sandboxRef": pod, "tenantId": "acme"},
+		Annotations: map[string]string{"agentPodRef": pod, "tenantId": "acme"},
 	}); err != nil {
 		return binding{}, fmt.Errorf("replica A claim pod %s: %w", pod, err)
 	}
@@ -136,7 +136,7 @@ func (s *Scenario) reclaimOnReplicaB(b binding) error {
 	}
 	// DeleteClaim is idempotent; a missing claim returns nil. A claim still
 	// present before this delete is the expected case.
-	got, err := s.store.Get("SandboxClaim", "lenny-agents", claimName(b.pod))
+	got, err := s.store.Get("PodClaim", "lenny-agents", claimName(b.pod))
 	if err == nil && got != nil {
 		s.podClaims.Add(-1)
 	} else {
@@ -144,7 +144,7 @@ func (s *Scenario) reclaimOnReplicaB(b binding) error {
 		// double-release the durable binding must prevent.
 		s.doubleFree.Add(1)
 	}
-	if err := s.store.Delete("SandboxClaim", "lenny-agents", claimName(b.pod)); err != nil {
+	if err := s.store.Delete("PodClaim", "lenny-agents", claimName(b.pod)); err != nil {
 		return fmt.Errorf("replica B reclaim pod %s: %w", b.pod, err)
 	}
 	s.reclaimed.Add(1)

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package condition writes the §6.2 line-305 Sandbox `.status.conditions`
+// Package condition writes the §6.2 line-305 AgentPod `.status.conditions`
 // lifecycle history that §4.6.1 names as part of the authoritative state.
 // It is a leaf utility both the gateway (podsession) and the controller
 // (warmpool orphan-claim GC) depend on, so it lives under pkg/sandbox to
@@ -23,25 +23,25 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// Sandbox lifecycle condition types written by Apply. They are the §4.6.1
-// history entries operators read to learn why a Sandbox sits in a given
+// AgentPod lifecycle condition types written by Apply. They are the §4.6.1
+// history entries operators read to learn why a AgentPod sits in a given
 // §6.2 phase.
 //
-// The session-terminal and interrupt-suspension facts are NOT Sandbox
+// The session-terminal and interrupt-suspension facts are NOT AgentPod
 // conditions: the §5.2 mode collapse relocated them to the Postgres session
-// model (§7.2 / §8.8), because the gateway lost sandboxes/status RBAC and is
-// no longer a Sandbox.status writer (§4.6.3). The orphan-claim reclaim is the
+// model (§7.2 / §8.8), because the gateway lost agentpods/status RBAC and is
+// no longer a AgentPod.status writer (§4.6.3). The orphan-claim reclaim is the
 // sole remaining condition write, and the WarmPoolController performs it.
 const (
-	// OrphanClaimReclaimed records the §4.6.1 orphan-SandboxClaim
-	// collection that returned a Sandbox to idle. Written by the
-	// WarmPoolController, the sole writer of Sandbox.status (§4.6.3).
+	// OrphanClaimReclaimed records the §4.6.1 orphan-PodClaim
+	// collection that returned a AgentPod to idle. Written by the
+	// WarmPoolController, the sole writer of AgentPod.status (§4.6.3).
 	OrphanClaimReclaimed = "OrphanClaimReclaimed"
 )
 
-// Apply records a single §6.2 line-305 Sandbox status.conditions entry via
+// Apply records a single §6.2 line-305 AgentPod status.conditions entry via
 // SSA Apply. Each condition Type is owned by its own field manager
-// (`lenny-sandbox-cond-<type>`), so distinct lifecycle conditions (suspend,
+// (`lenny-agentpod-cond-<type>`), so distinct lifecycle conditions (suspend,
 // terminal disposition, orphan-claim reclaim, etc.) accumulate independently
 // rather than overwriting one another, and a condition write never disturbs
 // the §4.6.3 WPC-owned status.phase or the gateway's own phase claim (the
@@ -50,11 +50,11 @@ const (
 // entry in place because status.conditions is a `listType=map` keyed by
 // `type`.
 //
-// LastTransitionTime defaults to now and ObservedGeneration to the Sandbox's
+// LastTransitionTime defaults to now and ObservedGeneration to the AgentPod's
 // current generation when the caller leaves them unset; Status defaults to
 // True. On success the condition is merged into sb.Status.Conditions in
 // place so a caller chaining further writes sees a consistent view.
-func Apply(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, cond metav1.Condition) error {
+func Apply(ctx context.Context, cl client.Client, sb *lennyv1.AgentPod, cond metav1.Condition) error {
 	if cond.Type == "" {
 		return fmt.Errorf("sandbox/condition: empty condition type for sandbox %s", sb.Name)
 	}
@@ -67,10 +67,10 @@ func Apply(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, cond meta
 	if cond.ObservedGeneration == 0 {
 		cond.ObservedGeneration = sb.Generation
 	}
-	patch := &lennyv1.Sandbox{
+	patch := &lennyv1.AgentPod{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: lennyv1.GroupVersion.String(),
-			Kind:       "Sandbox",
+			Kind:       "AgentPod",
 		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sb.Name,
@@ -78,7 +78,7 @@ func Apply(ctx context.Context, cl client.Client, sb *lennyv1.Sandbox, cond meta
 		},
 	}
 	patch.Status.Conditions = []metav1.Condition{cond}
-	fieldOwner := "lenny-sandbox-cond-" + strings.ToLower(cond.Type)
+	fieldOwner := "lenny-agentpod-cond-" + strings.ToLower(cond.Type)
 	if err := cl.Status().Patch(ctx, patch, client.Apply,
 		client.FieldOwner(fieldOwner), client.ForceOwnership); err != nil {
 		return fmt.Errorf("sandbox/condition: apply %s on sandbox %s: %w", cond.Type, sb.Name, err)

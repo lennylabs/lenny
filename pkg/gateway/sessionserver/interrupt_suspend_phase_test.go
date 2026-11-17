@@ -28,10 +28,10 @@ import (
 // spec: §7.2 / §8.8 — `running → suspended` on interrupt_request +
 // interrupt_acknowledged is a session-model state on the Postgres session row.
 // The interrupt-suspension fact (SuspendedAt + SuspendedReason) lives on the
-// session row, not on Sandbox.status.conditions: the gateway lost
-// sandboxes/status RBAC and is no longer a Sandbox.status writer (§4.6.3), so
-// the gateway writes no Sandbox condition for the suspend. The pod stays in
-// the coarse `claimed` phase (the WarmPoolController is the sole Sandbox.status
+// session row, not on AgentPod.status.conditions: the gateway lost
+// agentpods/status RBAC and is no longer a AgentPod.status writer (§4.6.3), so
+// the gateway writes no AgentPod condition for the suspend. The pod stays in
+// the coarse `claimed` phase (the WarmPoolController is the sole AgentPod.status
 // writer). F-6.2.12.
 
 func suspendStubAdapter(t *testing.T, status adapterv1.InterruptResponse_Status) (*stubAdapterServer, *adapterclient.Client) {
@@ -51,16 +51,16 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
-	cluster := podBindClient(t, &lennyv1.Sandbox{
+	cluster := podBindClient(t, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-att", Namespace: testNS(t)},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.1"},
+		Status:     lennyv1.AgentPodStatus{Phase: string(state.Claimed), PodIP: "10.0.0.1"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_ACKNOWLEDGED)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess_sus", TenantID: "acme",
-		SandboxName: "sbx-att", Adapter: adapter,
+		AgentPodName: "sbx-att", Adapter: adapter,
 	})
 
 	srv := sessionserver.New(store, sessionserver.Options{
@@ -92,12 +92,12 @@ func TestInterruptRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 	}
 	// spec: §4.6.3 — the gateway writes no Sandbox.status field; the pod stays
 	// in the coarse `claimed` phase and no condition is written.
-	sb := getSandbox(t, cluster, "sbx-att")
+	sb := getAgentPod(t, cluster, "sbx-att")
 	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("F-6.2.13: Sandbox.status.phase = %q, want claimed (suspended is a session-model state)", sb.Status.Phase)
+		t.Errorf("F-6.2.13: AgentPod.status.phase = %q, want claimed (suspended is a session-model state)", sb.Status.Phase)
 	}
 	if len(sb.Status.Conditions) != 0 {
-		t.Errorf("§4.6.3: gateway must write no Sandbox condition; got %+v", sb.Status.Conditions)
+		t.Errorf("§4.6.3: gateway must write no AgentPod condition; got %+v", sb.Status.Conditions)
 	}
 }
 
@@ -114,16 +114,16 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
-	cluster := podBindClient(t, &lennyv1.Sandbox{
+	cluster := podBindClient(t, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-to", Namespace: testNS(t)},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.2"},
+		Status:     lennyv1.AgentPodStatus{Phase: string(state.Claimed), PodIP: "10.0.0.2"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_INTERRUPT_TIMEOUT)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess_to", TenantID: "acme",
-		SandboxName: "sbx-to", Adapter: adapter,
+		AgentPodName: "sbx-to", Adapter: adapter,
 	})
 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodBinder: binder, PodRegistry: reg})
@@ -147,17 +147,17 @@ func TestInterruptTimeoutRecordsSuspendedConditionOnRow_spec_7_2(t *testing.T) {
 		t.Errorf("F-6.2.12: SuspendedReason = %q, want InterruptTimeout", row.SuspendedReason)
 	}
 	// spec: §4.6.3 — the pod stays in the coarse `claimed` phase; no condition.
-	sb := getSandbox(t, cluster, "sbx-to")
+	sb := getAgentPod(t, cluster, "sbx-to")
 	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("F-6.2.13 timeout path: Sandbox.status.phase = %q, want claimed", sb.Status.Phase)
+		t.Errorf("F-6.2.13 timeout path: AgentPod.status.phase = %q, want claimed", sb.Status.Phase)
 	}
 	if len(sb.Status.Conditions) != 0 {
-		t.Errorf("§4.6.3: gateway must write no Sandbox condition; got %+v", sb.Status.Conditions)
+		t.Errorf("§4.6.3: gateway must write no AgentPod condition; got %+v", sb.Status.Conditions)
 	}
 }
 
 // spec: §4.7 STATUS_BUSY — the row stays running; no Suspended fact is stamped
-// on the row and the Sandbox stays in the coarse `claimed` phase.
+// on the row and the AgentPod stays in the coarse `claimed` phase.
 func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	t.Parallel()
 	store := memstore.New()
@@ -168,16 +168,16 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 		State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
 	})
 
-	cluster := podBindClient(t, &lennyv1.Sandbox{
+	cluster := podBindClient(t, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-bz", Namespace: testNS(t)},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.3"},
+		Status:     lennyv1.AgentPodStatus{Phase: string(state.Claimed), PodIP: "10.0.0.3"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 	_, adapter := suspendStubAdapter(t, adapterv1.InterruptResponse_STATUS_BUSY)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
 		SessionID: "sess_busy", TenantID: "acme",
-		SandboxName: "sbx-bz", Adapter: adapter,
+		AgentPodName: "sbx-bz", Adapter: adapter,
 	})
 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, PodBinder: binder, PodRegistry: reg})
@@ -198,17 +198,17 @@ func TestInterruptBusyLeavesRowRunning_spec_7_2(t *testing.T) {
 	if !row.SuspendedAt.IsZero() {
 		t.Errorf("BUSY must not stamp SuspendedAt; got %v", row.SuspendedAt)
 	}
-	sb := getSandbox(t, cluster, "sbx-bz")
+	sb := getAgentPod(t, cluster, "sbx-bz")
 	if sb.Status.Phase != string(state.Claimed) {
-		t.Errorf("BUSY must not flip Sandbox.status.phase; got %q, want claimed", sb.Status.Phase)
+		t.Errorf("BUSY must not flip AgentPod.status.phase; got %q, want claimed", sb.Status.Phase)
 	}
 	if len(sb.Status.Conditions) != 0 {
-		t.Errorf("§4.6.3: gateway must write no Sandbox condition; got %+v", sb.Status.Conditions)
+		t.Errorf("§4.6.3: gateway must write no AgentPod condition; got %+v", sb.Status.Conditions)
 	}
 }
 
 // spec: the no-binding fallback path must still flip the session row and stamp
-// the Suspended fact even when there is no Sandbox to update. F-6.2.12.
+// the Suspended fact even when there is no AgentPod to update. F-6.2.12.
 func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	now := time.Now()
@@ -233,7 +233,7 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 		t.Errorf("row state = %q, want suspended", row.State)
 	}
 	// Even with no pod binding the Suspended fact is stamped on the row: the
-	// fact is a session-model field, independent of the Sandbox.
+	// fact is a session-model field, independent of the AgentPod.
 	if row.SuspendedAt.IsZero() {
 		t.Errorf("F-6.2.12: SuspendedAt not stamped in row-only mode")
 	}
@@ -242,10 +242,10 @@ func TestInterruptSuspendNoBindingStampsRow_spec_7_2(t *testing.T) {
 	}
 }
 
-// getSandbox reads a Sandbox by name from the envtest cluster.
-func getSandbox(t *testing.T, c client.Client, name string) lennyv1.Sandbox {
+// getAgentPod reads a AgentPod by name from the envtest cluster.
+func getAgentPod(t *testing.T, c client.Client, name string) lennyv1.AgentPod {
 	t.Helper()
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: name}, &sb); err != nil {
 		t.Fatalf("get sandbox %s: %v", name, err)
 	}

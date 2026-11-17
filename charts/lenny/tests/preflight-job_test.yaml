@@ -198,7 +198,7 @@ tests:
           path: spec.template.spec.containers[0].args
           content: "--required-runtime-classes=sandboxed=gvisor"
 
-  - it: grants the preflight SA RuntimeClass and SandboxTemplate read
+  - it: grants the preflight SA RuntimeClass and PodSet read
     documentSelector:
       path: kind
       value: ClusterRole
@@ -213,7 +213,7 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxtemplates"]
+            resources: ["podsets"]
             verbs: ["list"]
 
   # spec: §13.1 — the host-sharing and credential-fsGroup

@@ -677,7 +677,7 @@ func assertInheritChildDrawsFromOriginPool(t *testing.T) {
 const crossEnvNS = "lenny-agents"
 
 // sharedToolCluster returns an envtest-backed cluster seeded with a warm
-// pool, its template, and one idle Sandbox for the shared-tool runtime, so
+// pool, its template, and one idle AgentPod for the shared-tool runtime, so
 // the create handler can claim a pod for the inherit child.
 func sharedToolCluster(t *testing.T) client.Client {
 	t.Helper()
@@ -697,19 +697,19 @@ func sharedToolCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: crossEnvNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "shared-pool", Namespace: crossEnvNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "shared-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "shared-tmpl", MinWarm: 1, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "shared-tmpl", Namespace: crossEnvNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "shared-tool", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "shared-tool", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.Sandbox{
+	if err := c.Create(ctx, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sbx-share", Namespace: crossEnvNS,
 			Labels: map[string]string{warmpool.LabelPool: "shared-pool"},
@@ -719,7 +719,7 @@ func sharedToolCluster(t *testing.T) client.Client {
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName("sbx-share")
 	u.SetNamespace(crossEnvNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": "10.244.2.9"}, "status")

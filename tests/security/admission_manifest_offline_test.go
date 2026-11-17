@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/podsecurity"
 )
 

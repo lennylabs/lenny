@@ -19,7 +19,7 @@
 // the §4.4 eviction-checkpoint trigger on an individual agent pod's
 // termination. checkpoint.TriggerEviction (pkg/checkpoint/checkpoint.go)
 // is defined with its own §4.4 retry budget, and the agent pod's
-// preStop hook (pkg/controller/sandbox/podspec/podspec.go
+// preStop hook (pkg/controller/agentpod/podspec/podspec.go
 // preStopDrainHook) drains the adapter so an in-flight gateway
 // Checkpoint RPC is not SIGKILLed at the grace deadline — but no
 // gateway code path invokes the checkpointer with TriggerEviction, so

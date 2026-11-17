@@ -30,7 +30,7 @@ entries:
     reason: |-
       a custom resource definition rendered by the chart generator, which writes no generation marker into the manifest
   - member: |-
-      charts/lenny/crds/lenny.dev_sandboxes.yaml
+      charts/lenny/crds/lenny.dev_agentpods.yaml
     class: generated-artifacts
     disposition: in-class
     reason: |-
@@ -60,7 +60,7 @@ entries:
     reason: |-
       a copy of a chart custom resource definition, which the copying producer writes without a generation marker
   - member: |-
-      pkg/embedded/crds/lenny.dev_sandboxes.yaml
+      pkg/embedded/crds/lenny.dev_agentpods.yaml
     class: generated-artifacts
     disposition: in-class
     reason: |-

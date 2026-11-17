@@ -50,7 +50,7 @@ func TestReportOnASuspendedRowNeedsItsPod_spec_6_2(t *testing.T) {
 			t.Run(oc.name+"/"+pre, func(t *testing.T) {
 				f := newFunnelFixture(t, funnelOpts{})
 				_, bind := f.seed(t, "s", session.StateSuspended, oc.retries, false)
-				pod := bind.SandboxName
+				pod := bind.AgentPodName
 				if pre == "podless before the read" {
 					pod = ""
 				}
@@ -70,7 +70,7 @@ func TestReportOnASuspendedRowNeedsItsPod_spec_6_2(t *testing.T) {
 				}
 				before := f.state(t, "s")
 				_, err := f.srv.ReportSessionFailure(context.Background(), FailureReport{
-					TenantID: "acme", SessionID: "s", Reason: oc.reason, PodAssignment: bind.SandboxName,
+					TenantID: "acme", SessionID: "s", Reason: oc.reason, PodAssignment: bind.AgentPodName,
 				})
 				if err != nil {
 					t.Fatalf("ReportSessionFailure: %v", err)

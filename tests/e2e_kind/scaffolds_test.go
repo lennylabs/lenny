@@ -71,7 +71,7 @@ const nodeDrainReplenishBound = 3 * time.Minute
 // sessiondriver, drains the node hosting the bound agent pod, and
 // asserts the WarmPoolController replenishes the pool to minWarm. Skips
 // "precondition not met" when --agent-namespace is unset (the §4.6 pod
-// binder is nil so no SandboxClaim is written). The §12.5 drain-
+// binder is nil so no PodClaim is written). The §12.5 drain-
 // readiness + §4.4 checkpoint half (session reaches
 // awaiting_client_action) needs an unhealthy MinIO probe and the
 // checkpointer, both deferred from Phase 8.
@@ -101,7 +101,7 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 	// deny-all, and this test creates sessions that name no environment.
 	ensureTenantAllowsSessionsWithNoEnvironment(t, d, tenant)
 
-	// Drive a session onto the sidecar pool so a §4.6 SandboxClaim is
+	// Drive a session onto the sidecar pool so a §4.6 PodClaim is
 	// written and a specific agent pod is bound.
 	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
 	if err != nil {
@@ -116,9 +116,9 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 
 	podName := lookupBoundPodForSession(t, c, sess.ID)
 	if podName == "" {
-		t.Skipf("precondition not met: no SandboxClaim binding found for session %s; "+
+		t.Skipf("precondition not met: no PodClaim binding found for session %s; "+
 			"the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — "+
-			"the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents "+
+			"the session is in-memory only and no AgentPod is claimed. Set --agent-namespace=lenny-agents "+
 			"on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.", sess.ID)
 	}
 	t.Logf("session %s is bound to agent pod %s", sess.ID, podName)
@@ -131,8 +131,8 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 	if pool == "" {
 		t.Fatalf("could not resolve the §4.6 pool label on agent pod %s", podName)
 	}
-	preIdle := countIdleSandboxesInPool(t, c, pool)
-	t.Logf("agent pod %s runs on node %s in pool %s (idle Sandbox count before drain: %d)",
+	preIdle := countIdleAgentPodsInPool(t, c, pool)
+	t.Logf("agent pod %s runs on node %s in pool %s (idle AgentPod count before drain: %d)",
 		podName, node, pool, preIdle)
 
 	// Drain the node. `kubectl drain` cordons it (so the WarmPoolController
@@ -140,7 +140,7 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 	// pod. --delete-emptydir-data and --ignore-daemonsets are needed
 	// because Kind nodes carry kube-proxy and kindnet DaemonSets and the
 	// agent pods use emptyDir for the workspace. --force evicts pods that
-	// are not managed by a ReplicaSet (Sandbox-owned pods carry no
+	// are not managed by a ReplicaSet (AgentPod-owned pods carry no
 	// ReplicaSet owner reference). The cordon is reverted in a t.Cleanup
 	// so subsequent tests on the same cluster see all workers available.
 	t.Cleanup(func() {
@@ -157,20 +157,20 @@ func TestNodeDrainDuringActiveSession(t *testing.T) {
 	t.Logf("drained node %s", node)
 
 	// Assert the WarmPoolController brings the pool back to minWarm on a
-	// surviving worker. The replacement Sandbox is created with no node
+	// surviving worker. The replacement AgentPod is created with no node
 	// affinity, so the cordoned node is excluded automatically.
 	reached := pollUntilCondition(nodeDrainReplenishBound, 3*time.Second, func() bool {
-		return countIdleSandboxesInPool(t, c, pool) >= 1
+		return countIdleAgentPodsInPool(t, c, pool) >= 1
 	})
 	if !reached {
 		t.Errorf("TESTING.md §13.19 / §4.6.1 violation: warm pool %s did not replenish to minWarm within %s "+
-			"after node %s was drained (idle Sandbox count before drain %d, current %d); the "+
+			"after node %s was drained (idle AgentPod count before drain %d, current %d); the "+
 			"WarmPoolController did not replace the evicted pod on a surviving worker",
-			pool, nodeDrainReplenishBound, node, preIdle, countIdleSandboxesInPool(t, c, pool))
+			pool, nodeDrainReplenishBound, node, preIdle, countIdleAgentPodsInPool(t, c, pool))
 		return
 	}
-	t.Logf("TESTING.md §13.19 / §4.6.1: warm pool %s replenished to minWarm; pool has %d idle Sandbox(es) "+
-		"after node drain", pool, countIdleSandboxesInPool(t, c, pool))
+	t.Logf("TESTING.md §13.19 / §4.6.1: warm pool %s replenished to minWarm; pool has %d idle AgentPod(es) "+
+		"after node drain", pool, countIdleAgentPodsInPool(t, c, pool))
 }
 
 // TESTING.md §13.27 Phase 12c — concurrent execution modes. The §5.2 concurrent-
@@ -313,17 +313,17 @@ func TestCrossEnvironmentDelegation(t *testing.T) {
 		"e2e_kind-tier ops backlog.")
 }
 
-// lookupBoundPodForSession returns the Sandbox name (which doubles as
+// lookupBoundPodForSession returns the AgentPod name (which doubles as
 // the agent pod name in the e2e install) bound to sessionID via a
-// SandboxClaim, or "" when no claim exists for the session. A missing
+// PodClaim, or "" when no claim exists for the session. A missing
 // claim means the gateway placed the session in-memory because the
 // install runs without --agent-namespace.
 func lookupBoundPodForSession(t *testing.T, c *kind.Cluster, sessionID string) string {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
-		"-n", scaffoldsAgentNamespace, "get", "sandboxclaim",
-		"-o", "jsonpath={range .items[*]}{.spec.sessionId}{\"\\t\"}{.spec.sandboxRef}{\"\\n\"}{end}",
+		"-n", scaffoldsAgentNamespace, "get", "podclaim",
+		"-o", "jsonpath={range .items[*]}{.spec.sessionId}{\"\\t\"}{.spec.agentPodRef}{\"\\n\"}{end}",
 	)
 	if err != nil {
 		return ""
@@ -372,11 +372,11 @@ func lookupPodPoolLabel(t *testing.T, c *kind.Cluster, podName string) string {
 	return strings.TrimSpace(out)
 }
 
-// countIdleSandboxesInPool returns the number of Sandbox CRs in pool
+// countIdleAgentPodsInPool returns the number of AgentPod CRs in pool
 // whose .status.phase is idle. The §4.6.1 WarmPoolController maintains
-// minWarm idle Sandboxes per pool, so this is the post-drain assertion
+// minWarm idle AgentPods per pool, so this is the post-drain assertion
 // signal.
-func countIdleSandboxesInPool(t *testing.T, c *kind.Cluster, pool string) int {
+func countIdleAgentPodsInPool(t *testing.T, c *kind.Cluster, pool string) int {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,

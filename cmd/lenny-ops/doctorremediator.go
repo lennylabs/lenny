@@ -31,7 +31,7 @@ import (
 const (
 	doctorOptOutAnnotation = "lenny.dev/doctor-optout"
 	// doctorRedriveAnnotation is the annotation the warmPoolStuckReplenish fix
-	// stamps on a stalled SandboxWarmPool to re-drive the WarmPoolController.
+	// stamps on a stalled PodSet to re-drive the WarmPoolController.
 	// The apiserver honors an annotation write (advancing resourceVersion and
 	// emitting a watch Update event) where a direct .metadata.generation write
 	// is a no-op, so this achieves the §25.6 "triggers controller to re-drive"
@@ -70,7 +70,7 @@ type poolDiagnosisSource interface {
 //   - coreDnsStuckEndpoint: rolling restart of the CoreDNS Deployment.
 //   - certManagerExpiring: force re-issuance (annotate + delete Secret).
 //   - warmPoolStuckReplenish: stamp a re-drive annotation on the
-//     SandboxWarmPool so the apiserver emits a watch event and the controller
+//     PodSet so the apiserver emits a watch event and the controller
 //     re-drives the stalled pool (a direct generation write is server-side
 //     no-op, so it never re-drives).
 //   - bootstrapConfigDrift: re-apply the Helm-rendered lenny-bootstrap
@@ -110,24 +110,16 @@ type k8sDoctorRemediator struct {
 	now    func() time.Time
 }
 
-// sandboxWarmPoolGVR is the §5.2 SandboxWarmPool custom resource the
-// warmPoolStuckReplenish fix enumerates and re-drives (re-drive annotation).
+// podSetGVR is the §5.2 PodSet custom resource the warmPoolStuckReplenish
+// fix enumerates and re-drives (re-drive annotation). The
+// WarmPoolController writes the PoolDrained condition onto the same
+// PodSet's status (`updatePoolConditions`,
+// pkg/controller/warmpool/controller.go), so the dwell is read from it too.
 // Pools are platform-global CRs, so the fix acts cluster-wide.
-var sandboxWarmPoolGVR = schema.GroupVersionResource{
+var podSetGVR = schema.GroupVersionResource{
 	Group:    "lenny.dev",
 	Version:  "v1alpha1",
-	Resource: "sandboxwarmpools",
-}
-
-// sandboxTemplateGVR is the §5.2 SandboxTemplate the WarmPoolController
-// writes the PoolDrained condition onto (`updateTemplateCondition`,
-// pkg/controller/warmpool/controller.go). The pool's own status never
-// carries that condition, so the warmPoolStuckReplenish dwell is read
-// from the template the pool references (spec.templateRef).
-var sandboxTemplateGVR = schema.GroupVersionResource{
-	Group:    "lenny.dev",
-	Version:  "v1alpha1",
-	Resource: "sandboxtemplates",
+	Resource: "podsets",
 }
 
 // warmPoolStuckWindow is the §25.6 dwell threshold: a pool in
@@ -136,7 +128,7 @@ var sandboxTemplateGVR = schema.GroupVersionResource{
 const warmPoolStuckWindow = 5 * time.Minute
 
 // poolDrainedConditionType is the §5.2 condition the WarmPoolController
-// writes onto the SandboxTemplate (not the pool). Its True state (no idle
+// writes onto the PodSet (not the pool). Its True state (no idle
 // and no warming pods) is exactly the §25.6 state, and its lastTransitionTime supplies the durable
 // >5m dwell timestamp the pool's own status does not carry.
 //
@@ -341,21 +333,21 @@ func (r *k8sDoctorRemediator) applyCertExpiring(ctx context.Context, resource st
 	return nil
 }
 
-// detectWarmPoolStuck reports warmPoolStuckReplenish for each SandboxWarmPool
+// detectWarmPoolStuck reports warmPoolStuckReplenish for each PodSet
 // that is stalled per §25.6: the §25.6 pool diagnosis classifies
 // its bottleneck as DEMAND_EXCEEDS_SUPPLY (claim rate outpaces replenishment
 // rate) with zero in-flight warm-up claims (no warming and no claimed pods),
 // and the pool has dwelt in that no-progress state for longer than the 5m
 // window. The DEMAND_EXCEEDS_SUPPLY classification and the pod-state
 // breakdown come from the injected §25.6 DataSource; the durable >5m dwell
-// comes from the PoolWarmingUp/Drained condition the WarmPoolController
-// writes onto the referenced SandboxTemplate (the pool's own status never
-// carries it). A nil pool-diagnosis source leaves the finding undetected.
+// comes from the PoolDrained condition the WarmPoolController writes onto
+// the PodSet's status. A nil pool-diagnosis source leaves the finding
+// undetected.
 func (r *k8sDoctorRemediator) detectWarmPoolStuck(ctx context.Context) ([]doctor.Detected, error) {
 	if r.dyn == nil || r.poolDx == nil {
 		return nil, nil
 	}
-	list, err := r.dyn.Resource(sandboxWarmPoolGVR).List(ctx, metav1.ListOptions{})
+	list, err := r.dyn.Resource(podSetGVR).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		if isAbsent(err) {
 			return nil, nil
@@ -383,11 +375,11 @@ func (r *k8sDoctorRemediator) detectWarmPoolStuck(ctx context.Context) ([]doctor
 	return out, nil
 }
 
-// warmPoolStuck reports whether a SandboxWarmPool is in the §25.6 stuck-replenish state. It requires all three conjuncts the spec
+// warmPoolStuck reports whether a PodSet is in the §25.6 stuck-replenish state. It requires all three conjuncts the spec
 // names: the §25.6 bottleneck classification is DEMAND_EXCEEDS_SUPPLY;
 // the pod-state breakdown shows zero in-flight warm-up claims (no warming
-// and no claimed pods); and the referenced SandboxTemplate's
-// PoolWarmingUp/Drained condition (the zero-in-flight state) has dwelt
+// and no claimed pods); and the PodSet's PoolDrained condition (the
+// zero-in-flight state) has dwelt
 // past warmPoolStuckWindow. A pool that is actively warming pods (a
 // non-zero warming or claimed count, or a Provisioning condition) is not
 // stuck: it is making progress, which is why the spec keys detection on
@@ -409,8 +401,8 @@ func (r *k8sDoctorRemediator) warmPoolStuck(ctx context.Context, u *unstructured
 	if diag.PodCounts.Warming > 0 || diag.PodCounts.Claimed > 0 {
 		return false, nil
 	}
-	// The >5m dwell is read from the SandboxTemplate's PoolWarmingUp/Drained
-	// condition, the durable timestamp for the zero-in-flight state.
+	// The >5m dwell is read from the PodSet's PoolDrained condition, the
+	// durable timestamp for the zero-in-flight state.
 	dwelt, err := r.warmPoolDrainedPastWindow(ctx, u, now)
 	if err != nil {
 		return false, err
@@ -418,31 +410,17 @@ func (r *k8sDoctorRemediator) warmPoolStuck(ctx context.Context, u *unstructured
 	return dwelt, nil
 }
 
-// warmPoolDrainedPastWindow reports whether the SandboxTemplate the pool
-// references carries a PoolDrained condition in its True state (the §25.6
-// zero-in-flight state) whose lastTransitionTime is older than
-// warmPoolStuckWindow. It reads the condition from the template rather than
-// the pool because the WarmPoolController writes PoolDrained onto the
-// SandboxTemplate status, never onto the pool's own status. Because the
+// warmPoolDrainedPastWindow reports whether the PodSet carries a
+// PoolDrained condition in its True state (the §25.6 zero-in-flight state)
+// whose lastTransitionTime is older than warmPoolStuckWindow. Because the
 // condition's Status flips False→True on entry into the drained state,
 // lastTransitionTime marks entry and the >5m dwell gate holds even for the
 // common Available→Drained path (unlike the PoolWarmingUp condition, whose
-// Available and Drained states share a False status). A pool with no
-// templateRef, an unreadable template, or no PoolDrained=True condition is
-// treated as not-yet-dwelt (no finding), failing closed.
-func (r *k8sDoctorRemediator) warmPoolDrainedPastWindow(ctx context.Context, pool *unstructured.Unstructured, now time.Time) (bool, error) {
-	templateRef, _, _ := unstructured.NestedString(pool.Object, "spec", "templateRef")
-	if templateRef == "" {
-		return false, nil
-	}
-	tmpl, err := r.dyn.Resource(sandboxTemplateGVR).Namespace(pool.GetNamespace()).Get(ctx, templateRef, metav1.GetOptions{})
-	if err != nil {
-		if isAbsent(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	conds, ok, _ := unstructured.NestedSlice(tmpl.Object, "status", "conditions")
+// Available and Drained states share a False status). A PodSet with no
+// PoolDrained=True condition is treated as not-yet-dwelt (no finding),
+// failing closed.
+func (r *k8sDoctorRemediator) warmPoolDrainedPastWindow(_ context.Context, pool *unstructured.Unstructured, now time.Time) (bool, error) {
+	conds, ok, _ := unstructured.NestedSlice(pool.Object, "status", "conditions")
 	if !ok {
 		return false, nil
 	}
@@ -467,13 +445,13 @@ func (r *k8sDoctorRemediator) warmPoolDrainedPastWindow(ctx context.Context, poo
 	return false, nil
 }
 
-// applyWarmPoolStuck re-drives the stalled SandboxWarmPool (spec line 2956:
+// applyWarmPoolStuck re-drives the stalled PodSet (spec line 2956:
 // "Bumps pool generation (triggers controller to re-drive)"). It stamps a
 // re-drive annotation carrying the current timestamp onto .metadata, which
 // the apiserver honors: an annotation write is a spec-adjacent metadata
 // change that advances .metadata.resourceVersion and (as a spec-file change)
 // bumps .metadata.generation server-side, and it emits a watch Update event.
-// The WarmPoolController is registered For(SandboxWarmPool) (controller.go
+// The WarmPoolController is registered For(PodSet) (controller.go
 // SetupWithManager) and enqueues on that event, so the stalled pool is
 // re-driven. A direct .metadata.generation write would be a no-op against a
 // real apiserver — generation is server-managed and recomputed on update — so
@@ -485,7 +463,7 @@ func (r *k8sDoctorRemediator) applyWarmPoolStuck(ctx context.Context, resource s
 	if !ok {
 		return fmt.Errorf("malformed warm-pool resource %q", resource)
 	}
-	client := r.dyn.Resource(sandboxWarmPoolGVR).Namespace(ns)
+	client := r.dyn.Resource(podSetGVR).Namespace(ns)
 	patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
 		doctorRedriveAnnotation, r.clock().UTC().Format(time.RFC3339Nano))
 	if _, err := client.Patch(ctx, name, types.MergePatchType, []byte(patch), metav1.PatchOptions{}); err != nil {

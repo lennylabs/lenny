@@ -23,17 +23,17 @@ import (
 )
 
 // occupancy is the projection input the OccupancyReconciler reduces one
-// Sandbox plus its per-pod SandboxClaim to. It is the level-triggered view
-// that ProjectOccupancyPhase maps to the coarse Sandbox.status.phase, kept
+// AgentPod plus its per-pod PodClaim to. It is the level-triggered view
+// that ProjectOccupancyPhase maps to the coarse AgentPod.status.phase, kept
 // as a pure value so the §4.6.1 / §4.6.3 projection table can be exhaustively
 // unit-tested without a cluster.
 //
 // spec: §4.6.1 (occupancy projection), §4.6.3 (binding-state enumeration).
 type occupancy struct {
-	// Current is the Sandbox's live status.phase.
+	// Current is the AgentPod's live status.phase.
 	Current state.State
-	// HasClaim reports whether a per-pod SandboxClaim (claim-<podName>)
-	// exists for the Sandbox.
+	// HasClaim reports whether a per-pod PodClaim (claim-<podName>)
+	// exists for the AgentPod.
 	HasClaim bool
 	// Binding is the claim's status.phase binding state when HasClaim is
 	// true; empty otherwise (or while a freshly created claim has not yet
@@ -45,11 +45,11 @@ type occupancy struct {
 	RewarmStarted bool
 }
 
-// ProjectOccupancyPhase computes the coarse Sandbox.status.phase as a
-// level-triggered projection of per-pod SandboxClaim existence, the claim's
+// ProjectOccupancyPhase computes the coarse AgentPod.status.phase as a
+// level-triggered projection of per-pod PodClaim existence, the claim's
 // binding state, and the rewarm stamp (§4.6.1, §6.2, §4.6.3). It returns the
 // projected phase and whether the projection owns the pod's phase at all:
-// when ok is false the warm-fill and SDK-warm legs the Sandbox-to-Pod
+// when ok is false the warm-fill and SDK-warm legs the AgentPod-to-Pod
 // reconciler owns (warming→idle, the preConnect pre-idle sdk_connecting, idle,
 // and the terminal phases) are left untouched, so the occupancy projection
 // never fights the warm-fill writer for an unclaimed pod.
@@ -80,9 +80,9 @@ type occupancy struct {
 //     scrub-before-idle invariant of §5.2).
 //
 // spec: §4.6.1 (occupancy projection), §6.2 (coarse pod state machine,
-// recycle edges), §4.6.3 (SandboxClaim binding-state enumeration).
+// recycle edges), §4.6.3 (PodClaim binding-state enumeration).
 func ProjectOccupancyPhase(o occupancy) (state.State, bool) {
-	// failed and terminated are the Sandbox-to-Pod reconciler's terminals,
+	// failed and terminated are the AgentPod-to-Pod reconciler's terminals,
 	// and §6.2 leaves failed only through failed → draining. A claim that
 	// outlives the pod's failure (for example a recycling claim whose SDK
 	// re-warm watchdog fired) must not pull the pod back into an occupancy
@@ -138,7 +138,7 @@ func ProjectOccupancyPhase(o occupancy) (state.State, bool) {
 	// is deleted (a non-recycling release, the one-session-only invariant,
 	// or an orphan-GC reclaim of a still-claimed pod that was never scrubbed)
 	// drains. A pod in any warm-fill phase (warming, idle, the pre-idle
-	// sdk_connecting leg) or a terminal phase is the Sandbox-to-Pod
+	// sdk_connecting leg) or a terminal phase is the AgentPod-to-Pod
 	// reconciler's to own.
 	switch o.Current {
 	case state.Reserved:
@@ -159,18 +159,18 @@ func ProjectOccupancyPhase(o occupancy) (state.State, bool) {
 }
 
 // OccupancyReconciler is the §4.6.1 claim-driven occupancy projection arm of
-// the WarmPoolController. It reconciles Sandboxes and additionally wakes on
-// SandboxClaim changes mapped to their owning Sandbox (via spec.sandboxRef,
+// the WarmPoolController. It reconciles AgentPods and additionally wakes on
+// PodClaim changes mapped to their owning AgentPod (via spec.agentPodRef,
 // the deterministic claim-<podName> name), so every binding-state transition
-// re-projects the Sandbox phase. It is the sole writer of the coarse
+// re-projects the AgentPod phase. It is the sole writer of the coarse
 // occupancy phases the per-pod claim drives (claimed, reserved, the recycle
 // sdk_connecting re-warm leg, and the claim-DELETE return to idle or
-// draining); the Sandbox-to-Pod reconciler keeps the warm-fill and SDK-warm
-// pre-idle legs. Both write Sandbox.status.phase under the single
+// draining); the AgentPod-to-Pod reconciler keeps the warm-fill and SDK-warm
+// pre-idle legs. Both write AgentPod.status.phase under the single
 // lenny-warm-pool-controller field manager, so the §4.6.3 sole-writer
 // invariant holds across the two arms.
 //
-// The gateway never writes Sandbox.status (§4.6.3 ownership decomposition):
+// The gateway never writes AgentPod.status (§4.6.3 ownership decomposition):
 // it creates and deletes the claim and writes the claim binding state, and
 // this projection turns that into the pod phase.
 //
@@ -190,15 +190,15 @@ type OccupancyReconciler struct {
 	QueueFactory controllermetrics.QueueFactory
 }
 
-// Reconcile projects one Sandbox's coarse occupancy phase from its per-pod
-// SandboxClaim. It reads the claim (if any), computes the projected phase,
+// Reconcile projects one AgentPod's coarse occupancy phase from its per-pod
+// PodClaim. It reads the claim (if any), computes the projected phase,
 // and SSA-patches it under the WPC field manager when it changes.
 func (r *OccupancyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := r.Client.Get(ctx, req.NamespacedName, &sb); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-	// A Sandbox being torn down is the Sandbox-to-Pod reconciler's to drive
+	// A AgentPod being torn down is the AgentPod-to-Pod reconciler's to drive
 	// to terminated; re-projecting its phase here is pointless and would
 	// fight the teardown.
 	if sb.DeletionTimestamp != nil {
@@ -225,38 +225,38 @@ func (r *OccupancyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-// observeClaim reads the per-pod SandboxClaim (claim-<podName>) for the
-// Sandbox and returns its binding state, whether it carries a rewarm stamp,
+// observeClaim reads the per-pod PodClaim (claim-<podName>) for the
+// AgentPod and returns its binding state, whether it carries a rewarm stamp,
 // and whether it exists at all. A NotFound is the no-claim case (a released
 // or never-claimed pod), reported as hasClaim=false rather than an error.
 func (r *OccupancyReconciler) observeClaim(ctx context.Context, namespace, podName string) (claimstate.State, bool, bool, error) {
-	var cl lennyv1.SandboxClaim
+	var cl lennyv1.PodClaim
 	key := client.ObjectKey{Namespace: namespace, Name: occupancyClaimName(podName)}
 	if err := r.Client.Get(ctx, key, &cl); err != nil {
 		if apierrors.IsNotFound(err) {
 			return "", false, false, nil
 		}
-		return "", false, false, fmt.Errorf("get sandbox claim for %s: %w", podName, err)
+		return "", false, false, fmt.Errorf("get pod claim for %s: %w", podName, err)
 	}
 	return claimstate.State(cl.Status.Phase), cl.Status.RewarmStartedAt != nil, true, nil
 }
 
-// patchPhase SSA-applies the projected coarse phase onto the Sandbox under
+// patchPhase SSA-applies the projected coarse phase onto the AgentPod under
 // the WPC field manager, re-applying the live WPC-owned status fields
 // (PodName/NodeName/PodIP) so the partial apply does not clobber them. The
 // §4.6.3 retry policy applies on HTTP 409.
-func (r *OccupancyReconciler) patchPhase(ctx context.Context, sb *lennyv1.Sandbox, phase state.State) error {
+func (r *OccupancyReconciler) patchPhase(ctx context.Context, sb *lennyv1.AgentPod, phase state.State) error {
 	key := client.ObjectKeyFromObject(sb)
 	id := ssaretry.ConflictID{
 		Controller: string(ownership.WarmPoolController),
-		CRD:        string(ownership.Sandbox),
+		CRD:        string(ownership.AgentPod),
 		Namespace:  sb.Namespace,
 		Name:       sb.Name,
 	}
 	return ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
 		live := sb
 		if attempt > 0 {
-			var fresh lennyv1.Sandbox
+			var fresh lennyv1.AgentPod
 			if err := r.Client.Get(ctx, key, &fresh); err != nil {
 				return client.IgnoreNotFound(err)
 			}
@@ -265,10 +265,10 @@ func (r *OccupancyReconciler) patchPhase(ctx context.Context, sb *lennyv1.Sandbo
 		if live.Status.Phase == string(phase) {
 			return nil
 		}
-		patch := &lennyv1.Sandbox{
+		patch := &lennyv1.AgentPod{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "Sandbox",
+				Kind:       "AgentPod",
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      live.Name,
@@ -284,7 +284,7 @@ func (r *OccupancyReconciler) patchPhase(ctx context.Context, sb *lennyv1.Sandbo
 	})
 }
 
-// occupancyClaimName is the deterministic SandboxClaim name for a pod
+// occupancyClaimName is the deterministic PodClaim name for a pod
 // (claim-<podName>), mirroring the gateway's podclaim.claimName so the
 // projection resolves the same per-pod claim the gateway creates. It is
 // duplicated here rather than imported because pkg/gateway/podclaim depends
@@ -293,22 +293,22 @@ func occupancyClaimName(podName string) string {
 	return "claim-" + podName
 }
 
-// claimToSandbox maps a SandboxClaim event to a reconcile request for its
-// owning Sandbox (spec.sandboxRef), so a binding-state transition or a claim
-// delete re-projects the Sandbox phase within one reconcile cycle.
-func claimToSandbox(_ context.Context, obj client.Object) []reconcile.Request {
-	cl, ok := obj.(*lennyv1.SandboxClaim)
-	if !ok || cl.Spec.SandboxRef == "" {
+// claimToAgentPod maps a PodClaim event to a reconcile request for its
+// owning AgentPod (spec.agentPodRef), so a binding-state transition or a claim
+// delete re-projects the AgentPod phase within one reconcile cycle.
+func claimToAgentPod(_ context.Context, obj client.Object) []reconcile.Request {
+	cl, ok := obj.(*lennyv1.PodClaim)
+	if !ok || cl.Spec.AgentPodRef == "" {
 		return nil
 	}
 	return []reconcile.Request{{
-		NamespacedName: client.ObjectKey{Namespace: cl.Namespace, Name: cl.Spec.SandboxRef},
+		NamespacedName: client.ObjectKey{Namespace: cl.Namespace, Name: cl.Spec.AgentPodRef},
 	}}
 }
 
 // SetupWithManager registers the occupancy-projection reconciler. It
-// reconciles Sandboxes and additionally wakes on SandboxClaim changes mapped
-// to their owning Sandbox, so a claim binding-state change re-projects the
+// reconciles AgentPods and additionally wakes on PodClaim changes mapped
+// to their owning AgentPod, so a claim binding-state change re-projects the
 // pod phase (§4.6.1).
 func (r *OccupancyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	opts := controller.Options{}
@@ -319,15 +319,15 @@ func (r *OccupancyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		opts.NewQueue = r.QueueFactory
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&lennyv1.Sandbox{}).
-		Watches(&lennyv1.SandboxClaim{}, handler.EnqueueRequestsFromMapFunc(claimToSandbox)).
+		For(&lennyv1.AgentPod{}).
+		Watches(&lennyv1.PodClaim{}, handler.EnqueueRequestsFromMapFunc(claimToAgentPod)).
 		Named("warmpool-occupancy").
 		WithOptions(opts).
 		Complete(r)
 }
 
-// ClaimToSandboxForTest exposes the §4.6.1 claim→sandbox map function for
+// ClaimToAgentPodForTest exposes the §4.6.1 claim→sandbox map function for
 // the package's external tests.
-func (r *OccupancyReconciler) ClaimToSandboxForTest(ctx context.Context, obj client.Object) []reconcile.Request {
-	return claimToSandbox(ctx, obj)
+func (r *OccupancyReconciler) ClaimToAgentPodForTest(ctx context.Context, obj client.Object) []reconcile.Request {
+	return claimToAgentPod(ctx, obj)
 }

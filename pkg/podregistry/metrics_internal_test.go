@@ -24,7 +24,7 @@ func metricsRegistry(t *testing.T, seed ...client.Object) (*CRDPodRegistry, *Met
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(seed...).
-		WithStatusSubresource(&lennyv1.Sandbox{}).
+		WithStatusSubresource(&lennyv1.AgentPod{}).
 		Build()
 	r, err := New(cli, "lenny-agents")
 	if err != nil {
@@ -38,12 +38,12 @@ func metricsRegistry(t *testing.T, seed ...client.Object) (*CRDPodRegistry, *Met
 	return r, m
 }
 
-func sb(name, pool, phase string) *lennyv1.Sandbox {
-	s := &lennyv1.Sandbox{}
+func sb(name, pool, phase string) *lennyv1.AgentPod {
+	s := &lennyv1.AgentPod{}
 	s.Namespace = "lenny-agents"
 	s.Name = name
 	s.Labels = map[string]string{PoolLabel: pool}
-	s.Spec.PoolRef = pool
+	s.Spec.PodSetRef = pool
 	s.Status.Phase = phase
 	return s
 }
@@ -116,7 +116,7 @@ func TestRegistryMetrics_NilSafe(t *testing.T) {
 	}
 	cli := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(sb("alpha", "echo-pool", "idle")).
-		WithStatusSubresource(&lennyv1.Sandbox{}).Build()
+		WithStatusSubresource(&lennyv1.AgentPod{}).Build()
 	r, err := New(cli, "lenny-agents")
 	if err != nil {
 		t.Fatalf("New: %v", err)

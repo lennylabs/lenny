@@ -17,7 +17,7 @@ import (
 // diagnosis: an idle pod pinned to one tenant can be admitted for another
 // tenant, a pod pinned `unassigned` is admitted, a pinned pod is admitted on a
 // pool that reuses no pod, or AdmitTenantPin writes to the Pod or
-// reads a SandboxClaim.
+// reads a PodClaim.
 func TestAdmitTenantPinDecisions_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	const pool = "pin-decide"
@@ -73,8 +73,8 @@ func TestPinReadErrorEndsAcquisitionWithoutExhaustion_spec_5_2(t *testing.T) {
 	injected := apierrors.NewInternalError(errors.New("injected pod read failure"))
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, testPool, "a-pinerr", "idle"),
-		sandboxIn(ns, testPool, "b-ok", "idle"),
+		agentPodIn(ns, testPool, "a-pinerr", "idle"),
+		agentPodIn(ns, testPool, "b-ok", "idle"),
 		pinnedPod(ns, testPool, "a-pinerr", ""),
 		pinnedPod(ns, testPool, "b-ok", ""),
 	)
@@ -151,7 +151,7 @@ func TestDrainRefusedPodStampsOnlyUnclaimedPod_spec_5_2(t *testing.T) {
 
 	podclaim.DrainRefusedPod(ctx, c, ns, pool, "dr-held", fixedNow)
 	if hasDrainRequest(t, base, "dr-held") || rec.patched("dr-held") {
-		t.Error("a pod held by a SandboxClaim was patched")
+		t.Error("a pod held by a PodClaim was patched")
 	}
 	if recs := logs(); len(recs) != 0 {
 		t.Errorf("a claimed pod logged %d records, want none", len(recs))
@@ -181,8 +181,8 @@ func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, _ := slotClaimerFor(
 		t,
-		sandboxIn(ns, testPool, "a-other", "idle"),
-		sandboxIn(ns, testPool, "b-own", "idle"),
+		agentPodIn(ns, testPool, "a-other", "idle"),
+		agentPodIn(ns, testPool, "b-own", "idle"),
 		pinnedPod(ns, testPool, "a-other", "globex"),
 		lifetimePod(ns, testPool, "b-own", "acme", "keep"),
 	)
@@ -190,8 +190,8 @@ func TestClaimSlotIdlePassAdmitsOwnTenantPinOnly_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "b-own" {
-		t.Errorf("slot placed on %q, want b-own", res.SandboxName)
+	if res.AgentPodName != "b-own" {
+		t.Errorf("slot placed on %q, want b-own", res.AgentPodName)
 	}
 	if !claimAbsent(t, c, "a-other") {
 		t.Error("a claim was created on the pod pinned to globex")
@@ -218,13 +218,13 @@ func TestKeptRuntimeRefusalWritesNothing_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, "kr-only", "kr1-a", "idle"),
-		sandboxIn(ns, "kr-only", "kr1-b", "idle"),
+		agentPodIn(ns, "kr-only", "kr1-a", "idle"),
+		agentPodIn(ns, "kr-only", "kr1-b", "idle"),
 		pinnedPod(ns, "kr-only", "kr1-a", "globex"),
 		pinnedPod(ns, "kr-only", "kr1-b", "globex"),
-		sandboxIn(ns, "kr-mixed", "kr2-a", "idle"),
-		sandboxIn(ns, "kr-mixed", "kr2-b", "idle"),
-		sandboxIn(ns, "kr-mixed", "kr2-z", "idle"),
+		agentPodIn(ns, "kr-mixed", "kr2-a", "idle"),
+		agentPodIn(ns, "kr-mixed", "kr2-b", "idle"),
+		agentPodIn(ns, "kr-mixed", "kr2-z", "idle"),
 		pinnedPod(ns, "kr-mixed", "kr2-a", "globex"),
 		pinnedPod(ns, "kr-mixed", "kr2-b", "globex"),
 		pinnedPod(ns, "kr-mixed", "kr2-z", ""),
@@ -249,8 +249,8 @@ func TestKeptRuntimeRefusalWritesNothing_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "kr2-z" {
-		t.Errorf("bound %q, want the unpinned kr2-z", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "kr2-z" {
+		t.Errorf("bound %q, want the unpinned kr2-z", claim.Spec.AgentPodRef)
 	}
 	if rec.patched("kr2-a") || rec.patched("kr2-b") {
 		t.Error("a pod pinned to another tenant was patched")
@@ -265,9 +265,9 @@ func TestIdleScanNoIdlePodResultNamesRefusedPods_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, testPool, "n-a", "idle"),
-		sandboxIn(ns, testPool, "n-b", "idle"),
-		sandboxIn(ns, testPool, "n-taken", "idle"),
+		agentPodIn(ns, testPool, "n-a", "idle"),
+		agentPodIn(ns, testPool, "n-b", "idle"),
+		agentPodIn(ns, testPool, "n-taken", "idle"),
 		pinnedPod(ns, testPool, "n-a", "globex"),
 		pinnedPod(ns, testPool, "n-b", "globex"),
 	)

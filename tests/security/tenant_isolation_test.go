@@ -305,7 +305,7 @@ func newKeptRuntimeHarness(t *testing.T, label string, bootstrapMinWarm int) *ke
 	t.Cleanup(func() {
 		_ = gatewayRequest(t, c, h.probe, h.gwIP, "DELETE", "/v1/admin/runtimes/"+h.runtime, h.admin, "")
 	})
-	// The Sandbox reconciler renders the agent pod from the cluster-scoped
+	// The AgentPod reconciler renders the agent pod from the cluster-scoped
 	// Runtime CR, so the registry row needs its CR counterpart.
 	h.applyRuntimeCR(t, rt.Image)
 	h.warmCount = 2
@@ -328,13 +328,13 @@ func newKeptRuntimeHarness(t *testing.T, label string, bootstrapMinWarm int) *ke
 
 // setBootstrapMinWarm updates the pool's bootstrapMinWarm with warmCount
 // unchanged and waits until the PoolScalingController renders it as the
-// SandboxWarmPool's minWarm.
+// PodSet's minWarm.
 func (h *keptRuntimeHarness) setBootstrapMinWarm(t *testing.T, n int) {
 	t.Helper()
 	if res := h.putPool(t, fmt.Sprintf(`{"bootstrapMinWarm":%d,"warmCount":%d}`, n, h.warmCount)); res.statusCode != 200 {
 		t.Fatalf("pool update to bootstrapMinWarm %d: status %d body %q", n, res.statusCode, res.body)
 	}
-	h.waitField(t, "sandboxwarmpool", h.pool, "{.spec.minWarm}", fmt.Sprint(n), 2*time.Minute)
+	h.waitField(t, "podset", h.pool, "{.spec.minWarm}", fmt.Sprint(n), 2*time.Minute)
 }
 
 // keptRuntimeCRLabel marks the Runtime CRs the harness applies, so a run
@@ -371,15 +371,15 @@ spec:
 }
 
 // removeKeptRuntimePool deletes a harness pool through the admin API and
-// then deletes its SandboxWarmPool and SandboxTemplate, so its Sandboxes and
+// then deletes its PodSet, so its AgentPods and
 // agent pods are garbage-collected rather than left pinned and idle, where
 // later tests waiting on the managed-pod label would wait on them.
 func removeKeptRuntimePool(t *testing.T, c *kind.Cluster, probe, gwIP string, admin gwRole, name string) {
 	t.Helper()
 	cleanupPool(t, c, probe, gwIP, admin, name)
-	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "sandboxwarmpool,sandboxtemplate", name,
+	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "podset,podset", name,
 		"--wait=false", "--ignore-not-found")
-	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "sandboxes", "-l", "lenny.dev/pool="+name,
+	_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "agentpods", "-l", "lenny.dev/pool="+name,
 		"--wait=false", "--ignore-not-found")
 }
 
@@ -390,13 +390,13 @@ func removeKeptRuntimePool(t *testing.T, c *kind.Cluster, probe, gwIP string, ad
 // fails the run.
 func sweepKeptRuntimeLeftovers(t *testing.T, c *kind.Cluster, probe, gwIP string, admin gwRole) {
 	t.Helper()
-	out, _ := c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxwarmpools", "-o", "name")
+	out, _ := c.KubectlOut(t, "-n", agentNamespace, "get", "podsets", "-o", "name")
 	for _, ref := range strings.Fields(out) {
-		name := strings.TrimPrefix(ref, "sandboxwarmpool.lenny.dev/")
+		name := strings.TrimPrefix(ref, "podset.lenny.dev/")
 		if !strings.HasPrefix(name, "t9-kept-pool-") {
 			continue
 		}
-		rt, _ := c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxtemplate", name, "-o", "jsonpath={.spec.runtimeRef}")
+		rt, _ := c.KubectlOut(t, "-n", agentNamespace, "get", "podset", name, "-o", "jsonpath={.spec.runtimeRef}")
 		removeKeptRuntimePool(t, c, probe, gwIP, admin, name)
 		if rt = strings.TrimSpace(rt); strings.HasPrefix(rt, "t9-kept-rt-") {
 			_ = gatewayRequest(t, c, probe, gwIP, "DELETE", "/v1/admin/runtimes/"+rt, admin, "")
@@ -408,13 +408,13 @@ func sweepKeptRuntimeLeftovers(t *testing.T, c *kind.Cluster, probe, gwIP string
 	}
 }
 
-// waitReadyPods waits until the pool's SandboxWarmPool reports at least n
+// waitReadyPods waits until the pool's PodSet reports at least n
 // ready pods.
 func (h *keptRuntimeHarness) waitReadyPods(t *testing.T, n int, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		out, _ := h.c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxwarmpool", h.pool,
+		out, _ := h.c.KubectlOut(t, "-n", agentNamespace, "get", "podset", h.pool,
 			"-o", "jsonpath={.status.readyCount}")
 		var ready int
 		_, _ = fmt.Sscanf(strings.TrimSpace(out), "%d", &ready)
@@ -469,8 +469,8 @@ func (h *keptRuntimeHarness) waitField(t *testing.T, kindName, name, path, want 
 	}
 }
 
-// waitDrained polls the Sandbox's phase until the pod is draining or already
-// past it (terminated, or the Sandbox removed).
+// waitDrained polls the AgentPod's phase until the pod is draining or already
+// past it (terminated, or the AgentPod removed).
 func (h *keptRuntimeHarness) waitDrained(t *testing.T, pod string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -532,7 +532,7 @@ func (h *keptRuntimeHarness) sessionAToReserved(t *testing.T, ctx context.Contex
 			t.Fatalf("session A %s on pod %s: %s", sessA.ID, sessA.PodAssignment, msg)
 		}
 	}
-	h.waitField(t, "sandboxclaim", "claim-"+sessA.PodAssignment, "{.status.phase}", "reserved", 90*time.Second)
+	h.waitField(t, "podclaim", "claim-"+sessA.PodAssignment, "{.status.phase}", "reserved", 90*time.Second)
 	return sessA.PodAssignment
 }
 
@@ -634,7 +634,7 @@ func TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime(t *testing.T) {
 		if sessB.PodAssignment == podA {
 			t.Fatalf("session B landed on pod %s, which served session A on a pool that no longer keeps its runtime", podA)
 		}
-		h.waitField(t, "sandboxclaim", "claim-"+podA, "{.metadata.name}", "", 60*time.Second)
+		h.waitField(t, "podclaim", "claim-"+podA, "{.metadata.name}", "", 60*time.Second)
 		h.waitDrained(t, podA, 3*time.Minute)
 		if h.sessionPodReuse(t, ctx, acme, sessB.ID) {
 			t.Error("session B reports podReuse true on a pool that stopped recycling")
@@ -668,7 +668,7 @@ func TestPoolEditOutsideRuleNeverDispatchesIntoKeptRuntime(t *testing.T) {
 }
 
 // keptRuntimeIdleSoloPod leaves acme's session-A pod idle and pinned as the
-// pool's only idle Sandbox: it runs session A to the reserved hold on a pool
+// pool's only idle AgentPod: it runs session A to the reserved hold on a pool
 // rendered with maxWarm one above minWarm, so the pinned-idle bound keeps
 // one pinned pod when the hold expires, then sets bootstrapMinWarm 0 with
 // warmCount unchanged so the unpinned idle pods drain while the bound keeps
@@ -680,7 +680,7 @@ func keptRuntimeIdleSoloPod(t *testing.T, ctx context.Context, h *keptRuntimeHar
 	h.setBootstrapMinWarm(t, 0)
 	deadline := time.Now().Add(4 * time.Minute)
 	for {
-		out, _ := h.c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxes", "-l", "lenny.dev/pool="+h.pool,
+		out, _ := h.c.KubectlOut(t, "-n", agentNamespace, "get", "agentpods", "-l", "lenny.dev/pool="+h.pool,
 			"-o", `jsonpath={range .items[?(@.status.phase=="idle")]}{.metadata.name}{"\n"}{end}`)
 		idle := strings.Fields(out)
 		if len(idle) == 1 && idle[0] == podA {
@@ -711,8 +711,8 @@ func TestKeptRuntimePodNeverBindsSecondTenant(t *testing.T) {
 			t.Fatalf("a %s session bound pod %s, which is pinned to %s", globex, podA, acme)
 		}
 	}
-	if got := h.objectField(t, "sandboxclaim", "claim-"+podA, "{.metadata.name}"); got != "" {
-		t.Errorf("a SandboxClaim names pod %s, which is pinned to another tenant", podA)
+	if got := h.objectField(t, "podclaim", "claim-"+podA, "{.metadata.name}"); got != "" {
+		t.Errorf("a PodClaim names pod %s, which is pinned to another tenant", podA)
 	}
 	if got := h.objectField(t, "sandbox", podA, "{.status.phase}"); got != "idle" {
 		t.Errorf("pod %s phase = %q, want idle and still pinned for its tenant", podA, got)

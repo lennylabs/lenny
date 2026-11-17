@@ -54,12 +54,12 @@ func (m *recordingMirror) RecycleCounters(context.Context, string) (agentpodstat
 }
 
 // spec: §4.6.1 "WarmPoolController mirror reconciliation on recovery" —
-// the runnable re-lists every Sandbox in the agent namespaces and
+// the runnable re-lists every AgentPod in the agent namespaces and
 // converges the full mirror in one bulk ReconcileAll.
-func TestMirrorRecoveryReconcilesAllSandboxes(t *testing.T) {
+func TestMirrorRecoveryReconcilesAllAgentPods(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 5), idleSandbox(ns, "pod-1"), idleSandbox(ns, "pod-2"))
+	c := newClient(t, s, template(ns), pool(ns, 2, 5), idleAgentPod(ns, "pod-1"), idleAgentPod(ns, "pod-2"))
 
 	mirror := &recordingMirror{}
 	m := &warmpool.MirrorReconciler{
@@ -91,7 +91,7 @@ func TestMirrorRecoveryReconcilesAllSandboxes(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 — with no live Sandboxes the recovery pass still runs
+// spec: §4.6.1 — with no live AgentPods the recovery pass still runs
 // ReconcileAll (with an empty set), which prunes every stale mirror row.
 func TestMirrorRecoveryEmptyClusterPrunesMirror(t *testing.T) {
 	ns := testNamespace(t)
@@ -121,7 +121,7 @@ func TestMirrorRecoveryNeedsLeaderElection(t *testing.T) {
 // listOptionRecorder is a client whose List records the options of each call
 // and returns an empty list. Every other method is the nil embedded client
 // and panics if reached, so the test also proves the pass issues only Lists
-// when no Sandbox exists.
+// when no AgentPod exists.
 type listOptionRecorder struct {
 	client.Client
 	lists []*client.ListOptions
@@ -137,9 +137,9 @@ func (r *listOptionRecorder) List(_ context.Context, _ client.ObjectList, opts .
 // spec: §4.6.1 "WarmPoolController mirror reconciliation on recovery"
 //
 // TestMirrorRecoveryListsWithoutDeepCopy pins that the recovery pass reads the
-// cached Sandbox list without the per-object deep copy. The pass reads every
-// Sandbox in every agent namespace, terminal ones included; with about 16,000
-// Sandboxes on the e2e cluster the default deep copy doubled the informer's
+// cached AgentPod list without the per-object deep copy. The pass reads every
+// AgentPod in every agent namespace, terminal ones included; with about 16,000
+// AgentPods on the e2e cluster the default deep copy doubled the informer's
 // footprint in one burst and OOM-killed the controller at the chart's 256Mi
 // limit as soon as the chart rendered --agent-namespaces (F-4.6.30). A pass
 // that drops client.UnsafeDisableDeepCopy, or lists a namespace outside the
@@ -160,7 +160,7 @@ func TestMirrorRecoveryListsWithoutDeepCopy(t *testing.T) {
 			t.Errorf("List %d namespace = %q, want %q", i, lo.Namespace, want)
 		}
 		if lo.UnsafeDisableDeepCopy == nil || !*lo.UnsafeDisableDeepCopy {
-			t.Errorf("List %d in %s deep-copies every Sandbox; the recovery pass must pass client.UnsafeDisableDeepCopy", i, want)
+			t.Errorf("List %d in %s deep-copies every AgentPod; the recovery pass must pass client.UnsafeDisableDeepCopy", i, want)
 		}
 	}
 	if mirror.calls != 1 {

@@ -14,7 +14,7 @@ import (
 // this package binary reuses, isolated per test by namespace. Starting one
 // per test cost about six seconds each and made the package the slowest in
 // the unit tier (TEST-GAPS T-17.4.22). The tests create only namespaced
-// objects, and the claimers list Sandboxes only within their own namespace.
+// objects, and the claimers list AgentPods only within their own namespace.
 var sharedEnv envtest.Shared
 
 // testNamespaces holds the namespace each test was assigned.

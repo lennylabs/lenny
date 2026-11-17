@@ -6,12 +6,12 @@
 // leader-kill-mid-claim acceptance scenario. §4.6.1 requires a chaos
 // test that kills the WarmPoolController leader mid-claim at high
 // concurrency (>= 50 concurrent claim goroutines against a pool of 10
-// pods) and verifies zero double-claims in the resulting SandboxClaim
+// pods) and verifies zero double-claims in the resulting PodClaim
 // set. The leader-election failover half lives in leader_election_test.go
 // and the concurrent-claim fencing half lives in concurrency_test.go;
 // this file combines them into the single scenario the ADR requires,
-// asserting that no two SandboxClaim resources non-terminally bind the
-// same Sandbox after a leader kill lands amid the claim race.
+// asserting that no two PodClaim resources non-terminally bind the
+// same AgentPod after a leader kill lands amid the claim race.
 
 package chaos_test
 
@@ -32,11 +32,11 @@ const leaderKillPoolSize = 10
 
 // leaderKillClaimGoroutines is the number of concurrent claim goroutines.
 // §4.6.1 requires >= 50; spreading them across the 10-pod pool puts five
-// racers on each Sandbox, so every pod is a genuine double-claim
+// racers on each AgentPod, so every pod is a genuine double-claim
 // contention point rather than an uncontended single claim.
 const leaderKillClaimGoroutines = 50
 
-// leaderKillTestLabel labels every Sandbox and SandboxClaim the test
+// leaderKillTestLabel labels every AgentPod and PodClaim the test
 // creates so the whole set can be swept in one cleanup.
 const leaderKillTestLabel = "lenny.dev/test=chaos-leaderkill-claim"
 
@@ -45,14 +45,14 @@ const leaderKillTestLabel = "lenny.dev/test=chaos-leaderkill-claim"
 // scenario did not hold. ADR-007 is a Phase-1 blocking prerequisite: it
 // kills the WarmPoolController leader mid-claim while >= 50 goroutines
 // race to claim a 10-pod pool, and requires zero double-claims in the
-// resulting SandboxClaim set — the lenny-sandboxclaim-guard CREATE
+// resulting PodClaim set — the lenny-podclaim-guard CREATE
 // webhook and the API server's resourceVersion / name-uniqueness fencing
-// must together admit at most one non-terminal SandboxClaim per Sandbox
-// even across the failover window. The test seeds 10 idle Sandboxes,
-// fires 50 concurrent claim CREATEs (five per Sandbox), deletes the
+// must together admit at most one non-terminal PodClaim per AgentPod
+// even across the failover window. The test seeds 10 idle AgentPods,
+// fires 50 concurrent claim CREATEs (five per AgentPod), deletes the
 // controller leader Pod amid the race, settles through failover, and
-// asserts every Sandbox is referenced by at most one non-terminal
-// SandboxClaim. More than one non-terminal claim on any Sandbox is a
+// asserts every AgentPod is referenced by at most one non-terminal
+// PodClaim. More than one non-terminal claim on any AgentPod is a
 // genuine double-claim: the ADR-007 "optimistic locking plus the guard
 // webhook is sufficient fencing" hypothesis is violated and Phase 1 must
 // not proceed.
@@ -73,14 +73,14 @@ func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 			len(controllerPods), controllerPods)
 	}
 
-	// The double-claim fencing runs inside the lenny-sandboxclaim-guard
+	// The double-claim fencing runs inside the lenny-podclaim-guard
 	// CREATE webhook; confirm it is reachable and fail-closed before the
 	// race, so a webhook that cannot serve admission does not surface here
 	// as a spurious "no double-claim" pass (every CREATE would be rejected
-	// and the assertion would be vacuous). requireSandboxClaimGuardReachable
+	// and the assertion would be vacuous). requirePodClaimGuardReachable
 	// skips with a precise diagnosis when the webhook's API-server egress
 	// is blocked.
-	requireSandboxClaimGuardReachable(t, c)
+	requirePodClaimGuardReachable(t, c)
 
 	// Identify the current controller leader from the Lease holderIdentity
 	// before the race, so the kill targets the real leader pod (mirrors
@@ -98,34 +98,34 @@ func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 	t.Logf("current %s leader: pod %q; seeding a %d-pod pool and racing %d claim goroutines",
 		warmPoolControllerLease, leaderPod, leaderKillPoolSize, leaderKillClaimGoroutines)
 
-	// Sweep every Sandbox and SandboxClaim this test creates on the way
+	// Sweep every AgentPod and PodClaim this test creates on the way
 	// out, whether or not the race completed cleanly.
 	t.Cleanup(func() {
-		_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "sandboxclaims",
+		_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "podclaims",
 			"-l", leaderKillTestLabel, "--ignore-not-found", "--wait=false")
-		_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "sandboxes",
+		_, _ = c.KubectlOut(t, "-n", agentNamespace, "delete", "agentpods",
 			"-l", leaderKillTestLabel, "--ignore-not-found", "--wait=false")
 	})
 
-	// Seed the 10-pod pool: ten idle Sandbox resources the claim
+	// Seed the 10-pod pool: ten idle AgentPod resources the claim
 	// goroutines contend for.
-	sandboxRefs := make([]string, leaderKillPoolSize)
+	agentPodRefs := make([]string, leaderKillPoolSize)
 	for i := 0; i < leaderKillPoolSize; i++ {
-		ref := leaderKillSandboxName(i)
-		sandboxRefs[i] = ref
-		manifest := leaderKillLabeledSandbox(ref)
+		ref := leaderKillAgentPodName(i)
+		agentPodRefs[i] = ref
+		manifest := leaderKillLabeledAgentPod(ref)
 		if out, err := c.ApplyStdin(t, manifest); err != nil {
-			t.Fatalf("failed to seed pool Sandbox %s: %v\n%s", ref, err, out)
+			t.Fatalf("failed to seed pool AgentPod %s: %v\n%s", ref, err, out)
 		}
 	}
-	t.Logf("seeded %d idle Sandbox resources", len(sandboxRefs))
+	t.Logf("seeded %d idle AgentPod resources", len(agentPodRefs))
 
-	// Fire the race: 50 claim goroutines, each a CREATE of a SandboxClaim
-	// for one of the ten pool Sandboxes (five goroutines share each
-	// Sandbox). Every claim for a given Sandbox carries the deterministic
+	// Fire the race: 50 claim goroutines, each a CREATE of a PodClaim
+	// for one of the ten pool AgentPods (five goroutines share each
+	// AgentPod). Every claim for a given AgentPod carries the deterministic
 	// claim-<podName> name the gateway claim path always uses (§4.6.1), so
-	// the five racers on a Sandbox collide on one resource name: the API
-	// server's name-uniqueness check plus the lenny-sandboxclaim-guard
+	// the five racers on a AgentPod collide on one resource name: the API
+	// server's name-uniqueness check plus the lenny-podclaim-guard
 	// CREATE webhook together admit exactly one and reject the rest. A
 	// plain CREATE (not apply) is used so a loser is rejected outright
 	// rather than silently converted into a PATCH of the winner's object.
@@ -133,25 +133,25 @@ func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 	// deletes the leader pod on the same release so the kill lands amid
 	// the in-flight CREATEs.
 	type result struct {
-		sandboxRef string
-		admitted   bool
-		output     string
+		agentPodRef string
+		admitted    bool
+		output      string
 	}
 	results := make([]result, leaderKillClaimGoroutines)
 	var wg sync.WaitGroup
 	start := make(chan struct{})
 	for i := 0; i < leaderKillClaimGoroutines; i++ {
-		ref := sandboxRefs[i%leaderKillPoolSize]
+		ref := agentPodRefs[i%leaderKillPoolSize]
 		claimName := leaderKillClaimName(ref)
 		manifest := leaderKillLabeledClaim(claimName, ref, leaderKillSessionID(i))
 		wg.Add(1)
-		go func(idx int, sandboxRef, doc string) {
+		go func(idx int, agentPodRef, doc string) {
 			defer wg.Done()
 			cmd := c.Kubectl("-n", agentNamespace, "create", "-f", "-")
 			cmd.Stdin = strings.NewReader(doc)
 			<-start
 			out, err := cmd.CombinedOutput()
-			results[idx] = result{sandboxRef: sandboxRef, admitted: err == nil, output: string(out)}
+			results[idx] = result{agentPodRef: agentPodRef, admitted: err == nil, output: string(out)}
 		}(i, ref, manifest)
 	}
 
@@ -200,73 +200,73 @@ func TestLeaderKillMidClaimNoDoubleAssignment(t *testing.T) {
 			admitted++
 		}
 	}
-	t.Logf("claim race outcome: %d of %d CREATEs admitted across %d Sandboxes",
+	t.Logf("claim race outcome: %d of %d CREATEs admitted across %d AgentPods",
 		admitted, leaderKillClaimGoroutines, leaderKillPoolSize)
 
 	// Liveness: the fencing must not deadlock the whole claim path. With
-	// the guard reachable, exactly one of the five racers on each Sandbox
+	// the guard reachable, exactly one of the five racers on each AgentPod
 	// must win its deterministic-name CREATE, so the admitted total must
-	// be non-zero (and, with ten contended Sandboxes, at most ten). A
+	// be non-zero (and, with ten contended AgentPods, at most ten). A
 	// zero-admission run means every CREATE was rejected — a fencing that
 	// admits nothing is as broken as one that admits duplicates, and would
 	// also make the double-claim assertion below vacuous.
 	if admitted == 0 {
 		t.Fatalf("§4.6.1 / ADR-007 violation: every one of %d concurrent claim CREATEs was rejected; "+
-			"the fencing must admit exactly one claim per Sandbox, not zero", leaderKillClaimGoroutines)
+			"the fencing must admit exactly one claim per AgentPod, not zero", leaderKillClaimGoroutines)
 	}
 	if admitted > leaderKillPoolSize {
-		t.Errorf("§4.6.1 / ADR-007 fencing weakness: %d CREATEs were admitted across %d Sandboxes; "+
-			"the deterministic-name plus guard fencing must admit at most one claim per Sandbox",
+		t.Errorf("§4.6.1 / ADR-007 fencing weakness: %d CREATEs were admitted across %d AgentPods; "+
+			"the deterministic-name plus guard fencing must admit at most one claim per AgentPod",
 			admitted, leaderKillPoolSize)
 	}
 
-	// The ADR-007 assertion: after the race and failover, every Sandbox is
-	// referenced by at most one non-terminal SandboxClaim. Read the live
+	// The ADR-007 assertion: after the race and failover, every AgentPod is
+	// referenced by at most one non-terminal PodClaim. Read the live
 	// claim set from the API server (authoritative over the per-goroutine
-	// kubectl exit codes) and bucket non-terminal claims by sandboxRef.
-	nonTerminal := leaderKillNonTerminalClaimsBySandbox(t, c)
+	// kubectl exit codes) and bucket non-terminal claims by agentPodRef.
+	nonTerminal := leaderKillNonTerminalClaimsByAgentPod(t, c)
 	doubles := 0
-	for _, ref := range sandboxRefs {
+	for _, ref := range agentPodRefs {
 		claims := nonTerminal[ref]
 		if len(claims) > 1 {
 			doubles++
-			t.Errorf("§4.6.1 / ADR-007 double-claim: Sandbox %s is referenced by %d non-terminal SandboxClaims %v; "+
+			t.Errorf("§4.6.1 / ADR-007 double-claim: AgentPod %s is referenced by %d non-terminal PodClaims %v; "+
 				"the guard webhook plus optimistic-locking fencing must admit at most one even across the leader-kill "+
 				"failover window", ref, len(claims), claims)
 		}
 	}
 	if doubles == 0 {
-		t.Logf("verified: no Sandbox carries more than one non-terminal SandboxClaim after the leader-kill race; " +
+		t.Logf("verified: no AgentPod carries more than one non-terminal PodClaim after the leader-kill race; " +
 			"ADR-007 fencing held across failover")
 	}
 }
 
-// leaderKillNonTerminalClaimsBySandbox lists every test-labeled
-// SandboxClaim in the agent namespace and returns, per sandboxRef, the
+// leaderKillNonTerminalClaimsByAgentPod lists every test-labeled
+// PodClaim in the agent namespace and returns, per agentPodRef, the
 // names of the claims whose binding state is non-terminal. §4.6.1 marks
-// only released and failed as terminal SandboxClaim.status.phase values;
+// only released and failed as terminal PodClaim.status.phase values;
 // an empty phase (a freshly created claim with no gateway-written status)
 // is non-terminal and counts toward the per-pod uniqueness the guard
 // enforces.
-func leaderKillNonTerminalClaimsBySandbox(t *testing.T, c *kind.Cluster) map[string][]string {
+func leaderKillNonTerminalClaimsByAgentPod(t *testing.T, c *kind.Cluster) map[string][]string {
 	t.Helper()
-	// One line per claim: "<name> <sandboxRef> <phase>"; phase is empty
+	// One line per claim: "<name> <agentPodRef> <phase>"; phase is empty
 	// when the claim has no status.phase yet.
 	out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandboxclaims", "-l", leaderKillTestLabel,
-		"-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{.spec.sandboxRef}{\" \"}{.status.phase}{\"\\n\"}{end}",
+		"-n", agentNamespace, "get", "podclaims", "-l", leaderKillTestLabel,
+		"-o", "jsonpath={range .items[*]}{.metadata.name}{\" \"}{.spec.agentPodRef}{\" \"}{.status.phase}{\"\\n\"}{end}",
 	)
 	if err != nil {
-		t.Fatalf("failed to list the test SandboxClaims for the double-claim assertion: %v\n%s", err, out)
+		t.Fatalf("failed to list the test PodClaims for the double-claim assertion: %v\n%s", err, out)
 	}
-	bySandbox := make(map[string][]string)
+	byAgentPod := make(map[string][]string)
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 2 {
-			continue // a claim with no sandboxRef cannot double-claim a pod
+			continue // a claim with no agentPodRef cannot double-claim a pod
 		}
-		name, sandboxRef := fields[0], fields[1]
+		name, agentPodRef := fields[0], fields[1]
 		phase := ""
 		if len(fields) >= 3 {
 			phase = fields[2]
@@ -274,25 +274,25 @@ func leaderKillNonTerminalClaimsBySandbox(t *testing.T, c *kind.Cluster) map[str
 		if phase == "released" || phase == "failed" {
 			continue // terminal claims free the pod and do not double-claim
 		}
-		bySandbox[sandboxRef] = append(bySandbox[sandboxRef], name)
+		byAgentPod[agentPodRef] = append(byAgentPod[agentPodRef], name)
 	}
-	return bySandbox
+	return byAgentPod
 }
 
-// leaderKillSandboxName is the deterministic name of the i-th pool
-// Sandbox.
-func leaderKillSandboxName(i int) string {
+// leaderKillAgentPodName is the deterministic name of the i-th pool
+// AgentPod.
+func leaderKillAgentPodName(i int) string {
 	return "chaos-lk-sandbox-" + strconv.Itoa(i)
 }
 
 // leaderKillClaimName is the deterministic per-pod claim name for the
-// given Sandbox, modeling the gateway claim path's claim-<podName>
-// convention (§4.6.1). Every goroutine racing to claim the same Sandbox
+// given AgentPod, modeling the gateway claim path's claim-<podName>
+// convention (§4.6.1). Every goroutine racing to claim the same AgentPod
 // produces this same name, so their CREATEs collide on one resource name
 // and the API server's name-uniqueness check plus the guard webhook admit
 // exactly one.
-func leaderKillClaimName(sandboxRef string) string {
-	return "claim-" + sandboxRef
+func leaderKillClaimName(agentPodRef string) string {
+	return "claim-" + agentPodRef
 }
 
 // leaderKillSessionID is the session id carried by the i-th racing claim.
@@ -300,14 +300,14 @@ func leaderKillSessionID(i int) string {
 	return "sess-lk-" + strconv.Itoa(i)
 }
 
-// leaderKillLabeledSandbox renders a pool Sandbox carrying the sweep
+// leaderKillLabeledAgentPod renders a pool AgentPod carrying the sweep
 // label so the whole seeded pool is deletable in one cleanup. poolRef and
 // runtimeRef are the CRD-required fields; their referents need not exist
-// for the claim-fencing scenario, which keys on the Sandbox name via
-// .spec.sandboxRef.
-func leaderKillLabeledSandbox(name string) string {
+// for the claim-fencing scenario, which keys on the AgentPod name via
+// .spec.agentPodRef.
+func leaderKillLabeledAgentPod(name string) string {
 	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
-kind: Sandbox
+kind: AgentPod
 metadata:
   name: %s
   namespace: %s
@@ -319,18 +319,18 @@ spec:
 `, name, agentNamespace)
 }
 
-// leaderKillLabeledClaim renders a racing SandboxClaim carrying the sweep
-// label, binding sessionID to the Sandbox named by sandboxRef.
-func leaderKillLabeledClaim(name, sandboxRef, sessionID string) string {
+// leaderKillLabeledClaim renders a racing PodClaim carrying the sweep
+// label, binding sessionID to the AgentPod named by agentPodRef.
+func leaderKillLabeledClaim(name, agentPodRef, sessionID string) string {
 	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
-kind: SandboxClaim
+kind: PodClaim
 metadata:
   name: %s
   namespace: %s
   labels:
     lenny.dev/test: chaos-leaderkill-claim
 spec:
-  sandboxRef: %s
+  agentPodRef: %s
   sessionId: %s
-`, name, agentNamespace, sandboxRef, sessionID)
+`, name, agentNamespace, agentPodRef, sessionID)
 }

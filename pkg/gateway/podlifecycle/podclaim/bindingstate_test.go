@@ -22,15 +22,15 @@ func fixedClock(t time.Time) func() time.Time {
 	return func() time.Time { return t }
 }
 
-// seedBoundClaim creates a per-pod SandboxClaim and writes its first `bound`
+// seedBoundClaim creates a per-pod PodClaim and writes its first `bound`
 // binding state, returning a client wired to the envtest API server. It is
 // the common precondition for the recycle-path writer tests.
 func seedBoundClaim(t *testing.T, name string) (client.WithWatch, string) {
 	t.Helper()
 	ns := testNamespace(t)
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "sbx-1", TenantID: "acme"},
 	}
 	c := newEnvtestClient(t, claim)
 	if err := podclaim.WriteBoundStatus(context.Background(), c, ns, name); err != nil {
@@ -40,10 +40,10 @@ func seedBoundClaim(t *testing.T, name string) (client.WithWatch, string) {
 }
 
 // getClaim reads the named claim off the envtest API server.
-func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim {
+func getClaim(t *testing.T, c client.Client, name string) *lennyv1.PodClaim {
 	t.Helper()
 	ns := testNamespace(t)
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err != nil {
 		t.Fatalf("get claim %s: %v", name, err)
 	}
@@ -52,9 +52,9 @@ func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim 
 
 // TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3 pins the §4.6.3 design
 // contract that the gateway writes the first `bound` binding state on the
-// per-pod SandboxClaim via the status-subresource PATCH verb, never a PUT
+// per-pod PodClaim via the status-subresource PATCH verb, never a PUT
 // (`update`). The chart grants the gateway `get`/`patch` on
-// `sandboxclaims/status` and no `update` verb (§4.6.3 RBAC), so a regression
+// `podclaims/status` and no `update` verb (§4.6.3 RBAC), so a regression
 // to client.Status().Update — which issues an HTTP PUT the API server
 // authorizes against `update` — would be denied Forbidden in any real
 // cluster while passing the envtest suite (which does not enforce RBAC). The
@@ -63,15 +63,15 @@ func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim 
 // the test asserts a Patch occurred and no Update did.
 //
 // diagnosis: a failure means the gateway's binding-state write reverted to a
-// status PUT/update, which the scoped sandboxclaims/status RBAC grant denies.
+// status PUT/update, which the scoped podclaims/status RBAC grant denies.
 //
 // spec: §4.6.1 (first `bound` status patch); §4.6.3 (gateway granted
-// `patch`, not `update`, on sandboxclaims/status).
+// `patch`, not `update`, on podclaims/status).
 func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
 	ns := testNamespace(t)
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "sbx-1", TenantID: "acme"},
 	}
 	base := newEnvtestClient(t, claim)
 
@@ -102,7 +102,7 @@ func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
 		t.Errorf("status UPDATE count = %d, want 0 (a PUT requires the `update` verb the gateway is not granted)", updates)
 	}
 
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := base.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-sbx-1"}, &got); err != nil {
 		t.Fatalf("get claim: %v", err)
 	}
@@ -126,9 +126,9 @@ func TestWriteBoundStatusUsesPatchNotUpdate_spec_4_6_3(t *testing.T) {
 // spec: §4.6.1 (idempotent first `bound` status patch).
 func TestWriteBoundStatusIdempotentOnAlreadyBound_spec_4_6_1(t *testing.T) {
 	ns := testNamespace(t)
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "sbx-1", TenantID: "acme"},
 	}
 	base := newEnvtestClient(t, claim)
 	// Establish the bound state, then count writes on the second call.
@@ -339,7 +339,7 @@ func TestHoldExpiryDeleteHonorsPreconditions_spec_4_6_1(t *testing.T) {
 	if aborted {
 		t.Fatal("DeleteOnHoldExpiry reported aborted, want delete (no rebind raced)")
 	}
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &got); err == nil {
 		t.Fatal("claim still present after hold-expiry delete")
 	}

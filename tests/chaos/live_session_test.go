@@ -47,7 +47,7 @@ const warmPoolReplenishBound = 3 * time.Minute
 // pod, deletes the bound agent pod, and asserts the WarmPoolController
 // replenishes the pool to minWarm. Skips when the e2e gateway runs
 // without --agent-namespace (the K8s pod binder is nil, so no
-// SandboxClaim is written). A failure when the binder IS wired means
+// PodClaim is written). A failure when the binder IS wired means
 // the pool stayed degraded.
 func TestPodKillDuringActiveSession(t *testing.T) {
 	d := sessiondriver.New(t)
@@ -91,16 +91,16 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 	})
 	t.Logf("created session %s in state %q", sess.ID, sess.State)
 
-	// Find the bound pod via the SandboxClaim the gateway wrote when
-	// the session was placed. The claim's .spec.sandboxRef is the
-	// Sandbox name, which matches the agent pod name in the e2e
-	// install (the Sandbox reconciler stamps the pod with the Sandbox
+	// Find the bound pod via the PodClaim the gateway wrote when
+	// the session was placed. The claim's .spec.agentPodRef is the
+	// AgentPod name, which matches the agent pod name in the e2e
+	// install (the AgentPod reconciler stamps the pod with the AgentPod
 	// name).
 	podName := lookupBoundPod(t, c, sess.ID)
 	if podName == "" {
-		t.Skipf("precondition not met: no SandboxClaim binding found for session %s; "+
+		t.Skipf("precondition not met: no PodClaim binding found for session %s; "+
 			"the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — "+
-			"the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents "+
+			"the session is in-memory only and no AgentPod is claimed. Set --agent-namespace=lenny-agents "+
 			"on the gateway Deployment to exercise this path.", sess.ID)
 	}
 	t.Logf("session %s is bound to agent pod %s", sess.ID, podName)
@@ -113,9 +113,9 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 	}
 	preCount := countIdlePodsInPool(t, c, pool)
 
-	// Kill the bound pod. The Sandbox CR survives (the WarmPoolController
-	// observes the Sandbox going to a non-running state and replenishes
-	// the pool), and the SandboxClaim survives by §4.6 contract — no
+	// Kill the bound pod. The AgentPod CR survives (the WarmPoolController
+	// observes the AgentPod going to a non-running state and replenishes
+	// the pool), and the PodClaim survives by §4.6 contract — no
 	// ownerReference so the session can be reassigned.
 	if out, err := c.KubectlOut(t, "-n", agentNamespace,
 		"delete", "pod", podName, "--grace-period=0", "--force"); err != nil {
@@ -124,7 +124,7 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 	t.Logf("deleted agent pod %s", podName)
 
 	// Assert the pool replenishes back to its minWarm target. The
-	// WarmPoolController spawns a fresh Sandbox + pod when the running
+	// WarmPoolController spawns a fresh AgentPod + pod when the running
 	// idle pod count drops below minWarm.
 	reached := pollUntil(warmPoolReplenishBound, 3*time.Second, func() bool {
 		return countIdlePodsInPool(t, c, pool) >= 1
@@ -141,7 +141,7 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 
 	// Soft signal: the session row should still be reachable via the
 	// gateway. A 404 here would mean the gateway dropped the session on
-	// pod loss, which is not the §4.6 contract (a SandboxClaim survives
+	// pod loss, which is not the §4.6 contract (a PodClaim survives
 	// pod deletion so the session can be reassigned).
 	if got, err := d.GetSession(ctx, tenant, sess.ID); err != nil {
 		t.Logf("§12.8: GET session after pod kill returned an error: %v", err)
@@ -150,16 +150,16 @@ func TestPodKillDuringActiveSession(t *testing.T) {
 	}
 }
 
-// lookupBoundPod returns the Sandbox name (which is also the agent pod
-// name in the e2e install) bound to sessionID via a SandboxClaim, or
+// lookupBoundPod returns the AgentPod name (which is also the agent pod
+// name in the e2e install) bound to sessionID via a PodClaim, or
 // "" when no claim exists for the session yet. The claim is written by
 // the gateway's §4.6 binder during session start.
 func lookupBoundPod(t *testing.T, c *kind.Cluster, sessionID string) string {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandboxclaim",
-		"-o", "jsonpath={range .items[*]}{.spec.sessionId}{\"\\t\"}{.spec.sandboxRef}{\"\\n\"}{end}",
+		"-n", agentNamespace, "get", "podclaim",
+		"-o", "jsonpath={range .items[*]}{.spec.sessionId}{\"\\t\"}{.spec.agentPodRef}{\"\\n\"}{end}",
 	)
 	if err != nil {
 		return ""
@@ -191,9 +191,9 @@ func lookupPodPool(t *testing.T, c *kind.Cluster, podName string) string {
 	return strings.TrimSpace(out)
 }
 
-// countIdlePodsInPool returns the number of Sandbox CRs in pool whose
+// countIdlePodsInPool returns the number of AgentPod CRs in pool whose
 // .status.phase is idle. The §4.6.1 WarmPoolController maintains
-// minWarm idle Sandboxes per pool.
+// minWarm idle AgentPods per pool.
 func countIdlePodsInPool(t *testing.T, c *kind.Cluster, pool string) int {
 	t.Helper()
 	out, err := c.KubectlOut(

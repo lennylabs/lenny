@@ -62,7 +62,7 @@ func seedDelegatedChild(t *testing.T, store sessionstore.Store, id, plan string)
 
 // materializeCluster builds the envtest warm-pool cluster, the bufconn adapter
 // dialer, and the adapter's workspace root the §8.2 materialization bind path
-// drives an idle Sandbox through. It reuses the start_pod_test warm-pool
+// drives an idle AgentPod through. It reuses the start_pod_test warm-pool
 // fixtures (one idle "sbx-1" in "echo-pool"). adapterOpts are passed to the
 // adapter's gRPC server, so a test can observe the calls the gateway makes.
 func materializeCluster(t *testing.T, adapterOpts ...grpc.ServerOption) (client.Client, func(string) (*adapterclient.Client, error), string) {
@@ -75,7 +75,7 @@ func materializeCluster(t *testing.T, adapterOpts ...grpc.ServerOption) (client.
 		t,
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	return cluster, podBindAdapterDialer(t, adapterSrv, adapterOpts...), wsRoot
 }
@@ -250,8 +250,8 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 	if !ok {
 		t.Fatal("registry holds no binding for the materialized child; Executor.Send would reject it as unbound")
 	}
-	if binding.SandboxName != "sbx-1" {
-		t.Errorf("registry binding SandboxName = %q, want sbx-1", binding.SandboxName)
+	if binding.AgentPodName != "sbx-1" {
+		t.Errorf("registry binding AgentPodName = %q, want sbx-1", binding.AgentPodName)
 	}
 	// The stamped WorkspacePlan streamed through the §6.3 binder onto the pod.
 	got, err := os.ReadFile(filepath.Join(wsRoot, "slots", "child-1", "current", "CHILD.md"))
@@ -400,13 +400,13 @@ func TestMaterializeDelegatedChildNonCreatedGuard_spec_8_2(t *testing.T) {
 	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed running child: %v", err)
 	}
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: testNS(t)},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: testNS(t)},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
 	registry := podsession.NewRegistry()
@@ -442,13 +442,13 @@ func TestMaterializeDelegatedChildPreClaimExhaustion_spec_8_2(t *testing.T) {
 	store := memstore.New()
 	seedDelegatedChild(t, store, "child-exhausted", "")
 	tenants, runtimes, credPools := materializeCredStores(t, credentialpoolstore.CredentialRevoked)
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: testNS(t)},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: testNS(t)},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	c := fake.NewClientBuilder().WithScheme(materializeFakeScheme(t)).WithObjects(pool, tmpl).Build()
 	registry := podsession.NewRegistry()
@@ -528,8 +528,8 @@ func TestMaterializeDelegatedChildAssignmentRaceFailsClosed_spec_8_3(t *testing.
 		t.Errorf("child state = %q, want created (non-running after the assignment race)", row.State)
 	}
 	// The pod claimed before the assignment failure was released: its per-pod
-	// SandboxClaim is deleted, so no warm pod leaks.
-	var claim lennyv1.SandboxClaim
+	// PodClaim is deleted, so no warm pod leaks.
+	var claim lennyv1.PodClaim
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the assignment race; the claimed pod leaked")
 	}
@@ -580,9 +580,9 @@ func TestMaterializeDelegatedChildPersistFailureReleasesBinding_spec_8_2(t *test
 	if registry.Len() != 0 {
 		t.Errorf("registry holds %d bindings, want 0 (rollbackBinding precedes registerBinding)", registry.Len())
 	}
-	// The launched pod was released: its per-pod SandboxClaim is deleted.
+	// The launched pod was released: its per-pod PodClaim is deleted.
 	store.fail = false
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 		t.Errorf("per-pod claim still present after the failed persist; the bound pod leaked")
 	}
@@ -620,7 +620,7 @@ func shutdownCounter(n *atomic.Int32) grpc.ServerOption {
 }
 
 // spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned
-// SandboxClaim detection)
+// PodClaim detection)
 // diagnosis: each of the materializer's rollback paths must reach the binder
 // when the request context ended before the rollback ran: the claim rollback
 // after a failed launch, the binding rollback after a refused coordination
@@ -703,7 +703,7 @@ func TestMaterializeDelegatedChildRollbacksSurviveCancelledRequest_spec_7_1(t *t
 				t.Fatal("the request context was not cancelled before the rollback; the fault did not fire")
 			}
 
-			var claim lennyv1.SandboxClaim
+			var claim lennyv1.PodClaim
 			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err == nil {
 				t.Errorf("per-pod claim still present after the rollback; the claimed pod leaked")
 			}

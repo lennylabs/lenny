@@ -32,7 +32,7 @@ type negotiated struct {
 
 // claimPod claims an idle pod from the pool for the request's session,
 // trying the §4.6.1 Postgres-backed fallback claim when the Kubernetes-API
-// claim finds no idle pod, and returns the claimed Sandbox name. It opens no
+// claim finds no idle pod, and returns the claimed AgentPod name. It opens no
 // adapter connection: the post-claim hook runs between it and handshake, so a
 // caller can record the claim before any RPC reaches the pod. A failure here
 // leaves no claim behind for the caller to release. req carries the pool,
@@ -70,7 +70,7 @@ func (b *Binder) claimPod(ctx context.Context, req podclaim.ClaimRequest) (strin
 	if err != nil {
 		return "", err
 	}
-	return claim.Spec.SandboxRef, nil
+	return claim.Spec.AgentPodRef, nil
 }
 
 // runOnClaimed invokes a binder request's post-claim hook. A nil hook is a
@@ -87,16 +87,16 @@ func runOnClaimed(ctx context.Context, onClaimed func(context.Context) error) er
 	return onClaimed(ctx)
 }
 
-// handshake resolves the claimed Sandbox, dials its adapter, and runs the
+// handshake resolves the claimed AgentPod, dials its adapter, and runs the
 // §15.5 version handshake, then records the §6.3 warm-pool claim. It closes
 // any client it opened on its own failure. On success the caller owns cl and
 // must close it once the session ends or on any later failure, and owns the
-// returned Sandbox object. The negotiated return value carries the
+// returned AgentPod object. The negotiated return value carries the
 // handshake-reported metadata the caller threads onto BindResult.
 //
 // spec: §15.5 (version handshake); §6.3 (warm-pool claim counter).
-func (b *Binder) handshake(ctx context.Context, sandboxName, pool string) (*lennyv1.Sandbox, *adapterclient.Client, negotiated, error) {
-	sb, cl, neg, err := b.dialAndNegotiate(ctx, sandboxName)
+func (b *Binder) handshake(ctx context.Context, agentPodName, pool string) (*lennyv1.AgentPod, *adapterclient.Client, negotiated, error) {
+	sb, cl, neg, err := b.dialAndNegotiate(ctx, agentPodName)
 	if err != nil {
 		return nil, nil, negotiated{}, err
 	}

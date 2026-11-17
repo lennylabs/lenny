@@ -22,10 +22,10 @@ func TestAddToSchemeRegistersAllKinds(t *testing.T) {
 	}
 	for _, obj := range []runtime.Object{
 		&lennyv1.Runtime{}, &lennyv1.RuntimeList{},
-		&lennyv1.Sandbox{}, &lennyv1.SandboxList{},
-		&lennyv1.SandboxClaim{}, &lennyv1.SandboxClaimList{},
-		&lennyv1.SandboxTemplate{}, &lennyv1.SandboxTemplateList{},
-		&lennyv1.SandboxWarmPool{}, &lennyv1.SandboxWarmPoolList{},
+		&lennyv1.AgentPod{}, &lennyv1.AgentPodList{},
+		&lennyv1.PodClaim{}, &lennyv1.PodClaimList{},
+		&lennyv1.PodSet{}, &lennyv1.PodSetList{},
+		&lennyv1.PodSet{}, &lennyv1.PodSetList{},
 	} {
 		gvks, _, err := scheme.ObjectKinds(obj)
 		if err != nil {
@@ -69,10 +69,10 @@ func TestGatewayStampedAnnotationKeys(t *testing.T) {
 	}
 }
 
-func TestSandboxDeepCopyIsolatesTheCopy(t *testing.T) {
-	orig := &lennyv1.Sandbox{
-		Spec:   lennyv1.SandboxSpec{RuntimeRef: "claude-code", PoolRef: "default"},
-		Status: lennyv1.SandboxStatus{Phase: "idle"},
+func TestAgentPodDeepCopyIsolatesTheCopy(t *testing.T) {
+	orig := &lennyv1.AgentPod{
+		Spec:   lennyv1.AgentPodSpec{RuntimeRef: "claude-code", PodSetRef: "default"},
+		Status: lennyv1.AgentPodStatus{Phase: "idle"},
 	}
 	cp := orig.DeepCopy()
 	cp.Spec.RuntimeRef = "mutated"
@@ -103,16 +103,16 @@ func TestRuntimeDeepCopyIsolatesRequireSoPeercred(t *testing.T) {
 	}
 }
 
-// TestSandboxDeepCopyIsolatesRequireSoPeercred exercises the §4.7
-// resolved-decision carrier on SandboxSpec. The WarmPoolController writes
+// TestAgentPodDeepCopyIsolatesRequireSoPeercred exercises the §4.7
+// resolved-decision carrier on AgentPodSpec. The WarmPoolController writes
 // it with the resolved render decision; a shallow pointer copy would let
-// one Sandbox's decision leak into another.
+// one AgentPod's decision leak into another.
 // spec: §4.7 (resolved nonce-only render decision carrier).
-func TestSandboxDeepCopyIsolatesRequireSoPeercred(t *testing.T) {
-	orig := &lennyv1.Sandbox{
-		Spec: lennyv1.SandboxSpec{
+func TestAgentPodDeepCopyIsolatesRequireSoPeercred(t *testing.T) {
+	orig := &lennyv1.AgentPod{
+		Spec: lennyv1.AgentPodSpec{
 			RuntimeRef:        "claude-code",
-			PoolRef:           "default",
+			PodSetRef:         "default",
 			RequireSoPeercred: ptr.To(false),
 		},
 	}
@@ -123,13 +123,13 @@ func TestSandboxDeepCopyIsolatesRequireSoPeercred(t *testing.T) {
 	}
 }
 
-// TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies exercises the
-// §5.3 PSC-mirrored acknowledgment scalar on SandboxTemplateSpec that the
+// TestPodSetAcknowledgeNonceOnlyAuthDeepCopies exercises the
+// §5.3 PSC-mirrored acknowledgment scalar on PodSetSpec that the
 // WarmPoolController render gate reads.
 // spec: §4.7, §5.3 (nonce-only acknowledgment gate).
-func TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies(t *testing.T) {
-	orig := &lennyv1.SandboxTemplate{
-		Spec: lennyv1.SandboxTemplateSpec{
+func TestPodSetAcknowledgeNonceOnlyAuthDeepCopies(t *testing.T) {
+	orig := &lennyv1.PodSet{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:               "claude-code",
 			AcknowledgeNonceOnlyAuth: true,
 		},
@@ -144,32 +144,32 @@ func TestSandboxTemplateAcknowledgeNonceOnlyAuthDeepCopies(t *testing.T) {
 // TestNonceOnlyConditionTypeConstants pins the condition-type
 // constant values the WarmPoolController writes and the surfacing
 // predicate reads back. The string values are the wire-visible condition
-// types on the Sandbox and SandboxTemplate status; a rename would silently
+// types on the AgentPod and PodSet status; a rename would silently
 // break the §13.1 security posture surfacing.
 // spec: §4.7 (SOPeercredDisabled / SecurityDegradedMode conditions).
 func TestNonceOnlyConditionTypeConstants(t *testing.T) {
-	if lennyv1.SandboxConditionSOPeercredDisabled != "SOPeercredDisabled" {
-		t.Errorf("SandboxConditionSOPeercredDisabled = %q, want SOPeercredDisabled",
-			lennyv1.SandboxConditionSOPeercredDisabled)
+	if lennyv1.AgentPodConditionSOPeercredDisabled != "SOPeercredDisabled" {
+		t.Errorf("AgentPodConditionSOPeercredDisabled = %q, want SOPeercredDisabled",
+			lennyv1.AgentPodConditionSOPeercredDisabled)
 	}
-	if lennyv1.SandboxTemplateConditionSecurityDegradedMode != "SecurityDegradedMode" {
-		t.Errorf("SandboxTemplateConditionSecurityDegradedMode = %q, want SecurityDegradedMode",
-			lennyv1.SandboxTemplateConditionSecurityDegradedMode)
+	if lennyv1.PodSetConditionSecurityDegradedMode != "SecurityDegradedMode" {
+		t.Errorf("PodSetConditionSecurityDegradedMode = %q, want SecurityDegradedMode",
+			lennyv1.PodSetConditionSecurityDegradedMode)
 	}
 }
 
-// TestSandboxClaimDeepCopyIsolatesTheCopy exercises the per-pod-occupancy
-// SandboxClaim, including the pointer-valued binding-state timestamps the
+// TestPodClaimDeepCopyIsolatesTheCopy exercises the per-pod-occupancy
+// PodClaim, including the pointer-valued binding-state timestamps the
 // gateway stamps at the reserved hold and the recycle re-warm.
 // spec: §4.6.3 (CRD field ownership and binding state), §6.2 (pod state
 // machine).
-func TestSandboxClaimDeepCopyIsolatesTheCopy(t *testing.T) {
+func TestPodClaimDeepCopyIsolatesTheCopy(t *testing.T) {
 	holdExpires := metav1.NewTime(time.Unix(1700000010, 0))
 	rewarmStarted := metav1.NewTime(time.Unix(1700000000, 0))
 	transition := metav1.NewTime(time.Unix(1700000005, 0))
-	orig := &lennyv1.SandboxClaim{
-		Spec: lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
-		Status: lennyv1.SandboxClaimStatus{
+	orig := &lennyv1.PodClaim{
+		Spec: lennyv1.PodClaimSpec{AgentPodRef: "sbx-1", TenantID: "acme"},
+		Status: lennyv1.PodClaimStatus{
 			Phase:                      "reserved",
 			HoldExpiresAt:              &holdExpires,
 			RewarmStartedAt:            &rewarmStarted,
@@ -177,13 +177,13 @@ func TestSandboxClaimDeepCopyIsolatesTheCopy(t *testing.T) {
 		},
 	}
 	cp := orig.DeepCopy()
-	cp.Spec.SandboxRef = "sbx-2"
+	cp.Spec.AgentPodRef = "sbx-2"
 	cp.Spec.TenantID = "globex"
 	cp.Status.Phase = "released"
 	cp.Status.HoldExpiresAt.Time = time.Unix(0, 0)
 	cp.Status.RewarmStartedAt.Time = time.Unix(0, 0)
 	cp.Status.BindingStateTransitionTime.Time = time.Unix(0, 0)
-	if orig.Spec.SandboxRef != "sbx-1" || orig.Spec.TenantID != "acme" || orig.Status.Phase != "reserved" {
+	if orig.Spec.AgentPodRef != "sbx-1" || orig.Spec.TenantID != "acme" || orig.Status.Phase != "reserved" {
 		t.Errorf("DeepCopy did not isolate the copy; the original was mutated: %+v", orig)
 	}
 	if !orig.Status.HoldExpiresAt.Equal(&holdExpires) {
@@ -197,13 +197,13 @@ func TestSandboxClaimDeepCopyIsolatesTheCopy(t *testing.T) {
 	}
 }
 
-// TestSandboxTemplateDeepCopyIsolatesNestedPolicy exercises the
+// TestPodSetDeepCopyIsolatesNestedPolicy exercises the
 // pointer-valued SessionPolicy and its nested RecyclePolicy so a
 // regression in the generated DeepCopy (a shallow pointer copy) is caught.
 // spec: §5.2 (sessionPolicy and recycle block).
-func TestSandboxTemplateDeepCopyIsolatesNestedPolicy(t *testing.T) {
-	orig := &lennyv1.SandboxTemplate{
-		Spec: lennyv1.SandboxTemplateSpec{
+func TestPodSetDeepCopyIsolatesNestedPolicy(t *testing.T) {
+	orig := &lennyv1.PodSet{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:    "claude-code",
 			ExecutionMode: "session",
 			SessionPolicy: &lennyv1.SessionPolicy{
@@ -229,17 +229,17 @@ func TestSandboxTemplateDeepCopyIsolatesNestedPolicy(t *testing.T) {
 	}
 }
 
-// TestSandboxWarmPoolDeepCopyIsolatesCircuitBreaker exercises the
+// TestPodSetDeepCopyIsolatesCircuitBreaker exercises the
 // PoolScalingController-owned status carve-out so a shallow copy of
 // the circuit-breaker pointer is caught.
-func TestSandboxWarmPoolDeepCopyIsolatesCircuitBreaker(t *testing.T) {
-	orig := &lennyv1.SandboxWarmPool{
-		Spec: lennyv1.SandboxWarmPoolSpec{
+func TestPodSetDeepCopyIsolatesCircuitBreaker(t *testing.T) {
+	orig := &lennyv1.PodSet{
+		Spec: lennyv1.PodSetSpec{
 			TemplateRef: "default",
 			MinWarm:     2,
 			MaxWarm:     10,
 		},
-		Status: lennyv1.SandboxWarmPoolStatus{
+		Status: lennyv1.PodSetStatus{
 			WarmCount: 2,
 			SDKWarmCircuitBreaker: &lennyv1.SDKWarmCircuitBreakerStatus{
 				OpenedReason: "demotion_rate_exceeded",

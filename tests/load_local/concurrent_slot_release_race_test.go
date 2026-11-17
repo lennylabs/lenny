@@ -12,12 +12,12 @@
 // lifecycle harness's slot log), a leaked release leaves its leaked: member,
 // a pod's set never exceeds its cap, and the per-pod claim is deleted only by
 // the release that empties the set. The departure cases, whose residue
-// §5.2 (Slot assignment atomicity) and §4.6.1 (Orphaned SandboxClaim
+// §5.2 (Slot assignment atomicity) and §4.6.1 (Orphaned PodClaim
 // detection) accept, run on the lifecycle harness in
 // slot_release_departure_race_test.go.
 //
 // spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
-// §4.6.3 (SandboxClaim: a release that ends the occupancy without reuse).
+// §4.6.3 (PodClaim: a release that ends the occupancy without reuse).
 package loadlocal_test
 
 import (
@@ -58,7 +58,7 @@ const (
 )
 
 // slotRaceEnv is one pod's slot set behind a logged Redis client and a fake
-// apiserver holding the pod's Sandbox.
+// apiserver holding the pod's AgentPod.
 type slotRaceEnv struct {
 	mr  *miniredis.Miniredis
 	rc  *redis.Client
@@ -68,7 +68,7 @@ type slotRaceEnv struct {
 	kube client.WithWatch
 }
 
-func newSlotRaceEnv(t *testing.T, sandboxPhase string) *slotRaceEnv {
+func newSlotRaceEnv(t *testing.T, agentPodPhase string) *slotRaceEnv {
 	t.Helper()
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -82,25 +82,25 @@ func newSlotRaceEnv(t *testing.T, sandboxPhase string) *slotRaceEnv {
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: slotRacePod, Namespace: slotRaceNS, Labels: map[string]string{warmpool.LabelPool: slotRacePool}},
-		Status:     lennyv1.SandboxStatus{Phase: sandboxPhase, PodIP: "10.244.3.3"},
+		Status:     lennyv1.AgentPodStatus{Phase: agentPodPhase, PodIP: "10.244.3.3"},
 	}
-	base := fake.NewClientBuilder().WithScheme(s).WithObjects(sb).WithStatusSubresource(sb, &lennyv1.SandboxClaim{}).Build()
+	base := fake.NewClientBuilder().WithScheme(s).WithObjects(sb).WithStatusSubresource(sb, &lennyv1.PodClaim{}).Build()
 	return &slotRaceEnv{mr: mr, rc: rc, log: log, base: base, kube: interceptor.NewClient(base, applyAsUpdate())}
 }
 
-// applyAsUpdate serves a server-side-apply status patch of a SandboxClaim,
+// applyAsUpdate serves a server-side-apply status patch of a PodClaim,
 // which the fake client does not implement, as a status update of the
 // fields the patch sets.
 func applyAsUpdate() interceptor.Funcs {
 	return interceptor.Funcs{
 		SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
-			want, ok := obj.(*lennyv1.SandboxClaim)
+			want, ok := obj.(*lennyv1.PodClaim)
 			if !ok || p.Type() != types.ApplyPatchType {
 				return cl.SubResource(sub).Patch(ctx, obj, p, opts...)
 			}
-			var cur lennyv1.SandboxClaim
+			var cur lennyv1.PodClaim
 			if err := cl.Get(ctx, client.ObjectKeyFromObject(want), &cur); err != nil {
 				return err
 			}
@@ -131,9 +131,9 @@ func (e *slotRaceEnv) claimer(kube client.Client) *podclaim.SlotClaimer {
 func (e *slotRaceEnv) seedBoundClaim(t *testing.T, members ...string) {
 	t.Helper()
 	ctx := context.Background()
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(slotRacePod), Namespace: slotRaceNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: slotRacePod, TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: slotRacePod, TenantID: "acme"},
 	}
 	if err := e.kube.Create(ctx, claim); err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func (e *slotRaceEnv) seedBoundClaim(t *testing.T, members ...string) {
 // claimPhase returns the pod's claim phase, or "" when it is gone.
 func (e *slotRaceEnv) claimPhase(t *testing.T) string {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := e.kube.Get(context.Background(), client.ObjectKey{Namespace: slotRaceNS, Name: podclaim.ClaimName(slotRacePod)}, &claim)
 	if apierrors.IsNotFound(err) {
 		return ""
@@ -256,25 +256,25 @@ func TestConcurrentReservationsNeverExceedTheCap_spec_5_2(t *testing.T) {
 	}
 }
 
-// createGate counts the SandboxClaim writes one claimer makes that reach the
+// createGate counts the PodClaim writes one claimer makes that reach the
 // apiserver, so a case can assert that a joining or losing claimer wrote
 // nothing.
 type createGate struct {
 	writes atomic.Int32
 }
 
-// funcs counts every SandboxClaim write the claimer makes.
+// funcs counts every PodClaim write the claimer makes.
 func (g *createGate) funcs() interceptor.Funcs {
 	f := applyAsUpdate()
 	inner := f.SubResourcePatch
 	f.SubResourcePatch = func(ctx context.Context, cl client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
-		if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+		if _, ok := obj.(*lennyv1.PodClaim); ok {
 			g.writes.Add(1)
 		}
 		return inner(ctx, cl, sub, obj, p, opts...)
 	}
 	f.Create = func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-		if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+		if _, ok := obj.(*lennyv1.PodClaim); ok {
 			err := cl.Create(ctx, obj, opts...)
 			if err == nil {
 				g.writes.Add(1)
@@ -284,7 +284,7 @@ func (g *createGate) funcs() interceptor.Funcs {
 		return cl.Create(ctx, obj, opts...)
 	}
 	f.Delete = func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-		if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+		if _, ok := obj.(*lennyv1.PodClaim); ok {
 			g.writes.Add(1)
 		}
 		return cl.Delete(ctx, obj, opts...)
@@ -292,7 +292,7 @@ func (g *createGate) funcs() interceptor.Funcs {
 	return f
 }
 
-// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// spec: §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse), §5.2 (Slot assignment atomicity)
 // diagnosis: two replicas acquiring one fresh pod left more than one claim,
 // left no claim for the winner, or the loser wrote to the winner's claim

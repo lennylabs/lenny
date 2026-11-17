@@ -30,7 +30,7 @@ spec:
     preConnect: true
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-preconnect-template-gvisor
   namespace: lenny-agents
@@ -40,7 +40,7 @@ spec:
   executionMode: session
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-preconnect-pool-gvisor
   namespace: lenny-agents

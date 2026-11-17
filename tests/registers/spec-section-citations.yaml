@@ -113,7 +113,7 @@ packages:
       count: 29
     - package: pkg/admission/registry_digest
       count: 1
-    - package: pkg/admission/sandboxclaim_guard
+    - package: pkg/admission/podclaim_guard
       count: 7
     - package: pkg/admission/t4_node_isolation
       count: 2
@@ -201,13 +201,13 @@ packages:
       count: 1
     - package: pkg/controller/runtime
       count: 42
-    - package: pkg/controller/sandbox
+    - package: pkg/controller/agentpod
       count: 161
-    - package: pkg/controller/sandbox/lifecycle
+    - package: pkg/controller/agentpod/lifecycle
       count: 15
-    - package: pkg/controller/sandbox/podspec
+    - package: pkg/controller/agentpod/podspec
       count: 108
-    - package: pkg/controller/sandbox/resourceclass
+    - package: pkg/controller/agentpod/resourceclass
       count: 2
     - package: pkg/controller/ssaretry
       count: 10

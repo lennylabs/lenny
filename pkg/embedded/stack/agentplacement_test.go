@@ -67,9 +67,9 @@ func TestEchoRuntimeCR_spec_4_7(t *testing.T) {
 
 // TestUpsertRuntimeCRCreatesWhenAbsent_spec_5_1 asserts upsertRuntimeCR creates
 // the echo Runtime CR when none exists, so the first lenny up applies the CR the
-// Sandbox controller resolves the runtime from by name.
+// AgentPod controller resolves the runtime from by name.
 //
-// spec: §5.1 (the Runtime CR is the declarative source the Sandbox controller
+// spec: §5.1 (the Runtime CR is the declarative source the AgentPod controller
 // resolves by name).
 func TestUpsertRuntimeCRCreatesWhenAbsent_spec_5_1(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(lennyScheme(t)).Build()
@@ -117,10 +117,10 @@ func TestUpsertRuntimeCRUpdatesInPlace_spec_5_1(t *testing.T) {
 }
 
 // TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2 asserts the echo
-// SandboxTemplate/SandboxWarmPool pair the embedded bring-up applies reproduces
+// PodSet pair the embedded bring-up applies reproduces
 // the canonical poolstore→CRD field mapping (poolscaling.PoolStoreSource.toConfig)
-// for a §5.2 single-pod hot pool: the SandboxWarmPool sets templateRef to the
-// pool name with minWarm = maxWarm = warmCount, and the SandboxTemplate carries
+// for a §5.2 single-pod hot pool: the PodSet sets templateRef to the
+// pool name with minWarm = maxWarm = warmCount, and the PodSet carries
 // the runtimeRef, the §17.4 local-fidelity `standard` isolation, the restricted
 // egress profile, the §13.2 cluster-default DNS opt-out, and the small resource
 // class. A drift between this direct apply and what the controller would have
@@ -171,7 +171,7 @@ func TestEchoPoolObjectsReproducesToConfigMapping_spec_4_6_2(t *testing.T) {
 
 // TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2 asserts the echo
 // pool pair the bring-up applies is encoded as unstructured objects carrying the
-// lenny.dev/v1alpha1 SandboxTemplate/SandboxWarmPool GVK and preserving the
+// lenny.dev/v1alpha1 PodSet GVK and preserving the
 // canonical field mapping, so the C1 dynamic-apply path (apply.go applyObject)
 // can resolve each object's GVR via the RESTMapper and server-side-apply it. The
 // echo seed and the runtime-agnostic CLI verb share this dynamic-apply transport
@@ -188,7 +188,7 @@ func TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2(t *testing.T) 
 		t.Fatalf("echoPoolUnstructured: %v", err)
 	}
 	if len(objs) != 2 {
-		t.Fatalf("echoPoolUnstructured returned %d objects, want 2 (SandboxTemplate + SandboxWarmPool)", len(objs))
+		t.Fatalf("echoPoolUnstructured returned %d objects, want 2 (PodSet)", len(objs))
 	}
 
 	byKind := map[string]unstructured.Unstructured{}
@@ -205,9 +205,9 @@ func TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2(t *testing.T) 
 		byKind[o.GetKind()] = o
 	}
 
-	tmpl, ok := byKind["SandboxTemplate"]
+	tmpl, ok := byKind["PodSet"]
 	if !ok {
-		t.Fatal("echoPoolUnstructured produced no SandboxTemplate")
+		t.Fatal("echoPoolUnstructured produced no PodSet")
 	}
 	if got, _, _ := unstructured.NestedString(tmpl.Object, "spec", "runtimeRef"); got != EchoRuntimeName {
 		t.Errorf("template spec.runtimeRef = %q, want %q", got, EchoRuntimeName)
@@ -216,9 +216,9 @@ func TestEchoPoolUnstructuredCarriesGVKForDynamicApply_spec_4_6_2(t *testing.T) 
 		t.Errorf("template spec.isolationProfile = %q, want standard (§17.4 local fidelity)", got)
 	}
 
-	pool, ok := byKind["SandboxWarmPool"]
+	pool, ok := byKind["PodSet"]
 	if !ok {
-		t.Fatal("echoPoolUnstructured produced no SandboxWarmPool")
+		t.Fatal("echoPoolUnstructured produced no PodSet")
 	}
 	if got, _, _ := unstructured.NestedString(pool.Object, "spec", "templateRef"); got != EchoPoolName {
 		t.Errorf("warm pool spec.templateRef = %q, want %q", got, EchoPoolName)

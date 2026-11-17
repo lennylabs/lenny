@@ -1085,7 +1085,7 @@ type stagedLineSupersession struct {
 // spec: §28.3 (Registers)
 var stagedLineSupersessions = []stagedLineSupersession{
 	{
-		// The REG-CLAIM writer cell follows the §4.6.3 SandboxClaim
+		// The REG-CLAIM writer cell follows the §4.6.3 PodClaim
 		// ownership row, which gained the gateway delete that ends a hold
 		// when an acquisition ends it.
 		proposal:   "0079_fix_name-who-starts-the-next-sessions-runtime-on-a-recycled-pod",
@@ -1104,7 +1104,7 @@ var stagedLineSupersessions = []stagedLineSupersession{
 			"ceilings concurrent slots ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes))",
 	},
 	{
-		// The REG-CLAIM writer cell follows the §4.6.3 SandboxClaim
+		// The REG-CLAIM writer cell follows the §4.6.3 PodClaim
 		// ownership row, which gained the gateway delete by a release that
 		// ends the occupancy without reuse. It applies after the rewrite
 		// above, so its replaced text is that rewrite's result.

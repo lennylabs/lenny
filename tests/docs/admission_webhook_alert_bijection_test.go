@@ -90,7 +90,7 @@ func additiveLabelCarriers(sectionText string) map[string]bool {
 // TestAdmissionWebhookAdditiveLabelCarriersAgree asserts §13.2 and
 // §17.2 name the same additive-label carrier set: exactly the two
 // gateway-probing webhooks `drain-readiness` and
-// `sandboxtemplate-deletion-guard`. The remaining webhooks carry no
+// `podset-deletion-guard`. The remaining webhooks carry no
 // `lenny.dev/webhook-name` label and are in-process validators.
 //
 // diagnosis: A failure means the §13.2 admission-webhook NetworkPolicy
@@ -112,14 +112,14 @@ func TestAdmissionWebhookAdditiveLabelCarriersAgree(t *testing.T) {
 	// The additive-label affordance (NET-068) narrows gateway egress to
 	// the two webhooks that probe the gateway internal port: the
 	// drain-readiness pre-drain callback (sub-rule (b)) and the
-	// sandboxtemplate-deletion-guard runtime-upgrade probe (sub-rule
+	// podset-deletion-guard runtime-upgrade probe (sub-rule
 	// (c), added by proposal 0022). No other webhook may carry the
 	// label; §17.2's "MUST NOT add per-webhook labels to any webhook
 	// other than lenny-drain-readiness and
-	// lenny-sandboxtemplate-deletion-guard" guard forbids it.
+	// lenny-podset-deletion-guard" guard forbids it.
 	want := map[string]bool{
-		"drain-readiness":                true,
-		"sandboxtemplate-deletion-guard": true,
+		"drain-readiness":       true,
+		"podset-deletion-guard": true,
 	}
 
 	got132 := additiveLabelCarriers(text132)
@@ -172,20 +172,20 @@ func carrierSetDiff(want, got map[string]bool) string {
 // "acknowledged as a labeled admission-webhook Deployment in §17.2"
 // cross-reference has a resolving antecedent in §17.2: §13.2 contains
 // the phrase referring the reader to §17.2, and §17.2 contains a
-// sentence that acknowledges `lenny-sandboxtemplate-deletion-guard` as
+// sentence that acknowledges `lenny-podset-deletion-guard` as
 // a labeled admission-webhook Deployment (the additive-label / HA
 // sentence added on application of proposal 0022).
 //
 // diagnosis: A failure means the §13.2 cross-reference to §17.2 for the
-// sandboxtemplate-deletion-guard is dangling — either §13.2 dropped the
+// podset-deletion-guard is dangling — either §13.2 dropped the
 // "acknowledged as a labeled admission-webhook Deployment in §17.2"
 // phrase, or §17.2 dropped the antecedent sentence naming
-// lenny-sandboxtemplate-deletion-guard with its additive
+// lenny-podset-deletion-guard with its additive
 // `lenny.dev/webhook-name` label. The reader following the §13.2 row to
 // §17.2 would find no acknowledgement of the deletion-guard.
 //
 // spec: 13.2 (cross-reference phrase), 17.2 (antecedent additive-label
-// sentence for lenny-sandboxtemplate-deletion-guard), 16.5
+// sentence for lenny-podset-deletion-guard), 16.5
 func TestDeletionGuardCrossReferenceResolves(t *testing.T) {
 	root := repoRoot(t)
 	text132 := readSection(t, root, section132)
@@ -197,20 +197,20 @@ func TestDeletionGuardCrossReferenceResolves(t *testing.T) {
 		t.Errorf("§13.2 is missing the deletion-guard cross-reference phrase %q", crossRef)
 	}
 	// The phrase must name the deletion-guard and target §17.2's anchor.
-	if !strings.Contains(text132, "lenny-sandboxtemplate-deletion-guard") {
-		t.Errorf("§13.2 does not name lenny-sandboxtemplate-deletion-guard in the admission-webhook row")
+	if !strings.Contains(text132, "lenny-podset-deletion-guard") {
+		t.Errorf("§13.2 does not name lenny-podset-deletion-guard in the admission-webhook row")
 	}
 
 	// (b2) §17.2 carries the antecedent sentence: it acknowledges
-	// lenny-sandboxtemplate-deletion-guard as a labeled admission-webhook
+	// lenny-podset-deletion-guard as a labeled admission-webhook
 	// Deployment carrying the additive per-webhook label. The sentence
 	// added on application states the deletion-guard "carries the additive
-	// per-webhook label lenny.dev/webhook-name: sandboxtemplate-deletion-guard".
-	if !strings.Contains(text172, "lenny-sandboxtemplate-deletion-guard") {
-		t.Fatalf("§17.2 does not name lenny-sandboxtemplate-deletion-guard; the §13.2 cross-reference has no antecedent")
+	// per-webhook label lenny.dev/webhook-name: podset-deletion-guard".
+	if !strings.Contains(text172, "lenny-podset-deletion-guard") {
+		t.Fatalf("§17.2 does not name lenny-podset-deletion-guard; the §13.2 cross-reference has no antecedent")
 	}
-	if !additiveLabelCarriers(text172)["sandboxtemplate-deletion-guard"] {
-		t.Errorf("§17.2 does not acknowledge lenny-sandboxtemplate-deletion-guard as a lenny.dev/webhook-name label carrier; the §13.2 cross-reference antecedent (the additive-label sentence) is missing")
+	if !additiveLabelCarriers(text172)["podset-deletion-guard"] {
+		t.Errorf("§17.2 does not acknowledge lenny-podset-deletion-guard as a lenny.dev/webhook-name label carrier; the §13.2 cross-reference antecedent (the additive-label sentence) is missing")
 	}
 }
 
@@ -238,7 +238,7 @@ var backtickedNameRe = regexp.MustCompile("`(lenny-[a-z0-9-]+)`")
 // catalog (rules.Catalog) and is named in the §17.2 SLO clause's alert
 // enumeration. The three baseline fail-closed webhooks the spec keeps
 // out of the SLO/alert bijection are excepted:
-// lenny-sandboxtemplate-deletion-guard, lenny-pod-security, and
+// lenny-podset-deletion-guard, lenny-pod-security, and
 // lenny-tenant-label-immutability (proposal 0022, Decision §2). A future
 // author who adds one of those (or another baseline webhook) to the
 // line-56 enumeration without a matching §16.5 alert is caught.
@@ -266,9 +266,9 @@ func TestReplicas2EnumerationHasMatchingAlert(t *testing.T) {
 	// the line-56 enumeration, the test fails unless a real alert also
 	// lands (dropping it from this set). proposal 0022 Decision §2.
 	baselineExceptions := map[string]bool{
-		"lenny-sandboxtemplate-deletion-guard": true,
-		"lenny-pod-security":                   true,
-		"lenny-tenant-label-immutability":      true,
+		"lenny-podset-deletion-guard":     true,
+		"lenny-pod-security":              true,
+		"lenny-tenant-label-immutability": true,
 	}
 
 	// Extract the parenthesized Deployment enumeration from the line-56
@@ -337,23 +337,23 @@ func TestBijectionDriftDetection(t *testing.T) {
 	// (a) carrier drift: a section that grants the additive label to a
 	// third webhook must diverge from the expected two-carrier set.
 	drifted := "The `lenny-drain-readiness` Deployment carries `lenny.dev/webhook-name: drain-readiness`. " +
-		"The `lenny-sandboxtemplate-deletion-guard` Deployment carries `lenny.dev/webhook-name: sandboxtemplate-deletion-guard`. " +
+		"The `lenny-podset-deletion-guard` Deployment carries `lenny.dev/webhook-name: podset-deletion-guard`. " +
 		"A stray edit adds `lenny.dev/webhook-name: pool-config-validator`."
-	want := map[string]bool{"drain-readiness": true, "sandboxtemplate-deletion-guard": true}
+	want := map[string]bool{"drain-readiness": true, "podset-deletion-guard": true}
 	if diff := carrierSetDiff(want, additiveLabelCarriers(drifted)); diff == "" {
 		t.Errorf("carrier drift went undetected: a third additive-label carrier did not diff against the expected set")
 	}
 	// A section missing a carrier must also diff.
 	missing := "The `lenny-drain-readiness` Deployment carries `lenny.dev/webhook-name: drain-readiness`."
 	if diff := carrierSetDiff(want, additiveLabelCarriers(missing)); diff == "" {
-		t.Errorf("missing-carrier drift went undetected: dropping sandboxtemplate-deletion-guard did not diff against the expected set")
+		t.Errorf("missing-carrier drift went undetected: dropping podset-deletion-guard did not diff against the expected set")
 	}
 
 	// (b) cross-reference antecedent drift: §17.2 text that names the
 	// deletion-guard but drops its additive label must fail the
 	// antecedent check (the additive-label sentence is the antecedent).
-	noAntecedent := "The `lenny-sandboxtemplate-deletion-guard` Deployment is a fail-closed webhook."
-	if additiveLabelCarriers(noAntecedent)["sandboxtemplate-deletion-guard"] {
+	noAntecedent := "The `lenny-podset-deletion-guard` Deployment is a fail-closed webhook."
+	if additiveLabelCarriers(noAntecedent)["podset-deletion-guard"] {
 		t.Errorf("cross-reference antecedent drift went undetected: §17.2 text without the additive-label sentence still resolved the deletion-guard carrier")
 	}
 

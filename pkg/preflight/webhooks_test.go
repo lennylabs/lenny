@@ -16,7 +16,7 @@ func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 		// spec: §17.2 item 5 / §13.2 NET-003 — the lenny.dev/tenant-id
 		// transition rules render as a separate webhook (F-17.2.15).
 		"lenny-tenant-label-immutability":      true,
-		"lenny-sandboxclaim-guard":             true,
+		"lenny-podclaim-guard":                 true,
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
 		"lenny-pod-security":                   true,
@@ -25,7 +25,7 @@ func TestExpectedValidatingWebhooksBaseline(t *testing.T) {
 		"lenny-direct-mode-isolation": true,
 		// spec: §10.5 — renders unconditionally and fail-closed
 		// (F-10.5.14).
-		"lenny-sandboxtemplate-deletion-guard": true,
+		"lenny-podset-deletion-guard": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("baseline expected %d webhooks, want %d: %v", len(got), len(want), got)
@@ -48,12 +48,12 @@ func TestExpectedValidatingWebhooksWithFeatureFlags(t *testing.T) {
 	want := map[string]bool{
 		"lenny-label-immutability":             true,
 		"lenny-tenant-label-immutability":      true,
-		"lenny-sandboxclaim-guard":             true,
+		"lenny-podclaim-guard":                 true,
 		"lenny-pool-config-validator":          true,
 		"lenny-ephemeral-container-cred-guard": true,
 		"lenny-pod-security":                   true,
 		"lenny-direct-mode-isolation":          true,
-		"lenny-sandboxtemplate-deletion-guard": true,
+		"lenny-podset-deletion-guard":          true,
 		"lenny-drain-readiness":                true,
 		"lenny-data-residency-validator":       true,
 		"lenny-t4-node-isolation":              true,
@@ -193,9 +193,9 @@ func TestCheckAdmissionWebhooksFailsOnNonFailPolicy(t *testing.T) {
 }
 
 func TestCheckAdmissionWebhooksFailsOnEmptyCABundle(t *testing.T) {
-	expected := []string{"lenny-sandboxclaim-guard"}
+	expected := []string{"lenny-podclaim-guard"}
 	deployed := []preflight.WebhookConfig{
-		{Name: "lenny-sandboxclaim-guard", FailurePolicy: "Fail", HasCABundle: false},
+		{Name: "lenny-podclaim-guard", FailurePolicy: "Fail", HasCABundle: false},
 	}
 	d := preflight.CheckAdmissionWebhooks(expected, deployed)
 	if d.Passed {

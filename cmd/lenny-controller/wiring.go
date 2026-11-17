@@ -26,7 +26,7 @@ import (
 //
 // spec: §4.1 — the gateway and its sibling binaries are each one component
 // whose composition root constructs each subsystem in dependency order; §4.6.1
-// — the lenny-controller hosts the WarmPoolController, the Sandbox reconciler,
+// — the lenny-controller hosts the WarmPoolController, the AgentPod reconciler,
 // and the leader-elected mirror / GC / CIDR-drift runnables.
 func runController(f *controllerFlags) {
 	w := &controllerWiring{f: f}
@@ -94,7 +94,7 @@ func (w *controllerWiring) runManager() {
 //   - stores.go: the §4.6.1 Postgres-backed stores (the agent_pod_state mirror,
 //     the session lookup, and the Runtime CRD registry), the §16.6 / §25.5 ops
 //     emitter, and the bounded reconciliation work-queue factory — buildStores.
-//   - controllers.go: the §4.6.1 WarmPoolController, Sandbox reconciler, per-pod
+//   - controllers.go: the §4.6.1 WarmPoolController, AgentPod reconciler, per-pod
 //     reconciler, and occupancy-projection reconciler (always registered), the
 //     §5.1 RuntimeReconciler (Postgres-gated), and the leader-elected §4.6.1
 //     mirror / orphan-claim GC, §13.2 CIDR drift detector, and §4.6.1

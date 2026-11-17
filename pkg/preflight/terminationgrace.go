@@ -22,9 +22,9 @@ import (
 const nodeDrainTimeoutWarnSeconds = 600
 
 // PoolGracePeriod is one pool's deployer-set
-// terminationGracePeriodSeconds, projected from a SandboxTemplate.
+// terminationGracePeriodSeconds, projected from a PodSet.
 type PoolGracePeriod struct {
-	// Pool is the SandboxTemplate (pool) name.
+	// Pool is the PodSet (pool) name.
 	Pool string
 	// TerminationGracePeriodSeconds is the pool's deployer-set grace
 	// period, or nil when unset (the pool uses the §4.6.1 default base).
@@ -34,7 +34,7 @@ type PoolGracePeriod struct {
 // CheckTerminationGracePeriods emits an advisory warning for every pool
 // whose terminationGracePeriodSeconds exceeds the commonly-configured
 // node drain timeout (600s). The check never fails the install: §5.2 specifies a preflight warning, not a rejection, mirroring the
-// warning-only treatment of the SandboxWarmPool CRD validation webhook
+// warning-only treatment of the PodSet CRD validation webhook
 // for the same condition. A fresh install carries no pools and the check
 // passes cleanly; on upgrade, existing pools are evaluated.
 //
@@ -61,13 +61,13 @@ func CheckTerminationGracePeriods(pools []PoolGracePeriod) Decision {
 	return Decision{Passed: true, Reason: "WARNING: " + strings.Join(warnings, "; ")}
 }
 
-// gatherPoolGracePeriods lists the cluster's SandboxTemplate pools and
+// gatherPoolGracePeriods lists the cluster's PodSet pools and
 // projects each onto its deployer-set terminationGracePeriodSeconds. On a
-// fresh install the SandboxTemplate CRD may not be applied yet; a
+// fresh install the PodSet CRD may not be applied yet; a
 // missing kind or absent CRD is treated as "no pools to check" so the
 // advisory warning never blocks a first install.
 func gatherPoolGracePeriods(ctx context.Context, reader client.Reader) ([]PoolGracePeriod, error) {
-	var list lennyv1.SandboxTemplateList
+	var list lennyv1.PodSetList
 	if err := reader.List(ctx, &list); err != nil {
 		if meta.IsNoMatchError(err) || apierrors.IsNotFound(err) {
 			return nil, nil

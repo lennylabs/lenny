@@ -21,7 +21,7 @@ import (
 // when a controller applies a field owned by another SSA field manager.
 func ssaConflict() error {
 	return apierrors.NewConflict(
-		schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+		schema.GroupResource{Group: "lenny.dev", Resource: "podsets"},
 		"claude-worker-small",
 		errors.New("Apply failed with 1 conflict: conflict with \"lenny-pool-scaling-controller\""),
 	)
@@ -82,7 +82,7 @@ func stuckRecords(records []string) []string {
 //
 // spec: §4.6.3 / §16.1 (stuck log + counter after 5 consecutive 409s)
 func TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts(t *testing.T) {
-	const crd, controller, name, namespace = "SandboxWarmPool", "warm-pool-controller", "claude-worker-small", "lenny-agents"
+	const crd, controller, name, namespace = "PodSet", "warm-pool-controller", "claude-worker-small", "lenny-agents"
 	ctx, records := captureLogs(t)
 	id := ConflictID{Controller: controller, CRD: crd, Namespace: namespace, Name: name}
 
@@ -123,7 +123,7 @@ func TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts(t *testing.T) {
 //
 // spec: §4.6.3 (increment only after 5 consecutive no-progress 409s)
 func TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing(t *testing.T) {
-	const crd, controller = "SandboxWarmPool", "four-then-succeed-controller"
+	const crd, controller = "PodSet", "four-then-succeed-controller"
 	ctx, records := captureLogs(t)
 	id := ConflictID{Controller: controller, CRD: crd, Namespace: "lenny-agents", Name: "claude-worker-small"}
 
@@ -192,7 +192,7 @@ func TestRetryOnConflictSSAEmptyCRDIsSilent(t *testing.T) {
 //
 // spec: §4.6.3 (SSA conflict retry policy: retry only on 409)
 func TestRetryOnConflictSSAReturnsOnFirstSuccess(t *testing.T) {
-	id := ConflictID{Controller: "warm-pool-controller", CRD: "SandboxWarmPool", Name: "claude-worker-small"}
+	id := ConflictID{Controller: "warm-pool-controller", CRD: "PodSet", Name: "claude-worker-small"}
 	calls := 0
 	err := RetryOnConflictSSA(context.Background(), id, func(int) error {
 		calls++
@@ -213,7 +213,7 @@ func TestRetryOnConflictSSAReturnsOnFirstSuccess(t *testing.T) {
 //
 // spec: §4.6.3 item 1 (re-read is keyed on 409 conflicts)
 func TestRetryOnConflictSSADoesNotRetryNonConflict(t *testing.T) {
-	const crd, controller = "SandboxWarmPool", "non-conflict-controller"
+	const crd, controller = "PodSet", "non-conflict-controller"
 	ctx, records := captureLogs(t)
 	id := ConflictID{Controller: controller, CRD: crd, Name: "claude-worker-small"}
 	before := counterValue(t, crd, controller)
@@ -247,7 +247,7 @@ func TestRetryOnConflictSSADoesNotRetryNonConflict(t *testing.T) {
 //
 // spec: §4.6.3 item 3 (jittered backoff, initial 100ms)
 func TestRetryOnConflictSSARetriesAndBacksOffOnConflict(t *testing.T) {
-	id := ConflictID{Controller: "warm-pool-controller", CRD: "SandboxWarmPool", Name: "claude-worker-small"}
+	id := ConflictID{Controller: "warm-pool-controller", CRD: "PodSet", Name: "claude-worker-small"}
 	var attempts []int
 	start := time.Now()
 	// Succeed on the third attempt so the loop exercises two conflict-driven
@@ -279,7 +279,7 @@ func TestRetryOnConflictSSARetriesAndBacksOffOnConflict(t *testing.T) {
 //
 // spec: §4.6.3 (bounded retry with backoff); code-best-practices.md (honor context cancellation)
 func TestRetryOnConflictSSAHonorsContextCancellation(t *testing.T) {
-	const crd, controller = "SandboxWarmPool", "cancellation-controller"
+	const crd, controller = "PodSet", "cancellation-controller"
 	base, records := captureLogs(t)
 	ctx, cancel := context.WithCancel(base)
 	id := ConflictID{Controller: controller, CRD: crd, Name: "claude-worker-small"}

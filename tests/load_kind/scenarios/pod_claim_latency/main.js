@@ -3,7 +3,7 @@
 // k6 scenario: pod_claim_latency
 //
 // TESTING.md 12.7 target: 100 concurrent pod claims. SLO: P99 < 100ms
-// cache-warm; SandboxClaim CAS under 50ms.
+// cache-warm; PodClaim CAS under 50ms.
 //
 // Spec cross-reference: §6.3 budgets
 // "Pod claim and routing" at P95 ≤ 100ms (indicative planning until
@@ -71,7 +71,7 @@ export default function () {
     'status is 201': (r) => r.status === 201,
     'session running': (r) => r.body && r.body.includes('"running"'),
   });
-  // Terminate so the §4.6 SandboxClaim releases its pod back to the
+  // Terminate so the §4.6 PodClaim releases its pod back to the
   // warm pool. Without this each iteration leaks a claimed pod and
   // the pool exhausts within ~25 iterations on a Kind cluster sized
   // for smoke runs.

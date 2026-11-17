@@ -2,19 +2,18 @@
 
 // Package poolscaling holds the §4.6.2 PoolScalingController. The
 // controller treats the admin API's Postgres pool definitions as the
-// source of truth and reconciles them into the SandboxTemplate and
-// SandboxWarmPool CRD pair the WarmPoolController consumes.
+// source of truth and reconciles each into the PodSet the
+// WarmPoolController consumes.
 //
 // This file holds the configuration sync: the PoolConfigSource
 // abstraction over the pool definitions and the Sync pass that upserts
-// each definition's CRD pair. The warm-pod floor is derived per pool
+// each definition's PodSet. The warm-pod floor is derived per pool
 // by feeding the observed demand from a DemandSource and the pool's
 // tuning inputs through the §4.6.2 scaling formula in the strategy
 // subpackage; a pool with no observed demand stays at its bootstrap
-// minWarm. Because the CRDs are derived state, Sync overwrites the
-// full SandboxTemplate spec and the PoolScalingController-owned
-// SandboxWarmPool spec fields (§4.6.3) on every pass, which also
-// corrects any manual drift.
+// minWarm. Because the PodSet is derived state, Sync overwrites its full
+// spec, which the PoolScalingController owns (§4.6.3), on every pass,
+// which also corrects any manual drift.
 package poolscaling
 
 import (
@@ -51,17 +50,17 @@ const (
 
 // PoolConfig is the desired configuration of one pool, resolved from
 // the admin API's Postgres source of truth (§4.6.2). The
-// PoolScalingController reconciles it into a SandboxTemplate and a
-// SandboxWarmPool that share the pool name.
+// PoolScalingController reconciles it into one PodSet named after the
+// pool.
 type PoolConfig struct {
-	// Name is the pool name. The SandboxTemplate and SandboxWarmPool
-	// are both created under it.
+	// Name is the pool name. The pool's PodSet is created under it.
 	Name string
-	// Namespace is the agent namespace the pool's CRDs live in.
+	// Namespace is the agent namespace the pool's PodSet lives in.
 	Namespace string
-	// Template is the desired SandboxTemplate spec. Per §4.6.3 the
-	// PoolScalingController owns the whole SandboxTemplate spec.
-	Template lennyv1.SandboxTemplateSpec
+	// Settings carries the pool settings of the desired PodSet spec. The
+	// warm targets below are written onto the same spec. Per §4.6.3 the
+	// PoolScalingController owns the whole PodSet spec.
+	Settings lennyv1.PodSetSpec
 	// MinWarm is the warm-pod floor and MaxWarm the warm-pod ceiling,
 	// both owned by the PoolScalingController per §4.6.3. MinWarm is the
 	// static fallback the §4.6.2 formula returns until observed demand
@@ -129,23 +128,21 @@ type PoolConfig struct {
 	// paused experiment's variant pool: minWarm drops to 0 so no new warm
 	// pods are created, while MaxWarm is intentionally left at the pool's
 	// current ceiling so existing warm pods drain naturally rather than
-	// being pre-terminated and the SandboxWarmPool CRD is retained for
+	// being pre-terminated and the PodSet CRD is retained for
 	// re-activation. spec: §10.7.
 	ForceZeroMinWarm bool
 
 	// DrainAndDelete marks a concluded experiment's variant pool for the
-	// §10.7 full-drain-then-delete lifecycle: the
-	// SandboxWarmPool spec is driven to minWarm=0/maxWarm=0 to trigger a
-	// full drain, and once status.readyCount reaches 0 the
-	// PoolScalingController deletes the SandboxWarmPool CRD. The
-	// SandboxTemplate is retained (it may be referenced by other
-	// experiments or kept for audit). spec: §10.7
+	// §10.7 full-drain-then-delete lifecycle: the PodSet spec is driven
+	// to minWarm=0/maxWarm=0 to trigger a full drain, and once
+	// status.readyCount reaches 0 the PoolScalingController deletes the
+	// PodSet and does not recreate it. spec: §10.7
 	// (active|paused → concluded).
 	DrainAndDelete bool
 
 	// Generation is the §4.6.2 pool_config_generation the admin API
 	// bumped on the last write to this pool. The reconciler stamps it
-	// onto the SandboxTemplate and SandboxWarmPool CRDs as the
+	// onto the PodSet as the
 	// `lenny.dev/config-generation` annotation so the gateway-side
 	// PoolConfigDrift check can compare Postgres- and CRD-side
 	// generations. spec: §4.6.2.
@@ -307,7 +304,7 @@ type Reconciler struct {
 	// a pool's status until its grace window elapses.
 	Demotion DemotionRateSource
 	// Events records the §6.1 SDKWarmDemotionRateHigh warning
-	// event on the SandboxWarmPool when a pool's rolling 1-hour demotion
+	// event on the PodSet when a pool's rolling 1-hour demotion
 	// rate exceeds demotionRateThreshold and the pool has not set
 	// acknowledgeHighDemotionRate. When nil, the event is not emitted; the
 	// circuit-breaker trip is unaffected. The binary wires
@@ -460,8 +457,7 @@ func (r *Reconciler) now() time.Time {
 }
 
 // Sync performs one full reconciliation pass: every pool definition
-// from the source is upserted into its SandboxTemplate and
-// SandboxWarmPool CRD pair. A failure on one pool aborts the pass so
+// from the source is upserted into its PodSet. A failure on one pool aborts the pass so
 // the next tick retries; pools synced before the failure keep their
 // applied state.
 func (r *Reconciler) Sync(ctx context.Context) error {
@@ -504,33 +500,23 @@ func (r *Reconciler) Sync(ctx context.Context) error {
 		// below, so a stuck pool is retried this tick without a
 		// configuration change.
 		r.applyResumeEpoch(cfg)
-		// syncTemplate and syncWarmPool both call into
-		// controllerutil.CreateOrUpdate; an admission webhook rejection
-		// surfaces as a Forbidden / Invalid / BadRequest status error.
-		// Each CRD tuple is gated and counted independently per §4.6.2:
-		// a tuple in backoff (or stuck at the ceiling) is skipped this
-		// tick, and an admission denial on one tuple never aborts the
-		// pass or blocks another pool. A non-admission failure
-		// (transport, Postgres, internal) aborts the pass so the next
-		// tick retries, matching the SSA conflict retry policy.
-		tmplErr := r.syncTuple(ctx, cfg, crdSandboxTmpl, now, r.syncTemplate)
-		if tmplErr != nil {
-			return tmplErr
-		}
-		// spec: §10.7 — a concluded experiment's variant pool is
-		// drained to 0/0 and its SandboxWarmPool deleted once readyCount
-		// reaches 0. The SandboxTemplate above is retained. Every other
-		// pool reconciles its SandboxWarmPool through the normal upsert.
-		warmApply := r.syncWarmPool
+		// syncPodSet calls into controllerutil.CreateOrUpdate; an
+		// admission webhook rejection surfaces as a Forbidden / Invalid /
+		// BadRequest status error. The PodSet tuple is gated and counted
+		// per pool per §4.6.2: a tuple in backoff (or stuck at the
+		// ceiling) is skipped this tick, and an admission denial never
+		// aborts the pass or blocks another pool. A non-admission failure
+		// (transport, Postgres, internal) aborts the pass so the next tick
+		// retries, matching the SSA conflict retry policy. A concluded
+		// experiment's variant pool (§10.7) takes the drain-then-delete
+		// path instead of the upsert.
+		apply := r.syncPodSet
 		if cfg.DrainAndDelete {
-			warmApply = r.drainAndDeleteWarmPool
+			apply = r.drainAndDeletePodSet
 		}
-		warmErr := r.syncTuple(ctx, cfg, crdSandboxPool, now, warmApply)
-		if warmErr != nil {
-			return warmErr
+		if err := r.syncTuple(ctx, cfg, crdPodSet, now, apply); err != nil {
+			return err
 		}
-		// spec: §4.6.2 — both tuples synced cleanly, reset the
-		// lag gauge to zero.
 		r.lagMeter.MarkSynced(cfg.Name)
 		// spec: §16.5 — mirror the pool's warm-up baseline so
 		// WarmPoolReplenishmentSlow fires at 2× the per-pool value.
@@ -591,32 +577,6 @@ func (r *Reconciler) syncTuple(ctx context.Context, cfg PoolConfig, crd string, 
 	return fmt.Errorf("sync %s %s/%s: %w", crd, cfg.Namespace, cfg.Name, err)
 }
 
-// syncTemplate upserts the pool's SandboxTemplate. The whole spec is
-// PoolScalingController-owned, so it is replaced wholesale. The §5.2
-// topology-spread defaults are stamped in when the pool definition
-// carries none.
-func (r *Reconciler) syncTemplate(ctx context.Context, cfg PoolConfig, now time.Time) error {
-	spec := cfg.Template
-	// spec: §5.2 — the PoolScalingController owns
-	// SandboxTemplate.spec and writes the soft zone/node spread defaults
-	// when the deployer has not overridden them per pool.
-	if len(spec.TopologySpreadConstraints) == 0 {
-		spec.TopologySpreadConstraints = defaultTopologySpreadConstraints(cfg.Name)
-	}
-	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
-	}
-	_, err := controllerutil.CreateOrUpdate(ctx, r.Client, tmpl, func() error {
-		tmpl.Spec = spec
-		// spec: §4.6.2 — stamp pool_config_generation and
-		// the last-reconciled timestamp onto the CRD so the gateway-side
-		// PoolConfigDrift / sync-status check can compare it to Postgres.
-		stampReconcileAnnotations(&tmpl.ObjectMeta, cfg.Generation, now)
-		return nil
-	})
-	return err
-}
-
 // stampReconcileAnnotations writes the §4.6.2
 // pool_config_generation onto the resource together with the §4.6.2 last-reconciled timestamp. The gateway-side PoolConfigDrift /
 // sync-status check reads the generation and compares it to the Postgres
@@ -648,7 +608,7 @@ func stampReconcileAnnotations(meta *metav1.ObjectMeta, generation int64, now ti
 
 // topology spread keys the §5.2 defaults distribute pods over. The
 // label selector matches the pool's managed agent pods (the
-// WarmPoolController stamps lenny.dev/pool onto every Sandbox, and the
+// WarmPoolController stamps lenny.dev/pool onto every AgentPod, and the
 // podspec builder copies it onto the pod) so the skew is computed
 // within the pool rather than across unrelated pods.
 const (
@@ -680,11 +640,12 @@ func defaultTopologySpreadConstraints(poolName string) []corev1.TopologySpreadCo
 	}
 }
 
-// syncWarmPool upserts the pool's SandboxWarmPool, writing the spec
-// fields §4.6.3 assigns to the PoolScalingController and, separately,
-// the §4.6.3 status.sdkWarmCircuitBreaker carve-out. minWarm is the
-// formula-derived floor; the WarmPoolController-owned status counts
-// are not touched.
+// syncPodSet upserts the pool's PodSet, writing its whole spec in one
+// apply: the pool settings, with the §5.2 topology-spread defaults
+// stamped in when the pool definition carries none, and the warm targets.
+// It then writes the §4.6.3 status carve-outs separately. minWarm is the
+// formula-derived floor; the WarmPoolController-owned status counts are
+// not touched.
 //
 // spec.sdkWarmDisabled is the §6.1 SDK-warm circuit-breaker flag. The
 // breaker decision is taken against the rolling demotion signal and
@@ -692,10 +653,14 @@ func defaultTopologySpreadConstraints(poolName string) []corev1.TopologySpreadCo
 // own SDKWarmDisabled stays authoritative when no DemotionRateSource
 // is wired and no breaker is currently persisted, so an operator
 // override via the admin API still takes effect.
-func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.Time) error {
+func (r *Reconciler) syncPodSet(ctx context.Context, cfg PoolConfig, now time.Time) error {
 	wd, err := r.resolveWarm(ctx, cfg)
 	if err != nil {
 		return err
+	}
+	settings := cfg.Settings
+	if len(settings.TopologySpreadConstraints) == 0 {
+		settings.TopologySpreadConstraints = defaultTopologySpreadConstraints(cfg.Name)
 	}
 
 	// Read the rolling SDK-warm demotion signal once for this pool. Both
@@ -714,7 +679,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 		haveSig = true
 	}
 
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
 	}
 
@@ -725,7 +690,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 	var decision *BreakerDecision
 	_, err = controllerutil.CreateOrUpdate(ctx, r.Client, pool, func() error {
 		decision = r.evaluateBreaker(cfg, pool, sig, haveSig)
-		pool.Spec.TemplateRef = cfg.Name
+		pool.Spec = settings
 		pool.Spec.MinWarm = wd.MinWarm
 		pool.Spec.MaxWarm = cfg.MaxWarm
 		pool.Spec.ScalePolicy = cfg.ScalePolicy
@@ -734,9 +699,6 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 		} else {
 			pool.Spec.SDKWarmDisabled = cfg.SDKWarmDisabled
 		}
-		// spec: §4.6.2 — same generation + reconcile-time
-		// stamp on the SandboxWarmPool so a partial sync (template-only)
-		// still exposes the mismatch.
 		stampReconcileAnnotations(&pool.ObjectMeta, cfg.Generation, now)
 		return nil
 	})
@@ -770,7 +732,7 @@ func (r *Reconciler) syncWarmPool(ctx context.Context, cfg PoolConfig, now time.
 // EventRecorder aggregates repeated emissions into a single Event object
 // with a running count, so emitting on each reconcile while the rate
 // stays high does not spam the API server.
-func (r *Reconciler) emitDemotionRateHigh(pool *lennyv1.SandboxWarmPool, cfg PoolConfig, sig DemotionSignal, haveSig bool) {
+func (r *Reconciler) emitDemotionRateHigh(pool *lennyv1.PodSet, cfg PoolConfig, sig DemotionSignal, haveSig bool) {
 	if r.Events == nil || !haveSig || !sig.HourHasSample {
 		return
 	}
@@ -796,15 +758,14 @@ func demotionRateThresholdFor(cfg PoolConfig) float64 {
 	return demotionRateHighThresholdDefault
 }
 
-// drainAndDeleteWarmPool implements the §10.7 conclude
-// lifecycle for a variant pool: it drives the SandboxWarmPool to a full
-// drain (minWarm=0, maxWarm=0) and, once status.readyCount has reached
-// 0, deletes the SandboxWarmPool CRD. The SandboxTemplate is left in
-// place by the caller. A SandboxWarmPool that is already gone is a
-// no-op, so a concluded experiment that lingers in the registry does
-// not churn after its pool has been reclaimed.
-func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig, now time.Time) error {
-	pool := &lennyv1.SandboxWarmPool{
+// drainAndDeletePodSet implements the §10.7 conclude lifecycle for a
+// variant pool: it drives the PodSet to a full drain (minWarm=0,
+// maxWarm=0) and, once status.readyCount has reached 0, deletes the
+// PodSet. A PodSet that is already gone is a no-op and is not recreated,
+// so a concluded experiment that lingers in the registry does not churn
+// after its pool has been reclaimed.
+func (r *Reconciler) drainAndDeletePodSet(ctx context.Context, cfg PoolConfig, now time.Time) error {
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: cfg.Name, Namespace: cfg.Namespace},
 	}
 	if err := r.Client.Get(ctx, client.ObjectKeyFromObject(pool), pool); err != nil {
@@ -850,7 +811,7 @@ func (r *Reconciler) drainAndDeleteWarmPool(ctx context.Context, cfg PoolConfig,
 // the admin-API operator override path. When a breaker IS persisted, the
 // decision runs even without a signal so the breaker is held open until
 // its grace window elapses (the §6.1 leader-failover guard).
-func (r *Reconciler) evaluateBreaker(cfg PoolConfig, pool *lennyv1.SandboxWarmPool, sig DemotionSignal, haveSig bool) *BreakerDecision {
+func (r *Reconciler) evaluateBreaker(cfg PoolConfig, pool *lennyv1.PodSet, sig DemotionSignal, haveSig bool) *BreakerDecision {
 	cur := breakerStateFromStatus(pool.Status.SDKWarmCircuitBreaker)
 	override := cfg.SDKWarmCircuitBreakerOverride
 
@@ -895,12 +856,12 @@ func (r *Reconciler) evaluateBreaker(cfg PoolConfig, pool *lennyv1.SandboxWarmPo
 }
 
 // syncPoolStatus writes the §6.1 circuit-breaker state and the §17.8.2
-// scaling mode to the SandboxWarmPool status subresource in a single
+// scaling mode to the PodSet status subresource in a single
 // update. Both are PoolScalingController-owned carve-outs (§4.6.3). A
 // nil breaker decision leaves the breaker status untouched (no breaker
 // evaluation ran). The update is skipped when neither field changed so a
 // steady-state reconcile does not churn the status subresource.
-func (r *Reconciler) syncPoolStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision *BreakerDecision, scalingMode string, hoursOfData int32) error {
+func (r *Reconciler) syncPoolStatus(ctx context.Context, pool *lennyv1.PodSet, decision *BreakerDecision, scalingMode string, hoursOfData int32) error {
 	changed := false
 	if decision != nil {
 		want := breakerStatusFromState(decision.State)
@@ -962,7 +923,7 @@ const (
 const warmPoolLowRecencyWindow = 6 * time.Hour
 
 // warmDecision is the per-pool outcome of resolveWarm: the warm-pod
-// floor written to the SandboxWarmPool spec, the §17.8.2 scaling mode
+// floor written to the PodSet spec, the §17.8.2 scaling mode
 // written to status, and the cold-start gauge snapshot the bootstrap
 // meter publishes.
 type warmDecision struct {
@@ -1019,7 +980,7 @@ func (r *Reconciler) resolveWarm(ctx context.Context, cfg PoolConfig) (warmDecis
 
 	in := strategy.ScalingInputs{
 		PoolType:                cfg.PoolType,
-		Mode:                    strategy.ExecutionMode(cfg.Template.ExecutionMode),
+		Mode:                    strategy.ExecutionMode(cfg.Settings.ExecutionMode),
 		SafetyFactor:            cfg.SafetyFactor,
 		FailoverSeconds:         failoverSeconds,
 		PodWarmupSeconds:        podWarmupSeconds(cfg),
@@ -1184,8 +1145,8 @@ func podWarmupSeconds(cfg PoolConfig) float64 {
 //
 // spec: §5.2 (execution mode scaling implications).
 func resolveModeFactors(ctx context.Context, cfg PoolConfig, src ModeFactorSource) (modeFactor, burstModeFactor float64) {
-	if cfg.Template.ExecutionMode == "service" && cfg.Template.MaxConcurrent > 0 {
-		modeFactor = float64(cfg.Template.MaxConcurrent)
+	if cfg.Settings.ExecutionMode == "service" && cfg.Settings.MaxConcurrent > 0 {
+		modeFactor = float64(cfg.Settings.MaxConcurrent)
 		return modeFactor, modeFactor
 	}
 	// Session mode. burst_mode_factor = maxConcurrentSessions: a pod absorbs

@@ -54,18 +54,18 @@ func claimContractCluster(t *testing.T, objs ...client.Object) client.Client {
 // echoPool returns the `echo` runtime's pool and template. A warming
 // template carries the PoolWarmingUp condition the gateway reads.
 func echoPool(warming bool) []client.Object {
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: claimContractNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
 	}
 	if warming {
 		tmpl.Status.Conditions = []metav1.Condition{{
 			Type: "PoolWarmingUp", Status: metav1.ConditionTrue, Reason: "Warming", LastTransitionTime: metav1.Now(),
 		}}
 	}
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: claimContractNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
 	return []client.Object{pool, tmpl}
 }

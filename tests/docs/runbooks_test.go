@@ -191,7 +191,7 @@ func TestRunbookStructure(t *testing.T) {
 var knownBrokenRunbookSlugs = map[string]bool{
 	// F-17.7.4 closed the 26 §17.7-cataloged alert→file mismatches by
 	// renaming alert slugs to match existing files and authoring stub
-	// runbooks for the residual unmatched alerts (sandboxclaim-guard,
+	// runbooks for the residual unmatched alerts (podclaim-guard,
 	// audit-redaction-receipt-missing, otlp-plaintext-egress-detected,
 	// ops-admin-api-plaintext-detected, backup-reconcile-blocked,
 	// ops-lock-split-brain, artifact-replication-residency-violation,
@@ -326,8 +326,8 @@ var knownBrokenRunbookTriggers = map[string]bool{
 	"PostgresUnavailable":               true,
 	"RedisClusterDegraded":              true,
 	"RedisMasterFailover":               true,
-	"SandboxClaimRaceDetected":          true,
-	"SandboxFinalizerHang":              true,
+	"PodClaimRaceDetected":              true,
+	"AgentPodFinalizerHang":             true,
 	"SchemaMigrationDirtyFlag":          true,
 	"SchemaMigrationFailed":             true,
 	"SchemaMigrationDirty":              true,

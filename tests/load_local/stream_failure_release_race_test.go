@@ -33,9 +33,9 @@ func TestStreamFailureRacingReleaseRetiresExactlyMarkedPods_spec_28_5_1(t *testi
 	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 1, Pods: streamFailureRaceRuns + 4, Recycling: true})
 	r := h.Replicas[0]
 	var handled sync.Map
-	r.Executor.SetStreamFailureHandler(func(tenantID, sessionID, sandboxName string, cause error) {
+	r.Executor.SetStreamFailureHandler(func(tenantID, sessionID, agentPodName string, cause error) {
 		handled.Store(sessionID, true)
-		r.Server.ReportAttachStreamFailure(tenantID, sessionID, sandboxName, cause)
+		r.Server.ReportAttachStreamFailure(tenantID, sessionID, agentPodName, cause)
 	})
 	var marked, retired atomic.Int64
 	for run := 0; run < streamFailureRaceRuns; run++ {
@@ -47,7 +47,7 @@ func TestStreamFailureRacingReleaseRetiresExactlyMarkedPods_spec_28_5_1(t *testi
 		if !ok {
 			t.Fatalf("run %d: no binding", run)
 		}
-		pod := bind.SandboxName
+		pod := bind.AgentPodName
 		race(run%2,
 			func() { h.Cluster.PodOf(pod).FailAttach() },
 			func() { _ = r.Executor.Release(context.Background(), id, executor.DispositionCompleted) })

@@ -219,7 +219,7 @@ const (
 	lookupDerivedRT   = "claude-derived"
 	lookupOriginRT    = "origin-rt"
 	lookupOriginID    = "origin-1"
-	lookupSandbox     = "sbx-1"
+	lookupAgentPod    = "sbx-1"
 )
 
 // lookupFixture is a Server wired with fault-injecting tenant, runtime, and
@@ -287,32 +287,32 @@ func newLookupFixture(t *testing.T, opts lookupFixtureOpts) *lookupFixture {
 
 	writes := &kubeWrites{}
 	objs := []client.Object{
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: lookupNS},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
+			Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
 		},
-		&lennyv1.SandboxTemplate{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: lookupNS},
-			Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: lookupExclusiveRT, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec:       lennyv1.PodSetSpec{RuntimeRef: lookupExclusiveRT, IsolationProfile: string(isolation.ProfileSandboxed)},
 		},
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "derived-pool", Namespace: lookupNS},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "derived-tmpl", MinWarm: 1, MaxWarm: 5},
+			Spec:       lennyv1.PodSetSpec{TemplateRef: "derived-tmpl", MinWarm: 1, MaxWarm: 5},
 		},
-		&lennyv1.SandboxTemplate{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "derived-tmpl", Namespace: lookupNS},
-			Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: lookupDerivedRT, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec:       lennyv1.PodSetSpec{RuntimeRef: lookupDerivedRT, IsolationProfile: string(isolation.ProfileSandboxed)},
 		},
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: lookupNS},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
+			Spec:       lennyv1.PodSetSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
 		},
-		&lennyv1.SandboxTemplate{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: lookupNS},
-			Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: lookupConcRT, IsolationProfile: string(isolation.ProfileSandboxed)},
+			Spec:       lennyv1.PodSetSpec{RuntimeRef: lookupConcRT, IsolationProfile: string(isolation.ProfileSandboxed)},
 		},
 		// The create-time claim a finalize-time row holds on its pod.
-		&lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim-" + lookupSandbox, Namespace: lookupNS}},
+		&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: "claim-" + lookupAgentPod, Namespace: lookupNS}},
 	}
 	cluster := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(objs...).
 		WithInterceptorFuncs(interceptor.Funcs{
@@ -418,10 +418,10 @@ func (f *lookupFixture) apply(t *testing.T, fault lookupFault, runtimeRef string
 	return ctx, nil
 }
 
-// claimCount returns the number of SandboxClaims in the fixture's cluster.
+// claimCount returns the number of PodClaims in the fixture's cluster.
 func (f *lookupFixture) claimCount(t *testing.T) int {
 	t.Helper()
-	var claims lennyv1.SandboxClaimList
+	var claims lennyv1.PodClaimList
 	if err := f.cluster.List(context.Background(), &claims, client.InNamespace(lookupNS)); err != nil {
 		t.Fatalf("list claims: %v", err)
 	}
@@ -616,7 +616,7 @@ func preClaimCallers() []preClaimCaller {
 			name: "finalize lease assignment", runtime: lookupExclusiveRT,
 			row: func(r *sessionstore.Session) {
 				r.State = session.StateFinalizing
-				r.PodAssignment = lookupSandbox
+				r.PodAssignment = lookupAgentPod
 			},
 			call: func(ctx context.Context, f *lookupFixture, row sessionstore.Session) (int, error) {
 				_, err := f.srv.prepareAtFinalize(ctx, row, workspaceplan.Plan{})

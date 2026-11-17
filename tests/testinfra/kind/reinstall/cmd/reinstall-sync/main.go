@@ -13,7 +13,7 @@
 //	    --pods <file> --runtimes <file> --sandboxes <file>
 //
 // reads `kubectl get -o json` lists of the agent pods, the Runtime CRs,
-// and the Sandboxes, and prints one line per idle pod (per warming pod
+// and the AgentPods, and prints one line per idle pod (per warming pod
 // with --warming) whose runtime image differs from its Runtime CR, or
 // whose container named by a --platform-image flag runs another image:
 //
@@ -71,7 +71,7 @@ func stalePods(args []string) error {
 	fs := flag.NewFlagSet("stale-pods", flag.ExitOnError)
 	podsFile := fs.String("pods", "", "kubectl get pods -o json output")
 	runtimesFile := fs.String("runtimes", "", "kubectl get runtimes -o json output")
-	sandboxesFile := fs.String("sandboxes", "", "kubectl get sandboxes -o json output")
+	agentPodsFile := fs.String("agentpods", "", "kubectl get agentpods -o json output")
 	warming := fs.Bool("warming", false, "print the warming pods on an old image instead of the idle ones")
 	platform := reinstall.PlatformImages{}
 	fs.Func("platform-image", "<container>=<image> of a platform-injected container; repeatable", func(v string) error {
@@ -87,11 +87,11 @@ func stalePods(args []string) error {
 	}
 	var pods corev1.PodList
 	var runtimes v1alpha1.RuntimeList
-	var sandboxes v1alpha1.SandboxList
+	var agentPods v1alpha1.AgentPodList
 	for _, in := range []struct {
 		path string
 		into any
-	}{{*podsFile, &pods}, {*runtimesFile, &runtimes}, {*sandboxesFile, &sandboxes}} {
+	}{{*podsFile, &pods}, {*runtimesFile, &runtimes}, {*agentPodsFile, &agentPods}} {
 		if err := readJSON(in.path, in.into); err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func stalePods(args []string) error {
 	if *warming {
 		selectPods = reinstall.StaleWarmingPods
 	}
-	for _, p := range selectPods(&pods, &runtimes, &sandboxes, platform) {
+	for _, p := range selectPods(&pods, &runtimes, &agentPods, platform) {
 		if _, err := fmt.Printf("%s\t%s\t%s\t%s\t%s\n", p.Name, p.ResourceVersion, p.Runtime, p.Image, p.Want); err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func stalePods(args []string) error {
 
 func readJSON(path string, into any) error {
 	if path == "" {
-		return fmt.Errorf("stale-pods needs --pods, --runtimes, and --sandboxes")
+		return fmt.Errorf("stale-pods needs --pods, --runtimes, and --agentpods")
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

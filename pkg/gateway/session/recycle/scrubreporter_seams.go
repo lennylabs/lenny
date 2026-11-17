@@ -112,7 +112,7 @@ func (s *recycleCounterStore) RecycleCounters(ctx context.Context, podID string)
 // concurrent-session pool (the §5.2 "Concurrent" preset, maxConcurrentSessions:
 // N with recycle.enabled) drains only at ceil(N/2) failed-or-leaked slots.
 //
-// The gateway never writes Sandbox.status itself (§4.6.3), so the drain is
+// The gateway never writes AgentPod.status itself (§4.6.3), so the drain is
 // routed through the annotation rather than a phase write; podclaim.
 // StampDrainRequest performs the §4.6.3 gateway-stamps-drain-request patch.
 type drainLedger struct {
@@ -612,7 +612,7 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 	// claimDispositionDriver, which treats a NotFound from the binding-state
 	// writers as the same no-op. spec: §4.6.1, §4.7 (skip when the claim
 	// is gone).
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podclaim.ClaimName(podID)}, &claim); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			return leasecontrol.PodRecyclePolicy{}, false, nil
@@ -765,7 +765,7 @@ func podUptimeSeconds(createdAt, now time.Time) int64 {
 }
 
 // claimDispositionDriver applies a resolved recycle disposition to the
-// pod's SandboxClaim binding state via the podclaim binding-state writers.
+// pod's PodClaim binding state via the podclaim binding-state writers.
 // On a recycle it stamps rewarmStartedAt on a preConnect pool (the
 // projection drives sdk_connecting and the §6.2 re-warm completes
 // asynchronously, after which a later WriteReservedStatus reserves the
@@ -810,7 +810,7 @@ type recycleBoundarySignal interface {
 
 // ClaimDispositionDriverOptions configures the claim disposition driver.
 type ClaimDispositionDriverOptions struct {
-	// Client patches the SandboxClaim binding-state status subresource and
+	// Client patches the PodClaim binding-state status subresource and
 	// the agent Pod's lenny.dev/scrub-warning annotation. Required.
 	Client client.Client
 	// Namespace is the agent namespace the claims live in. Required.
@@ -872,7 +872,7 @@ func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol
 }
 
 // claimGone reports whether a binding-state write failed because the
-// SandboxClaim no longer exists. The recycle disposition races a concurrent
+// PodClaim no longer exists. The recycle disposition races a concurrent
 // reclaim of the claim: a hold-expiry DELETE on a reserved claim, or the
 // §4.6.1 orphan GC draining a `recycling` claim after a coordinator crash,
 // can remove the claim while the agent Pod object survives and the

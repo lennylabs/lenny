@@ -15,7 +15,7 @@
 // function (podscrub.Decide) with the outcome the adapter actually reports (or
 // the timeout that fires when the adapter withholds the report), so the whole
 // fold-to-disposition chain is asserted on one flow rather than component by
-// component. It crosses the gateway binder, the SandboxClaim on a real
+// component. It crosses the gateway binder, the PodClaim on a real
 // kube-apiserver (envtest), and the pod adapter over an in-memory gRPC
 // connection, which is the multi-service surface the integration tier owns.
 //
@@ -153,7 +153,7 @@ func (r *recycleScrubReporter) snapshot() []recycleReport {
 }
 
 // recycleCluster returns an envtest-backed client seeded with a warm pool, its
-// template, and one idle Sandbox the binder can claim for the recycling
+// template, and one idle AgentPod the binder can claim for the recycling
 // session-mode flow.
 func recycleCluster(t *testing.T) client.Client {
 	t.Helper()
@@ -174,19 +174,19 @@ func recycleCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: recycleNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "recycle-pool", Namespace: recycleNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "recycle-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "recycle-tmpl", MinWarm: 1, MaxWarm: 5},
 	}); err != nil {
 		t.Fatalf("create warm pool: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "recycle-tmpl", Namespace: recycleNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: "microvm"},
+		Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo", IsolationProfile: "microvm"},
 	}); err != nil {
 		t.Fatalf("create template: %v", err)
 	}
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "sbx-r", Namespace: recycleNS,
 			Labels: map[string]string{warmpool.LabelPool: "recycle-pool"},
@@ -198,7 +198,7 @@ func recycleCluster(t *testing.T) client.Client {
 	// Status is a subresource that Create ignores; seed it through a status
 	// Update so the binder's label-selecting claim finds an idle pod with a
 	// reachable pod IP.
-	sb.Status = lennyv1.SandboxStatus{Phase: "idle", PodIP: "10.244.3.9"}
+	sb.Status = lennyv1.AgentPodStatus{Phase: "idle", PodIP: "10.244.3.9"}
 	if err := c.Status().Update(ctx, sb); err != nil {
 		t.Fatalf("seed sandbox status: %v", err)
 	}
@@ -396,14 +396,14 @@ func bindRecyclingSession(t *testing.T, binder *podsession.Binder, sessionID, pr
 	return res
 }
 
-func claimPhase(t *testing.T, c client.Client, sandbox string) string {
+func claimPhase(t *testing.T, c client.Client, agentPod string) string {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: recycleNS, Name: podclaim.ClaimName(sandbox)}, &claim); err != nil {
+	var claim lennyv1.PodClaim
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: recycleNS, Name: podclaim.ClaimName(agentPod)}, &claim); err != nil {
 		if apierrors.IsNotFound(err) {
 			return "<deleted>"
 		}
-		t.Fatalf("get claim for %s: %v", sandbox, err)
+		t.Fatalf("get claim for %s: %v", agentPod, err)
 	}
 	return claim.Status.Phase
 }
@@ -437,7 +437,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 			res.CleanupTimeoutSeconds, res.CleanupCommands)
 	}
 	// After Bind the claim is `bound`; the recycle patch has not run yet.
-	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Bound) {
+	if got := claimPhase(t, c, res.AgentPodName); got != string(claimstate.Bound) {
 		t.Fatalf("claim phase after Bind = %q, want bound", got)
 	}
 
@@ -447,7 +447,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
-	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
+	if got := claimPhase(t, c, res.AgentPodName); got != string(claimstate.Recycling) {
 		t.Fatalf("claim phase after clean recycle Release = %q, want recycling (patch-then-scrub)", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
@@ -472,7 +472,7 @@ func TestRecyclePathScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("ReportPodScrub count = %d, want 1", len(reps))
 	}
 	if reps[0].podID != "sbx-r" {
-		t.Errorf("reported pod_id = %q, want sbx-r (the folded SandboxName the timer keys on)", reps[0].podID)
+		t.Errorf("reported pod_id = %q, want sbx-r (the folded AgentPodName the timer keys on)", reps[0].podID)
 	}
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
@@ -549,7 +549,7 @@ func TestRecyclePathDroppedReportRetires_spec_3_4(t *testing.T) {
 	// transition within a bound that comfortably exceeds the ~1s timer.
 	deadline := time.Now().Add(6 * time.Second)
 	for {
-		got := claimPhase(t, c, res.SandboxName)
+		got := claimPhase(t, c, res.AgentPodName)
 		if got == string(claimstate.Failed) {
 			break
 		}
@@ -602,7 +602,7 @@ func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
 	if err := binder.Release(context.Background(), res, "completed"); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
-	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
+	if got := claimPhase(t, c, res.AgentPodName); got != string(claimstate.Recycling) {
 		t.Fatalf("claim phase = %q, want recycling", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 {
@@ -625,8 +625,8 @@ func TestRecyclePathVMRestartRetiresAndReprovisions_spec_5_2(t *testing.T) {
 	if len(reps) != 1 {
 		t.Fatalf("vm-restart ReportPodScrub count = %d, want exactly 1 (no withhold); got %+v", len(reps), reps)
 	}
-	if reps[0].podID != res.SandboxName {
-		t.Errorf("reported pod_id = %q, want %q (the folded SandboxName the timer keys on)", reps[0].podID, res.SandboxName)
+	if reps[0].podID != res.AgentPodName {
+		t.Errorf("reported pod_id = %q, want %q (the folded AgentPodName the timer keys on)", reps[0].podID, res.AgentPodName)
 	}
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded (uniform binary outcome)", reps[0].outcome)
@@ -719,7 +719,7 @@ func TestRecyclePathNilScrubOpsWithholdsReportAndRetires_spec_5_2(t *testing.T) 
 	// terminal rather than being reused without a scrub.
 	deadline := time.Now().Add(6 * time.Second)
 	for {
-		got := claimPhase(t, c, res.SandboxName)
+		got := claimPhase(t, c, res.AgentPodName)
 		if got == string(claimstate.Failed) {
 			break
 		}
@@ -762,7 +762,7 @@ func TestRecyclePathFailedDispositionRetires_spec_6_2(t *testing.T) {
 	}
 
 	// The claim is deleted (drained), never patched to recycling.
-	if got := claimPhase(t, c, res.SandboxName); got != "<deleted>" {
+	if got := claimPhase(t, c, res.AgentPodName); got != "<deleted>" {
 		t.Errorf("claim phase after failed Release = %q, want <deleted> (retire drains the claim, never patches recycling)", got)
 	}
 	// No missing-report timer is armed on the retire path.
@@ -845,7 +845,7 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("slot BindResult scrub config = %d / %v, want the bind-request cleanup config carried through",
 			res.CleanupTimeoutSeconds, res.CleanupCommands)
 	}
-	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Bound) {
+	if got := claimPhase(t, c, res.AgentPodName); got != string(claimstate.Bound) {
 		t.Fatalf("claim phase after BindSlot = %q, want bound", got)
 	}
 
@@ -854,7 +854,7 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 	if err := binder.ReleaseSlot(context.Background(), res); err != nil {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
-	if got := claimPhase(t, c, res.SandboxName); got != string(claimstate.Recycling) {
+	if got := claimPhase(t, c, res.AgentPodName); got != string(claimstate.Recycling) {
 		t.Fatalf("claim phase after clean concurrent recycle ReleaseSlot = %q, want recycling (patch-then-scrub)", got)
 	}
 	if armed := armer.armedSnapshot(); len(armed) != 1 || armed[0] != "sbx-r" {
@@ -878,7 +878,7 @@ func TestRecyclePathConcurrentSlotScrubReportedReuses_spec_5_2(t *testing.T) {
 		t.Fatalf("ReportPodScrub count = %d, want 1", len(reps))
 	}
 	if reps[0].podID != "sbx-r" {
-		t.Errorf("reported pod_id = %q, want sbx-r (the SandboxName the timer keys on)", reps[0].podID)
+		t.Errorf("reported pod_id = %q, want sbx-r (the AgentPodName the timer keys on)", reps[0].podID)
 	}
 	if reps[0].outcome != gatewaycontrol.PodScrubSucceeded {
 		t.Errorf("reported outcome = %v, want PodScrubSucceeded", reps[0].outcome)
@@ -938,7 +938,7 @@ func activeSlots(t *testing.T, rc *redis.Client, pod string) int {
 // failure with a Shutdown carrying the slot_bind_failed reason. When that
 // reclaim goes unanswered the slot is leaked: the reservation release carries
 // leaked=true, the Redis slot counter keeps the slot counted, and the per-pod
-// SandboxClaim survives at bound. When the reclaim is answered the release is
+// PodClaim survives at bound. When the reclaim is answered the release is
 // clean, the counter reaches zero and the claim is deleted. The contrast
 // between the two arms is the assertion.
 //
@@ -982,11 +982,11 @@ func TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ClaimSlot: %v", err)
 			}
-			if got := activeSlots(t, rc, claim.SandboxName); got != 1 {
+			if got := activeSlots(t, rc, claim.AgentPodName); got != 1 {
 				t.Fatalf("active_slots after ClaimSlot = %d, want 1", got)
 			}
 
-			_, err = binder.BindReservedSlot(ctx, req, claim.SandboxName, claim.SlotID)
+			_, err = binder.BindReservedSlot(ctx, req, claim.AgentPodName, claim.SlotID)
 			var sbe *podsession.SlotBindError
 			if !errors.As(err, &sbe) {
 				t.Fatalf("BindReservedSlot error = %v, want a *podsession.SlotBindError", err)
@@ -998,10 +998,10 @@ func TestRecyclePathUnansweredReclaimLeaksTheSlot_spec_5_2(t *testing.T) {
 			if len(reasons) != 1 || reasons[0] != "slot_bind_failed" {
 				t.Errorf("Shutdown reasons = %v, want one compensation carrying slot_bind_failed", reasons)
 			}
-			if got := activeSlots(t, rc, claim.SandboxName); got != tc.wantSlots {
+			if got := activeSlots(t, rc, claim.AgentPodName); got != tc.wantSlots {
 				t.Errorf("active_slots after the failed bind = %d, want %d", got, tc.wantSlots)
 			}
-			if got := claimPhase(t, c, claim.SandboxName); got != tc.wantPhase {
+			if got := claimPhase(t, c, claim.AgentPodName); got != tc.wantPhase {
 				t.Errorf("claim phase after the failed bind = %q, want %q", got, tc.wantPhase)
 			}
 		})

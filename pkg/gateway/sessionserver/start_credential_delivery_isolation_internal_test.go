@@ -152,7 +152,7 @@ func TestResolveCredentialPoolsSurfacesDeliveryMode(t *testing.T) {
 }
 
 // deliveryGateResolveServer wires a Server against a fake Kubernetes client
-// holding an exclusive warm pool whose SandboxTemplate carries the given
+// holding an exclusive warm pool whose PodSet carries the given
 // isolation profile and spiffe binding, plus the §4.9 credential stores routing
 // anthropic_direct to a pool with the given CredentialPool deliveryMode. It is
 // the fixture the seam-level gate tests drive startOnPod / prepareAtFinalize
@@ -180,13 +180,13 @@ func deliveryGateResolveServer(t *testing.T, tenancyMode, isoProfile, spiffeBind
 	if err := credPools.Create(ctx, primary); err != nil {
 		t.Fatalf("create credential pool: %v", err)
 	}
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: isoProfile,
 			SpiffeBinding:    spiffeBinding,

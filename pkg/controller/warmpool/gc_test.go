@@ -22,7 +22,7 @@ import (
 )
 
 // stubSessions is a fake §4.6.1 active-session oracle keyed on the pod
-// (sandboxRef). The per-pod claim (§4.6.3) carries no session identifier,
+// (agentPodRef). The per-pod claim (§4.6.3) carries no session identifier,
 // so the GC keys the active-session check on the pod through the Postgres
 // pod_assignment binding.
 type stubSessions struct {
@@ -30,19 +30,19 @@ type stubSessions struct {
 	err    error
 }
 
-func (s stubSessions) PodHasActiveSession(_ context.Context, sandboxRef string) (bool, error) {
+func (s stubSessions) PodHasActiveSession(_ context.Context, agentPodRef string) (bool, error) {
 	if s.err != nil {
 		return false, s.err
 	}
-	return s.active[sandboxRef], nil
+	return s.active[agentPodRef], nil
 }
 
-func claim(ns, name, sandboxRef string) *lennyv1.SandboxClaim {
-	return &lennyv1.SandboxClaim{
+func claim(ns, name, agentPodRef string) *lennyv1.PodClaim {
+	return &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec: lennyv1.SandboxClaimSpec{
-			SandboxRef: sandboxRef,
-			TenantID:   "acme",
+		Spec: lennyv1.PodClaimSpec{
+			AgentPodRef: agentPodRef,
+			TenantID:    "acme",
 		},
 	}
 }
@@ -53,13 +53,13 @@ func claim(ns, name, sandboxRef string) *lennyv1.SandboxClaim {
 // rejects status on Create, so the status is written as a follow-up patch. It
 // keys on the explicit claim name (the GC tests name claims directly) rather
 // than deriving claim-<podName>.
-func seedClaimFullStatus(t *testing.T, c client.Client, name string, st lennyv1.SandboxClaimStatus) {
+func seedClaimFullStatus(t *testing.T, c client.Client, name string, st lennyv1.PodClaimStatus) {
 	t.Helper()
 	ns := testNamespace(t)
-	patch := &lennyv1.SandboxClaim{
+	patch := &lennyv1.PodClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: lennyv1.GroupVersion.String(),
-			Kind:       "SandboxClaim",
+			Kind:       "PodClaim",
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
 	}
@@ -69,25 +69,25 @@ func seedClaimFullStatus(t *testing.T, c client.Client, name string, st lennyv1.
 	}
 }
 
-func claimedSandbox(ns, name string) *lennyv1.Sandbox {
-	sb := idleSandbox(ns, name)
+func claimedAgentPod(ns, name string) *lennyv1.AgentPod {
+	sb := idleAgentPod(ns, name)
 	sb.Status.Phase = "claimed"
 	return sb
 }
 
-func reservedSandbox(ns, name string) *lennyv1.Sandbox {
-	sb := idleSandbox(ns, name)
+func reservedAgentPod(ns, name string) *lennyv1.AgentPod {
+	sb := idleAgentPod(ns, name)
 	sb.Status.Phase = "reserved"
 	return sb
 }
 
-func getClaim(t *testing.T, c client.Client, name string) (lennyv1.SandboxClaim, bool) {
+func getClaim(t *testing.T, c client.Client, name string) (lennyv1.PodClaim, bool) {
 	t.Helper()
 	ns := testNamespace(t)
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got)
 	if err != nil {
-		return lennyv1.SandboxClaim{}, false
+		return lennyv1.PodClaim{}, false
 	}
 	return got, true
 }
@@ -119,10 +119,10 @@ func gcForSweep(ns string, c client.Client) *warmpool.ClaimGarbageCollector {
 func TestGCDrainsOrphanedBoundClaim(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	c := newClient(t, s, claimedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
 	// A bound claim whose binding-state transition is well past the orphan
 	// timeout (the GC's Now is pinned an hour ahead).
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Bound),
 		BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
 	})
@@ -132,10 +132,10 @@ func TestGCDrainsOrphanedBoundClaim(t *testing.T) {
 	if _, ok := getClaim(t, c, "claim-1"); ok {
 		t.Fatal("expected orphaned bound claim to be deleted")
 	}
-	if phase := sandboxPhase(t, c, "pod-1"); phase != "draining" {
+	if phase := agentPodPhase(t, c, "pod-1"); phase != "draining" {
 		t.Errorf("sandbox phase = %q, want draining (live state drains)", phase)
 	}
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "pod-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
@@ -152,10 +152,10 @@ func TestGCDrainsOrphanedBoundClaim(t *testing.T) {
 func TestGCDrainsOrphanedRecyclingClaim(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	c := newClient(t, s, claimedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
 	// recycling with no holdExpiresAt and no rewarmStartedAt: the
 	// coordinating-gateway-crash case the reserved predicate cannot reach.
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Recycling),
 		BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
 	})
@@ -165,7 +165,7 @@ func TestGCDrainsOrphanedRecyclingClaim(t *testing.T) {
 	if _, ok := getClaim(t, c, "claim-1"); ok {
 		t.Fatal("expected orphaned recycling claim to be deleted")
 	}
-	if phase := sandboxPhase(t, c, "pod-1"); phase != "draining" {
+	if phase := agentPodPhase(t, c, "pod-1"); phase != "draining" {
 		t.Errorf("sandbox phase = %q, want draining (recycling drains)", phase)
 	}
 }
@@ -179,10 +179,10 @@ func TestGCDrainsOrphanedRecyclingClaim(t *testing.T) {
 func TestGCReclaimsReservedClaimToIdle(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, reservedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	c := newClient(t, s, reservedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
 	// holdExpiresAt in the past; the GC's Now is pinned an hour ahead, so
 	// holdExpiresAt plus the default grace has passed.
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Reserved),
 		HoldExpiresAt:              &metav1.Time{Time: time.Now()},
 		BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
@@ -199,7 +199,7 @@ func TestGCReclaimsReservedClaimToIdle(t *testing.T) {
 	// deletes the claim with preconditions; project the resulting phase to
 	// confirm the pod returns to idle rather than draining.
 	reconcileOccupancy(t, c, "pod-1")
-	if phase := sandboxPhase(t, c, "pod-1"); phase != "idle" {
+	if phase := agentPodPhase(t, c, "pod-1"); phase != "idle" {
 		t.Errorf("sandbox phase = %q, want idle (reserved hold expiry returns to pool)", phase)
 	}
 }
@@ -218,7 +218,7 @@ func TestGCDrainsEmptyStatusClaimByCreationTimestamp(t *testing.T) {
 	// occupancy projection never moved the pod off its warm-fill idle phase.
 	// The fail-closed reclaim drains it anyway, because the controller cannot
 	// know whether the crashed gateway scrubbed or occupied the pod.
-	c := newClient(t, s, idleSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	c := newClient(t, s, idleAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
 	// No status patch: the claim carries empty status. The GC's Now is pinned
 	// an hour ahead, so the server-stamped creationTimestamp is past the
 	// orphan timeout.
@@ -228,7 +228,7 @@ func TestGCDrainsEmptyStatusClaimByCreationTimestamp(t *testing.T) {
 	if _, ok := getClaim(t, c, "claim-1"); ok {
 		t.Fatal("expected orphaned empty-status claim to be deleted")
 	}
-	if phase := sandboxPhase(t, c, "pod-1"); phase != "draining" {
+	if phase := agentPodPhase(t, c, "pod-1"); phase != "draining" {
 		t.Errorf("sandbox phase = %q, want draining (empty-status fallback drains, fail-closed from idle)", phase)
 	}
 }
@@ -241,8 +241,8 @@ func TestGCDrainsEmptyStatusClaimByCreationTimestamp(t *testing.T) {
 func TestGCReservedReclaimAbortsOnRebindRace(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, reservedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	c := newClient(t, s, reservedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:         string(claimstate.Reserved),
 		HoldExpiresAt: &metav1.Time{Time: time.Now()},
 	})
@@ -254,7 +254,7 @@ func TestGCReservedReclaimAbortsOnRebindRace(t *testing.T) {
 	if !ok {
 		t.Fatal("claim must exist before the race")
 	}
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:         string(claimstate.Bound),
 		HoldExpiresAt: &metav1.Time{Time: time.Now()},
 	})
@@ -281,21 +281,21 @@ func TestGCLeavesNoNonTerminalOrEmptyClaimUnreclaimed(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		claimedSandbox(ns, "pod-bound"), claim(ns, "claim-bound", "pod-bound"),
-		claimedSandbox(ns, "pod-recycling"), claim(ns, "claim-recycling", "pod-recycling"),
-		reservedSandbox(ns, "pod-reserved"), claim(ns, "claim-reserved", "pod-reserved"),
-		claimedSandbox(ns, "pod-empty"), claim(ns, "claim-empty", "pod-empty"),
+		claimedAgentPod(ns, "pod-bound"), claim(ns, "claim-bound", "pod-bound"),
+		claimedAgentPod(ns, "pod-recycling"), claim(ns, "claim-recycling", "pod-recycling"),
+		reservedAgentPod(ns, "pod-reserved"), claim(ns, "claim-reserved", "pod-reserved"),
+		claimedAgentPod(ns, "pod-empty"), claim(ns, "claim-empty", "pod-empty"),
 	)
 	now := time.Now()
-	seedClaimFullStatus(t, c, "claim-bound", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-bound", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Bound),
 		BindingStateTransitionTime: &metav1.Time{Time: now},
 	})
-	seedClaimFullStatus(t, c, "claim-recycling", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-recycling", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Recycling),
 		BindingStateTransitionTime: &metav1.Time{Time: now},
 	})
-	seedClaimFullStatus(t, c, "claim-reserved", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-reserved", lennyv1.PodClaimStatus{
 		Phase:         string(claimstate.Reserved),
 		HoldExpiresAt: &metav1.Time{Time: now},
 	})
@@ -322,15 +322,15 @@ func TestGCSkipsTerminalDispositionClaims(t *testing.T) {
 	s := newScheme(t)
 	c := newClient(
 		t, s,
-		claimedSandbox(ns, "pod-released"), claim(ns, "claim-released", "pod-released"),
-		claimedSandbox(ns, "pod-failed"), claim(ns, "claim-failed", "pod-failed"),
+		claimedAgentPod(ns, "pod-released"), claim(ns, "claim-released", "pod-released"),
+		claimedAgentPod(ns, "pod-failed"), claim(ns, "claim-failed", "pod-failed"),
 	)
 	now := time.Now()
-	seedClaimFullStatus(t, c, "claim-released", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-released", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Released),
 		BindingStateTransitionTime: &metav1.Time{Time: now},
 	})
-	seedClaimFullStatus(t, c, "claim-failed", lennyv1.SandboxClaimStatus{
+	seedClaimFullStatus(t, c, "claim-failed", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Failed),
 		BindingStateTransitionTime: &metav1.Time{Time: now},
 	})
@@ -349,8 +349,8 @@ func TestGCSkipsTerminalDispositionClaims(t *testing.T) {
 func TestGCKeepsClaimWithActiveSession(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	c := newClient(t, s, claimedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Bound),
 		BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
 	})
@@ -373,8 +373,8 @@ func TestGCKeepsClaimWithActiveSession(t *testing.T) {
 func TestGCSkipsYoungClaim(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	c := newClient(t, s, claimedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Bound),
 		BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
 	})
@@ -398,8 +398,8 @@ func TestGCSkipsYoungClaim(t *testing.T) {
 func TestGCSkipsOnLookupError(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, claimedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
-	seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+	c := newClient(t, s, claimedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+	seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 		Phase:                      string(claimstate.Bound),
 		BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
 	})
@@ -428,8 +428,8 @@ func TestGCNeedsLeaderElection(t *testing.T) {
 // whose post-terminal cap is the orphan timeout, as the controller wires it.
 type storeSessions struct{ store *memstore.Store }
 
-func (s storeSessions) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
-	ids, err := s.store.GetActiveSlotsByPod(ctx, sandboxRef)
+func (s storeSessions) PodHasActiveSession(ctx context.Context, agentPodRef string) (bool, error) {
+	ids, err := s.store.GetActiveSlotsByPod(ctx, agentPodRef)
 	return len(ids) > 0, err
 }
 
@@ -438,7 +438,7 @@ func (s storeSessions) PodHasActiveSession(ctx context.Context, sandboxRef strin
 // inside claimOrphanTimeout of its terminal transition, which cuts a seal
 // still exporting; or it never drains the pod once the release is recorded
 // or claimOrphanTimeout has passed.
-// spec: 4.6.1 (Orphaned SandboxClaim detection), 7.1 (Post-terminal window)
+// spec: 4.6.1 (Orphaned PodClaim detection), 7.1 (Post-terminal window)
 func TestGCKeepsAPodItsTerminalSessionStillHolds_spec_4_6_1(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -453,10 +453,10 @@ func TestGCKeepsAPodItsTerminalSessionStillHolds_spec_4_6_1(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ns := testNamespace(t)
 			s := newScheme(t)
-			c := newClient(t, s, claimedSandbox(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
+			c := newClient(t, s, claimedAgentPod(ns, "pod-1"), claim(ns, "claim-1", "pod-1"))
 			// A bound claim whose binding transition is older than
 			// claimOrphanTimeout at the GC's clock.
-			seedClaimFullStatus(t, c, "claim-1", lennyv1.SandboxClaimStatus{
+			seedClaimFullStatus(t, c, "claim-1", lennyv1.PodClaimStatus{
 				Phase:                      string(claimstate.Bound),
 				BindingStateTransitionTime: &metav1.Time{Time: time.Now()},
 			})

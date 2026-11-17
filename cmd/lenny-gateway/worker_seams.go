@@ -36,23 +36,23 @@ func (a agentPodStateMirror) MirrorLagSeconds(ctx context.Context, poolID string
 	return a.store.MirrorLagSeconds(ctx, poolID)
 }
 
-// sandboxPhaseReader is the §10.1.4 direct-Kubernetes fallback the
+// agentPodPhaseReader is the §10.1.4 direct-Kubernetes fallback the
 // orphan-session reconciler consults when the agent_pod_state mirror is
-// stale or missing. It reads the authoritative Sandbox phase through the
-// §4.6.1 PodLifecycleManager.GetPodStatus surface; a deleted Sandbox
+// stale or missing. It reads the authoritative AgentPod phase through the
+// §4.6.1 PodLifecycleManager.GetPodStatus surface; a deleted AgentPod
 // (ErrPodNotFound) reports found=false, itself a terminal signal.
 // spec: §10.1. F-10.1.5.
-type sandboxPhaseReader struct {
+type agentPodPhaseReader struct {
 	mgr podlifecycle.PodLifecycleManager
 	ns  string
 }
 
-func (r sandboxPhaseReader) PodPhase(ctx context.Context, sessionID, podID, poolID string) (string, bool, error) {
+func (r agentPodPhaseReader) PodPhase(ctx context.Context, sessionID, podID, poolID string) (string, bool, error) {
 	st, err := r.mgr.GetPodStatus(ctx, podlifecycle.PodHandle{
-		SandboxName: podID,
-		Namespace:   r.ns,
-		SessionID:   sessionID,
-		PoolName:    poolID,
+		AgentPodName: podID,
+		Namespace:    r.ns,
+		SessionID:    sessionID,
+		PoolName:     poolID,
 	})
 	if errors.Is(err, podlifecycle.ErrPodNotFound) {
 		return "", false, nil

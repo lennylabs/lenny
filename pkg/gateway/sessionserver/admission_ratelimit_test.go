@@ -186,18 +186,18 @@ func TestPerPoolRateLimitRejects_spec_11_1_7(t *testing.T) {
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec:       lennyv1.PodSetSpec{TemplateRef: "claude-tmpl", MinWarm: 1, MaxWarm: 5},
 	}
 	// A service-mode template makes the create-time claim claimless (§5.2),
 	// so the per-pool rate-limit gate (which resolves the pool ahead of any
-	// claim) is exercised without seeding an idle Sandbox or needing the
+	// claim) is exercised without seeding an idle AgentPod or needing the
 	// SSA-capable envtest claim path. The per-pool scope still resolves the
 	// pool from the template, which is what this test asserts.
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-tmpl", Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
 			ExecutionMode:    string(runtimestore.ExecutionModeService),

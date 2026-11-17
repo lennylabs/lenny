@@ -146,7 +146,7 @@ func (f *shutdownWaitFixture) seedTerminal(t *testing.T, id string) sessionstore
 	if err != nil {
 		t.Fatalf("terminal write %s: %v", id, err)
 	}
-	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-" + id, CoordinationGeneration: 1})
+	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: "pod-" + id, CoordinationGeneration: 1})
 	return row
 }
 

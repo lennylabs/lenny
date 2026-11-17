@@ -56,8 +56,8 @@ func TestReconcileCreatesWarmPodPDB(t *testing.T) {
 	if sel[warmpool.LabelPool] != testPool || sel[state.LabelState] != string(state.Idle) {
 		t.Errorf("PDB selector = %v, want pool=%s state=idle", sel, testPool)
 	}
-	if len(pdb.OwnerReferences) != 1 || pdb.OwnerReferences[0].Kind != "SandboxWarmPool" {
-		t.Errorf("PDB owner references = %+v, want one SandboxWarmPool", pdb.OwnerReferences)
+	if len(pdb.OwnerReferences) != 1 || pdb.OwnerReferences[0].Kind != "PodSet" {
+		t.Errorf("PDB owner references = %+v, want one PodSet", pdb.OwnerReferences)
 	}
 }
 
@@ -134,7 +134,7 @@ func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 	}
 
 	// Scale the pool to zero and reconcile again.
-	var p lennyv1.SandboxWarmPool
+	var p lennyv1.PodSet
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: testPool}, &p); err != nil {
 		t.Fatalf("get pool: %v", err)
 	}
@@ -149,23 +149,23 @@ func TestReconcileDeletesPDBWhenScaledToZero(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 "Sandbox finalizers" — every Sandbox the controller
+// spec: §4.6.1 "AgentPod finalizers" — every AgentPod the controller
 // creates carries the session-cleanup finalizer.
-func TestCreateSandboxStampsFinalizer(t *testing.T) {
+func TestCreateAgentPodStampsFinalizer(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	c := newClient(t, s, template(ns), pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
-	var sandboxes lennyv1.SandboxList
-	if err := c.List(context.Background(), &sandboxes, client.InNamespace(ns)); err != nil {
+	var agentPods lennyv1.AgentPodList
+	if err := c.List(context.Background(), &agentPods, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
-	if len(sandboxes.Items) == 0 {
-		t.Fatalf("expected the controller to create at least one Sandbox")
+	if len(agentPods.Items) == 0 {
+		t.Fatalf("expected the controller to create at least one AgentPod")
 	}
-	for _, sb := range sandboxes.Items {
+	for _, sb := range agentPods.Items {
 		found := false
 		for _, f := range sb.Finalizers {
 			if f == lennyv1.FinalizerSessionCleanup {
@@ -173,7 +173,7 @@ func TestCreateSandboxStampsFinalizer(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("Sandbox %s missing the session-cleanup finalizer (finalizers=%v)", sb.Name, sb.Finalizers)
+			t.Errorf("AgentPod %s missing the session-cleanup finalizer (finalizers=%v)", sb.Name, sb.Finalizers)
 		}
 	}
 }

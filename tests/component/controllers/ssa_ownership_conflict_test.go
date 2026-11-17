@@ -29,7 +29,7 @@ import (
 // enforced by the API server itself, without any additional controller
 // logic."
 //
-// The ownership table assigns SandboxWarmPool.status.* (excluding the
+// The ownership table assigns PodSet.status.* (excluding the
 // status.sdkWarmCircuitBreaker carve-out) to the WarmPoolController. The
 // test applies status.warmCount as field manager lenny-warm-pool-controller,
 // then applies the same field as lenny-pool-scaling-controller with a
@@ -46,8 +46,8 @@ import (
 // WarmPoolController-owned field despite the rejection.
 //
 // spec: §4.6.3 (SSA enforcement — cross-manager write on a WarmPoolController-
-// owned SandboxWarmPool.status field is rejected with HTTP 409 without
-// mutating the field; SandboxWarmPool.status.* owned by WarmPoolController).
+// owned PodSet.status field is rejected with HTTP 409 without
+// mutating the field; PodSet.status.* owned by WarmPoolController).
 func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
 	env := sharedEnv.Start(t)
 
@@ -64,9 +64,9 @@ func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
 	const poolName = "claude-worker-small"
 
 	ns := testNamespaces.Create(t, c)
-	mustCreate(t, ctx, c, &lennyv1.SandboxWarmPool{
+	mustCreate(t, ctx, c, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxWarmPoolSpec{
+		Spec: lennyv1.PodSetSpec{
 			TemplateRef: poolName,
 			MinWarm:     3,
 			MaxWarm:     10,
@@ -78,14 +78,14 @@ func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
 	// statusApply builds a status-subresource SSA patch that asserts
 	// ownership of status.warmCount with the given value. TypeMeta is
 	// mandatory on an Apply patch so the API server can route it.
-	statusApply := func(warm int32) *lennyv1.SandboxWarmPool {
-		return &lennyv1.SandboxWarmPool{
+	statusApply := func(warm int32) *lennyv1.PodSet {
+		return &lennyv1.PodSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "SandboxWarmPool",
+				Kind:       "PodSet",
 			},
 			ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-			Status:     lennyv1.SandboxWarmPoolStatus{WarmCount: warm},
+			Status:     lennyv1.PodSetStatus{WarmCount: warm},
 		}
 	}
 
@@ -115,9 +115,9 @@ func TestSSARejectsCrossControllerFieldWrite(t *testing.T) {
 
 	// The rejected apply must not have mutated the field: it retains the
 	// WarmPoolController's value.
-	var live lennyv1.SandboxWarmPool
+	var live lennyv1.PodSet
 	if err := c.Get(ctx, key, &live); err != nil {
-		t.Fatalf("get SandboxWarmPool after rejected apply: %v", err)
+		t.Fatalf("get PodSet after rejected apply: %v", err)
 	}
 	if live.Status.WarmCount != warmPoolValue {
 		t.Fatalf("status.warmCount = %d after a rejected cross-manager apply, want %d (the rejected write must not mutate the field)",

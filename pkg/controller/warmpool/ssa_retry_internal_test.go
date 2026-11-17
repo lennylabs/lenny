@@ -29,7 +29,7 @@ import (
 // when a controller applies a field owned by another SSA field manager.
 func ssaConflict() error {
 	return apierrors.NewConflict(
-		schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+		schema.GroupResource{Group: "lenny.dev", Resource: "podsets"},
 		"claude-worker-small",
 		errors.New("Apply failed with 1 conflict: conflict with \"lenny-pool-scaling-controller\""),
 	)
@@ -37,7 +37,7 @@ func ssaConflict() error {
 
 // TestUpdateStatusReReadsAndNeverForcesOnSSAConflict covers the two ownership
 // invariants of the retry policy at a real call site (updateStatus applies the
-// WarmPoolController-owned SandboxWarmPool.status fields via SSA): after a 409
+// WarmPoolController-owned PodSet.status fields via SSA): after a 409
 // the controller issues a fresh GET before re-applying, and no apply carries
 // Force ownership. Forcing would steal the field from the other manager and
 // defeat the isolation the SSA boundary enforces.
@@ -46,26 +46,26 @@ func ssaConflict() error {
 // Force: true)").
 func TestUpdateStatusReReadsAndNeverForcesOnSSAConflict(t *testing.T) {
 	s := reclaimScheme(t)
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker-small", Namespace: reclaimNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{MinWarm: 2, MaxWarm: 4},
-		Status:     lennyv1.SandboxWarmPoolStatus{WarmCount: 0, ReadyCount: 0},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 4},
+		Status:     lennyv1.PodSetStatus{WarmCount: 0, ReadyCount: 0},
 	}
 
 	var events []string
 	firstPatch := true
 	forced := false
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(pool).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if _, ok := obj.(*lennyv1.SandboxWarmPool); ok {
+				if _, ok := obj.(*lennyv1.PodSet); ok {
 					events = append(events, "get")
 				}
 				return cl.Get(ctx, key, obj, opts...)
 			},
 			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-				if _, ok := obj.(*lennyv1.SandboxWarmPool); ok {
+				if _, ok := obj.(*lennyv1.PodSet); ok {
 					events = append(events, "patch")
 					po := &client.SubResourcePatchOptions{}
 					for _, o := range opts {
@@ -144,10 +144,10 @@ func stuckCounterValue(t *testing.T, crd, controller string) float64 {
 }
 
 // TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity pins the identity the
-// SandboxWarmPool status call site hands the shared retry helper. An apply
+// PodSet status call site hands the shared retry helper. An apply
 // that conflicts on every attempt must drive the helper to exhaustion and
 // produce the §4.6.3 stuck signal labeled with the owning CRD kind
-// (SandboxWarmPool) and the field manager the apply actually uses
+// (PodSet) and the field manager the apply actually uses
 // (lenny-warm-pool-controller), plus a crd_ssa_conflict_stuck log carrying the
 // pool's namespace and name.
 //
@@ -159,22 +159,22 @@ func stuckCounterValue(t *testing.T, crd, controller string) float64 {
 //
 // spec: §4.6.3 (SSA conflict retry policy), §16.1 (lenny_crd_ssa_conflict_total)
 func TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity(t *testing.T) {
-	const wantCRD = string(ownership.SandboxWarmPool)
+	const wantCRD = string(ownership.PodSet)
 	const wantController = string(ownership.WarmPoolController)
 
 	s := reclaimScheme(t)
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker-small", Namespace: reclaimNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{MinWarm: 2, MaxWarm: 4},
-		Status:     lennyv1.SandboxWarmPoolStatus{WarmCount: 0, ReadyCount: 0},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 4},
+		Status:     lennyv1.PodSetStatus{WarmCount: 0, ReadyCount: 0},
 	}
 
 	patches := 0
 	c := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(pool).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-				if _, ok := obj.(*lennyv1.SandboxWarmPool); ok {
+				if _, ok := obj.(*lennyv1.PodSet); ok {
 					patches++
 					return ssaConflict()
 				}

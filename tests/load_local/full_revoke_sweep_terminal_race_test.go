@@ -132,7 +132,7 @@ func (rr *revokeRound) shutdownsSince(h *lifecycleharness.Harness, id string) in
 }
 
 // spec: §11.4 (User Invalidation), §10.1.5 (Stale Replica Behavior), §5.2
-// (Recycle lifecycle), §4.6.3 (SandboxClaim: a release that ends the
+// (Recycle lifecycle), §4.6.3 (PodClaim: a release that ends the
 // occupancy without reuse)
 // diagnosis: on a recycling pool with maxConcurrentSessions: 1, full_revoke
 // on the handling replica raced that replica's coordination Sweeper releasing

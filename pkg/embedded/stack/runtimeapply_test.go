@@ -340,7 +340,7 @@ func TestRuntimePoolUnstructuredCarriesGVK_spec_4_6_2(t *testing.T) {
 	if len(objs) != 2 {
 		t.Fatalf("runtimePoolUnstructured returned %d objects, want 2", len(objs))
 	}
-	want := map[string]bool{"SandboxTemplate": false, "SandboxWarmPool": false}
+	want := map[string]bool{"PodSet": false, "PodSet": false}
 	for _, o := range objs {
 		if got := o.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
 			t.Errorf("%s apiVersion = %q, want %q", o.GetKind(), got, lennyv1alpha1.GroupVersion.String())

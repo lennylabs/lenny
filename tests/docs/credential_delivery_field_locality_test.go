@@ -5,7 +5,7 @@
 // spec/18 build-sequence bullet, the lenny-direct-mode-isolation webhook
 // chart resource scope, and the guard package doc must all agree that
 // the credential-delivery combination fields (deliveryMode,
-// isolationProfile, spiffeBinding) are authored on the SandboxTemplate
+// isolationProfile, spiffeBinding) are authored on the PodSet
 // pool definition, and that a CredentialPool is a Postgres-backed
 // admin-API object a ValidatingAdmissionWebhook cannot intercept and
 // that carries no spiffeBinding. These invariants have no existing
@@ -35,33 +35,33 @@ func section49Text(t *testing.T, root string) string {
 	return content[start:]
 }
 
-// TestSection49WebhookScopesSandboxTemplateOnly asserts the two §4.9
+// TestSection49WebhookScopesPodSetOnly asserts the two §4.9
 // layer-2 ValidatingAdmissionWebhook sentences (the direct + standard
 // rejection and the proxy + spiffeBinding: disabled rejection) name
-// SandboxTemplate resources only, never a CredentialPool. A
+// PodSet resources only, never a CredentialPool. A
 // CredentialPool is a Postgres-backed admin-API object the chart-scoped
-// (sandboxtemplates) webhook cannot intercept, so naming it as a
+// (podsets) webhook cannot intercept, so naming it as a
 // webhook-rejected carrier is a spec-vs-code contradiction.
 //
 // diagnosis: A failure means a §4.9 layer-2 sentence again names a
 // CredentialPool as a resource the lenny-direct-mode-isolation webhook
 // rejects, contradicting the shipped chart rule scoped to
-// sandboxtemplates and the guard package doc's reasoning that
-// SandboxTemplate is the only admitted carrier.
+// podsets and the guard package doc's reasoning that
+// PodSet is the only admitted carrier.
 //
 // spec: 4.9 (field-locality of the two layer-2 webhook rejections)
-func TestSection49WebhookScopesSandboxTemplateOnly(t *testing.T) {
+func TestSection49WebhookScopesPodSetOnly(t *testing.T) {
 	root := repoRoot(t)
 	text := section49Text(t, root)
 
-	// The direct + standard layer-2 sentence rejects SandboxTemplate only.
-	const directStandardLayer2 = "rejects `SandboxTemplate` resources carrying this combination"
+	// The direct + standard layer-2 sentence rejects PodSet only.
+	const directStandardLayer2 = "rejects `PodSet` resources carrying this combination"
 	if !strings.Contains(text, directStandardLayer2) {
 		t.Errorf("§4.9 is missing the corrected direct + standard layer-2 sentence %q", directStandardLayer2)
 	}
 	// The proxy + spiffeBinding: disabled layer-2 sentence rejects
-	// SandboxTemplate only.
-	const proxySpiffeLayer2 = "reject `SandboxTemplate` resources carrying `deliveryMode: proxy` + `spiffeBinding: disabled`"
+	// PodSet only.
+	const proxySpiffeLayer2 = "reject `PodSet` resources carrying `deliveryMode: proxy` + `spiffeBinding: disabled`"
 	if !strings.Contains(text, proxySpiffeLayer2) {
 		t.Errorf("§4.9 is missing the corrected proxy + spiffeBinding layer-2 sentence %q", proxySpiffeLayer2)
 	}
@@ -72,23 +72,23 @@ func TestSection49WebhookScopesSandboxTemplateOnly(t *testing.T) {
 		t.Errorf("§4.9 is missing the justification that a CredentialPool is not a webhook-interceptable resource: %q", justification)
 	}
 	// Neither layer-2 sentence names a CredentialPool as a rejected
-	// resource. The old wording paired the two as "SandboxTemplate and
+	// resource. The old wording paired the two as "PodSet and
 	// CredentialPool resources"; the preflight sentence used "registered
 	// CredentialPool resources". Neither "`CredentialPool` resources"
 	// construction may reappear anywhere in §4.9.
 	if strings.Contains(text, "`CredentialPool` resources") {
-		t.Errorf("§4.9 names `CredentialPool` resources as a webhook/preflight carrier; the webhook is scoped to sandboxtemplates and a CredentialPool cannot be intercepted")
+		t.Errorf("§4.9 names `CredentialPool` resources as a webhook/preflight carrier; the webhook is scoped to podsets and a CredentialPool cannot be intercepted")
 	}
 	if strings.Contains(text, "and `CredentialPool` resources") {
-		t.Errorf("§4.9 restores the old \"SandboxTemplate and CredentialPool resources\" layer-2 wording")
+		t.Errorf("§4.9 restores the old \"PodSet and CredentialPool resources\" layer-2 wording")
 	}
 }
 
-// TestSection49PreflightScansSandboxTemplates asserts the §4.9
-// lenny-preflight sentence scans SandboxTemplate pool definitions for
+// TestSection49PreflightScansPodSets asserts the §4.9
+// lenny-preflight sentence scans PodSet pool definitions for
 // deliveryMode: proxy + spiffeBinding: disabled, not registered
 // CredentialPool resources. A CredentialPool is not a Kubernetes
-// resource and carries no spiffeBinding; the SandboxTemplate CRD carries
+// resource and carries no spiffeBinding; the PodSet CRD carries
 // both deliveryMode and spiffeBinding, so the scan targets it.
 //
 // diagnosis: A failure means the §4.9 preflight sentence again scans
@@ -97,11 +97,11 @@ func TestSection49WebhookScopesSandboxTemplateOnly(t *testing.T) {
 // against the resource named.
 //
 // spec: 4.9 (lenny-preflight scan target and combination)
-func TestSection49PreflightScansSandboxTemplates(t *testing.T) {
+func TestSection49PreflightScansPodSets(t *testing.T) {
 	root := repoRoot(t)
 	text := section49Text(t, root)
 
-	const preflightSentence = "scans all `SandboxTemplate` pool definitions at install and upgrade time and fails when any pool in a multi-tenant deployment carries `deliveryMode: proxy` + `spiffeBinding: disabled`"
+	const preflightSentence = "scans all `PodSet` pool definitions at install and upgrade time and fails when any pool in a multi-tenant deployment carries `deliveryMode: proxy` + `spiffeBinding: disabled`"
 	if !strings.Contains(text, preflightSentence) {
 		t.Errorf("§4.9 is missing the corrected preflight scan sentence %q", preflightSentence)
 	}
@@ -114,7 +114,7 @@ func TestSection49PreflightScansSandboxTemplates(t *testing.T) {
 // including the §4.9.2 audit-event catalog row, names a CredentialPool as
 // the carrier of `spiffeBinding: disabled`. Every occurrence of
 // `spiffeBinding: disabled` in §4.9 must be attributed to a
-// SandboxTemplate pool definition / warm-pool admin resource, never a
+// PodSet pool definition / warm-pool admin resource, never a
 // CredentialPool. The check inspects the text immediately preceding each
 // occurrence: the legitimate §4.9 mentions of CredentialPool (the
 // Postgres-backed-admin-object justification, and the session-start gate
@@ -161,38 +161,38 @@ func TestSection49NoCredentialPoolSpiffeBindingCarrier(t *testing.T) {
 	}
 }
 
-// TestWebhookChartAndGuardDocAgreeSandboxTemplateScope asserts the
+// TestWebhookChartAndGuardDocAgreePodSetScope asserts the
 // shipped lenny-direct-mode-isolation webhook chart rule is scoped to
-// the sandboxtemplates resource only, and the guard package doc states
-// SandboxTemplate is the only admitted carrier and the chart rule is
-// scoped to sandboxtemplates. This pins the code side of the §4.9
+// the podsets resource only, and the guard package doc states
+// PodSet is the only admitted carrier and the chart rule is
+// scoped to podsets. This pins the code side of the §4.9
 // field-locality wording: the spec, the chart, and the guard doc all
-// agree the webhook intercepts SandboxTemplate resources only.
+// agree the webhook intercepts PodSet resources only.
 //
 // diagnosis: A failure means the webhook chart resource scope or the
 // guard package doc drifted from the §4.9 wording that the webhook
-// intercepts SandboxTemplate resources only: either the chart matched
+// intercepts PodSet resources only: either the chart matched
 // another resource (e.g. credentialpools, which the apiserver cannot
-// route to a webhook) or the guard doc no longer states SandboxTemplate
+// route to a webhook) or the guard doc no longer states PodSet
 // is the only admitted carrier.
 //
-// spec: 4.9 (webhook is scoped to SandboxTemplate), 13.2
-func TestWebhookChartAndGuardDocAgreeSandboxTemplateScope(t *testing.T) {
+// spec: 4.9 (webhook is scoped to PodSet), 13.2
+func TestWebhookChartAndGuardDocAgreePodSetScope(t *testing.T) {
 	root := repoRoot(t)
 	chart := readRepoFile(t, root, "charts/lenny/templates/admission-policies/direct-mode-isolation-webhook.yaml")
 	guard := readRepoFile(t, root, "pkg/admission/direct_mode_isolation/guard.go")
 
-	if !strings.Contains(chart, `resources: ["sandboxtemplates"]`) {
-		t.Errorf("webhook chart is not scoped to the sandboxtemplates resource")
+	if !strings.Contains(chart, `resources: ["podsets"]`) {
+		t.Errorf("webhook chart is not scoped to the podsets resource")
 	}
 	if strings.Contains(chart, "credentialpools") {
 		t.Errorf("webhook chart matches credentialpools, which is not a Kubernetes resource a ValidatingAdmissionWebhook can intercept")
 	}
-	if !strings.Contains(guard, "the SandboxTemplate is the only admitted resource that can carry a") {
-		t.Errorf("guard package doc no longer states SandboxTemplate is the only admitted carrier")
+	if !strings.Contains(guard, "the PodSet is the only admitted resource that can carry a") {
+		t.Errorf("guard package doc no longer states PodSet is the only admitted carrier")
 	}
-	if !strings.Contains(guard, "Scoping the chart rule to sandboxtemplates") {
-		t.Errorf("guard package doc no longer states the chart rule is scoped to sandboxtemplates")
+	if !strings.Contains(guard, "Scoping the chart rule to podsets") {
+		t.Errorf("guard package doc no longer states the chart rule is scoped to podsets")
 	}
 }
 
@@ -207,16 +207,16 @@ func TestWebhookChartAndGuardDocAgreeSandboxTemplateScope(t *testing.T) {
 //
 // spec: 4.9, 18
 func TestFieldLocalityDriftDetection(t *testing.T) {
-	// (a) A layer-2 sentence that names "SandboxTemplate and
+	// (a) A layer-2 sentence that names "PodSet and
 	// CredentialPool resources" must trip the "`CredentialPool`
 	// resources" guard.
-	drifted := "the webhook rejects `SandboxTemplate` and `CredentialPool` resources carrying `deliveryMode: proxy` + `spiffeBinding: disabled`"
+	drifted := "the webhook rejects `PodSet` and `CredentialPool` resources carrying `deliveryMode: proxy` + `spiffeBinding: disabled`"
 	if !strings.Contains(drifted, "`CredentialPool` resources") {
 		t.Errorf("drift detector missed a CredentialPool resources layer-2 wording")
 	}
 
 	// (b) The carrier lookback must flag a CredentialPool that carries
-	// spiffeBinding: disabled and must not flag a SandboxTemplate carrier.
+	// spiffeBinding: disabled and must not flag a PodSet carrier.
 	const marker = "spiffeBinding: disabled"
 	const lookback = 100
 	carrierNamed := func(s string) bool {
@@ -234,9 +234,9 @@ func TestFieldLocalityDriftDetection(t *testing.T) {
 	if !carrierNamed(bad) {
 		t.Errorf("carrier lookback missed a CredentialPool carrying spiffeBinding: disabled")
 	}
-	good := "a warm-pool admin resource whose `SandboxTemplate` pool definition carries `deliveryMode: proxy` + `spiffeBinding: disabled`"
+	good := "a warm-pool admin resource whose `PodSet` pool definition carries `deliveryMode: proxy` + `spiffeBinding: disabled`"
 	if carrierNamed(good) {
-		t.Errorf("carrier lookback falsely flagged a SandboxTemplate carrier as a CredentialPool")
+		t.Errorf("carrier lookback falsely flagged a PodSet carrier as a CredentialPool")
 	}
 	// The legitimate session-start gate sentence names a CredentialPool
 	// as a deliveryMode carrier and the bound pod as the spiffeBinding

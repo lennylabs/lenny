@@ -42,7 +42,7 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 		t,
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	binder := podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv))
 	blobs := blobstore.NewMemoryStore(nil)
@@ -73,7 +73,7 @@ func newPlanBindPodEnv(t *testing.T, sessionID string) *planBindPodEnv {
 // claimPresent reports whether the per-pod claim on sbx-1 exists.
 func (e *planBindPodEnv) claimPresent(t *testing.T) bool {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := e.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	return err == nil
 }

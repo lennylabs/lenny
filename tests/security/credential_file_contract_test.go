@@ -19,7 +19,7 @@
 // The credfile writer's 0440 mode is pinned at tier-1
 // (pkg/adapter/credfile TestWriteSetsRestrictiveMode) and the pod's
 // fsGroup / supplementalGroups declaration at tier-2
-// (pkg/controller/sandbox/podspec). This probe is the missing
+// (pkg/controller/agentpod/podspec). This probe is the missing
 // real-pod assertion: it stats the credential file the adapter
 // actually materialized inside a running agent pod and confirms the
 // three delivery-contract properties (mode, owner UID, group GID)
@@ -34,7 +34,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 

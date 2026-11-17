@@ -39,7 +39,7 @@ func TestServiceModeSuspendedSessionResumesToRunning_spec_7_3(t *testing.T) {
 		t,
 		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
 		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindIdleAgentPod(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	counter := &attemptCounter{}
 	store := memstore.New()

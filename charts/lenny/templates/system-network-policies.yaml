@@ -26,7 +26,7 @@ ingress so the API server can invoke the webhook callbacks, and
 kube-system CoreDNS egress for name resolution. Without the ingress
 rule every fail-closed webhook silently rejects all admissions. The
 per-webhook gateway-egress sub-rules (§13.2 (b) drain-readiness-only and
-(c) sandboxtemplate-deletion-guard-only, each narrowed by an additive
+(c) podset-deletion-guard-only, each narrowed by an additive
 lenny.dev/webhook-name label) are rendered by those webhooks' own
 templates rather than here, so this shared policy grants no gateway
 reachability to the in-process validators.
@@ -53,8 +53,8 @@ spec:
         - port: 8443
           protocol: TCP
   egress:
-    # The §4.6.1 lenny-sandboxclaim-guard webhook reads sibling
-    # SandboxClaims from the kube-apiserver to enforce the ADR-007
+    # The §4.6.1 lenny-podclaim-guard webhook reads sibling
+    # PodClaims from the kube-apiserver to enforce the ADR-007
     # one-claim-per-slot rule, and lenny-drain-readiness reads pod
     # state. Without kube-apiserver egress the webhook handler's API
     # call hangs and the fail-closed webhook times out on every
@@ -146,7 +146,7 @@ in one row (kube-apiserver, PgBouncer, kube-system CoreDNS), but the PSC runs
 as its own Deployment labelled lenny.dev/component: pool-scaling-controller
 (§4.6.2), not lenny.dev/component: controller, so the allow-controller-egress
 policy above does not select it. Without this policy the PSC cannot reach the
-kube-apiserver to watch and write its SandboxTemplate / SandboxWarmPool CRD
+kube-apiserver to watch and write its PodSet / PodSet CRD
 pair, nor PgBouncer to read the Postgres-authoritative pool definitions it
 reconciles, and the §13.2 default-deny breaks pool reconciliation. The PSC
 accepts no unsolicited ingress, so the policy is egress-only. The DNS peers

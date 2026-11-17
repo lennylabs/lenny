@@ -48,8 +48,8 @@ func (p *queueProbe) onTimeout(_ string) { p.timeouts.Add(1) }
 
 // queueExhaustionPool is the §5.2 poolstore record whose sessionPolicy folds
 // the onPoolExhausted queue disposition and its wait bound onto the PoolMatch
-// the start path's claim queue reads. The CRD pair (SandboxWarmPool +
-// SandboxTemplate) does not carry these fields; the poolstore is the source.
+// the start path's claim queue reads. The CRD pair (PodSet +
+// PodSet) does not carry these fields; the poolstore is the source.
 func queueExhaustionPool(maxQueueWaitSeconds int) poolstore.Pool {
 	return poolstore.Pool{
 		Name:       "echo-pool",
@@ -62,10 +62,10 @@ func queueExhaustionPool(maxQueueWaitSeconds int) poolstore.Pool {
 }
 
 // queueExhaustionServer wires a session server against a real kube-apiserver
-// (envtest) seeded with an echo-pool sized to the given idle Sandboxes, plus a
+// (envtest) seeded with an echo-pool sized to the given idle AgentPods, plus a
 // poolstore pool carrying the onPoolExhausted queue disposition. The claim
 // queue polls at poll so a freed pod is re-acquired within a few milliseconds.
-func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration, sandboxes ...string) (
+func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration, agentPods ...string) (
 	*sessionserver.Server, client.Client, *memstore.Store, *queueProbe,
 ) {
 	t.Helper()
@@ -77,8 +77,8 @@ func queueExhaustionServer(t *testing.T, pool poolstore.Pool, poll time.Duration
 		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
 		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
 	}
-	for i, name := range sandboxes {
-		objs = append(objs, podBindIdleSandbox(t, name, "echo-pool", fmt.Sprintf("10.244.2.%d", 5+i)))
+	for i, name := range agentPods {
+		objs = append(objs, podBindIdleAgentPod(t, name, "echo-pool", fmt.Sprintf("10.244.2.%d", 5+i)))
 	}
 	cluster := podBindClient(t, objs...)
 
@@ -129,14 +129,14 @@ func waitForQueue(t *testing.T, timeout time.Duration, desc string, cond func() 
 	t.Fatalf("timed out after %s waiting for %s", timeout, desc)
 }
 
-// liveClaimCount returns the number of SandboxClaim resources in the agent
+// liveClaimCount returns the number of PodClaim resources in the agent
 // namespace. It is the observable for "a queued request holds no claim": only
 // the pod A holds carries a claim while B and C wait.
 func liveClaimCount(t *testing.T, c client.Client) int {
 	t.Helper()
-	var list lennyv1.SandboxClaimList
+	var list lennyv1.PodClaimList
 	if err := c.List(context.Background(), &list, client.InNamespace(testNS(t))); err != nil {
-		t.Fatalf("list SandboxClaims: %v", err)
+		t.Fatalf("list PodClaims: %v", err)
 	}
 	return len(list.Items)
 }
@@ -155,7 +155,7 @@ func persistedRowCount(t *testing.T, s *memstore.Store) int {
 
 func claimExists(t *testing.T, c client.Client, podName string) bool {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: podclaim.ClaimName(podName)}, &claim)
 	return err == nil
 }
@@ -170,7 +170,7 @@ func claimExists(t *testing.T, c client.Client, podName string) bool {
 // against real pod-claim contention on a real kube-apiserver. If a queued
 // create never returns 201 after the held pod is released, the queue does not
 // re-enter acquisition as pods free (the §4.6.1 draining property is broken).
-// If more than one SandboxClaim exists while two requests wait, a queued
+// If more than one PodClaim exists while two requests wait, a queued
 // request is holding a claim it should not (the "holds no claim" invariant is
 // broken) or the per-pod CREATE guard let two claims race onto one pod. If a
 // session row exists for a waiting request, the gateway persisted a row before
@@ -200,7 +200,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 	// While queued, neither B nor C holds a pod, slot, or claim: exactly the one
 	// claim A created exists, and only A's session row is persisted.
 	if n := liveClaimCount(t, cluster); n != 1 {
-		t.Fatalf("SandboxClaim count while two requests are queued = %d, want 1 (a queued request holds no claim)", n)
+		t.Fatalf("PodClaim count while two requests are queued = %d, want 1 (a queued request holds no claim)", n)
 	}
 	if n := persistedRowCount(t, store); n != 1 {
 		t.Fatalf("persisted session rows while two requests are queued = %d, want 1 (a queued request holds no session; §7.1)", n)
@@ -217,7 +217,7 @@ func TestQueueDispositionDrainsAsPodsFreeOnRealPool(t *testing.T) {
 
 	// Exactly one waiter claimed the freed pod; the other is still queued.
 	if n := liveClaimCount(t, cluster); n != 1 {
-		t.Fatalf("SandboxClaim count after one release = %d, want 1 (one waiter claimed, one still queued)", n)
+		t.Fatalf("PodClaim count after one release = %d, want 1 (one waiter claimed, one still queued)", n)
 	}
 
 	// Release again for the remaining waiter, which then drains too.
@@ -273,7 +273,7 @@ func TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool(t *testing.T) {
 
 	// The timed-out request held nothing: still one claim (A's), still one row (A's).
 	if n := liveClaimCount(t, cluster); n != 1 {
-		t.Fatalf("SandboxClaim count after the queue-wait timeout = %d, want 1 (the timed-out request holds no claim)", n)
+		t.Fatalf("PodClaim count after the queue-wait timeout = %d, want 1 (the timed-out request holds no claim)", n)
 	}
 	if n := persistedRowCount(t, store); n != 1 {
 		t.Fatalf("persisted session rows after the queue-wait timeout = %d, want 1 (§7.1: no row on a failed create)", n)

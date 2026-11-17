@@ -27,7 +27,7 @@ spec:
     preConnect: true
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: load-preconnect-template-kata
   namespace: lenny-agents
@@ -37,7 +37,7 @@ spec:
   executionMode: session
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: load-preconnect-pool-kata
   namespace: lenny-agents

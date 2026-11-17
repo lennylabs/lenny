@@ -91,7 +91,7 @@ type Root struct {
 	MTLS                       Object      `json:"mtls,omitempty"`
 	CertManager                Object      `json:"certmanager,omitempty"`
 	Adapter                    Object      `json:"adapter,omitempty"`
-	Sandbox                    Object      `json:"sandbox,omitempty"`
+	AgentPod                   Object      `json:"sandbox,omitempty"`
 	RuntimeClasses             Object      `json:"runtimeClasses,omitempty"`
 	Gateway                    Object      `json:"gateway,omitempty"`
 	Delegation                 Object      `json:"delegation,omitempty"`

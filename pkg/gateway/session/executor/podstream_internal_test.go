@@ -121,7 +121,7 @@ func newScriptedExecutor(t *testing.T) (*PodExecutor, *scriptedAdapter, *podsess
 	t.Helper()
 	a, cl := dialScripted(t)
 	reg := podsession.NewRegistry()
-	reg.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: "sbx-1", Adapter: cl})
+	reg.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", AgentPodName: "sbx-1", Adapter: cl})
 	return NewPodExecutor(reg, nil), a, reg
 }
 
@@ -382,12 +382,12 @@ func TestReleaseEndOfStreamIsSilent_spec_28_5_1(t *testing.T) {
 func TestStreamEndEvictsAndNextSendReattaches_spec_28_5_1(t *testing.T) {
 	e, a, _ := newScriptedExecutor(t)
 	type end struct {
-		tenant, session, sandbox string
-		code                     codes.Code
+		tenant, session, agentPod string
+		code                      codes.Code
 	}
 	ends := make(chan end, 1)
-	e.SetStreamFailureHandler(func(tenant, session, sandbox string, err error) {
-		ends <- end{tenant, session, sandbox, status.Code(err)}
+	e.SetStreamFailureHandler(func(tenant, session, agentPod string, err error) {
+		ends <- end{tenant, session, agentPod, status.Code(err)}
 	})
 	r := sendAsync(context.Background(), e, "open")
 	ss := a.nextStream(t)
@@ -614,7 +614,7 @@ func TestFailedOpenReachesEveryWaiterAndIsRetried_spec_28_5_1(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cl.Close() })
 	reg := podsession.NewRegistry()
-	reg.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: "sbx-1", Adapter: cl})
+	reg.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", AgentPodName: "sbx-1", Adapter: cl})
 	e := NewPodExecutor(reg, nil)
 
 	waiters := []<-chan sendResult{
@@ -638,7 +638,7 @@ func TestFailedOpenReachesEveryWaiterAndIsRetried_spec_28_5_1(t *testing.T) {
 	}
 
 	a, good := dialScripted(t)
-	reg.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: "sbx-1", Adapter: good})
+	reg.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", AgentPodName: "sbx-1", Adapter: good})
 	if r := openRoundTrip(t, e, a, "opened"); r.err != nil || r.text != "opened" {
 		t.Fatalf("Send after a failed open = %+v, want a reply on a new stream", r)
 	}
@@ -1002,13 +1002,13 @@ func (a *releaseProbeAdapter) Shutdown(context.Context, *adapterv1.ShutdownReque
 // cluster: the slot set for sandbox is seeded with a sibling member and its
 // rehydrated flag, so every release leaves a sibling on the pod and
 // ReleaseSlot never reaches the claim.
-func releaseProbeBinder(t *testing.T, sandbox string) *podsession.Binder {
+func releaseProbeBinder(t *testing.T, agentPod string) *podsession.Binder {
 	t.Helper()
 	mr := miniredis.RunT(t)
-	if _, err := mr.SAdd("lenny:pod:{"+sandbox+"}:active_slots", "sibling"); err != nil {
+	if _, err := mr.SAdd("lenny:pod:{"+agentPod+"}:active_slots", "sibling"); err != nil {
 		t.Fatalf("seed slot set: %v", err)
 	}
-	if err := mr.Set("lenny:pod:{"+sandbox+"}:rehydrated", "1"); err != nil {
+	if err := mr.Set("lenny:pod:{"+agentPod+"}:rehydrated", "1"); err != nil {
 		t.Fatalf("seed rehydrated flag: %v", err)
 	}
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -1039,9 +1039,9 @@ func spinSends(e *PodExecutor, sessionID string, stop <-chan struct{}) {
 // gap between the stream eviction and the registry removal would cache and
 // open a stream that outlives the Release.
 func TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1(t *testing.T) {
-	const sandbox = "sbx-1"
+	const agentPod = "sbx-1"
 	const iterations = 300
-	e := NewPodExecutor(podsession.NewRegistry(), releaseProbeBinder(t, sandbox))
+	e := NewPodExecutor(podsession.NewRegistry(), releaseProbeBinder(t, agentPod))
 	probe := &releaseProbeAdapter{}
 	var leaked atomic.Int64
 	probe.onShutdown = func() {
@@ -1064,7 +1064,7 @@ func TestReleaseLeavesNoStreamASendCanReopen_spec_28_5_1(t *testing.T) {
 		if err != nil {
 			t.Fatalf("dial adapter: %v", err)
 		}
-		e.registry.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: sandbox, SlotID: "slot-1", Adapter: cl})
+		e.registry.Put(&podsession.BindResult{SessionID: "sess-1", TenantID: "acme", AgentPodName: agentPod, SlotID: "slot-1", Adapter: cl})
 		stop := make(chan struct{})
 		var wg sync.WaitGroup
 		for s := 0; s < 4; s++ {

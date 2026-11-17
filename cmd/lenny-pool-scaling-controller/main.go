@@ -3,7 +3,7 @@
 // Command lenny-pool-scaling-controller runs the §4.6.2
 // PoolScalingController against a Kubernetes API server. It treats the
 // admin API's Postgres pool definitions as the source of truth and
-// reconciles them into the SandboxTemplate and SandboxWarmPool CRD pair
+// reconciles them into the PodSet CRD pair
 // the WarmPoolController consumes.
 //
 // The controller runs as its own workload with its own leader-election
@@ -87,9 +87,9 @@ func main() {
 	flag.StringVar(&leaderElectNS, "leader-election-namespace", "lenny-system",
 		"namespace that holds the leader-election Lease")
 	flag.StringVar(&postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
-		"Postgres connection string. The §4.6.2 PoolScalingController reads the admin API's pool definitions (the source of truth) from this database and reconciles them into the SandboxTemplate/SandboxWarmPool CRD pair. Required.")
+		"Postgres connection string. The §4.6.2 PoolScalingController reads the admin API's pool definitions (the source of truth) from this database and reconciles them into the PodSet CRD pair. Required.")
 	flag.StringVar(&agentNS, "agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
-		"agent namespace the derived SandboxTemplate/SandboxWarmPool CRDs are materialized in. Required.")
+		"agent namespace the derived PodSet CRDs are materialized in. Required.")
 	flag.DurationVar(&syncInterval, "sync-interval", 30*time.Second,
 		"§4.6.2 pool-config reconcile cadence. The PSC re-syncs Postgres pool definitions into CRDs on this timer because Kubernetes cannot watch the Postgres source of truth.")
 	// §16.5 — the workload-profile assumptions the tier

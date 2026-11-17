@@ -50,7 +50,7 @@ func config() poolscaling.PoolConfig {
 	return poolscaling.PoolConfig{
 		Name:      testPool,
 		Namespace: testNS,
-		Template: lennyv1.SandboxTemplateSpec{
+		Settings: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
 			ResourceClass:    "medium",
@@ -67,9 +67,9 @@ func syncOnce(t *testing.T, c client.Client, src *fakeSource) error {
 	return r.Sync(context.Background())
 }
 
-func getTemplate(t *testing.T, c client.Client) lennyv1.SandboxTemplate {
+func getTemplate(t *testing.T, c client.Client) lennyv1.PodSet {
 	t.Helper()
-	var tm lennyv1.SandboxTemplate
+	var tm lennyv1.PodSet
 	if err := c.Get(context.Background(),
 		client.ObjectKey{Namespace: testNS, Name: testPool}, &tm); err != nil {
 		t.Fatalf("get template: %v", err)
@@ -77,9 +77,9 @@ func getTemplate(t *testing.T, c client.Client) lennyv1.SandboxTemplate {
 	return tm
 }
 
-func getWarmPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
+func getWarmPool(t *testing.T, c client.Client) lennyv1.PodSet {
 	t.Helper()
-	var p lennyv1.SandboxWarmPool
+	var p lennyv1.PodSet
 	if err := c.Get(context.Background(),
 		client.ObjectKey{Namespace: testNS, Name: testPool}, &p); err != nil {
 		t.Fatalf("get warm pool: %v", err)
@@ -89,7 +89,7 @@ func getWarmPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
 
 func TestSyncCreatesTheCRDPair(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {
@@ -112,7 +112,7 @@ func TestSyncCreatesTheCRDPair(t *testing.T) {
 
 func TestSyncUpdatesAnExistingPool(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {
@@ -122,7 +122,7 @@ func TestSyncUpdatesAnExistingPool(t *testing.T) {
 	// The admin API raised minWarm and switched the runtime image line.
 	changed := config()
 	changed.MinWarm = 7
-	changed.Template.RuntimeRef = "claude-code-next"
+	changed.Settings.RuntimeRef = "claude-code-next"
 	src.configs = []poolscaling.PoolConfig{changed}
 
 	if err := syncOnce(t, c, src); err != nil {
@@ -139,7 +139,7 @@ func TestSyncUpdatesAnExistingPool(t *testing.T) {
 
 func TestSyncCorrectsManualSpecDrift(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {
@@ -164,20 +164,20 @@ func TestSyncCorrectsManualSpecDrift(t *testing.T) {
 // TestSyncReconcilesDeliveryFieldsOntoTemplateCRD drives the full
 // poolstore-to-CRD channel: a PoolStoreSource reads a pool carrying
 // deliveryMode/spiffeBinding, the Reconciler applies the derived
-// SandboxTemplate, and the applied CRD must carry both delivery fields so the
+// PodSet, and the applied CRD must carry both delivery fields so the
 // lenny-direct-mode-isolation ValidatingAdmissionWebhook reads live values
 // rather than the empty strings the CRD carried before toConfig populated them.
 // Against the pre-fix mapping the reconciled Spec.DeliveryMode/SpiffeBinding
 // stay empty and this fails.
 //
-// diagnosis: the poolstore-to-SandboxTemplate reconcile dropped the §4.9
+// diagnosis: the poolstore-to-PodSet reconcile dropped the §4.9
 // credential-delivery fields, so the admission webhook and preflight scan
 // inspect empty deliveryMode/spiffeBinding on the reconciled CRD.
 //
 // spec: §4.9.
 func TestSyncReconcilesDeliveryFieldsOntoTemplateCRD(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:                                testPool,
@@ -209,7 +209,7 @@ func TestSyncReconcilesDeliveryFieldsOntoTemplateCRD(t *testing.T) {
 
 func TestSyncHandlesMultiplePools(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 
 	a := config()
 	a.Name = "pool-a"
@@ -222,7 +222,7 @@ func TestSyncHandlesMultiplePools(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	var pools lennyv1.SandboxWarmPoolList
+	var pools lennyv1.PodSetList
 	if err := c.List(context.Background(), &pools, client.InNamespace(testNS)); err != nil {
 		t.Fatalf("list warm pools: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestSyncHandlesMultiplePools(t *testing.T) {
 
 func TestSyncPropagatesSourceError(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{err: errors.New("postgres unreachable")}
 
 	if err := syncOnce(t, c, src); err == nil {
@@ -257,7 +257,7 @@ func (f *fakeDemand) PoolDemand(context.Context, string) (poolscaling.Demand, er
 // p95 0.1 / p99 0.2, the formula yields ceil(5.25 + 2.0) = 8.
 func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	demand := &fakeDemand{demand: poolscaling.Demand{
 		BaseDemandP95:  0.1,
@@ -282,7 +282,7 @@ func TestSyncUsesObservedDemandForMinWarm(t *testing.T) {
 // Tier 1/2 result of 8. spec: §17.8.2.
 func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	demand := &fakeDemand{demand: poolscaling.Demand{
 		BaseDemandP95:  0.1,
@@ -311,7 +311,7 @@ func TestSyncAppliesTierDefaultSafetyFactor_spec_17_8_2_1008(t *testing.T) {
 // ceil(7.0 + 2.0) = 9. spec: §17.8.2.
 func TestSyncPoolSafetyFactorOverridesTierDefault_spec_17_8_2_1010(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.SafetyFactor = 2.0
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -338,7 +338,7 @@ func TestSyncPoolSafetyFactorOverridesTierDefault_spec_17_8_2_1010(t *testing.T)
 
 func TestSyncStaysAtBootstrapWithoutObservedDemand(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	demand := &fakeDemand{demand: poolscaling.Demand{
 		BaseDemandP95:  99,
@@ -360,7 +360,7 @@ func TestSyncStaysAtBootstrapWithoutObservedDemand(t *testing.T) {
 
 func TestSyncStaysAtBootstrapWithNoDemandSource(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	// No Demand wired: the controller operates the pool in bootstrap.
@@ -375,7 +375,7 @@ func TestSyncStaysAtBootstrapWithNoDemandSource(t *testing.T) {
 
 func TestSyncPropagatesDemandSourceError(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	demand := &fakeDemand{err: errors.New("prometheus unreachable")}
 
@@ -396,7 +396,7 @@ func TestSyncPropagatesDemandSourceError(t *testing.T) {
 // yields ceil(0.4·0.25·1.5·35 + 0.5·0.25·10) = ceil(5.25 + 1.25) = 7.
 func TestSyncSizesVariantPoolByVariantWeight(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.PoolType = strategy.PoolVariant
 	cfg.VariantWeight = 0.25
@@ -428,7 +428,7 @@ func TestSyncSizesVariantPoolByVariantWeight(t *testing.T) {
 // formula yields ceil(0.4·0.7·1.5·35 + 0.5·0.7·10) = ceil(14.7 + 3.5) = 19.
 func TestSyncAdjustsBasePoolBySumVariantWeights(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.PoolType = strategy.PoolStandard
 	cfg.SumActiveVariantWeights = 0.3
@@ -461,7 +461,7 @@ func TestSyncAdjustsBasePoolBySumVariantWeights(t *testing.T) {
 // an explicit standard pool.
 func TestSyncTreatsEmptyPoolTypeAsStandard(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	demand := &fakeDemand{demand: poolscaling.Demand{
 		BaseDemandP95:  0.1,
@@ -485,7 +485,7 @@ func TestSyncTreatsEmptyPoolTypeAsStandard(t *testing.T) {
 // failure so the bad experiment configuration is not silently sized.
 func TestSyncRejectsBasePoolWithSumVariantWeightsAtOne(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.PoolType = strategy.PoolStandard
 	cfg.SumActiveVariantWeights = 1.0
@@ -513,7 +513,7 @@ func TestSyncBacksOffWithinPause(t *testing.T) {
 		Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
 			creates++
 			return apierrors.NewForbidden(
-				schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+				schema.GroupResource{Group: "lenny.dev", Resource: "podsets"},
 				obj.GetName(), errors.New("validator rejected"),
 			)
 		},
@@ -555,12 +555,12 @@ func TestSyncStuckPoolResumesAfterReconciliationReset(t *testing.T) {
 	scheme := newScheme(t)
 	deny := true
 	var creates int
-	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).WithInterceptorFuncs(interceptor.Funcs{
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&lennyv1.PodSet{}).WithInterceptorFuncs(interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			if deny {
 				creates++
 				return apierrors.NewForbidden(
-					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+					schema.GroupResource{Group: "lenny.dev", Resource: "podsets"},
 					obj.GetName(), errors.New("validator rejected"),
 				)
 			}
@@ -647,7 +647,7 @@ func TestAdminResumerBindsNamespace(t *testing.T) {
 // minWarm 0 regardless of its bootstrap floor or observed demand.
 func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.ScalePolicy = &lennyv1.ScalePolicy{
 		ScaleToZero: &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *"},
@@ -666,12 +666,12 @@ func TestSyncScaleToZeroOverridesMinWarmToZero(t *testing.T) {
 
 // TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558 confirms the
 // PoolScalingController writes lenny.dev/config-generation onto both
-// SandboxTemplate and SandboxWarmPool, taking the value from the
+// PodSet, taking the value from the
 // PoolConfig.Generation the admin store bumps on every write.
 // spec: §4.6.2.
 func TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.Generation = 7
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -693,7 +693,7 @@ func TestSyncStampsConfigGenerationOnCRDs_Spec4_6_2_558(t *testing.T) {
 // (the source has not advanced past create-time).
 func TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
@@ -711,10 +711,10 @@ func TestSyncWithZeroGenerationOmitsAnnotation_Spec4_6_2_558(t *testing.T) {
 // spec: §5.2 (execution mode scaling implications).
 func TestSyncServiceModeUsesMaxConcurrent_spec_5_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
-	cfg.Template.ExecutionMode = "service"
-	cfg.Template.MaxConcurrent = 8
+	cfg.Settings.ExecutionMode = "service"
+	cfg.Settings.MaxConcurrent = 8
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
 	r := &poolscaling.Reconciler{
 		Client: c, Source: src,
@@ -773,7 +773,7 @@ func recyclingDemand() *fakeDemand {
 // spec: §5.2 (cold-start fallback 1.0 until the histogram converges).
 func TestSyncRecyclingPoolColdStartUsesBaseModeFactor(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
 	r := &poolscaling.Reconciler{
 		Client: c, Source: src,
@@ -794,7 +794,7 @@ func TestSyncRecyclingPoolColdStartUsesBaseModeFactor(t *testing.T) {
 // spec: §5.2 (cold start, no historical data).
 func TestSyncRecyclingPoolNilSourceUsesBaseModeFactor(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
 	r := &poolscaling.Reconciler{Client: c, Source: src, Demand: recyclingDemand()}
 	if err := r.Sync(context.Background()); err != nil {
@@ -812,7 +812,7 @@ func TestSyncRecyclingPoolNilSourceUsesBaseModeFactor(t *testing.T) {
 // spec: §5.2 (mode_factor from observed reuse p50).
 func TestSyncRecyclingPoolConvergedUsesObservedMedian(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
 	r := &poolscaling.Reconciler{
 		Client: c, Source: src,
@@ -835,7 +835,7 @@ func TestSyncRecyclingPoolConvergedUsesObservedMedian(t *testing.T) {
 // spec: §5.2 (converged value bounded above by recycle.maxSessionsPerPod).
 func TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
 	r := &poolscaling.Reconciler{
 		Client: c, Source: src,
@@ -856,7 +856,7 @@ func TestSyncRecyclingPoolMedianBoundedByMaxSessionsPerPod(t *testing.T) {
 // spec: §5.2 (cold-start fallback).
 func TestSyncRecyclingPoolSourceErrorFallsBackToColdStart(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{recyclingConfig(10)}}
 	r := &poolscaling.Reconciler{
 		Client: c, Source: src,
@@ -879,7 +879,7 @@ func TestSyncRecyclingPoolSourceErrorFallsBackToColdStart(t *testing.T) {
 // spec: §5.2 (burst_mode_factor = maxConcurrentSessions).
 func TestSyncSessionPoolConcurrentBurstFactor(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.MaxConcurrentSessions = 4
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -895,7 +895,7 @@ func TestSyncSessionPoolConcurrentBurstFactor(t *testing.T) {
 // Outside the window the pool keeps its bootstrap floor.
 func TestSyncScaleToZeroInactiveKeepsBootstrap(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.ScalePolicy = &lennyv1.ScalePolicy{
 		ScaleToZero: &lennyv1.ScaleToZeroPolicy{Schedule: "0 22 * * *", ResumeAt: "0 6 * * *"},

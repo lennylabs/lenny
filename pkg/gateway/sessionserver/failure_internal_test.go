@@ -231,13 +231,13 @@ func (f *funnelFixture) binder(t *testing.T, withPool bool) *podsession.Binder {
 	b := fake.NewClientBuilder().WithScheme(scheme)
 	if withPool {
 		b = b.WithObjects(
-			&lennyv1.SandboxWarmPool{
+			&lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "pool-c", Namespace: funnelNS},
-				Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "tmpl-c", MinWarm: 1, MaxWarm: 2},
+				Spec:       lennyv1.PodSetSpec{TemplateRef: "tmpl-c", MinWarm: 1, MaxWarm: 2},
 			},
-			&lennyv1.SandboxTemplate{
+			&lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "tmpl-c", Namespace: funnelNS},
-				Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo"},
+				Spec:       lennyv1.PodSetSpec{RuntimeRef: "echo"},
 			},
 		)
 	}
@@ -312,11 +312,11 @@ func (f *funnelFixture) seed(t *testing.T, id string, st session.State, retries 
 		t.Fatalf("get %s: %v", id, err)
 	}
 	bind := &podsession.BindResult{
-		SessionID: id, TenantID: "acme", SandboxName: "pod-x",
+		SessionID: id, TenantID: "acme", AgentPodName: "pod-x",
 		CoordinationGeneration: row.CoordinationGeneration,
 	}
 	if slot {
-		bind.SandboxName, bind.SlotID = "pod-a", id
+		bind.AgentPodName, bind.SlotID = "pod-a", id
 	}
 	if f.registry != nil {
 		f.registry.Put(bind)
@@ -642,7 +642,7 @@ func TestFailureFunnelReleasesOnlyTheReportedBinding_spec_7_3(t *testing.T) {
 		wantNewBind bool
 	}{
 		{"a newer binding is published", func(f *funnelFixture) {
-			f.registry.Put(&podsession.BindResult{SessionID: "sess-own", TenantID: "acme", SandboxName: "pod-new"})
+			f.registry.Put(&podsession.BindResult{SessionID: "sess-own", TenantID: "acme", AgentPodName: "pod-new"})
 		}, 0, true},
 		{"the binding is removed", func(f *funnelFixture) { f.registry.Remove("sess-own") }, 0, false},
 		{"no hook", nil, 1, false},
@@ -674,7 +674,7 @@ func TestFailureFunnelReleasesOnlyTheReportedBinding_spec_7_3(t *testing.T) {
 					t.Errorf("release disposition = %q, want failed", d)
 				}
 			}
-			if b, ok := f.registry.Get("sess-own"); tc.wantNewBind && (!ok || b.SandboxName != "pod-new") {
+			if b, ok := f.registry.Get("sess-own"); tc.wantNewBind && (!ok || b.AgentPodName != "pod-new") {
 				t.Errorf("registry = %+v ok=%v, want the newer binding kept", b, ok)
 			}
 			if h := f.leaseHolder("sess-own"); h != "rep-1" {

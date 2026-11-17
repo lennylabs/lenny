@@ -16,14 +16,14 @@ func TestGateAllowsFirstWriteThenDefersWithinWindow(t *testing.T) {
 	g := New(500 * time.Millisecond)
 	g.now = func() time.Time { return clock }
 
-	if ok, rem := g.Allow("Sandbox/ns/a"); !ok || rem != 0 {
+	if ok, rem := g.Allow("AgentPod/ns/a"); !ok || rem != 0 {
 		t.Fatalf("first write: Allow = (%v, %v), want (true, 0)", ok, rem)
 	}
 
 	// 200ms later: still within the 500ms window, so the write is deferred
 	// with the remaining 300ms.
 	clock = base.Add(200 * time.Millisecond)
-	ok, rem := g.Allow("Sandbox/ns/a")
+	ok, rem := g.Allow("AgentPod/ns/a")
 	if ok {
 		t.Fatalf("write within window: Allow ok = true, want deferred")
 	}
@@ -39,9 +39,9 @@ func TestGateAllowsAfterWindowExpires(t *testing.T) {
 	g := New(500 * time.Millisecond)
 	g.now = func() time.Time { return clock }
 
-	g.Allow("Sandbox/ns/a")
+	g.Allow("AgentPod/ns/a")
 	clock = base.Add(500 * time.Millisecond)
-	if ok, rem := g.Allow("Sandbox/ns/a"); !ok || rem != 0 {
+	if ok, rem := g.Allow("AgentPod/ns/a"); !ok || rem != 0 {
 		t.Errorf("write at window boundary: Allow = (%v, %v), want (true, 0)", ok, rem)
 	}
 }
@@ -49,8 +49,8 @@ func TestGateAllowsAfterWindowExpires(t *testing.T) {
 // Distinct resources have independent windows.
 func TestGateKeysAreIndependent(t *testing.T) {
 	g := New(500 * time.Millisecond)
-	g.Allow("Sandbox/ns/a")
-	if ok, _ := g.Allow("Sandbox/ns/b"); !ok {
+	g.Allow("AgentPod/ns/a")
+	if ok, _ := g.Allow("AgentPod/ns/b"); !ok {
 		t.Error("a second resource must not be gated by the first resource's write")
 	}
 }
@@ -79,10 +79,10 @@ func TestForgetResetsWindow(t *testing.T) {
 	g := New(500 * time.Millisecond)
 	g.now = func() time.Time { return clock }
 
-	g.Allow("Sandbox/ns/a")
-	g.Forget("Sandbox/ns/a")
+	g.Allow("AgentPod/ns/a")
+	g.Forget("AgentPod/ns/a")
 	clock = base.Add(10 * time.Millisecond)
-	if ok, _ := g.Allow("Sandbox/ns/a"); !ok {
+	if ok, _ := g.Allow("AgentPod/ns/a"); !ok {
 		t.Error("after Forget the next write must be permitted immediately")
 	}
 }

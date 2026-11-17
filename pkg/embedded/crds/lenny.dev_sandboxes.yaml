@@ -5,13 +5,13 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.16.5
     lenny.dev/schema-version: "1"
-  name: sandboxes.lenny.dev
+  name: agentpods.lenny.dev
 spec:
   group: lenny.dev
   names:
-    kind: Sandbox
-    listKind: SandboxList
-    plural: sandboxes
+    kind: AgentPod
+    listKind: AgentPodList
+    plural: agentpods
     shortNames:
     - sbx
     singular: sandbox
@@ -31,10 +31,10 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          Sandbox is the lenny.dev/v1alpha1 record of one managed agent pod (§4.6).
+          AgentPod is the lenny.dev/v1alpha1 record of one managed agent pod (§4.6).
           The status subresource carries the §6.2 authoritative pod state
           machine; the gateway claims pods by referencing them from a
-          SandboxClaim.
+          PodClaim.
         properties:
           apiVersion:
             description: |-
@@ -55,9 +55,9 @@ spec:
             type: object
           spec:
             description: |-
-              SandboxSpec is the desired state of a Sandbox — one managed agent
+              AgentPodSpec is the desired state of a AgentPod — one managed agent
               pod (§4.6, §6). The WarmPoolController owns spec.*; the pod is
-              created from the pool's SandboxTemplate, and these fields pin the
+              created from the pool's PodSet, and these fields pin the
               per-pod identity the controller and gateway resolve against.
             properties:
               deliveryMode:
@@ -72,7 +72,7 @@ spec:
                   under: `session` (a pod parameterized by the pool's sessionPolicy)
                   or `service` (a claimless, request-routed pod). spec: §12.6 — the PodRegistry projects it as PodRecord.ExecutionMode.
                   The WarmPoolController denormalizes it from the pool's
-                  SandboxTemplate.spec.executionMode onto each Sandbox (the same
+                  PodSet.spec.executionMode onto each AgentPod (the same
                   copy-down as IsolationProfile) so the registry can project it
                   without resolving the template on every read. Empty is treated as
                   `session`.
@@ -90,19 +90,19 @@ spec:
                 - microvm
                 type: string
               poolRef:
-                description: PoolRef names the SandboxWarmPool this pod is a member
+                description: PoolRef names the PodSet this pod is a member
                   of.
                 type: string
               requireSoPeercred:
                 description: |-
                   RequireSoPeercred carries the resolved §4.7 nonce-only render
-                  decision the WarmPoolController's Sandbox reconciler computes from
+                  decision the WarmPoolController's AgentPod reconciler computes from
                   the referenced Runtime's requireSoPeercred, its deploymentModel, and
                   the pool's acknowledgeNonceOnlyAuth. An explicit false records that
                   the pod was rendered with --require-so-peercred=false (nonce-only
                   mode); a nil value records the default SO_PEERCRED-enforcing render.
                   The pool-level SecurityDegradedMode trigger reads this field back
-                  from the member Sandboxes without resolving the Runtime CR. spec:
+                  from the member AgentPods without resolving the Runtime CR. spec:
                   §4.7.
                 type: boolean
               resourceClass:
@@ -113,7 +113,7 @@ spec:
                   carries the per-pod resource limits, which this codebase models as
                   a named resource class rather than raw quantities. A warm pod
                   created by the WarmPoolController resolves its class from the
-                  SandboxTemplate at pod-build time and leaves this empty; the §12.6
+                  PodSet at pod-build time and leaves this empty; the §12.6
                   CreatePod path (a gateway-created pod for a non-prewarmed session
                   at Tier 4+) stamps the resolved class here so it round-trips
                   through the registry.
@@ -126,10 +126,10 @@ spec:
                 description: |-
                   TopologySpreadConstraints distribute the pod across zones and
                   nodes. spec: §5.2 — the WarmPoolController copies the
-                  pool's SandboxTemplate.spec.topologySpreadConstraints onto each
-                  Sandbox it creates, and the Sandbox-to-Pod reconciler stamps them
+                  pool's PodSet.spec.topologySpreadConstraints onto each
+                  AgentPod it creates, and the AgentPod-to-Pod reconciler stamps them
                   onto the agent pod. The PoolScalingController owns the defaults it
-                  writes into the SandboxTemplate; this field carries the resolved
+                  writes into the PodSet; this field carries the resolved
                   constraints (defaults or deployer override) down to the pod.
                 items:
                   description: TopologySpreadConstraint specifies how to spread matching
@@ -312,10 +312,10 @@ spec:
             x-kubernetes-preserve-unknown-fields: true
           status:
             description: |-
-              SandboxStatus is the observed state of a Sandbox. status.phase is
+              AgentPodStatus is the observed state of a AgentPod. status.phase is
               the §6.2 authoritative pod lifecycle state machine; it is the
               single source of truth that the §4.6 claim path and the
-              lenny-sandboxclaim-guard webhook read.
+              lenny-podclaim-guard webhook read.
             properties:
               conditions:
                 description: Conditions is the standard Kubernetes condition list.
@@ -392,7 +392,7 @@ spec:
                 description: |-
                   Phase is the §6.2 coarse pod-occupancy state. The WarmPoolController
                   is the sole writer and computes it as a level-triggered projection of
-                  per-pod SandboxClaim existence, the claim's binding state, and the
+                  per-pod PodClaim existence, the claim's binding state, and the
                   pool's sessionPolicy (§4.6.3). The fine session-lifecycle states live
                   in the Postgres session model (§7.2, §8.8) and are not projected onto
                   the CRD; concurrent occupancy projects `claimed`.
@@ -413,7 +413,7 @@ spec:
                 type: string
               podName:
                 description: |-
-                  PodName is the underlying Pod backing this Sandbox. Empty until
+                  PodName is the underlying Pod backing this AgentPod. Empty until
                   the pod is created.
                 type: string
               sessionId:

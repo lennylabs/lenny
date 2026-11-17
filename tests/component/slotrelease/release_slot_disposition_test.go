@@ -14,7 +14,7 @@
 // that was never published, deletes the claim instead.
 //
 // spec: §5.2 (Slot assignment atomicity; Recycle lifecycle), §4.6.3
-// (SandboxClaim: a release that ends the occupancy without reuse), §6.2
+// (PodClaim: a release that ends the occupancy without reuse), §6.2
 // (leaked slot semantics).
 package slotrelease_test
 
@@ -38,7 +38,7 @@ func (f *releaseFixture) reserve(t *testing.T, sessionID string) {
 	res, err := f.slotClaimer().ClaimSlot(context.Background(), podclaim.SlotRequest{
 		Pool: releasePool, SessionID: sessionID, TenantID: "acme", MaxConcurrentSessions: releaseMaxConcurrent,
 	})
-	if err != nil || res.SandboxName != releasePod {
+	if err != nil || res.AgentPodName != releasePod {
 		t.Fatalf("reserve %s: %+v, %v", sessionID, res, err)
 	}
 }
@@ -53,7 +53,7 @@ func (f *releaseFixture) release(t *testing.T, sessionID string, recycle, leaked
 	return recycled
 }
 
-// spec: §5.2 (Slot assignment atomicity), §4.6.3 (SandboxClaim: a release
+// spec: §5.2 (Slot assignment atomicity), §4.6.3 (PodClaim: a release
 // that ends the occupancy without reuse), §6.2 (leaked slot semantics)
 // diagnosis: the per-pod claim was deleted by a release other than the one
 // that removed the last member: a release that left a sibling, a duplicate
@@ -99,7 +99,7 @@ func TestReleaseSlotDeletesTheClaimOnlyOnTheEmptyingRemoval_spec_5_2(t *testing.
 	})
 }
 
-// spec: §5.2 (Recycle lifecycle), §4.6.3 (SandboxClaim: a release that ends
+// spec: §5.2 (Recycle lifecycle), §4.6.3 (PodClaim: a release that ends
 // the occupancy without reuse)
 // diagnosis: on a recycling concurrent pool, the release that emptied the set
 // did not patch the claim `recycling`, so the whole-pod scrub never starts;

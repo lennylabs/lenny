@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres-backed agentpodstate.Store,
-// persisting the §4.6.1 Sandbox-status mirror to the agent_pod_state
+// persisting the §4.6.1 AgentPod-status mirror to the agent_pod_state
 // table.
 //
 // agent_pod_state is platform-global (§12.6): the mirror is keyed by
@@ -113,7 +113,7 @@ func (s *Store) Sync(ctx context.Context, poolID string, observed []agentpodstat
 // agent_pod_state row whose pod_id is not in observed is deleted. This
 // is the §4.6.1 mirror reconciliation on leader-election acquisition; it
 // re-establishes the steady-state invariant that the mirror matches the
-// authoritative Sandbox set across all pools before the controller
+// authoritative AgentPod set across all pools before the controller
 // resumes incremental writes. With no observed rows, every row is stale
 // and the table is emptied.
 func (s *Store) ReconcileAll(ctx context.Context, observed []agentpodstate.PodState) error {

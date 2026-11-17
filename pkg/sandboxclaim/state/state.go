@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-// Package state defines the SandboxClaim CRD binding-state machine.
+// Package state defines the PodClaim CRD binding-state machine.
 //
-// SandboxClaim is the per-pod-occupancy claim a gateway replica creates
-// when it acquires an idle Sandbox pod. SandboxClaim.status.phase tracks
+// PodClaim is the per-pod-occupancy claim a gateway replica creates
+// when it acquires an idle AgentPod pod. PodClaim.status.phase tracks
 // the gateway-owned binding state of that occupancy, distinct from the
 // pod lifecycle state machine the WarmPoolController projects onto
-// Sandbox.status.phase (§6.2). The gateway is the sole writer of the
+// AgentPod.status.phase (§6.2). The gateway is the sole writer of the
 // binding state; the WarmPoolController consumes it as projection input
 // but never writes it.
 //
@@ -17,7 +17,7 @@
 // (reserved → idle) is the claim DELETE edge rather than a phase value.
 //
 // ADR-007 governs the optimistic-locking and failover-fencing behavior
-// the lenny-sandboxclaim-guard admission webhook backstops.
+// the lenny-podclaim-guard admission webhook backstops.
 //
 // spec: §4.6.1 (binding states, reserved hold, precondition DELETE),
 // §4.6.3 (binding-state enumeration), §6.2 (coarse pod enum projection).
@@ -25,8 +25,8 @@ package state
 
 import "fmt"
 
-// State is the SandboxClaim binding state, written to
-// SandboxClaim.status.phase.
+// State is the PodClaim binding state, written to
+// PodClaim.status.phase.
 type State string
 
 const (
@@ -52,7 +52,7 @@ const (
 )
 
 // All returns the binding-state enumeration in advancement order. It
-// mirrors the SandboxClaim.status.phase CRD enum
+// mirrors the PodClaim.status.phase CRD enum
 // (bound;recycling;reserved;released;failed). spec: §4.6.3.
 func All() []State {
 	return []State{Bound, Recycling, Reserved, Released, Failed}
@@ -109,7 +109,7 @@ type InvalidTransitionError struct {
 }
 
 func (e *InvalidTransitionError) Error() string {
-	return fmt.Sprintf("sandboxclaim: %q → %q is not a valid transition per spec §4.6.1", e.From, e.To)
+	return fmt.Sprintf("podclaim: %q → %q is not a valid transition per spec §4.6.1", e.From, e.To)
 }
 
 var validSet = func() map[Transition]struct{} {

@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Slot assignment
+// spec: §4.6.1 (Orphaned PodClaim detection), §5.2 (Slot assignment
 // atomicity)
 //
 // Claimer.Claim returns the StampPodTenant error and deletes nothing: the
@@ -26,7 +26,7 @@ import (
 // joined through the slot path.
 func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1(t *testing.T) {
 	ns := testNamespace(t)
-	base := newEnvtestClient(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	base := newEnvtestClient(t, agentPodIn(ns, testPool, "sbx-1", "idle"))
 	mustCreate(t, base, agentPod(ns, "sbx-1", ""))
 	stampErr := errors.New("injected tenant stamp failure")
 	deletes := &atomic.Int32{}
@@ -38,7 +38,7 @@ func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1(t *testing.T) {
 			return c.Patch(ctx, obj, p, opts...)
 		},
 		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+			if _, ok := obj.(*lennyv1.PodClaim); ok {
 				deletes.Add(1)
 			}
 			return c.Delete(ctx, obj, opts...)
@@ -55,7 +55,7 @@ func TestClaimIdleStampFailureLeavesBoundClaim_spec_4_6_1(t *testing.T) {
 	if n := deletes.Load(); n != 0 {
 		t.Errorf("claim deletes = %d, want none", n)
 	}
-	var stored lennyv1.SandboxClaim
+	var stored lennyv1.PodClaim
 	if err := base.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName("sbx-1")}, &stored); err != nil {
 		t.Fatalf("the claim is gone: %v", err)
 	}

@@ -43,13 +43,13 @@ type streamEvicter interface {
 //
 // spec: §28.5.1 (CH-ATTACH Degradation.); §7.3 (resume flow after pod
 // failure); §10.1.1; §10.1.5.
-func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, sandboxName string, cause error) {
+func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, agentPodName string, cause error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.streamFailureReportTimeout+s.sealMaxDuration)
 	defer cancel()
-	log := slog.With("tenant_id", tenantID, "session_id", sessionID, "sandbox", sandboxName,
+	log := slog.With("tenant_id", tenantID, "session_id", sessionID, "sandbox", agentPodName,
 		"status_code", status.Code(cause).String())
 
-	bind := s.reportedStreamBinding(sessionID, sandboxName)
+	bind := s.reportedStreamBinding(sessionID, agentPodName)
 	if bind == nil {
 		log.Info("sessionserver: attach stream failure belongs to a superseded binding; not reported")
 		return
@@ -71,7 +71,7 @@ func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, sandboxName stri
 		TenantID:      tenantID,
 		SessionID:     sessionID,
 		Reason:        string(session.FailureRuntimeCrash),
-		PodAssignment: sandboxName,
+		PodAssignment: agentPodName,
 	})
 	if err != nil {
 		log.Warn("sessionserver: report attach stream failure", "error", err)
@@ -83,14 +83,14 @@ func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, sandboxName stri
 }
 
 // reportedStreamBinding returns the session's current binding when it names
-// sandboxName, and nil when the server has no registry, the session is
+// agentPodName, and nil when the server has no registry, the session is
 // unbound, or the binding names another sandbox.
-func (s *Server) reportedStreamBinding(sessionID, sandboxName string) *podsession.BindResult {
+func (s *Server) reportedStreamBinding(sessionID, agentPodName string) *podsession.BindResult {
 	if s.podRegistry == nil {
 		return nil
 	}
 	bind, ok := s.podRegistry.Get(sessionID)
-	if !ok || bind.SandboxName != sandboxName {
+	if !ok || bind.AgentPodName != agentPodName {
 		return nil
 	}
 	return bind

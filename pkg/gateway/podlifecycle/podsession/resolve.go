@@ -38,7 +38,7 @@ var ErrAmbiguousPool = errors.New("podsession: more than one warm pool matches t
 // spec: §7.1 (pool selector), §14.1 (CreateSessionRequest.pool).
 var ErrPoolNotSatisfiable = errors.New("podsession: the requested pool is not backed by the runtime or is isolation-inconsistent")
 
-// conditionPoolWarmingUp is the §5.2 SandboxTemplate condition type the
+// conditionPoolWarmingUp is the §5.2 PodSet condition type the
 // WarmPoolController sets True while a pool with a positive minWarm has
 // no idle pods and at least one pod still warming. The gateway reads it
 // to answer session creation with a 503 during the bootstrap window.
@@ -50,7 +50,7 @@ const conditionPoolWarmingUp = "PoolWarmingUp"
 // bootstrapping. The session-creation handler maps it to the §5.2 "Pool Not Ready" response.
 // spec: §5.2.
 type PoolWarmingError struct {
-	// Pool is the warming pool's name (its SandboxWarmPool name).
+	// Pool is the warming pool's name (its PodSet name).
 	Pool string
 	// PodsWarming is the number of pods currently warming toward idle.
 	PodsWarming int32
@@ -60,7 +60,7 @@ func (e *PoolWarmingError) Error() string {
 	return fmt.Sprintf("podsession: pool %q is warming up (%d pods warming)", e.Pool, e.PodsWarming)
 }
 
-// PoolMatch is a resolved SandboxWarmPool with the dispatch-relevant
+// PoolMatch is a resolved PodSet with the dispatch-relevant
 // fields copied alongside it, so the start path can decide between the
 // session-claim and slot-claim paths without re-reading the template.
 //
@@ -72,7 +72,7 @@ func (e *PoolWarmingError) Error() string {
 // the poolstore sessionPolicy mirror; ResolvePool folds them in from the
 // PoolPolicyReader when one is wired, keyed by the resolved pool name.
 type PoolMatch struct {
-	// Pool is the resolved SandboxWarmPool name.
+	// Pool is the resolved PodSet name.
 	Pool string
 	// ExecutionMode is the §5.2 mode declared on the template: `session`
 	// or `service`. Empty is treated as `session`.
@@ -88,22 +88,22 @@ type PoolMatch struct {
 	// not carry it. Zero (or 1) keeps the session-claim path.
 	MaxConcurrentSessions int32
 	// IsolationProfile is the §5.3 profile the pool's pods run under,
-	// copied from the SandboxTemplate so the §7.1 sessionIsolationLevel
+	// copied from the PodSet so the §7.1 sessionIsolationLevel
 	// can report the assigned pod's profile.
 	IsolationProfile string
 	// SpiffeBinding is the §4.9 proxy-mode lease-token SPIFFE binding the
-	// pool's pods run under, copied from the SandboxTemplate. The
+	// pool's pods run under, copied from the PodSet. The
 	// session-start credential-delivery gate pairs it with each resolved
 	// CredentialPool's effective deliveryMode so the same
 	// direct_mode_isolation.Decide the registration and admission layers run
 	// also evaluates the delivery mode leasing actually uses. Empty is the
-	// SandboxTemplate default. spec: §4.9.
+	// PodSet default. spec: §4.9.
 	SpiffeBinding string
 	// Recycle reports whether the pool's §5.2 sessionPolicy.recycle block
 	// is present, so the §7.1 scrubPolicy derivation knows the pod is
 	// reused across sessions. It is the stored recycle.enabled when the pool
 	// has a poolstore mirror row (foldPoolPolicy), and otherwise falls back
-	// to the SandboxTemplate's sessionPolicy.recycle presence.
+	// to the PodSet's sessionPolicy.recycle presence.
 	Recycle bool
 	// AllowCrossTenantReuse and MicrovmScrubMode select the §7.1 scrubPolicy
 	// variant for a cross-tenant-reuse microvm pool. MicrovmScrubMode is set
@@ -147,22 +147,22 @@ type PoolMatch struct {
 	// it. spec: §5.2 (Slot retry policy).
 	SlotRetries *int
 	// PoolWarmingUp reflects the §5.2 PoolWarmingUp condition on the
-	// pool's SandboxTemplate: true while the pool is bootstrapping with
+	// pool's PodSet: true while the pool is bootstrapping with
 	// no idle pods. The start path returns a 503 RUNTIME_UNAVAILABLE
 	// before attempting a claim when this is set.
 	PoolWarmingUp bool
 	// PodsWarming is the number of pods currently warming toward idle
-	// (warm count minus ready count on the SandboxWarmPool status). It
+	// (warm count minus ready count on the PodSet status). It
 	// populates the 503 response's details.podsWarming.
 	PodsWarming int32
 	// WorkspaceSizeLimitBytes is the §4.4 / §10.1 per-pod hard workspace
-	// size limit declared on the SandboxTemplate. Zero leaves the cap
+	// size limit declared on the PodSet. Zero leaves the cap
 	// unset (the kubelet emptyDir guard remains the backstop). The
 	// resume path forwards it to the adapter for the §7.3
 	// pre-extraction symmetric size check. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
 	// MaxPodUptimeSeconds is the §6.2 concurrent-workspace
-	// pod-uptime retirement cap copied from the SandboxTemplate's
+	// pod-uptime retirement cap copied from the PodSet's
 	// sessionPolicy.recycle.maxPodUptimeSeconds. Zero leaves uptime retirement off. The
 	// slot-claim path drains an over-uptime pod before its next slot
 	// assignment. Zero on non-concurrent pools.
@@ -181,7 +181,7 @@ type PoolMatch struct {
 	// CheckpointGrantWindow is the §5.2 per-pool override of the
 	// deployment-wide checkpointGrantWindow: the number of chunk-upload
 	// capabilities the gateway keeps outstanding while draining this pool's
-	// workspace checkpoints. It is copied from the SandboxTemplate's
+	// workspace checkpoints. It is copied from the PodSet's
 	// checkpointGrantWindow field. Nil leaves the driver on the
 	// deployment-wide default. spec: §10.1.7 chunk-grant window;
 	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
@@ -259,8 +259,8 @@ type PoolPolicyReader interface {
 // poolWarming derives the §5.2 PoolWarmingUp signal and the warming-pod
 // count for a resolved (template, pool) pair. PodsWarming is the warm
 // count minus the ready count, clamped at zero.
-func poolWarming(tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool) (warmingUp bool, podsWarming int32) {
-	warmingUp = meta.IsStatusConditionTrue(tmpl.Status.Conditions, conditionPoolWarmingUp)
+func poolWarming(pool *lennyv1.PodSet) (warmingUp bool, podsWarming int32) {
+	warmingUp = meta.IsStatusConditionTrue(pool.Status.Conditions, conditionPoolWarmingUp)
 	podsWarming = pool.Status.WarmCount - pool.Status.ReadyCount
 	if podsWarming < 0 {
 		podsWarming = 0
@@ -268,14 +268,13 @@ func poolWarming(tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool) (
 	return warmingUp, podsWarming
 }
 
-// ResolvePool finds the SandboxWarmPool whose SandboxTemplate serves
+// ResolvePool finds the PodSet whose PodSet serves
 // the given runtime — and, when isolationProfile is non-empty, the
 // given §5.3 isolation profile. The gateway calls it to choose the
 // pool a session's pod is claimed from, and to read the dispatch
 // fields (executionMode, maxConcurrentSessions, maxConcurrent) that
 // route the bind between the session-claim and slot-claim paths. A
-// pool whose templateRef dangles is skipped rather than treated as an
-// error. ResolvePool returns ErrNoMatchingPool when none match and
+// ResolvePool returns ErrNoMatchingPool when none match and
 // ErrAmbiguousPool when more than one does.
 //
 // When pool is non-empty the client pinned a specific pool (the §14.1
@@ -297,7 +296,7 @@ func poolWarming(tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool) (
 // resolved pool name. spec: §5.2 (sessionPolicy block, gateway-enforced
 // subset).
 func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyReader, namespace, runtimeRef, isolationProfile, pinnedPool string) (PoolMatch, error) {
-	var pools lennyv1.SandboxWarmPoolList
+	var pools lennyv1.PodSetList
 	if err := reader.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
 		return PoolMatch{}, fmt.Errorf("podsession: list warm pools: %w", err)
 	}
@@ -312,21 +311,14 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 		if pinnedPool != "" && pool.Name != pinnedPool {
 			continue
 		}
-		var tmpl lennyv1.SandboxTemplate
-		err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: pool.Spec.TemplateRef}, &tmpl)
-		if apierrors.IsNotFound(err) {
-			continue
-		}
-		if err != nil {
-			return PoolMatch{}, fmt.Errorf("podsession: get template %s: %w", pool.Spec.TemplateRef, err)
-		}
+		tmpl := pool
 		if tmpl.Spec.RuntimeRef != runtimeRef {
 			continue
 		}
 		if isolationProfile != "" && tmpl.Spec.IsolationProfile != isolationProfile {
 			continue
 		}
-		warmingUp, podsWarming := poolWarming(&tmpl, pool)
+		warmingUp, podsWarming := poolWarming(pool)
 		m := PoolMatch{
 			Pool:             pool.Name,
 			ExecutionMode:    tmpl.Spec.ExecutionMode,
@@ -353,7 +345,7 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 			m.WorkspaceSizeLimitBytes = *tmpl.Spec.WorkspaceSizeLimitBytes
 		}
 		// spec: §10.1.7 / §5.2 — copy the per-pool
-		// checkpointGrantWindow override from the SandboxTemplate so the
+		// checkpointGrantWindow override from the PodSet so the
 		// checkpoint driver can prefer it over the deployment-wide default.
 		// foldPoolPolicy lets a poolstore mirror row override it further.
 		m.CheckpointGrantWindow = tmpl.Spec.CheckpointGrantWindow
@@ -451,7 +443,7 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 // its Kubernetes CRD pair. The §15.1 admin pool GET handler consults it
 // to surface `poolCondition` and `idlePodCount` (§5.2) without
 // requiring operators to inspect the CR status directly. The pool's
-// SandboxWarmPool and SandboxTemplate share the pool name (the
+// PodSet share the pool name (the
 // PoolScalingController names both after the pool, §4.6.2).
 type PoolStatusLookup struct {
 	// Reader addresses the cluster.
@@ -461,15 +453,15 @@ type PoolStatusLookup struct {
 }
 
 // PoolStatus returns the pool's §5.2 condition and idle-pod count. The
-// condition is "PoolWarmingUp" while the pool's SandboxTemplate carries
+// condition is "PoolWarmingUp" while the pool's PodSet carries
 // a true PoolWarmingUp condition, and the empty string otherwise.
-// idlePodCount is the SandboxWarmPool's ready-pod count. found is false
-// when the pool has no SandboxWarmPool yet (defined in Postgres but not
+// idlePodCount is the PodSet's ready-pod count. found is false
+// when the pool has no PodSet yet (defined in Postgres but not
 // reconciled into a CRD), so the caller omits the live-status fields
 // rather than reporting a misleading zero.
 // spec: §5.2.
 func (l PoolStatusLookup) PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error) {
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &pool); e != nil {
 		if apierrors.IsNotFound(e) {
 			return "", 0, false, nil
@@ -477,34 +469,20 @@ func (l PoolStatusLookup) PoolStatus(ctx context.Context, poolName string) (cond
 		return "", 0, false, fmt.Errorf("podsession: get warm pool %s: %w", poolName, e)
 	}
 	idlePodCount = int(pool.Status.ReadyCount)
-
-	var tmpl lennyv1.SandboxTemplate
-	templateRef := pool.Spec.TemplateRef
-	if templateRef == "" {
-		templateRef = poolName
-	}
-	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: templateRef}, &tmpl); e != nil {
-		if apierrors.IsNotFound(e) {
-			// Pool exists but its template does not resolve; report the
-			// idle count without a condition rather than failing the GET.
-			return "", idlePodCount, true, nil
-		}
-		return "", 0, false, fmt.Errorf("podsession: get template %s: %w", templateRef, e)
-	}
-	if meta.IsStatusConditionTrue(tmpl.Status.Conditions, conditionPoolWarmingUp) {
+	if meta.IsStatusConditionTrue(pool.Status.Conditions, conditionPoolWarmingUp) {
 		condition = conditionPoolWarmingUp
 	}
 	return condition, idlePodCount, true, nil
 }
 
 // PoolBootstrapStatus returns the pool's §17.8.2 cold-start signals read
-// from its SandboxWarmPool CRD status: the accumulated whole hours of
+// from its PodSet CRD status: the accumulated whole hours of
 // traffic data and the scaling mode the PoolScalingController operates
 // it in (`bootstrap` or `formula`). found is false when the pool has no
-// SandboxWarmPool yet, so the admin GET reports the override-only view.
+// PodSet yet, so the admin GET reports the override-only view.
 // spec: §17.8.2 step 3.
 func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName string) (hoursOfData float64, scalingMode string, found bool, err error) {
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &pool); e != nil {
 		if apierrors.IsNotFound(e) {
 			return 0, "", false, nil
@@ -515,19 +493,19 @@ func (l PoolStatusLookup) PoolBootstrapStatus(ctx context.Context, poolName stri
 }
 
 // CRDGeneration returns the §4.6.2 pool_config_generation the
-// PoolScalingController stamped on the pool's SandboxTemplate annotation,
+// PoolScalingController stamped on the pool's PodSet annotation,
 // the line-560 last-reconciled instant, and ok = true when the
-// SandboxTemplate exists. It satisfies the admin
+// PodSet exists. It satisfies the admin
 // CRDGenerationReader so the §15.1 GET /v1/admin/pools/{name}/sync-status
 // endpoint and the PUT response can report crdGeneration / lastReconciledAt
 // / lagSeconds / inSync outside the Postgres-only dev posture. ok = false
-// when no SandboxTemplate has been created for the pool yet (defined in
+// when no PodSet has been created for the pool yet (defined in
 // Postgres but not reconciled into a CRD), so the handler reports the
 // pending state. The PoolScalingController names both CRDs after the pool
-// (§4.6.2), so the SandboxTemplate is looked up by the pool name.
+// (§4.6.2), so the PodSet is looked up by the pool name.
 // spec: §4.6.2.
 func (l PoolStatusLookup) CRDGeneration(ctx context.Context, poolName string) (generation int64, lastReconciledAt time.Time, ok bool, err error) {
-	var tmpl lennyv1.SandboxTemplate
+	var tmpl lennyv1.PodSet
 	if e := l.Reader.Get(ctx, client.ObjectKey{Namespace: l.Namespace, Name: poolName}, &tmpl); e != nil {
 		if apierrors.IsNotFound(e) {
 			return 0, time.Time{}, false, nil

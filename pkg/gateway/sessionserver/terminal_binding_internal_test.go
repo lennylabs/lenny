@@ -39,7 +39,7 @@ func bindAt(t *testing.T, f *funnelFixture, id string, st session.State, gen, st
 		r.CoordinationGeneration = gen
 		return nil
 	})
-	bind := &podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: "pod-x", CoordinationGeneration: stamp}
+	bind := &podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: "pod-x", CoordinationGeneration: stamp}
 	f.registry.Put(bind)
 	return row, bind
 }

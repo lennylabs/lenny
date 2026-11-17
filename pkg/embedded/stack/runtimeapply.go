@@ -36,7 +36,7 @@ import (
 var runtimeImageDigestPattern = regexp.MustCompile(`@sha256:[A-Fa-f0-9]{64}$`)
 
 // The §4.6.2 pool defaults the runtime-apply verb stamps onto the derived
-// SandboxTemplate/SandboxWarmPool when the runtime file does not pin them.
+// PodSet when the runtime file does not pin them.
 // They mirror the echo seed's poolstore→CRD field mapping
 // (poolscaling.PoolStoreSource.toConfig: MinWarm = MaxWarm = warmCount, the
 // isolation profile, the egress profile, the DNS policy, and the resource
@@ -76,16 +76,16 @@ type imageDigestResolver func(repository string) (digest string, err error)
 
 // RunRuntimeApply parses the runtime file at path, resolves a tag-based
 // spec.image to its §5.3 digest-pinned form against the running embedded
-// stack's containerd, assembles the runtime's Runtime, SandboxTemplate, and
-// SandboxWarmPool CRD set, and applies the set to the embedded cluster
+// stack's containerd, assembles the runtime's Runtime, PodSet, and
+// PodSet CRD set, and applies the set to the embedded cluster
 // reachable through kubeconfigPath. It is the generalized, runtime-agnostic
 // counterpart of the echo seed's direct pool materialization: under the §17.4
 // no-Postgres development profile no PoolScalingController runs to project a
-// poolstore row into a SandboxWarmPool CRD, and `lenny-ctl runtime register`
+// poolstore row into a PodSet CRD, and `lenny-ctl runtime register`
 // writes only the runtime-registry record, so without this set a custom
 // runtime registered through the walkthrough has no Runtime CRD and no pool
 // and ResolvePool returns ErrNoMatchingPool. The verb applies the set so the
-// Sandbox controller resolves the runtime by name and the
+// AgentPod controller resolves the runtime by name and the
 // unconditionally-registered WarmPoolController reconciles the pool to a warm
 // pod.
 //
@@ -100,14 +100,14 @@ type imageDigestResolver func(repository string) (digest string, err error)
 // missing `lenny image import` step rather than letting the apply surface a
 // raw OpenAPI pattern rejection.
 //
-// The SandboxTemplate/SandboxWarmPool pair is applied through the C1
+// The PodSet pair is applied through the C1
 // dynamic-apply path (applyObjects), and the Runtime CR through the same
 // typed-client upsert the echo seed uses (upsertRuntimeCR), so the verb reuses
 // both established apply mechanisms rather than adding a parallel one. The
 // whole set is idempotent: a re-run reconverges the live objects in place.
 //
 // spec: §17.4 (the runtime-apply verb materializes the CRD set without a
-// PoolScalingController), §5.2 (ResolvePool lists the applied SandboxWarmPool),
+// PoolScalingController), §5.2 (ResolvePool lists the applied PodSet),
 // §5.3 (the applied Runtime is digest-pinned), §4.6.2 (direct pool
 // materialization).
 func RunRuntimeApply(ctx context.Context, kubeconfigPath, path string) error {
@@ -218,7 +218,7 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 
 // ApplyRuntimeSetFromConfig assembles the runtime's CRD set from rt and applies
 // it against an already-resolved rest config through the C1 dynamic-apply path
-// (the SandboxTemplate/SandboxWarmPool pair) plus the echo seed's typed-client
+// (the PodSet pair) plus the echo seed's typed-client
 // upsert (the Runtime CR). It is split from RunRuntimeApply so a component-tier envtest
 // drives the same apply path against a real kube-apiserver with the lenny.dev
 // CRDs installed, without writing a kubeconfig file, the way
@@ -226,8 +226,8 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 // responsible for digest-resolving rt.Spec.Image (RunRuntimeApply does this
 // via resolveRuntimeImage); rt reaching here carries the digest-pinned image
 // the §5.3 CRD pattern accepts. The Runtime CR is applied first (the
-// SandboxTemplate's runtimeRef points at it), then the SandboxTemplate and
-// SandboxWarmPool pair. spec: §17.4, §5.3, §4.6.2.
+// PodSet's runtimeRef points at it), then the PodSet and
+// PodSet pair. spec: §17.4, §5.3, §4.6.2.
 func ApplyRuntimeSetFromConfig(ctx context.Context, cfg *rest.Config, rt *lennyv1alpha1.Runtime) error {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(lennyv1alpha1.AddToScheme(scheme))
@@ -251,7 +251,7 @@ func ApplyRuntimeSetFromConfig(ctx context.Context, cfg *rest.Config, rt *lennyv
 
 // runtimeCRFromFile normalizes the runtime parsed from the file into the
 // cluster-scoped Runtime CR the verb applies. It defaults the §5.1 fields the
-// Sandbox controller and the CRD validation require but the walkthrough file
+// AgentPod controller and the CRD validation require but the walkthrough file
 // may omit (type → agent, executionMode → session, isolationProfile →
 // standard, deploymentModel → sidecar, the §17.4 walkthrough default), so a
 // minimal runtime-crds.yaml carrying only name, image, and integrationLevel
@@ -280,42 +280,33 @@ func runtimeCRFromFile(rt *lennyv1alpha1.Runtime) *lennyv1alpha1.Runtime {
 	}
 }
 
-// runtimePoolObjects builds the SandboxTemplate and SandboxWarmPool for the
-// runtime cr in the agent namespace. The field mapping reproduces the echo
-// seed's poolstore→CRD projection (echoPoolObjects, in turn reproducing
-// poolscaling.PoolStoreSource.toConfig): the SandboxTemplate carries the
-// runtimeRef, the runtime's isolation profile, and the embedded egress, DNS,
-// and resource-class defaults, and the SandboxWarmPool sets templateRef to the
-// runtime name with MinWarm = MaxWarm = warmCount, so the directly-applied
-// pair matches what the PoolScalingController would have produced. The pool is
-// named for the runtime so multiple runtimes applied through the verb each get
-// their own pool. spec: §4.6.2 (the poolstore→CRD projection), §5.2 (hot pool).
-func runtimePoolObjects(cr *lennyv1alpha1.Runtime) (*lennyv1alpha1.SandboxTemplate, *lennyv1alpha1.SandboxWarmPool) {
-	poolName := RuntimePoolName(cr.Name)
-	tmpl := &lennyv1alpha1.SandboxTemplate{
-		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1alpha1.GroupVersion.String(), Kind: "SandboxTemplate"},
-		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: agentNamespace},
-		Spec: lennyv1alpha1.SandboxTemplateSpec{
+// runtimePoolObject builds the PodSet for the runtime cr in the agent
+// namespace. The field mapping reproduces the echo seed's poolstore→CRD
+// projection (echoPoolObject, in turn reproducing
+// poolscaling.PoolStoreSource.toConfig): the PodSet carries the runtimeRef,
+// the runtime's isolation profile, and the embedded egress, DNS, and
+// resource-class defaults with MinWarm = MaxWarm = warmCount, so the
+// directly-applied PodSet matches what the PoolScalingController would have
+// produced. The pool is named for the runtime so multiple runtimes applied
+// through the verb each get their own pool. spec: §4.6.2 (the poolstore→CRD
+// projection), §5.2 (hot pool).
+func runtimePoolObject(cr *lennyv1alpha1.Runtime) *lennyv1alpha1.PodSet {
+	return &lennyv1alpha1.PodSet{
+		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1alpha1.GroupVersion.String(), Kind: "PodSet"},
+		ObjectMeta: metav1.ObjectMeta{Name: RuntimePoolName(cr.Name), Namespace: agentNamespace},
+		Spec: lennyv1alpha1.PodSetSpec{
 			RuntimeRef:       cr.Name,
 			IsolationProfile: cr.Spec.IsolationProfile,
 			EgressProfile:    runtimeApplyEgressProfile,
 			DNSPolicy:        runtimeApplyDNSPolicy,
 			ResourceClass:    runtimeApplyResourceClass,
+			MinWarm:          runtimeApplyWarmCount,
+			MaxWarm:          runtimeApplyWarmCount,
 		},
 	}
-	pool := &lennyv1alpha1.SandboxWarmPool{
-		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1alpha1.GroupVersion.String(), Kind: "SandboxWarmPool"},
-		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: agentNamespace},
-		Spec: lennyv1alpha1.SandboxWarmPoolSpec{
-			TemplateRef: poolName,
-			MinWarm:     runtimeApplyWarmCount,
-			MaxWarm:     runtimeApplyWarmCount,
-		},
-	}
-	return tmpl, pool
 }
 
-// RuntimePoolName returns the SandboxTemplate/SandboxWarmPool name the
+// RuntimePoolName returns the PodSet name the
 // runtime-apply verb derives for a runtime. The pool is named for the runtime
 // (runtime-pool) so multiple runtimes applied through the verb each get a
 // distinct pool the WarmPoolController reconciles independently.
@@ -323,19 +314,15 @@ func RuntimePoolName(runtimeName string) string {
 	return runtimeName + "-pool"
 }
 
-// runtimePoolUnstructured builds the runtime's SandboxTemplate/SandboxWarmPool
-// pair and encodes each as an unstructured.Unstructured carrying its lenny.dev
-// GVK, so the C1 applier (applyObjects) resolves the GVR via the RESTMapper and
-// server-side-applies it, the same transport the echo seed uses. spec: §4.6.2.
+// runtimePoolUnstructured builds the runtime's PodSet and encodes it as an
+// unstructured.Unstructured carrying its lenny.dev GVK, so the C1 applier
+// (applyObjects) resolves the GVR via the RESTMapper and server-side-applies
+// it, the same transport the echo seed uses. spec: §4.6.2.
 func runtimePoolUnstructured(cr *lennyv1alpha1.Runtime) ([]unstructured.Unstructured, error) {
-	tmpl, pool := runtimePoolObjects(cr)
-	tmplU, err := toUnstructured(tmpl)
+	ps := runtimePoolObject(cr)
+	u, err := toUnstructured(ps)
 	if err != nil {
-		return nil, fmt.Errorf("embedded runtime apply: encode SandboxTemplate %s: %w", tmpl.Name, err)
+		return nil, fmt.Errorf("embedded runtime apply: encode PodSet %s: %w", ps.Name, err)
 	}
-	poolU, err := toUnstructured(pool)
-	if err != nil {
-		return nil, fmt.Errorf("embedded runtime apply: encode SandboxWarmPool %s: %w", pool.Name, err)
-	}
-	return []unstructured.Unstructured{*tmplU, *poolU}, nil
+	return []unstructured.Unstructured{*u}, nil
 }

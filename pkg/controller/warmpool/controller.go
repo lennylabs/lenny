@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 
 // Package warmpool holds the §4.6.1 WarmPoolController. The Reconciler
-// drives one SandboxWarmPool toward its minWarm/maxWarm target by
-// creating and draining Sandbox resources, and writes the observed
+// drives one PodSet toward its minWarm/maxWarm target by
+// creating and draining AgentPod resources, and writes the observed
 // warm and ready counts back to the pool's status subresource.
 //
 // The create/drain decision is delegated to the pure planner in the
 // plan subpackage; this file is the controller-runtime adapter that
-// reads the live Sandbox set, applies the plan through the API
+// reads the live AgentPod set, applies the plan through the API
 // server, and registers the reconciler with a manager.
 package warmpool
 
@@ -41,11 +41,11 @@ import (
 )
 
 // conditionPoolWarmingUp is the §5.2 bootstrap condition the
-// WarmPoolController maintains on SandboxTemplate.status.
+// WarmPoolController maintains on PodSet.status.
 const conditionPoolWarmingUp = "PoolWarmingUp"
 
 // conditionPoolDrained is the §25.6 zero-in-flight condition the
-// WarmPoolController maintains on SandboxTemplate.status. It is True while a
+// WarmPoolController maintains on PodSet.status. It is True while a
 // pool with a positive minWarm has no idle pods and no pods warming (the
 // "zero in-flight warm-up claims" state §25.6 names as the stuck signal), and
 // False otherwise. Unlike the PoolWarmingUp condition, whose Available and
@@ -60,7 +60,7 @@ const conditionPoolWarmingUp = "PoolWarmingUp"
 // spec: §25.6.
 const conditionPoolDrained = "PoolDrained"
 
-// Label keys the controller stamps on every Sandbox it creates. The
+// Label keys the controller stamps on every AgentPod it creates. The
 // pool label scopes the per-pool List; the managed label marks the
 // resource as controller-owned for §17.2 admission targeting.
 const (
@@ -90,7 +90,7 @@ const (
 	LabelDNSPolicy = "lenny.dev/dns-policy"
 
 	// EgressProfileRestricted is the §13.2 default egress profile (gateway
-	// + DNS only); an empty SandboxTemplate.spec.egressProfile resolves to
+	// + DNS only); an empty PodSet.spec.egressProfile resolves to
 	// it. spec: §13.2.
 	EgressProfileRestricted = "restricted"
 
@@ -130,22 +130,22 @@ const (
 type EventEmitter = events.EventEmitter
 
 // Reconciler is the §4.6.1 WarmPoolController. It reconciles one
-// SandboxWarmPool per pass.
+// PodSet per pass.
 type Reconciler struct {
 	// Client is the controller-runtime client backed by the manager
 	// cache.
 	Client client.Client
 	// APIReader is the manager's uncached reader. The §5.2 pinned-idle
-	// detection confirms a cached SandboxClaim NotFound through it, because
+	// detection confirms a cached PodClaim NotFound through it, because
 	// the cache can show a pod's tenant pin before the claim the pin
 	// follows. Nil leaves every idle pod unpinned.
 	APIReader client.Reader
 	// Scheme is required to stamp owner references on created
-	// Sandboxes.
+	// AgentPods.
 	Scheme *runtime.Scheme
 	// Mirror is the optional §4.6.1 agent_pod_state mirror store. When
 	// set, every reconcile converges the Postgres-side mirror of this
-	// pool's Sandbox status. It is nil when no Postgres is configured;
+	// pool's AgentPod status. It is nil when no Postgres is configured;
 	// every call site treats nil as "mirroring disabled". The mirror is
 	// a read-optimized copy for the gateway's fallback claim path, so a
 	// mirror write failure never fails the reconcile.
@@ -210,12 +210,12 @@ type Reconciler struct {
 	fillOnce sync.Once
 }
 
-// Reconcile sizes one pool: it lists the pool's Sandboxes, computes
+// Reconcile sizes one pool: it lists the pool's AgentPods, computes
 // the create/drain plan, applies it, and updates the pool status.
 func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if err := r.Client.Get(ctx, req.NamespacedName, &pool); err != nil {
-		// The pool was deleted; its Sandboxes are garbage-collected via
+		// The pool was deleted; its AgentPods are garbage-collected via
 		// owner references, so there is nothing left to reconcile. Drop the
 		// idle-pod-minutes accrual state so a recreated pool re-baselines.
 		if apierrors.IsNotFound(err) {
@@ -230,33 +230,30 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 	r.fillOnce.Do(func() { r.fill.period = r.InitialFillGracePeriod })
 
-	// The SandboxTemplate is required: it supplies the pod spec for
-	// created Sandboxes and hosts the PoolWarmingUp condition.
-	tmpl, err := r.poolTemplate(ctx, &pool)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	// The PodSet carries both the pool settings the pod builder reads and
+	// the warm targets, and it hosts the PoolWarmingUp condition.
+	tmpl := &pool
 
-	var sandboxes lennyv1.SandboxList
-	if err := r.Client.List(ctx, &sandboxes,
+	var agentPods lennyv1.AgentPodList
+	if err := r.Client.List(ctx, &agentPods,
 		client.InNamespace(pool.Namespace),
 		client.MatchingLabels{LabelPool: pool.Name}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("list sandboxes for pool %s: %w", pool.Name, err)
 	}
 
-	// Mirror the observed Sandbox status to the §4.6.1 agent_pod_state
+	// Mirror the observed AgentPod status to the §4.6.1 agent_pod_state
 	// table. The mirror is a read-optimized copy for the gateway's
 	// fallback claim path; a write failure is logged and the reconcile
-	// continues, because the authoritative store is the Sandbox status
+	// continues, because the authoritative store is the AgentPod status
 	// subresource, not the mirror.
-	r.syncMirror(ctx, &pool, tmpl, sandboxes.Items)
+	r.syncMirror(ctx, &pool, tmpl, agentPods.Items)
 
 	in := plan.Inputs{
 		MinWarm: int(pool.Spec.MinWarm),
 		MaxWarm: int(pool.Spec.MaxWarm),
 	}
-	for i := range sandboxes.Items {
-		sb := &sandboxes.Items[i]
+	for i := range agentPods.Items {
+		sb := &agentPods.Items[i]
 		in.Pods = append(in.Pods, plan.Pod{Name: sb.Name, Phase: observedPhase(sb)})
 	}
 	// spec: §5.2 (Pinned idle inventory) — an idle pod pinned to a tenant
@@ -283,13 +280,13 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	}
 
 	for i := 0; i < decision.Create; i++ {
-		if err := r.createSandbox(ctx, &pool, tmpl); err != nil {
+		if err := r.createAgentPod(ctx, &pool, tmpl); err != nil {
 			return ctrl.Result{}, fmt.Errorf("create sandbox for pool %s: %w", pool.Name, err)
 		}
 	}
 
 	for _, name := range append(append([]string(nil), decision.Drain...), decision.DrainPinned...) {
-		if err := r.drainSandbox(ctx, sandboxes.Items, name); err != nil {
+		if err := r.drainAgentPod(ctx, agentPods.Items, name); err != nil {
 			return ctrl.Result{}, fmt.Errorf("drain sandbox %s: %w", name, err)
 		}
 	}
@@ -297,8 +294,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	if err := r.updateStatus(ctx, &pool, decision, degraded); err != nil {
 		return ctrl.Result{}, fmt.Errorf("update pool %s status: %w", pool.Name, err)
 	}
-	if err := r.updateTemplateCondition(ctx, tmpl, &pool, decision, sandboxes.Items); err != nil {
-		return ctrl.Result{}, fmt.Errorf("update template %s status: %w", tmpl.Name, err)
+	if err := r.updatePoolConditions(ctx, &pool, decision, agentPods.Items); err != nil {
+		return ctrl.Result{}, fmt.Errorf("update pod set %s conditions: %w", pool.Name, err)
 	}
 	if err := r.reconcilePDB(ctx, &pool); err != nil {
 		return ctrl.Result{}, fmt.Errorf("reconcile pdb for pool %s: %w", pool.Name, err)
@@ -383,7 +380,7 @@ func DerivePoolPhase(minWarm int, decision plan.Plan) PoolPhase {
 // pool_state_changed event when the phase differs from the prior pass.
 // Emission is per spec §4.0 pool state manager. A nil Events sink is a
 // no-op.
-func (r *Reconciler) observePoolPhase(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan) {
+func (r *Reconciler) observePoolPhase(ctx context.Context, pool *lennyv1.PodSet, decision plan.Plan) {
 	current := DerivePoolPhase(int(pool.Spec.MinWarm), decision)
 	key := pool.Namespace + "/" + pool.Name
 
@@ -429,11 +426,11 @@ func (r *Reconciler) emitPoolStateChanged(ctx context.Context, pool string, oldP
 	}
 }
 
-// observedPhase maps a Sandbox's reported phase to a state.State. A
-// Sandbox that exists but has not yet reported a phase is still
+// observedPhase maps a AgentPod's reported phase to a state.State. A
+// AgentPod that exists but has not yet reported a phase is still
 // starting up, so it is treated as warming — this prevents the
 // planner from creating a duplicate before the new pod's status lands.
-func observedPhase(sb *lennyv1.Sandbox) state.State {
+func observedPhase(sb *lennyv1.AgentPod) state.State {
 	if sb.Status.Phase == "" {
 		return state.Warming
 	}
@@ -441,41 +438,41 @@ func observedPhase(sb *lennyv1.Sandbox) state.State {
 }
 
 // syncMirror converges the §4.6.1 agent_pod_state mirror for the pool
-// to the observed Sandbox set. It is a no-op when no Mirror store is
+// to the observed AgentPod set. It is a no-op when no Mirror store is
 // configured. A mirror write failure is logged and swallowed: the
 // mirror is a read-optimized copy for the gateway's fallback claim
 // path, so a stale mirror must never block pod-pool reconciliation.
-func (r *Reconciler) syncMirror(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate, sandboxes []lennyv1.Sandbox) {
+func (r *Reconciler) syncMirror(ctx context.Context, pool *lennyv1.PodSet, tmpl *lennyv1.PodSet, agentPods []lennyv1.AgentPod) {
 	if r.Mirror == nil {
 		return
 	}
-	observed := derivePodStates(pool, tmpl, sandboxes)
+	observed := derivePodStates(pool, tmpl, agentPods)
 	if err := r.Mirror.Sync(ctx, pool.Name, observed); err != nil {
 		logf.FromContext(ctx).Error(err, "agent_pod_state mirror sync failed; continuing",
 			"pool", pool.Name)
 	}
 }
 
-// derivePodStates projects the pool's live Sandbox set onto the
-// §4.6.1 agent_pod_state row set. Each row mirrors one Sandbox: pod_id
-// is the Sandbox name, pool_id is the pool name, state is the observed
+// derivePodStates projects the pool's live AgentPod set onto the
+// §4.6.1 agent_pod_state row set. Each row mirrors one AgentPod: pod_id
+// is the AgentPod name, pool_id is the pool name, state is the observed
 // §6.2 phase, and isolation_profile / execution_mode are the pool-level
-// properties (the Sandbox spec carries the isolation profile; execution
-// mode is a §5.2 pool property sourced from the SandboxTemplate).
+// properties (the AgentPod spec carries the isolation profile; execution
+// mode is a §5.2 pool property sourced from the PodSet).
 // tenant_id and session_id are left empty because a warm-pool reconcile
 // only ever observes idle and warming pods, which carry no session; the
 // claim path writes those columns when a pod is claimed.
 //
 // derivePodStates is a pure function with no I/O so the projection can
 // be unit-tested without a cluster or a database.
-func derivePodStates(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate, sandboxes []lennyv1.Sandbox) []agentpodstate.PodState {
+func derivePodStates(pool *lennyv1.PodSet, tmpl *lennyv1.PodSet, agentPods []lennyv1.AgentPod) []agentpodstate.PodState {
 	execMode := ""
 	if tmpl != nil {
 		execMode = tmpl.Spec.ExecutionMode
 	}
-	out := make([]agentpodstate.PodState, 0, len(sandboxes))
-	for i := range sandboxes {
-		sb := &sandboxes[i]
+	out := make([]agentpodstate.PodState, 0, len(agentPods))
+	for i := range agentPods {
+		sb := &agentPods[i]
 		out = append(out, agentpodstate.PodState{
 			PodID:            sb.Name,
 			PoolID:           pool.Name,
@@ -489,7 +486,7 @@ func derivePodStates(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplat
 	return out
 }
 
-// parseResourceVersion parses a Sandbox metadata.resourceVersion into
+// parseResourceVersion parses a AgentPod metadata.resourceVersion into
 // the BIGINT the agent_pod_state.resource_version column expects. The
 // Kubernetes API server's resourceVersion is an opaque string;
 // etcd-backed clusters return a decimal integer, and the fake client
@@ -503,47 +500,36 @@ func parseResourceVersion(rv string) int64 {
 	return n
 }
 
-// poolTemplate fetches the SandboxTemplate the pool's pods are created
-// from.
-func (r *Reconciler) poolTemplate(ctx context.Context, pool *lennyv1.SandboxWarmPool) (*lennyv1.SandboxTemplate, error) {
-	var tmpl lennyv1.SandboxTemplate
-	key := client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.TemplateRef}
-	if err := r.Client.Get(ctx, key, &tmpl); err != nil {
-		return nil, fmt.Errorf("get template %s for pool %s: %w", pool.Spec.TemplateRef, pool.Name, err)
-	}
-	return &tmpl, nil
-}
-
-// createSandbox creates one Sandbox for the pool, derived from the
-// pool's SandboxTemplate and owned by the SandboxWarmPool so it is
+// createAgentPod creates one AgentPod for the pool, derived from the
+// pool's PodSet and owned by the PodSet so it is
 // garbage-collected with the pool.
-func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) error {
-	sb := &lennyv1.Sandbox{
+func (r *Reconciler) createAgentPod(ctx context.Context, pool *lennyv1.PodSet, tmpl *lennyv1.PodSet) error {
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: pool.Name + "-",
 			Namespace:    pool.Namespace,
-			Labels:       sandboxLabels(pool, tmpl),
+			Labels:       agentPodLabels(pool, tmpl),
 			Annotations:  propagatedAnnotations(tmpl),
 			// spec: §4.6.1 "Sandbox finalizers" — every Sandbox carries
 			// the session-cleanup finalizer so a node drain or accidental
 			// deletion never silently orphans an active session; the
-			// Sandbox-to-Pod reconciler removes it once no active claim
+			// AgentPod-to-Pod reconciler removes it once no active claim
 			// references the pod.
 			Finalizers: []string{lennyv1.FinalizerSessionCleanup},
 		},
-		Spec: lennyv1.SandboxSpec{
+		Spec: lennyv1.AgentPodSpec{
 			RuntimeRef: tmpl.Spec.RuntimeRef,
-			PoolRef:    pool.Name,
+			PodSetRef:  pool.Name,
 			// spec: §12.6 — denormalize the pool's isolation
-			// profile and execution mode onto each Sandbox so the
+			// profile and execution mode onto each AgentPod so the
 			// PodRegistry projects PodRecord.{IsolationProfile,ExecutionMode}
-			// without resolving the SandboxTemplate on every read.
+			// without resolving the PodSet on every read.
 			IsolationProfile: tmpl.Spec.IsolationProfile,
 			ExecutionMode:    tmpl.Spec.ExecutionMode,
 			DeliveryMode:     tmpl.Spec.DeliveryMode,
 			// spec: §5.2 — the WarmPoolController (which owns
-			// Sandbox.spec) copies the pool's topology spread constraints
-			// from the SandboxTemplate so the Sandbox-to-Pod reconciler can
+			// AgentPod.spec) copies the pool's topology spread constraints
+			// from the PodSet so the AgentPod-to-Pod reconciler can
 			// stamp them onto the agent pod.
 			TopologySpreadConstraints: tmpl.Spec.TopologySpreadConstraints,
 		},
@@ -554,8 +540,8 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 	return r.Client.Create(ctx, sb)
 }
 
-// sandboxLabels builds the label set the controller stamps on every
-// Sandbox it warms. The labels propagate to the agent pod (the Sandbox
+// agentPodLabels builds the label set the controller stamps on every
+// AgentPod it warms. The labels propagate to the agent pod (the AgentPod
 // reconciler copies sb.Labels onto the pod), where the §13.2
 // pre-created NetworkPolicies select them. The controller never creates
 // NetworkPolicies; it only labels pods so the chart-rendered policies
@@ -570,7 +556,7 @@ func (r *Reconciler) createSandbox(ctx context.Context, pool *lennyv1.SandboxWar
 //     (spec: §13.2). F-13.2.11.
 //   - LabelDNSPolicy: `cluster-default` only on pools that opt out of the
 //     dedicated CoreDNS instance (spec: §13.2). F-13.2.4.
-func sandboxLabels(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) map[string]string {
+func agentPodLabels(pool *lennyv1.PodSet, tmpl *lennyv1.PodSet) map[string]string {
 	labels := map[string]string{
 		LabelPool:    pool.Name,
 		LabelManaged: "true",
@@ -593,11 +579,11 @@ func sandboxLabels(pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate)
 }
 
 // propagatedAnnotations carries the small set of opt-in annotations
-// from a SandboxTemplate onto every Sandbox it warms. The
+// from a PodSet onto every AgentPod it warms. The
 // reconciler's createPod path reads these to decide whether to inject
 // optional features (the egress-capture sidecar today; more
 // per-template knobs land alongside).
-func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
+func propagatedAnnotations(tmpl *lennyv1.PodSet) map[string]string {
 	if tmpl == nil {
 		return nil
 	}
@@ -606,9 +592,9 @@ func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
 		return nil
 	}
 	keys := []string{
-		// a SandboxTemplate annotated with the egress-capture
-		// upstream propagates that annotation to every Sandbox it
-		// warms, and the Sandbox reconciler reads it on createPod.
+		// a PodSet annotated with the egress-capture
+		// upstream propagates that annotation to every AgentPod it
+		// warms, and the AgentPod reconciler reads it on createPod.
 		"lenny.dev/test-egress-capture-upstream",
 	}
 	var out map[string]string
@@ -623,16 +609,16 @@ func propagatedAnnotations(tmpl *lennyv1.SandboxTemplate) map[string]string {
 	return out
 }
 
-// drainSandbox transitions the named Sandbox to the draining phase so
+// drainAgentPod transitions the named AgentPod to the draining phase so
 // the pod-lifecycle layer retires it. The planner only ever names idle
-// Sandboxes, for which idle → draining is a valid §6.2 transition.
+// AgentPods, for which idle → draining is a valid §6.2 transition.
 //
 // Per spec §4.6.3, the write goes through SSA with the
 // `lenny-warm-pool-controller` field manager; the patch carries only
 // the controller-owned Phase field so the API server merges it onto
-// the live Sandbox under WPC's ownership boundary. The §4.6.3
+// the live AgentPod under WPC's ownership boundary. The §4.6.3
 // retry policy applies on HTTP 409.
-func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, name string) error {
+func (r *Reconciler) drainAgentPod(ctx context.Context, items []lennyv1.AgentPod, name string) error {
 	namespace := ""
 	found := false
 	for i := range items {
@@ -645,12 +631,12 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 	if !found {
 		return nil
 	}
-	// The planner only ever names idle Sandboxes, so requireIdle is false
+	// The planner only ever names idle AgentPods, so requireIdle is false
 	// here: a pod already advanced past idle by a concurrent claim is
 	// handled by the claim path, and the shared helper still no-ops on an
-	// already-draining Sandbox.
+	// already-draining AgentPod.
 	key := client.ObjectKey{Namespace: namespace, Name: name}
-	_, err := patchSandboxDraining(ctx, r.Client, key, false)
+	_, err := patchAgentPodDraining(ctx, r.Client, key, false)
 	return err
 }
 
@@ -665,7 +651,7 @@ func (r *Reconciler) drainSandbox(ctx context.Context, items []lennyv1.Sandbox, 
 // recovers.
 //
 // spec: §5.3.
-func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate) (*metav1.Condition, error) {
+func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.PodSet, tmpl *lennyv1.PodSet) (*metav1.Condition, error) {
 	if r.RuntimeClasses == nil {
 		return nil, nil
 	}
@@ -694,16 +680,15 @@ func (r *Reconciler) evaluateRuntimeClass(ctx context.Context, pool *lennyv1.San
 // Each non-nil condition (the §5.3 RuntimeClass Degraded condition) is
 // merged into the live condition list. The write is skipped when nothing
 // changed, to avoid spurious etcd writes and reconcile events. When every
-// supplied condition is nil the condition list is left untouched (no
-// checker produced one).
+// supplied condition is nil the live condition list is applied unchanged.
 //
 // The §13.1 ConcurrentWorkspaceCredentialSharing warning is not managed
 // from this controller: its trigger is `sessionPolicy.maxConcurrentSessions
 // > 1`, which lives on the gateway-side poolstore mirror rather than the
-// SandboxTemplate CRD, so the gateway pool-admission path (§4.7) stamps the
-// condition. The SandboxTemplate `executionMode` enum no longer admits
+// PodSet CRD, so the gateway pool-admission path (§4.7) stamps the
+// condition. The PodSet `executionMode` enum no longer admits
 // `concurrent`. spec: §13.1; §5.2.
-func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarmPool, decision plan.Plan, conds ...*metav1.Condition) error {
+func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.PodSet, decision plan.Plan, conds ...*metav1.Condition) error {
 	drained := len(decision.Drain)
 	warm := int32(decision.WarmCount + decision.Create - drained)
 	ready := int32(decision.ReadyCount - drained)
@@ -711,12 +696,12 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 	key := client.ObjectKeyFromObject(pool)
 	id := ssaretry.ConflictID{
 		Controller: string(ownership.WarmPoolController),
-		CRD:        string(ownership.SandboxWarmPool),
+		CRD:        string(ownership.PodSet),
 		Namespace:  pool.Namespace,
 		Name:       pool.Name,
 	}
 	return ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
-		var live lennyv1.SandboxWarmPool
+		var live lennyv1.PodSet
 		if attempt == 0 {
 			live = *pool
 		} else if err := r.Client.Get(ctx, key, &live); err != nil {
@@ -724,12 +709,10 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		}
 		merged := append([]metav1.Condition{}, live.Status.Conditions...)
 		condChanged := false
-		manageConditions := false
 		for _, c := range conds {
 			if c == nil {
 				continue
 			}
-			manageConditions = true
 			desired := *c
 			desired.ObservedGeneration = live.Generation
 			if meta.SetStatusCondition(&merged, desired) {
@@ -742,10 +725,10 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		if !condChanged && !countsChanged {
 			return nil
 		}
-		patch := &lennyv1.SandboxWarmPool{
+		patch := &lennyv1.PodSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "SandboxWarmPool",
+				Kind:       "PodSet",
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      live.Name,
@@ -755,31 +738,35 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 		patch.Status.WarmCount = warm
 		patch.Status.ReadyCount = ready
 		patch.Status.ObservedGeneration = live.Generation
-		// Only assert ownership of the condition list when a checker
-		// produced a condition, so a build without any condition source
-		// wired keeps the prior counts-only status patch.
-		if manageConditions {
-			patch.Status.Conditions = merged
-		}
+		// The apply carries the whole live condition list: the pool
+		// conditions updatePoolConditions writes share this field manager
+		// on the same PodSet status, and an apply that omitted them would
+		// release them for the API server to remove.
+		patch.Status.Conditions = merged
 		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
 	})
 }
 
-// updateTemplateCondition writes the WarmPoolController-owned conditions
-// to the SandboxTemplate status in a single SSA apply: the §5.2
+// updatePoolConditions writes the WarmPoolController-owned pool
+// conditions to the PodSet status in a single SSA apply: the §5.2
 // PoolWarmingUp condition and the §4.7 SecurityDegradedMode condition.
+// It runs after updateStatus, which applies the counts and the RuntimeClass
+// condition under the same field manager, so it reads the live PodSet and
+// re-applies the counts and every condition the live status carries. An
+// apply that left them out would release this manager's ownership of them,
+// and the API server would remove them.
 //
 // PoolWarmingUp is True while a pool with a positive minWarm has no idle
 // pods and at least one pod still warming; the gateway reads it to answer
 // session requests with a 503 during the bootstrap window.
 //
 // SecurityDegradedMode is written only for a pool that is, or recently was,
-// in §4.7 nonce-only mode, derived from the member Sandboxes the reconcile
+// in §4.7 nonce-only mode, derived from the member AgentPods the reconcile
 // already listed (poolNonceOnly) so the WarmPoolController reads no Runtime
 // CR. A pool that never rendered a nonce-only pod gets no condition; the §4.5
 // latch keeps it True across a Runtime-field revert until the last nonce-only
 // pod is replaced, then transitions to an explicit False only because the
-// live SandboxTemplate already carried the condition.
+// live PodSet already carried the condition.
 //
 // Both conditions are merged into the live condition list and applied
 // together so the second condition's apply does not prune the first from
@@ -791,8 +778,8 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 //
 // spec: §5.2; §4.5,
 // §4.7 (SecurityDegradedMode + lenny_pool_security_degraded gauge); §4.6.3
-// (SandboxTemplate.status owned by the WarmPoolController).
-func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.SandboxTemplate, pool *lennyv1.SandboxWarmPool, decision plan.Plan, sandboxes []lennyv1.Sandbox) error {
+// (PodSet.status owned by the WarmPoolController).
+func (r *Reconciler) updatePoolConditions(ctx context.Context, pool *lennyv1.PodSet, decision plan.Plan, agentPods []lennyv1.AgentPod) error {
 	drained := len(decision.Drain)
 	warm := decision.WarmCount + decision.Create - drained
 	ready := decision.ReadyCount - drained
@@ -809,21 +796,19 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 	// The gauge reflects the live nonce-only state and is published every
 	// reconcile, even for a clean pool that gets no condition write, so the
 	// bundled rule has a 0 series after a controller restart.
-	nonceOnly := poolNonceOnly(sandboxes)
+	nonceOnly := poolNonceOnly(agentPods)
 	setPoolSecurityDegraded(pool.Name, nonceOnly)
 
-	key := client.ObjectKeyFromObject(tmpl)
+	key := client.ObjectKeyFromObject(pool)
 	id := ssaretry.ConflictID{
 		Controller: string(ownership.WarmPoolController),
-		CRD:        string(ownership.SandboxTemplate),
-		Namespace:  tmpl.Namespace,
-		Name:       tmpl.Name,
+		CRD:        string(ownership.PodSet),
+		Namespace:  pool.Namespace,
+		Name:       pool.Name,
 	}
-	return ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
-		var live lennyv1.SandboxTemplate
-		if attempt == 0 {
-			live = *tmpl
-		} else if err := r.Client.Get(ctx, key, &live); err != nil {
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
+		var live lennyv1.PodSet
+		if err := r.Client.Get(ctx, key, &live); err != nil {
 			return err
 		}
 		mergedConditions := append([]metav1.Condition{}, live.Status.Conditions...)
@@ -849,10 +834,10 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 		if !changed {
 			return nil
 		}
-		patch := &lennyv1.SandboxTemplate{
+		patch := &lennyv1.PodSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "SandboxTemplate",
+				Kind:       "PodSet",
 			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      live.Name,
@@ -861,6 +846,8 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 		}
 		patch.Status.Conditions = mergedConditions
 		patch.Status.ObservedGeneration = live.Generation
+		patch.Status.WarmCount = live.Status.WarmCount
+		patch.Status.ReadyCount = live.Status.ReadyCount
 		return r.Client.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
 	})
 }
@@ -923,29 +910,29 @@ func poolDrainedCondition(minWarm, warm, ready int) metav1.Condition {
 }
 
 // conditionSecurityDegradedMode is the §4.7 nonce-only degradation
-// condition the WarmPoolController maintains on SandboxTemplate.status.
-const conditionSecurityDegradedMode = lennyv1.SandboxTemplateConditionSecurityDegradedMode
+// condition the WarmPoolController maintains on PodSet.status.
+const conditionSecurityDegradedMode = lennyv1.PodSetConditionSecurityDegradedMode
 
-// poolNonceOnly reports whether any member Sandbox places the pool in §4.7
-// nonce-only mode. A pool is in nonce-only mode when a member Sandbox
-// carries the WPC-resolved render decision `Sandbox.spec.requireSoPeercred:
-// false` (the Sandbox reconciler set it from a deploymentModel: sidecar
+// poolNonceOnly reports whether any member AgentPod places the pool in §4.7
+// nonce-only mode. A pool is in nonce-only mode when a member AgentPod
+// carries the WPC-resolved render decision `AgentPod.spec.requireSoPeercred:
+// false` (the AgentPod reconciler set it from a deploymentModel: sidecar
 // runtime and the pool acknowledgment, §4.3) or still carries the
 // SOPeercredDisabled=True status condition. The trigger reads both signals
 // so the §4.5 latch holds across a revert: after an operator reverts the
-// Runtime field, newly created Sandboxes carry neither signal, but
+// Runtime field, newly created AgentPods carry neither signal, but
 // pre-revert pods keep both until they are replaced, so the pool stays in
 // nonce-only mode until the last one is gone.
 //
-// spec: §4.5 (pool-level surfacing trigger from member Sandboxes); §4.7
+// spec: §4.5 (pool-level surfacing trigger from member AgentPods); §4.7
 // (revert latch: degraded until the last nonce-only pod is replaced).
-func poolNonceOnly(sandboxes []lennyv1.Sandbox) bool {
-	for i := range sandboxes {
-		sb := &sandboxes[i]
+func poolNonceOnly(agentPods []lennyv1.AgentPod) bool {
+	for i := range agentPods {
+		sb := &agentPods[i]
 		if sb.Spec.RequireSoPeercred != nil && !*sb.Spec.RequireSoPeercred {
 			return true
 		}
-		if meta.IsStatusConditionTrue(sb.Status.Conditions, lennyv1.SandboxConditionSOPeercredDisabled) {
+		if meta.IsStatusConditionTrue(sb.Status.Conditions, lennyv1.AgentPodConditionSOPeercredDisabled) {
 			return true
 		}
 	}
@@ -957,14 +944,14 @@ func poolNonceOnly(sandboxes []lennyv1.Sandbox) bool {
 // restraint: it writes the condition only for a pool that is, or recently
 // was, in nonce-only mode. It returns nil (leave the condition list
 // untouched) for a pool that is not in nonce-only mode and does not already
-// carry the condition, so a SandboxTemplate that has never rendered a
+// carry the condition, so a PodSet that has never rendered a
 // nonce-only pod gets no SecurityDegradedMode stamp. This matches the §4.5
 // "no condition" rule for unacknowledged, enforcing, and embedded-runtime
 // pools, where the gauge (0) is the only clean-pool signal.
 //
 // When the pool is in nonce-only mode it returns the True condition. The
 // explicit False is reserved for the recovery transition of a pool that was
-// previously True: it is written only when the live SandboxTemplate already
+// previously True: it is written only when the live PodSet already
 // carries SecurityDegradedMode, so a clean pool that was never degraded is
 // left untouched. This mirrors the §5.3 RuntimeClass Degraded recovery in
 // evaluateRuntimeClass, which writes Degraded=False only when a RuntimeClass
@@ -996,8 +983,8 @@ func securityDegradedCondition(degraded, present bool) *metav1.Condition {
 }
 
 // SetupWithManager registers the reconciler with the manager. It
-// reconciles SandboxWarmPool resources and additionally wakes on
-// changes to any Sandbox it owns, so a pod phase change re-sizes the
+// reconciles PodSet resources and additionally wakes on
+// changes to any AgentPod it owns, so a pod phase change re-sizes the
 // pool.
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	opts := controller.Options{}
@@ -1008,8 +995,8 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		opts.NewQueue = r.QueueFactory
 	}
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&lennyv1.SandboxWarmPool{}).
-		Owns(&lennyv1.Sandbox{}).
+		For(&lennyv1.PodSet{}).
+		Owns(&lennyv1.AgentPod{}).
 		Owns(&policyv1.PodDisruptionBudget{}).
 		Named("warmpool").
 		WithOptions(opts).

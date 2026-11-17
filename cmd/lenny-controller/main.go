@@ -2,9 +2,9 @@
 
 // Command lenny-controller runs the Lenny control-plane controllers
 // against a Kubernetes API server. It hosts the §4.6.1
-// WarmPoolController, which reconciles each SandboxWarmPool toward its
-// minWarm/maxWarm target by creating and draining Sandbox resources,
-// and the Sandbox-to-Pod reconciler, which materializes each Sandbox
+// WarmPoolController, which reconciles each PodSet toward its
+// minWarm/maxWarm target by creating and draining AgentPod resources,
+// and the AgentPod-to-Pod reconciler, which materializes each AgentPod
 // into a backing Pod and drives the §6.2 warm-path lifecycle.
 //
 // The binary builds a controller-runtime manager: a shared client
@@ -39,7 +39,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/resourceclass"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/preflight"
@@ -170,7 +170,7 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 // session holds its pod. The per-pod claim (§4.6.3) carries no session
 // identifier, so the check keys on the pod through the Postgres
 // `pod_assignment` binding: GetActiveSlotsByPod returns the pod's holders
-// (the sessions whose row names the Sandbox and is non-terminal or in its
+// (the sessions whose row names the AgentPod and is non-terminal or in its
 // §7.1 post-terminal window), and a pod with none has no session using it.
 // The controller's store is built with claimOrphanTimeout as its
 // post-terminal cap (stores.go), so a terminal session whose gateway has not
@@ -179,13 +179,13 @@ func assertCRDSchemaVersion(restCfg *rest.Config) error {
 // session's pod_assignment, so such a session does not hold its earlier pod.
 // A pod whose sessions all released or passed the cap (or whose gateway
 // crashed before persisting any session) reports inactive.
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+// spec: §4.6.1 (Orphaned PodClaim detection), §7.1 (Post-terminal window).
 type sessionActiveLookup struct {
 	store sessionstore.Store
 }
 
-func (l *sessionActiveLookup) PodHasActiveSession(ctx context.Context, sandboxRef string) (bool, error) {
-	ids, err := l.store.GetActiveSlotsByPod(ctx, sandboxRef)
+func (l *sessionActiveLookup) PodHasActiveSession(ctx context.Context, agentPodRef string) (bool, error) {
+	ids, err := l.store.GetActiveSlotsByPod(ctx, agentPodRef)
 	if err != nil {
 		return false, err
 	}
