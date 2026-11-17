@@ -44,7 +44,7 @@ The tier-0 gates of "Gates" in `change.md`, applied to pages of the new tree and
 `.claude/rules/spec-annotations.md`, the edits to `spec-citations.md`, `spec-driven-development.md`, and `code-best-practices.md`, the tier-0 lint on new and changed lines, and the ratchet register of each area's old `§` citations.
 
 ### 0115.S6 Documentation rule and gates
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0115.S3, 0115.S4]
 
@@ -65,7 +65,7 @@ The stub format in `conventions.md`, a `specshift ref stub` command that replace
 The `digest`, `where`, and `since` skills and their commands, and `docs/about/status.md` generated from the programs' milestones.
 
 ### 0115.S9 Retire the root plan files
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: [0115.S8]
 

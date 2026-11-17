@@ -8,10 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 7 |
+| Building | 9 |
 | Ready | 2 |
 | Waiting on decisions | 39 |
-| Blocked | 141 |
+| Blocked | 139 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -29,12 +29,12 @@ Not yet resolved to steps: 0116.
 | [0115.S3](0115-spec-structure/steps.md#0115s3-definition-blocks-and-generators) | Definition blocks and generators | Building |  |
 | [0115.S4](0115-spec-structure/steps.md#0115s4-gates) | Gates | Building |  |
 | [0115.S5](0115-spec-structure/steps.md#0115s5-annotation-rule-and-its-lint) | Annotation rule and its lint | Building |  |
+| [0115.S6](0115-spec-structure/steps.md#0115s6-documentation-rule-and-gates) | Documentation rule and gates | Building |  |
 | [0115.S7](0115-spec-structure/steps.md#0115s7-successor-stubs-and-the-frozen-reference) | Successor stubs and the frozen reference | Building |  |
 | [0115.S8](0115-spec-structure/steps.md#0115s8-helpers-that-read-the-structure) | Helpers that read the structure | Building |  |
+| [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Building |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Ready |  |
 | [0154.S1](0154-merge-gate/steps.md#0154s1-repair-tier-0-and-sweep-for-accidental-deletions) | Repair tier 0 and sweep for accidental deletions | Ready |  |
-| [0115.S6](0115-spec-structure/steps.md#0115s6-documentation-rule-and-gates) | Documentation rule and gates | Blocked | 0115.S3, 0115.S4 |
-| [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Blocked | 0115.S8 |
 | [0154.S2](0154-merge-gate/steps.md#0154s2-the-gate-container-the-gate-command-and-concurrent-static-checks) | The gate container, the gate command, and concurrent static checks | Blocked | 0154.S1 |
 | [0154.S3](0154-merge-gate/steps.md#0154s3-the-merge-policy) | The merge policy | Blocked | 0154.S2 |
 | [0155.S1](0155-test-tiers-by-name/steps.md#0155s1-name-the-tiers) | Name the tiers | Blocked | 0115.S9 |

@@ -47,7 +47,7 @@ All 10 of its steps have landed.
 
 Exit criteria: Every merge passes the merge gate and `main` is green. The conventions, the identifier registry, the reference tool, the gates, and the annotation and documentation rules have landed, coverage and test selection are derived from annotations and the import graph, and the kind renames and the `PodSet` merge are done tree-wide. The test tiers carry names and the static tier is split.
 
-0 of its 16 steps have landed, and 7 are being built. Part of its work is not yet divided into steps, so the count covers only the steps listed.
+0 of its 16 steps have landed, and 9 are being built. Part of its work is not yet divided into steps, so the count covers only the steps listed.
 
 ### Gateway package layout and the journey pilot
 
