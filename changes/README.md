@@ -22,7 +22,7 @@ changes/
     2026-12-02-0113-pod-lifecycle-controller/
 ```
 
-A change folder is named `<number>-<slug>`. Numbers continue from the last proposal under `proposals/` and are never reused. A change moves to `archive/` with a date prefix when its status becomes `Implemented` or `Cancelled`.
+A change folder is named `<number>-<slug>`. Numbers continue from the last proposal under `proposals/` and are never reused. One number is shared: proposal 0114 under `proposals/` and change 0114 were numbered on separate branches before either saw the other. A bare "0114" names the change, and the proposal is written "proposal 0114". A change moves to `archive/` with a date prefix when its status becomes `Implemented` or `Cancelled`.
 
 ## `change.md`
 
