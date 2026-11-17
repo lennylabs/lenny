@@ -2993,7 +2993,7 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["agentpods", "podclaims", "podsets"]
+    resources: ["agentpods", "podclaims"]
     verbs: ["get", "list", "watch"]
 ---
 # Source: lenny/templates/backup-job.yaml

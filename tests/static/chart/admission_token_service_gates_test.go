@@ -112,8 +112,11 @@ func TestAdmissionWebhooksDefaultRendersFullStack(t *testing.T) {
 	// NET-068), §17.2, §10.5. The deletion-guard's gateway-egress policy
 	// renders under admissionWebhooks.enabled (no separate feature flag),
 	// re-admitting the runtime-upgrade probe hop the lenny-system
-	// default-deny blocks. Without it the fail-closed webhook denies a
-	// PodSet DELETE with a referencing PodSet. F-13.2.24.
+	// default-deny blocks. lenny-podset-deletion-guard refuses a PodSet
+	// DELETE while the PodSet's pool has an active RuntimeUpgrade, and it
+	// learns that from the gateway probe; without the policy the probe
+	// times out and the fail-closed webhook refuses every PodSet DELETE.
+	// F-13.2.24.
 	if _, ok := m.Find("NetworkPolicy", "allow-deletion-guard-gateway-egress"); !ok {
 		t.Errorf("admissionWebhooks.enabled defaults true: the allow-deletion-guard-gateway-egress NetworkPolicy must render")
 	}

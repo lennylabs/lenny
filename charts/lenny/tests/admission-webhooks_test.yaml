@@ -349,6 +349,25 @@ tests:
       - hasDocuments:
           count: 3
 
+  # spec: §10.5 — the lenny-podset-deletion-guard route reads no
+  # cluster object after the template and warm pool merged into PodSet,
+  # so the shared webhook ServiceAccount holds no access to podsets.
+  - it: grants the webhook service account read access to agentpods and podclaims only
+    template: admission-policies/webhook-rbac.yaml
+    documentIndex: 1
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - equal:
+          path: rules[0].resources
+          value: ["agentpods", "podclaims"]
+      - equal:
+          path: rules[0].verbs
+          value: ["get", "list", "watch"]
+      - lengthEqual:
+          path: rules
+          count: 1
+
   # spec: §13.2 NET-068 / §17.2 — only the drain-readiness
   # Deployment carries the additive lenny.dev/webhook-name label, so the
   # gateway-egress sub-rule narrows to that webhook alone. F-17.2.11.

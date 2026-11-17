@@ -27,7 +27,7 @@ import (
 // retiredNameExemptPrefixes and retiredNameExemptFiles list the records
 // above, relative to the repository root.
 var retiredNameExemptPrefixes = []string{
-	"changes/", "proposals/", "designs/", "docs/adr/", ".claude/",
+	"changes/", "proposals/", "designs/", "docs/adr/",
 }
 
 var retiredNameExemptFiles = map[string]bool{
@@ -113,6 +113,14 @@ var retiredNameText = regexp.MustCompile(strings.Join([]string{
 // context: a CRD name, a subresource, a quoted or backticked name, or a
 // kubectl argument. As a bare prose word it can name isolation sandboxes.
 var retiredResourceInCode = regexp.MustCompile("sandboxes\\.lenny\\.dev|sandboxes/(?:status|finalizers)|[`\"']sandboxes[`\"']|kubectl get sandbox(?:es)?\\b|lenny\\.dev_sandboxes|^\\s*-\\s+sandboxes\\s*$|/sandboxes(?:/|\\b)|--sandboxes\\b|\\bsandboxes\\.json\\b")
+
+// retiredCompoundText matches the compound retired kind names and their
+// resource names, which no prose uses in another sense: SandboxTemplate,
+// SandboxWarmPool, SandboxClaim, their plurals, and sandboxtemplates,
+// sandboxwarmpools, and sandboxclaims. Markdown prose is checked for these;
+// the bare word "Sandbox" and the resource "sandboxes" are checked in code
+// spans only, because prose uses them for the isolation sandbox.
+var retiredCompoundText = regexp.MustCompile(`(?:^|[^A-Za-z])Sandbox(?:WarmPools?|Templates?|Claims?)(?:[^a-z]|$)|\bsandbox(?:warmpools?|templates?|claims?)\b`)
 
 // codeSpan matches a Markdown code span.
 var codeSpan = regexp.MustCompile("`[^`\n]+`")
@@ -211,6 +219,7 @@ func retiredNamesInText(rel, src string, markdown bool) []string {
 	inFence := false
 	for i, line := range strings.Split(src, "\n") {
 		text := line
+		prose := ""
 		if markdown {
 			if strings.HasPrefix(strings.TrimSpace(line), "```") {
 				inFence = !inFence
@@ -218,16 +227,41 @@ func retiredNamesInText(rel, src string, markdown bool) []string {
 			}
 			if !inFence {
 				text = strings.Join(codeSpan.FindAllString(line, -1), " ")
+				prose = maskKeptNames(codeSpan.ReplaceAllString(line, " "))
 			}
 		} else if j := strings.Index(text, "#"); j >= 0 && strings.HasSuffix(rel, ".yaml") {
 			text = text[:j]
 		}
 		text = maskKeptNames(text)
-		if retiredNameText.MatchString(text) || retiredResourceInCode.MatchString(text) {
+		if retiredNameText.MatchString(text) || retiredResourceInCode.MatchString(text) || retiredCompoundText.MatchString(prose) {
 			hits = append(hits, rel+":"+strconv.Itoa(i+1)+": names a retired pod lifecycle kind or resource")
 		}
 	}
 	return hits
+}
+
+// TestRetiredCompoundNamesAreCheckedInMarkdownProse pins the Markdown
+// scan: a compound kind or resource name is reported in prose as well as
+// in a code span, and the isolation-sense "sandbox" in prose is not.
+//
+// spec: KAPI
+func TestRetiredCompoundNamesAreCheckedInMarkdownProse(t *testing.T) {
+	cases := map[string]bool{
+		"The SandboxTemplate carries the pool settings.": true,
+		"Each SandboxClaims entry is a lock.":            true,
+		"RBAC on sandboxwarmpools/status.":               true,
+		"A `SandboxWarmPool` holds the warm targets.":    true,
+		"GKE Sandbox provides the gVisor runtime class.": false,
+		"gVisor sandboxes isolate the agent pods.":       false,
+		"The Sandbox isolation profile is sandboxed.":    false,
+		"A PodSet carries the pool settings.":            false,
+	}
+	for line, want := range cases {
+		got := len(retiredNamesInText("x.md", line, true)) > 0
+		if got != want {
+			t.Errorf("markdown line %q: reported = %v, want %v", line, got, want)
+		}
+	}
 }
 
 // TestRetiredPodLifecycleNameMatchers pins the matchers: each retired name
@@ -273,20 +307,58 @@ func TestRetiredPodLifecycleNameMatchers(t *testing.T) {
 // 0033_sandbox_warm_pools.up.sql.
 var retiredTableName = regexp.MustCompile(`(?:^|[^0-9_])sandbox_warm_pools\b`)
 
+// renameMigration is the number of the migration that renames
+// sandbox_warm_pools to pools. A migration numbered at or below it predates
+// or performs the rename and names the earlier table.
+const renameMigration = 198
+
+// migrationNumber matches the leading four-digit number of a migration
+// file name, such as 0033 in migrations/0033_sandbox_warm_pools.up.sql.
+var migrationNumber = regexp.MustCompile(`^migrations/(\d{4})_`)
+
+// historicalMigrationTests are the Go tests under migrations/ that read a
+// migration numbered at or below renameMigration and assert the SQL it
+// holds, which names the earlier table.
+var historicalMigrationTests = map[string]bool{
+	"migrations/pool_acknowledge_nonce_only_auth_test.go":           true,
+	"migrations/pool_bootstrap_min_warm_test.go":                    true,
+	"migrations/pool_draining_since_test.go":                        true,
+	"migrations/pool_elicitation_policy_test.go":                    true,
+	"migrations/runtime_definitions_execution_mode_service_test.go": true,
+}
+
+// tableNameExempt reports whether a tracked path may name the retired pool
+// record table: a migration numbered at or below renameMigration, a Go test
+// of such a migration, the component tests that roll the chain back to the
+// table each migration altered, and the records retiredNameExempt keeps. A
+// migration numbered above renameMigration is checked like any other file.
+func tableNameExempt(rel string) bool {
+	if m := migrationNumber.FindStringSubmatch(rel); m != nil {
+		n, err := strconv.Atoi(m[1])
+		return err == nil && n <= renameMigration
+	}
+	if historicalMigrationTests[rel] || strings.HasPrefix(rel, "tests/component/migrations/") {
+		return true
+	}
+	if strings.HasPrefix(rel, "migrations/") {
+		return false
+	}
+	return retiredNameExempt(rel)
+}
+
 // TestRetiredPoolTableNameAbsent asserts that no Go code or SQL outside the
 // historical migration chain names the retired pool record table
 // sandbox_warm_pools. Migration 0198 renames the table to pools, and every
-// query and every test that runs the full chain reads pools. The Go tests
-// under migrations/ and tests/component/migrations/ test the historical
-// migrations by number, rolling each back to the table it altered, and are
-// exempt, as are Go comments, which may state what an earlier migration
-// did. A failure names the file and line; replace the name with pools.
+// later migration, every query, and every test that runs the full chain
+// reads pools. Go comments are not read, because they may state what an
+// earlier migration did. A failure names the file and line; replace the
+// name with pools.
 //
 // spec: POOL
 func TestRetiredPoolTableNameAbsent(t *testing.T) {
 	root := schematest.RepoRoot(t)
 	for _, rel := range schematest.TrackedFiles(t) {
-		if retiredNameExempt(rel) || strings.HasPrefix(rel, "migrations/") || strings.HasPrefix(rel, "tests/component/migrations/") {
+		if tableNameExempt(rel) {
 			continue
 		}
 		ext := filepath.Ext(rel)
@@ -357,6 +429,30 @@ func TestPodSetTemplateReferenceAbsent(t *testing.T) {
 			if templateReference.MatchString(line) {
 				t.Errorf("%s:%d: names the removed PodSet template reference", rel, i+1)
 			}
+		}
+	}
+}
+
+// TestPoolTableExemptionEndsAtTheRenameMigration pins the exemption of
+// TestRetiredPoolTableNameAbsent: the migrations up to and including the
+// rename may name sandbox_warm_pools, and a later migration may not.
+//
+// spec: POOL
+func TestPoolTableExemptionEndsAtTheRenameMigration(t *testing.T) {
+	cases := map[string]bool{
+		"migrations/0033_sandbox_warm_pools.up.sql":                true,
+		"migrations/0198_pools_rename.down.sql":                    true,
+		"migrations/0199_pools_add_column.up.sql":                  false,
+		"migrations/1024_pools_add_column.up.sql":                  false,
+		"migrations/pool_draining_since_test.go":                   true,
+		"migrations/pools_column_test.go":                          false,
+		"tests/component/migrations/prod_columns_test.go":          true,
+		"pkg/gateway/runtime/poolstore/pgstore/pgstore.go":         false,
+		"changes/0137-pod-lifecycle-controller/evidence/notes.sql": true,
+	}
+	for rel, want := range cases {
+		if got := tableNameExempt(rel); got != want {
+			t.Errorf("tableNameExempt(%q) = %v, want %v", rel, got, want)
 		}
 	}
 }
