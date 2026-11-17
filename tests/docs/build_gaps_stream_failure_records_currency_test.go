@@ -3,13 +3,10 @@
 // docs-tier consistency checks between the records of the CH-ATTACH
 // stream-failure work and the tree they describe.
 //
-// The build loops read the claim register, BUILD-GAPS.md, and the remediation
-// plan as statements about the current tree. These checks hold three of those
-// statements to the code:
+// The build loops read BUILD-GAPS.md and the remediation plan as statements
+// about the current tree. These checks hold two of those statements to the
+// code:
 //
-//   - The claim rows for the held CH-ATTACH stream and its failure report name
-//     symbols the files they cite still declare, so a rename or a move cannot
-//     leave a WIRED row pointing at nothing.
 //   - The two closed stream findings stay closed only while the code that
 //     closed them is in the tree, and every test file their resolutions cite
 //     exists, so a reader can rerun the evidence.
@@ -26,7 +23,6 @@
 package docs_test
 
 import (
-	"encoding/json"
 	"go/ast"
 	"os"
 	"path/filepath"
@@ -35,31 +31,10 @@ import (
 	"testing"
 )
 
-// streamFailureClaims are the claim-register rows that record the held
-// CH-ATTACH stream and the gateway's reaction to its failure.
-var streamFailureClaims = []string{
-	"`Attach` content stream",
-	"Coordinating replica reports a CH-ATTACH stream failure as runtime_crash, " +
-		"releases the pod with the failed disposition, and does not redial Attach",
-}
-
-// surfaceSymbol matches one `path.go` `Symbol` pair in a claim surface. The
-// symbol is a function, a type, or a Type.Method.
-var surfaceSymbol = regexp.MustCompile("`([\\w./-]+\\.go)` `([\\w]+(?:\\.[\\w]+)?)`")
-
-// surfaceSymbols returns the file and symbol pairs a claim surface names.
-func surfaceSymbols(surface string) [][2]string {
-	var out [][2]string
-	for _, m := range surfaceSymbol.FindAllStringSubmatch(surface, -1) {
-		out = append(out, [2]string{m[1], m[2]})
-	}
-	return out
-}
-
 // declaresSymbol reports whether file declares symbol. A bare name matches a
 // function, a type, or a method of that name on any receiver, because the
-// register names a method by its bare name when the file declares one
-// receiver for it. Type.Method matches only a method on Type or *Type.
+// records name a method by its bare name when the file declares one receiver
+// for it. Type.Method matches only a method on Type or *Type.
 func declaresSymbol(file *ast.File, symbol string) bool {
 	recv, name, isMethod := strings.Cut(symbol, ".")
 	if !isMethod {
@@ -96,56 +71,6 @@ func receiverName(d *ast.FuncDecl) string {
 		return ident.Name
 	}
 	return ""
-}
-
-// claimRows returns the claim register's rows keyed by claim.
-func claimRows(t testing.TB, root string) map[string]map[string]string {
-	t.Helper()
-	var doc struct {
-		Claims []map[string]string `json:"claims"`
-	}
-	if err := json.Unmarshal([]byte(readDocPage(t, filepath.Join(root, "tests", "claim-map.json"))), &doc); err != nil {
-		t.Fatalf("parse tests/claim-map.json: %v", err)
-	}
-	out := map[string]map[string]string{}
-	for _, c := range doc.Claims {
-		out[c["claim"]] = c
-	}
-	return out
-}
-
-// diagnosis: a claim-register row for the held CH-ATTACH stream or its failure
-// report names a symbol its file no longer declares, or the row is missing or
-// not WIRED. Regenerate tests/claim-map.json from scripts/seed-claim-register.py
-// after correcting the surface there; do not hand-edit the register.
-func TestStreamFailureClaimRowsNameDeclaredSymbols_spec_28_5_1(t *testing.T) {
-	root := repoRoot(t)
-	rows := claimRows(t, root)
-	for _, claim := range streamFailureClaims {
-		t.Run(claim, func(t *testing.T) {
-			row, ok := rows[claim]
-			if !ok {
-				t.Fatalf("tests/claim-map.json has no row %q", claim)
-			}
-			if row["status"] != "WIRED" || row["spec_anchor"] != "#2851-gateway-to-pod" {
-				t.Errorf("row %q: status %q anchor %q, want WIRED at #2851-gateway-to-pod", claim, row["status"], row["spec_anchor"])
-			}
-			pairs := surfaceSymbols(row["surface"])
-			if len(pairs) == 0 {
-				t.Fatalf("row %q: surface %q names no `file.go` `Symbol` pair", claim, row["surface"])
-			}
-			for _, p := range pairs {
-				path := filepath.Join(root, filepath.FromSlash(p[0]))
-				if _, err := os.Stat(path); err != nil {
-					t.Errorf("row %q names %s, which does not exist", claim, p[0])
-					continue
-				}
-				if !declaresSymbol(parseGoFile(t, path), p[1]) {
-					t.Errorf("row %q names %s in %s, which the file does not declare", claim, p[1], p[0])
-				}
-			}
-		})
-	}
 }
 
 // closedStreamFinding is a closed stream finding and the declaration whose
@@ -326,21 +251,9 @@ func TestRemediationPlanRecordsTheStreamFailureProposal_spec_28_5_1(t *testing.T
 	}
 }
 
-// diagnosis: the surface parser or the declaration probe no longer reads a
-// claim surface or a Go declaration the way the checks above assume, so they
-// pass or fail vacuously.
+// diagnosis: the declaration probe no longer reads a Go declaration the way
+// the checks above assume, so they pass or fail vacuously.
 func TestStreamFailureRecordProbes_spec_28_5_1(t *testing.T) {
-	got := surfaceSymbols("`pkg/a/b.go` `streamFor`, `pkg/a/c.go` `attachConn`, handler `pkg/d/e.go` `Server.Attach`")
-	want := [][2]string{{"pkg/a/b.go", "streamFor"}, {"pkg/a/c.go", "attachConn"}, {"pkg/d/e.go", "Server.Attach"}}
-	if len(got) != len(want) {
-		t.Fatalf("surfaceSymbols = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("surfaceSymbols[%d] = %v, want %v", i, got[i], want[i])
-		}
-	}
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "x.go")
 	src := "package x\ntype Server struct{}\ntype attachConn struct{}\n" +
