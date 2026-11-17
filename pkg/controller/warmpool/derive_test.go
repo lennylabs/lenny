@@ -3,7 +3,7 @@
 // In-package unit tests for the §4.6.1 agent_pod_state derivation: the
 // pure projection of a pool's live Sandbox set onto the mirror row set.
 // The Sync write path itself is covered by the Postgres component test
-// in tests/tier2_component/stores.
+// in tests/component/stores.
 package warmpool
 
 import (

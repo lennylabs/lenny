@@ -2,7 +2,7 @@
 #
 # Deployment-boundary exception register.
 #
-# The deployment-boundary gate in tests/tier0_static/deployment_boundary_test.go
+# The deployment-boundary gate in tests/static/chart/deployment_boundary_test.go
 # fails every flag and every environment variable the adapter binary reads that
 # no rendered agent pod sets. An entry here accepts one such input while the
 # remediation step named as its blocker renders it. A subject is written in the

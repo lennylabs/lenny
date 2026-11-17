@@ -16,7 +16,7 @@
 // MCP, REST, and A2A fidelity rows live in §15.4 but are out of
 // scope for the v1 conformance test surface: REST is `[exact]` on every
 // field by construction; A2A is post-V1; MCP is exercised by separate
-// tier-3 contract suites against the MCP fabric.
+// contract suites against the MCP fabric.
 package outputpartfidelity
 
 // FidelityTag is the §15.4 classification of how a single

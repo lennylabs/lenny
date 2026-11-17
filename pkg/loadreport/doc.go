@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package loadreport generates the tier-12 HTML report. Given a Run
+// Package loadreport generates the load_cloud-tier HTML report. Given a Run
 // manifest and the associated metric snapshots, Render produces a
 // single self-contained HTML document with Plotly.js charts loaded
 // from CDN and all data inlined as JSON in the page.

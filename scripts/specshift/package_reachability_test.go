@@ -20,10 +20,10 @@ import (
 // command, which is the one package a run of the tooling starts in.
 const migrationToolingPath = "github.com/lennylabs/lenny/scripts/specshift"
 
-// gateBatteryDir holds the static-tier gates of the migration, which are
-// the tooling's second entry point: a gate runs the tooling's predicates
-// over the tracked tree on every static-tier run.
-const gateBatteryDir = "../../tests/tier0_static"
+// gateBatteryDir holds the static-tier gates of the migration in its
+// packages, which are the tooling's second entry point: a gate runs the
+// tooling's predicates over the tracked tree on every static-tier run.
+const gateBatteryDir = "../../tests/static"
 
 // TestEveryMigrationToolingPackageIsReachableFromAnEntryPoint pins that
 // the tooling ships no package with no caller. The tooling has two entry
@@ -94,16 +94,12 @@ func TestEveryMigrationToolingPackageIsReachableFromAnEntryPoint(t *testing.T) {
 // static-tier gates import. A gate is written as a test file, so both
 // forms are read here.
 func gateBatteryImports(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
+	files, err := gateBatteryFiles(dir)
 	if err != nil {
 		return nil, err
 	}
 	var imported []string
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		current := filepath.Join(dir, entry.Name())
+	for _, current := range files {
 		source, err := os.ReadFile(current)
 		if err != nil {
 			return nil, err
@@ -123,6 +119,29 @@ func gateBatteryImports(dir string) ([]string, error) {
 		}
 	}
 	return imported, nil
+}
+
+// gateBatteryFiles returns the Go files of the static tier's packages
+// under dir, which the tier splits into the build, chart, lint, and
+// structure packages, leaving out the fixture trees under testdata/.
+func gateBatteryFiles(dir string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(d.Name(), ".go") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	return files, err
 }
 
 // toolingImportGraph returns, for every package of the migration tooling
@@ -421,16 +440,12 @@ func walkToolingSources(root string, visit func(pkg, path string, file *ast.File
 // gateBatteryIdentReferences counts, per identifier name, every
 // occurrence in the static-tier gates.
 func gateBatteryIdentReferences(dir string) (map[string]int, error) {
-	entries, err := os.ReadDir(dir)
+	files, err := gateBatteryFiles(dir)
 	if err != nil {
 		return nil, err
 	}
 	counts := map[string]int{}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		current := filepath.Join(dir, entry.Name())
+	for _, current := range files {
 		source, err := os.ReadFile(current)
 		if err != nil {
 			return nil, err

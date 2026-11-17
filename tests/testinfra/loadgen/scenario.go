@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Scenario is a single tier-7a load test. Each scenario lives in its
-// own subpackage under tests/tier7a_load_local/scenarios/ and
+// Scenario is a single load_local test. Each scenario lives in its
+// own subpackage under tests/load_local/scenarios/ and
 // registers itself with the default Registry via Register().
 type Scenario interface {
 	// Name uniquely identifies the scenario within the registry.

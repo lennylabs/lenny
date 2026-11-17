@@ -23,7 +23,7 @@ var withdrawnMinIOImage = regexp.MustCompile(`(?m)(image:|--image=|repository:)\
 // ImagePullBackOff on the air-gapped Kind nodes; a carrier that names a
 // withdrawn image cannot be pulled on a fresh host.
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind), 17.9.5 (Self-Managed Backends)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind), 17.9.5 (Self-Managed Backends)
 func TestMinIOImagePinsAgree(t *testing.T) {
 	silo := strings.SplitN(MinIOServerImage, "@", 2)
 	siloRepo, siloTag, _ := strings.Cut(silo[0], ":")
@@ -64,10 +64,10 @@ func TestMinIOImagePinsAgree(t *testing.T) {
 			`default "` + MinIOClientImage + `"`,
 		}},
 		{"tests/testinfra/kind/e2e-values.yaml", nil},
-		{"tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go", []string{
+		{"tests/e2e_kind/restore_test_cronjob_dispatch_test.go", []string{
 			"image: ` + kind.MinIOClientImage + `",
 		}},
-		{"tests/tier8_chaos/store_failure_test.go", []string{
+		{"tests/chaos/store_failure_test.go", []string{
 			`"--image="+kind.MinIOClientImage`,
 		}},
 	}
@@ -96,7 +96,7 @@ func TestMinIOImagePinsAgree(t *testing.T) {
 // TestMinIOImagePinsAgree applies, so a matcher that silently stops
 // matching cannot pass a regressed carrier.
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestMinIOImageWithdrawnPatternMatches(t *testing.T) {
 	for _, line := range []string{
 		"image: lenny-minio:e2e",

@@ -578,7 +578,7 @@ func (r *Rewriter) moveOf(target string) (string, *pass.Abort) {
 // substitutions retire, keyed by the reference the spec map writes,
 // which is `<declaring file>::<symbol>`.
 //
-// The reference is keyed by symbol rather than by path, and a tier-0
+// The reference is keyed by symbol rather than by path, and a static tier
 // check resolves each one against its declaring file, so a renamed
 // symbol left standing there fails that check with the run that renamed
 // it having exited clean. The record is keyed by the whole reference

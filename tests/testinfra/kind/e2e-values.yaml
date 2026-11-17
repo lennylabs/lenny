@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# Helm values overlay for the tier-5 e2e Kind cluster. It points every
+# Helm values overlay for the e2e_kind Kind cluster. It points every
 # workload at the locally-built `lenny-*:e2e` images (loaded onto the
 # cluster nodes by `kind load docker-image`) with `pullPolicy: Never`
 # so the install never reaches a remote registry, and runs the gateway
@@ -88,14 +88,14 @@ controller:
   supervisorImage: lenny-supervisor:e2e
   # The §28.5.3 CH-SUPERVISE ping bounds, shortened from the 5s defaults so
   # a stopped supervisor is detected (interval plus timeout, 4s) inside the
-  # §4.6.1 reserved hold (claimHoldTTLSeconds, 10s), which the tier-8 case
+  # §4.6.1 reserved hold (claimHoldTTLSeconds, 10s), which the chaos-tier case
   # that stops a reserved pod's supervisor needs. The probe Runtimes' 30s
   # CH-MSGSOCK dial delay stays above interval plus timeout and below the
   # default 2m warm-up timeout (tests/testinfra/kind/agent-workload.yaml).
   tuning:
     supervisePingInterval: 2s
     supervisePingTimeout: 2s
-  # TESTING.md §12.9.8 tier-9 egress-capture sidecar. The reconciler injects it
+  # TESTING.md §12.9.8 security-tier egress-capture sidecar. The reconciler injects it
   # into every Sandbox whose template carries the
   # `lenny.dev/test-egress-capture-upstream` annotation (today, only
   # the cred-shell-echo template in agent-workload.yaml).
@@ -161,7 +161,7 @@ gateway:
   # for a quiet control plane; a load run accumulates session and
   # billing state and OOM-kills the pod at that limit. The e2e cluster
   # has headroom, so the overlay raises the gateway limit for the
-  # benefit of tests/tier7b_load_kind.
+  # benefit of tests/load_kind.
   resources:
     requests:
       cpu: 250m
@@ -175,7 +175,7 @@ gateway:
   # retries for the full maxWorkspaceSealDurationSeconds window
   # (compiled-in default 300s), so a broken object store would hold every
   # terminated session's pod for five minutes. Shortening the window to
-  # 6s (one attempt and one retry) keeps a tier-5 or tier-9 test that
+  # 6s (one attempt and one retry) keeps an e2e_kind-tier or security-tier test that
   # claims and terminates a real session prompt. 6s is the shortest window
   # the gateway admits at the default 5s usage quiescence timeout: the
   # gateway refuses to start when the seal window is not greater than that
@@ -461,7 +461,7 @@ objectStorage:
   egressCIDRs:
     - "10.245.0.0/16"
 
-# Enable the feature-gated admission webhooks so the tier-5
+# Enable the feature-gated admission webhooks so the e2e_kind tier
 # admission_featuregated tests can exercise their behavioural half:
 # lenny-direct-mode-isolation (llmProxy), lenny-drain-readiness
 # (drainReadiness), and lenny-data-residency-validator +

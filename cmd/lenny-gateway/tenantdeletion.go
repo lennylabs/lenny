@@ -83,7 +83,7 @@ type tenantSessionLister interface {
 //
 // The access-token cache flush that §12.8 Phase 3 names has no code here.
 // The token service constructs that cache and never writes to it, so a
-// flush would delete nothing; the tier-0 guard
+// flush would delete nothing; the static-tier guard
 // TestErasureExemptionsHaveNoProductionWriter_spec_12_8 fails when a
 // writer appears.
 //

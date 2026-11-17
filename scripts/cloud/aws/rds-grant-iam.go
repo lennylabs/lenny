@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 //
-// rds-grant-iam: one-shot setup for the RDS IAM auth tier-6 tests.
+// rds-grant-iam: one-shot setup for the RDS IAM auth e2e_cloud-tier tests.
 // Connects to the RDS Postgres master via password auth, then:
 //
 //   1. REVOKE rds_iam FROM lenny (so the master keeps password auth).

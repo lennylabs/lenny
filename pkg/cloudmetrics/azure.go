@@ -17,7 +17,7 @@ type AzureMetricsClient interface {
 	QueryResource(ctx context.Context, resourceURI string, options *azquery.MetricsClientQueryResourceOptions) (azquery.MetricsClientQueryResourceResponse, error)
 }
 
-// AzurePoller polls Azure Monitor for tier-12 metrics. Mirrors the
+// AzurePoller polls Azure Monitor for load_cloud-tier metrics. Mirrors the
 // AWS poller shape: Flexible Server CPU/connections, Cache CPU/
 // evictions, Azure Load Balancer request count + latency, VMSS node
 // CPU.

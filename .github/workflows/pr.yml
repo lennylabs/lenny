@@ -75,7 +75,7 @@ jobs:
         run: ./bin/lenny-test --group pr-fast --output human
 
   static:
-    name: tier 0 — static
+    name: static
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [pr-fast]
@@ -139,7 +139,7 @@ jobs:
         run: docker run --rm --user 1001 ghcr.io/lennylabs/lenny-supervisor:ci selftest
 
   unit:
-    name: tier 1 — unit
+    name: unit
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [pr-fast]
@@ -176,7 +176,7 @@ jobs:
           retention-days: 30
 
   component:
-    name: tier 2 — component
+    name: component
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [unit]
@@ -199,7 +199,7 @@ jobs:
           retention-days: 30
 
   contract:
-    name: tier 3 — contract
+    name: contract
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [unit]
@@ -222,12 +222,12 @@ jobs:
           retention-days: 30
 
   integration:
-    name: tier 4 — integration
+    name: integration
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # The tier hierarchy is gating: failures in static/unit invalidate
     # higher tiers' assumptions. Listing static and unit here
-    # short-circuits a wasted integration runner when Tier 0/1 is red.
+    # short-circuits a wasted integration runner when the static or unit tier is red.
     needs: [static, unit, component, contract]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -248,11 +248,11 @@ jobs:
           retention-days: 30
 
   e2e-kind-critical:
-    name: tier 5 — e2e Kind (critical-path)
-    runs-on: ubuntu-latest   # promoted to self-hosted once Tier 5 is wired
+    name: e2e_kind (critical-path)
+    runs-on: ubuntu-latest   # promoted to self-hosted once the e2e_kind tier is wired
     timeout-minutes: 30
     needs: [integration]
-    # Community-PR matrix (§18.3): fork PRs run tiers 0-4 and docs by
+    # Community-PR matrix (§18.3): fork PRs run the tiers from static to integration and docs by
     # default; the Kind tier runs for same-repo PRs and feature-branch
     # pushes, and for a fork PR only after a maintainer applies the
     # 'ok-to-test' label as explicit reviewer approval.
@@ -281,7 +281,7 @@ jobs:
           retention-days: 30
 
   conformance-bundled:
-    name: tier 10 — conformance (bundled runtimes)
+    name: conformance (bundled runtimes)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [unit]
@@ -304,7 +304,7 @@ jobs:
           retention-days: 30
 
   docs:
-    name: tier 11 — documentation
+    name: docs
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [pr-fast]
@@ -331,9 +331,9 @@ jobs:
         run: go build -o bin/lenny-test ./cmd/lenny-test
       # spec: §23.2 — "CI includes a TTHW smoke test that
       # validates both paths on every merge." The docs tier runs
-      # tests/tier11_docs/..., which includes the time-to-hello-world
+      # tests/docs/..., which includes the time-to-hello-world
       # gate (time_to_hello_world_test.go). F-23.2.2.
-      - name: TTHW + documentation gate (tier 11)
+      - name: TTHW + documentation gate (docs tier)
         run: ./bin/lenny-test --tier docs --output github-annotations
 
   pr-summary:

@@ -122,7 +122,7 @@ func TestIsEgressDefaultDeny(t *testing.T) {
 }
 
 // TestE2EApiServerEgressLeavesTokenServiceToTheChartRule pins the harness
-// inputs the tier-9 egress test depends on. If the e2e policy selected the
+// inputs the security-tier egress test depends on. If the e2e policy selected the
 // Token Service, a dial would succeed with the chart's allow-token-service rule
 // deleted. If the overlay left kubeApiServerCIDR on the service CIDR, the chart
 // rule would not match kindnet's post-DNAT destination.

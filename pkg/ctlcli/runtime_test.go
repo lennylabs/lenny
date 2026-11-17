@@ -337,7 +337,7 @@ integrationLevel: full
 // pushed image: appending the local content id to the pushed reference
 // as `<ref>@sha256:<hex>`, the same form
 // tests/testinfra/kind/install.sh's resolve_digest shell function
-// produces for the reference-runtime images it pins onto the tier-5
+// produces for the reference-runtime images it pins onto the e2e_kind tier
 // Kind cluster.
 func TestDigestPinnedImage(t *testing.T) {
 	got := digestPinnedImage("ghcr.io/acme/runtime-my-agent:1.0.0",

@@ -14,7 +14,7 @@ import (
 // fixtureGraph is a small module graph shaped like the real one:
 //
 //	pkg/leaf        <- pkg/mid (import), pkg/side (test import),
-//	                   tests/tier0_static (import)
+//	                   tests/static (import)
 //	pkg/mid         <- pkg/top
 //	pkg/top         <- cmd/app
 //	pkg/orphan         (no importers)
@@ -27,7 +27,7 @@ func fixtureGraph() *pkgGraph {
 	g.addPackage(m+"pkg/side", "pkg/side", []string{"testing", m + "pkg/leaf"})
 	g.addPackage(m+"pkg/top", "pkg/top", []string{m + "pkg/mid"})
 	g.addPackage(m+"cmd/app", "cmd/app", []string{m + "pkg/top", m + "pkg/top"})
-	g.addPackage(m+"tests/tier0_static", "tests/tier0_static", []string{m + "pkg/leaf"})
+	g.addPackage(m+"tests/static", "tests/static", []string{m + "pkg/leaf"})
 	g.addPackage(m+"pkg/orphan", "pkg/orphan", nil)
 	g.addPackage(m+"pkg/fix", "pkg/fix", []string{"", "os"})
 	return g
@@ -38,13 +38,13 @@ func fixtureGraph() *pkgGraph {
 func fixtureGlobs() map[string]map[string][]string {
 	return map[string]map[string][]string{
 		"pkg/leaf": {
-			"static": {"tests/tier0_static/leaf_test.go"},
+			"static": {"tests/static/leaf_test.go"},
 			"unit":   {"pkg/leaf/...", "pkg/consumer/..."},
-			"e2e":    {"tests/tier5_e2e_kind/leaf_test.go"},
+			"e2e":    {"tests/e2e_kind/leaf_test.go"},
 		},
-		"tests/tier0_static": {"static": {"tests/tier0_static/..."}},
-		"docs/":              {"docs": {"tests/tier11_docs/..."}},
-		"pkg/mid/...":        {"unit": {"pkg/mid/..."}, "contract": {"tests/tier3_contract/mid/..."}},
+		"tests/static": {"static": {"tests/static/..."}},
+		"docs/":        {"docs": {"tests/docs/..."}},
+		"pkg/mid/...":  {"unit": {"pkg/mid/..."}, "contract": {"tests/contract/mid/..."}},
 	}
 }
 
@@ -73,7 +73,7 @@ func TestSelectChangedScopesTheUnitTierToTheDiff(t *testing.T) {
 			paths:     []string{"pkg/leaf/leaf.go"},
 			opts:      selectOpts{rdepsDepth: 1},
 			wantTiers: []string{"e2e", "static", "unit"},
-			// tests/tier0_static imports pkg/leaf but runs in the static tier.
+			// tests/static imports pkg/leaf but runs in the static tier.
 			wantPkgs: []string{"./pkg/consumer/...", "./pkg/leaf/...", "./pkg/mid", "./pkg/side"},
 		},
 		{
@@ -91,7 +91,7 @@ func TestSelectChangedScopesTheUnitTierToTheDiff(t *testing.T) {
 			wantPkgs:  []string{"./cmd/app", "./pkg/consumer/...", "./pkg/leaf/...", "./pkg/mid", "./pkg/side", "./pkg/top"},
 		},
 		{
-			name:         "documentation-only diff runs tier 0 and reports the unmapped path",
+			name:         "documentation-only diff runs the static tier and reports the unmapped path",
 			paths:        []string{"BUILD-GAPS.md"},
 			opts:         selectOpts{rdepsDepth: 1},
 			wantTiers:    []string{"static"},
@@ -127,8 +127,8 @@ func TestSelectChangedScopesTheUnitTierToTheDiff(t *testing.T) {
 			wantPkgs:  []string{"./pkg/mid/...", "./pkg/top"},
 		},
 		{
-			name:      "tier-0 test change stays in the static tier",
-			paths:     []string{"tests/tier0_static/leaf_test.go"},
+			name:      "static-tier test change stays in the static tier",
+			paths:     []string{"tests/static/leaf_test.go"},
 			opts:      selectOpts{rdepsDepth: 1},
 			wantTiers: []string{"static"},
 		},
@@ -163,7 +163,7 @@ func TestSelectChangedScopesTheUnitTierToTheDiff(t *testing.T) {
 			wantUnmapped: []string{"Makefile"},
 		},
 		{
-			name:      "empty diff runs tier 0",
+			name:      "empty diff runs the static tier",
 			opts:      selectOpts{rdepsDepth: 1},
 			wantTiers: []string{"static"},
 		},
@@ -189,7 +189,7 @@ func TestSelectChangedScopesTheUnitTierToTheDiff(t *testing.T) {
 				t.Errorf("unit tier selected with no scope; it would run ./...")
 			}
 			for _, p := range sel.unitPkgs {
-				if p == "./..." || strings.HasPrefix(p, "./tests/tier0_static") {
+				if p == "./..." || strings.HasPrefix(p, "./tests/static") {
 					t.Errorf("unit scope carries %q", p)
 				}
 			}
@@ -284,10 +284,10 @@ func TestCollapsePatternsDropsCoveredPackages(t *testing.T) {
 // spec: the test infrastructure §6 (selection algorithm)
 func TestGoTestPatternAndDiffRange(t *testing.T) {
 	for in, want := range map[string]string{
-		"pkg/a/...":             "./pkg/a/...",
-		"./pkg/a/...":           "./pkg/a/...",
-		"pkg/a/x_test.go":       "./pkg/a",
-		"tests/tier1_unit/life": "./tests/tier1_unit/life",
+		"pkg/a/...":            "./pkg/a/...",
+		"./pkg/a/...":          "./pkg/a/...",
+		"pkg/a/x_test.go":      "./pkg/a",
+		"tests/testinfra/life": "./tests/testinfra/life",
 	} {
 		if got := goTestPattern(in); got != want {
 			t.Errorf("goTestPattern(%q) = %q, want %q", in, got, want)

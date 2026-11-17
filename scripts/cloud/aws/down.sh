@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/down.sh — tears down the tier-6 EKS cluster.
+# scripts/cloud/aws/down.sh — tears down the e2e_cloud-tier EKS cluster.
 #
 # Runs `terraform destroy` against the same per-release tfvars
 # scripts/cloud/aws/up.sh produced. Safe to re-run; the tfvars file is

@@ -18,19 +18,21 @@ Test infrastructure for Lenny. The architecture and conventions are defined in [
 Each tier has its own directory and build tag (see TESTING.md §4 for the canonical layout). Phase 0 ships the skeleton; subsequent phases populate each tier.
 
 - `testinfra/` — shared infrastructure (containers, Kind, fixtures, mocks, assertions, verdict producer, time and randomness control)
-- `tier0_static/` — lint, schema validation, traceability validation
-- `tier2_component/` — single component plus real backing services
-- `tier3_contract/` — wire-format equivalence across surfaces
-- `tier4_integration/` — multi-component flows via compose
-- `tier5_e2e_kind/` — full deployment on Kind
-- `tier6_e2e_cloud/` — full deployment on GKE, EKS, AKS
-- `tier7b_load_kind/` — performance and SLO scenarios
-- `tier8_chaos/` — failure injection
-- `tier9_security/` — security controls and adversarial scenarios
-- `tier10_conformance/` — runtime adapter conformance
-- `tier11_docs/` — documentation tests
+- `static/` — the static tier's Go test packages: `build/` (build and generated-artifact drift), `chart/` (the chart render and the deployment boundary), `lint/` (code invariants and test hygiene), and `structure/` (the specification's structure, the migration gates, and the maps)
+- `component/` — single component plus real backing services
+- `contract/` — wire-format equivalence across surfaces
+- `integration/` — multi-component flows via compose
+- `e2e_kind/` — full deployment on Kind
+- `e2e_cloud/` — full deployment on GKE, EKS, AKS
+- `load_local/` — in-process load and concurrency scenarios
+- `load_kind/` — performance and SLO scenarios on Kind
+- `load_cloud/` — cloud-scale load scenarios
+- `chaos/` — failure injection
+- `security/` — security controls and adversarial scenarios
+- `conformance/` — runtime adapter conformance
+- `docs/` — documentation tests
 
-Tier 1 unit tests are co-located with the code they cover under `pkg/`. This directory is the index, not the location.
+Unit tests are co-located with the code they cover under `pkg/`. This directory is the index, not the location.
 
 ## Quick commands
 

@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration test for the §11.2 direct-mode usage flow end to end
+// Integration test for the §11.2 direct-mode usage flow end to end
 // across the components proposal 0024 couples (F-15.3.7, F-11.2.20). It
 // drives the full adapter-meter → gateway ReportUsage pull → gateway usage
 // sink → quota-counter path as one flow over real transports and the

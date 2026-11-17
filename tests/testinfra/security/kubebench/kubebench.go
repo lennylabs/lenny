@@ -4,7 +4,7 @@
 // the kube-bench tool. The benchmark runs against a live cluster
 // and reports findings as JSON; this package shells out to the
 // binary, parses the report, and surfaces FAIL/WARN counts to
-// tier-9 tests.
+// security-tier tests.
 package kubebench
 
 import (

@@ -3,7 +3,7 @@ layout: default
 title: "lenny-ctl tests"
 parent: "Testing"
 nav_order: 4
-description: How the §15.1 operability tests are organised — testing the lenny-ctl command surface across tier-4 integration and tier-5 Kind e2e.
+description: How the §15.1 operability tests are organised — testing the lenny-ctl command surface across integration and e2e_kind-tier Kind e2e.
 ---
 
 # Testing `lenny-ctl`
@@ -17,8 +17,8 @@ description: How the §15.1 operability tests are organised — testing the lenn
 | Test scope | Location |
 |:-----------|:---------|
 | Unit tests of pure pkg/ subcommand logic | `pkg/lenny-ctl/<subcommand>/*_test.go` |
-| Tier-4 integration through the gateway | `tests/tier4_integration/lenny_ctl_<category>_test.go` |
-| Tier-5 e2e against a Kind cluster + chart | `tests/tier5_e2e_kind/lenny_ctl_<category>_test.go` |
+| Integration through the gateway | `tests/integration/lenny_ctl_<category>_test.go` |
+| e2e_kind against a Kind cluster + chart | `tests/e2e_kind/lenny_ctl_<category>_test.go` |
 
 The `lenny_ctl_` filename prefix groups them at directory listing.
 
@@ -33,7 +33,7 @@ Every `lenny-ctl` test follows the same shape:
 //	rotation event. Inspect the gateway's
 //	/v1/admin/credential-pools handler.
 func TestCtlCredentialPoolAdd(t *testing.T) {
-    gw := gateway.Start(t)  // tier-4: subprocess gateway
+    gw := gateway.Start(t)  // integration tier: subprocess gateway
     ctl := lennyctl.Build(t)
     out := ctl.Run(t, gw.BaseURL(),
         "credential", "pool", "add",
@@ -72,8 +72,8 @@ The matching test asserts the dry-run output equals the eventual real-run output
 The full category list is in spec §15.1; the test naming convention is `TestCtl<Category><Action>` (e.g. `TestCtlBootstrapFromValues`, `TestCtlPoolUpgradeStart`, `TestCtlCredentialRotate`).
 
 When the `lenny-ctl` binary ships:
-1. Move the scaffolded tests under `tests/tier4_integration/scaffolds_test.go` (e.g. `TestAdminBootstrap`) into per-category files.
+1. Move the scaffolded tests under `tests/integration/scaffolds_test.go` (e.g. `TestAdminBootstrap`) into per-category files.
 2. Add entries to `tests/spec-map.json` under §15.1 referencing each test.
 3. Update `tests/groups.yaml` phase-4.5-gate to include the new test files.
 
-Until then the category-level scaffolds sit under `tests/tier4_integration/scaffolds_test.go` with `t.Skip("not implemented: §15.1 ...")`.
+Until then the category-level scaffolds sit under `tests/integration/scaffolds_test.go` with `t.Skip("not implemented: §15.1 ...")`.

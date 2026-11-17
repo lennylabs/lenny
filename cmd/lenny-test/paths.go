@@ -60,5 +60,5 @@ const (
 
 	// parityMatrixFile lists every cloud capability and the
 	// providers it is validated against.
-	parityMatrixFile = "tests/tier6_e2e_cloud/parity-matrix.yaml"
+	parityMatrixFile = "tests/e2e_cloud/parity-matrix.yaml"
 )

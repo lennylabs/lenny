@@ -2,7 +2,7 @@
 
 //go:build load_local
 
-// Tier-7a load_local concurrency coverage of the supervised runtime: the
+// load_local concurrency coverage of the supervised runtime: the
 // launch mutex and permit, the one outstanding CH-SUPERVISE request, the
 // once-per-generation handling of a runtime end under the registry critical
 // section, the hold timeout's close, the link close against an outstanding

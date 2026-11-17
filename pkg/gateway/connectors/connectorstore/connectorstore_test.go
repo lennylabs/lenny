@@ -60,7 +60,7 @@ func TestCapabilityMetadataRoundTrip_spec_9_3_136(t *testing.T) {
 
 // spec: §4.2 — connectors are tenant-scoped. Tests use the
 // built-in default tenant; multi-tenant isolation is exercised in
-// the tier-2 component suite.
+// the component suite.
 const testTenantID = "acme"
 
 func validConnector() connectorstore.Connector {

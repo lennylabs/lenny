@@ -27,7 +27,7 @@ type GCPTimeSeriesIterator interface {
 	Next() (*monitoringpb.TimeSeries, error)
 }
 
-// GCPPoller polls Cloud Monitoring for tier-12 metrics. Mirrors the
+// GCPPoller polls Cloud Monitoring for load_cloud-tier metrics. Mirrors the
 // AWS poller shape: database CPU/connections, cache CPU/evictions,
 // load-balancer request count + latency, node CPU.
 type GCPPoller struct {

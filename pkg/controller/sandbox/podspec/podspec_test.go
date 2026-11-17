@@ -510,7 +510,7 @@ func TestBuildAddsPreStopDrainHook_spec_4_6_1(t *testing.T) {
 		// /usr/local/bin/lenny, so token 0 must be that absolute path. A
 		// bare `lenny-adapter` names no executable in the image and fails
 		// the hook at every termination (F-4.6.37). The literal pins the
-		// constant; tests/tier0_static pins the constant to the Dockerfile.
+		// constant; tests/static pins the constant to the Dockerfile.
 		const wantBinary = "/usr/local/bin/lenny"
 		if podspec.PlatformBinaryPath != wantBinary {
 			t.Fatalf("PlatformBinaryPath = %q, want %q", podspec.PlatformBinaryPath, wantBinary)

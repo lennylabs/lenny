@@ -55,8 +55,8 @@ type Cluster struct {
 	KubeconfigPath string
 }
 
-// SkipUnlessAvailable is the entry point existing tier-5 scaffolds
-// call. It skips when a tier-5 prerequisite is missing — docker, kind,
+// SkipUnlessAvailable is the entry point existing e2e_kind-tier scaffolds
+// call. It skips when an e2e_kind-tier prerequisite is missing — docker, kind,
 // kubectl, the docker daemon, or the Lenny Helm chart directory the
 // tests render — and otherwise returns so the caller can proceed.
 //

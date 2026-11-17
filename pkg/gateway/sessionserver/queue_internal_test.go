@@ -325,7 +325,7 @@ func TestRunWithQueueNilQueueRejects(t *testing.T) {
 
 // spec: §4.6.1 (the single per-pool FIFO serializes acquisition); §5.2
 // (atomic slot reservation — no over-acquisition); §7.1 (session_id only on
-// success). Tier 7a concurrency: many waiters compete for a fixed pod supply.
+// success). The load_local tier concurrency: many waiters compete for a fixed pod supply.
 // diagnosis: a race in the FIFO admission or yield path could hand the same
 // freed pod to two waiters (over-acquisition) or deadlock a waiter; this test
 // fails under -race if the queue's locking is wrong.

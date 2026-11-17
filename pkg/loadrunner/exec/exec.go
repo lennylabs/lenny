@@ -238,7 +238,7 @@ func postAck(ctx context.Context, cfg Config, j *dispatch.Job, summary Summary) 
 // --- k6 runner -----------------------------------------------------
 
 // K6Runner shells out to the `k6` binary. Falls back to a NoopRunner
-// when the binary is missing, which keeps tier-12 wiring testable
+// when the binary is missing, which keeps load_cloud-tier wiring testable
 // on machines without k6 installed.
 //
 // K6Runner implements ProgressReporter: a stdout parser goroutine

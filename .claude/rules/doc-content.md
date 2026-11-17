@@ -114,7 +114,7 @@ The specification moves to its page structure area by area, and the documentatio
 
 ### Gates
 
-Tier 0 holds this rule through `specshift`:
+The static tier holds this rule through `specshift`:
 
 - `go run ./scripts/specshift docs check` refuses a `spec` key that is not a list of codes, and a code that `spec/registry.json` does not register. On a page in scope, it refuses a name in a code span whose form fixes its kind (a metric under `lenny_`, a key under `lenny.dev/`, an event type under `dev.lenny.`, or a `lenny-ctl` command) when neither the catalogs nor a numbered section of the specification defines it, and a quoted default, limit, or unit that differs from the definition block. It reports as undecided, without failing, a name that only a numbered section still defines, a name that only its context classifies, and a value it cannot compare.
 - `go run ./scripts/specshift docs impact` reads the branch's diff against its merge base with `main` and names each landed specification page whose changed items no edited documentation page describes. It skips with a reason when there is no merge base.

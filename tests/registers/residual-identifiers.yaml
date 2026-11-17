@@ -7,7 +7,7 @@
 # its route out is the class's own pass or remediation. An excluded entry
 # never belonged to the class, and it is permanent.
 #
-# The residual gate in tests/tier0_static fails tier 0 on a member that
+# The residual gate in tests/static fails the static tier on a member that
 # matches the class's broad predicate and appears in neither the
 # enumeration nor this file, so a member no enumeration anticipated is
 # triaged here rather than absorbed. The gate removes an in-class entry
@@ -24,7 +24,7 @@ entries:
     reason: |-
       the retired path-carrier spelling read without regard to case, standing here as a camel-case component of a Go identifier rather than as the file-name stem the naming table retires on the path carrier
   - member: |-
-      tests/tier11_docs/eviction_coordinator_route_consistency_test.go: controlChannel
+      tests/docs/eviction_coordinator_route_consistency_test.go: controlChannel
     class: identifiers
     disposition: excluded
     reason: |-

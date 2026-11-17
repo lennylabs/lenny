@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package annotation reads the `// spec:` annotations in Go source and
-// holds the two tier-0 checks of the annotation rule in
+// holds the two static-tier checks of the annotation rule in
 // .claude/rules/spec-annotations.md: the lint over the lines a branch
 // adds or changes, and the ratchet over each package's count of
 // section-number citations.

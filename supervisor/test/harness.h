@@ -11,7 +11,7 @@
  *                           or 77 (the environment lacks what the case
  *                           needs; the reason is on stderr)
  *
- * The Go driver under tests/tier1_unit/supervisor runs each case as a
+ * The Go driver in tests/testinfra/supervisorbuild runs each case as a
  * subtest with a timeout, so a case that hangs fails rather than blocks.
  *
  * No case calls kill(-1) in the harness's own PID namespace. A case that

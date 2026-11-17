@@ -7,7 +7,7 @@
 // The values live in their own importable package because
 // `cmd/lenny-test` is a main package. The completeness check that fails
 // a tracked source path no glob key covers, the `--changed` selector
-// that resolves a changed path against the same keys, and the tier-0
+// that resolves a changed path against the same keys, and the static tier
 // residual scan that reports the source paths the check's narrowing
 // never reaches all read this domain. A reader that restated the tree
 // list, the extension list, or the key reading would drift from the

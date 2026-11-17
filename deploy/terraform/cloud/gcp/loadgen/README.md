@@ -1,6 +1,6 @@
 # GCP loadgen module
 
-Provisions the tier-12 load-runner pool on GCP:
+Provisions the load_cloud-tier load-runner pool on GCP:
 
 - Managed Instance Group of `c2-standard-8` instances in the GKE VPC, on private subnets.
 - Pub/Sub topic + subscription the runners pull jobs from.

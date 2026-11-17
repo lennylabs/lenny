@@ -10,7 +10,7 @@ import (
 // spec: §25.4 — the escalation emission-retry loop runs
 // leader-only, so a multi-replica deployment re-publishes a record left
 // unemitted by a dual-destination outage from exactly one replica rather
-// than once per replica. This is the tier-7a (ordering/singleton)
+// than once per replica. This is the load_local tier (ordering/singleton)
 // regression for F-REL-1: the loop must carry LeaderOnly so the retry is
 // a singleton behavior, matching the other §25.4 reconciliation loops.
 func TestEscalationEmissionRetryLoopIsLeaderOnly_spec_25_4_F_REL_1(t *testing.T) {

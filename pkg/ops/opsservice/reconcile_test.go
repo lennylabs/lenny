@@ -89,7 +89,7 @@ func TestNilReconcilersContributeNoLoops_spec_25_4(t *testing.T) {
 // spec: §25.4 — wiring the EscalationEmissionRetry
 // reconciler registers an escalation-emission-retry loop, so the §25.4
 // 30s emission-retry that re-publishes records left unemitted by a
-// dual-destination outage has a production caller. This is the tier-7a
+// dual-destination outage has a production caller. This is the load_local tier
 // (load/ordering) regression for F-REL-1: pre-fix the Reconcilers struct
 // carried no emission-retry field, so RetryEmission had no production
 // caller and no loop was registered. The leader-only property of the loop

@@ -24,7 +24,7 @@ func installSpecs(t *testing.T) (specs []Spec, script string) {
 	return specs, string(b)
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // The install script's image inventory parses, every Dockerfile, COPY source,
 // and Go package it names exists, every image it references is in the list,
@@ -68,7 +68,7 @@ func TestInstallScriptImageSpecsComputeStableDistinctTags(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // Every Dockerfile in the inventory is analyzed precisely, so no image falls
 // back to hashing the whole context, which would rebuild it on any change
@@ -96,7 +96,7 @@ func TestInstallScriptImageSpecsAvoidTheWholeContextFallback(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // Extraction fails on a script without the IMAGE_SPECS here-document, on an
 // unterminated one, and on a malformed line inside it.

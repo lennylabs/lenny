@@ -117,7 +117,7 @@ type SocketRuntimeProcess struct {
 	nonce func() string
 	// peerUID, when set, replaces the SO_PEERCRED lookup of a connecting
 	// peer's UID. It is a test seam: a test process cannot dial from a
-	// second UID without root, so a tier-1 case stands in the UID the
+	// second UID without root, so an unit-tier case stands in the UID the
 	// lookup reports. It is written only before the first Start.
 	peerUID func(net.Conn) (uint32, error)
 	// logger receives the refusal record for each refused peer. Nil logs

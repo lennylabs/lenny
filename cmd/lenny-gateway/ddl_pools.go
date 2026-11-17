@@ -31,7 +31,7 @@ func aliasPrimaryDDLToBillingAudit(billingAuditDSN, primaryDDLDSN string) bool {
 // so closing each distinct pool once avoids a double Close on the shared pool.
 // A nil pool contributes nothing. The shutdown path (runServers) iterates the
 // result and calls Close on each, so the dedup decision has a single canonical
-// implementation the tier-1 test pins.
+// implementation the unit-tier test pins.
 //
 // spec: §12.3, §15.1. F-11.2.10.
 func distinctDDLPools(billingAuditDDLPool, primaryDDLPool *pgxpool.Pool) []*pgxpool.Pool {
@@ -49,7 +49,7 @@ func distinctDDLPools(billingAuditDDLPool, primaryDDLPool *pgxpool.Pool) []*pgxp
 // shutdown, deduplicating the pool shared between the billing/audit and
 // primary limbs in the single-instance topology through distinctDDLPools. The
 // shutdown path (runServers) delegates here so the close loop is a single
-// canonical implementation the tier-1 test pins, rather than an inline loop
+// canonical implementation the unit-tier test pins, rather than an inline loop
 // that runs only during a real process shutdown.
 //
 // spec: §12.3, §15.1. F-11.2.10.
@@ -73,7 +73,7 @@ type ddlSchemaVerifier func(ctx context.Context, pool *pgxpool.Pool) error
 // its schema, returning the pool for the caller to retain. Both the
 // billing/audit and the primary per-tenant sequence-provisioning pools are
 // opened this way, so the open-then-verify-then-fail-closed sequence has a
-// single canonical implementation the tier-1 test pins rather than two
+// single canonical implementation the unit-tier test pins rather than two
 // near-identical inline blocks. An empty dsn yields a nil pool and no error
 // (the topology does not use this DDL pool). A verify failure closes the pool
 // it opened before returning the error, so a failed startup leaks no
@@ -117,7 +117,7 @@ type ddlPoolDSNs struct {
 // configured topology, returning the billing/audit DDL pool and the primary DDL
 // pool. It centralizes the topology decision the two pools share so the alias
 // branch and the separate-instance branch have a single canonical
-// implementation the tier-1 test pins, rather than two inline blocks in the
+// implementation the unit-tier test pins, rather than two inline blocks in the
 // startup path. The rules:
 //
 //   - billingAuditDDL opens the billing/audit DDL pool (empty DSN -> nil).

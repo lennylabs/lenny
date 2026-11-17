@@ -126,7 +126,7 @@ func (s span) covers(other span) bool { return other.lo >= s.lo && other.hi <= s
 
 // findSites returns every reserved-phrase site one file carries, in
 // source order, which is the order the register's occurrence numbers are
-// assigned in. The pinned set names the string literals of a tier-11
+// assigned in. The pinned set names the string literals of a docs tier
 // reconciliation carrier the pinned-literal register resolves, and is
 // empty for every other carrier.
 //
@@ -322,7 +322,7 @@ func covered(spans []span, match span) bool {
 // function-body comment is outside it. The second is the
 // string literal the pinned-literal register
 // names, which is how the specification prose, heading slugs, and
-// intra-spec links a tier-11 reconciliation test pins are rewritten by
+// intra-spec links a docs-tier reconciliation test pins are rewritten by
 // the same run that rewrites the specification they pin. Every other
 // string literal is outside the pass: `lenny runtime validate` prints
 // one as operator-facing help text, which this migration leaves

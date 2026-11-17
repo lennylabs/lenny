@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# Redis Sentinel HA overlay for the tier-8 chaos failover tests.
+# Redis Sentinel HA overlay for the chaos failover tests.
 #
 # The base datastores.yaml deploys a single Redis Deployment with
 # ClusterIP Service lenny-redis. This overlay augments that baseline

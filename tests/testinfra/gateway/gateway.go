@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package gateway is the testinfra helper that boots cmd/lenny-gateway
-// as a subprocess for tier-4 integration tests. Builds the binary
+// as a subprocess for integration tests. Builds the binary
 // into a temp dir on first call, then launches it bound to a random
 // free port. Provides BaseURL() so tests can issue HTTP against the
 // real gateway process (not just the http.Handler).

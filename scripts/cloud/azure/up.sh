@@ -17,7 +17,7 @@
 #   AKS_CLUSTER_NAME=lenny-e2e \
 #   scripts/cloud/aks/up.sh <release-name>
 #
-# Outputs the env vars the tier-6 tests read:
+# Outputs the env vars the e2e_cloud-tier tests read:
 #   LENNY_CLOUD_PROVIDERS=azure
 #   LENNY_AZURE_RESOURCE_GROUP
 #   LENNY_AZURE_LOCATION
@@ -66,7 +66,7 @@ terraform init -upgrade >/dev/null
 # tfvars is the per-release topology declaration: which managed
 # services to provision, their SKUs, their networking. It is written
 # ONCE at first up.sh and reused as-is on every later invocation,
-# so re-running up.sh after a tier-6 run-e2e.sh (which calls up.sh
+# so re-running up.sh after an e2e_cloud-tier run-e2e.sh (which calls up.sh
 # without WITH_FLEXIBLE_POSTGRES / WITH_AZURE_REDIS set) does NOT
 # destroy the managed datastores that an earlier tier-7 run brought
 # up — the infra is treated as a whole. To change topology, run
@@ -79,7 +79,7 @@ else
   WITH_FLEXIBLE_POSTGRES="${WITH_FLEXIBLE_POSTGRES:-false}"
   WITH_AZURE_REDIS="${WITH_AZURE_REDIS:-false}"
   # Tier-7 sizing knobs. Defaults match the terraform module's
-  # tier-6 baseline; tier-7 run-load.sh maps LENNY_LOAD_SCALE into
+  # e2e_cloud-tier baseline; tier-7 run-load.sh maps LENNY_LOAD_SCALE into
   # these so the SKU aligns with the load envelope.
   FLEXIBLE_POSTGRES_SKU="${FLEXIBLE_POSTGRES_SKU:-B_Standard_B2s}"
   FLEXIBLE_POSTGRES_STORAGE_MB="${FLEXIBLE_POSTGRES_STORAGE_MB:-32768}"

@@ -101,7 +101,7 @@ type RatchetReport struct {
 // falls is written back in the same run. When every count has fallen to
 // zero the baseline is empty and the gate is a flat prohibition.
 //
-// It is delivered as a tier-0 Go test rather than as a linter rule,
+// It is delivered as a static-tier Go test rather than as a linter rule,
 // because the repository's lint invocation is downgraded to a warning
 // and a check whose script is absent passes silently.
 //

@@ -142,7 +142,7 @@ func TestRun_MissingManifestErrors(t *testing.T) {
 	}
 }
 
-// runGoGates is the tier-0 go-toolchain gate (build, vet, list). Drive it
+// runGoGates is the static-tier go-toolchain gate (build, vet, list). Drive it
 // against a minimal valid module (passes) and a module with a compile error
 // (aborts), so the gate-abort path the driver relies on is exercised.
 func TestRunGoGates_PassAndFail(t *testing.T) {

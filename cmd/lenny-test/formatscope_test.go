@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// spec: TESTING.md §12.0 (Tier 0 — Static: the gofumpt and goimports
+// spec: TESTING.md §12.0 (static tier — Static: the gofumpt and goimports
 // checks judge the checkout under test)
 
 // TestScopeToRepoFilesDropsOutOfTreeGoPaths pins the line filter: a
@@ -109,9 +109,9 @@ func writeScopeFile(t *testing.T, path, body string) {
 const unformattedGo = "package p\n\nfunc F( ) {\n}\n"
 
 // newScopeFixtureRepo builds a git checkout holding a tracked formatted
-// file, an untracked-but-not-ignored unformatted file, a git-ignored
-// scratch tree, and a nested git worktree under .claude/worktrees/ whose
-// copy of the tracked file is unformatted. The worktree directory is left
+// file, a tracked unformatted file, an untracked-but-not-ignored
+// unformatted file, a git-ignored scratch tree, and a nested git worktree
+// under .claude/worktrees/ whose copy of the tracked file is unformatted. The worktree directory is left
 // out of .gitignore on purpose: git skips a nested worktree whether or
 // not an ignore rule names it, and the test proves that. It returns the
 // checkout root.
@@ -125,6 +125,7 @@ func newScopeFixtureRepo(t *testing.T) string {
 	writeScopeFile(t, filepath.Join(root, "go.mod"), "module example.com/scope\n\ngo 1.21\n")
 	writeScopeFile(t, filepath.Join(root, ".gitignore"), "scratchpad/\n")
 	writeScopeFile(t, filepath.Join(root, "pkg", "p", "p.go"), "package p\n\nfunc F() {}\n")
+	writeScopeFile(t, filepath.Join(root, "pkg", "p", "bad.go"), unformattedGo)
 	gitIn(t, root, "add", "-A")
 	gitIn(t, root, "commit", "-q", "-m", "seed")
 
@@ -136,10 +137,10 @@ func newScopeFixtureRepo(t *testing.T) string {
 	return root
 }
 
-// TestRepoGoFilesListsOnlyTheCheckout pins the scope: the tracked file and
-// the untracked file .gitignore leaves in are listed, while the ignored
-// scratch tree and the nested worktree are not, so another agent's
-// in-progress edit cannot fail this checkout's gate.
+// TestRepoGoFilesListsOnlyTheCheckout pins the scope: the tracked files are
+// listed, while the untracked file, the ignored scratch tree, and the
+// nested worktree are not, so neither an untracked scratch folder nor
+// another agent's in-progress edit can fail this checkout's gate.
 func TestRepoGoFilesListsOnlyTheCheckout(t *testing.T) {
 	root := newScopeFixtureRepo(t)
 	files := repoGoFiles(root)
@@ -148,7 +149,7 @@ func TestRepoGoFilesListsOnlyTheCheckout(t *testing.T) {
 		got = append(got, p)
 	}
 	sort.Strings(got)
-	want := []string{"pkg/p/new.go", "pkg/p/p.go"}
+	want := []string{"pkg/p/bad.go", "pkg/p/p.go"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("repoGoFiles = %v, want %v", got, want)
 	}
@@ -173,9 +174,10 @@ func TestRepoGoFilesOutsideGitKeepsEverything(t *testing.T) {
 
 // TestFormatterWalkScopedToCheckout runs the real gofumpt and goimports
 // walks over the fixture, the way the static tier does, and asserts the
-// scoped report names only the checkout's unformatted file. Without the
-// scope both walks also report the nested worktree's copy and the
-// scratch file, which is the failure the main checkout hit.
+// scoped report names only the checkout's tracked unformatted file.
+// Without the scope both walks also report the untracked file, the nested
+// worktree's copy, and the scratch file, which is the failure the main
+// checkout hit.
 func TestFormatterWalkScopedToCheckout(t *testing.T) {
 	root := newScopeFixtureRepo(t)
 	for _, tool := range []struct {
@@ -198,11 +200,11 @@ func TestFormatterWalkScopedToCheckout(t *testing.T) {
 			}
 			raw := strings.Fields(string(out))
 			sort.Strings(raw)
-			if len(raw) < 2 {
+			if len(raw) < 3 {
 				t.Fatalf("%s unscoped walk reported %v; the fixture expects it to reach the out-of-tree files", tool.name, raw)
 			}
-			if got := scopeFormatterOutput(string(out), root); got != "pkg/p/new.go" {
-				t.Fatalf("%s scoped report = %q, want %q (unscoped: %v)", tool.name, got, "pkg/p/new.go", raw)
+			if got := scopeFormatterOutput(string(out), root); got != "pkg/p/bad.go" {
+				t.Fatalf("%s scoped report = %q, want %q (unscoped: %v)", tool.name, got, "pkg/p/bad.go", raw)
 			}
 		})
 	}

@@ -11,6 +11,6 @@ dated release, referenced by the OpenAPI 3.1.0 specification at
 `tests/testinfra/schematest.NewCompiler` selects via
 `jsonschema.Draft2020` without a network fetch.
 
-`tests/tier3_contract/rest_sessions/openapi_document_test.go` validates
+`tests/contract/rest_sessions/openapi_document_test.go` validates
 the served `/openapi.json` document (§15.1) against this meta-schema,
 via `tests/testinfra/schematest.Compile`.

@@ -237,7 +237,7 @@ ops:
 # EncryptionConfiguration is inert in Embedded Mode. Left unset, the
 # chart generates a fresh random key on every render (randAlphaNum), which
 # would make the pre-rendered embedded manifests differ on each `make
-# generate` and break the tier-11 sync check. The application data stores
+# generate` and break the docs-tier sync check. The application data stores
 # are in-process and in-memory in Embedded Mode and never reach etcd, so
 # the encryption-at-rest exemption already disclosed for Embedded Mode
 # holds and the fixed dev key carries no production secret. spec: §17.4,

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/gcp/down-loadgen.sh — tears down the tier-12 GCP
+# scripts/cloud/gcp/down-loadgen.sh — tears down the load_cloud-tier GCP
 # load-runner pool. Idempotent.
 # TESTING.md §12.12 / Wave 5.
 

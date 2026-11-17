@@ -335,15 +335,15 @@ EXPLICIT = [
     },
     # §15.4 publishes the §4.7.1 slot-bind rules as normative for a third-party
     # adapter, and the project has no harness that can run them against one: the
-    # Tier 3 and Tier 10 batteries drive this repository's own adapter only. R8,
+    # Tier 3 and the conformance tier batteries drive this repository's own adapter only. R8,
     # the reciprocal host-conformance battery, is the step that supplies one.
     {
         "claim": "third-party adapter conformance harness for the §15.4 slot-bind rules",
         "status": "ABSENT",
         "spec_anchor": "#2851-gateway-to-pod",
         "deferral_id": "R8",
-        "surface": "`tests/tier3_contract/adapter_bind_attempt/`, "
-                   "`tests/tier10_conformance/slot_bind_attempt_conformance_test.go`",
+        "surface": "`tests/contract/adapter_bind_attempt/`, "
+                   "`tests/conformance/slot_bind_attempt_conformance_test.go`",
         "note": "the rules are normative for any adapter implementation; cmd/lenny-compliance "
                 "drives a runtime binary over JSONL against a fake adapter and imports no "
                 "gRPC, so the project runs the clauses against its own adapter only",

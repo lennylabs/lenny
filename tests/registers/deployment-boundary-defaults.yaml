@@ -4,7 +4,7 @@
 #
 # Each entry records an input the adapter binary reads that no rendered agent
 # pod sets and whose compiled default is the correct value in a deployed pod.
-# The deployment-boundary gate in tests/tier0_static/deployment_boundary_test.go
+# The deployment-boundary gate in tests/static/chart/deployment_boundary_test.go
 # reads this file together with exceptions-deployment-boundary.yaml: an
 # unrendered input must appear in exactly one of the two.
 #

@@ -15,8 +15,8 @@
 //   - §11.6 circuit-breaker admission middleware.
 //   - §11.5 idempotency replay cache middleware.
 //
-// Backed by in-memory stores. The tier-3 contract suites and the
-// tier-4 integration tests drive the same binary; production swaps
+// Backed by in-memory stores. The contract suites and the
+// integration tests drive the same binary; production swaps
 // the in-memory backends for Postgres / Redis / Kubernetes wiring
 // behind the same interfaces.
 //

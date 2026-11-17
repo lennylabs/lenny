@@ -58,7 +58,7 @@ Confirm which §16.5 health component the alert maps to and whether it reports `
 
 ## Remediation
 
-Apply the documented remediation for the named alert. The chaos test mapped to this runbook in `tests/tier8_chaos/runbook-map.yaml` records the failure mode and the recovery path the platform exercises. If the alert persists after the documented remediation, escalate per the Escalation section.
+Apply the documented remediation for the named alert. The chaos test mapped to this runbook in `tests/chaos/runbook-map.yaml` records the failure mode and the recovery path the platform exercises. If the alert persists after the documented remediation, escalate per the Escalation section.
 
 ## Verification
 

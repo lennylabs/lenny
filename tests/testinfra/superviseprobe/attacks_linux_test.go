@@ -69,7 +69,7 @@ func TestSquatCountsTheConnectionsItAccepts(t *testing.T) {
 // spec: §4.7.11 item 8 (Runtime supervisor, Property self-test)
 // diagnosis: a failure means the /proc/1/mem attack reports a refusal when
 // the memory file opened, so a supervisor that lost its non-dumpable
-// property passes the tier-9 check whenever the confirming read fails.
+// property passes the security-tier check whenever the confirming read fails.
 //
 // TestOpenableMemFileIsABreachEvenWhenTheReadFails pins that a successful
 // open of the memory file is the breach: an openable file whose read fails

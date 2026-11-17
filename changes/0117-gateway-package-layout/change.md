@@ -229,7 +229,7 @@ No client, operator, or runtime-author behavior changes, so no page under `docs/
 
 - `pkg/gateway/ARCHITECTURE.md` becomes the map from each directory to its component page and part, in place of the groups of proposal 0020.
 - `TESTING.md` takes the new paths in its three references to `sessionstore`, `memstore`, and `sessionserver`.
-- `tests/tier1_unit/README.md`, `tests/tier10_conformance/README.md`, and `tests/testdata/mcp/README.md` take the new paths where they name gateway packages, unless 0155 has moved or rewritten them first.
+- `tests/unit/README.md`, `tests/conformance/README.md`, and `tests/testdata/mcp/README.md` take the new paths where they name gateway packages, unless 0155 has moved or rewritten them first.
 
 ## Tests
 

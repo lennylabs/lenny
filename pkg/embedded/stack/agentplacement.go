@@ -204,7 +204,7 @@ func ensureAgentNamespace(ctx context.Context, kubeconfigPath, namespace string)
 
 // ensureAgentNamespaceFromConfig creates the agent namespace against an
 // already-resolved rest config, idempotently. It is split from
-// ensureAgentNamespace so a tier-2 envtest can exercise the create and the
+// ensureAgentNamespace so a component-tier envtest can exercise the create and the
 // AlreadyExists idempotency against a real kube-apiserver without writing a
 // kubeconfig file. spec: §4.6.2, §5.1.
 func ensureAgentNamespaceFromConfig(ctx context.Context, cfg *rest.Config, namespace string) error {
@@ -239,7 +239,7 @@ func ensureRuntimeClass(ctx context.Context, kubeconfigPath, name, handler strin
 
 // ensureRuntimeClassFromConfig creates the RuntimeClass against an
 // already-resolved rest config, idempotently. It is split from ensureRuntimeClass
-// so a tier-2 envtest can exercise the create and the AlreadyExists idempotency
+// so a component-tier envtest can exercise the create and the AlreadyExists idempotency
 // against a real kube-apiserver without writing a kubeconfig file. spec: §5.3.
 func ensureRuntimeClassFromConfig(ctx context.Context, cfg *rest.Config, name, handler string) error {
 	client, err := kubernetes.NewForConfig(cfg)
@@ -287,7 +287,7 @@ func applyEchoRuntimeCR(ctx context.Context, kubeconfigPath, image string) error
 
 // applyEchoRuntimeCRFromConfig applies the echo Runtime CR against an
 // already-resolved rest config. It is split from applyEchoRuntimeCR so a
-// tier-2 envtest can exercise the create and the update-in-place reconvergence
+// component-tier envtest can exercise the create and the update-in-place reconvergence
 // against a real kube-apiserver with the lenny.dev CRDs installed, without
 // writing a kubeconfig file. spec: §4.7, §5.1.
 func applyEchoRuntimeCRFromConfig(ctx context.Context, cfg *rest.Config, image string) error {

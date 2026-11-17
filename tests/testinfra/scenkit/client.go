@@ -11,7 +11,7 @@ import (
 )
 
 // HTTPClient is the shared connection-pooled client every HTTP-driven
-// tier-7a scenario uses. Centralising it keeps the loopback ephemeral
+// load_local-tier scenario uses. Centralising it keeps the loopback ephemeral
 // port range under the macOS limit even when many scenarios run back
 // to back: each scenario's targets pool separately by host:port, so a
 // shared client across scenarios is safe.
@@ -43,7 +43,7 @@ var pooledClient = &http.Client{
 }
 
 // CloseIdleConnections evicts the shared client's idle keep-alive
-// connections. A tier-7a scenario calls this at teardown: each scenario
+// connections. A load_local-tier scenario calls this at teardown: each scenario
 // boots its own in-process gateway on a fresh loopback port, and once
 // that listener closes the pooled connections to it are dead. Evicting
 // them promptly (rather than waiting out IdleConnTimeout) keeps idle

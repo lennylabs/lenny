@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package objectstore is the tier-12 object-storage seam. Callers
+// Package objectstore is the load_cloud-tier object-storage seam. Callers
 // upload per-run artefacts (k6 summary JSON, HTML reports) addressed
 // by URL and read them back through the same URL.
 //

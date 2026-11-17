@@ -106,16 +106,16 @@ const (
 )
 
 // gateChangedTiers are the tiers the gate takes from the --changed plan,
-// in execution order. Tier 0 and the general documentation gates run on
+// in execution order. The static tier and the general documentation gates run on
 // every branch whatever the diff touches.
 var gateChangedTiers = []string{tierUnit, tierComponent, tierContract, tierIntegration}
 
-// gateDocsFiles are the general documentation gates of tier 11 that the
+// gateDocsFiles are the general documentation gates of the docs tier that the
 // merge gate runs. They check the published documentation as a whole
 // (links, code blocks, runbooks, alerts, ADRs, the quickstart, the
 // embedded manifests, and the harness inventories) rather than the
 // wording one past fix introduced, which is why they gate every merge
-// while the rest of tier 11 runs at the area gate.
+// while the rest of the docs tier runs at the area gate.
 var gateDocsFiles = []string{
 	"adr_test.go",
 	"alert_runbook_test.go",
@@ -382,7 +382,7 @@ func (s gateImageStore) save(tag, id string) error {
 // the host daemon resolves; Docker Desktop shares /tmp with its VM. The
 // path is short, so a Unix socket under it stays below the 108-byte
 // limit. It lies outside the worktree, because the static checks that
-// walk the tree (goimports, gofumpt, and the tier-0 tree scans) run while
+// walk the tree (goimports, gofumpt, and the static-tier tree scans) run while
 // other checks create and remove fixtures, and would read them
 // half-written.
 func gateHostTmpDir(root string) (string, error) {
@@ -827,14 +827,14 @@ func gitState(root, base string) (head, mergeBase string, dirty bool) {
 	return head, mergeBase, dirty
 }
 
-// runGateDocs runs the general documentation gates of tier 11.
+// runGateDocs runs the general documentation gates of the docs tier.
 func runGateDocs(root string) (string, string, *tierResult) {
-	names, err := gateDocsTestNames(filepath.Join(root, "tests", "tier11_docs"), gateDocsFiles)
+	names, err := gateDocsTestNames(filepath.Join(root, "tests", "docs"), gateDocsFiles)
 	if err != nil {
 		return verdictstatus.Fail, err.Error(), nil
 	}
 	pattern := "^(" + strings.Join(names, "|") + ")$"
-	return runTierArgs("docs", []string{"-count=1", fmt.Sprintf("-timeout=%s", tierDocsTimeout), "-run", pattern, "./tests/tier11_docs/"})
+	return runTierArgs("docs", []string{"-count=1", fmt.Sprintf("-timeout=%s", tierDocsTimeout), "-run", pattern, "./tests/docs/"})
 }
 
 // gateDocsTestNames returns the top-level test functions the given files

@@ -1,6 +1,6 @@
 # GCP loadctl module
 
-Provisions the tier-12 control plane on GCP:
+Provisions the load_cloud-tier control plane on GCP:
 
 - Cloud Run v2 service running the `lenny-loadctl` container image.
 - Cloud SQL Postgres for run-state persistence.

@@ -8,7 +8,7 @@ import (
 )
 
 // These tests pin the boundary-anchored rewrite primitives the pkg/gateway C3
-// regroup driver (proposal 0020 §2, §4 C4) depends on. They are tier-1 unit
+// regroup driver (proposal 0020 §2, §4 C4) depends on. They are unit
 // tests: pure functions, in-process, no I/O.
 //
 // spec: §4.1 (gateway is one component; the regroup preserves the subsystem
@@ -399,8 +399,8 @@ func TestClassifyGo_InformationalStringWarns(t *testing.T) {
 
 // warn-vs-abort: the §4 C4-named canonical informational-string form places the
 // path token immediately after the opening quote with a trailing space (the real
-// t.Log strings in tests/tier2_component/gateway_subsystems/scaffolds_test.go and
-// tests/tier4_integration/scaffolds_test.go). Pass 4 names these as the residual
+// t.Log strings in tests/component/gateway_subsystems/scaffolds_test.go and
+// tests/integration/scaffolds_test.go). Pass 4 names these as the residual
 // drift the audit must record as a non-fatal Warn. The byte before the token is
 // the opening quote, so the abort forms ("<P>/ and "<P>") miss (a space, not / or
 // ", follows) and the classification must be Warn rather than None. These are the

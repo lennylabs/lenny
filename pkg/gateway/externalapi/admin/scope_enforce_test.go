@@ -82,7 +82,7 @@ func TestRouteScopesResolvesCanonicalScope(t *testing.T) {
 // SCOPE_FORBIDDEN before the destructive handler runs, admits a
 // matching-scope token, and defers an absent claim to the role ceiling.
 // This pins the ADM-1 fix at the admin Router seam (the unit-tier
-// counterpart of the tier-9 security regression).
+// counterpart of the security regression).
 //
 // spec: §15.1, §25.1.
 func TestAdminScopeGateBlocksBeforeHandler(t *testing.T) {

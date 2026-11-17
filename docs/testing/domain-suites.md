@@ -14,76 +14,76 @@ TESTING.md §14 enumerates 13 test suites that span multiple tiers. Each suite c
 
 The most important security suite. Every store, query path, API surface, and adapter is validated for cross-tenant isolation.
 
-- **Tier 2 component**: `tests/tier2_component/rls/` — direct Postgres queries with `SET LOCAL app.current_tenant`.
-- **Tier 9 security**: `tests/tier9_security/scaffolds_test.go::TestTenantIsolationCrossStore` — adversarial across every store, REST, MCP, OpenAI Completions, OpenAI Responses.
+- **Component**: `tests/component/rls/` — direct Postgres queries with `SET LOCAL app.current_tenant`.
+- **Security**: `tests/security/scaffolds_test.go::TestTenantIsolationCrossStore` — adversarial across every store, REST, MCP, OpenAI Completions, OpenAI Responses.
 - Helpers: `testinfra/fixtures` defines `TenantAcme` / `TenantGlobex` / `TenantInitech`; `testinfra/containers` boots Postgres with the migration set.
 
 ## TESTING.md §14.2 Workspace plan and source handling
 
-- **Tier 0 static**: schema validation of `schemas/workspaceplan-v1.json`.
-- **Tier 3 contract**: `tests/tier3_contract/workspaceplan/sources_test.go` — every source type with adversarial paths, modes, gitClone shapes.
-- **Tier 7 load**: `tests/tier7b_load_kind/scenarios/checkpoint_duration/` for archive-bomb scenarios.
+- **Static**: schema validation of `schemas/workspaceplan-v1.json`.
+- **Contract**: `tests/contract/workspaceplan/sources_test.go` — every source type with adversarial paths, modes, gitClone shapes.
+- **load_kind**: `tests/load_kind/scenarios/checkpoint_duration/` for archive-bomb scenarios.
 
 ## TESTING.md §14.3 Credential leasing lifecycle
 
-- **Tier 1 unit**: `pkg/credential/` ships every primitive.
-- **Tier 3 contract**: `tests/tier3_contract/oauth_token/` covers §13.3 RFC 8693.
-- **Tier 4 integration**: `tests/tier4_integration/scaffolds_test.go::TestCredentialLifecycle` (skip-bearing until Phase 12a wires the Token Service).
-- **Tier 7 load**: `tests/tier7b_load_kind/scenarios/credential_rotation_under_load/`.
+- **Unit**: `pkg/credential/` ships every primitive.
+- **Contract**: `tests/contract/oauth_token/` covers §13.3 RFC 8693.
+- **Integration**: `tests/integration/scaffolds_test.go::TestCredentialLifecycle` (skip-bearing until Phase 12a wires the Token Service).
+- **load_kind**: `tests/load_kind/scenarios/credential_rotation_under_load/`.
 
 ## TESTING.md §14.4 Delegation and the task tree
 
-- **Tier 1**: `pkg/delegation/cycle/` + `pkg/delegation/lease/`.
-- **Tier 4**: `TestDelegation`, `TestDelegationRecovery`, `TestDelegationSelfRecursion` (scaffolds today).
-- **Tier 5 e2e**: `tests/tier5_e2e_kind/scaffolds_test.go::TestCrossEnvironmentDelegation`.
-- **Tier 7**: `tests/tier7b_load_kind/scenarios/delegation_fanout/`.
+- **Unit**: `pkg/delegation/cycle/` + `pkg/delegation/lease/`.
+- **Integration**: `TestDelegation`, `TestDelegationRecovery`, `TestDelegationSelfRecursion` (scaffolds today).
+- **e2e_kind**: `tests/e2e_kind/scaffolds_test.go::TestCrossEnvironmentDelegation`.
+- **load_kind**: `tests/load_kind/scenarios/delegation_fanout/`.
 
 ## TESTING.md §14.5 MCP elicitation chain
 
-- **Tier 1**: `pkg/elicitation/` ships the canonicalised SHA-256 digest + tamper detector.
-- **Tier 3**: `tests/tier3_contract/rest_mcp_consistency/consistency_test.go::TestRESTMCPElicitation`.
-- **Tier 4**: `TestMCPElicitationChain`, `TestMCPProvenance` (scaffolds).
-- **Tier 9**: tier-9 security scaffolds cover the tamper / floor enforcement cases.
+- **The unit tier**: `pkg/elicitation/` ships the canonicalised SHA-256 digest + tamper detector.
+- **The contract tier**: `tests/contract/rest_mcp_consistency/consistency_test.go::TestRESTMCPElicitation`.
+- **The integration tier**: `TestMCPElicitationChain`, `TestMCPProvenance` (scaffolds).
+- **The security tier**: security scaffolds cover the tamper / floor enforcement cases.
 
 ## TESTING.md §14.6 Operability surface
 
-- **Tier 2 component**: `tests/tier2_component/gateway_subsystems/scaffolds_test.go::TestAdminPlane`.
-- **Tier 4**: `TestLLMProxyAnthropic`, admin endpoints scaffolds.
-- **Tier 5**: `tests/tier5_e2e_kind/scaffolds_test.go::TestLennyOpsFirstDeploy`.
+- **Component**: `tests/component/gateway_subsystems/scaffolds_test.go::TestAdminPlane`.
+- **The integration tier**: `TestLLMProxyAnthropic`, admin endpoints scaffolds.
+- **The e2e_kind tier**: `tests/e2e_kind/scaffolds_test.go::TestLennyOpsFirstDeploy`.
 
 ## TESTING.md §14.7 Multi-protocol gateway
 
-- **Tier 3**: every contract surface lives at `tests/tier3_contract/rest_*/` and `tests/tier3_contract/sdks/`.
-- **Tier 3 SDK harness**: `tests/tier3_contract/sdks/harness/` cross-validates Go / Python / TypeScript clients against the same matrix.
+- **The contract tier**: every contract surface lives at `tests/contract/rest_*/` and `tests/contract/sdks/`.
+- **The contract tier SDK harness**: `tests/contract/sdks/harness/` cross-validates Go / Python / TypeScript clients against the same matrix.
 
 ## TESTING.md §14.8 The 13-phase request interceptor chain
 
-- Composed across tier-2 (per-interceptor) and tier-4 (composed). Today only the tier-1 enums (`pkg/circuitbreaker`, `pkg/idempotency`, `pkg/elicitation`, etc.) are shipped.
+- Composed across the component tier (per-interceptor) and the integration tier (composed). Today only the unit-tier enums (`pkg/circuitbreaker`, `pkg/idempotency`, `pkg/elicitation`, etc.) are shipped.
 
 ## TESTING.md §14.9 Pool and warm-pod lifecycle
 
-- **Tier 5**: `TestWarmPool`, `TestSandboxClaim`, `TestPodLifecycle`, `TestPoolUpgrade` — all skip until Kind cluster bring-up lands.
+- **The e2e_kind tier**: `TestWarmPool`, `TestSandboxClaim`, `TestPodLifecycle`, `TestPoolUpgrade` — all skip until Kind cluster bring-up lands.
 
 ## TESTING.md §14.10 Compliance and erasure
 
-- **Tier 2**: every store's mandatory `DeleteByUser` / `DeleteByTenant` (per TESTING.md §12.2.1).
-- **Tier 4**: `TestErasureJobFailureMidSequence` scaffold.
-- **Tier 5**: `TestAdmissionDataResidency`, `TestAdmissionT4NodeIsolation`.
+- **The component tier**: every store's mandatory `DeleteByUser` / `DeleteByTenant` (per TESTING.md §12.2.1).
+- **The integration tier**: `TestErasureJobFailureMidSequence` scaffold.
+- **The e2e_kind tier**: `TestAdmissionDataResidency`, `TestAdmissionT4NodeIsolation`.
 
 ## TESTING.md §14.11 Data residency and T4 controls
 
-- **Tier 5 / Tier 9**: residency-validator + T4-node-isolation admission webhooks.
-- **Tier 8 chaos**: `TestKMSUnavailable`, `TestKMSKeyProbeStale` for the T4 KMS probe.
+- **The e2e_kind tier / the security tier**: residency-validator + T4-node-isolation admission webhooks.
+- **Chaos**: `TestKMSUnavailable`, `TestKMSKeyProbeStale` for the T4 KMS probe.
 
 ## TESTING.md §14.12 Web playground
 
-- **Tier 5**: `playground.enabled: true` chart bring-up (deferred until chart lands).
-- **Tier 9**: CSP / cookie / bearer-revocation scaffolds.
+- **The e2e_kind tier**: `playground.enabled: true` chart bring-up (deferred until chart lands).
+- **The security tier**: CSP / cookie / bearer-revocation scaffolds.
 
 ## TESTING.md §14.13 Language SDKs
 
-- **Tier 3 contract harness**: `tests/tier3_contract/sdks/harness/` is the shared driver. Each language SDK ships a `test-helper` binary that the harness drives over stdin/stdout.
-- **Per-language scaffolds**: `tests/tier3_contract/sdks/{go_client,python_client,typescript_client,runtime_sdk}_test.go`.
+- **Contract harness**: `tests/contract/sdks/harness/` is the shared driver. Each language SDK ships a `test-helper` binary that the harness drives over stdin/stdout.
+- **Per-language scaffolds**: `tests/contract/sdks/{go_client,python_client,typescript_client,runtime_sdk}_test.go`.
 - **Reference echo helper**: `tests/testinfra/sdkhelper/echo/` demonstrates the protocol.
 
 ## Where to start

@@ -620,7 +620,7 @@ No Codex result is recorded. The CLI was not logged in for model turns, and the 
 | SDKs | `MemoryWrite` and `MemoryQuery` in the Go, Python, and TypeScript runtime SDKs. |
 | Chart | Memory values and `gateway-deployment.yaml` flags, with the chart tests and `pkg/embedded/manifests/manifests.yaml`. |
 | Schema | A new migration dropping `agent_memory`. Migrations 0032 and 0044 stay as history. |
-| Tests | `tests/tier2_component/stores/memory*`, and memory cases in the contract and security tiers. |
+| Tests | `tests/component/stores/memory*`, and memory cases in the contract and security tiers. |
 
 **The embedder.** `semanticcache` imports `memorystore` for `Embedder`, `HashingEmbedder`, and `CosineDistance` **[source]**. If the cache is removed first or together, that code goes too. Otherwise it moves into `semanticcache`.
 

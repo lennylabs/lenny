@@ -1,6 +1,6 @@
 # AWS loadgen module
 
-Provisions the tier-12 load-runner pool on AWS:
+Provisions the load_cloud-tier load-runner pool on AWS:
 
 - Auto Scaling Group of `c6i.2xlarge` instances in the EKS VPC, on private subnets.
 - SQS queue the runners pull jobs from.

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package kms is a minimal KMS stub for tier-2 component and tier-4
+// Package kms is a minimal KMS stub for component and tier-4
 // integration tests. It models the envelope-encryption surface
 // Lenny relies on: a per-tenant CMK alias resolves to a 32-byte key
 // material; Encrypt/Decrypt round-trip ciphertext under XSalsa20-Poly1305-

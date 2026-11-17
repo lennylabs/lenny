@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/azure/up-loadctl.sh — provisions the tier-12 control
+# scripts/cloud/azure/up-loadctl.sh — provisions the load_cloud-tier control
 # plane on Azure (Container Apps + Postgres Flexible Server). Idempotent.
 #
 # Required environment:

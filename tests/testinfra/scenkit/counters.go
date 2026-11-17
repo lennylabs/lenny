@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 )
 
-// Counters is a named set of atomic int64 counters. Every tier-7a
+// Counters is a named set of atomic int64 counters. Every load_local tier
 // scenario carries a handful of counters that track outcomes
 // (successes, failures, rejections, leaks). Centralising them here
 // removes the per-scenario `field + atomic.Int64 + Add + Load +

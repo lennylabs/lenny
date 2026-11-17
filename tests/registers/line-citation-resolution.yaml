@@ -10,7 +10,7 @@
 #
 # The resolver rewrites this file downward: an entry whose citation is no
 # longer in the tree is removed in the same run, and no run adds an
-# entry, so a citation that stops resolving fails tier 0 rather than
+# entry, so a citation that stops resolving fails the static tier rather than
 # being absorbed here. The file empties as the citations are retired.
 kind: line-citation-resolution-baseline
 version: 1

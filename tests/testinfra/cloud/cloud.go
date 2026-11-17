@@ -2,7 +2,7 @@
 
 // Package cloud is the §12.6 cloud-provider bring-up harness. It
 // dispatches per-provider helpers and exposes a uniform
-// SkipUnlessAvailable + Up / Down lifecycle to tier-6 tests.
+// SkipUnlessAvailable + Up / Down lifecycle to e2e_cloud-tier tests.
 //
 // The package does not embed Terraform; it shells out to per-
 // provider scripts under scripts/cloud/<provider>/{up,down}.sh.
@@ -16,14 +16,14 @@
 // # Environment variables
 //
 //	LENNY_CLOUD_PROVIDERS  Comma-separated list of providers the
-//	                       tier-6 suite must validate, e.g.
+//	                       e2e_cloud-tier suite must validate, e.g.
 //	                       `aws`, `aws,gcp`, `aws,gcp,azure`.
 //	                       Each provider in the list spawns a
 //	                       subtest. A provider listed but not
 //	                       authenticated (no AWS_PROFILE etc.) is a
 //	                       test failure — the operator named it, so
 //	                       the test expects it to work. Unset or
-//	                       empty → tier-6 fails with the missing-
+//	                       empty → the e2e_cloud tier fails with the missing-
 //	                       provider diagnosis.
 //	LENNY_CLOUD_PROVIDER   (Deprecated, single-provider alias).
 //	                       When set, the helper treats it as a
@@ -69,7 +69,7 @@ func FromEnv() Provider {
 	return ""
 }
 
-// ConfiguredProviders returns the list of cloud providers the tier-6
+// ConfiguredProviders returns the list of cloud providers the e2e_cloud tier
 // suite must validate. The canonical env var is
 // LENNY_CLOUD_PROVIDERS (comma-separated); LENNY_CLOUD_PROVIDER is
 // retained as a single-value alias. Unknown provider names are
@@ -83,9 +83,9 @@ func ConfiguredProviders() []Provider {
 // ConfiguredLoadProviders returns the list of cloud providers the
 // tier-7 cloud-load suite must validate. The env var is
 // LENNY_LOAD_CLOUD_PROVIDERS (comma-separated), separate from the
-// tier-6 LENNY_CLOUD_PROVIDERS so an operator can run cloud-load
+// e2e_cloud-tier LENNY_CLOUD_PROVIDERS so an operator can run cloud-load
 // against a different cluster (or only one provider) than the
-// tier-6 cluster-shape assertions. An empty result indicates the
+// e2e_cloud-tier cluster-shape assertions. An empty result indicates the
 // suite is opt-out (the PR-cadence path).
 func ConfiguredLoadProviders() []Provider {
 	return parseProviders(strings.TrimSpace(os.Getenv("LENNY_LOAD_CLOUD_PROVIDERS")), "")
@@ -123,7 +123,7 @@ func parseProviders(plural, singular string) []Provider {
 
 // RunPerProvider runs fn as a subtest for every provider listed in
 // LENNY_CLOUD_PROVIDERS. The parent test fails when the env var is
-// unset — tier-6 cloud assertions require at least one configured
+// unset — e2e_cloud assertions require at least one configured
 // provider. Each subtest's name is the provider id, so a failing
 // per-provider assertion is attributable in the test report.
 //
@@ -134,7 +134,7 @@ func RunPerProvider(t *testing.T, fn func(t *testing.T, p Provider)) {
 	t.Helper()
 	providers := ConfiguredProviders()
 	if len(providers) == 0 {
-		t.Fatalf("cloud: LENNY_CLOUD_PROVIDERS is required for tier-6; export a comma-separated subset of aws,gcp,azure (e.g. LENNY_CLOUD_PROVIDERS=aws). The operator provides only cloud-auth credentials (AWS_PROFILE / gcloud / az); scripts/cloud/<provider>/up.sh provisions the per-release resources and emits the per-resource env vars the test reads.")
+		t.Fatalf("cloud: LENNY_CLOUD_PROVIDERS is required for the e2e_cloud tier; export a comma-separated subset of aws,gcp,azure (e.g. LENNY_CLOUD_PROVIDERS=aws). The operator provides only cloud-auth credentials (AWS_PROFILE / gcloud / az); scripts/cloud/<provider>/up.sh provisions the per-release resources and emits the per-resource env vars the test reads.")
 	}
 	for _, p := range providers {
 		p := p
@@ -144,7 +144,7 @@ func RunPerProvider(t *testing.T, fn func(t *testing.T, p Provider)) {
 	}
 }
 
-// SkipUnlessAvailable enforces the tier-6 precondition contract:
+// SkipUnlessAvailable enforces the e2e_cloud-tier precondition contract:
 // the suite runs against one or more configured cloud providers,
 // and a configured provider that isn't reachable is a test failure
 // (the provider was named, so the operator expects it to work).
@@ -153,14 +153,14 @@ func RunPerProvider(t *testing.T, fn func(t *testing.T, p Provider)) {
 //
 //   - `LENNY_CLOUD_PROVIDER` lists the active provider for the
 //     suite (`aws`, `gcp`, or `azure`). When the var is unset the
-//     helper t.Fatals — tier-6 is an e2e cloud suite and must run
+//     helper t.Fatals — the e2e_cloud tier is an e2e cloud suite and must run
 //     against at least one cloud.
 //   - The active provider's CLI must be on PATH and authenticated;
 //     a CLI missing or unauthenticated fails the test with a
 //     diagnosis pointing at the env var to set or the auth command
 //     to run.
 //   - `LENNY_CLOUD_SKIP_CLI_CHECK=1` bypasses the CLI + auth check.
-//     The in-cluster tier-6 runner sets it because the runner
+//     The in-cluster e2e_cloud-tier runner sets it because the runner
 //     pod's image carries no aws / gcloud / az CLI; the tests in
 //     the suite read pre-staged env vars (`LENNY_AWS_REDIS_AUTH_TOKEN`
 //     etc.) or fall back to the in-pod IRSA-resolved SDK credentials.
@@ -171,7 +171,7 @@ func RunPerProvider(t *testing.T, fn func(t *testing.T, p Provider)) {
 func SkipUnlessAvailable(t testing.TB, p Provider) {
 	t.Helper()
 	if p == "" {
-		t.Fatalf("cloud: LENNY_CLOUD_PROVIDER is required for tier-6; export one of aws | gcp | azure to drive the suite against live cloud infrastructure.")
+		t.Fatalf("cloud: LENNY_CLOUD_PROVIDER is required for the e2e_cloud tier; export one of aws | gcp | azure to drive the suite against live cloud infrastructure.")
 		return
 	}
 	if strings.ToLower(strings.TrimSpace(os.Getenv("LENNY_CLOUD_SKIP_CLI_CHECK"))) == "1" {

@@ -145,7 +145,7 @@ func isServiceByte(b byte) bool { return isAlphanumeric(b) || b == '.' || b == '
 // package-level declaration of a Go carrier, in source order.
 //
 // It is the position a symbol rename is recorded at. A `::<symbol>`
-// reference names a symbol its declaring file declares, and a tier-0
+// reference names a symbol its declaring file declares, and a static tier
 // check resolves it against that file, so a substitution inside a
 // declaration's name retires the reference while a substitution in a
 // comment, in a string literal, or in a use of a symbol declared

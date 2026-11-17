@@ -1,6 +1,6 @@
 # AWS loadctl module
 
-Provisions the tier-12 control plane on AWS:
+Provisions the load_cloud-tier control plane on AWS:
 
 - ECS Fargate service running the `lenny-loadctl` container image.
 - Application Load Balancer with HTTPS listener (TLS via ACM) in front of the service.

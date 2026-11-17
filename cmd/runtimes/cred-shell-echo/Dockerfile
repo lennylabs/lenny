@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# Tier-9 credential-leakage probe runtime image. Pairs the
+# security-tier credential-leakage probe runtime image. Pairs the
 # Basic-level echo loop (pkg/runtimekit/echocore) with an Alpine
 # base that retains /bin/sh, so the probes can run
 # `kubectl exec ... cat /proc/<pid>/environ` and
@@ -9,7 +9,7 @@
 # This image is TEST-ONLY. The §13.1 pod-security posture forbids a
 # shell in production agent pods; the lenny-pod-security admission
 # webhook rejects this image in production installations. The
-# tier-9 overlay deploys it explicitly for the leakage probes.
+# security-tier overlay deploys it explicitly for the leakage probes.
 #
 # Usage: docker build -f cmd/runtimes/cred-shell-echo/Dockerfile -t lennylabs/cred-shell-echo:dev .
 
@@ -24,7 +24,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' \
     -o /out/cred-shell-echo ./cmd/runtimes/cred-shell-echo
 
 # Alpine base: a shell, busybox utilities, and the /proc filesystem
-# the tier-9 probes read. Stays single-stage thin for image size
+# the security-tier probes read. Stays single-stage thin for image size
 # (~10 MB compared to ~5 MB for distroless).
 FROM alpine:3.20
 RUN addgroup -g 65532 -S nonroot && \

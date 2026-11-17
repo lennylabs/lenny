@@ -14,7 +14,7 @@ already self-contained under their own `definitions` block) from
 
 Vendored 2026-07-06.
 
-`tests/tier3_contract/rest_mcp_consistency/published_schema_test.go`
+`tests/contract/rest_mcp_consistency/published_schema_test.go`
 validates the gateway-edge `/mcp` `initialize` result and `tools/list`
 catalog against the `InitializeResult` and `Tool`/`ListToolsResult`
 definitions in these files via `tests/testinfra/schematest`, so the

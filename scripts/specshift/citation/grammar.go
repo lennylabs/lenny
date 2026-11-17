@@ -130,7 +130,7 @@ var refExpr = regexp.MustCompile(
 // The spelling is read because the tree wrote it. Spec annotations of the form
 // `// spec: N.M line L` stood in Go test files for months while the gates
 // read only the section-sign and path spellings, so none of them was resolved
-// or counted, and a new one passed tier 0. The two components are required
+// or counted, and a new one passed static tier. The two components are required
 // because a single integer followed by the keyword is ordinary prose, as in
 // `2 lines 4 and 5`, while a dotted pair standing directly against the keyword
 // and a number is the citation in every occurrence the tree held. The adjacency

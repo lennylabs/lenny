@@ -44,7 +44,7 @@ const gatewayDeploymentName = "lenny-gateway"
 // kube-proxy bind via --kube-proxy-arg=nodeport-addresses=127.0.0.1/32, the
 // Docker publish via -p 127.0.0.1:<nodePort>:<nodePort>), so the node port
 // is reachable on 127.0.0.1 alone and never on a non-loopback host address.
-// It is exported so the tier-9 EMBEDDED_MODE_LOCAL_ONLY security check can
+// It is exported so the security-tier EMBEDDED_MODE_LOCAL_ONLY security check can
 // target the node port off-host and assert it is refused, exercising the C4
 // containment rather than only the forwarder's loopback bind.
 // spec: §17.4 (the CLI reaches the in-cluster gateway through the
@@ -150,7 +150,7 @@ func createDevBearerSecret(ctx context.Context, kubeconfigPath, keyFilePath stri
 
 // createDevBearerSecretFromConfig creates the dev bearer-trust Secret
 // against an already-resolved rest config. It is split from
-// createDevBearerSecret so a tier-2 envtest can drive the create and the
+// createDevBearerSecret so a component-tier envtest can drive the create and the
 // update-in-place reconvergence against a real kube-apiserver without
 // writing a kubeconfig file. spec: §10.2, §17.4.
 func createDevBearerSecretFromConfig(ctx context.Context, cfg *rest.Config, keyFilePath string) error {

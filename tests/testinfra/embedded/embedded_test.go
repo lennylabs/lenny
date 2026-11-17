@@ -138,7 +138,7 @@ func TestUpTimeoutDefaultAndOverride(t *testing.T) {
 	}
 }
 
-// spec: §17.4, §4.7 — the custom-sidecar tier-4 leg imports a genuine
+// spec: §17.4, §4.7 — the custom-sidecar integration-tier leg imports a genuine
 // sidecar-model runtime image (runtime-echo) to prove placement is
 // runtime-agnostic rather than echo-only, and the genuine sidecar image is a
 // docker-save artifact the leg cannot synthesize. SidecarRuntimeTarball

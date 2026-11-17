@@ -150,7 +150,7 @@ subsets:
   critical-path:
     tier: e2e_kind
     tests:
-      - tests/tier5_e2e_kind/foo_test.go
+      - tests/e2e_kind/foo_test.go
   bundled-runtimes:
     tier: conformance
     runtimes: [echo]
@@ -160,15 +160,15 @@ subsets:
   load-with-scenarios:
     tier: load_kind
     scenarios:
-      - tests/tier7b_load_kind/scenarios/foo.go
+      - tests/load_kind/scenarios/foo.go
   load-local-ref:
     tier: load_local
     scenarios:
-      - tests/tier7a_load_local/scenarios/foo/scenario.go
+      - tests/load_local/scenarios/foo/scenario.go
   load-cloud-ref:
     tier: load_cloud
     scenarios:
-      - tests/tier12_load_cloud/scenarios/foo/main.js
+      - tests/load_cloud/scenarios/foo/main.js
   matrix:
     tier: integration
     run: TestX|TestY

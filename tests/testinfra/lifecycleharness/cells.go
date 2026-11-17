@@ -23,7 +23,7 @@ import (
 )
 
 // This file holds the terminal-writer and resume-exit cell tables, which the
-// tier-1 run executes on the in-memory store and the tier-2 run on Postgres.
+// unit-tier run executes on the in-memory store and the component-tier run on Postgres.
 
 // preState is one non-terminal pre-state a cell reaches through production
 // calls, and the replica the session is bound on afterwards.

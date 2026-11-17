@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/azure/run-e2e.sh — end-to-end driver for a tier-6
+# scripts/cloud/azure/run-e2e.sh — end-to-end driver for an e2e_cloud tier
 # AKS verification run. Mirrors scripts/cloud/aws/run-e2e.sh with
 # the Azure equivalents: Key Vault, Blob Storage, Azure Workload
 # Identity, and Azure Container Registry (in lieu of ECR).
@@ -17,7 +17,7 @@
 #                                       replaces MinIO).
 #   5. helm install lenny-e2e         — chart install with the Azure
 #                                       overlay; wait for ready.
-#   6. lenny-test --tier e2e_cloud    — run the tier-6 suite.
+#   6. lenny-test --tier e2e_cloud    — run the e2e_cloud-tier suite.
 #   7. scripts/cloud/azure/down.sh    — terraform destroy on exit
 #                                       (unless KEEP_CLUSTER=1).
 #

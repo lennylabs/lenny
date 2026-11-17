@@ -10,7 +10,7 @@ import (
 )
 
 // CreateDevBearerSecretFromConfigForTest exposes createDevBearerSecretFromConfig
-// to the external tier-2 envtest in package stack_test so the §10.2/§17.4
+// to the external component-tier envtest in package stack_test so the §10.2/§17.4
 // dev bearer-trust Secret create and update-in-place path runs against a real
 // kube-apiserver without writing a kubeconfig file. It is test-only.
 func CreateDevBearerSecretFromConfigForTest(ctx context.Context, cfg *rest.Config, keyFilePath string) error {
@@ -18,7 +18,7 @@ func CreateDevBearerSecretFromConfigForTest(ctx context.Context, cfg *rest.Confi
 }
 
 // WaitDeploymentReadyForTest exposes waitDeploymentReady to the external
-// tier-2 envtest so the §17.4 gateway-readiness wait runs against a real
+// component-tier envtest so the §17.4 gateway-readiness wait runs against a real
 // kube-apiserver. It is test-only.
 func WaitDeploymentReadyForTest(ctx context.Context, cfg *rest.Config, namespace, name string, timeout, interval time.Duration) error {
 	return waitDeploymentReady(ctx, cfg, namespace, name, timeout, interval)
@@ -33,7 +33,7 @@ func DevBearerTrustSecretKeyForTest() string  { return devBearerTrustSecretKey }
 func ControlPlaneNamespaceForTest() string    { return controlPlaneNamespace }
 
 // CreateMasterKeySecretFromConfigForTest exposes
-// createMasterKeySecretFromConfig to the external tier-2 envtest so the §17.4
+// createMasterKeySecretFromConfig to the external component-tier envtest so the §17.4
 // master key Secret create-if-absent path runs against a real kube-apiserver.
 // It is test-only.
 func CreateMasterKeySecretFromConfigForTest(ctx context.Context, cfg *rest.Config) error {

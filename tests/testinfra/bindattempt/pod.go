@@ -3,8 +3,8 @@
 // Package bindattempt is the shared fixture and case battery for the §4.7.1
 // bind attempt contract: the numbered admission rules, the numbered Shutdown
 // rules, the stamp-once rule, and the registry critical section. The battery
-// runs twice, once over the real gRPC transport in the Tier 3 contract suite
-// and once in process in the Tier 10 conformance battery, so each rule is
+// runs twice, once over the real gRPC transport in the contract suite
+// and once in process in the conformance battery, so each rule is
 // written here once and each tier supplies only the transport.
 //
 // Every assertion reads a result a caller can observe: the status and the

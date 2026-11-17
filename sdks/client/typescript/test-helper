@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // Entry point the tier-3 SDK contract harness
-// (tests/tier3_contract/sdks/harness) execs for the TypeScript client
+// (tests/contract/sdks/harness) execs for the TypeScript client
 // SDK. The harness spawns this file directly as a subprocess and
 // speaks the JSON-line protocol over stdin/stdout.
 //

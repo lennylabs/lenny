@@ -469,7 +469,7 @@ func (g goneBindingReleaserSeam) ReleaseGone(tenantID, sessionID string) {
 // read; a tenant with no configured limit resolves to 0, which the driver
 // treats as unlimited and skips the reservation. Extracted from
 // buildPodLifecycle so the resolve-then-wrap path has a single canonical
-// implementation the tier-1 test pins rather than an inline closure only a live
+// implementation the unit-tier test pins rather than an inline closure only a live
 // cluster exercises.
 //
 // spec: §11.2; §12.4 storageQuotaBytes.

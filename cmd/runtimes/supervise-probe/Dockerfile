@@ -11,7 +11,7 @@
 #     SIGINT to the runtime process (§4.7.10 Runtime supervisor, Signals).
 #
 # It also carries the supervisor's tier-1 C harness, statically linked, at
-# /usr/local/bin/lenny-supervisor-harness, so tier 6 can run the harness's
+# /usr/local/bin/lenny-supervisor-harness, so the e2e_cloud tier can run the harness's
 # synchronous-fault case under each sandboxed runtime (§4.7.10 Runtime
 # supervisor, Signals: the kernel's row for a synchronous fault).
 #

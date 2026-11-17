@@ -15,6 +15,6 @@ The directory is populated by `testinfra/fuzz.Mirror(t, pkg, target)`, called fr
 
 1. Crashes survive across go-test caches and CI runners.
 2. Subsequent runs replay every entry as a regression seed.
-3. The Tier 0 gate counts entries and refuses new additions without an accompanying fix commit (planned in a later phase).
+3. The static-tier gate counts entries and refuses new additions without an accompanying fix commit (planned in a later phase).
 
 Crashes are not pruned automatically; the file's presence is the regression test. Remove an entry only when the underlying input is no longer reachable (a parser change, a schema migration). Document the removal in the commit message so reviewers can re-derive the rationale.

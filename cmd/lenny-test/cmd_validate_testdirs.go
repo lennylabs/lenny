@@ -13,20 +13,20 @@ import (
 // check walks.
 const testDirsRoot = "tests"
 
-// validateTestDirsKeyed fails a tracked test directory under tests/tier*/
-// that no glob key of tests/change-graph.json covers.
+// validateTestDirsKeyed fails a tracked test directory under a tier
+// directory (tierDirs) that no glob key of tests/change-graph.json covers.
 //
 // validateChangeGraphCompleteness gates source files and leaves _test.go
 // files out of its domain, because a test file is a target of the graph.
 // A test directory is a target, and a source of change as well: a diff
-// confined to tests/tier2_component/<dir>/ resolves its tiers through the
+// confined to tests/component/<dir>/ resolves its tiers through the
 // change graph like any other path, and with no key covering the
 // directory `lenny-test --since <ref>` selects only the static tier,
 // runs none of the directory's tests, and reports a pass (TESTING.md §6
 // **Selection algorithm**). T-17.4.35 records two directories that did
 // this before their keys were added by hand.
 //
-// A test directory is a directory under tests/tier*/ that holds a
+// A test directory is a directory under a tier directory that holds a
 // git-tracked _test.go file outside any testdata/ tree. It is covered
 // when a glob key names it or one of its ancestor directories, read
 // through changegraph.CoveredByGlob, the reading the selector and the
@@ -51,7 +51,7 @@ func validateTestDirsKeyed(changeGraphPath, root string) checkResult {
 	dirs := tierTestDirs(tracked)
 	if len(dirs) == 0 {
 		return newResult(name, false,
-			"git lists no tracked _test.go file under tests/tier*/; a gate that inspects nothing cannot certify the tree")
+			"git lists no tracked _test.go file under a tier directory; a gate that inspects nothing cannot certify the tree")
 	}
 	unkeyed := []string{}
 	for _, d := range dirs {
@@ -68,14 +68,14 @@ func validateTestDirsKeyed(changeGraphPath, root string) checkResult {
 	return newResult(name, true, fmt.Sprintf("%d test directories keyed", len(dirs)))
 }
 
-// tierTestDirs returns the sorted, de-duplicated directories under
-// tests/tier*/ that hold a _test.go path from the given list, excluding
+// tierTestDirs returns the sorted, de-duplicated directories under a tier
+// directory that hold a _test.go path from the given list, excluding
 // anything under a testdata/ directory, whose files are fixtures rather
 // than tests the harness runs.
 func tierTestDirs(paths []string) []string {
 	seen := map[string]bool{}
 	for _, p := range paths {
-		if !strings.HasPrefix(p, testDirsRoot+"/tier") || !strings.HasSuffix(p, "_test.go") {
+		if !inTierDir(p) || !strings.HasSuffix(p, "_test.go") {
 			continue
 		}
 		if strings.Contains("/"+p, "/testdata/") {
@@ -89,4 +89,9 @@ func tierTestDirs(paths []string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// inTierDir reports whether path sits under a tier directory.
+func inTierDir(path string) bool {
+	return tierOfDir(path) != ""
 }

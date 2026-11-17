@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 // Package compose wraps the §10.3 docker-compose profile. It exposes
-// Up / Down / WaitReady / Endpoints helpers so tier-3 contract and
-// tier-4 integration tests can ensure the backing stores are
+// Up / Down / WaitReady / Endpoints helpers so contract and
+// integration tests can ensure the backing stores are
 // running without each test orchestrating docker compose itself.
 //
 // The Go helper shells out to `docker compose` rather than a SDK so

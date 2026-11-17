@@ -9,7 +9,7 @@
 //
 //   - stdin/stdout: the runtime reads os.Stdin and writes os.Stdout.
 //     This is the §15.4 contract transport — the conformance harness
-//     (cmd/lenny-compliance) and the Tier 3 contract tests exec the
+//     (cmd/lenny-compliance) and the contract tests exec the
 //     runtime binary directly and drive it over its standard streams.
 //
 //   - abstract Unix socket: in the §4.7 sidecar deployment model the

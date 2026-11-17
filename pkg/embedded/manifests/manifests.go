@@ -20,7 +20,7 @@
 // migration against its in-memory stores, so no excluded hook is a
 // required step.
 //
-// charts/lenny is the source of truth. The tier-11 sync check
+// charts/lenny is the source of truth. The docs-tier sync check
 // (TestEmbeddedManifestsMatchDevProfileRender) re-renders the chart and
 // fails on any byte difference, so the embedded copy cannot drift.
 //

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
-// Package gate holds the implementations the tier-0 citation gates run.
-// A gate is delivered as a Go test under tests/tier0_static/, which is a
+// Package gate holds the implementations the static-tier citation gates run.
+// A gate is delivered as a Go test under tests/static/, which is a
 // channel the repository hard-gates, and the logic it drives lives here
 // so the same walk, the same matcher, and the same section resolver the
 // passes use answer for the gates as well.

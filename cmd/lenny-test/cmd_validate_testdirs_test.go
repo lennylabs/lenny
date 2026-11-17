@@ -48,21 +48,21 @@ func runTestDirsKeyed(root string) checkResult {
 }
 
 // TestValidateTestDirsKeyedFailsAnUnkeyedTestDirectory pins the check
-// T-17.4.35 asked for: a tracked test directory under tests/tier*/ that
+// T-17.4.35 asked for: a tracked test directory under a tier directory that
 // no change-graph glob key covers fails validate-maps and is named,
 // because `--since` would select none of its tests on its own change.
 //
 // spec: TESTING.md §6 (The lenny-test harness, Selection algorithm)
 func TestValidateTestDirsKeyedFailsAnUnkeyedTestDirectory(t *testing.T) {
 	files := []string{
-		"tests/tier2_component/controllers/a_test.go",
-		"tests/tier2_component/stores/b_test.go",
+		"tests/component/controllers/a_test.go",
+		"tests/component/stores/b_test.go",
 	}
 
 	// One keyed and one unkeyed directory: the unkeyed one is named and
 	// the keyed one is not.
-	r := runTestDirsKeyed(testDirsKeyedRoot(t, files, []string{"tests/tier2_component/controllers/"}))
-	expectFail(t, r, "tests/tier2_component/stores/")
+	r := runTestDirsKeyed(testDirsKeyedRoot(t, files, []string{"tests/component/controllers/"}))
+	expectFail(t, r, "tests/component/stores/")
 	if containsSubstr(r.detail, "controllers") {
 		t.Errorf("detail names a keyed directory: %s", r.detail)
 	}
@@ -70,9 +70,9 @@ func TestValidateTestDirsKeyedFailsAnUnkeyedTestDirectory(t *testing.T) {
 	// Every spelling of a covering key passes: the directory with or
 	// without a trailing separator, the recursive form, and an ancestor.
 	for _, keys := range [][]string{
-		{"tests/tier2_component/controllers/", "tests/tier2_component/stores"},
-		{"tests/tier2_component/controllers/...", "tests/tier2_component/stores/..."},
-		{"tests/tier2_component/"},
+		{"tests/component/controllers/", "tests/component/stores"},
+		{"tests/component/controllers/...", "tests/component/stores/..."},
+		{"tests/component/"},
 	} {
 		expectPass(t, runTestDirsKeyed(testDirsKeyedRoot(t, files, keys)))
 	}
@@ -80,42 +80,42 @@ func TestValidateTestDirsKeyedFailsAnUnkeyedTestDirectory(t *testing.T) {
 	// A key that only shares a string prefix with the directory, rather
 	// than naming it or an ancestor, does not cover it.
 	r = runTestDirsKeyed(testDirsKeyedRoot(t,
-		[]string{"tests/tier2_component/leases/a_test.go"},
-		[]string{"tests/tier2_component/lease"}))
-	expectFail(t, r, "tests/tier2_component/leases/")
+		[]string{"tests/component/leases/a_test.go"},
+		[]string{"tests/component/lease"}))
+	expectFail(t, r, "tests/component/leases/")
 
 	// A nested test directory under an unkeyed parent fails on its own.
 	r = runTestDirsKeyed(testDirsKeyedRoot(t,
-		[]string{"tests/tier9_security/pentest/p_test.go"},
-		[]string{"tests/tier9_security/other/"}))
-	expectFail(t, r, "tests/tier9_security/pentest/")
+		[]string{"tests/security/pentest/p_test.go"},
+		[]string{"tests/security/other/"}))
+	expectFail(t, r, "tests/security/pentest/")
 }
 
 // TestValidateTestDirsKeyedDomain pins what counts as a test directory:
-// a tracked _test.go under tests/tier*/ outside testdata/. A non-test
+// a tracked _test.go under a tier directory outside testdata/. A non-test
 // file, a testdata fixture, a harness directory outside the tier trees,
 // and an untracked test file need no key.
 //
 // spec: TESTING.md §6 (The lenny-test harness, Selection algorithm)
 func TestValidateTestDirsKeyedDomain(t *testing.T) {
 	root := testDirsKeyedRoot(t, []string{
-		"tests/tier2_component/stores/b_test.go",
-		"tests/tier2_component/fixtures/helper.go",
-		"tests/tier3_contract/sdks/testdata/x_test.go",
+		"tests/component/stores/b_test.go",
+		"tests/component/fixtures/helper.go",
+		"tests/contract/sdks/testdata/x_test.go",
 		"tests/testinfra/envtest/e_test.go",
-	}, []string{"tests/tier2_component/stores/"})
-	writeChangeGraphSource(t, root, "tests/tier4_integration/untracked_test.go")
+	}, []string{"tests/component/stores/"})
+	writeChangeGraphSource(t, root, "tests/integration/untracked_test.go")
 	expectPass(t, runTestDirsKeyed(root))
 
 	got := tierTestDirs([]string{
-		"tests/tier2_component/stores/b_test.go",
-		"tests/tier2_component/stores/c_test.go",
-		"tests/tier2_component/fixtures/helper.go",
-		"tests/tier3_contract/sdks/testdata/x_test.go",
+		"tests/component/stores/b_test.go",
+		"tests/component/stores/c_test.go",
+		"tests/component/fixtures/helper.go",
+		"tests/contract/sdks/testdata/x_test.go",
 		"tests/testinfra/envtest/e_test.go",
-		"tests/tier4_integration/i_test.go",
+		"tests/integration/i_test.go",
 	})
-	want := []string{"tests/tier2_component/stores", "tests/tier4_integration"}
+	want := []string{"tests/component/stores", "tests/integration"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("tierTestDirs = %v; want %v", got, want)
 	}
@@ -127,8 +127,8 @@ func TestValidateTestDirsKeyedDomain(t *testing.T) {
 //
 // spec: TESTING.md §6 (The lenny-test harness, Selection algorithm)
 func TestValidateTestDirsKeyedFailsClosed(t *testing.T) {
-	root := testDirsKeyedRoot(t, []string{"tests/tier2_component/stores/b_test.go"},
-		[]string{"tests/tier2_component/stores/"})
+	root := testDirsKeyedRoot(t, []string{"tests/component/stores/b_test.go"},
+		[]string{"tests/component/stores/"})
 	if err := os.Remove(filepath.Join(root, "tests", "change-graph.json")); err != nil {
 		t.Fatal(err)
 	}

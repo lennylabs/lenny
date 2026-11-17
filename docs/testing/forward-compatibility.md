@@ -22,7 +22,7 @@ Forward-compat hook: the `pkg/delegation/` interfaces are protocol-neutral. The 
 
 ### AP (Agent Protocol) adapters
 
-Similar to A2A — the IETF Agent Protocol working group's surface is not yet stable. The platform's tier-3 contract tests (`tests/tier3_contract/`) are organised by surface so AP can ship as a parallel directory (`tests/tier3_contract/ap/`).
+Similar to A2A — the IETF Agent Protocol working group's surface is not yet stable. The platform's contract tests (`tests/contract/`) are organised by surface so AP can ship as a parallel directory (`tests/contract/ap/`).
 
 ### Multi-cluster federation
 
@@ -30,7 +30,7 @@ Similar to A2A — the IETF Agent Protocol working group's surface is not yet st
 
 ### SSH git URLs
 
-`workspaceplan.gitClone` accepts HTTPS only today. SSH (and `git://`) are documented as future. Tests under `tests/tier3_contract/workspaceplan/` already reject SSH URLs; that rejection is part of the v1 contract.
+`workspaceplan.gitClone` accepts HTTPS only today. SSH (and `git://`) are documented as future. Tests under `tests/contract/workspaceplan/` already reject SSH URLs; that rejection is part of the v1 contract.
 
 ### Pluggable storage backends
 
@@ -42,7 +42,7 @@ The PoolScalingController in v1 uses a fixed formula (§4.6.2). v2 may grow cust
 
 ### Cross-environment delegation
 
-§10.6 ships single-environment delegation; cross-environment is documented but deferred. The `tests/tier5_e2e_kind/scaffolds_test.go::TestCrossEnvironmentDelegation` scaffold names the v2 invariant.
+§10.6 ships single-environment delegation; cross-environment is documented but deferred. The `tests/e2e_kind/scaffolds_test.go::TestCrossEnvironmentDelegation` scaffold names the v2 invariant.
 
 ### Long-running batch jobs
 

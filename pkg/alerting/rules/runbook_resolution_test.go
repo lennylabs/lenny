@@ -12,7 +12,7 @@ import (
 // runbookURLPrefix is the §17.7 rendered-site host pattern runbook()
 // composes; the slug after it is the on-disk filename minus ".md".
 // The platform-wide alert→file resolution invariant is covered by
-// tests/tier11_docs TestAlertCatalogRunbookSlugsResolveToDocs (with
+// tests/docs TestAlertCatalogRunbookSlugsResolveToDocs (with
 // its §17.7 procedural allowlist); this file pins the §17.3 / §25.11
 // disaster-recovery subset that F-17.3.11 added.
 const runbookURLPrefix = "https://docs.lenny.dev/runbooks/"

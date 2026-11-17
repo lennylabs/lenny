@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/down-loadgen.sh — tears down the tier-12
+# scripts/cloud/aws/down-loadgen.sh — tears down the load_cloud tier
 # load-runner pool. Idempotent. Does NOT touch the EKS cluster or
 # the Lenny install; those are handled by down.sh.
 #

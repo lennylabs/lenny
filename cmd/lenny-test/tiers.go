@@ -2,6 +2,8 @@
 
 package main
 
+import "strings"
+
 // Tier names. These are the canonical string values used in
 // groups.yaml, spec-map.json, change-graph.json, build tags, and
 // the verdict JSON. Every call site that needs a tier name must
@@ -23,11 +25,14 @@ const (
 	tierLoadCloud   = "load_cloud"
 )
 
-// allTiers returns the tier names in execution order. The order is the gate
-// hierarchy documented for the test harness: lower-numbered tiers gate higher ones.
-// Tier 7 is a two-stage gate (load_local then load_kind). Tier 12 (load_cloud)
-// sits after every other tier so cloud spend only fires once everything below
-// is green.
+// allTiers returns the tier names in execution order. A tier is selected by
+// its name only; the numbers the tiers carried before change 0155 are not
+// accepted. The order is the one --max-tier reads: --max-tier <name> runs
+// every tier from static up to and including <name> in this order, and a
+// lower tier's failure stops the tiers after it. load_local runs before
+// load_kind, and load_cloud sits after every other tier so cloud spend only
+// fires once everything below is green. Change 0116 replaces this ordering
+// with the merge, area, and release gates.
 func allTiers() []string {
 	return []string{
 		tierStatic,
@@ -45,6 +50,43 @@ func allTiers() []string {
 		tierDocs,
 		tierLoadCloud,
 	}
+}
+
+// tierDirs returns the test directory of every tier that has one, in
+// execution order. The unit tier has none: its tests sit beside the code
+// they test.
+func tierDirs() []string {
+	dirs := []string{}
+	for _, t := range allTiers() {
+		if dir := tierDir(t); dir != "" {
+			dirs = append(dirs, dir)
+		}
+	}
+	return dirs
+}
+
+// tierDir returns the test directory of the tier, or "" when the tier's
+// tests do not sit in one directory under tests/.
+func tierDir(tier string) string {
+	for _, glob := range testsForTier(tier) {
+		dir := strings.TrimSuffix(strings.TrimPrefix(glob, "./"), "/...")
+		if strings.HasPrefix(dir, "tests/") {
+			return dir
+		}
+	}
+	return ""
+}
+
+// tierOfDir returns the tier whose test directory holds path, or "" when
+// no tier directory holds it.
+func tierOfDir(path string) string {
+	for _, t := range allTiers() {
+		dir := tierDir(t)
+		if dir != "" && (path == dir || strings.HasPrefix(path, dir+"/")) {
+			return t
+		}
+	}
+	return ""
 }
 
 // tiersForGroup returns the tier plan implied by a named group.

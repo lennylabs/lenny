@@ -56,14 +56,14 @@
 // implementation comment inside a function body, and so does every
 // string literal the pinned-literal register does not name.
 //
-// That register covers the string literals under tests/tier11_docs/ that
+// That register covers the string literals under tests/docs/ that
 // pin specification prose, a specification heading slug, or an
 // intra-spec markdown link. They are positions of this pass because the
 // run that rewrites such a sentence in the specification has to rewrite
-// the literal that pins it in the same diff; otherwise tier 11 goes red
+// the literal that pins it in the same diff; otherwise the docs tier goes red
 // with a reader on the sentence and no pass able to write the literal.
 // The register names each literal rather than the pass walking every
-// string of the file, so the operator-facing help text a tier-11 carrier
+// string of the file, so the operator-facing help text a docs-tier carrier
 // happens to hold stays outside the pass and the enumeration the sense
 // register is keyed by stays defined.
 //
@@ -111,7 +111,7 @@ type Rewriter struct {
 	registerPath string
 	senses       map[string]map[int]Entry
 
-	// pinned holds, per tier-11 reconciliation carrier, the string
+	// pinned holds, per docs-tier reconciliation carrier, the string
 	// literals the pinned-literal register resolves as pinning
 	// specification prose, a heading slug, or an intra-spec link. It is
 	// read out of the tree the pass runs over, alongside the identifier

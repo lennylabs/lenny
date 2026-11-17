@@ -62,8 +62,8 @@ controller:
   # lenny-cosign-verify webhook verifies its signature like every other
   # agent-pod image under imageVerification.cosign.verifiedRegistries.
   supervisorImage: ""
-  # egressCaptureImage is the tier-9 lenny-egress-capture
-  # sidecar image. Empty by default; tier-9 credential-leakage
+  # egressCaptureImage is the security-tier lenny-egress-capture
+  # sidecar image. Empty by default; security-tier credential-leakage
   # test overlays set it to enable the sidecar on Sandboxes whose
   # template annotates `lenny.dev/test-egress-capture-upstream`.
   # Leave it empty outside test overlays: the empty value is what keeps
@@ -1588,7 +1588,7 @@ eventBus:
 #                in once the corresponding publisher lands.
 #
 # Empty string leaves the env unset and the gateway runs the v1 path
-# unchanged. The tier-6 EKS overlay sets `sink: "postgres"` so the
+# unchanged. The e2e_cloud-tier EKS overlay sets `sink: "postgres"` so the
 # §11.2.1 TestCloudBillingExport sees the env var on the gateway pod.
 billing:
   sink: ""

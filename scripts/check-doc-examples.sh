@@ -8,12 +8,12 @@
 # schemas/<schema>-v1.json). The script walks docs/examples/,
 # resolves each subdirectory to a schema, and runs the
 # tests/testinfra/schematest binding indirectly via `go test
-# ./tests/tier0_static/...` which already validates schema-vs-example
+# ./tests/static/...` which already validates schema-vs-example
 # pairs.
 #
 # Today this script is a thin wrapper: it confirms the directory
 # layout exists and reports the count. When go-based deep validation
-# is needed, tests/tier0_static/schemas_test.go handles it; this
+# is needed, tests/static/build/schemas_test.go handles it; this
 # script is the shell-level entry point for the static tier and CI.
 #
 # Exit code:

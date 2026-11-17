@@ -4,7 +4,7 @@ Lenny's CI is documented in [`../../TESTING.md`](../../TESTING.md) §20. This di
 
 | Workflow | Trigger | Purpose |
 |:---------|:--------|:--------|
-| `pr.yml` | Disabled | PR gate. Tiers 0–4 plus critical-path higher tiers. Change 0154 disables it with `if: false` on its first job until pull requests replace direct merges; the merge gate is `lenny-test gate` (TESTING.md, "Merge gate"). |
+| `pr.yml` | Disabled | PR gate. The tiers from static to integration plus critical-path later tiers. Change 0154 disables it with `if: false` on its first job until pull requests replace direct merges; the merge gate is `lenny-test gate` (TESTING.md, "Merge gate"). |
 | `dco.yml` | `pull_request` | Verifies every PR commit carries a DCO `Signed-off-by` trailer. |
 | `secret-scan.yml` | `pull_request`, `push` to feature branches | Runs gitleaks over the introduced commits; fails on a positive hit. |
 | `nightly.yml` | `schedule` daily 05:00 UTC, `workflow_dispatch` | Full e2e Kind, rotated cloud subset, security, path-specific load. Target < 2 hours. |
@@ -19,11 +19,11 @@ Lenny's CI is documented in [`../../TESTING.md`](../../TESTING.md) §20. This di
 
 ## Phase 0 state
 
-The PR pipeline runs tiers 0–4 (`static`, `unit`, `component`, `contract`, `integration`) plus `docs` on every push and pull request, alongside `pr-fast`, `dco`, and `secret-scan`. The `e2e-kind-critical` and `conformance-bundled` jobs run their critical-path subsets; for a community fork PR the Kind tier is held until a maintainer applies the `ok-to-test` label. Higher cluster, cloud, and load tiers light up incrementally per TESTING.md §13.
+The PR pipeline runs the `static`, `unit`, `component`, `contract`, and `integration` tiers plus `docs` on every push and pull request, alongside `pr-fast`, `dco`, and `secret-scan`. The `e2e-kind-critical` and `conformance-bundled` jobs run their critical-path subsets; for a community fork PR the Kind tier is held until a maintainer applies the `ok-to-test` label. Higher cluster, cloud, and load tiers light up incrementally per TESTING.md §13.
 
 ## Self-hosted runners
 
-Tier 5+ jobs migrate to self-hosted runners (managed by `actions-runner-controller` in `lenny-ci-cluster`) as those tiers come online. The current placeholders target `ubuntu-latest`; the runner label is changed in the phase that first implements each tier. See TESTING.md §20.3.
+Jobs for `e2e_kind` and the tiers after it migrate to self-hosted runners (managed by `actions-runner-controller` in `lenny-ci-cluster`) as those tiers come online. The current placeholders target `ubuntu-latest`; the runner label is changed in the phase that first implements each tier. See TESTING.md §20.3.
 
 ## OIDC and secrets
 

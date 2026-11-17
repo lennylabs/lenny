@@ -9,7 +9,7 @@
 #                        fuzz driver, and a supervisor copy whose platform
 #                        volume paths sit under $(TEST_PREFIX)
 #
-# OUT defaults to ./bin. The tier-0 binary check and the tier-1 driver
+# OUT defaults to ./bin. The static-tier binary check and the tier-1 driver
 # under tests/ build into a temporary OUT.
 
 CC ?= cc
@@ -46,14 +46,14 @@ $(OUT)/lenny-supervisor-prefixed: $(SRCS) $(FREESTANDING) $(HDRS) | $(OUT)
 	$(CC) $(CFLAGS_FREE) -DSV_PATH_PREFIX='"$(TEST_PREFIX)"' $(LDFLAGS_FREE) -o $@ $(SRCS) $(FREESTANDING) -lgcc
 
 # The prefixed binary with a sweep worker that never reports and a short
-# sweep backstop, which the tier-3 contract test runs to reach the
+# sweep backstop, which the contract test runs to reach the
 # supervisor's backstop answer through the adapter client.
 $(OUT)/lenny-supervisor-sweepstall: $(SRCS) $(FREESTANDING) $(HDRS) | $(OUT)
 	$(CC) $(CFLAGS_FREE) -DSV_PATH_PREFIX='"$(TEST_PREFIX)"' -DSV_TEST_SWEEP_STALL -DSV_SWEEP_BACKSTOP_MS=1500 $(LDFLAGS_FREE) -o $@ $(SRCS) $(FREESTANDING) -lgcc
 
 # HARNESS_LDFLAGS is empty for the tier-1 driver. The supervise-probe image
 # sets it to -static so the harness runs in its distroless image, where
-# tier 6 runs the synchronous-fault case under each sandboxed runtime.
+# the e2e_cloud tier runs the synchronous-fault case under each sandboxed runtime.
 HARNESS_LDFLAGS ?=
 
 $(OUT)/harness: $(SRCS) $(HDRS) test/harness.c test/harness.h test/cases_*.c | $(OUT)

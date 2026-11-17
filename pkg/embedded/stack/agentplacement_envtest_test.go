@@ -20,7 +20,7 @@ import (
 )
 
 // The agent-namespace create and the echo Runtime CR apply are exported to the
-// external test package through these test-only seams so the tier-2 envtest
+// external test package through these test-only seams so the component-tier envtest
 // drives the same code paths Up wires, against a real kube-apiserver, without
 // reaching into unexported helpers. They live in agentplacement_export_test.go.
 

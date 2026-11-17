@@ -3,7 +3,7 @@
 // Package cosign wraps the TESTING.md §12.9.11 image-signing checks: cosign
 // signature verification and trivy CVE scanning. The TESTING.md §12.9.11 gate
 // runs pre-release; this scaffold ships the entry points so the
-// tier-9 tests can call them once the production image bundle is
+// security-tier tests can call them once the production image bundle is
 // available.
 package cosign
 

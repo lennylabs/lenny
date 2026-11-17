@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # scripts/cloud/aws/run-e2e.sh — single end-to-end driver for a
-# tier-6 EKS verification run.
+# e2e_cloud-tier EKS verification run.
 #
 # Sequence:
 #
@@ -19,7 +19,7 @@
 #                                       fixtures inside the cluster.
 #   5. helm install lenny-e2e         — chart install with the cloud
 #                                       overlay; wait for ready.
-#   6. lenny-test --tier e2e_cloud    — run the tier-6 suite against
+#   6. lenny-test --tier e2e_cloud    — run the e2e_cloud-tier suite against
 #                                       the freshly-installed gateway.
 #   7. scripts/cloud/aws/down.sh      — terraform destroy on exit
 #                                       (unless KEEP_CLUSTER=1).
@@ -125,7 +125,7 @@ trap cleanup EXIT
 
 # Pin every kubectl call to the EKS context derived from the release
 # name. A parallel `kind create cluster` (e.g. another test session
-# running tier-5) would otherwise switch ~/.kube/config's current-
+# running the e2e_kind tier) would otherwise switch ~/.kube/config's current-
 # context out from under this script mid-run and the subsequent
 # kubectl applies would error against the wrong (or absent) cluster.
 EKS_CONTEXT_NAME="arn:aws:eks:${REGION}:$(aws sts get-caller-identity --query Account --output text):cluster/${RELEASE}-eks"
@@ -179,7 +179,7 @@ fi
 #     The §13.3 RDS IAM auth path requires a Postgres user to be a
 #     member of the rds_iam role. Granting rds_iam to the master user
 #     (lenny) DISABLES password auth for the master, which breaks the
-#     password-auth tier-6 tests. Create a separate `lenny_iam` user
+#     password-auth e2e_cloud-tier tests. Create a separate `lenny_iam` user
 #     for the IAM auth path; the master keeps password auth.
 #     Idempotent; only fires when WITH_RDS=1.
 if [[ "${WITH_RDS}" == "1" ]]; then
@@ -321,7 +321,7 @@ kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f 
 
 kubectl create namespace lenny-system --dry-run=client -o yaml | kubectl apply -f -
 # Apply datastore fixtures from datastores.yaml selectively. The EKS
-# overlay always skips in-cluster MinIO because tier-6's
+# overlay always skips in-cluster MinIO because the e2e_cloud tier's
 # TestMultiAZMinIO asserts on a hasS3-only artifact store (the
 # per-release S3 bucket from the Terraform module is the artifact
 # store; the §12.5 SSE-KMS wiring is BUILD-GAPS TestCloudS3ViaIRSA
@@ -540,7 +540,7 @@ for kind in deployment daemonset; do
   fi
 done
 
-# 5c. Optional cluster-level fixtures that the tier-6 suite asserts on.
+# 5c. Optional cluster-level fixtures that the e2e_cloud-tier suite asserts on.
 #     These resources are not part of the Lenny chart (each is a
 #     deployer-supplied piece of cluster infrastructure on a production
 #     install); the e2e driver installs declarative stand-ins so the
@@ -669,18 +669,18 @@ spec:
                   number: ${LENNY_GATEWAY_PORT:-8080}
 INGRESS
 
-# 6. Run the tier-6 suite.
+# 6. Run the e2e_cloud-tier suite.
 echo "==[6/6] lenny-test --tier e2e_cloud==" >&2
 ARTIFACT_BUCKET="$("${TF}" -chdir="${TF_DIR}" output -raw artifact_bucket)"
 KMS_KEY_ARN="$("${TF}" -chdir="${TF_DIR}" output -raw kms_key_arn)"
 export LENNY_CLOUD_PROVIDERS=aws
-# LENNY_CLOUD_PROVIDER retained as the single-value alias for tier-6
+# LENNY_CLOUD_PROVIDER retained as the single-value alias for the e2e_cloud tier
 # tests that have not migrated to the plural canonical env var.
 export LENNY_CLOUD_PROVIDER=aws
 export LENNY_AWS_ARTIFACT_BUCKET="${ARTIFACT_BUCKET}"
 export LENNY_AWS_KMS_KEY_ARN="${KMS_KEY_ARN}"
 
-# Optional managed-service endpoints. Tier-6 managed_rds_test.go and
+# Optional managed-service endpoints. e2e_cloud-tier managed_rds_test.go and
 # managed_elasticache_test.go read these env vars; the tests skip
 # cleanly when an endpoint is empty, so the existing in-cluster
 # fixtures-only path keeps working without managed services.
@@ -707,11 +707,11 @@ if [[ -z "${LENNY_TEST_BIN}" ]]; then
 fi
 "${LENNY_TEST_BIN}" --tier e2e_cloud --output human
 
-# 6b. In-cluster tier-6 runner for the ElastiCache tests. The Redis
+# 6b. In-cluster e2e_cloud-tier runner for the ElastiCache tests. The Redis
 #     endpoint is VPC-private and not reachable from outside the
 #     cluster (AWS does not surface a public-DNS option for
 #     ElastiCache). The runner pod has VPC access by definition;
-#     compile a static linux/amd64 build of the tier-6 test binary,
+#     compile a static linux/amd64 build of the e2e_cloud-tier test binary,
 #     kubectl-cp it into a minimal alpine pod with the Redis env
 #     vars + AUTH token, and stream the test output back.
 if [[ "${WITH_ELASTICACHE}" == "1" && -n "${LENNY_AWS_REDIS_ENDPOINT}" ]]; then
@@ -727,7 +727,7 @@ if [[ "${WITH_ELASTICACHE}" == "1" && -n "${LENNY_AWS_REDIS_ENDPOINT}" ]]; then
     runner_tmpdir="$(mktemp -d)"
     GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
       go test -c -tags=e2e_cloud -o "${runner_tmpdir}/tier6.test" \
-      "${REPO_ROOT}/tests/tier6_e2e_cloud" >&2
+      "${REPO_ROOT}/tests/e2e_cloud" >&2
     kubectl -n lenny-system delete pod lenny-tier6-redis-runner --ignore-not-found --wait=true --force --grace-period=0 >/dev/null 2>&1
     kubectl -n lenny-system apply -f - <<POD
 apiVersion: v1

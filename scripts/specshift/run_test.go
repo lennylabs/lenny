@@ -566,7 +566,7 @@ func TestNoGateSourceOutsideItsFixtureTreeCarriesAReservedPhrase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list the tracked tree: %v", err)
 	}
-	trees := []string{"scripts/specshift/", "cmd/lenny-test/", "tests/tier0_static/"}
+	trees := []string{"scripts/specshift/", "cmd/lenny-test/", "tests/static/"}
 	read := scope.DirReader(root)
 	measured := 0
 	for _, target := range all {
@@ -1184,7 +1184,7 @@ func TestTheLinePassFixturesAreTheOnesACaseNames(t *testing.T) {
 }
 
 // TestProducerOutputSetsAreHeldAsData pins that the third disjunct is
-// decidable without running a producer, which is what lets a tier-0 gate
+// decidable without running a producer, which is what lets a static-tier gate
 // apply it. Every producer names a command, the source it reads, and a
 // non-empty output set.
 func TestProducerOutputSetsAreHeldAsData(t *testing.T) {
@@ -5503,7 +5503,7 @@ func TestNamePassFailsAnUndeclaredIdentifierCarriedOnlyByAReplacement(t *testing
 // tracked Go file)
 func TestNamePassReadsNoSiteInADetachedGoHeaderCommentBlock(t *testing.T) {
 	t.Parallel()
-	const target = "tests/tier11_docs/route_test.go"
+	const target = "tests/docs/route_test.go"
 	root := nameTree(t, "tree")
 	applyNamePass(t, root, "tree.yaml")
 	assertSubstituted(t, root, target)
@@ -5962,7 +5962,7 @@ func spanFrom(t *testing.T, text, open, endBefore string) [2]int {
 // tracked Go file)
 func TestGoDocCommentPositionIsOneSharedRule(t *testing.T) {
 	t.Parallel()
-	const src = `//go:build tier11_docs
+	const src = `//go:build docs
 
 // A header prose block the build constraint separates from the package
 // clause.
@@ -6528,7 +6528,7 @@ func TestNamePassFailsAnEntryNoSiteInTheTreeClaims(t *testing.T) {
 }
 
 // pinnedRegisterFixture is the tree path of the register naming the
-// string literals of the tier-11 reconciliation carriers that pin
+// string literals of the docs-tier reconciliation carriers that pin
 // specification prose, a heading slug, or an intra-spec link. A case
 // that exercises a defective register rewrites the copy inside the tree
 // it runs over.
@@ -6545,12 +6545,12 @@ func writePinnedRegister(t *testing.T, root, body string) {
 }
 
 // TestNamePassWritesAPinnedSpecLiteralAndLeavesAnUnpinnedOne pins the
-// second position the naming law governs in a Go carrier. A tier-11
+// second position the naming law governs in a Go carrier. A docs tier
 // reconciliation test pins specification prose, a specification heading
 // slug, or an intra-spec markdown link as a string literal, so the run
 // that rewrites such a sentence in the specification rewrites the
 // literal that pins it in the same diff. Leaving the literal behind
-// leaves tier 11 red with a reader on the sentence and no pass able to
+// leaves the docs tier red with a reader on the sentence and no pass able to
 // write it. Every other string literal stays outside the pass, which the
 // case pins in the same carrier: the register names one literal, and the
 // operator-facing literal beside it is byte-identical afterwards.
@@ -6559,7 +6559,7 @@ func writePinnedRegister(t *testing.T, root, body string) {
 // comments and the literals that pin the specification)
 func TestNamePassWritesAPinnedSpecLiteralAndLeavesAnUnpinnedOne(t *testing.T) {
 	t.Parallel()
-	const target = "tests/tier11_docs/route_test.go"
+	const target = "tests/docs/route_test.go"
 	root := nameTree(t, "tree")
 	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", target))
 	applied := applyNamePass(t, root, "tree.yaml")
@@ -6580,7 +6580,7 @@ func TestNamePassWritesAPinnedSpecLiteralAndLeavesAnUnpinnedOne(t *testing.T) {
 
 // TestNamePassRejectsAMissingOrMalformedPinnedLiteralRegister pins the
 // fail-closed rule over the second driving register. A tree carrying a
-// tier-11 reconciliation Go carrier and no readable register for its
+// docs-tier reconciliation Go carrier and no readable register for its
 // pinned literals would run with those literals silently outside the
 // pass, which is the writerless site the shared domain exists to
 // prevent, so the run fails and the tree is left byte-identical.
@@ -6636,7 +6636,7 @@ func TestNamePassFailsWhenTheTreeCarriesNoPinnedLiteralRegister(t *testing.T) {
 	before := treeSnapshot(t, root)
 	_, err := applyNamePassErr(t, root, "tree.yaml")
 	if err == nil {
-		t.Fatal("the name pass ran over a tier-11 carrier with no pinned-literal register")
+		t.Fatal("the name pass ran over a docs-tier carrier with no pinned-literal register")
 	}
 	if !strings.Contains(err.Error(), pinnedRegisterFixture) {
 		t.Errorf("the failure does not name the register the run needs: %v", err)
@@ -6652,7 +6652,7 @@ func TestNamePassFailsWhenTheTreeCarriesNoPinnedLiteralRegister(t *testing.T) {
 // entry keyed to a file the tree does not carry or to a position above
 // the count of string literals its file holds names no literal, so the
 // site a reviewer resolved would be left unwritten by a run that exited
-// zero. An entry keyed outside the tier-11 reconciliation tests would
+// zero. An entry keyed outside the docs-tier reconciliation tests would
 // admit an operator-facing literal, which the naming law does not
 // govern, into the pass.
 //
@@ -6669,13 +6669,13 @@ func TestNamePassFailsAPinnedLiteralEntryNoLiteralClaims(t *testing.T) {
 	}{
 		{
 			"a position above the literal count",
-			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 9\n",
+			head + "  - file: tests/docs/route_test.go\n    literal: 9\n",
 			"literal 9",
 		},
 		{
 			"a file the tree does not carry",
-			head + "  - file: tests/tier11_docs/absent_test.go\n    literal: 1\n",
-			"tests/tier11_docs/absent_test.go",
+			head + "  - file: tests/docs/absent_test.go\n    literal: 1\n",
+			"tests/docs/absent_test.go",
 		},
 		{
 			"a carrier outside the reconciliation tests",
@@ -6684,12 +6684,12 @@ func TestNamePassFailsAPinnedLiteralEntryNoLiteralClaims(t *testing.T) {
 		},
 		{
 			"a position below one",
-			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 0\n",
+			head + "  - file: tests/docs/route_test.go\n    literal: 0\n",
 			"numbered from one",
 		},
 		{
 			"a literal declared twice",
-			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 1\n  - file: tests/tier11_docs/route_test.go\n    literal: 1\n",
+			head + "  - file: tests/docs/route_test.go\n    literal: 1\n  - file: tests/docs/route_test.go\n    literal: 1\n",
 			"declared twice",
 		},
 	} {
@@ -6832,8 +6832,8 @@ func TestAConfinedRunReportsItsDeferredEntriesSortedByFileAndPosition(t *testing
 			"schemas/lenny-adapter.proto occurrence 2",
 			"schemas/lenny-adapter.schema.json occurrence 1",
 			"sdks/runtime/go/runtime/lifecycle_test.go occurrence 1",
-			"tests/tier11_docs/route_test.go occurrence 1",
-			"tests/tier11_docs/route_test.go occurrence 2",
+			"tests/docs/route_test.go occurrence 1",
+			"tests/docs/route_test.go occurrence 2",
 		}
 		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
 			t.Errorf("the specification-confined name run defers %v, want %v", got, want)
@@ -7473,13 +7473,13 @@ func TestTheConfinementFiltersThePinnedLiteralClaimCheck(t *testing.T) {
 	}{
 		{
 			"a position above the literal count",
-			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 9\n",
+			head + "  - file: tests/docs/route_test.go\n    literal: 9\n",
 			"literal 9",
 		},
 		{
 			"a file the tree does not carry",
-			head + "  - file: tests/tier11_docs/absent_test.go\n    literal: 1\n",
-			"tests/tier11_docs/absent_test.go",
+			head + "  - file: tests/docs/absent_test.go\n    literal: 1\n",
+			"tests/docs/absent_test.go",
 		},
 	} {
 		t.Run(tc.entry, func(t *testing.T) {
@@ -7489,7 +7489,7 @@ func TestTheConfinementFiltersThePinnedLiteralClaimCheck(t *testing.T) {
 				root := nameTree(t, "tree")
 				writePinnedRegister(t, root, tc.body)
 				before := treeSnapshot(t, root)
-				_, err := applyConfinedNamePass(t, root, "tree.yaml", pass.NewConfinement([]string{"tests/tier11_docs/"}, nil))
+				_, err := applyConfinedNamePass(t, root, "tree.yaml", pass.NewConfinement([]string{"tests/docs/"}, nil))
 				if err == nil {
 					t.Fatalf("the confined run accepted %s in the pinned-literal register", tc.entry)
 				}
@@ -9116,7 +9116,7 @@ func TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates(t *testing.T
 	// The spec map carries three key positions a rename invalidates: the
 	// package path, the schemas entry no check existence-checks, and the
 	// `::<symbol>` reference, which is keyed by symbol rather than by
-	// path and is resolved against its declaring file by a tier-0 check.
+	// path and is resolved against its declaring file by a static-tier check.
 	spec := after["tests/spec-map.json"]
 	for _, want := range []string{
 		"pkg/adapter/runtimeops.go",
@@ -10032,7 +10032,7 @@ func goStringLiteralTexts(t *testing.T, target, content string) []string {
 // only when its position is above the count of literals its carrier
 // holds, so an in-range but wrong position leaves the literal it was
 // seeded for outside the pass: the run exits zero with that literal
-// unwritten, and the tier-11 reconciliation reports it only after the
+// unwritten, and the docs-tier reconciliation reports it only after the
 // specification prose it pins has been rewritten.
 //
 // The predicate is a disjunction, which is what makes the case hold at
@@ -10043,7 +10043,7 @@ func goStringLiteralTexts(t *testing.T, target, content string) []string {
 // a predicate holding on one side alone would go red on the other.
 //
 // It ranges over the register's entries and asserts no completeness
-// conjunct. A tier-11 carrier also holds diagnostic messages that carry a
+// conjunct. A docs-tier carrier also holds diagnostic messages that carry a
 // reserved noun phrase and pin nothing, and registering one would make it
 // a site the pass admits and rewrites, which is what naming the literals
 // rather than walking them exists to prevent. It asserts neither the

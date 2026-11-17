@@ -17,7 +17,7 @@ import (
 // concurrently with SealSession, at an idle clock past the window, over
 // randomized interleavings. A seal requested while a call is in flight is
 // never placed, and the call count returns to zero once every call returns.
-// Run under -race (tier 7a).
+// Run under -race (load_local tier).
 //
 // spec: 4.7.1 (Role and Gateway RPC Contract), 28.5.3 (CH-MCP-PLATFORM,
 // CH-MCP-CONNECTOR)

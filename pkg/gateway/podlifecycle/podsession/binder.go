@@ -133,7 +133,7 @@ type Binder struct {
 	// SlotClaimer. Nil is a no-op.
 	Rehydration func(podID, pool string)
 	// slotReleasePause waits between releaseSlotRetrying attempts. Nil
-	// sleeps on the wall clock; a tier-1 test injects a pause that does not.
+	// sleeps on the wall clock; an unit-tier test injects a pause that does not.
 	slotReleasePause func(ctx context.Context, d time.Duration) error
 	// ClaimAccepted records the §6.3 / §16.1
 	// `lenny_warmpool_claims_total{pool,runtime_class}` counter

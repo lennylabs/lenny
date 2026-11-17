@@ -11,7 +11,7 @@
 // gateway reports as runtime_crash.
 //
 // The fixture also logs each `session_end` frame, with the session it
-// names, to its stderr, which is the runtime container's log, so a tier-5
+// names, to its stderr, which is the runtime container's log, so an e2e_kind tier
 // test can observe that the adapter wrote session_end to the runtime.
 //
 // The behavior lives here, in front of the reference runtime, so that the

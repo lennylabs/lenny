@@ -357,7 +357,7 @@ func TestDroppedTokenFrameStillDecrementsInflight_spec_28_5_3(t *testing.T) {
 // spec: §11.2 (direct-mode usage)
 // Concurrent llm_request_completed folds and gateway ReportUsage pulls on
 // the same session are mutex-guarded and total correctly. This is a smoke
-// -race check; the flake-budget concurrency assertion lives in the tier-7a
+// -race check; the flake-budget concurrency assertion lives in the load_local tier
 // stress test (S13).
 func TestSessionUsageMeterConcurrentFoldRaceSmoke_spec_11_2(t *testing.T) {
 	m := NewSessionUsageMeter(fixedClock())

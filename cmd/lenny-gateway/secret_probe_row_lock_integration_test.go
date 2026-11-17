@@ -2,7 +2,7 @@
 
 //go:build integration
 
-// Tier-4 integration test for the §4.9 admin-time Secret probe under the
+// Integration test for the §4.9 admin-time Secret probe under the
 // pool row lock. The probe runs inside the credential-pool Update
 // transaction, after SELECT ... FOR UPDATE, so a Token Service that never
 // answers would hold the row lock and a Postgres connection for as long as

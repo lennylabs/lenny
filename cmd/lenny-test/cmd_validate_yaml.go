@@ -106,10 +106,10 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 	}
 	// Subsets carry their contents through one of several slots:
 	//   tests:        []string of paths, or the scalar `all`
-	//   scenarios:    same shape as tests, for tier 7a / 7b load
+	//   scenarios:    same shape as tests, for the load_local tier / 7b load
 	//   scenarios_ref: name of another subset (delegation)
-	//   runtimes:     []string of runtime ids (tier 10 conformance)
-	//   run:          Go regexp matched against test names (tier 4)
+	//   runtimes:     []string of runtime ids (conformance
+	//   run:          Go regexp matched against test names (integration tier)
 	// We accept yaml.Node for the polymorphic slots and only verify
 	// at least one is populated.
 	var doc struct {
@@ -144,7 +144,7 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 			problems = append(problems, fmt.Sprintf("%s: unknown tier %q", name, s.Tier))
 		}
 		// A subset declares its contents through one of three slots:
-		// tests (most tiers), scenarios (tier 7a / 7b load), or scenarios_ref
+		// tests (most tiers), scenarios (load_local tier / 7b load), or scenarios_ref
 		// (delegates to another subset). Each may carry a sequence of
 		// paths or the scalar sentinel `all`.
 		hasTests := s.Tests.Kind == yaml.SequenceNode && len(s.Tests.Content) > 0
@@ -868,7 +868,7 @@ func openFindingIDs(root string) map[string]bool {
 }
 
 // validateParityMatrixYAML enforces the parity matrix policy on
-// tests/tier6_e2e_cloud/parity-matrix.yaml. Every capability has
+// tests/e2e_cloud/parity-matrix.yaml. Every capability has
 // at least one `validated` provider, every provider in a row is
 // listed under the top-level providers block, and every `skip`
 // status carries a reason.
@@ -876,7 +876,7 @@ func validateParityMatrixYAML(path string) checkResult {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return newResult("parity-matrix.yaml", true, "absent; tier 6 cloud parity matrix is empty by convention")
+			return newResult("parity-matrix.yaml", true, "absent; e2e_cloud parity matrix is empty by convention")
 		}
 		return newResult("parity-matrix.yaml", false, fmt.Sprintf("could not read: %v", err))
 	}

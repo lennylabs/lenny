@@ -13,7 +13,7 @@
 -- bearerTenantRegistry) precisely so a single-tenant-mode or Embedded
 -- Mode install works without any tenant-creation step, but nothing
 -- currently provisions its Postgres sequences to match: a deployment
--- whose bootstrap seed never names "default" explicitly (the tier-5
+-- whose bootstrap seed never names "default" explicitly (the e2e_kind tier
 -- e2e Kind install only seeds "acme", tests/testinfra/kind/e2e-values.yaml)
 -- never provisions them at all, and the first billing or audit write
 -- attributed to "default" fails with "relation ... does not exist"

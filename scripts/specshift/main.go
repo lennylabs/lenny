@@ -20,7 +20,7 @@
 //
 // The file domain lives in the scope subpackage, which is the one
 // implementation of the tracked-tree walk, the read and write exclusion
-// lists, and the per-file generated-artifact rule. The tier-0 gates
+// lists, and the per-file generated-artifact rule. The static-tier gates
 // import it rather than re-deriving the domain they read.
 //
 // Usage:
@@ -316,7 +316,7 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 // long as one part of the partition carries the retired population,
 // however clean the run that just finished reported itself to be.
 const redGates = "the naming lint, the identifier-resolution gate, the fragment-link gate, " +
-	"the per-class residual scans, and tier 11 stay red until every deferred entry is " +
+	"the per-class residual scans, and the docs tier stay red until every deferred entry is " +
 	"covered by a complementary run"
 
 // reportRun writes what one run of a pass did: the confinement it ran

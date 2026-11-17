@@ -210,7 +210,7 @@ func TestInstallReferenceRuntimesSeedsResolvedEchoDigest_spec_4_7(t *testing.T) 
 // TestInstallReferenceRuntimesGrantsEcho_spec_26_1 asserts the
 // default-tenant grant loop covers the seeded echo runtime in addition to
 // the §26 reference runtimes, so `lenny session new --runtime echo` is
-// reachable for the default tenant the tier-4 smoke runs against. spec:
+// reachable for the default tenant the integration-tier smoke runs against. spec:
 // §26.1, §15.4.4.
 func TestInstallReferenceRuntimesGrantsEcho_spec_26_1(t *testing.T) {
 	var grantedNames []string

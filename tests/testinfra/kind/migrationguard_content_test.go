@@ -162,7 +162,7 @@ func runContentGuard(t *testing.T, run contentGuardRun) contentGuardResult {
 // cannot be read refuses, and LENNY_SKIP_MIGRATION_GUARD=1 overrides each
 // refusal. Every database read stays read-only.
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestInstallMigrationGuardRefusesASameNumberContentMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -246,7 +246,7 @@ func TestInstallMigrationGuardRefusesASameNumberContentMismatch(t *testing.T) {
 // the record instead of leaving one that names content the database may
 // not carry. The recorder writes a ConfigMap and never the database.
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestInstallMigrationRecordCarriesVerifiedAndAppliedEntries(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -309,7 +309,7 @@ func TestInstallMigrationRecordCarriesVerifiedAndAppliedEntries(t *testing.T) {
 // recorder's position: install.sh records the manifest only after the
 // migrate Job completed, so a failed migrate leaves the previous record.
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestInstallRecordsTheMigrationManifestAfterTheMigrateJob(t *testing.T) {
 	b, err := os.ReadFile("install.sh")
 	if err != nil {

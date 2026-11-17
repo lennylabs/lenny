@@ -104,7 +104,7 @@ def main():
         # Exclude what no pass writes and what is not prose: the proposals, the
         # migration tooling's own fixtures, and the read-excluded root records.
         if not path or path.startswith(
-            ("proposals/", "scripts/specshift/", "tests/tier0_static/testdata/", ".claude/")
+            ("proposals/", "scripts/specshift/", "tests/static/testdata/", ".claude/")
         ) or os.path.basename(path) in {
             "BUILD-GAPS.md", "TEST-GAPS.md", "PROPOSAL-QUEUE.md",
             "gateway-runtime-comms.md",

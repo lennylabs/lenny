@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# Sense register for the citation-document gate in tests/tier0_static.
+# Sense register for the citation-document gate in tests/static.
 #
 # The gate reports a §-number that names no section any document this
 # repository holds declares. An entry here is a reader's judgement that a
@@ -33,7 +33,7 @@ entries:
       without a spec edit. spec/ is written through the proposal pipeline and
       the guard hook refuses a direct write, so the correction is staged there
       rather than applied here.
-  - file: tests/tier3_contract/oauth_token/oauth_token_envelope_test.go
+  - file: tests/contract/oauth_token/oauth_token_envelope_test.go
     occurrence: 1
     reason: |-
       RFC 8693 §2.2.1, named at the head of the file and written bare in its

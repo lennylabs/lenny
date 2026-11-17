@@ -8,7 +8,7 @@ description: How Lenny's test infrastructure works. Tier model, the lenny-test h
 
 # Testing
 
-Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; each higher tier gates on the one below. The full design lives in [TESTING.md](../../TESTING.md); this section is the developer-facing onramp.
+Lenny's test surface follows a strict tier model. The static tier runs first; each higher tier gates on the one below. The full design lives in [TESTING.md](../../TESTING.md); this section is the developer-facing onramp.
 
 ## The tier model at a glance
 
@@ -29,8 +29,8 @@ Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; ea
 
 ## Writing your first test
 
-1. Pick the tier. Most new tests are tier-1 unit tests under `pkg/<area>/*_test.go`. The rule of thumb: if the test needs another process running, it isn't tier-1.
-2. Follow the §17 conventions (see [conventions](conventions.html)). Every test from tier-2 onward needs a `// spec:` and `// diagnosis:` annotation above the function — see [Conventions / §17.2](conventions.html#annotations) for the exact format.
+1. Pick the tier. Most new tests are unit tests under `pkg/<area>/*_test.go`. The rule of thumb: if the test needs another process running, it isn't the unit tier.
+2. Follow the §17 conventions (see [conventions](conventions.html)). Every test from the component tier onward needs a `// spec:` and `// diagnosis:` annotation above the function — see [Conventions / §17.2](conventions.html#annotations) for the exact format.
 3. Run locally:
    ```bash
    go build -o bin/lenny-test ./cmd/lenny-test
@@ -53,7 +53,7 @@ Lenny's test surface follows a strict tier model. Tier 0 (static) runs first; ea
 
 ### Update a baseline
 
-Load-tier baselines under `tests/tier7b_load_kind/baselines/<scenario>.json` are pinned. When intentional change happens (a new scenario, an SLO loosening), regenerate:
+Load-tier baselines under `tests/load_kind/baselines/<scenario>.json` are pinned. When intentional change happens (a new scenario, an SLO loosening), regenerate:
 
 ```bash
 LENNY_UPDATE_BASELINE=1 ./bin/lenny-test --tier load
@@ -92,19 +92,21 @@ Per TESTING.md §17.10 every test must pass 50 consecutive runs. Investigate via
 ## Where each tier lives
 
 | Tier | Directory | Build tag |
-|:----:|:----------|:----------|
-| 0 | `tests/tier0_static/` | _(none)_ |
-| 1 | `pkg/<area>/*_test.go` and `tests/tier1_unit/` | _(none)_ |
-| 2 | `tests/tier2_component/<subsystem>/` | `component` |
-| 3 | `tests/tier3_contract/<surface>/` | `contract` |
-| 4 | `tests/tier4_integration/` | `integration` |
-| 5 | `tests/tier5_e2e_kind/` | `e2e_kind` |
-| 6 | `tests/tier6_e2e_cloud/` | `e2e_cloud` |
-| 7 | `tests/tier7b_load_kind/scenarios/<name>/` | `load` |
-| 8 | `tests/tier8_chaos/` | `chaos` |
-| 9 | `tests/tier9_security/` | `security` |
-| 10 | `tests/tier10_conformance/` | `conformance` |
-| 11 | `tests/tier11_docs/` | _(none)_ |
+|:-----|:----------|:----------|
+| `static` | `tests/static/build/`, `tests/static/chart/`, `tests/static/lint/`, and `tests/static/structure/` | _(none)_ |
+| `unit` | `pkg/<area>/*_test.go`, beside the code each test covers | _(none)_ |
+| `component` | `tests/component/<subsystem>/` | `component` |
+| `contract` | `tests/contract/<surface>/` | `contract` |
+| `integration` | `tests/integration/` | `integration` |
+| `e2e_kind` | `tests/e2e_kind/` | `e2e_kind` |
+| `e2e_cloud` | `tests/e2e_cloud/` | `e2e_cloud` |
+| `load_local` | `tests/load_local/` | `load_local` |
+| `load_kind` | `tests/load_kind/scenarios/<name>/` | `load_kind` |
+| `chaos` | `tests/chaos/` | `chaos` |
+| `security` | `tests/security/` | `security` |
+| `conformance` | `tests/conformance/` | `conformance` |
+| `docs` | `tests/docs/` | _(none)_ |
+| `load_cloud` | `tests/load_cloud/` | `load_cloud` |
 
 ## Test infrastructure helpers
 
@@ -127,7 +129,7 @@ The `tests/testinfra/` packages are shared building blocks:
 - `kind` — Kind cluster lifecycle + skip helpers
 - `envtest` — sigs.k8s.io controller-runtime envtest wrapper
 - `chaos` — toxiproxy + chaos-mesh dispatch
-- `security/{zap,cosign,sbom,kubebench,pentest}` — tier-9 wrappers
+- `security/{zap,cosign,sbom,kubebench,pentest}` — security-tier wrappers
 - `cloud` — per-provider cluster bring-up
 - `load` — k6 wrapper + baseline comparator
 - `randctl` + `timectl` — deterministic random + clock helpers
@@ -140,7 +142,7 @@ The `tests/testinfra/` packages are shared building blocks:
 - [Domain suites](domain-suites.html) — RLS, workspace plan, credentials, delegation, MCP elicitation, operability, multi-protocol, interceptor chain, pool lifecycle, compliance/erasure, T4 controls, web playground, SDKs
 - [Testing `lenny-ctl`](lenny-ctl.html) — operability tests across the 14 command categories
 - [Flakiness](flakiness.html) — TESTING.md §17.10 stress sweep, quarantine workflow, root-cause categories
-- [Documentation tests](documentation-tests.html) — tier-11 markdown / code-block / runbook / ADR checks
+- [Documentation tests](documentation-tests.html) — docs-tier markdown / code-block / runbook / ADR checks
 - [Forward compatibility](forward-compatibility.html) — §23 v2 surfaces
 - [TESTING.md](../../TESTING.md) — the authoritative design
 - [TESTING_DEPENDENCIES.md](../../TESTING_DEPENDENCIES.md) — local tool setup

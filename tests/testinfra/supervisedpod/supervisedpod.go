@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package supervisedpod holds the cluster helpers the runtime supervisor's
-// tier-5, tier-8, tier-9, and tier-10 tests share: the supervised probe
+// the e2e_kind tier, the chaos tier, the security tier, and conformance-tier tests share: the supervised probe
 // pools tests/testinfra/kind seeds, running a probe subcommand in a pod's
 // runtime container at the agent UID, sending probe commands through a
 // session, reading a container's host PID through the node's container

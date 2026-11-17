@@ -20,7 +20,7 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// These tier-1 tests inject API-server failures into the binding-state
+// These unit-tier tests inject API-server failures into the binding-state
 // writers and the precondition DELETE via a fake client wrapped in
 // error-returning interceptors. They exercise the wrapped-error and
 // NotFound/Conflict branches the envtest happy-path tests do not reach, so

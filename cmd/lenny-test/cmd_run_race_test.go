@@ -15,14 +15,14 @@ import (
 // invokes `go test` with the detector enabled; without it the cases run
 // but the property half of what they assert goes unchecked.
 func TestLoadLocalTierRunsUnderTheRaceDetector(t *testing.T) {
-	args := taggedTierArgs("load_local", "./tests/tier7a_load_local/...", time.Minute, true)
+	args := taggedTierArgs("load_local", "./tests/load_local/...", time.Minute, true)
 	if !slices.Contains(args, "-race") {
 		t.Errorf("load_local tier argv = %v, want it to carry -race", args)
 	}
 	if !slices.Contains(args, "-tags=load_local") {
 		t.Errorf("load_local tier argv = %v, want it to carry -tags=load_local", args)
 	}
-	plain := taggedTierArgs("chaos", "./tests/tier8_chaos/...", time.Minute, false)
+	plain := taggedTierArgs("chaos", "./tests/chaos/...", time.Minute, false)
 	if slices.Contains(plain, "-race") {
 		t.Errorf("a tagged tier that did not ask for the detector got argv %v", plain)
 	}
@@ -36,7 +36,7 @@ func TestLoadLocalTierRunsUnderTheRaceDetector(t *testing.T) {
 // argv, since the detector needs cgo and distorts the wall-clock timing a
 // latency scenario measures.
 func TestStressIterationsRunUnderTheRaceDetector(t *testing.T) {
-	cmd := buildGoTestStressCmd("^TestX$", "./tests/tier7a_load_local/...", "load_local", 60, true)
+	cmd := buildGoTestStressCmd("^TestX$", "./tests/load_local/...", "load_local", 60, true)
 	if !slices.Contains(cmd.Args, "-race") {
 		t.Errorf("stress iteration argv = %v, want it to carry -race", cmd.Args)
 	}
@@ -64,10 +64,10 @@ func TestStressRaceDefaultFollowsTheTierBeingStressed(t *testing.T) {
 		want   bool
 	}{
 		{"auto on the local load tag", "auto", "load_local", "./...", true},
-		{"auto on the local load package", "auto", "", "./tests/tier7a_load_local/...", true},
+		{"auto on the local load package", "auto", "", "./tests/load_local/...", true},
 		{"auto on an ordinary package", "auto", "", "./pkg/...", false},
-		{"auto on the kind load tier", "auto", "load_kind", "./tests/tier7b_load_kind/...", false},
-		{"auto on the cloud load tier", "auto", "load_cloud", "./tests/tier12_load_cloud/...", false},
+		{"auto on the kind load tier", "auto", "load_kind", "./tests/load_kind/...", false},
+		{"auto on the cloud load tier", "auto", "load_cloud", "./tests/load_cloud/...", false},
 		{"explicit on", "on", "", "./pkg/...", true},
 		{"explicit off", "off", "load_local", "./...", false},
 	} {

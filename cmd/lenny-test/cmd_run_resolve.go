@@ -223,38 +223,14 @@ func tiersForChangedPathIn(globs map[string]map[string][]string, path string) []
 	return tiers
 }
 
-// inferTierFromPath maps a test path back to a tier name.
+// inferTierFromPath maps a test path back to a tier name: the tier whose
+// directory holds it, or the unit tier for a test beside its code.
 func inferTierFromPath(path string) string {
-	switch {
-	case strings.HasPrefix(path, "tests/tier0_static"):
-		return "static"
-	case strings.HasPrefix(path, "tests/tier2_component"):
-		return "component"
-	case strings.HasPrefix(path, "tests/tier3_contract"):
-		return "contract"
-	case strings.HasPrefix(path, "tests/tier4_integration"):
-		return "integration"
-	case strings.HasPrefix(path, "tests/tier5_e2e_kind"):
-		return "e2e_kind"
-	case strings.HasPrefix(path, "tests/tier6_e2e_cloud"):
-		return "e2e_cloud"
-	case strings.HasPrefix(path, "tests/tier7a_load_local"):
-		return "load_local"
-	case strings.HasPrefix(path, "tests/tier7b_load_kind"):
-		return "load_kind"
-	case strings.HasPrefix(path, "tests/tier8_chaos"):
-		return "chaos"
-	case strings.HasPrefix(path, "tests/tier9_security"):
-		return "security"
-	case strings.HasPrefix(path, "tests/tier10_conformance"):
-		return "conformance"
-	case strings.HasPrefix(path, "tests/tier11_docs"):
-		return "docs"
-	case strings.HasPrefix(path, "tests/tier12_load_cloud"):
-		return "load_cloud"
-	case strings.HasPrefix(path, "pkg/") || strings.HasSuffix(path, "_test.go"):
-		// A pkg/ unit test.
-		return "unit"
+	if t := tierOfDir(path); t != "" {
+		return t
+	}
+	if strings.HasPrefix(path, "pkg/") || strings.HasSuffix(path, "_test.go") {
+		return tierUnit
 	}
 	return ""
 }

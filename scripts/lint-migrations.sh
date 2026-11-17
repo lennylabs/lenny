@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # scripts/lint-migrations.sh — enforces the TESTING.md §12.0 "every migration has a
 # corresponding rollback script and a non-empty test under
-# tests/tier2_component/migrations/" rule.
+# tests/component/migrations/" rule.
 #
 # Checks:
 #   1. Every .up.sql file under migrations/ has a matching .down.sql sibling.
@@ -10,7 +10,7 @@
 #      non-whitespace line).
 #   3. Every migration sequence number that appears in migrations/ also
 #      appears in at least one _test.go file under
-#      tests/tier2_component/migrations/ (so the framework's regression
+#      tests/component/migrations/ (so the framework's regression
 #      tests cover the migration). The check is conservative: it looks for
 #      the bare migration number as a substring; if your fixture lives
 #      under tests/testdata/migrations/ keep the same numbering.
@@ -42,7 +42,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MIGRATIONS_DIR="${1:-${ROOT}/migrations}"
-TEST_DIR="${ROOT}/tests/tier2_component/migrations"
+TEST_DIR="${ROOT}/tests/component/migrations"
 
 violations=0
 report() {

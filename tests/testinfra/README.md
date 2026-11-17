@@ -1,6 +1,6 @@
 # tests/testinfra
 
-Shared helper packages and asset directories for Lenny's test infrastructure. Every Tier 1+ test imports from here when it needs a backing service, a deterministic clock, a fixture, a goleak snapshot, or any other piece of plumbing the harness provides.
+Shared helper packages and asset directories for Lenny's test infrastructure. Every test outside the static tier imports from here when it needs a backing service, a deterministic clock, a fixture, a goleak snapshot, or any other piece of plumbing the harness provides.
 
 The full specification lives in `TESTING.md`. This README is the directory map.
 
@@ -13,10 +13,10 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`admission/`](admission/) | Validating-admission webhook test fixture. |
 | [`assertions/`](assertions/) | Typed comparison helpers; JSON equality with ordering hints; structural matchers for state machines. The project's stand-in for testify and gomega. |
 | [`audit/`](audit/) | Audit-pipeline helpers (chain inspection, OCSF envelope assertions, SIEM consumer harness). |
-| [`bindattempt/`](bindattempt/) | Adapter fixture and case battery for the slot bind attempt admission and `Shutdown` rules. The Tier 3 contract suite drives it over gRPC and the Tier 10 conformance battery drives it in process. |
-| [`chaos/`](chaos/) | Fault-injection driver for Tier 8 (chaos-mesh adapter, network partition, pod kill, clock skew, toxiproxy bridge). |
-| [`cloud/`](cloud/) | Tier 6 cloud-provider authentication and cluster acquisition for GKE, EKS, and AKS. |
-| [`compose/`](compose/) | `docker compose` lifecycle wrapper for Tier 4 integration tests (gateway, stores, and mocks on a single host). |
+| [`bindattempt/`](bindattempt/) | Adapter fixture and case battery for the slot bind attempt admission and `Shutdown` rules. The contract suite drives it over gRPC and the conformance battery drives it in process. |
+| [`chaos/`](chaos/) | Fault-injection driver for the chaos tier (chaos-mesh adapter, network partition, pod kill, clock skew, toxiproxy bridge). |
+| [`cloud/`](cloud/) | The e2e_cloud tier cloud-provider authentication and cluster acquisition for GKE, EKS, and AKS. |
+| [`compose/`](compose/) | `docker compose` lifecycle wrapper for integration tests (gateway, stores, and mocks on a single host). |
 | [`containers/`](containers/) | Per-test Postgres, Redis, and MinIO container managers. Each test gets a fresh schema or keyspace. `StartMinIO` runs `pgsty/silo`, the maintained fork of the MinIO server, pinned by tag and index digest; `LENNY_MINIO_IMAGE` replaces it. |
 | [`embpg/`](embpg/) | In-process embedded PostgreSQL 16 binary bundle for store-package tests (`fergusstrange/embedded-postgres` wrapper). Used where a test needs a real Postgres without a container runtime. |
 | [`envtest/`](envtest/) | controller-runtime envtest harness for Tier 2 K8s API-server interactions. |
@@ -25,10 +25,10 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`gateway/`](gateway/) | Boots `cmd/lenny-gateway` as a subprocess on a random port and returns the base URL. |
 | [`golden/`](golden/) | Golden-file roundtrip helpers with `-update` flag for accepting diffs. |
 | [`goleak/`](goleak/) | Wrapper around `go.uber.org/goleak` keyed on the test name; the canonical place to install per-test leak detection. |
-| [`heartbeatsilence/`](heartbeatsilence/) | Runtime fixture for a runtime that hangs between turns. It runs an unmodified reference runtime as a child and stops forwarding heartbeats after a directive message. Its `Dockerfile` layers it on a reference runtime image for the Tier 5 heartbeat-silence pools that `kind/install.sh` installs. |
+| [`heartbeatsilence/`](heartbeatsilence/) | Runtime fixture for a runtime that hangs between turns. It runs an unmodified reference runtime as a child and stops forwarding heartbeats after a directive message. Its `Dockerfile` layers it on a reference runtime image for the e2e_kind tier heartbeat-silence pools that `kind/install.sh` installs. |
 | [`helm/`](helm/) | Helm chart rendering and apply helpers. |
-| [`kind/`](kind/) | Kind cluster lifecycle for Tier 5 (cluster create, kubeconfig, kubectl apply, port-forward, teardown). |
-| [`load/`](load/) | k6 scenario runner and baseline diff utilities for Tier 7. |
+| [`kind/`](kind/) | Kind cluster lifecycle for the e2e_kind tier (cluster create, kubeconfig, kubectl apply, port-forward, teardown). |
+| [`load/`](load/) | k6 scenario runner and baseline diff utilities for the load tiers. |
 | [`matrix/`](matrix/) | Contract-test matrix combinatorics. |
 | [`mocks/`](mocks/) | Mock external services: LLM providers, OAuth connector, OTel collector. Subpackages mirror the mocked service names. |
 | [`ports/`](ports/) | Random free-port allocator for subprocess-style tests. |
@@ -36,7 +36,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`randctl/`](randctl/) | Deterministic RNG keyed by test name; substitutes for `crypto/rand` in tests. |
 | [`schematest/`](schematest/) | JSON Schema and protobuf round-trip helpers. |
 | [`security/`](security/) | SBOM, cosign verification, ZAP scanner driver, trivy, and kube-bench wrappers. Subpackages: `cosign/`, `kubebench/`, `pentest/`, `sbom/`, `zap/`. |
-| [`sessiondriver/`](sessiondriver/) | Live-session test driver (HTTP, SSE, chaos and security bridges) used by Tiers 5+. |
+| [`sessiondriver/`](sessiondriver/) | Live-session test driver (HTTP, SSE, chaos and security bridges) used by e2e_kind and the tiers after it. |
 | [`stubs/`](stubs/) | In-process fault models the gateway must handle gracefully. Subpackages: `kms/`, `llmprovider/`, `oidc/`, `siem/`. |
 | [`timectl/`](timectl/) | `Clock` interface; tests pass a frozen or advanceable clock where production uses wall time. |
 | [`tokenservice/`](tokenservice/) | Token-service minting helpers for mTLS-bearing client setups. |
@@ -54,7 +54,7 @@ A few subdirectories under `testinfra/` carry only YAML, fixtures, or a single s
 
 ## Importing a helper
 
-Go helpers live under `github.com/lennylabs/lenny/tests/testinfra/<name>`. A typical Tier 2 component test:
+Go helpers live under `github.com/lennylabs/lenny/tests/testinfra/<name>`. A typical component test:
 
 ```go
 import (
@@ -82,7 +82,7 @@ Every helper accepts `testing.TB` and registers its own `t.Cleanup` so the test 
 
 ## Determinism rules
 
-Helpers must not call `time.Now`, `crypto/rand`, `os/exec` against host binaries, or read environment variables outside of explicit configuration entry points. The `lint-determinism` static check in Tier 0 catches the common violations; the helpers must stay clean even when the linter is silent.
+Helpers must not call `time.Now`, `crypto/rand`, `os/exec` against host binaries, or read environment variables outside of explicit configuration entry points. The `lint-determinism` static check in the static tier catches the common violations; the helpers must stay clean even when the linter is silent.
 
 ## Skip behavior
 
@@ -96,7 +96,7 @@ Before it migrates, `kind/install.sh` reads `schema_migrations` in a read-only t
 
 golang-migrate records only the version of an applied migration, so a database another branch migrated to its own file at a shared number reads as equal to this branch. After each successful migrate, `kind/install.sh` records the sha256 and file name of every applied up migration in the ConfigMap `lenny-e2e-migrations` in `lenny-system`, together with the OID of the database the record describes. Before the next migrate, the guard compares each recorded entry at or below the database version with the branch's file of the same number, and stops when a name or a sha256 differs or when the branch lacks the recorded number. It names each colliding version, the recorded file, and the branch's file. The remedies are to renumber the branch's migration above the integration branch's highest, or to step the database back below the colliding number with the `lenny-migrate` image of the worktree that installed it, as the step-back procedure below describes. The record is a ConfigMap rather than a table, so neither the guard nor the recorder writes to the shared database.
 
-The content check has limits. A database with no record, or one whose OID differs from the record's because the database was dropped and recreated, is not checked, and the guard logs that. An install from a branch that predates the record migrates without updating it, so the versions it applied stay unrecorded until a later install records them. An install that `LENNY_SKIP_MIGRATION_GUARD=1` let through deletes the record, because its content is unverified. The tier-0 test `TestMigrationNumbersAreUnique` fails a tree whose `migrations/` holds two migrations at one number, which catches a collision once both branches merge.
+The content check has limits. A database with no record, or one whose OID differs from the record's because the database was dropped and recreated, is not checked, and the guard logs that. An install from a branch that predates the record migrates without updating it, so the versions it applied stay unrecorded until a later install records them. An install that `LENNY_SKIP_MIGRATION_GUARD=1` let through deletes the record, because its content is unverified. The static-tier test `TestMigrationNumbersAreUnique` fails a tree whose `migrations/` holds two migrations at one number, which catches a collision once both branches merge.
 
 The database is shared state. Do not edit `schema_migrations` by hand, and run either procedure only with the owner's approval, because both change the database every other worktree tests against. Read the current row first:
 

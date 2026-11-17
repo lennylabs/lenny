@@ -32,7 +32,7 @@ const moduleImportPath = "github.com/lennylabs/lenny"
 // to the touched packages. One hop runs the direct consumers of a changed
 // package, which is where a changed contract surfaces first; the static tier
 // type-checks every package in the module (`go vet ./...`), so a signature
-// break further out still fails tier 0. Operators widen it with
+// break further out still fails the static tier. Operators widen it with
 // `--rdeps-depth` (-1 for the full transitive closure) or run everything with
 // `--all`.
 const defaultRdepsDepth = 1
@@ -44,7 +44,7 @@ const goListTimeout = 2 * time.Minute
 // of every package, so no package-level scope describes their blast radius.
 // A diff that touches one of them is reported, and `--all` runs every
 // package; without `--all` the unit scope stays at what the rest of the diff
-// selects, and tier 0's module-wide `go vet ./...` compiles every package
+// selects, and the static tier's module-wide `go vet ./...` compiles every package
 // against the new module graph.
 var globalChangePaths = map[string]bool{
 	"go.mod":  true,
@@ -201,13 +201,13 @@ func (c changeSelection) notes(opts selectOpts) []string {
 	var out []string
 	if len(c.unmapped) > 0 {
 		out = append(out, fmt.Sprintf(
-			"%d changed path(s) have no tests/change-graph.json key; their owning packages run in the unit tier, and a path no package owns runs tier 0 only: %s",
+			"%d changed path(s) have no tests/change-graph.json key; their owning packages run in the unit tier, and a path no package owns runs the static tier only: %s",
 			len(c.unmapped), strings.Join(c.unmapped, ", "),
 		))
 	}
 	if len(c.global) > 0 && !opts.all {
 		out = append(out, fmt.Sprintf(
-			"module-wide build file(s) changed (%s); tier 0 type-checks every package, and `--all` runs every package's unit tests",
+			"module-wide build file(s) changed (%s); the static tier type-checks every package, and `--all` runs every package's unit tests",
 			strings.Join(c.global, ", "),
 		))
 	}
@@ -279,7 +279,7 @@ func selectChanged(paths []string, globs map[string]map[string][]string, g *pkgG
 // on every invocation. Its packages import many others, so they show up as
 // importers of a touched package; adding them to the unit scope would run
 // the same tests twice in one invocation.
-const staticTierTree = "tests/tier0_static"
+const staticTierTree = "tests/static"
 
 func runsInStaticTier(dir string) bool {
 	return dir == staticTierTree || strings.HasPrefix(dir, staticTierTree+"/")

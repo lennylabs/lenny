@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/gcp/run-e2e.sh — end-to-end driver for a tier-6 GKE
+# scripts/cloud/gcp/run-e2e.sh — end-to-end driver for an e2e_cloud-tier GKE
 # verification run. Mirrors scripts/cloud/aws/run-e2e.sh with the GCP
 # equivalents: Cloud KMS, GCS, Workload Identity, and Artifact
 # Registry (in lieu of ECR).
@@ -17,7 +17,7 @@
 #                                       MinIO).
 #   5. helm install lenny-e2e         — chart install with the GCP
 #                                       overlay; wait for ready.
-#   6. lenny-test --tier e2e_cloud    — run the tier-6 suite.
+#   6. lenny-test --tier e2e_cloud    — run the e2e_cloud-tier suite.
 #   7. scripts/cloud/gcp/down.sh      — terraform destroy on exit
 #                                       (unless KEEP_CLUSTER=1).
 #

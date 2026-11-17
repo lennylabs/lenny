@@ -20,7 +20,7 @@ func TestPublishingAppenderNilPublisherIsNoOp(t *testing.T) {
 	// this test asserts that NewPublishingAppender accepts a nil
 	// publisher and that buildEnvelope's pure side runs without
 	// pulling in a Postgres dependency. The end-to-end behaviour is
-	// covered by the tier-2 component test.
+	// covered by the component test.
 	app := auditstore.NewPublishingAppender(nil, nil, "")
 	if app == nil {
 		t.Fatal("NewPublishingAppender returned nil")
@@ -55,6 +55,6 @@ func TestPublishingAppenderInMemoryRedisPublishRoundTrip(t *testing.T) {
 		t.Errorf("Publisher not wired through; got %v want %v", app.Publisher, bus)
 	}
 	// The wiring is the contract; the end-to-end publish exercise
-	// lives in the tier-2 test against a real Postgres-backed Store.
+	// lives in the component-tier test against a real Postgres-backed Store.
 	_ = context.Background()
 }

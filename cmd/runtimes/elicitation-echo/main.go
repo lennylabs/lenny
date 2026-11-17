@@ -20,7 +20,7 @@
 //
 // elicitation-echo is the §9.2 Standard-level exemplar runtime: it
 // calls `lenny/request_elicitation` on each inbound message and returns
-// the human response. The elicitation integration suite and the tier-9
+// the human response. The elicitation integration suite and the security tier
 // admin probes for the enforce, detect-only, and floor wire contract use
 // it as the raising pod. In v1 the gateway resolves the elicitation
 // chain server-internally and no intermediate pod re-emits, so there is

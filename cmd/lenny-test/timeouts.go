@@ -44,7 +44,7 @@ var (
 	// a workflow timeout. Override: LENNY_TEST_LONG_TIMEOUT.
 	tierLongTimeout = tierTimeout("LENNY_TEST_LONG_TIMEOUT", 600*time.Second)
 
-	// tierSecurityTimeout caps the security tier. The tier-9 package is one
+	// tierSecurityTimeout caps the security tier. The security-tier package is one
 	// binary of roughly two hundred top-level tests, several of which wait
 	// up to 120 seconds each for a Ready agent workload on the Kind
 	// cluster, so its runtime tracks cluster load rather than test count.
@@ -87,7 +87,7 @@ var (
 	//
 	// The earlier four-to-five-minute figure was measured while most of the
 	// suite was refused at session creation and returned in milliseconds.
-	// A passing tests/tier4_integration package took 2568 seconds before
+	// A passing tests/integration package took 2568 seconds before
 	// its lifecycle harnesses moved onto a shared control plane and a
 	// shared Postgres container (TEST-GAPS T-17.4.32), and 1679 seconds
 	// after, when it still ran nearly serially. Once each subprocess

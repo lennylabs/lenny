@@ -65,7 +65,7 @@ func fakeSupervisor(t *testing.T, props map[string]string, pongs int) {
 // spec: §28.5.3 (CH-SUPERVISE), §4.7.10 (Runtime supervisor, Liveness)
 //
 // TestSupervisePeerReportsReadyAndExitsOnLinkFailure pins the stand-in
-// adapter the sandboxed tier-6 pods run: it prints the ready's properties,
+// adapter the sandboxed e2e_cloud-tier pods run: it prints the ready's properties,
 // keeps pinging while pongs arrive, and on a closed link prints
 // PeerLinkFailed and exits non-zero, the outcome a test reads as a
 // supervisor that stopped answering.

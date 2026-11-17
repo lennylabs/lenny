@@ -36,7 +36,7 @@ through this same SDK lineage (`github.com/OpenSLO/oslo`, the SDK's
 prior module name), so a document this schema rejects is a document a
 real OpenSLO-conformant tool also rejects.
 
-`tests/tier0_static/openslo_export_test.go` validates the rendered
+`tests/static/openslo_export_test.go` validates the rendered
 chart fragment (`charts/lenny/files/openslo.yaml`) against the per-kind
 subschemas (`#/$defs/SLIDocument`, `#/$defs/SLODocument`,
 `#/$defs/AlertPolicyDocument`, `#/$defs/AlertNotificationTargetDocument`)

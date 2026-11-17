@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package tokenservice is the testinfra helper that boots
-// cmd/lenny-token-service as a subprocess for tier-4 integration
+// cmd/lenny-token-service as a subprocess for integration
 // tests. Start builds the binary into a temp dir, then launches it
 // bound to a random free gRPC port; Build returns the built binary for
 // a test that runs it with its own flags. Provides GRPCAddr()
@@ -293,7 +293,7 @@ func (p *Process) exitErr() error {
 
 // Ping issues a no-op AssignCredentials with a deliberately bogus pool
 // to confirm the server responds (rejects with a clear error). It is a
-// liveness probe for tier-4 tests that need the server up but do not
+// liveness probe for integration-tier tests that need the server up but do not
 // have credential pools registered.
 func (p *Process) Ping(t testing.TB) error {
 	t.Helper()

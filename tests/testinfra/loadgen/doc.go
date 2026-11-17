@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
-// Package loadgen is the pure-Go load driver for tier-7a (load_local).
+// Package loadgen is the pure-Go load driver for the load_local tier.
 //
-// Tier-7a runs in-process with no Kubernetes, no Docker, and no k6.
-// Scenarios are Go files under tests/tier7a_load_local/scenarios/<name>/
+// The load_local tier runs in-process with no Kubernetes, no Docker, and no k6.
+// Scenarios are Go files under tests/load_local/scenarios/<name>/
 // that implement Scenario and register themselves with the default
 // Registry via Register().
 //
@@ -15,11 +15,11 @@
 //   - RampingVU             N-step ramp from start VUs to target VUs.
 //
 // The summary format mirrors k6's so baselines are comparable across
-// tier-7a, tier-7b, and tier-12 even though tier-7b and tier-12 use
+// the load_local tier, the load_kind tier, and load_cloud-tier even though load_kind-tier and load_cloud-tier use
 // k6 as the driver.
 //
-// The race detector is expected to be on for every tier-7a run; the
-// scaffolds_test.go in tests/tier7a_load_local/ invokes `go test`
+// The race detector is expected to be on for every load_local-tier run; the
+// scaffolds_test.go in tests/load_local/ invokes `go test`
 // with `-race`, and scenarios that race in their public surface fail
 // the run.
 package loadgen

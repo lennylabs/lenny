@@ -28,7 +28,7 @@ The specification restructure of [0115](../archive/2026-11-16-0115-spec-structur
   - 0115's annotation lint extended to refuse identifiers in test names, as it already refuses section numbers.
 - **Out of scope.**
   - Re-annotating existing code and renaming the 8,234 test functions whose names carry a section number. Each area change does both for its packages before its milestone exits, as `spec-annotations.md` states.
-  - Renaming the tier directories and splitting the static tier ([0155](../0155-test-tiers-by-name/change.md)).
+  - Renaming the tier directories and splitting the static tier ([0155](../archive/2026-11-17-0155-test-tiers-by-name/change.md)).
   - The gate command, its container, and the definitions of the merge, area, and release gates (0154).
   - The 14 registers of the channel-naming and line-citation migration, which retire with that migration (0155).
   - Deleting the tier-11 tests that compare specification prose (0155 and each area change), except where this change edits one because it reads a retired file.
@@ -80,7 +80,7 @@ Measured on `main` at `b1248f85b` on 2026-11-16, and on `change/0115-spec-struct
 | `tests/change-graph.json` | 73,645 bytes, 1,619 lines | 343 glob keys (163 under `tests/`, 136 under `pkg/`, 15 under `cmd/`, 8 under `schemas/`, 6 under `sdks/`, 4 under `scripts/`, and 11 elsewhere), each mapping to per-tier targets | Hand edits; `scripts/refactor` rewrites keys on a move |
 | `tests/change-graph-pending.txt` | 90 entries | Paths committed ahead of the code | Hand edits |
 | `tests/registers/change-graph-coverage.yaml` | 368 prefixes | Directories whose source files had no glob key when the completeness check landed | Rewritten downward by `validate-maps` |
-| `tests/registers/residual-change-graph-coverage.yaml` | 82 entries | Members of the change-graph-coverage class the enumeration does not carry | The residual gate in `tests/tier0_static/residual_gate_test.go`, class `ClassChangeGraphCoverage` of `scripts/specshift/scope/scope.go` |
+| `tests/registers/residual-change-graph-coverage.yaml` | 82 entries | Members of the change-graph-coverage class the enumeration does not carry | The residual gate in `tests/static/residual_gate_test.go`, class `ClassChangeGraphCoverage` of `scripts/specshift/scope/scope.go` |
 | `tests/claim-map.json` | 38,543 bytes, 709 lines | 102 claims: 61 `WIRED`, 23 `UNWIRED`, and 18 `ABSENT`. The 41 rows that are not `WIRED` carry a deferral to a step R6 to R23 of `gateway-runtime-comms-remediation.md`, 21 of them to R16 | `scripts/seed-claim-register.py` (824 lines), from the status table of `gateway-runtime-comms.md` |
 
 ### Readers
@@ -90,8 +90,8 @@ Measured on `main` at `b1248f85b` on 2026-11-16, and on `change/0115-spec-struct
   - `coverage --spec` (`cmd_coverage.go`) counts leaf sections with tests in the spec map.
   - `list --specs`, `list --spec`, and `run --spec` resolve sections through the spec map (`cmd_list.go`, `cmd_list_resolve.go`, `resolveSpecsPlan` in `cmd_run_resolve.go`); `list --pkg` and `run --pkg` resolve through the change graph.
   - The verdict's per-failure `spec_sections` come from `lookupSpecSections` in `gotest_json.go`, which parses annotations with its own regular expression.
-- **`tests/tier0_static`.** The nine category F files (`change_graph_*_selection_test.go` ×5, `spec_map_exception_blocker_retention_test.go`, `spec_map_operability_packages_test.go`, `spec_map_slot_address_registration_test.go`, and `testing_md_change_graph_example_test.go`) hold 48 tests in 3,389 lines. `heading_walker_test.go` requires every numbered heading to carry a spec-map key or an exception. `compliance_check_channel_naming_test.go` reads a symbol name from the spec map. `residual_gate_test.go` scans the change-graph-coverage class. `gate_integrity_test.go` lists the claim-register gates and the exceptions validator. `claim_register_test.go` (11 tests), `claim_register_generator_test.go` (2), and `claim_register_proto_agreement_test.go` (3) hold the claim register, 1,748 lines in all.
-- **Other tiers.** `tests/tier11_docs/delegation_tree_spec_map_currency_test.go` checks the spec map against annotations. Three tier-11 `build_gaps_*_records_currency_test.go` files and `spec_28_register_writers_test.go` read the claim register or quote §28.4. `spec_28_ownership_test.go` cites §28.4.
+- **`tests/static`.** The nine category F files (`change_graph_*_selection_test.go` ×5, `spec_map_exception_blocker_retention_test.go`, `spec_map_operability_packages_test.go`, `spec_map_slot_address_registration_test.go`, and `testing_md_change_graph_example_test.go`) hold 48 tests in 3,389 lines. `heading_walker_test.go` requires every numbered heading to carry a spec-map key or an exception. `compliance_check_channel_naming_test.go` reads a symbol name from the spec map. `residual_gate_test.go` scans the change-graph-coverage class. `gate_integrity_test.go` lists the claim-register gates and the exceptions validator. `claim_register_test.go` (11 tests), `claim_register_generator_test.go` (2), and `claim_register_proto_agreement_test.go` (3) hold the claim register, 1,748 lines in all.
+- **Other tiers.** `tests/docs/delegation_tree_spec_map_currency_test.go` checks the spec map against annotations. Three tier-11 `build_gaps_*_records_currency_test.go` files and `spec_28_register_writers_test.go` read the claim register or quote §28.4. `spec_28_ownership_test.go` cites §28.4.
 - **`scripts/`.** `scripts/refactor` rewrites both maps and audits them after a move; `scripts/specshift/scope/scope.go` lists both maps as path-keyed registers.
 - **The `cmd/lenny-test` tests of these readers.** `cmd_validate_test.go` (25 tests, 1,376 lines), `cmd_validate_testdirs_test.go` (4), `changegraph/changegraph_test.go` (5), `changed_select_test.go` (12), and the resolve and tier-select tests.
 - **The specification.** §28.4 requires the claim register, and the §28 lead, N4 of §28.1, the §28.5 lead, and §29.1 refer to it. No other section names the maps.
@@ -104,7 +104,7 @@ Measured on `main` at `b1248f85b` on 2026-11-16, and on `change/0115-spec-struct
 
 1. `changedPathsFor` takes the paths of `git diff --name-only ref...HEAD`, or of the working tree (unstaged, staged, and untracked) when no ref is given.
 2. Each path selects the tiers of every change-graph key whose prefix it starts with. A path no key covers is reported as unmapped.
-3. The unit tier's package scope is built from one `go list -e ./...` call that reads `Imports`, `TestImports`, and `XTestImports`: the change-graph unit targets of the path, its owning package, and the in-module importers of that package to `--rdeps-depth` hops, one by default (`defaultRdepsDepth`). An unmapped path owned by a package selects that package's unit tests. `tests/tier0_static` is left out because the static tier runs it.
+3. The unit tier's package scope is built from one `go list -e ./...` call that reads `Imports`, `TestImports`, and `XTestImports`: the change-graph unit targets of the path, its owning package, and the in-module importers of that package to `--rdeps-depth` hops, one by default (`defaultRdepsDepth`). An unmapped path owned by a package selects that package's unit tests. `tests/static` is left out because the static tier runs it.
 4. `go.mod`, `go.sum`, and `go.work` are reported as module-wide; `--all` runs every package.
 5. Every tier other than unit runs its change-graph targets as whole tiers. The `go list` call passes no build tags, so the tagged tier packages are outside the graph.
 6. `--max-tier` (`cmd_run.go`) drops every tier after the named one in the canonical order. The `pr-fast` group of `tests/groups.yaml` is `changed` with `max_tier: component`, the `pr` group uses `max_tier: integration`, the reusable workflow `.github/workflows/reusable/lenny-test.yml` takes a `max_tier` input, and `test-coverage.md` and the `build` skill instruct `lenny-test --changed --max-tier <tier>`.
@@ -158,7 +158,7 @@ Nothing is committed. The view is a few seconds of computation over the tree, an
 
 ### CS-3 Coverage gate
 
-`TestEveryChangedRequirementHasACitingTest` in `tests/tier0_static` compares the registry of the branch head with the registry at the branch's merge base with `main`, using `survey`'s snapshot comparison. For each requirement the branch adds, or whose text it modifies, the gate passes when one of these holds, and fails naming the requirement otherwise:
+`TestEveryChangedRequirementHasACitingTest` in `tests/static` compares the registry of the branch head with the registry at the branch's merge base with `main`, using `survey`'s snapshot comparison. For each requirement the branch adds, or whose text it modifies, the gate passes when one of these holds, and fails naming the requirement otherwise:
 
 - a test function's annotation cites the requirement directly;
 - an open or planned issue under `issues/<CODE>/` names the requirement in its `requirements` list, when decision O1 settles on option (b).
@@ -201,7 +201,7 @@ kind: non-go-inputs
 version: 1
 inputs:
   - paths: ["charts/lenny/**"]
-    runs: [tests/tier2_component/pgbouncerchart, e2e_kind]
+    runs: [tests/component/pgbouncerchart, e2e_kind]
     reason: The PgBouncer component test renders the chart, and the Kind tier deploys it.
   - paths: ["compose/**", "docker-compose.yml", "Dockerfile"]
     runs: [integration]
@@ -248,11 +248,11 @@ The claim register exists because §28.4 requires it. This change rewrites §28.
 | The `validate-maps` checks that read the maps (14 of 19), `cmd_validate_testdirs.go`, and `cmd/lenny-test/changegraph` | `validate` keeps its five other checks (groups, subsets, flake budget, parity matrix, and the registers directory), drops the `-maps` suffix, and gains the non-Go list check (CS-6) and the annotation check below. |
 | `validateTestFilesMapped` (every tier-2-and-above test file named in the spec map) | `validate` checks that every test function in the tiers `validate-diagnosis` covers carries a `// spec:` annotation or the comment the annotation rule asks of a test that verifies no requirement. Three integration tests fail it today. |
 | The spec-map conjunct of `heading_walker_test.go` | Removed from the walker; its other conjuncts stay until 0155 retires the category E gates. |
-| `tests/tier11_docs/delegation_tree_spec_map_currency_test.go` | Nothing; the index is the map it compared. |
+| `tests/docs/delegation_tree_spec_map_currency_test.go` | Nothing; the index is the map it compared. |
 | The claim-register reads of the three tier-11 `build_gaps_*` tests and the §28.4 quotation in `spec_28_register_writers_test.go` | The reads are removed; the tests lose the assertions that named the register, and the rest stays for 0155 to retire. |
 | The map steps of `scripts/refactor` and the map entries of `scope.go` | Removed. |
 
-The lines this deletes from `cmd/lenny-test`, `tests/tier0_static`, `tests/tier11_docs`, `scripts/`, and `tests/` are counted in the step digests.
+The lines this deletes from `cmd/lenny-test`, `tests/static`, `tests/docs`, `scripts/`, and `tests/` are counted in the step digests.
 
 ### CS-10 Test names
 
@@ -264,7 +264,7 @@ The 8,234 existing names that carry a section number are renamed by the area tha
 
 Area `pools` has migrated. A branch changes `pkg/controller/warmpool/reconcile.go` and modifies the text of `CLAIM-R4` on `spec/capabilities/pools/pod-claims.md`.
 
-1. **Selection.** The owning package of the Go file is `pkg/controller/warmpool`. The import graph adds every package that builds it: `cmd/lenny-controller`, the component test packages under `tests/tier2_component/` that import the controller, and the integration package. The hunk in `pod-claims.md` falls inside `CLAIM-R4`; the index names three test functions that cite it, in `pkg/gateway/podlifecycle/podsession` and in a contract package, and one deciding function in `pkg/gateway/podlifecycle/podclaim`, whose package is then treated as changed. No non-Go input changed.
+1. **Selection.** The owning package of the Go file is `pkg/controller/warmpool`. The import graph adds every package that builds it: `cmd/lenny-controller`, the component test packages under `tests/component/` that import the controller, and the integration package. The hunk in `pod-claims.md` falls inside `CLAIM-R4`; the index names three test functions that cite it, in `pkg/gateway/podlifecycle/podsession` and in a contract package, and one deciding function in `pkg/gateway/podlifecycle/podclaim`, whose package is then treated as changed. No non-Go input changed.
 2. **Bound.** `lenny-test run --changed` runs static, unit (the selected packages), component, and contract. `lenny-test gate merge` also runs the integration package, which the merge gate's tiers include.
 3. **Coverage gate.** `CLAIM-R4` is modified, and three tests cite it directly, so the gate passes. Had the branch added `CLAIM-R9` with no citing test, the gate would fail naming it, unless an open issue under `issues/CLAIM/` listed `CLAIM-R9` (decision O1, option (b)).
 4. **Coverage view.** `lenny-test coverage --spec CLAIM-R4` lists the three tests by tier, the deciding function, and any tests that still cite `§4.6.1` and reach `CLAIM-R4` through the stub, marked indirect.
@@ -288,8 +288,8 @@ Area `pools` has migrated. A branch changes `pkg/controller/warmpool/reconcile.g
   - `scripts/specshift/annotation`: the index, and the test-name identifier check.
   - `scripts/specshift/survey`: `findSites` over the index.
   - `cmd/lenny-test`: the selector (`changed_select.go`, `cmd_run_resolve.go`), the coverage view (`cmd_coverage.go`), `list` and `run --spec`, the verdict's annotation lookup (`gotest_json.go`), the tier bound (`cmd_run.go`, `groups_yaml.go`), `validate` (`cmd_validate.go`, `cmd_validate_yaml.go`), and the removal of `changegraph/` and `cmd_validate_testdirs.go`.
-  - `tests/tier0_static`: the coverage gate and the removals of CS-9.
-  - `tests/tier11_docs`: the edits of CS-9.
+  - `tests/static`: the coverage gate and the removals of CS-9.
+  - `tests/docs`: the edits of CS-9.
   - `scripts/refactor`, `scripts/specshift/scope/scope.go`, and `scripts/specshift/identifier/rekey.go`: the map steps and entries removed.
 - **Records.** `tests/non-go-inputs.yaml` (new); the retired files of CS-9; the issues of CS-8 under `issues/`; the v1 program's area exit (CS-10).
 - **Configuration.** `tests/groups.yaml` and `.github/workflows/reusable/lenny-test.yml` (CS-7).

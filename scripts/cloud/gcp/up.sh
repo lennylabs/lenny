@@ -18,7 +18,7 @@
 #   GKE_CLUSTER_LOCATION=us-central1 \
 #   scripts/cloud/gke/up.sh <release-name>
 #
-# Outputs the env vars the tier-6 tests read:
+# Outputs the env vars the e2e_cloud-tier tests read:
 #   LENNY_CLOUD_PROVIDERS=gcp
 #   LENNY_GCP_PROJECT
 #   LENNY_GCP_REGION
@@ -56,7 +56,7 @@ terraform init -upgrade >/dev/null
 # tfvars is the per-release topology declaration: which managed
 # services to provision, their tiers, their PSA wiring. It is
 # written ONCE at first up.sh and reused as-is on every later
-# invocation, so re-running up.sh after a tier-6 run-e2e.sh (which
+# invocation, so re-running up.sh after an e2e_cloud-tier run-e2e.sh (which
 # calls up.sh without WITH_CLOUD_SQL / WITH_MEMORYSTORE set) does
 # NOT destroy the managed datastores that an earlier tier-7 run
 # brought up — the infra is treated as a whole. To change topology,

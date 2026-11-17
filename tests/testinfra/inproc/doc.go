@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package inproc boots a single-binary Lenny in-process against
-// in-memory state for tier-7a multi-component scenarios.
+// in-memory state for load_local-tier multi-component scenarios.
 //
 // Scenarios that need more than a single component (gateway plus
 // admission, gateway plus controller, gateway plus token-service)
@@ -19,6 +19,6 @@
 // the Lenny boot path is wired in Wave 3 as the first scenario
 // that needs it lands.
 //
-// Used by tier-7a multi-component scenarios under
-// tests/tier7a_load_local/scenarios/.
+// Used by load_local-tier multi-component scenarios under
+// tests/load_local/scenarios/.
 package inproc

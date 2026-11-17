@@ -56,7 +56,7 @@ type Options struct {
 	// Breaker is the §4.9 upstream circuit breaker the proxy's forwarder
 	// gates every upstream call through. A nil breaker selects a fresh
 	// default-configured one. A test that drives the breaker across
-	// requests (for example a tier-8 provider-partition chaos scenario)
+	// requests (for example a chaos-tier provider-partition chaos scenario)
 	// injects its own breaker with a controllable clock and threshold so
 	// it can trip the breaker, observe the open state, advance past the
 	// cooldown, and assert the half-open probe recovery.

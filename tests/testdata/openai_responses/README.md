@@ -25,7 +25,7 @@ One upstream draft-2019-09 self-recursion (`$recursiveAnchor` /
 self-`$ref` for draft 2020-12 compatibility; this changes no accepted
 or rejected instance since the bundle is self-contained and the
 recursion always resolves to the same enclosing schema.
-`tests/tier3_contract/rest_openai_responses/published_schema_test.go`
+`tests/contract/rest_openai_responses/published_schema_test.go`
 validates the `/v1/responses` response body against this file via
 `tests/testinfra/schematest`, so the wire body is checked against
 OpenAI's own published schema and not only against Lenny's translator

@@ -19,7 +19,7 @@ type CloudWatchAPI interface {
 	GetMetricData(ctx context.Context, params *cloudwatch.GetMetricDataInput, optFns ...func(*cloudwatch.Options)) (*cloudwatch.GetMetricDataOutput, error)
 }
 
-// AWSPoller polls CloudWatch for tier-12 metrics: RDS CPU and
+// AWSPoller polls CloudWatch for load_cloud-tier metrics: RDS CPU and
 // connections, ElastiCache CPU and evictions, ALB request counts,
 // EKS node CPU.
 type AWSPoller struct {

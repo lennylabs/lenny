@@ -11,7 +11,7 @@
 // the in-memory implementation in this package or a Postgres-backed
 // implementation in a later phase. Both implementations satisfy the
 // same wire-level contract; the contract tests in
-// tests/tier3_contract/rest_idempotency/ exercise the middleware
+// tests/contract/rest_idempotency/ exercise the middleware
 // itself, not the store.
 package idempotency
 

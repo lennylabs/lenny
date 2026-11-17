@@ -143,7 +143,7 @@ func stressRaceDefault(tag, target string) bool {
 	if tag == "load_local" {
 		return true
 	}
-	return strings.Contains(target, "tier7a_load_local")
+	return strings.Contains(target, "load_local")
 }
 
 // resolveStressRace turns the --race tri-state into the detector

@@ -115,7 +115,7 @@ func (f *fakeStream) TailClient() (RedisTailClient, error) { return newParkedTai
 // parkedTailClient models a real Redis connection under XREAD BLOCK 0: the
 // read parks indefinitely and, matching go-redis, does not observe a
 // deadline-free context cancellation. Only Close ends it. It is what lets a
-// tier-1 test pin that the tail closes its own client rather than relying on
+// unit-tier test pin that the tail closes its own client rather than relying on
 // the context to unblock the read.
 type parkedTailClient struct {
 	closed chan struct{}

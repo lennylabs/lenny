@@ -20,7 +20,7 @@ TestQuotaCheckFiresAtEightyPercent
 TestIdempotencyKeyReplaysCachedResponse
 ```
 
-File names match the subject. `pkg/store/session/session.go` → `pkg/store/session/session_test.go`. Component-tier suites mirror the package path under `tests/tier2_component/`.
+File names match the subject. `pkg/store/session/session.go` → `pkg/store/session/session_test.go`. Component-tier suites mirror the package path under `tests/component/`.
 
 Build tags are mandatory above the unit tier:
 
@@ -39,7 +39,7 @@ Build tags are mandatory above the unit tier:
 
 ## Annotations
 
-Above every test function from tier-2 onward:
+Above every test function from the component tier onward:
 
 ```go
 // spec: 4.6.1 (warm pool controller — pod lifecycle), 12.3 (postgres ha requirements)
@@ -49,9 +49,9 @@ Above every test function from tier-2 onward:
 func TestSandboxClaimSkipLocked(t *testing.T) { ... }
 ```
 
-- `spec:` is mandatory on every test from Tier 2 onward. It lists every spec section the test encodes.
-- `diagnosis:` is mandatory on every test from Tier 2 onward.
-- The harness extracts both at compile time via `lenny-test validate-diagnosis`. Missing or malformed annotations fail Tier 0 lint.
+- `spec:` is mandatory on every test from the component tier onward. It lists every spec section the test encodes.
+- `diagnosis:` is mandatory on every test from the component tier onward.
+- The harness extracts both at compile time via `lenny-test validate-diagnosis`. Missing or malformed annotations fail the static tier lint.
 
 Scaffold variant: tests that aren't yet implementing the assertion may carry the diagnosis inside a `t.Skip("not implemented: §X.Y — ...")` call instead. The validator recognises this form.
 
@@ -94,10 +94,10 @@ Each row is a subtest with a deterministic name. `go test -run TestWorkspacePlan
 
 ## Parallelism
 
-- Tier 1 tests are `t.Parallel()` by default.
-- Tier 2 component tests are `t.Parallel()` within a suite. Each test reserves its own schema or namespace.
-- Tier 4 integration tests are serial by default within a suite. The compose stack has finite capacity.
-- Tier 5 e2e and beyond are serial within a suite; parallelism is at the suite level managed by CI.
+- Unit tests are `t.Parallel()` by default.
+- Component tests are `t.Parallel()` within a suite. Each test reserves its own schema or namespace.
+- Integration tests are serial by default within a suite. The compose stack has finite capacity.
+- e2e_kind and beyond are serial within a suite; parallelism is at the suite level managed by CI.
 
 ## Assertions
 

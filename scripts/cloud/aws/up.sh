@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/up.sh — provisions the tier-6 EKS cluster.
+# scripts/cloud/aws/up.sh — provisions the e2e_cloud-tier EKS cluster.
 #
 # Runs `terraform apply` against deploy/terraform/cloud/aws/ with
 # var.create_cluster=true so the apply produces a working EKS
@@ -32,11 +32,11 @@ TF_DIR="${REPO_ROOT}/deploy/terraform/cloud/aws"
 TFVARS_FILE="${TF_DIR}/${RELEASE}.tfvars.json"
 
 # Shape -> (node_instance_type, node_desired_size, node_max_size).
-# The cloud-* shapes are sized for the tier-6 conformance suite (no
+# The cloud-* shapes are sized for the e2e_cloud-tier conformance suite (no
 # load fixture, no warm-pool churn). The load-* shapes are sized for
 # tier-7 cloud-load: each scale's warm pools alone add ~25 / ~55 /
 # ~175 vCPU of pod requests on top of the chart workloads, so the
-# tier-6 shapes are dramatically undersized for tier-7. NODE_DESIRED,
+# e2e_cloud-tier shapes are dramatically undersized for tier-7. NODE_DESIRED,
 # NODE_MAX, and NODE_INSTANCE_TYPE env vars override the shape
 # defaults so a caller (run-load.sh, an ad-hoc operator) can tune
 # without picking a new shape; the override is also how
@@ -89,7 +89,7 @@ echo "aws/up.sh: shape=${SHAPE} region=${REGION} release=${RELEASE} node=${NODE_
 # tfvars is the per-release topology declaration: which managed
 # services to provision, their instance sizes, their networking. It
 # is written ONCE at first up.sh and reused as-is on every later
-# invocation. Reusing it means re-running up.sh after a tier-6
+# invocation. Reusing it means re-running up.sh after an e2e_cloud tier
 # `run-e2e.sh` (which calls up.sh without WITH_RDS / WITH_ELASTICACHE
 # set) does NOT destroy the managed RDS + ElastiCache that an
 # earlier tier-7 `run-load.sh` brought up — the infra is treated as
@@ -110,7 +110,7 @@ else
   #   ELASTICACHE_NODE_TYPE / ELASTICACHE_SHARDS / ELASTICACHE_REPLICAS
   #     — Redis node type and topology.
   #   TEST_CIDR — single CIDR for the caller's home/office IP. Admits
-  #     external Postgres + Redis connections so the tier-6 managed-
+  #     external Postgres + Redis connections so the e2e_cloud-tier managed-
   #     service tests can run from outside the VPC. Defaults to the
   #     caller's current public IP fetched from checkip.amazonaws.com.
   WITH_RDS="${WITH_RDS:-0}"

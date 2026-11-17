@@ -20,38 +20,39 @@ Every code change ships with tests across all relevant tiers, not unit tests alo
 
 ## The tier model
 
-The suite runs in thirteen stages (`lenny-test --tier <name>`; `--max-tier <name>` runs 0 through that tier; `--changed` selects by git diff). Tier 7 has a local stage (7a) gating a Kind stage (7b); tier 12 is the cloud load tier.
+The suite runs in tiers, each named for what its tests need (`lenny-test --tier <name>`; `--changed` selects by git diff). `--max-tier <name>` runs every tier up to and including `<name>` in the order of the table below, until change 0116 replaces that order with the gates. Each tier's tests sit in `tests/<name>/`, except the unit tests, which sit beside the code they test. TESTING.md ("Former tier numbers") maps the numbers the tiers carried before change 0155 to their names; the historical records keep the numbers.
 
-| Tier | Name | Covers |
-|:--|:--|:--|
-| 0 | static | `go build`, `go vet`, `golangci-lint`, schema and codegen checks |
-| 1 | unit | pure functions and single types, in-process |
-| 2 | component | one component against a real kube-apiserver (envtest) or a single container |
-| 3 | contract | wire contracts between components (proto, JSONL, HTTP) |
-| 4 | integration | multi-service flows on the compose stack (Postgres, Redis, MinIO) |
-| 5 | e2e (Kind) | full chart on Kind: pods, NetworkPolicy, admission, mTLS, lifecycle |
-| 6 | e2e (cloud) | behaviors Kind cannot reproduce (gVisor nodes, Kata, managed LB, multi-zone) |
-| 7 | load and SLO | concurrency, ordering, atomicity, error propagation (7a local, 7b Kind) |
-| 8 | chaos | failure injection, partition, fail-open recovery |
-| 9 | security | auth, isolation, network policy, credential handling |
-| 10 | conformance | runtime adapter conformance battery |
-| 11 | documentation | doc and runbook consistency (alert-to-runbook resolution, examples) |
-| 12 | load and SLO (cloud) | sustained cloud-scale load |
+| Tier | Covers |
+|:--|:--|
+| `static` | `go build`, `go vet`, `golangci-lint`, schema and codegen checks |
+| `unit` | pure functions and single types, in-process |
+| `component` | one component against a real kube-apiserver (envtest) or a single container |
+| `contract` | wire contracts between components (proto, JSONL, HTTP) |
+| `integration` | multi-service flows on the compose stack (Postgres, Redis, MinIO) |
+| `e2e_kind` | full chart on Kind: pods, NetworkPolicy, admission, mTLS, lifecycle |
+| `e2e_cloud` | behaviors Kind cannot reproduce (gVisor nodes, Kata, managed LB, multi-zone) |
+| `load_local` | concurrency, ordering, atomicity, and error propagation, in-process |
+| `load_kind` | load and SLO cases that need real Kubernetes primitives, on Kind |
+| `chaos` | failure injection, partition, fail-open recovery |
+| `security` | auth, isolation, network policy, credential handling |
+| `conformance` | runtime adapter conformance battery |
+| `docs` | doc and runbook consistency (alert-to-runbook resolution, examples) |
+| `load_cloud` | sustained cloud-scale load |
 
 ## Which tiers a change writes tests for
 
 A change writes tests for every tier whose surface it touches. This list says which tiers' tests a change writes; which tiers run, and what must pass before a merge, is under "Gates" below.
 
-- Pure function, type, or in-process logic: tier 1.
-- Controller, reconciler, or anything reading or writing the kube-apiserver: tier 2 (envtest).
-- A wire contract (a proto message, a JSONL frame, an HTTP request or response, a CRD schema): tier 3.
-- A flow that crosses the gateway, a datastore, or another service: tier 4.
-- A cluster behavior (pod lifecycle, NetworkPolicy, admission webhook, mTLS, drain): tier 5.
-- Concurrency, ordering, atomicity, or rate behavior: tier 7a, and 7b when it needs real Kubernetes primitives.
-- A failure or recovery path (datastore loss, partition, fail-open, leader failover): tier 8.
-- Authentication, authorization, tenant isolation, egress, or credential delivery: tier 9.
-- A runtime adapter contract: tier 10.
-- Documentation, alert rules, or runbooks: tier 11.
+- Pure function, type, or in-process logic: the unit tier, in a `_test.go` file beside the code it tests. No directory under `tests/` holds unit tests.
+- Controller, reconciler, or anything reading or writing the kube-apiserver: component tier (envtest).
+- A wire contract (a proto message, a JSONL frame, an HTTP request or response, a CRD schema): the contract tier.
+- A flow that crosses the gateway, a datastore, or another service: integration tier.
+- A cluster behavior (pod lifecycle, NetworkPolicy, admission webhook, mTLS, drain): the e2e_kind tier.
+- Concurrency, ordering, atomicity, or rate behavior: the load_local tier, and the load_kind tier when it needs real Kubernetes primitives.
+- A failure or recovery path (datastore loss, partition, fail-open, leader failover): the chaos tier.
+- Authentication, authorization, tenant isolation, egress, or credential delivery: the security tier.
+- A runtime adapter contract: the conformance tier.
+- Documentation, alert rules, or runbooks: the docs tier.
 
 A change usually touches several of these. Implement the tests for each tier the change reaches, not only the lowest one.
 
@@ -61,9 +62,9 @@ The merge, area, and release gates state which tiers run and what must be green.
 
 | Gate | When | Tiers | Must be green to |
 |:--|:--|:--|:--|
-| Merge | Every branch, on its head commit, before it merges | 0; 1 on the changed packages and their importers; 2 to 4 as `--changed` selects against `main`; the general documentation gates of 11 | Merge into `main` |
-| Area | Each milestone exit from M3 on | 5, 8 core, 9, 10, and 11 for the area, plus the area's journeys | Close the milestone |
-| Release | Before a release, and weekly on `main` | 6, 7, 12, 8 in full, and all journeys | Tag a release |
+| Merge | Every branch, on its head commit, before it merges | static; unit on the changed packages and their importers; component, contract, and integration as `--changed` selects against `main`; the general documentation gates of docs | Merge into `main` |
+| Area | Each milestone exit from M3 on | e2e_kind, chaos core, security, conformance, and docs for the area, plus the area's journeys | Close the milestone |
+| Release | Before a release, and weekly on `main` | e2e_cloud, load_local, load_kind, load_cloud, chaos in full, and all journeys | Tag a release |
 
 `lenny-test gate` runs the merge gate in one canonical environment, the Linux container it builds from `tests/gate/Dockerfile`, and writes `tests/results/gate-<run>.json` (TESTING.md, "Merge gate"). Only a run in that container yields a merge verdict. `lenny-test gate --here` runs the tiers in the current environment, and outside the gate image (when `LENNY_GATE_IMAGE` is not set, or does not name the image that `tests/gate/Dockerfile` at the commit defines) its verdict is `UNVERIFIED` at best and its exit code is non-zero, with the reason recorded under `gate.unverified`. A run on a tree with uncommitted changes is `UNVERIFIED` at best in the same way. Until the area and release gates have their own commands, run their tiers with `lenny-test --tier <name>`.
 
@@ -73,6 +74,15 @@ The merge policy:
 2. `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges.
 3. A merge-gate failure is never recorded as pre-existing. Recording a failure that also occurs on `main` as pre-existing applies only to tiers outside the merge gate.
 4. Only a flaky test enters quarantine: a test that fails and passes on the same commit. A deterministic failure on `main` does not enter quarantine; it is fixed or reverted under rule 2. A quarantined test gets an entry in `tests/flake-budget.yaml` that names its owner and its reason, and its skip carries a reason in the `quarantined:` category. The quarantine has a cap, the `cap` field of that file. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
+
+## Documentation checks
+
+A new check of the documentation, the specification, or the records is one of two kinds, and no other:
+
+- **A general gate.** It checks the documentation as a whole against a rule that holds for every page, such as links that resolve, code blocks that parse, runbooks that every alert names, or a page's front matter. The general gates of the docs tier are listed in `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`, and the gates of the specification structure run in the structure package of the static tier.
+- **A generator check.** It regenerates a file from its source, such as a catalog, an index, or a reference page from the definition blocks, and fails when the committed file differs.
+
+No test matches specification prose. A test does not read a numbered section or a specification page and assert that a phrase, a sentence, or a heading's wording appears there, and it does not assert the wording of a gap record. A requirement is verified by the code that carries it out, and a page's names and values are checked by the documentation gates against the catalogs (`doc-content.md`, "Documentation and the specification"). A test that pins prose fails when the text moves without any defect behind it. The docs-tier reconciliation tests and gap-record tests that match prose today are deleted or replaced area by area, at each area's milestone exit.
 
 ## Coverage target
 
@@ -89,7 +99,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 ## Test conventions
 
 - Every test that verifies a requirement carries a `// spec:` annotation in its doc comment naming the requirements it verifies, in the form `spec-annotations.md` gives (`// spec: POOL-R5`, or `// spec: §N.M (section heading)` while the page has not landed, as "Transition" in `spec-annotations.md` states). The harness maps tests to requirements through this annotation.
-- Every tier-2-and-higher test carries a `// diagnosis:` comment immediately above the function declaration, stating what a failure means. The harness surfaces it in the verdict.
+- Every test in the component tier and the tiers after it carries a `// diagnosis:` comment immediately above the function declaration, stating what a failure means. The harness surfaces it in the verdict.
 - Name tests for the behavior they check rather than for the function under test alone. A test name carries no section number and no identifier (`spec-annotations.md`).
 
 ## How to run
@@ -98,7 +108,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 - `lenny-test gate` runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.
 - `lenny-test --tier <name>` runs one tier; `--pkg <path>` scopes to a package.
 - Bring infrastructure up with `lenny-test infra up --profile compose|kind|all` before integration and higher tiers; see the AVAILABLE INFRASTRUCTURE the build loops document for standing clusters and stacks.
-- Check the environment before running any tier above 1, and read a failure there as an environment failure until you have ruled that out. The checks are in "Environment preflight" below.
+- Check the environment before running any tier after the unit tier, and read a failure there as an environment failure until you have ruled that out. The checks are in "Environment preflight" below.
 - `lenny-test stress --test <Name> --runs <N>` exercises a flake budget for concurrency-sensitive tests.
 
 ## How to apply when editing
@@ -107,11 +117,11 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 2. Write the tests for those tiers alongside the code, covering the non-happy paths.
 3. Iterate with `lenny-test --changed --max-tier <tier>` for each reached tier, then commit and run `lenny-test gate`; fix the code until the verdict for the head commit is `PASS`.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
-5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to tier-2-and-up tests.
+5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to the tests of the component tier and the tiers after it.
 
 ## Environment preflight
 
-A tier above 1 runs against a cluster or a compose stack whose images were built from some earlier revision
+A tier after the unit tier runs against a cluster or a compose stack whose images were built from some earlier revision
 of this tree. When the two drift apart the tests fail for reasons that have nothing to do with the change
 under test, and the failure looks exactly like a code defect: the container exits immediately, the pod never
 reaches Ready, and every `kubectl wait` burns its full timeout. One run spent 1400 seconds waiting on pods
@@ -155,10 +165,10 @@ and, for any pool at zero ready, read one of its pods' logs before running anyth
 
 **4. No orphaned test infrastructure is still running.** An envtest run killed part-way leaves its etcd and
 kube-apiserver behind, holding memory and ports. Any such process reparented to init (`ppid` of 1) is
-orphaned; reap them with `pkill -f kubebuilder-envtest` before starting, and again after each tier-2
-package.
+orphaned; reap them with `pkill -f kubebuilder-envtest` before starting, and again after each
+component-tier package.
 
-**5. The failure you are looking at is yours.** Before treating a tier failure above 1 as a defect in the
+**5. The failure you are looking at is yours.** Before treating a failure in a tier after the unit tier as a defect in the
 change, confirm the same tier fails on a clean checkout of the merge base. For a tier outside the merge
 gate, a failure that predates the change is a pre-existing condition to record, not work for this step, and
 rebuilding a landed step to make somebody else's broken fixture pass is how a step enters a loop it cannot
@@ -213,13 +223,13 @@ full, MinIO answers every PUT with `507 Insufficient Storage`. The adapter retri
 terminal seal fails inside its short e2e window, and the gateway releases the pod with the failed
 disposition. The symptom is far from the cause: a pod that should recycle or hold `reserved` after a session
 ends is retired instead, its claim disappears, and a wait on the claim reports an empty phase. Check
-`df -h /` before a tier above 1. The usual consumer is the Docker build cache that repeated content-tagged
+`df -h /` before a tier after the unit tier. The usual consumer is the Docker build cache that repeated content-tagged
 image builds leave behind; `docker system df` shows it, and `docker builder prune --filter until=12h` frees
 the unused part without touching an image a cluster runs.
 
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason that opens with one of the categories in
-`cmd/lenny-test/skipreason`, such as `blocked:`. The tier-0 skip-reason classifier refuses any other
+`cmd/lenny-test/skipreason`, such as `blocked:`. The static-tier skip-reason classifier refuses any other
 reason; `tests/registers/skip-reasons.yaml` is the baseline of older skips that predate the categories, and
 it only shrinks. A test skipped with a recorded reason is honest; one that fails for an environmental reason
 teaches everyone to ignore red.
@@ -227,7 +237,7 @@ teaches everyone to ignore red.
 ## Escape hatches
 
 - A pure refactor with no behavior change does not need new tests and is not held to the new-code coverage target; the existing tests must still pass.
-- Tier 6 and tier 12 require operator-provisioned cloud resources (managed Kubernetes, gVisor nodes, sustained load infrastructure). When those are unavailable locally, implement the tests, state the dependency, and run the tiers that do run locally; do not let the cloud tiers block the rest.
+- The e2e_cloud tier and the load_cloud tier require operator-provisioned cloud resources (managed Kubernetes, gVisor nodes, sustained load infrastructure). When those are unavailable locally, implement the tests, state the dependency, and run the tiers that do run locally; do not let the cloud tiers block the rest.
 - Generated code (codegen output, mocks) is exercised through the code that uses it; it does not need its own tests.
 
 ## Maintenance

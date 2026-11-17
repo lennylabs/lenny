@@ -20,7 +20,7 @@ import (
 )
 
 // TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2 is a
-// tier-3 contract test: it pushes the Embedded Mode bootstrap seed
+// contract test: it pushes the Embedded Mode bootstrap seed
 // through the real gateway admin bootstrap handler and asserts the
 // §26.2 shared coding-agent blocks and the §26.1 chat resource posture
 // survive registration. This guards the embedded-stack catalog against

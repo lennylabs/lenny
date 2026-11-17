@@ -36,10 +36,10 @@
 #                                       with the log path + session
 #                                       name. Requires `screen`.
 #
-# The script gates on the tier-6 verdict: it refuses to run unless
-# the most recent tier-6 e2e_cloud run on this branch reported PASS.
+# The script gates on the e2e_cloud-tier verdict: it refuses to run unless
+# the most recent e2e_cloud run on this branch reported PASS.
 # Override with LENNY_SKIP_TIER6_GATE=1 (the gate exists because a
-# cloud-load run that turns up a regression the tier-6 cluster-shape
+# cloud-load run that turns up a regression the e2e_cloud-tier cluster-shape
 # assertions also fail on is wasted spend).
 
 set -euo pipefail
@@ -138,8 +138,8 @@ if [[ "${LENNY_DETACH:-0}" == "1" ]]; then
   exit 0
 fi
 
-# Tier-6 gate. The cloud-load run shares all cluster-shape
-# preconditions with tier-6; failing tier-6 first means cloud-load
+# e2e_cloud-tier gate. The cloud-load run shares all cluster-shape
+# preconditions with the e2e_cloud tier; failing the e2e_cloud tier first means cloud-load
 # is wasted spend. LENNY_SKIP_TIER6_GATE=1 bypasses (e.g. when
 # explicitly driving a regression).
 if [[ "${LENNY_SKIP_TIER6_GATE:-0}" != "1" ]]; then
@@ -161,7 +161,7 @@ fi
 #    node group from the same subnets), so the slowest path is
 #    ~10 min on a fresh release. On a repeat run, up.sh detects the
 #    per-release tfvars file already on disk and reuses it — re-
-#    running this script (or running run-e2e.sh for tier-6) against
+#    running this script (or running run-e2e.sh for the e2e_cloud tier) against
 #    the same release does NOT regenerate tfvars and therefore does
 #    NOT destroy the managed services. To change topology (e.g. swap
 #    scales, drop managed services), run aws/down.sh first.
@@ -219,7 +219,7 @@ if (kubectl get namespace lenny-agents >/dev/null 2>&1); then
   done
 fi
 
-# 2. Apply the Lenny chart (reuse the tier-6 run-e2e.sh's chart
+# 2. Apply the Lenny chart (reuse the e2e_cloud-tier run-e2e.sh's chart
 #    install path so the gateway + admission webhooks come up the
 #    same way). Tier-7 runs the gateway against managed RDS Postgres
 #    + ElastiCache (non-cluster-mode) so the in-cluster postgres /
@@ -227,7 +227,7 @@ fi
 #    sandboxes. The chart uses gateway-process-local Redis client
 #    (pkg/redisconn), which does not support cluster-mode, so the
 #    standard single-shard replication group is the right target;
-#    WITH_ELASTICACHE_CLUSTER stays off here (tier-6's cluster-mode
+#    WITH_ELASTICACHE_CLUSTER stays off here (e2e_cloud tier's cluster-mode
 #    tests own that path).
 echo "==[2/5] reuse tier-6 install path (delegating to run-e2e.sh)==" >&2
 AWS_REGION="${REGION}" LENNY_RELEASE="${RELEASE}" \
@@ -286,4 +286,4 @@ LENNY_GATEWAY_BASE_URL="http://127.0.0.1:28080" \
   LENNY_LOAD_CLOUD_PROVIDERS=aws \
   LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE}" \
   LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES:-runc}" \
-  go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/tier12_load_cloud/..."
+  go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/load_cloud/..."

@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component test driving the production §25.8/§25.10 OpsRoll startup
+// Component test driving the production §25.8/§25.10 OpsRoll startup
 // hook against durable Postgres-backed drift and upgrade stores. It is the
 // component-tier counterpart of the in-memory unit tests in
 // opsroll_startup_test.go: the same runOpsRollStartupHook production path,

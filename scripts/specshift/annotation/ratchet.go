@@ -317,7 +317,7 @@ const ratchetBaselineHeader = `# SPDX-License-Identifier: MIT
 # area by area, and an area's count reaches zero before its milestone
 # exits.
 #
-# The ratchet in tests/tier0_static fails a package whose count rises
+# The ratchet in tests/static fails a package whose count rises
 # above the count here, and a package with a citation and no entry. Until
 # the page a package implements exists, new code there may cite a section
 # as before, and the author raises the package's count here in the same

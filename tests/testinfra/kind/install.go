@@ -45,7 +45,7 @@ const agentWorkloadHint = "no Ready agent-pod workload in namespace " + agentNam
 // confirms the `lenny` Helm release is deployed, and confirms the
 // control-plane pods are Ready. When the release is absent or the pods
 // are not Ready, InstallLenny calls t.Skip with installHint rather
-// than failing: a tier-5 run on a host where the operator has not run
+// than failing: an e2e_kind-tier run on a host where the operator has not run
 // the install script skips cleanly instead of reporting a spurious
 // failure.
 func InstallLenny(t testing.TB) *Cluster {
@@ -249,7 +249,7 @@ func controlPlaneReady(c *Cluster) bool {
 //
 // A pod whose phase is Running but whose Ready condition is not True is
 // serving nothing: its container is restarting, still pulling, or failing
-// its readiness probe. Admitting it lets a tier-5 test port-forward to a
+// its readiness probe. Admitting it lets an e2e_kind-tier test port-forward to a
 // pod that never answers and report a confusing assertion failure instead
 // of a clean skip, so the gate fails closed on anything that is not
 // exactly Running with Ready=True. An empty list (the chart was never

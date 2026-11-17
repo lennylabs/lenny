@@ -84,6 +84,9 @@ func buildAgentPod(t *testing.T, profile isolation.Profile, workspaceTier string
 //
 // spec: §17.2; §13.1 (pod-security
 // baseline); §17.2 items 1-2 (RuntimeClass-specific enforcement). F-17.2.15.
+// diagnosis: a failure here means the lenny-pod-security admission policy
+// rejects a pod spec the controller builds for that isolation profile, so
+// every warm pod of a pool on that RuntimeClass would fail admission.
 func TestAdmissionPolicyAcceptsControllerPodSpecsPerRuntimeClass(t *testing.T) {
 	profiles := []isolation.Profile{
 		isolation.ProfileStandard,
@@ -113,6 +116,9 @@ func TestAdmissionPolicyAcceptsControllerPodSpecsPerRuntimeClass(t *testing.T) {
 // sandboxed pod, and that pod must still pass the pod-security policy.
 //
 // spec: §17.2; §6.4 (T4 dedicated-node placement). F-17.2.15.
+// diagnosis: a failure here means the T4 node isolation the controller
+// stamps on a sandboxed pod makes the pod fail the pod-security policy, so
+// a T4 pool could not admit its warm pods.
 func TestAdmissionPolicyAcceptsT4ControllerPodSpec(t *testing.T) {
 	pod := buildAgentPod(t, isolation.ProfileSandboxed, "T4")
 	resp := admitAgentPod(t, pod)

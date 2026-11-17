@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// gateway is the minimal in-process HTTP listener tier-7a multi-
+// gateway is the minimal in-process HTTP listener load_local-tier multi-
 // component scenarios drive. It exposes a tiny subset of the §15.1
 // session lifecycle surface: POST /v1/sessions, GET /v1/sessions/{id},
 // DELETE /v1/sessions/{id}. State is in-memory; the listener binds

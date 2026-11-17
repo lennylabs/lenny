@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+# Each test file of tests/tier1_unit and the file it moved to in change 0155,
+# step S3. A source of the form <file>::<test> moved one test of a file that
+# tested several packages. unit_moves.py reads this list, and list_tests.py
+# reads its second column as the unit tests that tests/tier1_unit held.
+tests/tier1_unit/concurrency/concurrency_test.go::TestAuditChainAppendsAreSerialized	pkg/audit/chain_concurrency_test.go
+tests/tier1_unit/concurrency/concurrency_test.go::TestQuotaHierarchicalCheckIsPure	pkg/quota/hierarchical_check_concurrency_test.go
+tests/tier1_unit/concurrency/concurrency_test.go::TestIdempotencyDetectReuseIsPure	pkg/idempotency/detect_reuse_concurrency_test.go
+tests/tier1_unit/concurrency/concurrency_test.go::TestLeaseExtensionGrantNeverOversteps	pkg/leaseextension/grant_concurrency_test.go
+tests/tier1_unit/flagdefaults/flagdefaults_test.go	cmd/lenny-gateway/flagdefaults_test.go
+tests/tier1_unit/helm/helm_test.go	pkg/chart/values/helm_unittest_test.go
+tests/tier1_unit/lifecycle/lifecycle_state_machine_test.go	tests/testinfra/lifecycleharness/lifecycle_state_machine_test.go
+tests/tier1_unit/lifecycle/recording_runtime_test.go	tests/testinfra/lifecycleharness/recording_runtime_test.go
+tests/tier1_unit/lifecycle/resume_exits_test.go	tests/testinfra/lifecycleharness/resume_exits_test.go
+tests/tier1_unit/lifecycle/stepped_store_test.go	tests/testinfra/lifecycleharness/stepped_store_test.go
+tests/tier1_unit/lifecycle/terminal_writers_test.go	tests/testinfra/lifecycleharness/terminal_writers_test.go
+tests/tier1_unit/rbac/rbac_test.go	pkg/chart/values/cluster_role_verbs_test.go
+tests/tier1_unit/supervisor/harness_test.go	tests/testinfra/supervisorbuild/harness_test.go

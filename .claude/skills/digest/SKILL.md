@@ -29,7 +29,7 @@ Write the digest of one step, or of several steps that share a branch, so the ow
    - A catalog name the documentation still uses after the branch renamed or removed it needs each listed line edited.
    - A requirement cited from more than three functions needs a check that only one of them makes the decision and the others pass its result along. Move the annotation off the ones that do not decide.
 3. Fill in the three sections the generator leaves as "Not filled in yet":
-   - **Gate results.** Tier 0 and every tier the step reached, with the result of each and each pre-existing failure by name.
+   - **Gate results.** The static tier and every tier the step reached, with the result of each and each pre-existing failure by name.
    - **Review outcomes.** The fixes made, the open questions raised in `decisions.md`, and the issues filed. Write "No review ran" when none did.
    - **Defaults applied.** Every choice made without asking the owner, with the option taken.
 4. Commit the digest with the step.

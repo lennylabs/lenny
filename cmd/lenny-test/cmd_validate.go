@@ -109,33 +109,33 @@ func runValidateMaps(args []string) int {
 //
 // Phase 0 implementation:
 //   - Walks tests/ recursively looking for *_test.go files under tier
-//     directories at or above component (tier2_component, tier3_contract,
-//     tier4_integration, tier5_e2e_kind, tier6_e2e_cloud, tier7b_load_kind,
-//     tier8_chaos, tier9_security, tier10_conformance).
+//     directories at or above component (component, contract,
+//     integration, e2e_kind, e2e_cloud, load_kind,
+//     chaos, security, conformance).
 //   - For each, scans for top-level Test functions and confirms a //
 //     diagnosis: comment appears within the 10 lines preceding the function.
 //
 // In Phase 0 there are no tests yet, so this is effectively a no-op that
 // confirms the validator runs without error. As tests are added it gains teeth.
 // componentAndAboveTierDirs returns the tier directories at or above
-// component, relative to the repository root. Both tier-0 predicates
+// component, relative to the repository root. Both static-tier predicates
 // over test files range over this one list: every file in it must
 // appear in the spec map and must carry the spec and diagnosis
 // annotations, so a directory added to one predicate is added to the
 // other.
 func componentAndAboveTierDirs() []string {
 	return []string{
-		"tests/tier2_component",
-		"tests/tier3_contract",
-		"tests/tier4_integration",
-		"tests/tier5_e2e_kind",
-		"tests/tier6_e2e_cloud",
-		"tests/tier7a_load_local",
-		"tests/tier7b_load_kind",
-		"tests/tier8_chaos",
-		"tests/tier9_security",
-		"tests/tier10_conformance",
-		"tests/tier12_load_cloud",
+		"tests/component",
+		"tests/contract",
+		"tests/integration",
+		"tests/e2e_kind",
+		"tests/e2e_cloud",
+		"tests/load_local",
+		"tests/load_kind",
+		"tests/chaos",
+		"tests/security",
+		"tests/conformance",
+		"tests/load_cloud",
 	}
 }
 
@@ -491,7 +491,7 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 // readChangeGraphGlobKeys returns the glob keys of the change graph,
 // read through the shared statement of that reading in
 // cmd/lenny-test/changegraph, so the completeness check, the
-// `--changed` selector, and the tier-0 residual scan resolve a key the
+// `--changed` selector, and the static-tier residual scan resolve a key the
 // same way.
 func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	return changegraph.ReadGlobKeys(path)
@@ -706,7 +706,7 @@ func gitTrackedPaths(root string, trees []string) ([]string, error) {
 // source domain, read from the shared statement of that domain.
 func isTrackedSourceFile(name string) bool { return changegraph.IsSourceFile(name) }
 
-// validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
+// validateTestFilesMapped walks the tier directories from component up for _test.go
 // files and confirms each is referenced from at least one section's
 // `tests` list in spec-map.json (or is explicitly exempt via
 // tests/spec-map-exceptions.yaml — though this version of the
@@ -790,7 +790,7 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 			fmt.Sprintf("%d test file(s) absent from spec-map: %s",
 				len(orphans), strings.Join(preview, "; ")))
 	}
-	return newResult("test files mapped", true, "every tier-2+ test file appears in spec-map")
+	return newResult("test files mapped", true, "every test file from the component tier on appears in spec-map")
 }
 
 // validateSpecMapCoverage confirms every spec section in the map
@@ -1037,12 +1037,12 @@ func readPendingPaths(path string) map[string]bool {
 // `phase:` marker (today simply accept anything under the canonical
 // roots).
 //
-// The canonical roots also cover the documentation trees the tier-11
+// The canonical roots also cover the documentation trees the docs tier
 // batteries read, `proposals/` and the root-level `PROPOSAL-QUEUE.md`
 // among them, because a guard that reads a document fires under
 // `--changed` only when an edit to that document resolves to a key.
 // `supervisor/` and `Dockerfile.supervisor` hold the runtime supervisor's
-// C sources and image, which the tier-0 binary check and the tier-1 C
+// C sources and image, which the static-tier binary check and the unit-tier C
 // harness driver exercise; they sit outside the completeness domain,
 // which reads Go and shell sources only.
 func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
@@ -1221,8 +1221,8 @@ func precedingCommentExists(lines []string, idx int) bool {
 //     the missing infrastructure precisely.
 //   - t.Skip("phase-gated: …")            → blocked behind a phase
 //   - t.Skip("flaky-time: …")              → flaky-time quarantine
-//   - kind.SkipUnlessAvailable(t)         → tier-5 e2e_kind one-liner
-//   - cloud.SkipUnlessAuthorized(t)       → tier-6 helper
+//   - kind.SkipUnlessAvailable(t)         → e2e_kind one-liner
+//   - cloud.SkipUnlessAuthorized(t)       → e2e_cloud helper
 //   - any *.SkipUnless* harness helper that gates the test on an
 //     infrastructure precondition
 //
@@ -1240,7 +1240,7 @@ func hasNotImplementedSkipAfter(lines []string, idx int) bool {
 	}
 	// Both t.Skip(...) and t.Skipf(...) are acceptable. The reason
 	// categories §17.9 allows come from cmd/lenny-test/skipreason,
-	// which the tier-0 skip-reason classifier reads as well, so the
+	// which the static-tier skip-reason classifier reads as well, so the
 	// two readers of the convention cannot enumerate different sets.
 	prefixes := make([]string, 0, len(skipreason.Categories))
 	for _, category := range skipreason.Categories {

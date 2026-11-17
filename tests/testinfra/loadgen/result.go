@@ -13,7 +13,7 @@ import (
 
 // Result is the per-run aggregate. The format is intentionally close
 // to k6's summary export so baselines remain comparable across
-// tier-7a, tier-7b, and tier-12.
+// the load_local tier, the load_kind tier, and the load_cloud tier.
 type Result struct {
 	Scenario   string             `json:"scenario"`
 	Profile    Profile            `json:"-"` // profile shape; not serialized

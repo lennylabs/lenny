@@ -10,7 +10,7 @@ import (
 )
 
 // CollectClusterComponentsFromClientForTest exposes the control-plane
-// Deployment-readiness rows to the external tier-2 envtest so the §17.4
+// Deployment-readiness rows to the external component-tier envtest so the §17.4
 // cluster-backed status read runs against a real kube-apiserver from an
 // already-built clientset, without writing a kubeconfig file or recording a
 // stack. It is test-only. spec: §17.4 (status reads Deployment readiness).
@@ -27,7 +27,7 @@ func CollectClusterComponentsFromClientForTest(ctx context.Context, client kuber
 }
 
 // RolloutRestartDeploymentForTest exposes rolloutRestartDeployment to the
-// external tier-2 envtest so the §24.19 rollout-restart runs against a real
+// external component-tier envtest so the §24.19 rollout-restart runs against a real
 // kube-apiserver from an already-built clientset. It is test-only. spec:
 // §24.19.
 func RolloutRestartDeploymentForTest(ctx context.Context, client kubernetes.Interface, namespace, name string) error {
@@ -35,7 +35,7 @@ func RolloutRestartDeploymentForTest(ctx context.Context, client kubernetes.Inte
 }
 
 // EchoPoolReadyFromConfigForTest exposes echoPoolReadyFromConfig to the
-// external tier-2 envtest so the §17.4 echo-pool-readiness read runs against a
+// external component-tier envtest so the §17.4 echo-pool-readiness read runs against a
 // real kube-apiserver with the lenny.dev CRDs installed. It is test-only.
 // spec: §5.2 (readyCount), §17.4 (pool readiness distinct from gateway-up).
 func EchoPoolReadyFromConfigForTest(ctx context.Context, cfg *rest.Config) bool {
@@ -54,7 +54,7 @@ func ControlPlaneDeploymentNamesForTest() (gateway, controller, ops string) {
 func RestartedAtAnnotationForTest() string { return restartedAtAnnotation }
 
 // NewClusterClientForTest exposes the default newClusterClient so the external
-// tier-2 envtest exercises the §17.4 cluster-client happy path (load a real
+// component-tier envtest exercises the §17.4 cluster-client happy path (load a real
 // kubeconfig and build a working clientset) that the unit test cannot reach
 // because it injects clusterClientFn. It is test-only. spec: §17.4 (the cluster
 // commands reach the in-cluster control plane through the embedded kubeconfig).

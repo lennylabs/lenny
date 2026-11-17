@@ -715,7 +715,7 @@ func TestToolResultForAnUnheldSessionIsDropped_spec_28_5_3(t *testing.T) {
 
 // TestEveryHeartbeatIsAckedWhateverASessionSends_spec_28_5_3 asserts the
 // pod answers every heartbeat whatever text a session's message carries.
-// The text below is the one the tier-5 heartbeat-silence fixture reacts to;
+// The text below is the one the e2e_kind-tier heartbeat-silence fixture reacts to;
 // the fixture filters heartbeats in front of this runtime, so a client that
 // sends this text to a shipped pod cannot stop the acks for every slot.
 // spec: §28.5.3 (CH-MSGSOCK Timing.); §5.2.

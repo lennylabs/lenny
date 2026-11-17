@@ -3,7 +3,7 @@
 // Package skipreason holds the reason categories a skip call may open
 // with. The values live in their own
 // importable package because `cmd/lenny-test` is a main package: the
-// tier-0 classifier that holds every skip call site in the tree to
+// static-tier classifier that holds every skip call site in the tree to
 // these categories cannot import the scaffold-marker reader that also
 // reads them, so one of the two readers would otherwise restate the
 // list and drift from the other.

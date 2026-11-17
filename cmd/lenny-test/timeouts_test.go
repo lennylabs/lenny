@@ -86,7 +86,7 @@ func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
 // tier failure for a timeout alone.
 func TestIntegrationTimeoutExceedsObservedRuntime(t *testing.T) {
 	// Observed: 365s for the slowest of four consecutive passing runs of
-	// tests/tier4_integration on the 8-core developer host on 2026-10-28
+	// tests/integration on the 8-core developer host on 2026-10-28
 	// (351s to 365s, load average 5 to 9), after the package linked each
 	// subprocess command once, shared one Postgres container, and ran the
 	// tests that own their fixtures in parallel (TEST-GAPS T-17.4.33). The
@@ -102,7 +102,7 @@ func TestIntegrationTimeoutExceedsObservedRuntime(t *testing.T) {
 
 // The security tier budget is operator-tunable (code-best-practices).
 //
-// TESTING.md §12.9 (Tier 9, Security) runs the tier-9 package as one
+// TESTING.md §12.9 (security tier, Security) runs the security-tier package as one
 // `go test` binary. Under the 600-second long-tier budget it shared with
 // the load and chaos tiers, a loaded cluster pushed it past the budget and
 // `go test` aborted the binary with no per-test failure (TEST-GAPS
@@ -123,8 +123,8 @@ func TestSecurityTierRunsUnderItsOwnBudget(t *testing.T) {
 		if got, want := timeoutArg(args), tierSecurityTimeout.String(); got != want {
 			t.Errorf("security tier -timeout = %q, want tierSecurityTimeout %q (argv %v)", got, want, args)
 		}
-		if !slices.Contains(args, "-tags=security") || !slices.Contains(args, "./tests/tier9_security/...") {
-			t.Errorf("security tier argv = %v, want -tags=security over ./tests/tier9_security/...", args)
+		if !slices.Contains(args, "-tags=security") || !slices.Contains(args, "./tests/security/...") {
+			t.Errorf("security tier argv = %v, want -tags=security over ./tests/security/...", args)
 		}
 	})
 

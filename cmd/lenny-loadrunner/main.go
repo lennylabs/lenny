@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
 // lenny-loadrunner is the long-running agent that runs on each
-// off-cluster runner instance in the tier-12 load-runner pool. It
-// registers with the tier-12 control plane, pulls jobs from a
+// off-cluster runner instance in the load_cloud-tier load-runner pool. It
+// registers with the load_cloud-tier control plane, pulls jobs from a
 // per-cloud work queue, executes k6 against the supplied target,
 // posts the per-scenario ack back to loadctl, and uploads the k6
 // JSON to object storage.

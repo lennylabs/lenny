@@ -144,7 +144,7 @@ func quoteReplacement(s string) string { return strings.ReplaceAll(s, "$", "$$")
 // rewrite did not reach, because the register writes it inside a wider
 // value such as a note or a citation text, leaves the register pointing
 // at a file the run has moved: the line-citation ratchet then fires on
-// the new path as a file it has no count for, and the tier-0 check that
+// the new path as a file it has no count for, and the static-tier check that
 // resolves a symbol reference against its declaring file fails on the
 // retired token. The run stops with the tree unchanged and the operator
 // corrects the value by hand, rather than completing and leaving the
