@@ -18,7 +18,7 @@ New code is modular, small, and reuses existing surfaces, and it reads like the 
 
 ## What the linter already enforces
 
-Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`, `unused`, `ineffassign`, `misspell`, `gofumpt`, and `goimports` (local prefix `github.com/lennylabs/lenny`). Do not hand-fight formatting or import grouping; run `gofumpt` and `goimports`. Never ignore a returned error to satisfy the compiler. These are machine-checked; the rules below cover what the linter does not.
+The static tier runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`, `unused`, `ineffassign`, `misspell`, `gofumpt`, and `goimports` (local prefix `github.com/lennylabs/lenny`). Do not hand-fight formatting or import grouping; run `gofumpt` and `goimports`. Never ignore a returned error to satisfy the compiler. These are machine-checked; the rules below cover what the linter does not.
 
 ## Functions and files
 
@@ -51,7 +51,7 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 ## Concurrency and resource cleanup
 
 - Guard shared state with the right primitive; document the invariant the lock protects.
-- Code that runs concurrently must be `-race` clean; exercise it under tier 7a (see `test-coverage.md`).
+- Code that runs concurrently must be `-race` clean; exercise it under the load_local tier (see `test-coverage.md`).
 - Do not leak goroutines: every goroutine has a clear exit tied to a context or a closed channel.
 - Close what you open: `defer` the close of rows, response bodies, files, and connections. Put a timeout or deadline on every outbound network call; do not issue an unbounded one.
 
@@ -81,7 +81,7 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 1. Read the target package first; match its idioms, error style, and structure.
 2. Before adding a package or helper, search for an existing one to extend.
 3. Keep functions small and dependencies injected; add the `// spec:` citation on the deciding code, as `spec-annotations.md` states.
-4. Run `gofumpt`, `goimports`, and tier 0; resolve every linter finding rather than suppressing it.
+4. Run `gofumpt`, `goimports`, and the static tier; resolve every linter finding rather than suppressing it.
 5. Keep the diff scoped to the change; revert incidental reformatting.
 
 ## Escape hatches

@@ -3,21 +3,21 @@ layout: default
 title: "Documentation tests"
 parent: "Testing"
 nav_order: 6
-description: Tier-11 doc tests — link integrity, code-block parsing, runbook structure, ADR continuity, schema-validated examples.
+description: Docs tests — link integrity, code-block parsing, runbook structure, ADR continuity, schema-validated examples.
 ---
 
 # Documentation tests
 
-§16 names ten categories of documentation tests. Tier-11 runs them.
+§16 names ten categories of documentation tests. The docs tier runs them.
 
 ## Where they live
 
 | File | What it checks |
 |:-----|:----------|
-| `tests/tier11_docs/docs_test.go` | Directory structure, TESTING.md tier coverage, repo README references, spec README presence |
-| `tests/tier11_docs/code_blocks_test.go` | Parses every fenced Go / Bash / YAML / JSON / SQL block in docs/ and spec/ |
-| `tests/tier11_docs/runbooks_test.go` | docs/runbooks/ format: front matter + Symptom / Diagnosis / Procedure / Verification |
-| `tests/tier11_docs/adr_test.go` | ADR catalog continuity (numbering, references) |
+| `tests/docs/docs_test.go` | Directory structure, TESTING.md tier coverage, repo README references, spec README presence |
+| `tests/docs/code_blocks_test.go` | Parses every fenced Go / Bash / YAML / JSON / SQL block in docs/ and spec/ |
+| `tests/docs/runbooks_test.go` | docs/runbooks/ format: front matter + Symptom / Diagnosis / Procedure / Verification |
+| `tests/docs/adr_test.go` | ADR catalog continuity (numbering, references) |
 
 External scripts wired into the static tier:
 - `scripts/check-adr-catalog.sh` — shell version of the ADR check
@@ -71,7 +71,7 @@ Every `docs/adr/NNNN-<slug>.md` file must be referenced from `docs/adr/index.md`
 
 ## JSON-schema example validation
 
-When `docs/examples/<schema-name>/*.json` exists, the matching schema must live at `schemas/<schema-name>.json` (or `<schema-name>-v1.json`). Each example must parse as valid JSON and validate against the schema. The shell script (`scripts/check-doc-examples.sh`) wraps this; the schema test (`tests/tier0_static/schemas_test.go`) validates the schemas themselves.
+When `docs/examples/<schema-name>/*.json` exists, the matching schema must live at `schemas/<schema-name>.json` (or `<schema-name>-v1.json`). Each example must parse as valid JSON and validate against the schema. The shell script (`scripts/check-doc-examples.sh`) wraps this; the schema test (`tests/static/schemas_test.go`) validates the schemas themselves.
 
 ## Adding a new doc
 
@@ -86,11 +86,11 @@ When `docs/examples/<schema-name>/*.json` exists, the matching schema must live 
 When a code block is the expected output of a command (e.g. an `lenny-ctl --help` excerpt), regenerate via:
 
 ```bash
-LENNY_UPDATE_BASELINE=1 go test ./tests/tier11_docs/...
+LENNY_UPDATE_BASELINE=1 go test ./tests/docs/...
 ```
 
 Today the docs tier has no golden blocks; this hook is for future use.
 
 ## Time-to-Hello-World
 
-TESTING.md §22.7 ties the docs gate to `lenny-test stress --test TestTimeToHelloWorld --runs 50`. The TTHW test (in `tests/tier7b_load_kind/scenarios/`) measures how fast a fresh developer can run their first session. The 5-minute target is per the spec; CI exercises it under the TESTING.md §13.35 phase gate.
+TESTING.md §22.7 ties the docs gate to `lenny-test stress --test TestTimeToHelloWorld --runs 50`. The TTHW test (in `tests/load_kind/scenarios/`) measures how fast a fresh developer can run their first session. The 5-minute target is per the spec; CI exercises it under the TESTING.md §13.35 phase gate.

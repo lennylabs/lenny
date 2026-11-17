@@ -518,7 +518,7 @@ func (d *driver) recordTouchedGo(path string) {
 // rewrite modified, so the format pass regroups imports only in the files the
 // move already touched (proposal §2 step (4), §5 non-goal: no reformatting
 // outside the change). goimports is resolved by PATH then GOPATH/bin and skipped
-// with a warning when absent (matching the lenny-test tier-0 behavior), because
+// with a warning when absent (matching the lenny-test static-tier behavior), because
 // gofmt alone leaves correct, compilable code and the import regrouping is
 // cosmetic; the build gate still proves correctness.
 func (d *driver) formatTree() error {
@@ -553,7 +553,7 @@ func (d *driver) touchedGoFiles() []string {
 	return out
 }
 
-// runGates runs the tier-0 gate the proposal mandates: go build ./..., go vet
+// runGates runs the static-tier gate the proposal mandates: go build ./..., go vet
 // ./..., go list ./... (zero import cycles), and lenny-test validate-maps. Any
 // failure aborts; the caller reverts the move with git.
 func (d *driver) runGates() error {

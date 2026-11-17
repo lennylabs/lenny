@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package opsprocess is the testinfra helper that boots cmd/lenny-ops
-// as a subprocess for tier-4 integration tests. It builds the binary
+// as a subprocess for integration tests. It builds the binary
 // into a temp dir on first call, then launches it bound to a random
 // free port. Provides BaseURL() so tests can issue HTTP against the
 // real lenny-ops process (the §25.4 operability surface) rather than

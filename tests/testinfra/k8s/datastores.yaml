@@ -459,7 +459,7 @@ spec:
         # pod MinIO endpoint and runs `mc mb --ignore-existing` until
         # the bucket reappears. The §12.5 drain-readiness probe runs
         # BucketExists and rejects evictions when the bucket is
-        # missing, so this loop is what keeps tier-5 node-drain
+        # missing, so this loop is what keeps e2e_kind-tier node-drain
         # exercisable across the lifetime of the cluster.
         - name: bucket-init
           # pgsty/mc, the maintained fork of the MinIO client, pinned by
@@ -555,7 +555,7 @@ spec:
 # the namespace to the store pods plus kube-system CoreDNS on port 53 so
 # a pod can resolve a store's Service DNS name before dialing it. They
 # are additive, so they do not weaken the default-deny for any other
-# destination: the tier-9 NetworkPolicy adversarial test still observes
+# destination: the security-tier NetworkPolicy adversarial test still observes
 # the gateway as unreachable from an unlabelled pod, and DNS resolution
 # alone grants no data-plane reach to any non-datastore peer.
 apiVersion: networking.k8s.io/v1

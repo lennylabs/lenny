@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/gcp/up-loadctl.sh — provisions the tier-12 control
+# scripts/cloud/gcp/up-loadctl.sh — provisions the load_cloud-tier control
 # plane on GCP (Cloud Run + Cloud SQL + Secret Manager). Idempotent.
 #
 # Required environment:

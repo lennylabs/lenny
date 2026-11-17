@@ -183,7 +183,7 @@ if want core; then
   check_simple protoc-gen-go  protoc-gen-go  --version        '[0-9]+\.[0-9]+(\.[0-9]+)?' "0.0"                          core
 fi
 
-# ---- Kubernetes (tier 5) ----
+# ---- Kubernetes (e2e_kind tier) ----
 
 if want kubernetes; then
   check_simple kubectl kubectl version     '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_KUBECTL"      kubernetes
@@ -206,7 +206,7 @@ if want kubernetes; then
   fi
 fi
 
-# ---- Cloud (tier 6) ----
+# ---- Cloud (e2e_cloud tier) ----
 
 if want cloud; then
   check_simple gcloud  gcloud  version    '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_GCLOUD"   cloud
@@ -233,7 +233,7 @@ if want load; then
   check_simple toxiproxy-server toxiproxy-server --version    '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TOXIPROXY" load
 fi
 
-# ---- Security (tier 9) ----
+# ---- Security (security tier) ----
 
 if want security; then
   check_simple kubeaudit   kubeaudit   version    '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_KUBEAUDIT"  security
@@ -255,7 +255,7 @@ if want sdk; then
   check_simple tsc                   tsc                   --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_TYPESCRIPT"             sdk
 fi
 
-# ---- Documentation (tier 11) ----
+# ---- Documentation (docs tier) ----
 
 if want docs; then
   check_simple ruby                 ruby                --version  '[0-9]+\.[0-9]+(\.[0-9]+)?' "$LENNY_VERSION_RUBY"                docs

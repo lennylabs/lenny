@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-# Multi-zone Kind cluster configuration for the tier-8 chaos
+# Multi-zone Kind cluster configuration for the chaos
 # cross-zone failover tests (TestCrossZonePartition,
 # TestMultiZoneDR).
 #
@@ -10,7 +10,7 @@
 # topologySpreadConstraints lands one pod per zone — the precondition
 # every cross-zone partition / replication chaos test depends on.
 #
-# Apply this in place of cluster.yaml when the tier-8 cross-zone
+# Apply this in place of cluster.yaml when the chaos-tier cross-zone
 # suite is the target:
 #
 #   kind create cluster --config tests/testinfra/kind/cluster-multi-zone.yaml

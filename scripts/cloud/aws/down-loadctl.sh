@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/down-loadctl.sh — tears down the tier-12 AWS
+# scripts/cloud/aws/down-loadctl.sh — tears down the load_cloud-tier AWS
 # control plane. Idempotent.
 # TESTING.md §12.12 / Wave 6.
 

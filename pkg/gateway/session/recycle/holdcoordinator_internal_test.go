@@ -343,7 +343,7 @@ func realTimerCoordinator(del claimDeleter, reb claimRebinder) *HoldCoordinator 
 
 // TestConcurrentRebindVsExpiryIsRaceClean exercises the §4.6.1 reserved-hold
 // coordinator under concurrent Hold / Rebind / expire across many claims with
-// real short-lived timers. It is the tier-7a stress companion to the unit
+// real short-lived timers. It is the load_local-tier stress companion to the unit
 // tests: it asserts the map-guarded timer state is -race clean and that no
 // goroutine panics when a rebind and an expiry timer fire for the same claim
 // at nearly the same instant. Run under `go test -race`.

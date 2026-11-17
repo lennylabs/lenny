@@ -63,7 +63,7 @@ type preStopDeps struct {
 // against PID 1, logging through logf. It returns the process exit status:
 // 0 for every drain outcome, and 2 when the arguments do not parse. A parse
 // failure means the pod builder and the binary disagree on the subcommand's
-// flags, which the tier-0 deployment-boundary gate checks.
+// flags, which the static-tier deployment-boundary gate checks.
 func Run(args []string, logf func(string, ...any)) int {
 	cfg, err := parsePreStopArgs(args)
 	if err != nil {

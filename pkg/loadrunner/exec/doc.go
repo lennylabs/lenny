@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package exec runs a tier-12 scenario against a target gateway and
+// Package exec runs a load_cloud-tier scenario against a target gateway and
 // posts the result to the loadctl callback URL. It is the executable
 // core of cmd/lenny-loadrunner.
 //

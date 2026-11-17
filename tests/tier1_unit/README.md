@@ -1,10 +1,10 @@
 # tier1_unit
 
-Index for Tier 1 unit tests. Per TESTING.md §12.1 and §4, Lenny's unit tests live next to the code they cover under `pkg/.../foo_test.go`. This directory is a convention marker so the tier number has a home in the tree.
+Index for unit tests. Per TESTING.md §12.1 and §4, Lenny's unit tests live next to the code they cover under `pkg/.../foo_test.go`. This directory is a convention marker so the tier number has a home in the tree.
 
 ## What lives here
 
-The directory holds Tier 1 unit tests that have no obvious source-tree home. Today that is just one suite:
+The directory holds unit tests that have no obvious source-tree home. Today that is just one suite:
 
 | Path | Role |
 |:--|:--|

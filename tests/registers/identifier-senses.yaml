@@ -1007,91 +1007,91 @@ entries:
   - file: tests/spec-map.json
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier0_static/schemas_test.go
+  - file: tests/static/schemas_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier0_static/schemas_test.go
+  - file: tests/static/schemas_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier0_static/schemas_test.go
+  - file: tests/static/schemas_test.go
     occurrence: 3
     channel: CH-RUNTIMEOPS
-  - file: tests/tier0_static/schemas_test.go
+  - file: tests/static/schemas_test.go
     occurrence: 4
     channel: CH-RUNTIMEOPS
-  - file: tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go
+  - file: tests/conformance/token_service_unavailability_guard_conformance_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+  - file: tests/docs/eviction_coordinator_route_consistency_test.go
     occurrence: 1
     channel: CH-ADAPTEREVENTS
     carrier: path
-  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+  - file: tests/docs/eviction_coordinator_route_consistency_test.go
     occurrence: 2
     channel: CH-ADAPTEREVENTS
     carrier: path
-  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+  - file: tests/docs/eviction_coordinator_route_consistency_test.go
     occurrence: 3
     channel: CH-ADAPTEREVENTS
     carrier: path
-  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+  - file: tests/docs/eviction_coordinator_route_consistency_test.go
     occurrence: 4
     channel: CH-ADAPTEREVENTS
     carrier: path
-  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+  - file: tests/docs/eviction_coordinator_route_consistency_test.go
     occurrence: 5
     channel: CH-ADAPTEREVENTS
     carrier: path
-  - file: tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go
+  - file: tests/contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go
     occurrence: 1
     channel: CH-ADAPTEREVENTS
     carrier: go-symbol
-  - file: tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go
+  - file: tests/contract/adapter_usage_wired/wired_reportusage_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go
+  - file: tests/contract/adapter_usage_wired/wired_reportusage_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+  - file: tests/contract/lifecycle_tokens/tokens_wire_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+  - file: tests/contract/lifecycle_tokens/tokens_wire_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+  - file: tests/contract/lifecycle_tokens/tokens_wire_test.go
     occurrence: 3
     channel: CH-RUNTIMEOPS
-  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+  - file: tests/contract/lifecycle_tokens/tokens_wire_test.go
     occurrence: 4
     channel: CH-RUNTIMEOPS
-  - file: tests/tier4_integration/credential_lifecycle_test.go
+  - file: tests/integration/credential_lifecycle_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier4_integration/credential_lifecycle_test.go
+  - file: tests/integration/credential_lifecycle_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier4_integration/credential_lifecycle_test.go
+  - file: tests/integration/credential_lifecycle_test.go
     occurrence: 3
     channel: CH-RUNTIMEOPS
-  - file: tests/tier4_integration/credential_lifecycle_test.go
+  - file: tests/integration/credential_lifecycle_test.go
     occurrence: 4
     channel: CH-RUNTIMEOPS
-  - file: tests/tier4_integration/credential_lifecycle_test.go
+  - file: tests/integration/credential_lifecycle_test.go
     occurrence: 5
     channel: CH-RUNTIMEOPS
-  - file: tests/tier8_chaos/credential_rotation_ceiling_test.go
+  - file: tests/chaos/credential_rotation_ceiling_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier8_chaos/credential_rotation_ceiling_test.go
+  - file: tests/chaos/credential_rotation_ceiling_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier8_chaos/scaffolds_test.go
+  - file: tests/chaos/scaffolds_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS
-  - file: tests/tier8_chaos/scaffolds_test.go
+  - file: tests/chaos/scaffolds_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/tier9_security/pentest/v1-baseline-bundle.json
+  - file: tests/security/pentest/v1-baseline-bundle.json
     occurrence: 1
     channel: CH-RUNTIMEOPS
   # The claim-register seeder carries the naming table's retired spellings in

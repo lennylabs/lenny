@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package cloudmetrics polls cloud-provider metrics APIs and exposes
-// the results as Prometheus text-format metrics. The tier-12 metrics
+// the results as Prometheus text-format metrics. The load_cloud-tier metrics
 // collector (cmd/cloud-metrics-collector) instantiates one Poller
 // per active provider and serves /metrics off the union of their
 // outputs.

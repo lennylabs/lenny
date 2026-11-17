@@ -468,7 +468,7 @@ func TestSetExtendOnExhaustionNilRestoresTerminateImmediately_spec_8_6(t *testin
 }
 
 // The enforcer is safe under concurrent Record/Allow/Forget/RaiseBudget/
-// TerminateSession, mirroring the tier-7a scenario's in-process race
+// TerminateSession, mirroring the load_local-tier scenario's in-process race
 // coverage at unit scale.
 func TestConcurrentAccess_spec_11_2(t *testing.T) {
 	seam := &recordingSeam{outcome: Pending}

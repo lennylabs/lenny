@@ -25,7 +25,7 @@ const (
 
 // allTiers returns the tier names in execution order. The order is the gate
 // hierarchy documented for the test harness: lower-numbered tiers gate higher ones.
-// Tier 7 is a two-stage gate (load_local then load_kind). Tier 12 (load_cloud)
+// Tier 7 is a two-stage gate (load_local then load_kind). The load_cloud tier
 // sits after every other tier so cloud spend only fires once everything below
 // is green.
 func allTiers() []string {

@@ -44,7 +44,7 @@
 #   IMAGE_TAG                               Image tag. Default 0.1.0.
 #   KEEP_CLUSTER=1                          default. Skip terraform
 #                                           destroy on exit.
-#   LENNY_SKIP_TIER6_GATE=1                 bypass the tier-6 PASS gate.
+#   LENNY_SKIP_TIER6_GATE=1                 bypass the e2e_cloud tier PASS gate.
 #   LENNY_DETACH=1                          re-exec the script inside a
 #                                           detached `screen` session
 #                                           so a short-lived caller
@@ -162,7 +162,7 @@ if [[ "${LENNY_DETACH:-0}" == "1" ]]; then
   exit 0
 fi
 
-# Tier-6 gate. Identical contract to scripts/cloud/aws/run-load.sh.
+# e2e_cloud-tier gate. Identical contract to scripts/cloud/aws/run-load.sh.
 if [[ "${LENNY_SKIP_TIER6_GATE:-0}" != "1" ]]; then
   tier6_pass="$(jq -r 'select(.tiers.e2e_cloud == "pass") | .run_id' \
     "${REPO_ROOT}/tests/results/history.jsonl" 2>/dev/null | tail -n1)"
@@ -369,4 +369,4 @@ LENNY_GATEWAY_BASE_URL="http://127.0.0.1:28080" \
   LENNY_LOAD_CLOUD_PROVIDERS=azure \
   LENNY_LOAD_SCALE="${LENNY_LOAD_SCALE}" \
   LENNY_BENCH_RUNTIME_CLASSES="${LENNY_BENCH_RUNTIME_CLASSES:-runc}" \
-  go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/tier12_load_cloud/..."
+  go test -tags load_cloud -count=1 -timeout 60m -v "${REPO_ROOT}/tests/load_cloud/..."

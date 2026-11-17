@@ -24,7 +24,7 @@ func sandboxedSpec() SandboxedPodSpec {
 // spec: §4.7.10 (Runtime supervisor), §13.1 (Runtime supervisor volume;
 // Container identity), §28.5.3 (CH-SUPERVISE)
 //
-// TestSandboxedProbePodMirrorsTheSupervisedLayout pins the tier-6 pod: the
+// TestSandboxedProbePodMirrorsTheSupervisedLayout pins the e2e_cloud-tier pod: the
 // RuntimeClass under test, the stage init container writing the volume at
 // the stage UID, the runtime container running the supervisor from the
 // read-only mount at the agent UID with the adapter UID as its peer, and

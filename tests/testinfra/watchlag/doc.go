@@ -7,7 +7,7 @@
 // rules that observe stale phase mirrors can be expressed
 // deterministically.
 //
-// Used by tier-1 unit tests that need ordering control. The companion
+// Used by unit tests that need ordering control. The companion
 // package clockstep provides the underlying deterministic clock.
 //
 // TESTING.md §6.3 (Wave 4 ordering and mirror-lag tests).

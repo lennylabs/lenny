@@ -34,7 +34,7 @@ const (
 
 // Producer is one generator whose output the passes never write. The
 // output sets are held as data so the rule is decidable without running
-// a producer, which is what lets a tier-0 gate apply it.
+// a producer, which is what lets a static-tier gate apply it.
 type Producer struct {
 	// Command is the invocation that regenerates the outputs.
 	Command string

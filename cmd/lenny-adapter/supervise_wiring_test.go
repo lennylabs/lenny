@@ -38,7 +38,7 @@ type parsedSuperviseFlags struct {
 
 // newSuperviseFlagSet parses args through a flag set declaring the supervised
 // flags with the names and compiled defaults main declares them with. The
-// tier-0 deployment-boundary gate pins main's declarations against every
+// static-tier deployment-boundary gate pins main's declarations against every
 // rendered argv.
 func newSuperviseFlagSet(t *testing.T, args ...string) parsedSuperviseFlags {
 	t.Helper()

@@ -2,7 +2,7 @@
 
 //go:build load_local
 
-// Tier-7a load_local coverage of the order between a CH-SUPERVISE link
+// load_local coverage of the order between a CH-SUPERVISE link
 // failure and the not-live state during the whole-pod scrub: the failure
 // handler is held back by a randomized interval after the read loop detects a
 // closed connection, and the scrub's report and a start issued meanwhile must

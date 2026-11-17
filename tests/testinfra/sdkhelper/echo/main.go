@@ -4,7 +4,7 @@
 // harness helper protocol. It accepts one Command per stdin line,
 // echoes the args back in result, and exits cleanly on `shutdown`.
 //
-// Tests under tests/tier3_contract/sdks/harness/ build and drive
+// Tests under tests/contract/sdks/harness/ build and drive
 // this binary to verify the harness wiring is correct before real
 // language-native SDK helpers are written.
 //

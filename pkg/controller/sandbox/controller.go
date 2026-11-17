@@ -70,7 +70,7 @@ type Reconciler struct {
 	GatewayGRPCAddr string
 	// EgressCaptureImage is the egress-capture sidecar image.
 	// Empty disables the sidecar globally; a non-empty value enables
-	// the tier-9 leakage probe path on Sandboxes whose
+	// the security-tier leakage probe path on Sandboxes whose
 	// SandboxTemplate carries the egress-capture annotation
 	// (EgressCaptureUpstreamAnnotation).
 	EgressCaptureImage string

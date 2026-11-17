@@ -19,7 +19,7 @@ import (
 // create-then-delete pair against the shared cluster's kubeconfig leaves
 // it with no current-context (T-17.4.30).
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestDedicatedClusterArgsAlwaysNamesAPrivateKubeconfig(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -87,7 +87,7 @@ var bareKindClusterCommand = regexp.MustCompile(`exec\.Command\(\s*"kind",\s*"(c
 // EnsureCluster and Cluster.Delete manage the shared cluster with the
 // inherited kubeconfig, because that kubeconfig names the shared cluster.
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestNoTestCreatesOrDeletesAKindClusterAgainstTheInheritedKubeconfig(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "tests")
 	self, err := filepath.Abs(".")
@@ -152,7 +152,7 @@ func installStep3(t *testing.T) string {
 // kind-<cluster> in both cases, so an install repairs a kubeconfig that
 // another process cleared (T-17.4.30).
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestInstallRestoresTheKubeconfigCurrentContext(t *testing.T) {
 	// bash is a hard requirement: install.sh is a bash script, so a host
 	// without it cannot run the code under test and the test fails.

@@ -12,7 +12,7 @@ import (
 // agent pod runs alongside its runtime. The sidecar listens on
 // ListenPort, forwards every accepted TCP connection to Upstream,
 // and writes one JSONL row per connection to a path under the shared
-// capture volume; the leakage probe (tier-9) reads the file
+// capture volume; the leakage probe (security tier) reads the file
 // via `kubectl exec` to assert no credential material appears in
 // egress.
 type EgressCapture struct {

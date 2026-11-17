@@ -23,7 +23,7 @@ const migrationToolingPath = "github.com/lennylabs/lenny/scripts/specshift"
 // gateBatteryDir holds the static-tier gates of the migration, which are
 // the tooling's second entry point: a gate runs the tooling's predicates
 // over the tracked tree on every static-tier run.
-const gateBatteryDir = "../../tests/tier0_static"
+const gateBatteryDir = "../../tests/static"
 
 // TestEveryMigrationToolingPackageIsReachableFromAnEntryPoint pins that
 // the tooling ships no package with no caller. The tooling has two entry

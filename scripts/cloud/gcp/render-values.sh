@@ -116,7 +116,7 @@ bootstrap:
     repository: ${AR_REGISTRY}/lenny-ctl
     tag: "${TAG}"
     pullPolicy: IfNotPresent
-  # Seed the tenant + user the tier-6 e2e_cloud and tier-7 cloud-load
+  # Seed the tenant + user the e2e_cloud and tier-7 cloud-load
   # tests authenticate as. Without these the gateway's §4.8
   # QuotaEvaluator returns 429 QUOTA_EXCEEDED on every request
   # bearing X-Lenny-Tenant-ID: acme because no tenant row exists

@@ -562,9 +562,9 @@ func TestGateDocsTestNamesReadsEveryListedGate(t *testing.T) {
 }
 
 // TestGateDocsFilesExistInTheTree keeps the gate's list of general
-// documentation gates in step with tests/tier11_docs.
+// documentation gates in step with tests/docs.
 func TestGateDocsFilesExistInTheTree(t *testing.T) {
-	names, err := gateDocsTestNames(filepath.Join(repoRoot(), "tests", "tier11_docs"), gateDocsFiles)
+	names, err := gateDocsTestNames(filepath.Join(repoRoot(), "tests", "docs"), gateDocsFiles)
 	if err != nil {
 		t.Fatal(err)
 	}

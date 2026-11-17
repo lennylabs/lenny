@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// lenny-loadctl is the tier-12 control plane. It exposes the HTTP API
+// lenny-loadctl is the load_cloud-tier control plane. It exposes the HTTP API
 // that AI agents, CI pipelines, and operators drive load runs
 // through; persists run state; dispatches scenarios to the
 // lenny-loadrunner pool; ingests metrics; renders the per-run HTML

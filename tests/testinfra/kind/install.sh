@@ -2,7 +2,7 @@
 #!/usr/bin/env bash
 #
 # install.sh stands up a full Lenny control plane on a local Kind
-# cluster for the tier-5 e2e suite. It is the bring-up step the Go
+# cluster for the e2e_kind suite. It is the bring-up step the Go
 # harness in install.go expects: the harness verifies the install and
 # skips when it is absent; this script performs the install.
 #
@@ -28,7 +28,7 @@
 #   6. Install the prometheus-operator CRDs the chart's monitoring
 #      templates depend on.
 #   7. Install ingress-nginx and wait for its controller to become
-#      Available. The tier-5 gateway-ingress NetworkPolicy test needs
+#      Available. The e2e_kind-tier gateway-ingress NetworkPolicy test needs
 #      a real Ingress controller namespace on the cluster.
 #   8. Deploy the in-cluster data stores (Postgres, Redis, MinIO),
 #      wait for them to become Available, check the database's migration
@@ -133,7 +133,7 @@ MINIO_SECRET_KEY="lennyminio123"
 # minio/minio and minio/mc images are no longer distributed, so the
 # fixtures run the maintained forks pgsty/silo and pgsty/mc, each pinned by
 # release tag and by the digest of its multi-arch index. datastores.yaml,
-# the HA overlay, the tier-5 and tier-8 one-shot mc pods
+# the HA overlay, the e2e_kind-tier and chaos-tier one-shot mc pods
 # (tests/testinfra/kind/kind.go), and the chart's bucket-lifecycle Job
 # default name the same references. The Kind nodes cannot pull, so Step 2
 # pulls each image on the host and loads it, and Step 2c registers its
@@ -173,7 +173,7 @@ lenny-ctl Dockerfile BINARY=lenny-ctl
 # dedicated leader lease; the chart references it by image, so it must be
 # built and loaded onto the offline Kind cluster like the rest.
 lenny-pool-scaling-controller Dockerfile BINARY=lenny-pool-scaling-controller
-# TESTING.md §12.9.8 tier-9 egress-capture sidecar; the controller injects
+# TESTING.md §12.9.8 security-tier egress-capture sidecar; the controller injects
 # this image when a Sandbox carries the egress-capture annotation.
 lenny-egress-capture Dockerfile BINARY=lenny-egress-capture
 # The adapter binary image. It is a build base only: the lenny-adapter
@@ -192,7 +192,7 @@ lenny-runtime-echo-embedded Dockerfile BINARY=runtimes/echo-embedded
 # capabilities.preConnect; the §6.3 startup_latency benchmark drives its
 # pool as the SDK-warm arm against the pod-warm echo pool.
 lenny-runtime-preconnect-echo Dockerfile BINARY=runtimes/preconnect-echo
-# TESTING.md §12.9.8 / §9.2 tier-9 probe runtimes. cred-shell-echo builds
+# TESTING.md §12.9.8 / §9.2 security-tier probe runtimes. cred-shell-echo builds
 # from its own Alpine Dockerfile, which retains /bin/sh, cat, and ls for the
 # credential-leakage probes' kubectl exec; the root distroless Dockerfile
 # carries none of them. elicitation-echo raises §9.2 elicitations through the
@@ -201,7 +201,7 @@ lenny-runtime-cred-shell-echo cmd/runtimes/cred-shell-echo/Dockerfile
 lenny-runtime-elicitation-echo Dockerfile BINARY=runtimes/elicitation-echo
 # §5.2 sessionId dispatch-loop reference runtime. Backs
 # concurrent-echo-pool (sessionPolicy.maxConcurrentSessions > 1), the
-# tier-5 real-pod counterpart of the tier-4 concurrent_workspace_test.go
+# e2e_kind-tier real-pod counterpart of the tier-4 concurrent_workspace_test.go
 # in-process flow.
 lenny-runtime-echo-concurrent Dockerfile BINARY=runtimes/echo-concurrent
 
@@ -209,8 +209,8 @@ lenny-runtime-echo-concurrent Dockerfile BINARY=runtimes/echo-concurrent
 # layers the heartbeat-silence fixture on top of the named reference
 # runtime image, so the reference binary runs unchanged behind a filter
 # that stops forwarding heartbeats after the fixture's directive. Only the
-# heartbeat-silence pools below use these images; they back the tier-5
-# stream-failure cases in tests/tier5_e2e_kind/stream_failure_kind_test.go.
+# heartbeat-silence pools below use these images; they back the e2e_kind tier
+# stream-failure cases in tests/e2e_kind/stream_failure_kind_test.go.
 lenny-runtime-heartbeat-silence-echo tests/testinfra/heartbeatsilence/Dockerfile BASE_IMAGE=@lenny-runtime-echo
 lenny-runtime-heartbeat-silence-echo-concurrent tests/testinfra/heartbeatsilence/Dockerfile BASE_IMAGE=@lenny-runtime-echo-concurrent
 
@@ -257,7 +257,7 @@ fi
 #
 # This cluster is long-lived and re-installed/re-verified many times
 # across sessions; a test that builds a uniquely-tagged image on every
-# run (see tests/tier5_e2e_kind/runtime_publish_journey_test.go) leaves
+# run (see tests/e2e_kind/runtime_publish_journey_test.go) leaves
 # BuildKit cache entries that `docker rmi` never clears. Left unpruned
 # across enough runs this silently exhausts the Docker Desktop VM disk
 # (observed directly: a single day of repeated test-gaps batches against
@@ -778,7 +778,7 @@ done
 # ---------------------------------------------------------------------
 # Step 7: install ingress-nginx.
 #
-# The tier-5 gateway-ingress NetworkPolicy test (NET-038) asserts the
+# The e2e_kind-tier gateway-ingress NetworkPolicy test (NET-038) asserts the
 # chart's allow-gateway-ingress policy admits the Ingress controller
 # namespace. That assertion needs a real Ingress controller installed
 # on the cluster. The Kind-flavoured ingress-nginx manifest node-selects
@@ -1263,7 +1263,7 @@ bootstrap:
     # this runtime's single stdin/stdout dispatch loop keyed on sessionId.
     # capabilities.injection.supported is true (§5.1) to match the Runtime
     # CRD in agent-workload.yaml: each slot's echocore loop answers every
-    # inbound message frame, so the tier-5 harness can send several
+    # inbound message frame, so the e2e_kind-tier harness can send several
     # messages on each slot session.
     - name: echo-runtime-concurrent
       type: agent
@@ -1478,7 +1478,7 @@ bootstrap:
     # 1 pool (verified directly against gvisor-echo-pool) and is unrelated
     # to sessionPolicy — tracked separately, not a task-mode-specific
     # defect. A depth of 2 keeps a spare idle pod so
-    # tests/tier5_e2e_kind/execution_modes_test.go's claims do not race
+    # tests/e2e_kind/execution_modes_test.go's claims do not race
     # it; tenant pinning plus the reserved-pod preference (§5.2 "the pod
     # is held for its tenant through the claim's reserved state and
     # serves the next session") still routes the tenant's second session
@@ -1527,7 +1527,7 @@ bootstrap:
         cleanupTimeoutSeconds: 30
     # §5.2 recycling pool with maxConcurrentSessions left at the default of
     # 1, on the heartbeat-silence fixture. It mirrors task-mode-echo-pool so
-    # the tier-5 stream-failure case can show that a pod whose runtime
+    # the e2e_kind-tier stream-failure case can show that a pod whose runtime
     # stopped answering heartbeats is retired rather than recycled. warmCount
     # is 2 for the PoolWarmingUp-race reason task-mode-echo-pool states.
     - name: heartbeat-silence-recycle-pool
@@ -1546,7 +1546,7 @@ bootstrap:
           runtimeProcess: keep
         cleanupTimeoutSeconds: 30
     # §5.2 concurrent-session pool on the heartbeat-silence fixture. It
-    # mirrors concurrent-echo-pool so the tier-5 stream-failure case can
+    # mirrors concurrent-echo-pool so the e2e_kind-tier stream-failure case can
     # count failed slots toward the whole-pod replacement trigger.
     - name: heartbeat-silence-concurrent-pool
       runtimeRef: heartbeat-silence-concurrent-runtime
@@ -1560,8 +1560,8 @@ bootstrap:
         acknowledgeProcessLevelIsolation: true
         cleanupTimeoutSeconds: 30
     # Supervised probe pools for the runtime supervisor's cluster tiers
-    # (tests/tier5_e2e_kind/runtime_supervisor_test.go and the tier-8, tier-9,
-    # and tier-10 cases). warmCount is 2 for the PoolWarmingUp-race reason
+    # (tests/e2e_kind/runtime_supervisor_test.go and the chaos tier, security tier,
+    # and conformance-tier cases). warmCount is 2 for the PoolWarmingUp-race reason
     # task-mode-echo-pool states.
     #
     # supervise-probe-keep-pool is a reusing recycling pool under
@@ -1599,7 +1599,7 @@ bootstrap:
         cleanupCommands:
           - /usr/local/bin/lenny cleanup-record
         cleanupTimeoutSeconds: 30
-    # supervise-probe-idle-pool is a second keep pool on which a tier-8 case
+    # supervise-probe-idle-pool is a second keep pool on which a chaos-tier case
     # returns a used pod to idle, pinned to the tenant that used it, kills
     # its kept runtime process, and makes that tenant's next start reach it
     # (§4.7.10 Runtime supervisor, Liveness, the idle row's Start channel).
@@ -2003,4 +2003,4 @@ rm -rf "${REINSTALL_SYNC_DIR}"
 
 log "Lenny is installed on the ${CLUSTER} Kind cluster."
 log "Run the tier-5 e2e suite with:"
-log "  go test -tags=e2e_kind -count=1 ./tests/tier5_e2e_kind/..."
+log "  go test -tags=e2e_kind -count=1 ./tests/e2e_kind/..."

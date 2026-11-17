@@ -465,7 +465,7 @@ func renderDigest(d digestData) string {
 		}
 	}
 
-	b.WriteString("\n## Gate results\n\nNot filled in yet. List tier 0 and every tier the step reached, with the result of each and the pre-existing failures by name.\n")
+	b.WriteString("\n## Gate results\n\nNot filled in yet. List the static tier and every tier the step reached, with the result of each and the pre-existing failures by name.\n")
 	b.WriteString("\n## Review outcomes\n\nNot filled in yet. List the fixes made, the open questions raised, and the issues filed.\n")
 	b.WriteString("\n## Defaults applied\n\nNot filled in yet. List every choice made without asking, with the option taken.\n")
 	return b.String()

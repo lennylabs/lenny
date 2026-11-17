@@ -9,7 +9,7 @@
 # area by area, and an area's count reaches zero before its milestone
 # exits.
 #
-# The ratchet in tests/tier0_static fails a package whose count rises
+# The ratchet in tests/static fails a package whose count rises
 # above the count here, and a package with a citation and no entry. Until
 # the page a package implements exists, new code there may cite a section
 # as before, and the author raises the package's count here in the same
@@ -961,8 +961,250 @@ packages:
       count: 89
     - package: sdks/runtime/go/runtime
       count: 129
-    - package: tests/integration
+    - package: tests/chaos
+      count: 340
+    - package: tests/component/admission
+      count: 20
+    - package: tests/component/auditintegrity
+      count: 5
+    - package: tests/component/auditstore
+      count: 54
+    - package: tests/component/breakers
+      count: 3
+    - package: tests/component/controllers
+      count: 56
+    - package: tests/component/coordination
+      count: 22
+    - package: tests/component/embedded
+      count: 5
+    - package: tests/component/evalaggregates
+      count: 3
+    - package: tests/component/eventstream
+      count: 14
+    - package: tests/component/gateway_subsystems
+      count: 11
+    - package: tests/component/healthchecks
+      count: 11
+    - package: tests/component/issuedtokencascade
+      count: 11
+    - package: tests/component/leasedenial
+      count: 8
+    - package: tests/component/leases
+      count: 2
+    - package: tests/component/legalholdescrow
+      count: 3
+    - package: tests/component/legalholdreconciler
+      count: 2
+    - package: tests/component/lifecycle
+      count: 9
+    - package: tests/component/migrations
+      count: 86
+    - package: tests/component/observability
+      count: 17
+    - package: tests/component/opsaudit
+      count: 3
+    - package: tests/component/opsbackup
+      count: 1
+    - package: tests/component/opsidem
+      count: 2
+    - package: tests/component/opsrevocation
+      count: 4
+    - package: tests/component/pgbouncerchart
+      count: 6
+    - package: tests/component/poolresume
+      count: 2
+    - package: tests/component/postclaimrelease
+      count: 4
+    - package: tests/component/preflight
+      count: 5
+    - package: tests/component/quota
+      count: 3
+    - package: tests/component/ratelimit
+      count: 1
+    - package: tests/component/rls
+      count: 37
+    - package: tests/component/runbooks
+      count: 1
+    - package: tests/component/runtimecapoverride
+      count: 2
+    - package: tests/component/secretprobe
+      count: 2
+    - package: tests/component/securitycaches
+      count: 3
+    - package: tests/component/slotrelease
+      count: 25
+    - package: tests/component/storagequota
+      count: 1
+    - package: tests/component/stores
+      count: 320
+    - package: tests/component/tenantsalt
+      count: 4
+    - package: tests/component/tokensigning
+      count: 10
+    - package: tests/component/translators
+      count: 43
+    - package: tests/component/treebudget
+      count: 2
+    - package: tests/component/warmlayout
+      count: 6
+    - package: tests/component/watchdog
+      count: 9
+    - package: tests/conformance
+      count: 137
+    - package: tests/contract/adapter_artifact_scope
+      count: 9
+    - package: tests/contract/adapter_bind_attempt
+      count: 72
+    - package: tests/contract/adapter_checkpointbarrier
+      count: 2
+    - package: tests/contract/adapter_chunk_encoding
+      count: 4
+    - package: tests/contract/adapter_events
+      count: 3
+    - package: tests/contract/adapter_extendcredlease
+      count: 9
+    - package: tests/contract/adapter_frame_resolution
+      count: 6
+    - package: tests/contract/adapter_generation_fence
       count: 12
+    - package: tests/contract/adapter_jsonl
+      count: 38
+    - package: tests/contract/adapter_negotiate
+      count: 6
+    - package: tests/contract/adapter_observedlevel
+      count: 4
+    - package: tests/contract/adapter_reportusage
+      count: 8
+    - package: tests/contract/adapter_session_address
+      count: 8
+    - package: tests/contract/adapter_session_seal
+      count: 2
+    - package: tests/contract/adapter_supervise
+      count: 12
+    - package: tests/contract/adapter_usage_wired
+      count: 10
+    - package: tests/contract/adapter_workspace_restore
+      count: 11
+    - package: tests/contract/admin_conflict_codes
+      count: 11
+    - package: tests/contract/admin_credential_pool_codes
+      count: 6
+    - package: tests/contract/admin_extension_denial
+      count: 9
+    - package: tests/contract/admin_impersonation
+      count: 2
+    - package: tests/contract/admin_tenant_suspend
+      count: 5
+    - package: tests/contract/admin_user_invalidate
+      count: 6
+    - package: tests/contract/admission_pod_security
+      count: 2
+    - package: tests/contract/checkpoint_stream
+      count: 24
+    - package: tests/contract/cloudevents
+      count: 16
+    - package: tests/contract/compose_mode
+      count: 7
+    - package: tests/contract/crd_schema
+      count: 12
+    - package: tests/contract/embedded_gatewaycallback
+      count: 18
+    - package: tests/contract/fullrevoke_release
+      count: 1
+    - package: tests/contract/gateway_ops
+      count: 21
+    - package: tests/contract/gatewaycontrol_scrub
+      count: 25
+    - package: tests/contract/holderforward
+      count: 8
+    - package: tests/contract/interceptor_immutable_envelope
+      count: 4
+    - package: tests/contract/interceptor_proto
+      count: 6
+    - package: tests/contract/lease_elicit_dismissal
+      count: 3
+    - package: tests/contract/lifecycle_tokens
+      count: 6
+    - package: tests/contract/mcp_runtimes
+      count: 4
+    - package: tests/contract/mcp_tool_approval_address
+      count: 2
+    - package: tests/contract/multiprotocol_journey
+      count: 4
+    - package: tests/contract/oauth_token
+      count: 33
+    - package: tests/contract/ocsf_audit
+      count: 29
+    - package: tests/contract/ops_endpoints
+      count: 114
+    - package: tests/contract/playground
+      count: 16
+    - package: tests/contract/rest_auth
+      count: 20
+    - package: tests/contract/rest_circuitbreaker
+      count: 6
+    - package: tests/contract/rest_idempotency
+      count: 6
+    - package: tests/contract/rest_mcp_consistency
+      count: 76
+    - package: tests/contract/rest_openai_chat
+      count: 4
+    - package: tests/contract/rest_openai_responses
+      count: 20
+    - package: tests/contract/rest_pools
+      count: 21
+    - package: tests/contract/rest_sessions
+      count: 109
+    - package: tests/contract/runtimeops_emitted
+      count: 3
+    - package: tests/contract/sdks
+      count: 121
+    - package: tests/contract/sdks/harness
+      count: 2
+    - package: tests/contract/tokenservice_release
+      count: 7
+    - package: tests/contract/tokenservice_secret_read
+      count: 10
+    - package: tests/contract/vcs_credential_read
+      count: 6
+    - package: tests/contract/workspaceplan
+      count: 15
+    - package: tests/docs
+      count: 1202
+    - package: tests/e2e_cloud
+      count: 77
+    - package: tests/e2e_kind
+      count: 236
+    - package: tests/integration
+      count: 731
+    - package: tests/load_cloud
+      count: 13
+    - package: tests/load_kind
+      count: 24
+    - package: tests/load_local
+      count: 488
+    - package: tests/load_local/directusage_teardown
+      count: 2
+    - package: tests/load_local/scenarios/extension_episode_fanout
+      count: 2
+    - package: tests/load_local/scenarios/low_resource_startup
+      count: 2
+    - package: tests/load_local/scenarios/oversized_request_rejection_recovery
+      count: 1
+    - package: tests/load_local/scenarios/singleshot_admission_ordering
+      count: 7
+    - package: tests/load_local/scenarios/vm_restart_recycle_disposition
+      count: 4
+    - package: tests/load_local/toolapproval_xreplica
+      count: 1
+    - package: tests/load_local/usagemeter_contention
+      count: 4
+    - package: tests/security
+      count: 547
+    - package: tests/security/pentest
+      count: 6
+    - package: tests/static
+      count: 320
     - package: tests/testinfra/ackruntime
       count: 2
     - package: tests/testinfra/admission
@@ -1085,14 +1327,6 @@ packages:
       count: 2
     - package: tests/testinfra/wait
       count: 4
-    - package: tests/tier0_static
-      count: 320
-    - package: tests/tier10_conformance
-      count: 137
-    - package: tests/tier11_docs
-      count: 1202
-    - package: tests/tier12_load_cloud
-      count: 13
     - package: tests/tier1_unit/flagdefaults
       count: 4
     - package: tests/tier1_unit/helm
@@ -1103,239 +1337,3 @@ packages:
       count: 4
     - package: tests/tier1_unit/supervisor
       count: 5
-    - package: tests/tier2_component/admission
-      count: 20
-    - package: tests/tier2_component/auditintegrity
-      count: 5
-    - package: tests/tier2_component/auditstore
-      count: 54
-    - package: tests/tier2_component/breakers
-      count: 3
-    - package: tests/tier2_component/controllers
-      count: 56
-    - package: tests/tier2_component/coordination
-      count: 22
-    - package: tests/tier2_component/embedded
-      count: 5
-    - package: tests/tier2_component/evalaggregates
-      count: 3
-    - package: tests/tier2_component/eventstream
-      count: 14
-    - package: tests/tier2_component/gateway_subsystems
-      count: 11
-    - package: tests/tier2_component/healthchecks
-      count: 11
-    - package: tests/tier2_component/issuedtokencascade
-      count: 11
-    - package: tests/tier2_component/leasedenial
-      count: 8
-    - package: tests/tier2_component/leases
-      count: 2
-    - package: tests/tier2_component/legalholdescrow
-      count: 3
-    - package: tests/tier2_component/legalholdreconciler
-      count: 2
-    - package: tests/tier2_component/lifecycle
-      count: 9
-    - package: tests/tier2_component/migrations
-      count: 86
-    - package: tests/tier2_component/observability
-      count: 17
-    - package: tests/tier2_component/opsaudit
-      count: 3
-    - package: tests/tier2_component/opsbackup
-      count: 1
-    - package: tests/tier2_component/opsidem
-      count: 2
-    - package: tests/tier2_component/opsrevocation
-      count: 4
-    - package: tests/tier2_component/pgbouncerchart
-      count: 6
-    - package: tests/tier2_component/poolresume
-      count: 2
-    - package: tests/tier2_component/postclaimrelease
-      count: 4
-    - package: tests/tier2_component/preflight
-      count: 5
-    - package: tests/tier2_component/quota
-      count: 3
-    - package: tests/tier2_component/ratelimit
-      count: 1
-    - package: tests/tier2_component/rls
-      count: 37
-    - package: tests/tier2_component/runbooks
-      count: 1
-    - package: tests/tier2_component/runtimecapoverride
-      count: 2
-    - package: tests/tier2_component/secretprobe
-      count: 2
-    - package: tests/tier2_component/securitycaches
-      count: 3
-    - package: tests/tier2_component/slotrelease
-      count: 25
-    - package: tests/tier2_component/storagequota
-      count: 1
-    - package: tests/tier2_component/stores
-      count: 320
-    - package: tests/tier2_component/tenantsalt
-      count: 4
-    - package: tests/tier2_component/tokensigning
-      count: 10
-    - package: tests/tier2_component/translators
-      count: 43
-    - package: tests/tier2_component/treebudget
-      count: 2
-    - package: tests/tier2_component/warmlayout
-      count: 6
-    - package: tests/tier2_component/watchdog
-      count: 9
-    - package: tests/tier3_contract/adapter_artifact_scope
-      count: 9
-    - package: tests/tier3_contract/adapter_bind_attempt
-      count: 72
-    - package: tests/tier3_contract/adapter_checkpointbarrier
-      count: 2
-    - package: tests/tier3_contract/adapter_chunk_encoding
-      count: 4
-    - package: tests/tier3_contract/adapter_events
-      count: 3
-    - package: tests/tier3_contract/adapter_extendcredlease
-      count: 9
-    - package: tests/tier3_contract/adapter_frame_resolution
-      count: 6
-    - package: tests/tier3_contract/adapter_generation_fence
-      count: 12
-    - package: tests/tier3_contract/adapter_jsonl
-      count: 38
-    - package: tests/tier3_contract/adapter_negotiate
-      count: 6
-    - package: tests/tier3_contract/adapter_observedlevel
-      count: 4
-    - package: tests/tier3_contract/adapter_reportusage
-      count: 8
-    - package: tests/tier3_contract/adapter_session_address
-      count: 8
-    - package: tests/tier3_contract/adapter_session_seal
-      count: 2
-    - package: tests/tier3_contract/adapter_supervise
-      count: 12
-    - package: tests/tier3_contract/adapter_usage_wired
-      count: 10
-    - package: tests/tier3_contract/adapter_workspace_restore
-      count: 11
-    - package: tests/tier3_contract/admin_conflict_codes
-      count: 11
-    - package: tests/tier3_contract/admin_credential_pool_codes
-      count: 6
-    - package: tests/tier3_contract/admin_extension_denial
-      count: 9
-    - package: tests/tier3_contract/admin_impersonation
-      count: 2
-    - package: tests/tier3_contract/admin_tenant_suspend
-      count: 5
-    - package: tests/tier3_contract/admin_user_invalidate
-      count: 6
-    - package: tests/tier3_contract/admission_pod_security
-      count: 2
-    - package: tests/tier3_contract/checkpoint_stream
-      count: 24
-    - package: tests/tier3_contract/cloudevents
-      count: 16
-    - package: tests/tier3_contract/compose_mode
-      count: 7
-    - package: tests/tier3_contract/crd_schema
-      count: 12
-    - package: tests/tier3_contract/embedded_gatewaycallback
-      count: 18
-    - package: tests/tier3_contract/fullrevoke_release
-      count: 1
-    - package: tests/tier3_contract/gateway_ops
-      count: 21
-    - package: tests/tier3_contract/gatewaycontrol_scrub
-      count: 25
-    - package: tests/tier3_contract/holderforward
-      count: 8
-    - package: tests/tier3_contract/interceptor_immutable_envelope
-      count: 4
-    - package: tests/tier3_contract/interceptor_proto
-      count: 6
-    - package: tests/tier3_contract/lease_elicit_dismissal
-      count: 3
-    - package: tests/tier3_contract/lifecycle_tokens
-      count: 6
-    - package: tests/tier3_contract/mcp_runtimes
-      count: 4
-    - package: tests/tier3_contract/mcp_tool_approval_address
-      count: 2
-    - package: tests/tier3_contract/multiprotocol_journey
-      count: 4
-    - package: tests/tier3_contract/oauth_token
-      count: 33
-    - package: tests/tier3_contract/ocsf_audit
-      count: 29
-    - package: tests/tier3_contract/ops_endpoints
-      count: 114
-    - package: tests/tier3_contract/playground
-      count: 16
-    - package: tests/tier3_contract/rest_auth
-      count: 20
-    - package: tests/tier3_contract/rest_circuitbreaker
-      count: 6
-    - package: tests/tier3_contract/rest_idempotency
-      count: 6
-    - package: tests/tier3_contract/rest_mcp_consistency
-      count: 76
-    - package: tests/tier3_contract/rest_openai_chat
-      count: 4
-    - package: tests/tier3_contract/rest_openai_responses
-      count: 20
-    - package: tests/tier3_contract/rest_pools
-      count: 21
-    - package: tests/tier3_contract/rest_sessions
-      count: 109
-    - package: tests/tier3_contract/runtimeops_emitted
-      count: 3
-    - package: tests/tier3_contract/sdks
-      count: 121
-    - package: tests/tier3_contract/sdks/harness
-      count: 2
-    - package: tests/tier3_contract/tokenservice_release
-      count: 7
-    - package: tests/tier3_contract/tokenservice_secret_read
-      count: 10
-    - package: tests/tier3_contract/vcs_credential_read
-      count: 6
-    - package: tests/tier3_contract/workspaceplan
-      count: 15
-    - package: tests/tier4_integration
-      count: 719
-    - package: tests/tier5_e2e_kind
-      count: 236
-    - package: tests/tier6_e2e_cloud
-      count: 77
-    - package: tests/tier7a_load_local
-      count: 488
-    - package: tests/tier7a_load_local/directusage_teardown
-      count: 2
-    - package: tests/tier7a_load_local/scenarios/extension_episode_fanout
-      count: 2
-    - package: tests/tier7a_load_local/scenarios/low_resource_startup
-      count: 2
-    - package: tests/tier7a_load_local/scenarios/oversized_request_rejection_recovery
-      count: 1
-    - package: tests/tier7a_load_local/scenarios/singleshot_admission_ordering
-      count: 7
-    - package: tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition
-      count: 4
-    - package: tests/tier7a_load_local/toolapproval_xreplica
-      count: 1
-    - package: tests/tier7a_load_local/usagemeter_contention
-      count: 4
-    - package: tests/tier7b_load_kind
-      count: 24
-    - package: tests/tier8_chaos
-      count: 340
-    - package: tests/tier9_security
-      count: 547
-    - package: tests/tier9_security/pentest
-      count: 6

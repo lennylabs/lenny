@@ -12,7 +12,7 @@ import (
 // TestMemoryStoreTenantIsolation is the §9.4 named integration
 // test. It runs the published contract helper against the default
 // in-process backend. The Postgres default backend runs the same helper
-// in the tier-2 component suite, and the gateway runs the erasure half of
+// in the component suite, and the gateway runs the erasure half of
 // the contract against the wired backend at startup via
 // memorystore.ValidateMemoryStoreErasure. spec: §9.4.
 func TestMemoryStoreTenantIsolation(t *testing.T) {

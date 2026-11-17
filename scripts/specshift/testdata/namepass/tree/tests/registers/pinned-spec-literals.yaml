@@ -9,5 +9,5 @@
 kind: pinned-spec-literals
 version: 1
 entries:
-  - file: tests/tier11_docs/route_test.go
+  - file: tests/docs/route_test.go
     literal: 1

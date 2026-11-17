@@ -12,7 +12,7 @@
 //   - It is the reference implementation for runtime authors writing
 //     their own Basic-level sidecar runtimes.
 //   - It is the target the Phase 2 contract tests
-//     (tests/tier3_contract/adapter_jsonl/) exec to verify protocol
+//     (tests/contract/adapter_jsonl/) exec to verify protocol
 //     conformance end-to-end.
 //   - It is the binary the conformance harness (cmd/lenny-compliance/)
 //     exercises during its --level=basic battery.

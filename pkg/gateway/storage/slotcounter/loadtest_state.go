@@ -6,7 +6,7 @@ package slotcounter
 
 import "time"
 
-// This file is compiled only into the tier-7a build (the load_local build
+// This file is compiled only into the load_local-tier build (the load_local build
 // tag), where the randomized interleaving tests drive two Counters from
 // concurrent goroutines and must read the recovery state the add-only
 // rebuild maintains. It adds nothing to the production binary.

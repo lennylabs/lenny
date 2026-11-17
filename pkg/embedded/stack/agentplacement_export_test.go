@@ -9,21 +9,21 @@ import (
 )
 
 // EnsureAgentNamespaceFromConfigForTest exposes ensureAgentNamespaceFromConfig
-// to the external tier-2 envtest in package stack_test so the §4.6.2
+// to the external component-tier envtest in package stack_test so the §4.6.2
 // namespace-create path runs against a real kube-apiserver. It is test-only.
 func EnsureAgentNamespaceFromConfigForTest(ctx context.Context, cfg *rest.Config, namespace string) error {
 	return ensureAgentNamespaceFromConfig(ctx, cfg, namespace)
 }
 
 // ApplyEchoRuntimeCRFromConfigForTest exposes applyEchoRuntimeCRFromConfig to
-// the external tier-2 envtest in package stack_test so the §4.7/§5.1 echo
+// the external component-tier envtest in package stack_test so the §4.7/§5.1 echo
 // Runtime CR apply runs against a real kube-apiserver with the lenny.dev CRDs
 // installed. It is test-only.
 func ApplyEchoRuntimeCRFromConfigForTest(ctx context.Context, cfg *rest.Config, image string) error {
 	return applyEchoRuntimeCRFromConfig(ctx, cfg, image)
 }
 
-// The kubeconfig-loading placement wrappers are exposed so the tier-2 envtest
+// The kubeconfig-loading placement wrappers are exposed so the component-tier envtest
 // drives the §4.7 activation sequence end to end from a written kubeconfig (the
 // path Up takes with the launcher's host-rewritten kubeconfig), exercising the
 // BuildConfigFromFlags leg the already-tested ...FromConfig variants skip. They

@@ -109,7 +109,7 @@ func TestEmptyInputExitsCleanly(t *testing.T) {
 
 // spec: 28.5.3 (Intra-pod), 15.4.3 (Runtime Integration Levels)
 // The reference loop acks every heartbeat whatever message text came before
-// it. The text below is the one the tier-5 heartbeat-silence fixture reacts
+// it. The text below is the one the e2e_kind-tier heartbeat-silence fixture reacts
 // to; the fixture filters heartbeats in front of the runtime, so a client
 // that sends this text to a shipped echo runtime cannot stop its acks.
 func TestEveryHeartbeatIsAckedWhateverTheMessageText_spec_28_5_3(t *testing.T) {

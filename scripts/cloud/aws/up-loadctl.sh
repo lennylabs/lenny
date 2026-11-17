@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/up-loadctl.sh — provisions the tier-12 control
+# scripts/cloud/aws/up-loadctl.sh — provisions the load_cloud-tier control
 # plane on AWS (Fargate + ALB + RDS + IAM). Idempotent.
 #
 # Required environment:

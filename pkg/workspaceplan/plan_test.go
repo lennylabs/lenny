@@ -23,7 +23,7 @@ func parse(t *testing.T, body string) (workspaceplan.Plan, []workspaceplan.Warni
 // readExample loads a canonical workspaceplan example by base name from
 // the repo's schemas/examples corpus and returns its raw bytes. It
 // walks up from the package directory to the module root so the parser
-// runs against the same fixture files the tier-0 JSON Schema validator
+// runs against the same fixture files the static-tier JSON Schema validator
 // consumes, closing the F-CS5 fixture-drift gap at the unit tier.
 func readExample(t *testing.T, name string) []byte {
 	t.Helper()
@@ -199,9 +199,9 @@ func TestParseSkipsUnknownSourceTypeWithWarning(t *testing.T) {
 // the schema is rejected by the gateway parser (or the reverse). This
 // table is the unit-tier fixture-drift guard for F-CS5: it routes all
 // six schemas/examples/ fixtures through the parser and asserts each
-// accept/reject matches the tier-0 schema validator's expectValid flag
-// in tests/tier0_static/schemas_test.go. expectValid mirrors that
-// tier-0 truth table; the unknown-source-type fixture is accepted by
+// accept/reject matches the static-tier schema validator's expectValid flag
+// in tests/static/schemas_test.go. expectValid mirrors that
+// static-tier truth table; the unknown-source-type fixture is accepted by
 // both surfaces (the open-string discriminator passes it through with a
 // warning).
 func TestParseMatchesSchemaValidatorOnCanonicalFixtures(t *testing.T) {

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/up-loadgen.sh — provisions the tier-12
+# scripts/cloud/aws/up-loadgen.sh — provisions the load_cloud tier
 # load-runner pool (ASG + SQS + IAM + metrics collector) against
 # an EKS cluster already created by up.sh.
 #

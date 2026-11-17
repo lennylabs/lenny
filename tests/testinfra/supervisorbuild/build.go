@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package supervisorbuild builds the runtime supervisor's C sources for
-// the tests that check them: the tier-0 binary check and the tier-1
+// the tests that check them: the static-tier binary check and the tier-1
 // driver of the C unit harness. Both build through supervisor/Makefile
 // into a temporary directory, so no test writes into the source tree.
 //

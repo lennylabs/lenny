@@ -16,7 +16,7 @@ import (
 // rewrite, audit) against a throwaway temp git repo, with the go-build/vet/
 // validate-maps gates skipped (the temp tree is not the real module, so those
 // gates do not apply; the pure-rewrite correctness is pinned in the rewrite
-// package's unit tests). They are tier-1 unit tests over the driver's wiring.
+// package's unit tests). They are unit tests over the driver's wiring.
 //
 // spec: §4.1 (the gateway regroup is a behavior-preserving directory move plus
 // boundary-anchored path rewrites; the driver executes it reproducibly).

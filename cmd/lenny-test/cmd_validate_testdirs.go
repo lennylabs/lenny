@@ -19,7 +19,7 @@ const testDirsRoot = "tests"
 // validateChangeGraphCompleteness gates source files and leaves _test.go
 // files out of its domain, because a test file is a target of the graph.
 // A test directory is a target, and a source of change as well: a diff
-// confined to tests/tier2_component/<dir>/ resolves its tiers through the
+// confined to tests/component/<dir>/ resolves its tiers through the
 // change graph like any other path, and with no key covering the
 // directory `lenny-test --since <ref>` selects only the static tier,
 // runs none of the directory's tests, and reports a pass (TESTING.md §6

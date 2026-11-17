@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package schematest is a Tier 0 test helper that wraps
+// Package schematest is a static-tier test helper that wraps
 // github.com/santhosh-tekuri/jsonschema/v5 with convenience
 // constructors and assertion helpers keyed off *testing.T.
 //
@@ -9,7 +9,7 @@
 // golangci-lint releases fail to typecheck imports that appear only in
 // test files. Hosting helpers here keeps the lint clean.
 //
-// See TESTING.md §12.0 and tests/tier0_static.
+// See TESTING.md §12.0 and tests/static.
 package schematest
 
 import (
@@ -51,7 +51,7 @@ func MustCompile(t testing.TB, c *jsonschema.Compiler, rel string) *jsonschema.S
 }
 
 // MustAddLocalSchema teaches the compiler that a remote $id URL is
-// satisfied by a local file. Used to keep Tier 0 tests offline.
+// satisfied by a local file. Used to keep static-tier tests offline.
 func MustAddLocalSchema(t testing.TB, c *jsonschema.Compiler, url, rel string) {
 	t.Helper()
 	full := filepath.Join(RepoRoot(t), rel)

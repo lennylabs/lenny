@@ -38,7 +38,7 @@ func TestReservedPhraseClassDomainExcludesEveryRecordTheNamingLawNames(t *testin
 		"gateway-runtime-comms-remediation.md",
 		"proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md",
 		"spec/testdata/specimen.md",
-		"tests/tier11_docs/testdata/reserved-phrase-hyphenated.md",
+		"tests/docs/testdata/reserved-phrase-hyphenated.md",
 	}
 	// The records are named here as well as read from PlanningRecords, so
 	// a record dropped from that list fails this case instead of shrinking
@@ -112,7 +112,7 @@ func TestReservedPhraseCarrierBoundsMarkdownToTheNamedTreesAndTheRoot(t *testing
 
 	for _, outside := range []string{
 		"charts/lenny/README.md",
-		"tests/tier11_docs/notes.md",
+		"tests/docs/notes.md",
 		"sdks/python/README.md",
 		"charts/lenny/values.yaml",
 	} {

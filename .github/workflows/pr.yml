@@ -249,7 +249,7 @@ jobs:
 
   e2e-kind-critical:
     name: tier 5 — e2e Kind (critical-path)
-    runs-on: ubuntu-latest   # promoted to self-hosted once Tier 5 is wired
+    runs-on: ubuntu-latest   # promoted to self-hosted once the e2e_kind tier is wired
     timeout-minutes: 30
     needs: [integration]
     # Community-PR matrix (§18.3): fork PRs run tiers 0-4 and docs by
@@ -331,7 +331,7 @@ jobs:
         run: go build -o bin/lenny-test ./cmd/lenny-test
       # spec: §23.2 — "CI includes a TTHW smoke test that
       # validates both paths on every merge." The docs tier runs
-      # tests/tier11_docs/..., which includes the time-to-hello-world
+      # tests/docs/..., which includes the time-to-hello-world
       # gate (time_to_hello_world_test.go). F-23.2.2.
       - name: TTHW + documentation gate (tier 11)
         run: ./bin/lenny-test --tier docs --output github-annotations

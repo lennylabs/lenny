@@ -3,7 +3,7 @@
 #
 # scripts/cloud/azure/up-runtimeclass-pools.sh — provisions the gVisor and
 # Kata node pools, RuntimeClasses, and §6.1 SDK-warm pools the §6.3
-# startup-latency benchmark's per-runtime-class arms need (tier 12,
+# startup-latency benchmark's per-runtime-class arms need (load_cloud tier,
 # TestCloudStartupLatencySDKWarm{Gvisor,Kata}).
 #
 # Benchmark-only, opt-in helper, separate from up.sh (which treats the AKS

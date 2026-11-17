@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-// White-box tier-1 tests for CreateAndStart's terminal-error
+// White-box unit-tier tests for CreateAndStart's terminal-error
 // classification. They run in-process against an httptest server, so
 // they need neither the Kind cluster nor a warm pool; the goal is to
 // pin how CreateAndStart labels a persistent pool-not-ready 503 versus
-// any other failure, which the tier-9 live-session tests rely on to
+// any other failure, which the security-tier live-session tests rely on to
 // skip cleanly on a degraded cluster.
 
 package sessiondriver
@@ -36,7 +36,7 @@ func newTestDriver(baseURL string) *Driver {
 //
 // A gateway that keeps returning a transient §5.2 pool-not-ready 503 for
 // the whole retry window is an environmental warm-pool failure. The
-// tier-9 live-session tests distinguish it from a real session-surface
+// security-tier live-session tests distinguish it from a real session-surface
 // defect by errors.Is-checking ErrPoolNotReady; a plain error (the
 // pre-fix behavior) would make them hard-fail on a degraded cluster
 // instead of skipping. This asserts the terminal error wraps the
@@ -239,7 +239,7 @@ func TestCreateAndStartDoesNotWrapPoolNotReadyOnOtherFailures(t *testing.T) {
 
 // TestCreateAndStartSendsTheOwnerUserID pins that CreateAndStartWithOptions
 // sends StartOptions.UserID as the body's userId, the owner of the new
-// session row, and omits the field when it is empty. The tier-5 erasure
+// session row, and omits the field when it is empty. The e2e_kind-tier erasure
 // case relies on it: a session started without the owner is not reached by
 // the user's erasure, so its pod claim stays bound and the case cannot
 // exercise the cross-replica release.

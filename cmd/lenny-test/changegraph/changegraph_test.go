@@ -14,7 +14,7 @@ import (
 // attribute an annotated failure to a platform section this package
 // implements nothing of.
 //
-// The cases pin the boundary the completeness check and the tier-0
+// The cases pin the boundary the completeness check and the static tier
 // residual scan divide between them. Both read this package, so a tree
 // or an extension that moves here moves for both at once, and neither a
 // path governed by both nor a path governed by neither can appear.

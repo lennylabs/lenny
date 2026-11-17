@@ -94,7 +94,7 @@ type Server struct {
 	scenarioMetrics map[string]map[string]map[string]float64
 }
 
-// Run is a single tier-12 load run.
+// Run is a single load_cloud-tier load run.
 type Run struct {
 	ID             string    `json:"id"`
 	Status         string    `json:"status"`
@@ -1003,7 +1003,7 @@ func (s *Server) handleBaselines(w http.ResponseWriter, r *http.Request) {
 
 func defaultScenarios() []Scenario {
 	return []Scenario{
-		{Name: "default", Description: "Default tier-12 catalogue."},
+		{Name: "default", Description: "Default load_cloud-tier catalogue."},
 		{Name: "session_throughput", Description: "§12.7.b session_throughput."},
 		{Name: "streaming_reconnect_under_load", Description: "§12.7.b streaming_reconnect."},
 		{Name: "delegation_fanout", Description: "§12.7.b delegation_fanout."},

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/gcp/run-load.sh — tier-12 cloud-load trigger.
+# scripts/cloud/gcp/run-load.sh — load_cloud trigger.
 # Pre-flight + API trigger. No terraform. No helm. See the canonical
 # documentation in scripts/cloud/aws/run-load.sh.
 # TESTING.md §12.12 / Wave 5.

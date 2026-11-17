@@ -21,7 +21,7 @@ classifiers = [
 # The SDK uses only the Python standard library at runtime. The
 # transport is urllib.request and the webhook verifier is hmac plus
 # hashlib, so no third-party package is required to install or run the
-# client, including the tier-3 contract test-helper.
+# client, including the contract test-helper.
 dependencies = []
 
 [project.optional-dependencies]

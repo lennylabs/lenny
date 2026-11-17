@@ -30,7 +30,7 @@
 #   LENNY_KIND_SKIP_GVISOR   When "1", this script is a no-op. Escape
 #                            hatch for a host with no route to
 #                            storage.googleapis.com (the gVisor release
-#                            bucket); the gvisor_isolation_test.go tier-5
+#                            bucket); the gvisor_isolation_test.go the e2e_kind tier
 #                            test gates on RuntimeClass presence and
 #                            skips cleanly when this is set.
 #   LENNY_GVISOR_VERSION     gVisor release channel/version directory

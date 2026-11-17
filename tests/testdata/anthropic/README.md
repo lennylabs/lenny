@@ -6,7 +6,7 @@ SDK request/response pairs through the LLM Proxy native translator.
 Layout: `<scenario>/{request.json,response.json}`. Each pair is a
 canonical request shape on one side and the expected translator
 output on the other. The tier-2 component test
-(`tests/tier2_component/translators/`) iterates this directory and
+(`tests/component/translators/`) iterates this directory and
 asserts that:
 
 1. Marshalling the request through the translator produces the

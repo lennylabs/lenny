@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Tier-1 unit helm-template rendering tests per TESTING.md §12.1.
+// Unit helm-template rendering tests per TESTING.md §12.1.
 // helm-unittest reads YAML test cases under charts/<chart>/tests/
 // and asserts the rendered manifest matches expectations. The Go
 // harness here shells out to `helm unittest <chart>`; it skips

@@ -129,7 +129,7 @@ type Inputs struct {
 	// rejects an embedded runtime that sets requireSoPeercred: false (§4.1).
 	// spec: §4.7.
 	RequireSoPeercred *bool
-	// EgressCapture is the TESTING.md §12.9.8 tier-9 egress-capture sidecar
+	// EgressCapture is the TESTING.md §12.9.8 security-tier egress-capture sidecar
 	// configuration. Non-nil injects an additional container running
 	// lenny-egress-capture into the pod, plus a shared emptyDir mounted
 	// on the runtime container so the TESTING.md §12.9.8 leakage probe can read

@@ -23,7 +23,7 @@ type mcpRPCEnvelope struct {
 // mcpStub is an in-test JSON-RPC 2.0 handler that answers the §15.2
 // MCP methods the MCPClient exercises. It is a faithful stand-in for
 // the gateway /mcp endpoint: the contract test in
-// tests/tier3_contract/sdks drives the real gateway MCP server.
+// tests/contract/sdks drives the real gateway MCP server.
 func mcpStub(t *testing.T) http.Handler {
 	t.Helper()
 	mux := http.NewServeMux()

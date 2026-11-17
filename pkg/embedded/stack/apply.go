@@ -41,7 +41,7 @@ type applyPhase int
 
 const (
 	// applyPhaseAll applies every object in the manifest set in one pass. The
-	// tier-2 envtest and any non-fenced caller use it; the bring-up uses the
+	// component-tier envtest and any non-fenced caller use it; the bring-up uses the
 	// split phases below.
 	applyPhaseAll applyPhase = iota
 	// applyPhaseNonDeployments applies every object except the Deployments

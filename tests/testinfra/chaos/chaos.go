@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package chaos wraps the §12.8 fault-injection primitives the
-// tier-8 chaos suite depends on. Each helper is a thin interface
+// chaos suite depends on. Each helper is a thin interface
 // that delegates to either toxiproxy (compose-level fault injection)
 // or chaos-mesh (kind/cloud-level fault injection) depending on the
 // running profile.
@@ -44,7 +44,7 @@ func ChaosMeshAvailable() bool {
 }
 
 // SkipUnlessAvailable skips the test when no fault-injection tool
-// is reachable. Tier-8 tests call this at the top of their body so
+// is reachable. chaos-tier tests call this at the top of their body so
 // they degrade gracefully on hosts without the injectors.
 func SkipUnlessAvailable(t testing.TB) {
 	t.Helper()

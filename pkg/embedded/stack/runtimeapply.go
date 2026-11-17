@@ -219,7 +219,7 @@ func loadRuntimeFile(path string) (*lennyv1alpha1.Runtime, error) {
 // ApplyRuntimeSetFromConfig assembles the runtime's CRD set from rt and applies
 // it against an already-resolved rest config through the C1 dynamic-apply path
 // (the SandboxTemplate/SandboxWarmPool pair) plus the echo seed's typed-client
-// upsert (the Runtime CR). It is split from RunRuntimeApply so a tier-2 envtest
+// upsert (the Runtime CR). It is split from RunRuntimeApply so a component-tier envtest
 // drives the same apply path against a real kube-apiserver with the lenny.dev
 // CRDs installed, without writing a kubeconfig file, the way
 // ApplyEchoPoolFromConfig exposes the echo seed's apply. The caller is

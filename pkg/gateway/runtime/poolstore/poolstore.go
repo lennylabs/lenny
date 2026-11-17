@@ -710,7 +710,7 @@ var errRestartRefusedInterim = errors.New(`poolstore: recycle.runtimeProcess "re
 // validateRecyclePolicy, these comments, and its test
 // (TestValidateRecyclePolicyRefusesRestartInterim), together with the
 // interim sentences in docs/operator-guide/troubleshooting.md and
-// docs/reference/execution-modes.md that state this refusal and the tier-11
+// docs/reference/execution-modes.md that state this refusal and the docs tier
 // pin that requires them (requireRestartAdmissionRefusalStated).
 //
 // The gateway admission path runs ValidateRuntimeProcessRestartable before

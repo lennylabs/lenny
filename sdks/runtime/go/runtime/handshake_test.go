@@ -113,7 +113,7 @@ func awaitFrame(t *testing.T, got <-chan string) string {
 }
 
 // The runtime half of the handshake lives once, in pkg/runtimekit, whose
-// tier-1 cases pin the challenge answer, the redial with the re-read nonce,
+// unit-tier cases pin the challenge answer, the redial with the re-read nonce,
 // the wait for an unpublished manifest, and cancellation. The cases below pin
 // that both Go SDK dials and the MCP client reach it.
 

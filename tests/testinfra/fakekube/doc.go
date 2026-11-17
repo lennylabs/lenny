@@ -22,5 +22,5 @@
 // the embedded *fake.Clientset directly.
 //
 // Used by tier-7a multi-component scenarios under
-// tests/tier7a_load_local/scenarios/.
+// tests/load_local/scenarios/.
 package fakekube

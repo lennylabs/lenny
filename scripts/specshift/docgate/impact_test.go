@@ -124,7 +124,7 @@ func TestImpactPassesWhenTheDiffEditsADocumentationPageThatNamesThePage(t *testi
 func TestImpactPassesWhenTheChangeWaivesThePageByCode(t *testing.T) {
 	t.Parallel()
 	r := newRepo(t, "")
-	r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\n- No reader-facing behavior changes: CLAIM, POOL.\n\n## Tests\n\n- Tier 0.\n"})
+	r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\n- No reader-facing behavior changes: CLAIM, POOL.\n\n## Tests\n\n- The static tier.\n"})
 	r.commit("changes: state the documentation impact")
 	rep, err := CheckImpact(context.Background(), r.root)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestImpactWaiverCoversOnlyThePagesItNames(t *testing.T) {
 		"the phrase in a clause": "This step has no reader-facing behavior changes: POOL is internal.\n",
 	} {
 		r := newRepo(t, "")
-		r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\n" + doc + "\n## Tests\n\n- Tier 0.\n"})
+		r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\n" + doc + "\n## Tests\n\n- The static tier.\n"})
 		r.commit("changes: state the documentation impact")
 		rep, err := CheckImpact(context.Background(), r.root)
 		if err != nil {

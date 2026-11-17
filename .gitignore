@@ -7,7 +7,7 @@ tmp/
 /lenny-data/
 
 # Built Go binaries left in the repo root by `go build` against package
-# subdirectories. The names match the cmd/ and tests/tier7b_load_kind/scenarios/
+# subdirectories. The names match the cmd/ and tests/load_kind/scenarios/
 # package directories.
 /lenny-test
 /lenny-test-cached

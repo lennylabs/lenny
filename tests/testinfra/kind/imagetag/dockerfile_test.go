@@ -13,7 +13,7 @@ import (
 // repoRoot is the repository root relative to this package directory.
 const repoRoot = "../../../.."
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // The analyzer reads each Dockerfile the Kind install builds as the build
 // does: the root Dockerfile compiles ./cmd/$BINARY and copies go.mod, go.sum,
@@ -83,7 +83,7 @@ func TestAnalyzeDockerfileReadsTheRepositoryDockerfiles(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // A Dockerfile the analyzer cannot bound falls back to the whole context, and
 // one it cannot parse is an error rather than a guessed input set.
@@ -157,7 +157,7 @@ func TestAnalyzeDockerfileFallsBackOrFailsOnUnboundedInputs(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // COPY --from reads another stage rather than the context, ARG defaults apply
 // when the build passes no value, and a passed value overrides the default.

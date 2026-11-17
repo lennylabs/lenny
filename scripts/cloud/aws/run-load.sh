@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/aws/run-load.sh — tier-12 cloud-load trigger.
+# scripts/cloud/aws/run-load.sh — load_cloud trigger.
 #
 # Pre-flight checks then triggers a run through the lenny-loadctl
 # API. No terraform calls. No helm calls. No chart edits. No
@@ -27,7 +27,7 @@
 # Optional environment:
 #
 #   LENNY_LOAD_SCALE     — small|medium|production (default small)
-#   LENNY_SCENARIOS      — comma-separated scenario list (default: tier-12 default set)
+#   LENNY_SCENARIOS      — comma-separated scenario list (default: load_cloud-tier default set)
 #   LENNY_LOADCTL_URL    — override the loadctl URL discovery
 #   LENNY_LOADCTL_OPERATOR_TOKEN     — bearer token for the loadctl API
 #

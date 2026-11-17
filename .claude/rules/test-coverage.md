@@ -20,7 +20,7 @@ Every code change ships with tests across all relevant tiers, not unit tests alo
 
 ## The tier model
 
-The suite runs in thirteen stages (`lenny-test --tier <name>`; `--max-tier <name>` runs 0 through that tier; `--changed` selects by git diff). Tier 7 has a local stage (7a) gating a Kind stage (7b); tier 12 is the cloud load tier.
+The suite runs in thirteen stages (`lenny-test --tier <name>`; `--max-tier <name>` runs 0 through that tier; `--changed` selects by git diff). Tier 7 has a local stage (7a) gating a Kind stage (7b); the load_cloud tier is the cloud load tier.
 
 | Tier | Name | Covers |
 |:--|:--|:--|
@@ -42,16 +42,16 @@ The suite runs in thirteen stages (`lenny-test --tier <name>`; `--max-tier <name
 
 A change writes tests for every tier whose surface it touches. This list says which tiers' tests a change writes; which tiers run, and what must pass before a merge, is under "Gates" below.
 
-- Pure function, type, or in-process logic: tier 1.
-- Controller, reconciler, or anything reading or writing the kube-apiserver: tier 2 (envtest).
-- A wire contract (a proto message, a JSONL frame, an HTTP request or response, a CRD schema): tier 3.
-- A flow that crosses the gateway, a datastore, or another service: tier 4.
-- A cluster behavior (pod lifecycle, NetworkPolicy, admission webhook, mTLS, drain): tier 5.
-- Concurrency, ordering, atomicity, or rate behavior: tier 7a, and 7b when it needs real Kubernetes primitives.
-- A failure or recovery path (datastore loss, partition, fail-open, leader failover): tier 8.
-- Authentication, authorization, tenant isolation, egress, or credential delivery: tier 9.
-- A runtime adapter contract: tier 10.
-- Documentation, alert rules, or runbooks: tier 11.
+- Pure function, type, or in-process logic: the unit tier.
+- Controller, reconciler, or anything reading or writing the kube-apiserver: component tier (envtest).
+- A wire contract (a proto message, a JSONL frame, an HTTP request or response, a CRD schema): the contract tier.
+- A flow that crosses the gateway, a datastore, or another service: integration tier.
+- A cluster behavior (pod lifecycle, NetworkPolicy, admission webhook, mTLS, drain): the e2e_kind tier.
+- Concurrency, ordering, atomicity, or rate behavior: the load_local tier, and 7b when it needs real Kubernetes primitives.
+- A failure or recovery path (datastore loss, partition, fail-open, leader failover): the chaos tier.
+- Authentication, authorization, tenant isolation, egress, or credential delivery: the security tier.
+- A runtime adapter contract: the conformance tier.
+- Documentation, alert rules, or runbooks: the docs tier.
 
 A change usually touches several of these. Implement the tests for each tier the change reaches, not only the lowest one.
 
@@ -155,7 +155,7 @@ and, for any pool at zero ready, read one of its pods' logs before running anyth
 
 **4. No orphaned test infrastructure is still running.** An envtest run killed part-way leaves its etcd and
 kube-apiserver behind, holding memory and ports. Any such process reparented to init (`ppid` of 1) is
-orphaned; reap them with `pkill -f kubebuilder-envtest` before starting, and again after each tier-2
+orphaned; reap them with `pkill -f kubebuilder-envtest` before starting, and again after each component tier
 package.
 
 **5. The failure you are looking at is yours.** Before treating a tier failure above 1 as a defect in the
@@ -219,7 +219,7 @@ the unused part without touching an image a cluster runs.
 
 When a check fails and fixing the environment is out of scope for the work in hand, record the precondition
 and skip the affected case with a reason that opens with one of the categories in
-`cmd/lenny-test/skipreason`, such as `blocked:`. The tier-0 skip-reason classifier refuses any other
+`cmd/lenny-test/skipreason`, such as `blocked:`. The static-tier skip-reason classifier refuses any other
 reason; `tests/registers/skip-reasons.yaml` is the baseline of older skips that predate the categories, and
 it only shrinks. A test skipped with a recorded reason is honest; one that fails for an environmental reason
 teaches everyone to ignore red.
@@ -227,7 +227,7 @@ teaches everyone to ignore red.
 ## Escape hatches
 
 - A pure refactor with no behavior change does not need new tests and is not held to the new-code coverage target; the existing tests must still pass.
-- Tier 6 and tier 12 require operator-provisioned cloud resources (managed Kubernetes, gVisor nodes, sustained load infrastructure). When those are unavailable locally, implement the tests, state the dependency, and run the tiers that do run locally; do not let the cloud tiers block the rest.
+- The e2e_cloud tier and the load_cloud tier require operator-provisioned cloud resources (managed Kubernetes, gVisor nodes, sustained load infrastructure). When those are unavailable locally, implement the tests, state the dependency, and run the tiers that do run locally; do not let the cloud tiers block the rest.
 - Generated code (codegen output, mocks) is exercised through the code that uses it; it does not need its own tests.
 
 ## Maintenance

@@ -92,11 +92,11 @@ entries:
   # identifiers, so an enumeration reading the header block or the
   # unpinned literal as a site would write a resolved identifier at the
   # wrong site.
-  - file: tests/tier11_docs/route_test.go
+  - file: tests/docs/route_test.go
     occurrence: 1
     identifiers:
       - LNK-GWCONTROL
-  - file: tests/tier11_docs/route_test.go
+  - file: tests/docs/route_test.go
     occurrence: 2
     identifiers:
       - CH-PODLIFECYCLE

@@ -1,6 +1,6 @@
 # Azure loadgen module
 
-Provisions the tier-12 load-runner pool on Azure:
+Provisions the load_cloud-tier load-runner pool on Azure:
 
 - Virtual Machine Scale Set of `Standard_F8s_v2` instances in the AKS VNet, on private subnets.
 - Service Bus queue the runners pull jobs from.

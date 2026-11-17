@@ -59,7 +59,7 @@ const (
 	PoolGlobexDefaultGvisor = "globex-default-gvisor"
 )
 
-// Credential pools — mock providers for tier-4 and tier-5.
+// Credential pools — mock providers for tier-4 and the e2e_kind tier.
 const (
 	CredentialPoolMockAnthropic = "mock-anthropic"
 	CredentialPoolMockOpenAI    = "mock-openai"

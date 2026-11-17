@@ -16,7 +16,7 @@ import (
 // BINARY build-arg selects: the lenny-adapter sidecar image and the
 // first-party embedded runtime images alike. The images are distroless,
 // with no shell and no PATH lookup of another name, so an exec hook has
-// to name this path. A tier-0 test (tests/tier0_static) parses the
+// to name this path. A static-tier test (tests/static) parses the
 // Dockerfile's final COPY destination and ENTRYPOINT and fails when either
 // diverges from this constant.
 const PlatformBinaryPath = "/usr/local/bin/lenny"

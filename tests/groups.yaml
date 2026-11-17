@@ -210,7 +210,7 @@ groups:
       Phase 5.6. Targeted security design review (credential).
       The review itself is a human activity; the gate runs the
       static linters and asserts that the review checklist at
-      tests/tier9_security/reviews/credential-review.md exists.
+      tests/security/reviews/credential-review.md exists.
     selectors:
       tiers: [static]
       additional_checks:

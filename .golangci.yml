@@ -1,4 +1,4 @@
-# golangci-lint config. Tier 0 of TESTING.md.
+# golangci-lint config. The static tier of TESTING.md.
 #
 # Conservative defaults for Phase 1. Linters expand in later phases as
 # more code lands and false-positives get tuned out.
@@ -30,14 +30,14 @@ linters:
       # Don't penalise the agent-generated boilerplate while it stabilises.
       - linters:
           - govet
-        path: tests/tier3_contract/.*_test\.go
+        path: tests/contract/.*_test\.go
         text: not implemented
     paths:
       # Test-only helper directories whose lint pass is exercised by
-      # `go test ./tests/tier0_static/...`; the jsonschema/v5 import here
+      # `go test ./tests/static/...`; the jsonschema/v5 import here
       # has historically tripped the bundled type-checker, so exclude
       # them from the lint pass without losing coverage.
-      - tests/tier0_static
+      - tests/static
       - tests/testinfra/schematest
       - third_party$
       - builtin$
@@ -53,7 +53,7 @@ formatters:
   exclusions:
     generated: lax
     paths:
-      - tests/tier0_static
+      - tests/static
       - tests/testinfra/schematest
       - third_party$
       - builtin$

@@ -23,7 +23,7 @@
 # absent on disk (the tier-4 file was migrated during the S19 stale-
 # fixture cleanup). Tracked for repair separately; not this file's to
 # fix.
-tests/tier4_integration/concurrent_stateless_test.go
+tests/integration/concurrent_stateless_test.go
 
 # Stale `::TestName` selectors that point at a renamed or removed test
 # function while the file itself still exists. Surfaced when the
@@ -38,14 +38,14 @@ pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeConcurrentModeR
 pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeTaskModeReducesSteady
 pkg/gateway/runtime/poolstore/poolstore_test.go::TestValidateConcurrentConfig
 pkg/sandbox/state/state_test.go::TestAllStatesIncludePhase1Additions
-tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails
-tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload
-tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres
-tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport
-tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI
-tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS
-tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudOIDC
-tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability
-tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore
-tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO
-tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown
+tests/integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails
+tests/integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload
+tests/integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres
+tests/e2e_cloud/scaffolds_test.go::TestCloudBillingExport
+tests/e2e_cloud/scaffolds_test.go::TestCloudCSI
+tests/e2e_cloud/scaffolds_test.go::TestCloudKMS
+tests/e2e_cloud/scaffolds_test.go::TestCloudOIDC
+tests/e2e_cloud/scaffolds_test.go::TestCloudObservability
+tests/e2e_cloud/scaffolds_test.go::TestCloudSecretStore
+tests/e2e_cloud/scaffolds_test.go::TestMultiAZMinIO
+tests/chaos/event_stream_recovery_test.go::TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown

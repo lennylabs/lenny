@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package rbac is the tier-1 unit check that the chart's ClusterRoles
+// Package rbac is the unit check that the chart's ClusterRoles
 // contain every verb the gateway and controller binaries need.
 //
 // Regression source: commit f54b7bb. The gateway issued

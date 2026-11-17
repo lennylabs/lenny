@@ -10,7 +10,7 @@ import (
 )
 
 // ApplyManifestsFromConfigForTest exposes applyManifestsFromConfig to the
-// external tier-2 envtest in package stack_test so the §17.4 dynamic-apply
+// external component-tier envtest in package stack_test so the §17.4 dynamic-apply
 // path runs against a real kube-apiserver from an injected manifest set,
 // without writing a kubeconfig file or applying the full embedded render
 // (which references images and CRDs envtest does not carry). It is
@@ -20,7 +20,7 @@ func ApplyManifestsFromConfigForTest(ctx context.Context, cfg *rest.Config, fsys
 }
 
 // ApplyManifestsFromKubeconfigForTest exposes the kubeconfig-loading apply
-// path to the external tier-2 envtest so the §17.4 ApplyManifests entry
+// path to the external component-tier envtest so the §17.4 ApplyManifests entry
 // point (which loads a kubeconfig file) runs end to end against a real
 // kube-apiserver from an injected manifest set, exercising the same
 // kubeconfig-loading path ApplyManifests runs. It applies the full set in

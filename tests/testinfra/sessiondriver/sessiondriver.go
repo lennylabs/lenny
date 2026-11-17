@@ -1130,5 +1130,5 @@ var ErrEventsClosed = errors.New("sessiondriver: events channel closed")
 // could be placed. A test that requires a live session but not the pool
 // warm-up itself checks errors.Is(err, ErrPoolNotReady) and skips
 // cleanly, matching the Ready-precondition skips the sibling admin-API
-// tier-9 tests already perform.
+// security-tier tests already perform.
 var ErrPoolNotReady = errors.New("sessiondriver: warm pool not ready (no idle pod after retries)")

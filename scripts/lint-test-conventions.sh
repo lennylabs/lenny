@@ -3,13 +3,13 @@
 # scripts/lint-test-conventions.sh — enforces §17 test-authoring
 # conventions beyond §17.4 determinism (which has its own linter):
 #
-#   §17.6  Tier 1 (unit) tests use t.Parallel() by default.
+#   §17.6  the unit tier tests use t.Parallel() by default.
 #          Every TestXxx function in pkg/*_test.go should call
 #          t.Parallel() unless it has a documented reason not to.
 #   §17.7  No testify / gomega imports in tests/ or pkg/.
 #
-# §17.9 skip reasons are classified by the tier-0 Go test in
-# tests/tier0_static/, which reads the syntax tree of every skip call
+# §17.9 skip reasons are classified by the static-tier Go test in
+# tests/static/, which reads the syntax tree of every skip call
 # site and fails the tier. One convention has one implementation, so
 # nothing here reads a skip reason.
 #
@@ -33,7 +33,7 @@ while IFS= read -r match; do
 done < <(grep -RIEn '"github.com/(stretchr/testify|onsi/gomega)"' "${ROOT}/pkg" "${ROOT}/tests" 2>/dev/null | grep -v testdata || true)
 
 # §17.6 — every TestXxx in pkg/*_test.go should call t.Parallel().
-# Bound the check to pkg/ (Tier 1 unit). Other tiers have explicit
+# Bound the check to pkg/ (unit. Other tiers have explicit
 # parallelism rules (component: per-test schemas; integration:
 # serial within suite) so we don't gate them here.
 pkg_test_files=()

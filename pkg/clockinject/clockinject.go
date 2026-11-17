@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package clockinject is the §12.8 clock-injection harness for the
-// tier-8 chaos tests TestGatewayClockDrift,
+// chaos tests TestGatewayClockDrift,
 // TestCertificateExpiryAdvance, and TestT3T4SLABreach. Production
 // code reads time through clockinject.Now (or an injected func
 // returning time.Time) instead of time.Now directly; the chaos

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/azure/up-loadgen.sh — provisions the tier-12
+# scripts/cloud/azure/up-loadgen.sh — provisions the load_cloud tier
 # load-runner pool on Azure (VMSS + Service Bus + Managed Identity).
 # Idempotent.
 #

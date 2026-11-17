@@ -95,7 +95,7 @@ func TestDeletionReconcilerLogsPhase2PauseThroughTestLog_spec_12_8(t *testing.T)
 // successful and one faulted Phase 2 drain and requires each drain's
 // record, with its tenant, elapsed_seconds, and terminated count, to reach
 // the test log, and the faulted one to carry its error. A Phase 2 drain
-// that records no timing leaves the tier-8 deletion runs without the drain
+// that records no timing leaves the chaos-tier deletion runs without the drain
 // time that bounds the tenant-deletion tick delay.
 //
 // spec: 12.8 (Tenant deletion lifecycle), 12.8 (Compliance Interfaces: Lifecycle fence and drain)

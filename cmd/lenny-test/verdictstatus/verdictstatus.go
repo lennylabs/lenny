@@ -54,11 +54,11 @@ const (
 	VerdictUnverified = "UNVERIFIED"
 )
 
-// UnverifiedMarker is the line prefix a tier-0 Go test writes to stdout
+// UnverifiedMarker is the line prefix a static-tier Go test writes to stdout
 // to report that it could not reach a conclusion. The harness has no
 // channel other than the test binary's output for a passing test to say
 // that it proved nothing, so the test writes this marker followed by the
-// reason and exits zero, and the tier-0 composer promotes the tier to
+// reason and exits zero, and the static-tier composer promotes the tier to
 // Unverified. Producer and parser share the constant so the two cannot
 // drift apart.
 const UnverifiedMarker = "LENNY-TEST-UNVERIFIED:"

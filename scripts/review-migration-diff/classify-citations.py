@@ -54,7 +54,7 @@ RECORD_FILES = {
     "gateway-runtime-comms.md", "gateway-runtime-comms-remediation.md",
 }
 # The migration's own fixtures and drivers cite by construction.
-SKIP_PREFIX = ("proposals/", "scripts/specshift/", "tests/tier0_static/testdata/", ".claude/")
+SKIP_PREFIX = ("proposals/", "scripts/specshift/", "tests/static/testdata/", ".claude/")
 
 # What counts as product code for the TESTING.md inventory: everything that is
 # not documentation, not the testing document itself, and not an audit record.

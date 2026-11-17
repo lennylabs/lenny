@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # scripts/cloud/aws/build-images.sh — build + push the Lenny platform
-# images to ECR for a tier-6 EKS run.
+# images to ECR for an e2e_cloud-tier EKS run.
 #
 # For each image listed in IMAGES below, the script:
 #

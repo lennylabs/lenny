@@ -226,31 +226,31 @@ func tiersForChangedPathIn(globs map[string]map[string][]string, path string) []
 // inferTierFromPath maps a test path back to a tier name.
 func inferTierFromPath(path string) string {
 	switch {
-	case strings.HasPrefix(path, "tests/tier0_static"):
+	case strings.HasPrefix(path, "tests/static"):
 		return "static"
-	case strings.HasPrefix(path, "tests/tier2_component"):
+	case strings.HasPrefix(path, "tests/component"):
 		return "component"
-	case strings.HasPrefix(path, "tests/tier3_contract"):
+	case strings.HasPrefix(path, "tests/contract"):
 		return "contract"
-	case strings.HasPrefix(path, "tests/tier4_integration"):
+	case strings.HasPrefix(path, "tests/integration"):
 		return "integration"
-	case strings.HasPrefix(path, "tests/tier5_e2e_kind"):
+	case strings.HasPrefix(path, "tests/e2e_kind"):
 		return "e2e_kind"
-	case strings.HasPrefix(path, "tests/tier6_e2e_cloud"):
+	case strings.HasPrefix(path, "tests/e2e_cloud"):
 		return "e2e_cloud"
-	case strings.HasPrefix(path, "tests/tier7a_load_local"):
+	case strings.HasPrefix(path, "tests/load_local"):
 		return "load_local"
-	case strings.HasPrefix(path, "tests/tier7b_load_kind"):
+	case strings.HasPrefix(path, "tests/load_kind"):
 		return "load_kind"
-	case strings.HasPrefix(path, "tests/tier8_chaos"):
+	case strings.HasPrefix(path, "tests/chaos"):
 		return "chaos"
-	case strings.HasPrefix(path, "tests/tier9_security"):
+	case strings.HasPrefix(path, "tests/security"):
 		return "security"
-	case strings.HasPrefix(path, "tests/tier10_conformance"):
+	case strings.HasPrefix(path, "tests/conformance"):
 		return "conformance"
-	case strings.HasPrefix(path, "tests/tier11_docs"):
+	case strings.HasPrefix(path, "tests/docs"):
 		return "docs"
-	case strings.HasPrefix(path, "tests/tier12_load_cloud"):
+	case strings.HasPrefix(path, "tests/load_cloud"):
 		return "load_cloud"
 	case strings.HasPrefix(path, "pkg/") || strings.HasSuffix(path, "_test.go"):
 		// A pkg/ unit test.

@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/runtimenonce"
 )
 
-// This file holds the in-process fake runtime supervisor the tier-1 tests of
+// This file holds the in-process fake runtime supervisor the unit-tier tests of
 // the CH-SUPERVISE client and the supervised runtime run against. The fake
 // dials the adapter's socket, sends ready, and answers each request with a
 // programmable reaction; by default a launch also dials the runtime's

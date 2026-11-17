@@ -44,7 +44,7 @@ WS = re.compile(r"\s+")
 SKIP_PREFIX = (
     "proposals/",
     "scripts/specshift/testdata/",
-    "tests/tier0_static/testdata/",
+    "tests/static/testdata/",
 )
 SKIP_EXACT = {
     "BUILD-GAPS.md",

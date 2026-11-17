@@ -175,7 +175,7 @@ func TestStandaloneTokenServiceResolvesGatewayProvisionedAuditSequence_spec_13_3
 	// The gateway provisions the tenant's audit sequence on the primary through
 	// its LENNY_PG_PRIMARY_DDL_DSN (lenny_ddl) pool. Until it does, the Token
 	// Service write-before-issue path would fail closed (proven separately in
-	// tier 9); here we confirm the post-provision resolution succeeds.
+	// the security tier); here we confirm the post-provision resolution succeeds.
 	gatewayProvisionAuditSequence(t, ctx, ddl, tenant)
 
 	// The standalone Token Service store connects to the same instance as

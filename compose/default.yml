@@ -2,7 +2,7 @@
 
 # Compose profile: default
 #
-# Provisions the backing stores the tier-3 contract and tier-4
+# Provisions the backing stores the contract and tier-4
 # integration suites depend on. The in-process stubs (OIDC, KMS,
 # mock LLM provider, SIEM) run inside the test process; they are
 # not part of the compose stack.
@@ -95,7 +95,7 @@ services:
   # §12.8 Redis Sentinel topology. The default profile runs a single
   # master (the `redis` service above) plus one replica plus three
   # Sentinel nodes — the minimum quorum to elect a new master when
-  # the original fails. The tier-8 TestRedisSentinelFailover chaos
+  # the original fails. The chaos-tier TestRedisSentinelFailover chaos
   # scaffold uses this to drive an automatic failover under fault
   # injection. Production deployments run a Kubernetes Sentinel-based
   # operator; this compose is a fault-injection harness, not a

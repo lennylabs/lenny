@@ -54,7 +54,7 @@ func parseRunbookFrontMatter(path string) (alertDriven bool, err error) {
 // spec: 12.8 (every alert-driven runbook has a chaos test)
 // diagnosis: A runbook under docs/runbooks/ has no entry in
 //
-//	tests/tier8_chaos/runbook-map.yaml. Operational runbooks
+//	tests/chaos/runbook-map.yaml. Operational runbooks
 //	(triggers: []) are exempt because they document scheduled
 //	procedures (rotations, tier promotions) rather than incident
 //	response, so there is no chaos scenario to map them to.
@@ -63,13 +63,13 @@ func parseRunbookFrontMatter(path string) (alertDriven bool, err error) {
 func TestRunbookMapCoverage(t *testing.T) {
 	root := repoRootCwd(t)
 	runbookDir := filepath.Join(root, "docs", "runbooks")
-	mapPath := filepath.Join(root, "tests", "tier8_chaos", "runbook-map.yaml")
+	mapPath := filepath.Join(root, "tests", "chaos", "runbook-map.yaml")
 
 	if _, err := os.Stat(runbookDir); errors.Is(err, fs.ErrNotExist) {
 		t.Skip("docs/runbooks/ does not exist; nothing to validate")
 	}
 	if _, err := os.Stat(mapPath); errors.Is(err, fs.ErrNotExist) {
-		t.Skip("tests/tier8_chaos/runbook-map.yaml not present")
+		t.Skip("tests/chaos/runbook-map.yaml not present")
 	}
 
 	body, err := os.ReadFile(mapPath)

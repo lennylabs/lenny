@@ -310,7 +310,7 @@ func TestRecordedTierStatusStaysInTheEnum(t *testing.T) {
 
 // staticCheckStub builds a table entry whose run returns the given
 // output and error and whose classifier reads the shared unverified
-// marker, matching the tier-0 Go-test entry.
+// marker, matching the static-tier Go-test entry.
 func staticCheckStub(name, out string, err error) staticCheck {
 	return staticCheck{
 		name:     name,
@@ -320,15 +320,15 @@ func staticCheckStub(name, out string, err error) staticCheck {
 }
 
 // TestComposeStaticChecksUnverifiedMarkerRaisesTierStatus pins the
-// producer side of the unverified tier status. A tier-0 check that ran,
+// producer side of the unverified tier status. A static-tier check that ran,
 // exited zero, and wrote the marker reported that it proved nothing;
 // collapsing it to pass is the fail-open outcome the status exists to
 // prevent.
 func TestComposeStaticChecksUnverifiedMarkerRaisesTierStatus(t *testing.T) {
-	out := "ok  \tgithub.com/lennylabs/lenny/tests/tier0_static\t0.01s\n    " +
+	out := "ok  \tgithub.com/lennylabs/lenny/tests/static\t0.01s\n    " +
 		verdictstatus.UnverifiedMarker + " protoc not on PATH\n"
 	status, msg := composeStaticChecks([]staticCheck{
-		staticCheckStub("go test ./tests/tier0_static/...", out, nil),
+		staticCheckStub("go test ./tests/static/...", out, nil),
 	})
 	if status != verdictstatus.Unverified {
 		t.Fatalf("check reporting no conclusion yielded status %q; want %q", status, verdictstatus.Unverified)
@@ -369,7 +369,7 @@ func TestComposeStaticChecksFailOutranksUnverified(t *testing.T) {
 // carries no message.
 func TestComposeStaticChecksSilentChecksPass(t *testing.T) {
 	status, msg := composeStaticChecks([]staticCheck{
-		staticCheckStub("tier0 go test", "ok  \tgithub.com/lennylabs/lenny/tests/tier0_static\t0.01s\n", nil),
+		staticCheckStub("tier0 go test", "ok  \tgithub.com/lennylabs/lenny/tests/static\t0.01s\n", nil),
 		{name: "no classifier", run: func() (string, error) {
 			return verdictstatus.UnverifiedMarker + " ignored without a classifier", nil
 		}},
@@ -513,19 +513,19 @@ func TestInferTierFromPath(t *testing.T) {
 	cases := []struct {
 		path, want string
 	}{
-		{"tests/tier0_static/foo_test.go", "static"},
-		{"tests/tier2_component/x_test.go", "component"},
-		{"tests/tier3_contract/x_test.go", "contract"},
-		{"tests/tier4_integration/x_test.go", "integration"},
-		{"tests/tier5_e2e_kind/x_test.go", "e2e_kind"},
-		{"tests/tier6_e2e_cloud/x_test.go", "e2e_cloud"},
-		{"tests/tier7a_load_local/x_test.go", "load_local"},
-		{"tests/tier7b_load_kind/x_test.go", "load_kind"},
-		{"tests/tier8_chaos/x_test.go", "chaos"},
-		{"tests/tier9_security/x_test.go", "security"},
-		{"tests/tier10_conformance/x_test.go", "conformance"},
-		{"tests/tier11_docs/x_test.go", "docs"},
-		{"tests/tier12_load_cloud/x_test.go", "load_cloud"},
+		{"tests/static/foo_test.go", "static"},
+		{"tests/component/x_test.go", "component"},
+		{"tests/contract/x_test.go", "contract"},
+		{"tests/integration/x_test.go", "integration"},
+		{"tests/e2e_kind/x_test.go", "e2e_kind"},
+		{"tests/e2e_cloud/x_test.go", "e2e_cloud"},
+		{"tests/load_local/x_test.go", "load_local"},
+		{"tests/load_kind/x_test.go", "load_kind"},
+		{"tests/chaos/x_test.go", "chaos"},
+		{"tests/security/x_test.go", "security"},
+		{"tests/conformance/x_test.go", "conformance"},
+		{"tests/docs/x_test.go", "docs"},
+		{"tests/load_cloud/x_test.go", "load_cloud"},
 		{"pkg/audit/audit_test.go", "unit"},
 		{"foo/bar_test.go", "unit"},
 		{"docs/index.md", ""},

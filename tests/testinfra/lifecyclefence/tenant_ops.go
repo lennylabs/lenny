@@ -389,7 +389,7 @@ func (d disabler) SoftDisableTenant(ctx context.Context, tenantID string) error 
 
 // phase2Drain is the Phase 2 SessionTerminator: the shared drain over the
 // whole tenant. It logs each drain's elapsed time, because a long Phase 2
-// drain delays the tenant-deletion tick and the tier-8 runs make that delay
+// drain delays the tenant-deletion tick and the chaos tier runs make that delay
 // observable through the test log.
 type phase2Drain struct{ w *World }
 

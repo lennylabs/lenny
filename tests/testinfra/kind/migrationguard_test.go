@@ -39,7 +39,7 @@ func installScriptSection(t *testing.T, begin, end string) string {
 // position: install.sh calls it after the data stores are Available and
 // before it applies the lenny-e2e-migrate Job (T-17.4.29).
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestInstallMigrationGuardCallsPrecedeTheMigrateJob(t *testing.T) {
 	b, err := os.ReadFile("install.sh")
 	if err != nil {
@@ -65,7 +65,7 @@ func TestInstallMigrationGuardCallsPrecedeTheMigrateJob(t *testing.T) {
 // LENNY_SKIP_MIGRATION_GUARD=1. Every read the guard issues runs in a
 // read-only transaction (T-17.4.29).
 //
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 func TestInstallMigrationGuardRefusesADirtyOrAheadDatabase(t *testing.T) {
 	// bash is a hard requirement: install.sh is a bash script.
 	if _, err := exec.LookPath("bash"); err != nil {

@@ -327,7 +327,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 		// `make run` developer keeps their tenants, runtimes, sessions,
 		// and transcripts across a restart without a Postgres dependency.
 		// The stores' query logic is the same in-memory implementation
-		// the tier-3 contract suites exercise; SQLite is purely the
+		// the contract suites exercise; SQLite is purely the
 		// durable backing. F-17.4.2.
 		if *sqlitePath != "" {
 			db, err := sqlitestore.Open(*sqlitePath)

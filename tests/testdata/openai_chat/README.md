@@ -23,7 +23,7 @@ compiles standalone. One upstream draft-2019-09 self-recursion
 normalized to a plain self-`$ref` for draft 2020-12 compatibility;
 this changes no accepted or rejected instance since the bundle is
 self-contained and the recursion always resolves to the same enclosing
-schema. `tests/tier3_contract/rest_openai_chat/published_schema_test.go`
+schema. `tests/contract/rest_openai_chat/published_schema_test.go`
 validates the `/v1/chat/completions` response body against this file
 via `tests/testinfra/schematest`, so the wire body is checked against
 OpenAI's own published schema and not only against Lenny's translator

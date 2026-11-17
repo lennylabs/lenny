@@ -1,6 +1,6 @@
 # Azure loadctl module
 
-Provisions the tier-12 control plane on Azure:
+Provisions the load_cloud-tier control plane on Azure:
 
 - Container Apps environment hosting the `lenny-loadctl` container image.
 - Flexible Server Postgres for run-state persistence.

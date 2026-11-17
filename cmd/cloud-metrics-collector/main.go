@@ -2,7 +2,7 @@
 
 // cloud-metrics-collector polls the active cloud provider's metrics
 // API and exposes the results as Prometheus-format metrics that the
-// tier-12 load-run Prometheus scrapes.
+// load_cloud-tier load-run Prometheus scrapes.
 //
 // spec: §24.1.
 package main

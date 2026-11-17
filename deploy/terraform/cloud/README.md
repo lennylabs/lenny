@@ -38,7 +38,7 @@ per operator and are the operator's responsibility.
 
 The v1 Lenny chart consumes only the Postgres DSN, Redis URL, and
 MinIO endpoint as connection-string env. The full cloud KMS
-provisioning that Tier-6 e2e exercises (the per-tenant KMS key
+provisioning that e2e_cloud exercises (the per-tenant KMS key
 allocator on workspaceTier T4 promotion) needs the cloud KMS
 provider in `pkg/kms/<provider>/` — also v2 follow-on. The
 Terraform here lays the resource graph that those Go adapters

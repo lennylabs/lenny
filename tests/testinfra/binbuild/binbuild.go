@@ -6,7 +6,7 @@
 // The subprocess harnesses (tests/testinfra/gateway, opsprocess, and
 // tokenservice) used to run `go build` for every test that started a
 // process. Linking cmd/lenny-gateway takes about seven seconds of wall time
-// and ten of CPU even with a warm build cache, and the tier-4 package
+// and ten of CPU even with a warm build cache, and the integration-tier package
 // starts a gateway in about a hundred places, so the links alone cost
 // several minutes of its runtime (TEST-GAPS T-17.4.33). Build links each
 // command once and hard-links the result into a per-test directory, which

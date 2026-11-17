@@ -51,7 +51,7 @@ func waitSignalCount(t *testing.T, st *state, name string) {
 //
 // diagnosis: the probe never registered the fault signals or SIGPIPE, so Go
 // dropped a kill()-sent copy and a supervisor that forwarded one to the
-// runtime process passed the tier-9 signal case; or the probe listed SIGURG
+// runtime process passed the security-tier signal case; or the probe listed SIGURG
 // as counted while the Go runtime owned it. Read countedSignals.
 func TestCountedSignalsCoverTheFaultSignalsAndSIGPIPE(t *testing.T) {
 	cases := []struct {

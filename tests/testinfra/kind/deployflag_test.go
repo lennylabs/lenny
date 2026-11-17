@@ -8,7 +8,7 @@ import (
 )
 
 // TestSetFlagArgOverridesAndRestoresClaimOrphanTimeout pins the argument
-// rewrite the tier-5 erasure case uses to lower the controller's
+// rewrite the e2e_kind-tier erasure case uses to lower the controller's
 // claimOrphanTimeout for the run and to put it back afterwards, including on
 // a later run after a killed one. A rewrite that leaves the original
 // argument beside the override, or a restore that loses it, would leave the

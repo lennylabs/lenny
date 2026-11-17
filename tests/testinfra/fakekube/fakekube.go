@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Surface is the fake Kubernetes API used by tier-7a scenarios.
+// Surface is the fake Kubernetes API used by load_local-tier scenarios.
 //
 // The Wave 2 cut exposes the minimum surface scenarios need: a way
 // to register objects, a way to read them back, and a configurable

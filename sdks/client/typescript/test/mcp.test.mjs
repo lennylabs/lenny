@@ -56,7 +56,7 @@ function toolResult(text, isError) {
 }
 
 // mcpHandler answers the §15.2 MCP JSON-RPC methods. It is a faithful
-// stand-in for the gateway /mcp endpoint; the tier-3 contract test
+// stand-in for the gateway /mcp endpoint; the contract test
 // drives the real gateway MCP server.
 async function mcpHandler(req, res) {
   if (req.method !== 'POST' || req.url !== '/mcp') {

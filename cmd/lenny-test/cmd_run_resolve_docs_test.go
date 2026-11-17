@@ -12,11 +12,11 @@ import (
 	"testing"
 )
 
-// channelGuardDir holds the tier-11 guards over the communication
+// channelGuardDir holds the docs-tier guards over the communication
 // channel section, and channelGuardPrefix is the prefix their file names
 // carry.
 const (
-	channelGuardDir    = "tests/tier11_docs"
+	channelGuardDir    = "tests/docs"
 	channelGuardPrefix = "spec_28_"
 )
 
@@ -44,7 +44,7 @@ var (
 )
 
 // TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier pins the
-// change-graph routing that the tier-11 guards over the communication
+// change-graph routing that the docs-tier guards over the communication
 // channel section depend on. Those guards read the section text, the
 // spec index, the sections that name a register writer, the shared
 // predicates of the migration tooling, the proposal that records who
@@ -114,7 +114,7 @@ func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
 // spec: 28.1 (channel naming law), 28.3 (channel registers)
 func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 	dir := t.TempDir()
-	guard := "package tier11_docs_test\n\n" +
+	guard := "package docs_test\n\n" +
 		"import _ \"" + modulePath + "scripts/specshift/unrouted\"\n\n" +
 		"const held = \"spec/99_a-section-a-guard-reads.md\"\n\n" +
 		"const stem = \"98_a-section-named-by-its-stem.md\"\n\n" +
@@ -129,7 +129,7 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 		t.Fatalf("read the sources of the synthetic guard: %v", err)
 	}
 	globs := map[string]map[string][]string{
-		"tests/": {"docs": []string{"tests/tier11_docs/..."}},
+		"tests/": {"docs": []string{"tests/docs/..."}},
 	}
 	// Each form a guard names a routed file in has to be derived, and
 	// each has to read as unrouted under a graph with no key covering it.
@@ -181,7 +181,7 @@ func validateChangeGraphPathsOverKey(t *testing.T, key string) checkResult {
 	t.Helper()
 	graph := map[string]any{
 		"globs": map[string]any{
-			key: map[string]any{"docs": []string{"tests/tier11_docs/..."}},
+			key: map[string]any{"docs": []string{"tests/docs/..."}},
 		},
 	}
 	body, err := json.Marshal(graph)
@@ -216,7 +216,7 @@ func containsRootLevelDocument(list []string) bool {
 	return false
 }
 
-// channelGuardSources returns the tracked paths that the tier-11 guards
+// channelGuardSources returns the tracked paths that the docs-tier guards
 // over the communication channel section read, sorted and deduplicated.
 func channelGuardSources(dir string) ([]string, error) {
 	return channelGuardPaths(dir, func(text string, found map[string]bool) {

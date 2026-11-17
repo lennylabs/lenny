@@ -39,7 +39,7 @@ The other rules that mention section citations in code point here rather than re
 
 ## Gate
 
-A tier-0 lint, `TestSpecAnnotationLintPassesOnTheBranchDiff` and `TestSpecAnnotationIdentifiersResolveOnTheBranchDiff` in `tests/tier0_static`, reads the Go lines a branch adds or changes against its merge base with `main` (or `origin/main`), including uncommitted and untracked files. It leaves out `testdata/` directories, generated files, the change records, and the staged proposals. On those lines it refuses:
+A static-tier lint, `TestSpecAnnotationLintPassesOnTheBranchDiff` and `TestSpecAnnotationIdentifiersResolveOnTheBranchDiff` in `tests/static`, reads the Go lines a branch adds or changes against its merge base with `main` (or `origin/main`), including uncommitted and untracked files. It leaves out `testdata/` directories, generated files, the change records, and the staged proposals. On those lines it refuses:
 
 - a `// spec:` annotation inside a function body or a function literal, and one on a struct field, as a doc comment or a trailing comment, in test and non-test files alike;
 - a section number in the name of a test function, such as `_spec_4_7` or `Spec16_5`, and a `§` or `spec N.M` in a subtest name;
@@ -58,7 +58,7 @@ Review holds the parts of the rule that the lint cannot read: that only deciding
 2. Put the annotation on the doc comment of the function or type that makes the decision, and on the doc comments of the tests that verify it.
 3. Do not annotate the callers, helpers, or fields around it, and do not put a section number in a test name or a comment that cites a migrated page.
 4. When touching code that carries `§` annotations or section-numbered comments in an area that has migrated, replace them under this rule in the same commit, and delete the ones the rule does not keep. Commit the lowered count in `tests/registers/spec-section-citations.yaml` with them.
-5. Run tier 0, which runs the lint on the branch's diff and the ratchet on the tree.
+5. Run the static tier, which runs the lint on the branch's diff and the ratchet on the tree.
 
 ## Escape hatches
 

@@ -62,4 +62,4 @@ brew test lennylabs/tap/lenny
 ```
 
 The §22.7 TTHW load-tier scenario exercises this once the tap is
-published; see `tests/tier11_docs/time_to_hello_world_test.go` step 1.
+published; see `tests/docs/time_to_hello_world_test.go` step 1.

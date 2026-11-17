@@ -6,12 +6,12 @@ The wire-contract artifact register in [`spec/28_communication-channels.md`](../
 
 ## Validation
 
-Phase 1 Tier 0 runs these checks:
+Phase 1 the static tier runs these checks:
 
 ```bash
 lenny-test --tier static                # full Tier 0
 buf lint                                # proto only
-# JSON Schema example round-trips: tests/tier0_static/schemas_test.go
+# JSON Schema example round-trips: tests/static/schemas_test.go
 ```
 
 `buf breaking` runs against the prior commit on `main` in CI to catch wire-incompatible changes that aren't covered by an explicit version bump.
@@ -28,4 +28,4 @@ Each proto file uses a buf-canonical `v1` package suffix (`lenny.adapter.v1`, `l
 
 ## Examples
 
-Each schema has at least one valid example payload in [`examples/`](examples/). The Tier 0 schema-validation test loads every schema and every example and asserts the example validates.
+Each schema has at least one valid example payload in [`examples/`](examples/). The static tier schema-validation test loads every schema and every example and asserts the example validates.

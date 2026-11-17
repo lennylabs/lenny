@@ -127,7 +127,7 @@ func TestValidateSpecMapTestFiles(t *testing.T) {
 	// A non-.go directory reference is not required to resolve to a
 	// file.
 	r = specMapTestFilesFixture(t,
-		map[string][]string{"1.6": {"tests/tier2_component/foo"}},
+		map[string][]string{"1.6": {"tests/component/foo"}},
 		nil, "", "")
 	expectPass(t, r)
 }
@@ -197,7 +197,7 @@ func TestValidateSpecMapTestFuncs(t *testing.T) {
 
 	// The pre-fix reference names a function the file no longer declares
 	// (renamed away): the gate fails and names the dangling reference.
-	// This is the case that would have caught the tier-4
+	// This is the case that would have caught the integration tier
 	// interactive-iteration test rename
 	// (TestInteractiveIterationInterruptThenQueuedMessage ->
 	// ...ThenResumeAndDeliver) that repointed sections 7.1 and 7.2 at a
@@ -294,7 +294,7 @@ func TestHasNotImplementedSkipAfter(t *testing.T) {
 
 // TestScaffoldMarkerReaderAcceptsEveryPublishedSkipCategory holds the
 // scaffold-marker reader to the category enumeration in
-// cmd/lenny-test/skipreason, which the tier-0 skip-reason classifier
+// cmd/lenny-test/skipreason, which the static-tier skip-reason classifier
 // reads as well. A category widened or renamed in one reader alone
 // would let the classifier and this reader disagree about which skip
 // reasons §17.9 allows.
@@ -1211,11 +1211,11 @@ func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
 	r := changeGraphFileExistenceFixture(t,
 		map[string]map[string][]string{
 			"scripts/specshift": {
-				"static": {"tests/tier0_static/..."},
+				"static": {"tests/static/..."},
 				"unit":   {"scripts/specshift/..."},
 			},
 		},
-		[]string{"scripts/specshift/", "tests/tier0_static/"}, nil)
+		[]string{"scripts/specshift/", "tests/static/"}, nil)
 	expectPass(t, r)
 	if !strings.Contains(r.detail, "2 target(s)") {
 		t.Errorf("the detail does not report the probed targets: %s", r.detail)
@@ -1227,22 +1227,22 @@ func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
 		map[string]map[string][]string{
 			"scripts/specshift": {
 				"unit":     {"scripts/specshift/..."},
-				"contract": {"tests/tier3_contract/residual/..."},
+				"contract": {"tests/contract/residual/..."},
 			},
 		},
 		[]string{"scripts/specshift/"}, nil)
-	expectFail(t, r, "scripts/specshift", "contract", "tests/tier3_contract/residual/...")
+	expectFail(t, r, "scripts/specshift", "contract", "tests/contract/residual/...")
 
 	// A dangling target is exempt while it is listed as pending, spelled
 	// as the graph spells it.
 	r = changeGraphFileExistenceFixture(t,
 		map[string]map[string][]string{
 			"scripts/specshift": {
-				"contract": {"tests/tier3_contract/residual/..."},
+				"contract": {"tests/contract/residual/..."},
 			},
 		},
 		[]string{"scripts/specshift/"},
-		[]string{"tests/tier3_contract/residual/..."})
+		[]string{"tests/contract/residual/..."})
 	expectPass(t, r)
 
 	// The key side still fails on its own.
@@ -1256,9 +1256,9 @@ func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
 
 // TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers pins the tiers the
 // specification migration tooling selects. The tooling's gates are a
-// tier-0 static battery and tier-1 unit tests, and the shared
+// static battery and unit tests, and the shared
 // reserved-phrase predicate under scripts/specshift/scope also carries a
-// tier-11 case that ties it to the communication channel section's
+// docs-tier case that ties it to the communication channel section's
 // domain, so scripts/specshift adds the docs tier. A change under
 // tests/registers/ selects the static and unit tiers alone. Neither key
 // selects a tier whose suite the tooling does not carry.
@@ -1298,7 +1298,7 @@ func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
 }
 
 // TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier pins the
-// tiers the documents the tier-11 guards over the communication channel
+// tiers the documents the docs-tier guards over the communication channel
 // section read select. The guards hold the record of who creates that
 // section to one proposal and to the durable record of what an apply run
 // left open, and a guard fires under `--changed` only when the file it
@@ -1338,7 +1338,7 @@ func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) 
 // TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness pins
 // the change-graph keys of the runtime supervisor's C sources and image:
 // the path validator accepts both, and the committed graph routes an edit
-// under supervisor/ to the tier-0 binary check and the tier-1 C harness
+// under supervisor/ to the static-tier binary check and the tier-1 C harness
 // driver, and an edit to Dockerfile.supervisor to the binary check. A
 // validator that rejected the keys would force their removal, and a C
 // change would then select no test under --changed.
@@ -1353,11 +1353,11 @@ func TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness(t *testi
 	globs := mustReadChangeGraphGlobs(t)
 	want := map[string]map[string]string{
 		"supervisor/": {
-			"static": "tests/tier0_static/supervisor_binary_test.go",
+			"static": "tests/static/supervisor_binary_test.go",
 			"unit":   "tests/tier1_unit/supervisor/...",
 		},
 		"Dockerfile.supervisor": {
-			"static": "tests/tier0_static/supervisor_binary_test.go",
+			"static": "tests/static/supervisor_binary_test.go",
 		},
 	}
 	for key, tiers := range want {

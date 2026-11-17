@@ -461,7 +461,7 @@ func TestRuntimeOpsFoldsCompletedTokens_spec_11_2(t *testing.T) {
 // the first frames. This pins the corrected ordering: with the sink wired
 // before Run (startRuntimeOpsWithSink), a completed-LLM frame that
 // arrives immediately after the handshake folds its tokens with no race.
-// Run under -race (tier 7a) it fails against the pre-fix after-Run wiring.
+// Run under -race (load_local tier) it fails against the pre-fix after-Run wiring.
 func TestRuntimeOpsSinkWiredBeforeRun_spec_11_2(t *testing.T) {
 	sink := &recordingSink{}
 	_, fr := startRuntimeOpsWithSink(t, sink)

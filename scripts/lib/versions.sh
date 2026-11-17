@@ -32,14 +32,14 @@ LENNY_VERSION_SQLC="1.25"
 LENNY_VERSION_MIGRATE="4.17"
 LENNY_VERSION_CONFTEST="0.50"
 
-# ---- Kubernetes toolchain (tier 5) ----
+# ---- Kubernetes toolchain (e2e_kind tier) ----
 LENNY_VERSION_KUBECTL="1.27"           # +/-1 minor skew tolerated; managed K8s often lags
 LENNY_VERSION_KIND="0.20"              # 0.20 supports the K8s versions we target
 LENNY_VERSION_HELM="3.12"              # no 3.13-specific features required
 LENNY_VERSION_HELM_UNITTEST="1.1.0"    # full version; helm-unittest 1.x supports Helm 3 and Helm 4
 LENNY_VERSION_CMCTL="2.0"
 
-# ---- Cloud toolchain (tier 6) ----
+# ---- Cloud toolchain (e2e_cloud tier) ----
 LENNY_VERSION_GCLOUD="475.0"
 LENNY_VERSION_AWS_CLI="2.15"
 LENNY_VERSION_EKSCTL="0.180"
@@ -52,7 +52,7 @@ LENNY_VERSION_K6="0.50"
 LENNY_VERSION_VEGETA="12.11"
 LENNY_VERSION_TOXIPROXY="2.7"
 
-# ---- Security toolchain (tier 9) ----
+# ---- Security toolchain (security tier) ----
 LENNY_VERSION_OWASP_ZAP="2.14"
 LENNY_VERSION_KUBEAUDIT="0.22"
 LENNY_VERSION_KUBE_BENCH="0.7"
@@ -70,7 +70,7 @@ LENNY_VERSION_NODE="20"                # major; fnm install 20 picks the latest 
 LENNY_VERSION_TYPESCRIPT="5.4"
 LENNY_VERSION_OAPI_CODEGEN="2.3"
 
-# ---- Documentation toolchain (tier 11) ----
+# ---- Documentation toolchain (docs tier) ----
 LENNY_VERSION_RUBY="3.2.4"             # also the version rbenv installs when system ruby is below pin
 LENNY_VERSION_MARKDOWN_LINK_CHECK="3.12"
 LENNY_VERSION_VALE="3.4"

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Command cred-shell-echo is the tier-9-test reference runtime that
+// Command cred-shell-echo is the security tier-test reference runtime that
 // pairs the Basic-level echo loop with a Helm-renderable Runtime
 // definition declaring `credentialPoolRefs`, deployed on an
 // Alpine-based image that retains /bin/sh. The combination unblocks
@@ -18,7 +18,7 @@
 // This image SHOULD NOT be used in production: shipping a shell with
 // an agent pod weakens the §13.1 pod-security posture. The
 // `lenny-pod-security` admission webhook rejects it in production
-// installations; tier-9 deploys it explicitly into the e2e overlay
+// installations; security-tier deploys it explicitly into the e2e overlay
 // for the leakage probes.
 package main
 

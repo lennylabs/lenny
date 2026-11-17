@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 
-# Kind cluster configuration for the tier-5 e2e suite.
+# Kind cluster configuration for the e2e_kind suite.
 #
 # Three nodes (1 control plane + 2 workers) so the tests can exercise
 # pod scheduling, label-based admission, and the sandbox node-pool
@@ -13,7 +13,7 @@ name: lenny-e2e
 nodes:
   # The control-plane node carries ingress-ready=true so the Kind
   # ingress-nginx controller, which node-selects that label, schedules
-  # onto it. install.sh installs ingress-nginx for the tier-5
+  # onto it. install.sh installs ingress-nginx for the e2e_kind tier
   # gateway-ingress NetworkPolicy test.
   - role: control-plane
     image: kindest/node:v1.31.4

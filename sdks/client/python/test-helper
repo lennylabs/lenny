@@ -3,7 +3,7 @@
 
 """Language-native helper for the tier-3 SDK contract harness.
 
-The harness (tests/tier3_contract/sdks/harness) spawns this script for
+The harness (tests/contract/sdks/harness) spawns this script for
 the Python client SDK. It reads one Command JSON object per line on
 stdin, executes each op through the SDK against the gateway, and writes
 one Response JSON object per line on stdout.

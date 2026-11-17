@@ -15,7 +15,7 @@
 // commands is checked on its own; a MULTI block is one unit, so every key in
 // it must share one slot.
 //
-// Production code never imports this package; the tier-0 check
+// Production code never imports this package; the static-tier check
 // `TestRedisStoresInstallSlotGuard_spec_12_4` confirms that every Redis
 // store package's tests install it.
 //

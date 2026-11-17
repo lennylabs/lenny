@@ -12,7 +12,7 @@ import (
 // produces Jobs; the runner consumes them, executes k6 against
 // TargetURL, and acks or nacks based on outcome.
 type Job struct {
-	// RunID is the tier-12 run this job belongs to. Multiple jobs
+	// RunID is the load_cloud-tier run this job belongs to. Multiple jobs
 	// share a RunID when the scenario fans out across runners.
 	RunID string
 

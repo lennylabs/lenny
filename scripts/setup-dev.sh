@@ -448,7 +448,7 @@ install_core() {
   install_envtest_assets
 }
 
-# ---- Kubernetes toolchain (tier 5) ----
+# ---- Kubernetes toolchain (e2e_kind tier) ----
 
 install_kubernetes() {
   install_simple_brew kubectl kubectl version "$LENNY_VERSION_KUBECTL"
@@ -467,7 +467,7 @@ install_kubernetes() {
   fi
 }
 
-# ---- Cloud toolchain (tier 6) ----
+# ---- Cloud toolchain (e2e_cloud tier) ----
 
 install_cloud() {
   case "$PKG" in
@@ -532,7 +532,7 @@ install_chaos() {
   lenny_log_info "chaos-mesh installs in-cluster; no local CLI required (TESTING_DEPENDENCIES.md §8)."
 }
 
-# ---- Security toolchain (tier 9) ----
+# ---- Security toolchain (security tier) ----
 
 install_security() {
   install_simple_brew kubeaudit kubeaudit version "$LENNY_VERSION_KUBEAUDIT"
@@ -628,7 +628,7 @@ install_sdk_typescript() {
   install_npm_global_tool tsc "typescript@$LENNY_VERSION_TYPESCRIPT" "$LENNY_VERSION_TYPESCRIPT"
 }
 
-# ---- Documentation toolchain (tier 11) ----
+# ---- Documentation toolchain (docs tier) ----
 
 install_docs() {
   # Detect system ruby (Apple ships 2.6 on older macOS, Ubuntu LTS ships 3.0).

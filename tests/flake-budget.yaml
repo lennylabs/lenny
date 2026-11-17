@@ -21,7 +21,7 @@
 # Every entry also carries an associated issue link and an ETA, per
 # TESTING.md §21.4. The validator that enforces this file is
 # validateFlakeBudgetYAML in cmd/lenny-test, which `lenny-test
-# validate-maps` runs in the Tier 0 static gate.
+# validate-maps` runs in the static gate.
 
 version: 1
 

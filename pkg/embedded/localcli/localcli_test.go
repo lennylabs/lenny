@@ -180,7 +180,7 @@ func TestRunTokenPrintAfterKeyWritten(t *testing.T) {
 // TestUpThreadsEchoTarballOverride covers the LENNY_ECHO_TARBALL operator
 // override: the in-process foreground bring-up (cmdUp) is the only bring-up
 // path after the detached supervisor was removed, so cmdUp must read the env
-// var and thread it into UpOptions.EchoTarball. The tier-4 smoke harness
+// var and thread it into UpOptions.EchoTarball. The integration-tier smoke harness
 // builds lenny into a bare temp dir with no co-located tarball and supplies it
 // solely through this env var; if cmdUp drops it, the echo image never imports
 // and the `lenny up` → `session new --runtime echo` smoke path breaks.

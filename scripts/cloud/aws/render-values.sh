@@ -115,7 +115,7 @@ ${GATEWAY_SA_BLOCK}
 # §16 OpenTelemetry trace export. observability.otlpEndpoint is the
 # Helm-values trigger: when set, the chart pipes OTEL_EXPORTER_OTLP_ENDPOINT
 # into the gateway pod env and the agent-namespace
-# allow-pod-egress-otlp NetworkPolicy admits the egress. The tier-6
+# allow-pod-egress-otlp NetworkPolicy admits the egress. The e2e_cloud tier
 # overlay points at a stand-in OTLP receiver address; a production
 # install replaces it with the per-account collector endpoint (ADOT,
 # Cloud Trace, X-Ray).
@@ -152,7 +152,7 @@ bootstrap:
     repository: ${ECR_REGISTRY}/lenny-ctl
     tag: "${TAG}"
     pullPolicy: IfNotPresent
-  # Seed the tenant + user the tier-6 e2e_cloud and tier-7 cloud-load
+  # Seed the tenant + user the e2e_cloud and tier-7 cloud-load
   # tests authenticate as. Without these the gateway's §4.8
   # QuotaEvaluator returns 429 QUOTA_EXCEEDED on every request
   # bearing X-Lenny-Tenant-ID: acme because no tenant row exists

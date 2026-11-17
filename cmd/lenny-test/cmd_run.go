@@ -448,19 +448,19 @@ func tierSteps() map[string]tierStep {
 		},
 		tierLoadLocal: {
 			name: tierLoadLocal, exec: func(_ tierPlan) (string, string, *tierResult) {
-				return runTaggedTier("load_local", "./tests/tier7a_load_local/...", tierLongTimeout, true)
+				return runTaggedTier("load_local", "./tests/load_local/...", tierLongTimeout, true)
 			},
 			nextActionHint: "Fix load_local-tier failures before moving to higher tiers.",
 		},
 		tierLoadKind: {
 			name: tierLoadKind, exec: func(_ tierPlan) (string, string, *tierResult) {
-				return runTaggedTier("load_kind", "./tests/tier7b_load_kind/...", tierLongTimeout, false)
+				return runTaggedTier("load_kind", "./tests/load_kind/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix load_kind-tier failures before moving to higher tiers.",
 		},
 		tierChaos: {
 			name: tierChaos, exec: func(_ tierPlan) (string, string, *tierResult) {
-				return runTaggedTier("chaos", "./tests/tier8_chaos/...", tierLongTimeout, false)
+				return runTaggedTier("chaos", "./tests/chaos/...", tierLongTimeout, false)
 			},
 			nextActionHint: "Fix chaos-tier failures before moving to higher tiers.",
 		},
@@ -476,9 +476,9 @@ func tierSteps() map[string]tierStep {
 		},
 		tierLoadCloud: {
 			name: tierLoadCloud, exec: func(_ tierPlan) (string, string, *tierResult) {
-				return runTaggedTier("load_cloud", "./tests/tier12_load_cloud/...", tierLongTimeout, false)
+				return runTaggedTier("load_cloud", "./tests/load_cloud/...", tierLongTimeout, false)
 			},
-			nextActionHint: "Fix load_cloud-tier failures; tier 12 sits after every other tier and gates pre-release.",
+			nextActionHint: "Fix load_cloud-tier failures; the load_cloud tier sits after every other tier and gates pre-release.",
 		},
 		tierE2ECloud: {
 			name: tierE2ECloud, exec: func(_ tierPlan) (string, string, *tierResult) { return runE2ECloudTier() },
@@ -576,7 +576,7 @@ func exitCodeFor(verdict string) int {
 	}
 }
 
-// staticCheck is one entry of the tier-0 check table. run reports the
+// staticCheck is one entry of the static-tier check table. run reports the
 // check's output and, when the check failed outright, an error.
 // classify carries the per-check status: when it is set and the check
 // did not fail, it maps the output to a tier status, which lets a check
@@ -592,7 +592,7 @@ type staticCheck struct {
 	classify func(out string) (status string, detail string)
 }
 
-// runStaticTier runs the tier-0 check table. The checks are
+// runStaticTier runs the static-tier check table. The checks are
 // independent, so they run concurrently, and every check runs whatever
 // the others report: a failure early in the table does not hide the
 // checks after it. The result carries one failure entry per failed
@@ -607,11 +607,11 @@ func runStaticTier() (string, string, *tierResult) {
 			out, err := exec.Command("go", "vet", "./...").CombinedOutput()
 			return string(out), err
 		}},
-		{name: "go vet -tags=contract ./tests/tier3_contract/...", run: func() (string, error) {
+		{name: "go vet -tags=contract ./tests/contract/...", run: func() (string, error) {
 			// Verify contract-tagged tests compile without running them.
 			// They are expected to fail at runtime in the current phase;
 			// the static tier guarantees they at least compile.
-			out, err := exec.Command("go", "vet", "-tags=contract", "./tests/tier3_contract/...").CombinedOutput()
+			out, err := exec.Command("go", "vet", "-tags=contract", "./tests/contract/...").CombinedOutput()
 			return string(out), err
 		}},
 		{name: "buf lint", run: func() (string, error) {
@@ -847,9 +847,9 @@ func runStaticTier() (string, string, *tierResult) {
 			return string(out), nil
 		}},
 		{
-			name: "go test ./tests/tier0_static/...",
+			name: "go test ./tests/static/...",
 			run: func() (string, error) {
-				out, err := exec.Command("go", goTestArgs("./tests/tier0_static/...")...).CombinedOutput()
+				out, err := exec.Command("go", goTestArgs("./tests/static/...")...).CombinedOutput()
 				return string(out), err
 			},
 			// A tier-0 test that ran but could not reach a
@@ -914,14 +914,14 @@ func classifyUnverified(out string) (string, string) {
 	return verdictstatus.Unverified, strings.Join(reasons, "; ")
 }
 
-// composeStaticChecks runs the tier-0 check table and reduces it to one
+// composeStaticChecks runs the static-tier check table and reduces it to one
 // tier status and one message. See runStaticChecks and
 // reduceStaticOutcomes.
 func composeStaticChecks(checks []staticCheck) (string, string) {
 	return reduceStaticOutcomes(runStaticChecks(checks))
 }
 
-// staticOutcome is what one tier-0 check reported.
+// staticOutcome is what one static-tier check reported.
 type staticOutcome struct {
 	name     string
 	out      string
@@ -933,8 +933,8 @@ type staticOutcome struct {
 	detail string
 }
 
-// staticCheckConcurrency bounds how many tier-0 checks run at once.
-// Several checks (go vet, golangci-lint, and the tier-0 Go tests) are
+// staticCheckConcurrency bounds how many static-tier checks run at once.
+// Several checks (go vet, golangci-lint, and the static-tier Go tests) are
 // parallel themselves, so running every check at once oversubscribes the
 // host without finishing sooner.
 var staticCheckConcurrency = max(2, runtime.NumCPU()/2)
@@ -1147,8 +1147,8 @@ func summarizeFailures(r *tierResult) string {
 
 // planNeedsCompose reports whether any tier in r benefits from the
 // compose stack (component / contract / integration / load_kind).
-// Tier 7a (load_local) runs in-process and does not need compose.
-// Tier 12 (load_cloud) runs against a real cloud cluster and does
+// The load_local tier runs in-process and does not need compose.
+// The load_cloud tier runs against a real cloud cluster and does
 // not need compose either.
 func planNeedsCompose(r resolvedSelector) bool {
 	for _, t := range r.tiers {
@@ -1190,8 +1190,8 @@ func resolveGoBin(name string) string {
 }
 
 func runComponentTier(subsets []string) (string, string, *tierResult) {
-	// Tier 2 component tests are guarded by the `component` build tag. Each
-	// subdirectory under tests/tier2_component/ targets a distinct subsystem;
+	// Component tests are guarded by the `component` build tag. Each
+	// subdirectory under tests/component/ targets a distinct subsystem;
 	// some need Docker (testcontainers-go), others run in-process. When
 	// subsets is non-empty the runner scopes to those subdirectories so a
 	// phase gate can run only the work in scope for that phase. When subsets
@@ -1234,15 +1234,15 @@ func runComponentTier(subsets []string) (string, string, *tierResult) {
 // reaches cmd/lenny-ops.
 func componentTargets(subsets []string) ([]string, bool, error) {
 	if len(subsets) == 0 {
-		return []string{"./tests/tier2_component/...", "./tests/testinfra/containers/...", "./cmd/lenny-ops/..."}, true, nil
+		return []string{"./tests/component/...", "./tests/testinfra/containers/...", "./cmd/lenny-ops/..."}, true, nil
 	}
 	type entry struct {
 		path        string
 		needsDocker bool
 	}
 	mapping := map[string]entry{
-		"migrations":    {"./tests/tier2_component/migrations/...", true},
-		"observability": {"./tests/tier2_component/observability/...", false},
+		"migrations":    {"./tests/component/migrations/...", true},
+		"observability": {"./tests/component/observability/...", false},
 	}
 	seen := map[string]bool{}
 	targets := []string{}
@@ -1395,13 +1395,13 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	return "pass", strings.Join(results, "\n\n"), tr
 }
 
-// runDocsTier runs the tier-11 documentation checks. No build tag —
+// runDocsTier runs the docs checks. No build tag —
 // these tests exercise repo state directly.
 func runDocsTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	result, runErr := runGoTestJSON("-count=1", fmt.Sprintf("-timeout=%s", tierDocsTimeout), "./tests/tier11_docs/...")
+	result, runErr := runGoTestJSON("-count=1", fmt.Sprintf("-timeout=%s", tierDocsTimeout), "./tests/docs/...")
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("docs suite failed: %v\n%s", runErr, result.RawOut), result
 	}
@@ -1433,12 +1433,12 @@ func runTaggedTier(tag, targetGlob string, timeout time.Duration, race bool) (st
 }
 
 // securityTierArgs is the `go test` argv of the security tier. It runs
-// the tier-9 package under its own budget, tierSecurityTimeout, rather
+// the security-tier package under its own budget, tierSecurityTimeout, rather
 // than the long-tier budget the load and chaos tiers share, because the
 // package's runtime under a loaded cluster exceeds that budget and
 // `go test -timeout` then aborts the whole binary (TEST-GAPS T-17.4.19).
 func securityTierArgs() []string {
-	return taggedTierArgs("security", "./tests/tier9_security/...", tierSecurityTimeout, false)
+	return taggedTierArgs("security", "./tests/security/...", tierSecurityTimeout, false)
 }
 
 // runTierArgs runs `go test` with a tier's prepared argv and maps the
@@ -1457,7 +1457,7 @@ func runTierArgs(tag string, args []string) (string, string, *tierResult) {
 	return "pass", "", result
 }
 
-// runE2ECloudTier runs the tier-6 cloud tests under the `e2e_cloud`
+// runE2ECloudTier runs the e2e_cloud tests under the `e2e_cloud`
 // build tag. Tests internally guard on LENNY_CLOUD_PROVIDER + the
 // per-provider auth surface; without that, every test skips with a
 // precise diagnosis. The tier reports `pass` (with skipped
@@ -1466,7 +1466,7 @@ func runE2ECloudTier() (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	result, runErr := runGoTestJSON("-count=1", fmt.Sprintf("-timeout=%s", tierE2ECloudTimeout), "-tags=e2e_cloud", "./tests/tier6_e2e_cloud/...")
+	result, runErr := runGoTestJSON("-count=1", fmt.Sprintf("-timeout=%s", tierE2ECloudTimeout), "-tags=e2e_cloud", "./tests/e2e_cloud/...")
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("e2e_cloud suite failed: %v\n%s", runErr, result.RawOut), result
 	}
@@ -1476,7 +1476,7 @@ func runE2ECloudTier() (string, string, *tierResult) {
 	return "pass", "", result
 }
 
-// runE2EKindTier runs the tier-5 e2e tests under the `e2e_kind`
+// runE2EKindTier runs the e2e_kind tests under the `e2e_kind`
 // build tag. Each test calls tests/testinfra/kind.SkipUnlessAvailable
 // to short-circuit when docker / kind / a reachable docker daemon
 // are absent, so the tier reports `pass` (with skipped sub-tests)
@@ -1495,7 +1495,7 @@ func runE2EKindTier(subsets []string) (string, string, *tierResult) {
 	} else if pattern != "" {
 		extra = append(extra, "-run", pattern)
 	}
-	extra = append(extra, "./tests/tier5_e2e_kind/...")
+	extra = append(extra, "./tests/e2e_kind/...")
 	result, runErr := runGoTestJSON(extra...)
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("e2e_kind suite failed: %v\n%s", runErr, result.RawOut), result
@@ -1557,7 +1557,7 @@ func e2eKindSubsetPattern(subsets []string) (string, error) {
 	return "^(" + strings.Join(names, "|") + ")$", nil
 }
 
-// runIntegrationTier runs the tier-4 integration tests under the
+// runIntegrationTier runs the integration tests under the
 // `integration` build tag. Each test boots cmd/lenny-gateway as a
 // subprocess (via tests/testinfra/gateway) and drives the real HTTP
 // surface end-to-end. When subsets is non-empty the runner uses
@@ -1583,7 +1583,7 @@ func runIntegrationTier(subsets []string) (string, string, *tierResult) {
 		runArgs = []string{"-run", strings.Join(parts, "|")}
 	}
 	extra := append([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierIntegrationTimeout), "-tags=integration"}, runArgs...)
-	extra = append(extra, "./tests/tier4_integration/...")
+	extra = append(extra, "./tests/integration/...")
 	result, runErr := runGoTestJSON(extra...)
 	if runErr != nil && result.Failed == 0 {
 		return "fail", fmt.Sprintf("integration suite failed: %v\n%s", runErr, result.RawOut), result
@@ -1595,8 +1595,8 @@ func runIntegrationTier(subsets []string) (string, string, *tierResult) {
 }
 
 func runContractTier(subsets []string) (string, string, *tierResult) {
-	// Tier 3 contract tests are guarded by the `contract` build tag. Each
-	// subdirectory under tests/tier3_contract/ targets a distinct contract
+	// Contract tests are guarded by the `contract` build tag. Each
+	// subdirectory under tests/contract/ targets a distinct contract
 	// surface (adapter_jsonl, workspaceplan, ...). When subsets is non-empty
 	// the runner scopes to those subdirectories so a phase gate can verify
 	// only the contracts in scope for that phase. When subsets is empty the
@@ -1623,25 +1623,25 @@ func runContractTier(subsets []string) (string, string, *tierResult) {
 // executes. An empty subset list resolves to every contract directory.
 func contractTargets(subsets []string) ([]string, error) {
 	if len(subsets) == 0 {
-		return []string{"./tests/tier3_contract/..."}, nil
+		return []string{"./tests/contract/..."}, nil
 	}
 	mapping := map[string]string{
-		"adapter-jsonl":         "./tests/tier3_contract/adapter_jsonl/...",
-		"gatewaycontrol-scrub":  "./tests/tier3_contract/gatewaycontrol_scrub/...",
-		"workspaceplan":         "./tests/tier3_contract/workspaceplan/...",
-		"rest-sessions":         "./tests/tier3_contract/rest_sessions/...",
-		"rest-idempotency":      "./tests/tier3_contract/rest_idempotency/...",
-		"rest-circuitbreaker":   "./tests/tier3_contract/rest_circuitbreaker/...",
-		"rest-auth":             "./tests/tier3_contract/rest_auth/...",
-		"oauth-token":           "./tests/tier3_contract/oauth_token/...",
-		"rest-mcp-consistency":  "./tests/tier3_contract/rest_mcp_consistency/...",
-		"rest-openai-chat":      "./tests/tier3_contract/rest_openai_chat/...",
-		"rest-openai-responses": "./tests/tier3_contract/rest_openai_responses/...",
-		"ocsf-audit":            "./tests/tier3_contract/ocsf_audit/...",
-		"cloudevents":           "./tests/tier3_contract/cloudevents/...",
-		"sdk-go":                "./tests/tier3_contract/sdks/...",
-		"sdk-python":            "./tests/tier3_contract/sdks/...",
-		"sdk-typescript":        "./tests/tier3_contract/sdks/...",
+		"adapter-jsonl":         "./tests/contract/adapter_jsonl/...",
+		"gatewaycontrol-scrub":  "./tests/contract/gatewaycontrol_scrub/...",
+		"workspaceplan":         "./tests/contract/workspaceplan/...",
+		"rest-sessions":         "./tests/contract/rest_sessions/...",
+		"rest-idempotency":      "./tests/contract/rest_idempotency/...",
+		"rest-circuitbreaker":   "./tests/contract/rest_circuitbreaker/...",
+		"rest-auth":             "./tests/contract/rest_auth/...",
+		"oauth-token":           "./tests/contract/oauth_token/...",
+		"rest-mcp-consistency":  "./tests/contract/rest_mcp_consistency/...",
+		"rest-openai-chat":      "./tests/contract/rest_openai_chat/...",
+		"rest-openai-responses": "./tests/contract/rest_openai_responses/...",
+		"ocsf-audit":            "./tests/contract/ocsf_audit/...",
+		"cloudevents":           "./tests/contract/cloudevents/...",
+		"sdk-go":                "./tests/contract/sdks/...",
+		"sdk-python":            "./tests/contract/sdks/...",
+		"sdk-typescript":        "./tests/contract/sdks/...",
 	}
 	seen := map[string]bool{}
 	targets := []string{}
@@ -1917,7 +1917,7 @@ func repoRoot() string {
 // confined run never opens a carrier outside its confinement by making that
 // carrier unparseable, so a run that opened it would fail. A repository-wide
 // formatter walks those files anyway and reports them, which would fail a
-// tier-0 check on a fixture doing its job. Filtering by path keeps the check
+// static-tier check on a fixture doing its job. Filtering by path keeps the check
 // exact for real source.
 func dropTestdataLines(out string) string {
 	var kept []string

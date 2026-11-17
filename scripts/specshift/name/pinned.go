@@ -13,24 +13,24 @@ import (
 
 // The pinned-literal register and the carrier population it covers.
 //
-// The tier-11 documentation reconciliation tests pin specification
+// The docs reconciliation tests pin specification
 // prose, specification heading slugs, and intra-spec markdown links as
 // Go string literals, and a run that rewrote such a sentence in the
 // specification while leaving the literal that pins it verbatim would
-// leave tier 11 red with a reader on the sentence and no pass able to
+// leave the docs tier red with a reader on the sentence and no pass able to
 // write the literal. Those literals are therefore positions of this
 // pass, driven by their own register, which names every one of them.
 //
 // The register names the literals rather than the pass walking every
 // string of the file, because a walk would also admit the
-// operator-facing help text a tier-11 carrier happens to hold, and the
+// operator-facing help text a docs-tier carrier happens to hold, and the
 // reviewer resolves which literal pins the specification before the
 // substitution runs.
 const (
 	pinnedRegisterPath    = "tests/registers/pinned-spec-literals.yaml"
 	pinnedRegisterKind    = "pinned-spec-literals"
 	pinnedRegisterVersion = 1
-	pinnedCarrierPrefix   = "tests/tier11_docs/"
+	pinnedCarrierPrefix   = "tests/docs/"
 )
 
 // pinnedEntry is one pinned literal: the carrier and the literal's
@@ -54,7 +54,7 @@ type pinnedDocument struct {
 }
 
 // pinnedCarrier reports whether a tracked path is a Go carrier of the
-// tier-11 documentation reconciliation tests, which is the population
+// docs reconciliation tests, which is the population
 // the pinned-literal register covers.
 func pinnedCarrier(target string) bool {
 	return strings.HasPrefix(target, pinnedCarrierPrefix) && filepath.Ext(target) == ".go"
@@ -102,7 +102,7 @@ func loadPinnedLiterals(data []byte) (map[string]map[int]bool, error) {
 
 // validatePinnedEntry reports the first schema defect in one entry.
 //
-// An entry keyed to a carrier outside the tier-11 reconciliation tests
+// An entry keyed to a carrier outside the docs-tier reconciliation tests
 // is refused rather than admitted, because a string literal anywhere
 // else holds operator-facing or internal text the naming law does not
 // govern, and admitting one would rewrite it under the same register.
@@ -125,7 +125,7 @@ func validatePinnedEntry(i int, e pinnedEntry) error {
 // runs once per run, from the register check.
 //
 // The register is required whenever the tree carries a Go carrier under
-// the tier-11 reconciliation tests, and absent otherwise. A run over
+// the docs-tier reconciliation tests, and absent otherwise. A run over
 // such a tree with no register would leave every pinned literal
 // unwritten, which is the writerless site the shared domain exists to
 // prevent, so the absence fails the run rather than narrowing the pass
@@ -141,7 +141,7 @@ func (r *Rewriter) loadPinned(tracked map[string]bool) error {
 	}
 	data, err := r.read(pinnedRegisterPath)
 	if err != nil {
-		return fmt.Errorf("read the pinned-literal register %s, which resolves the string literals the %d tier-11 reconciliation carrier(s) of this tree pin specification prose, heading slugs, and intra-spec links in: %w",
+		return fmt.Errorf("read the pinned-literal register %s, which resolves the string literals the %d docs-tier reconciliation carrier(s) of this tree pin specification prose, heading slugs, and intra-spec links in: %w",
 			pinnedRegisterPath, len(carriers), err)
 	}
 	pinned, err := loadPinnedLiterals(data)
@@ -198,7 +198,7 @@ func (r *Rewriter) checkPinnedClaimed(pinned map[string]map[int]bool, tracked ma
 	return nil
 }
 
-// pinnedCarriers returns the tier-11 reconciliation Go carriers of the
+// pinnedCarriers returns the docs-tier reconciliation Go carriers of the
 // tree, sorted.
 func pinnedCarriers(tracked map[string]bool) []string {
 	var out []string

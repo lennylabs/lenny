@@ -82,7 +82,7 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL, echoImageRef stri
 	// echo is not a §26 reference runtime, so it is appended to the grant
 	// set explicitly: without the grant the default tenant holds no access
 	// for echo and tenantReachesRuntime denies `lenny session new --runtime
-	// echo` for the default tenant (the tier-4 smoke runs against the
+	// echo` for the default tenant (the integration-tier smoke runs against the
 	// default tenant). spec: §26.1 (auto-grant), §15.4.4 (echo exemplar).
 	//
 	// Each failure is collected with the runtime name and the underlying

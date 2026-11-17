@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// spec: TESTING.md §12.0 (Tier 0 — Static: the gofumpt and goimports
+// spec: TESTING.md §12.0 (static tier — Static: the gofumpt and goimports
 // checks judge the checkout under test)
 
 // TestScopeToRepoFilesDropsOutOfTreeGoPaths pins the line filter: a

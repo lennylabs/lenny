@@ -1,4 +1,4 @@
-# Test-only fixture image for the tier-5 stream-failure cases. It layers
+# Test-only fixture image for the e2e_kind-tier stream-failure cases. It layers
 # the heartbeat-silence fixture on top of a reference runtime image, whose
 # binary stays at /usr/local/bin/lenny unchanged, and makes the fixture the
 # entrypoint with that binary as its child:

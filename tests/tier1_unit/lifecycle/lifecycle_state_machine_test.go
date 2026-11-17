@@ -53,7 +53,7 @@ func lifecycleOps() []lifecycleOp {
 }
 
 // lifecycleChecks is the number of operation sequences the state machine
-// runs in the tier-1 package. Each sequence drives the harness to quiescence
+// runs in the unit-tier package. Each sequence drives the harness to quiescence
 // twice, about 26 checker passes of real-time settling each, so one sequence
 // takes several seconds and rapid's default of 100 sequences alone runs past
 // go test's default ten-minute package timeout. A run that passes

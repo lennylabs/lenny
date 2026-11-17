@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: MIT
 
 // Package load wraps the §12.7 k6 load generator. Each scenario is
-// a k6 script under tests/tier7b_load_kind/scenarios/<name>/main.js (or
+// a k6 script under tests/load_kind/scenarios/<name>/main.js (or
 // .ts); the Go wrapper invokes k6 with the canonical flag set and
-// writes a baseline JSON document to tests/tier7b_load_kind/baselines/.
+// writes a baseline JSON document to tests/load_kind/baselines/.
 //
 // Usage:
 //
@@ -17,7 +17,7 @@
 //	load.AssertBaseline(t, "streaming_reconnect", res, load.Threshold{P99: 0.15})
 //
 // The baseline file format is a JSON document with per-percentile latency,
-// throughput, and error rate; see tests/tier7b_load_kind/baselines/
+// throughput, and error rate; see tests/load_kind/baselines/
 // pod_claim_latency.json for an example.
 //
 // # Environment variables
@@ -68,8 +68,8 @@ type Options struct {
 	BaseURL  string
 	ExtraEnv map[string]string
 	// ScenarioRoot overrides the default scenario lookup directory
-	// (tests/tier7b_load_kind/scenarios). The cloud-load tier-7 suite
-	// stores its scenarios under tests/tier12_load_cloud/scenarios
+	// (tests/load_kind/scenarios). The cloud-load tier-7 suite
+	// stores its scenarios under tests/load_cloud/scenarios
 	// and sets this to that path; smoke callers leave it empty
 	// and the runner picks the smoke default.
 	ScenarioRoot string
@@ -111,7 +111,7 @@ func RunScenario(t testing.TB, scenario string, opts Options) Result {
 	}
 	root := opts.ScenarioRoot
 	if root == "" {
-		root = filepath.Join("tests", "tier7b_load_kind", "scenarios")
+		root = filepath.Join("tests", "load_kind", "scenarios")
 	}
 	scriptPath := filepath.Join(schematest.RepoRoot(t), root, scenario, "main.js")
 	if _, err := os.Stat(scriptPath); err != nil {
@@ -248,12 +248,12 @@ func metricStat(metric map[string]any, key string) (float64, bool) {
 }
 
 // AssertBaseline diffs res against the stored baseline at
-// tests/tier7b_load_kind/baselines/<scenario>.json. Regressions beyond
+// tests/load_kind/baselines/<scenario>.json. Regressions beyond
 // the threshold fail the test. When LENNY_UPDATE_BASELINE=1 the
 // stored baseline is overwritten.
 func AssertBaseline(t testing.TB, scenario string, res Result, threshold Threshold) {
 	t.Helper()
-	path := filepath.Join(schematest.RepoRoot(t), "tests", "tier7b_load_kind", "baselines", scenario+".json")
+	path := filepath.Join(schematest.RepoRoot(t), "tests", "load_kind", "baselines", scenario+".json")
 	if os.Getenv("LENNY_UPDATE_BASELINE") == "1" {
 		writeBaseline(t, path, res)
 		t.Logf("wrote baseline %s", path)

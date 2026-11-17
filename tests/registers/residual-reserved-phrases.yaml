@@ -7,7 +7,7 @@
 # its route out is the class's own pass or remediation. An excluded entry
 # never belonged to the class, and it is permanent.
 #
-# The residual gate in tests/tier0_static fails tier 0 on a member that
+# The residual gate in tests/static fails the static tier on a member that
 # matches the class's broad predicate and appears in neither the
 # enumeration nor this file, so a member no enumeration anticipated is
 # triaged here rather than absorbed. The gate removes an in-class entry
@@ -180,7 +180,7 @@ entries:
     reason: |-
       a carrier outside the domain the reserved-word ban names, so the law does not govern its text and no pass writes the site
   - member: |-
-      tests/tier9_security/pentest/v1-baseline-bundle.json: lifecycle channel
+      tests/security/pentest/v1-baseline-bundle.json: lifecycle channel
     class: reserved-phrases
     disposition: excluded
     reason: |-

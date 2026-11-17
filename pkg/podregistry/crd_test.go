@@ -125,8 +125,8 @@ func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
 // pkg/gateway/podclaim Server-Side Apply PATCH (§4.6.3: the gateway holds
 // `get`/`patch` and no `update` on sandboxclaims/status), which the
 // controller-runtime fake client cannot round-trip. They run against a real
-// API server in the tier-2 component suite
-// (tests/tier2_component/stores/crdpodregistry_claim_test.go:
+// API server in the component suite
+// (tests/component/stores/crdpodregistry_claim_test.go:
 // TestCRDPodRegistryClaimCreatesPerPodClaim_spec_4_6_1,
 // TestCRDPodRegistryClaimSingleClaimGuard_spec_4_6_1, and
 // TestCRDPodRegistryClaimInertOptsUsePatchNotUpdate_spec_4_6_3), which also

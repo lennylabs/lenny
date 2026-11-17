@@ -2,7 +2,7 @@
 
 /**
  * The language-native helper the tier-3 SDK contract harness
- * (tests/tier3_contract/sdks/harness) spawns for the TypeScript client
+ * (tests/contract/sdks/harness) spawns for the TypeScript client
  * SDK. It reads one Command JSON object per line on stdin, executes
  * each op through the SDK against the gateway, and writes one Response
  * JSON object per line on stdout.

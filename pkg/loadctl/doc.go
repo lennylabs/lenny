@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package loadctl implements the tier-12 control plane: the HTTP API
+// Package loadctl implements the load_cloud-tier control plane: the HTTP API
 // surface, the run-state store, the runner registry, the scenario
 // catalogue, and the WebSocket telemetry hub.
 //

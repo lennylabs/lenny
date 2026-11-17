@@ -9,12 +9,12 @@ Companion to [`TESTING.md`](TESTING.md). This file lists every tool the test inf
 3. [Setup scripts](#3-setup-scripts)
 4. [Tier-to-tool map](#4-tier-to-tool-map)
 5. [Core toolchain (tiers 0–4)](#5-core-toolchain-tiers-04)
-6. [Kubernetes toolchain (tier 5)](#6-kubernetes-toolchain-tier-5)
-7. [Cloud provider toolchain (tier 6)](#7-cloud-provider-toolchain-tier-6)
+6. [Kubernetes toolchain (e2e_kind tier)](#6-kubernetes-toolchain-tier-5)
+7. [Cloud provider toolchain (e2e_cloud tier)](#7-cloud-provider-toolchain-tier-6)
 8. [Performance and chaos toolchain (tiers 7–8)](#8-performance-and-chaos-toolchain-tiers-78)
-9. [Security toolchain (tier 9)](#9-security-toolchain-tier-9)
+9. [Security toolchain (security tier)](#9-security-toolchain-tier-9)
 10. [SDK and language toolchains (TESTING.md §14.13)](#10-sdk-and-language-toolchains-1413)
-11. [Documentation toolchain (tier 11)](#11-documentation-toolchain-tier-11)
+11. [Documentation toolchain (docs tier)](#11-documentation-toolchain-tier-11)
 12. [Optional convenience tools](#12-optional-convenience-tools)
 13. [Cloud authentication setup](#13-cloud-authentication-setup)
 14. [Verification](#14-verification)
@@ -88,16 +88,16 @@ The script is idempotent. Re-running it upgrades pinned versions and skips alrea
 | Tiers 0–1 (static, unit) | 2 cores | 4 GB | 5 GB | Native execution; minimal containers |
 | Tiers 2–3 (component, contract) with `lenny-test-cached` warm | 4 cores | 8 GB | 15 GB | Postgres, Redis, MinIO, OIDC stub, KMS stub, OTLP collector all running |
 | Tier 4 (integration via compose) | 6 cores | 12 GB | 25 GB | Full compose stack plus stores |
-| Tier 5 (e2e on Kind) | 8 cores | 16 GB | 40 GB | Kind cluster with control plane, two workers, cert-manager, metrics-server |
+| The e2e_kind tier (e2e on Kind) | 8 cores | 16 GB | 40 GB | Kind cluster with control plane, two workers, cert-manager, metrics-server |
 | Tier 7 load smoke | 8 cores | 16 GB | 40 GB | k6 plus full stack; sustained runs prefer cloud |
 
-A 16 GB MacBook Pro runs everything through Tier 5. Tier 6 (cloud) runs on managed clusters provisioned by CI; developers do not bring up cloud clusters in routine work.
+A 16 GB MacBook Pro runs everything through the e2e_kind tier. The e2e_cloud tier runs on managed clusters provisioned by CI; developers do not bring up cloud clusters in routine work.
 
 ### Docker resource allocation
 
 Docker Desktop, Colima, and OrbStack default to conservative limits. Increase them before running Tier 2 or higher:
 
-| Setting | Tier 2–3 | Tier 4 | Tier 5 |
+| Setting | Tier 2–3 | Tier 4 | The e2e_kind tier |
 |:--------|:--------:|:------:|:------:|
 | CPUs | 4 | 6 | 8 |
 | Memory | 6 GB | 10 GB | 14 GB |
@@ -166,10 +166,10 @@ Use this table to identify the minimum dependency set for the tier you intend to
 | 3 — Contract | Go, Docker, docker compose, protoc, buf |
 | 4 — Integration | Go, Docker, docker compose, jq |
 | 5 — E2E on Kind | Tier 0–4 plus kubectl, Kind, Helm, helm-unittest, cmctl, optionally kuttl and stern |
-| 6 — E2E on cloud | Tier 5 plus gcloud SDK, aws CLI v2, az CLI, eksctl, kubectl auth plugins, optionally terraform |
+| 6 — E2E on cloud | The e2e_kind tier plus gcloud SDK, aws CLI v2, az CLI, eksctl, kubectl auth plugins, optionally terraform |
 | 7 — Load and SLO | Tier 4 plus k6, optionally vegeta |
 | 8 — Chaos | Tier 4 or 5 plus toxiproxy; cloud scenarios require chaos-mesh (installed in the cluster, no local CLI) |
-| 9 — Security | Tier 5 plus OWASP ZAP, kubeaudit, kube-bench, trivy, cosign |
+| 9 — Security | The e2e_kind tier plus OWASP ZAP, kubeaudit, kube-bench, trivy, cosign |
 | 10 — Conformance | Tier 4 plus `lenny-compliance` binary (built from this repo, no external install) |
 | 11 — Documentation | Ruby 3.2, Jekyll, Node, markdown-link-check |
 | SDK contract tests | Tier 3 plus Python 3.11 with pytest/tox/ruff/mypy and Node 20 LTS with vitest/eslint/prettier |
@@ -288,7 +288,7 @@ Used to generate self-signed mTLS material in dev mode.
 
 ### golangci-lint 2.12+
 
-Aggregated Go linter used in Tier 0. The v2 series is required: the v1.x line aborts on Go 1.26 export data with "unsupported version: 2". Install via the upstream install script on every platform — it downloads a prebuilt binary and avoids `go install` compatibility issues that surface when an older pinned version's transitive `golang.org/x/tools` does not compile against a newer Go release.
+Aggregated Go linter used in the static tier. The v2 series is required: the v1.x line aborts on Go 1.26 export data with "unsupported version: 2". Install via the upstream install script on every platform — it downloads a prebuilt binary and avoids `go install` compatibility issues that surface when an older pinned version's transitive `golang.org/x/tools` does not compile against a newer Go release.
 
 ```bash
 curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
@@ -372,7 +372,7 @@ Local Kubernetes via Docker-in-Docker.
 
 ### Helm 3.12+
 
-Chart install for Tier 5 e2e.
+Chart install for e2e_kind.
 
 - macOS: `brew install helm`
 - Linux:
@@ -429,7 +429,7 @@ Multi-pod log tailing.
 
 ## 7. Cloud provider toolchain (tier 6)
 
-Tier 6 runs against three providers (GKE, EKS, AKS). The CLIs below are required if you want to run cloud tests locally; otherwise CI handles them.
+The e2e_cloud tier runs against three providers (GKE, EKS, AKS). The CLIs below are required if you want to run cloud tests locally; otherwise CI handles them.
 
 ### Google Cloud (GKE)
 

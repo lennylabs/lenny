@@ -38,11 +38,11 @@ entries:
   # package clause, so it is no doc comment and takes no entry. The first
   # site is the pinned string literal and the second is the comment
   # documenting a declaration below it.
-  - file: tests/tier11_docs/route_test.go
+  - file: tests/docs/route_test.go
     occurrence: 1
     identifiers:
       - LNK-GWCONTROL
-  - file: tests/tier11_docs/route_test.go
+  - file: tests/docs/route_test.go
     occurrence: 2
     identifiers:
       - CH-PODLIFECYCLE

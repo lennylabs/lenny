@@ -13,7 +13,7 @@ import (
 
 // writeMarkerPackage writes a module holding one passing test that
 // writes the unverified marker to stdout, and returns its directory.
-// The package stands in for a tier-0 test that ran, proved nothing, and
+// The package stands in for a static-tier test that ran, proved nothing, and
 // said so.
 func writeMarkerPackage(t *testing.T) string {
 	t.Helper()
@@ -49,7 +49,7 @@ func runGoTest(t *testing.T, dir string, args []string) string {
 }
 
 // TestTier0GoTestArgsSurfaceTheMarkerFromAPassingPackage runs the argv
-// the tier-0 Go-test check uses against a package that passes and
+// the static-tier Go-test check uses against a package that passes and
 // writes the unverified marker, and holds the composer to reporting
 // unverified. The invocation is what makes the status reachable: in
 // package-list mode cmd/go drops a passing package's output, so a

@@ -88,33 +88,33 @@ func tierBuildTag(tier string) string {
 func testsForTier(tier string) []string {
 	switch tier {
 	case "static":
-		return []string{"./tests/tier0_static/..."}
+		return []string{"./tests/static/..."}
 	case "unit":
 		return []string{"./..."}
 	case "component":
-		return []string{"./tests/tier2_component/..."}
+		return []string{"./tests/component/..."}
 	case "contract":
-		return []string{"./tests/tier3_contract/..."}
+		return []string{"./tests/contract/..."}
 	case "integration":
-		return []string{"./tests/tier4_integration/..."}
+		return []string{"./tests/integration/..."}
 	case "e2e_kind":
-		return []string{"./tests/tier5_e2e_kind/..."}
+		return []string{"./tests/e2e_kind/..."}
 	case "e2e_cloud":
-		return []string{"./tests/tier6_e2e_cloud/..."}
+		return []string{"./tests/e2e_cloud/..."}
 	case "load_local":
-		return []string{"./tests/tier7a_load_local/..."}
+		return []string{"./tests/load_local/..."}
 	case "load_kind":
-		return []string{"./tests/tier7b_load_kind/..."}
+		return []string{"./tests/load_kind/..."}
 	case "chaos":
-		return []string{"./tests/tier8_chaos/..."}
+		return []string{"./tests/chaos/..."}
 	case "security":
-		return []string{"./tests/tier9_security/..."}
+		return []string{"./tests/security/..."}
 	case "conformance":
-		return []string{"./tests/tier10_conformance/..."}
+		return []string{"./tests/conformance/..."}
 	case "docs":
-		return []string{"./tests/tier11_docs/..."}
+		return []string{"./tests/docs/..."}
 	case "load_cloud":
-		return []string{"./tests/tier12_load_cloud/..."}
+		return []string{"./tests/load_cloud/..."}
 	}
 	return nil
 }

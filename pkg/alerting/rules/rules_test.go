@@ -396,7 +396,7 @@ func TestPostgresWriteBurstIopsCalibration(t *testing.T) {
 // lenny_pool_security_degraded == 1 rather than on the adapter counter
 // because no default scrape surface reaches agent pods (§16.9), so a
 // counter rule would evaluate an empty vector. The runbook slug must
-// resolve to docs/runbooks/nonce-only-mode.md (the tier-11 docs gate
+// resolve to docs/runbooks/nonce-only-mode.md (the docs gate
 // cross-checks this).
 //
 // spec: §4.7 (escalation requirement); §16.5 (PoolSecurityDegraded);

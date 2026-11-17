@@ -2,7 +2,7 @@
 
 //go:build component
 
-// Tier-2 component test driving the §25.5 lenny_ops_events_stream_length
+// Component test driving the §25.5 lenny_ops_events_stream_length
 // gauge against a real MAXLEN-bounded Redis stream, exercising the
 // production sampleEventStreamGauges XLEN sampler rather than a fake
 // or miniredis substitute.

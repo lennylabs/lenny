@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package seed applies the §18.1 reference data to the compose-stack
-// Postgres + Redis so tier-3 contract and tier-4 integration tests
+// Postgres + Redis so contract and integration tests
 // have a known-good initial state.
 //
 // Idempotent: each apply uses INSERT ... ON CONFLICT DO NOTHING or

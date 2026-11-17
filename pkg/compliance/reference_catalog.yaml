@@ -5,7 +5,7 @@
 # OCI images the nightly conformance run pulls and exercises against
 # the harness. This manifest is the catalog of record consulted by:
 #
-#   - tier-10 TestReferenceCatalogNightly to verify the §26 catalog
+#   - conformance-tier TestReferenceCatalogNightly to verify the §26 catalog
 #     is structurally complete (every runtime listed in spec §26.1
 #     appears here with its declared integration level);
 #   - `lenny-test conformance --image` to drive each runtime through

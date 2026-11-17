@@ -27,7 +27,7 @@
 // bring-up is therefore expensive and host-dependent; SkipUnlessAvailable
 // gates the test behind an explicit LENNY_EMBEDDED_SMOKE opt-in and the
 // cross-platform substrate prerequisite (Linux, or a non-Linux host with
-// Docker on PATH) so the unit and tier-4 suites stay green on developer
+// Docker on PATH) so the unit and integration-tier suites stay green on developer
 // laptops and CI runners that lack the substrate. This mirrors the
 // envtest and kind opt-in convention.
 package embedded
@@ -106,7 +106,7 @@ func UpTimeout() time.Duration {
 }
 
 // SidecarRuntimeTarballEnv names the environment variable that points the
-// custom-sidecar tier-4 leg at a docker-save tarball of a genuine
+// custom-sidecar integration-tier leg at a docker-save tarball of a genuine
 // sidecar-model runtime image. `lenny up` imports only the platform bundle
 // and the embedded-model echo seed, so the custom-sidecar leg must import a
 // distinct sidecar-model image to prove placement is runtime-agnostic rather
@@ -122,7 +122,7 @@ func UpTimeout() time.Duration {
 // runtime container speaks to the adapter).
 const SidecarRuntimeTarballEnv = "LENNY_SIDECAR_RUNTIME_TARBALL"
 
-// SidecarRuntimeImage is the OCI reference the custom-sidecar tier-4 leg
+// SidecarRuntimeImage is the OCI reference the custom-sidecar integration-tier leg
 // imports the staged sidecar-model tarball under and references in the
 // runtime's Runtime CRD. It is the build tag the runtime-echo sidecar image
 // carries (the same tag the Makefile docker-saves), so the imported image

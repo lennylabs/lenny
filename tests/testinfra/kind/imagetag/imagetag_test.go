@@ -97,7 +97,7 @@ func computeTags(t *testing.T, root string) map[string]string {
 	return tags
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // The same inputs give the same tag; a change to any input of an image changes
 // that image's tag and the tag of every image built on it; and a change to a
@@ -164,7 +164,7 @@ func TestContentTagTracksEveryBuildInputAndNothingElse(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // A changed literal build argument changes the tag, a reference argument
 // resolves to the referenced image's tag, and a fixed tag replaces hashing.
@@ -202,7 +202,7 @@ func TestComputeArgumentsReferencesAndFixedTag(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // A missing COPY source, a package that does not exist, and a package that
 // fails to load are errors, because a guessed input set can deploy a stale
@@ -259,7 +259,7 @@ func TestComputeFailsClosedOnMissingInputs(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // The spec list parser accepts comments, options, and build arguments, and
 // rejects malformed lines; Order puts every image after the images it refers
@@ -306,7 +306,7 @@ func TestParseSpecsAndOrder(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §12.5 (Tier 5 — E2E on Kind)
+// spec: TESTING.md §12.5 (e2e_kind tier — E2E on Kind)
 //
 // Only the generated form src-<12 hex digits> is a content tag, so the
 // install script's prune never touches e2e, e2e-journey, or another fixed tag.

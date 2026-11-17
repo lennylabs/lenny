@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package clustertest builds an in-process Redis Cluster for tier-1 tests:
+// Package clustertest builds an in-process Redis Cluster for unit-tier tests:
 // a go-redis ClusterClient over several miniredis servers, each owning an
 // equal, contiguous range of the 16384 hash slots. The client routes every
 // keyed command to the server that owns the key's slot, so a store test

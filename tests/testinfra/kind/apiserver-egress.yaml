@@ -40,7 +40,7 @@
 # ADDS apiserver egress (NetworkPolicies are additive), so it cannot tighten
 # any component. The Token Service is excluded so the kubeApiServerCIDR rule
 # of the chart's allow-token-service is the only path that admits its §13.2.4
-# kube-apiserver dial, which is what the tier-9 egress test exercises:
+# kube-apiserver dial, which is what the security-tier egress test exercises:
 # e2e-values.yaml sets kubeApiServerCIDR to the CIDR below for that reason.
 # The CIDR is the Kind bridge subnet; on a real cluster the apiserver endpoint
 # is reachable through the chart's service-CIDR ipBlock and this manifest

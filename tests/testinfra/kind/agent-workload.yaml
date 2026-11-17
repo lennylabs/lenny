@@ -111,14 +111,14 @@ spec:
   capabilities:
     preConnect: true
 ---
-# TESTING.md §12.9.8 tier-9 credential-leakage probe runtime. The cred-shell-echo
+# TESTING.md §12.9.8 security-tier credential-leakage probe runtime. The cred-shell-echo
 # image keeps /bin/sh so kubectl exec ... cat /proc/<pid>/environ works.
 # cred-shell-echo is a stdin/stdout §28.5.3 binary (it does not link the
 # adapter), so the §4.7 sidecar deployment model is the correct fit: the
 # lenny-adapter sidecar serves the gRPC contract and bridges to
 # cred-shell-echo over the abstract Unix socket. Production installs reject
 # this runtime via the lenny-pod-security webhook; the e2e overlay deploys
-# it explicitly for the tier-9 scaffolds.
+# it explicitly for the security-tier scaffolds.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
@@ -140,7 +140,7 @@ spec:
 # calls lenny/request_elicitation on every inbound message and raises §9.2
 # elicitations that the gateway resolves server-internally. In v1 no
 # intermediate pod re-emits, so this runtime drives no live tamper-detect
-# path end to end; the tier-9 admin probes use it as the raising pod for
+# path end to end; the security-tier admin probes use it as the raising pod for
 # the enforce, detect-only, and floor wire contract.
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
@@ -188,10 +188,10 @@ spec:
 # slots over the single connection, keyed on the inbound frame's sessionId, so
 # the §4.7 sidecar deployment model bridges it over the abstract Unix
 # socket the same way echo-runtime-sidecar does. Backs concurrent-echo-pool
-# (sessionPolicy.maxConcurrentSessions > 1), the tier-5 real-pod
+# (sessionPolicy.maxConcurrentSessions > 1), the e2e_kind-tier real-pod
 # counterpart of the tier-4 concurrent_workspace_test.go in-process flow.
 # capabilities.injection.supported is true (§5.1): each slot's echocore loop
-# answers every inbound `message` frame, so the tier-5 harness can send
+# answers every inbound `message` frame, so the e2e_kind-tier harness can send
 # several messages on each slot session.
 # spec: §5.2, §6.4.
 apiVersion: lenny.dev/v1alpha1
@@ -236,8 +236,8 @@ spec:
   isolationProfile: standard
   deploymentModel: sidecar
 ---
-# Test-only fixture runtimes for the tier-5 stream-failure cases
-# (tests/tier5_e2e_kind/stream_failure_kind_test.go). Each image layers the
+# Test-only fixture runtimes for the e2e_kind-tier stream-failure cases
+# (tests/e2e_kind/stream_failure_kind_test.go). Each image layers the
 # tests/testinfra/heartbeatsilence fixture on top of a reference runtime
 # image: the fixture runs the reference binary unchanged as a child and
 # stops forwarding heartbeats once a session sends the fixture's directive,
@@ -314,7 +314,7 @@ spec:
     - name: PROBE_RUNTIME_ENV
       value: from-runtime-env
     # Asynchronous preemption off frees SIGURG from the Go runtime, so the
-    # probe counts it and the tier-9 signal case observes a forwarded copy.
+    # probe counts it and the security-tier signal case observes a forwarded copy.
     - name: GODEBUG
       value: asyncpreemptoff=1
   # The Runtime controller mirrors this CR into the runtime registry over the

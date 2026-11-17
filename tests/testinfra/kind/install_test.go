@@ -5,7 +5,7 @@ package kind
 import "testing"
 
 // TestAllPodsRunningAndReadyRejectsRunningButNotReady pins the
-// fail-closed behavior of the tier-5 install gate. The gate previously
+// fail-closed behavior of the e2e_kind-tier install gate. The gate previously
 // looked at the pod phase alone, so a control plane whose pods were
 // Running with a crash-looping or unready container passed the check and
 // the calling test proceeded to port-forward at a pod that serves nothing.
@@ -72,10 +72,10 @@ func TestAllPodsRunningAndReadyRejectsRunningButNotReady(t *testing.T) {
 	}
 }
 
-// TestParseDirtySchemaVersionSkipsOnDirtyMigration pins the tier-5
+// TestParseDirtySchemaVersionSkipsOnDirtyMigration pins the e2e_kind tier
 // install gate on the migration row. A lenny-migrate Job that fails
 // mid-migration leaves the previous release deployed and Ready, so the
-// release and readiness gates admitted it and tier-5 tests ran stale
+// release and readiness gates admitted it and e2e_kind-tier tests ran stale
 // images against a partly applied schema. The gate reports the dirty
 // version so InstallLenny skips with a blocked reason instead.
 func TestParseDirtySchemaVersionSkipsOnDirtyMigration(t *testing.T) {

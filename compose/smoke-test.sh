@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 #
 # §17.4 Compose Mode smoke test. Mirrors the Source Mode
-# TestSourceModeSmoke (tests/tier4_integration/source_mode_smoke_test.go):
+# TestSourceModeSmoke (tests/integration/source_mode_smoke_test.go):
 # bootstrap the tenant + echo runtime, create an echo session, send a
 # prompt, verify the echo response reflects it, and terminate. Driven
 # over HTTP with the §17.4 dev-mode header auth path.

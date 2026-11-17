@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# scripts/cloud/gcp/up-loadgen.sh — provisions the tier-12 load-runner
+# scripts/cloud/gcp/up-loadgen.sh — provisions the load_cloud-tier load-runner
 # pool on GCP (MIG + Pub/Sub + IAM). Idempotent.
 #
 # Required environment:

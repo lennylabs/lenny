@@ -13,8 +13,8 @@ import (
 	"time"
 )
 
-// Reporter aggregates per-scenario Results into a unified tier-7a
-// report. Default tier-7a runs use a nil Reporter (no I/O cost);
+// Reporter aggregates per-scenario Results into a unified load_local tier
+// report. Default the load_local tier runs use a nil Reporter (no I/O cost);
 // opt in via the LENNY_TIER7A_REPORT_DIR env var which the test
 // scaffolds resolve to a FileReporter.
 type Reporter interface {
@@ -114,7 +114,7 @@ func copyCustom(m map[string]float64) map[string]float64 {
 //   - report.md    — a one-line-per-scenario Markdown table.
 //
 // Both files are overwritten on each Flush. Callers run Flush once
-// at the end of the tier-7a invocation.
+// at the end of the load_local-tier invocation.
 func (r *FileReporter) Flush() error {
 	if r.Dir == "" {
 		return fmt.Errorf("loadgen.FileReporter: Dir is empty")
@@ -150,7 +150,7 @@ func writeJSON(path string, v any) error {
 
 func writeMarkdown(path string, entries []ReportEntry) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Tier-7a load_local report\n\n")
+	fmt.Fprintf(&b, "# load_local report\n\n")
 	fmt.Fprintf(&b, "Recorded at %s\n\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "%d entries.\n\n", len(entries))
 	if len(entries) == 0 {

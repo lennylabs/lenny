@@ -1,6 +1,6 @@
 # Lenny Testing Infrastructure
 
-> Status: living specification. Phase 0 scaffolding is in place (the `lenny-test` harness, the `tests/testinfra/` helper packages, the spec-map and change-graph traceability layer, the Tier 0 static gate, and the GitHub Actions workflows). Later tiers and feature suites land per the §13 phase milestones. The document is the architecture reference the platform is built against.
+> Status: living specification. Phase 0 scaffolding is in place (the `lenny-test` harness, the `tests/testinfra/` helper packages, the spec-map and change-graph traceability layer, the static gate, and the GitHub Actions workflows). Later tiers and feature suites land per the §13 phase milestones. The document is the architecture reference the platform is built against.
 
 ## Table of Contents
 
@@ -78,7 +78,7 @@ The infrastructure is also complete only when the operator and the runtime autho
 
 ## 3. Test layer model
 
-Lenny uses a thirteen-stage tier model. Tier 7 is a two-stage gate (7a local, 7b Kind). Tier 12 sits after every other tier. Each stage has a scoped responsibility, a defined dependency set, an order in which it runs, and a position in the gate hierarchy.
+Lenny uses a thirteen-stage tier model. Tier 7 is a two-stage gate (7a local, 7b Kind). The load_cloud tier sits after every other tier. Each stage has a scoped responsibility, a defined dependency set, an order in which it runs, and a position in the gate hierarchy.
 
 | Tier | Name | Scope | Backing services | Runs in PR | Runs nightly | Runs pre-release |
 |:----:|:-----|:------|:-----------------|:----------:|:------------:|:----------------:|
@@ -101,7 +101,7 @@ Lenny uses a thirteen-stage tier model. Tier 7 is a two-stage gate (7a local, 7b
 
 A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e_kind` runs tiers 0 through 5 and stops at the first failing tier. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
 
-Tier 7 is the only tier that runs as two sequential stages: `load_local` (7a) gates `load_kind` (7b). Tier 12 (`load_cloud`) sits after tier 11 because a tier-12 run is the most expensive part of the pipeline and should never fire while a lower-tier signal is missing.
+Tier 7 is the only tier that runs as two sequential stages: `load_local` (7a) gates `load_kind` (7b). The load_cloud tier sits after the docs tier because a load_cloud-tier run is the most expensive part of the pipeline and should never fire while a lower-tier signal is missing.
 
 ### What "component" means
 
@@ -113,7 +113,7 @@ An integration test exercises a flow that involves two or more Lenny components 
 
 ### What "e2e" means
 
-An e2e test installs the full chart, registers runtimes, claims pods through the real Warm Pool Controller, exercises admission webhooks, and validates NetworkPolicy and mTLS end to end. Tier 5 uses Kind. Tier 6 uses managed Kubernetes for the behaviors Kind cannot reproduce (gVisor at node level, Kata, real load-balancer integration, multi-zone DR).
+An e2e test installs the full chart, registers runtimes, claims pods through the real Warm Pool Controller, exercises admission webhooks, and validates NetworkPolicy and mTLS end to end. The e2e_kind tier uses Kind. The e2e_cloud tier uses managed Kubernetes for the behaviors Kind cannot reproduce (gVisor at node level, Kata, real load-balancer integration, multi-zone DR).
 
 ---
 
@@ -206,10 +206,10 @@ lenny/
     │   # cmd/lenny-test/ (cmd_validate.go validate-diagnosis,
     │   # verdict.go) rather than as separate testinfra packages;
     │   # both are exposed through the harness's subcommands.
-    ├── tier0_static/
+    ├── static/
     ├── tier1_unit/                # Index only; unit tests live with their packages under pkg/.
     │   └── helm/                  # Helm chart-rendering units (no obvious source-tree home)
-    ├── tier2_component/
+    ├── component/
     │   ├── auditintegrity/
     │   ├── auditstore/
     │   ├── breakers/
@@ -227,7 +227,7 @@ lenny/
     │   ├── storagequota/
     │   ├── stores/
     │   └── translators/
-    ├── tier3_contract/
+    ├── contract/
     │   ├── adapter_jsonl/         # Adapter JSONL binary protocol
     │   ├── cloudevents/           # CloudEvents envelope
     │   ├── oauth_token/           # OAuth token exchange
@@ -243,27 +243,27 @@ lenny/
     │   ├── rest_sessions/         # REST sessions surface
     │   ├── sdks/                  # SDK contract matrix
     │   └── workspaceplan/         # Workspace plan JSON schema
-    ├── tier4_integration/         # Flat *_test.go layout, one file per subject
-    ├── tier5_e2e_kind/            # Flat *_test.go layout, one file per subject
-    ├── tier6_e2e_cloud/           # Flat *_test.go layout + parity-matrix.yaml + README.md
-    ├── tier7b_load_kind/                # Kind smoke runs + per-scenario baselines
+    ├── integration/         # Flat *_test.go layout, one file per subject
+    ├── e2e_kind/            # Flat *_test.go layout, one file per subject
+    ├── e2e_cloud/           # Flat *_test.go layout + parity-matrix.yaml + README.md
+    ├── load_kind/                # Kind smoke runs + per-scenario baselines
     │   ├── scenarios/             # k6 scripts (one subdir per scenario)
     │   └── baselines/             # Per-scenario baseline JSON files
-    ├── tier12_load_cloud/          # Opt-in cloud-profile load runs
+    ├── load_cloud/          # Opt-in cloud-profile load runs
     │   └── scenarios/             # Cloud-only k6 scenarios
-    ├── tier8_chaos/               # Flat *_test.go layout + runbook-map.yaml
-    ├── tier9_security/            # Flat *_test.go layout
+    ├── chaos/               # Flat *_test.go layout + runbook-map.yaml
+    ├── security/            # Flat *_test.go layout
     │   ├── pentest/               # Driver, fixtures, findings store
     │   └── reviews/               # Security-review notes
-    ├── tier10_conformance/        # Runtime-adapter conformance battery (see tests/tier10_conformance/README.md)
-    └── tier11_docs/               # No build tag; verification-only doc tests
+    ├── conformance/        # Runtime-adapter conformance battery (see tests/conformance/README.md)
+    └── docs/               # No build tag; verification-only doc tests
 ```
 
 ### Why this layout
 
 - Unit tests live next to the code they cover (`pkg/.../foo_test.go`). The `tests/tier1_unit/` directory is a convention marker, not a code location.
 - Every other tier has its own directory, its own build tag, and its own dependency set.
-- Tier 7 is split into `tier7b_load_kind/` (Kind-based smoke and the canonical baseline corpus) and `tier12_load_cloud/` (opt-in cloud-profile runs). The two share scenario definitions but bind to different harnesses and run cadences.
+- Tier 7 is split into `load_kind/` (Kind-based smoke and the canonical baseline corpus) and `load_cloud/` (opt-in cloud-profile runs). The two share scenario definitions but bind to different harnesses and run cadences.
 - A few `testinfra/` subdirectories carry only YAML, fixtures, or a single subcommand (`runtimes/`, `k8s/`, `sdkhelper/`). They are listed as asset directories in `tests/testinfra/README.md` so a reader does not expect a Go package at the top of each path.
 - Shared infrastructure lives under `tests/testinfra/`. There is one canonical helper per concern (one container manager, one fixture loader, one verdict producer).
 - `cmd/lenny-test/` builds the harness binary. It is the only entry point developers and CI use to run tests.
@@ -283,9 +283,9 @@ lenny/
     "4.6.1": {
       "title": "Warm Pool Controller — Pod Lifecycle",
       "tests": [
-        "tests/tier2_component/controllers/warmpool/claim_atomicity_test.go::TestSandboxClaimSkipLocked",
-        "tests/tier5_e2e_kind/sandbox_claim_test.go::TestConcurrentClaimNoDoubleAssignment",
-        "tests/tier8_chaos/concurrent_claim_test.go::TestSandboxClaimUnder100Goroutines"
+        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestSandboxClaimSkipLocked",
+        "tests/e2e_kind/sandbox_claim_test.go::TestConcurrentClaimNoDoubleAssignment",
+        "tests/chaos/concurrent_claim_test.go::TestSandboxClaimUnder100Goroutines"
       ],
       "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
       "schemas": ["api/crds/sandbox_claim.yaml"],
@@ -312,22 +312,22 @@ Conventions:
   "version": 1,
   "pkg/store/session": {
     "unit": ["pkg/store/session/..."],
-    "component": ["tests/tier2_component/stores/session_store_test.go"],
+    "component": ["tests/component/stores/session_store_test.go"],
     "integration": [
-      "tests/tier4_integration/session_lifecycle_test.go",
-      "tests/tier4_integration/checkpoint_resume_test.go"
+      "tests/integration/session_lifecycle_test.go",
+      "tests/integration/checkpoint_resume_test.go"
     ],
-    "e2e_kind": ["tests/tier5_e2e_kind/pod_lifecycle_test.go"]
+    "e2e_kind": ["tests/e2e_kind/pod_lifecycle_test.go"]
   },
   "migrations/": {
-    "component": ["tests/tier2_component/stores/...", "tests/tier2_component/rls/..."],
-    "static": ["tests/tier0_static/schemas_test.go"]
+    "component": ["tests/component/stores/...", "tests/component/rls/..."],
+    "static": ["tests/static/schemas_test.go"]
   },
   "charts/lenny/": {
-    "static": ["charts/lenny/tests/...", "tests/tier0_static/helm_lint_test.go"],
+    "static": ["charts/lenny/tests/...", "tests/static/helm_lint_test.go"],
     "e2e_kind": [
-      "tests/tier5_e2e_kind/admission_policy_test.go",
-      "tests/tier5_e2e_kind/network_policy_test.go"
+      "tests/e2e_kind/admission_policy_test.go",
+      "tests/e2e_kind/network_policy_test.go"
     ]
   }
 }
@@ -443,7 +443,7 @@ lenny-test --verdict-file tests/results/<name>.json
    - `--tier` → all tests with that build tag.
    - `--max-tier` → all tests with tags up to and including that tier.
    - `--group` → the set named in `tests/groups.yaml`.
-   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. Tier 0 type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
+   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. The static tier type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
    - `--spec` → resolves each section through the spec map.
    - `--pkg` → resolves through the change graph. The unit tier runs the named package recursively plus the unit targets of the change-graph keys it matches.
 2. Intersect with `--max-tier` if both selectors are present.
@@ -454,7 +454,7 @@ lenny-test --verdict-file tests/results/<name>.json
 
 ### Test temp root
 
-Every process the harness starts inherits a temp root outside `/tmp`, because a host cleanup of `/tmp` during a run removes the fixture binaries a `TestMain` builds once and the socket directories a package reuses, and every later test in the package then fails with `fork/exec ... no such file or directory`. The harness exports the root as `TMPDIR` and `LENNY_TEST_TMPDIR`, and as `GOTMPDIR` unless the operator already set `GOTMPDIR` outside `/tmp`. The root is `$LENNY_TEST_TMPDIR` when set, otherwise the operator's `TMPDIR` when it is outside `/tmp`, otherwise `$HOME/.lenny-tmp`. A test creates a build-once fixture with `testtmp.MkdirTemp` (`tests/testinfra/testtmp`) and a Unix socket directory with `testtmp.ShortDir`, so a plain `go test` resolves the same root. The tier-0 check `TestBuildOnceFixturesStayOutOfTmp_spec_17_10` refuses an `os.MkdirTemp` call in the default temp directory inside a `TestMain` or a `sync.Once`, and any literal `/tmp` parent.
+Every process the harness starts inherits a temp root outside `/tmp`, because a host cleanup of `/tmp` during a run removes the fixture binaries a `TestMain` builds once and the socket directories a package reuses, and every later test in the package then fails with `fork/exec ... no such file or directory`. The harness exports the root as `TMPDIR` and `LENNY_TEST_TMPDIR`, and as `GOTMPDIR` unless the operator already set `GOTMPDIR` outside `/tmp`. The root is `$LENNY_TEST_TMPDIR` when set, otherwise the operator's `TMPDIR` when it is outside `/tmp`, otherwise `$HOME/.lenny-tmp`. A test creates a build-once fixture with `testtmp.MkdirTemp` (`tests/testinfra/testtmp`) and a Unix socket directory with `testtmp.ShortDir`, so a plain `go test` resolves the same root. The static-tier check `TestBuildOnceFixturesStayOutOfTmp_spec_17_10` refuses an `os.MkdirTemp` call in the default temp directory inside a `TestMain` or a `sync.Once`, and any literal `/tmp` parent.
 
 ### Container caching daemon
 
@@ -468,10 +468,10 @@ The daemon is opt-in via `--cached`. CI defaults to fresh containers per run for
 
 The merge gate is the set of tiers a branch passes before it merges into `main`. `lenny-test gate` runs it and writes a verdict for the commit it ran on. The gate runs these tiers:
 
-- Tier 0 (static), in full.
-- Tier 1 (unit) on the packages the branch changes and their in-module importers, to the depth `--rdeps-depth` sets (default 1).
+- The static tier, in full.
+- The unit tier on the packages the branch changes and their in-module importers, to the depth `--rdeps-depth` sets (default 1).
 - Tiers 2 (component), 3 (contract), and 4 (integration) when the `--changed` selection against the merge base of `--base` (default `main`) and `HEAD` selects them. The selection reads committed changes only, so commit the work before running the gate.
-- The general documentation gates of tier 11, which check the published documentation as a whole: links, code blocks, runbooks, alert-to-runbook resolution, the ADR catalog, the quickstart, the embedded manifests, and the harness inventories. The list is `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`. The rest of tier 11 runs at the area gate.
+- The general documentation gates of the docs tier, which check the published documentation as a whole: links, code blocks, runbooks, alert-to-runbook resolution, the ADR catalog, the quickstart, the embedded manifests, and the harness inventories. The list is `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`. The rest of the docs tier runs at the area gate.
 
 Every tier runs whatever an earlier tier reports, so one run reports every failure.
 
@@ -501,7 +501,7 @@ A `FAIL` or `INCONCLUSIVE` verdict stays as it is in either case.
 
 **Merge policy.** A branch merges into `main` only on a `PASS` verdict for its head commit, and `main` stays green: a merge-gate failure on `main` is fixed or reverted before any other branch merges. `.claude/rules/git-workflow.md` and `.claude/rules/test-coverage.md` ("Gates") state the policy, including the area and release gates that run the tiers outside the merge gate.
 
-**Running the gate on macOS.** The runtime supervisor checks of tier 0 build a Linux binary and skip on any other host, and a cgo link step depends on the host's C toolchain and SDK. On macOS the gate therefore runs in the container:
+**Running the gate on macOS.** The runtime supervisor checks of the static tier build a Linux binary and skip on any other host, and a cgo link step depends on the host's C toolchain and SDK. On macOS the gate therefore runs in the container:
 
 1. Install Docker Desktop, or another runtime that serves the Docker socket at `/var/run/docker.sock` to containers.
 2. From the worktree, run `go run ./cmd/lenny-test gate`, or `lenny-test gate` when the harness is installed.
@@ -548,8 +548,8 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
       "failures": [
         {
           "test": "TestSessionStoreConcurrentClaim",
-          "package": "tests/tier2_component/stores",
-          "file": "tests/tier2_component/stores/session_store_test.go",
+          "package": "tests/component/stores",
+          "file": "tests/component/stores/session_store_test.go",
           "line": 142,
           "spec_sections": ["4.2", "4.6"],
           "diagnosis": "SELECT ... FOR UPDATE SKIP LOCKED returned an already-claimed row. ...",
@@ -564,7 +564,7 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
     "e2e_kind":    { "status": "skipped", "reason": "not-requested" }
   },
   "verdict": "FAIL",
-  "next_action": "Fix 2 component-tier failures in pkg/store/session. See spec sections 4.2 and 4.6 and tests/tier2_component/stores/session_store_test.go.",
+  "next_action": "Fix 2 component-tier failures in pkg/store/session. See spec sections 4.2 and 4.6 and tests/component/stores/session_store_test.go.",
   "spec_section_status": {
     "4.2": "FAIL",
     "4.6": "FAIL",
@@ -677,7 +677,7 @@ The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is
 |:-----|:---------------:|:--------|
 | Go | 1.22 | Build the platform and run unit/component tests |
 | Docker (or compatible: Colima, Rancher Desktop, OrbStack) | 24.0 | Container runtime for testcontainers and compose |
-| docker compose | v2.20 | Tier 4 integration stack |
+| docker compose | v2.20 | Integration stack |
 | make | any | Build orchestration |
 | git | 2.40 | VCS |
 | jq | 1.6 | JSON tooling in scripts |
@@ -685,7 +685,7 @@ The infrastructure runs on macOS (Intel and Apple Silicon) and Linux. Windows is
 | buf | 1.30 | Proto linting and breaking-change detection |
 | openssl | 3.0 | Self-signed mTLS certs in dev |
 | sqlc or pgx codegen | latest | SQL codegen for migrations |
-| golangci-lint | 2.12 | Tier 0 lint |
+| golangci-lint | 2.12 | The static tier lint |
 | migrate (or atlas, or goose) | latest | Run migrations |
 
 ### Local Kubernetes (tiers 5, 8, 9, parts of 7)
@@ -720,7 +720,7 @@ CI provisions credentials for each provider through OIDC federation rather than 
 | k6 | Tier 7 load scenarios |
 | vegeta (optional) | Burst HTTP load |
 | toxiproxy | Latency/failure injection between services |
-| chaos-mesh (cloud only) | Tier 8 chaos in real clusters |
+| chaos-mesh (cloud only) | Chaos in real clusters |
 
 ### Security (tier 9)
 
@@ -752,7 +752,7 @@ CI provisions credentials for each provider through OIDC federation rather than 
 
 ## 10. Service and cluster provisioning
 
-Tests need real backing services. Lenny defines six profiles for service provisioning, named in `tests/testinfra/`. The first five back tiers 0 through 9; the last two (`loadgen` and `loadctl`) back tier 12.
+Tests need real backing services. Lenny defines six profiles for service provisioning, named in `tests/testinfra/`. The first five back tiers 0 through 9; the last two (`loadgen` and `loadctl`) back the load_cloud tier.
 
 ### Profile: `inproc` (tier 1, parts of tier 0)
 
@@ -788,7 +788,7 @@ Tests need real backing services. Lenny defines six profiles for service provisi
 - Cluster bring-up is automated via `scripts/cloud/<provider>/up.sh` and torn down via `scripts/cloud/<provider>/down.sh`. The full matrix detail lives in §12.6.
 - Cluster lifecycle is managed by CI for nightly and pre-release. Developers do not bring up cloud clusters from their laptops in routine work.
 - The cloud profile validates managed-K8s-specific behavior that no lower profile reproduces: external LB ingress, cloud-provider CSI, cert-manager with Let's Encrypt staging, provider-native KMS, and provider-native workload identity.
-- For tier 12, this profile provides the Lenny cluster plus managed datastores only. The load-generation surface lives in the `loadgen` profile and the control plane lives in the `loadctl` profile.
+- For the load_cloud tier, this profile provides the Lenny cluster plus managed datastores only. The load-generation surface lives in the `loadgen` profile and the control plane lives in the `loadctl` profile.
 
 ### Profile: `loadgen` (tier 12 load-generation surface)
 
@@ -803,7 +803,7 @@ Tests need real backing services. Lenny defines six profiles for service provisi
 - A managed-container deployment per cloud: ECS on Fargate behind an ALB (AWS), Cloud Run with Cloud Armor and a serverless VPC connector (GCP), Container Apps with managed certificate (Azure).
 - Backed by managed Postgres (RDS, Cloud SQL, Flexible Server) for run state, scenario library, and baseline pins.
 - Provisioned by `scripts/cloud/<provider>/up-loadctl.sh` against the `deploy/terraform/cloud/<provider>/loadctl/` module. Torn down by `down-loadctl.sh`.
-- Exposes the tier-12 control API (§12.12) and a WebSocket telemetry channel. Authenticates through the same OIDC and JWT path Lenny's gateway uses.
+- Exposes the load_cloud-tier control API (§12.12) and a WebSocket telemetry channel. Authenticates through the same OIDC and JWT path Lenny's gateway uses.
 - The HTTP UI (HTMX plus Plotly.js) and the API share the same listener. The HTML reports the API renders are uploaded to provider object storage (S3, GCS, Blob Storage) and surfaced through redirect.
 
 ### Service stubs and mocks
@@ -870,10 +870,10 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Scope.** Anything that does not need a running process or container.
 
-**Checks.** The harness composes the check table in `cmd/lenny-test` and lists it here in table order. The checks are independent, so the harness runs them concurrently, at most half the host's CPU count at a time, and runs every check whatever the others report. The tier message names every check that failed, and the verdict carries one failure entry per failed check. A tier-11 test reconciles this list against that table, so a check added to or removed from the harness must be reflected here.
+**Checks.** The harness composes the check table in `cmd/lenny-test` and lists it here in table order. The checks are independent, so the harness runs them concurrently, at most half the host's CPU count at a time, and runs every check whatever the others report. The tier message names every check that failed, and the verdict carries one failure entry per failed check. A docs-tier test reconciles this list against that table, so a check added to or removed from the harness must be reflected here.
 
 1. `go vet ./...`
-2. `go vet -tags=contract ./tests/tier3_contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
+2. `go vet -tags=contract ./tests/contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
 3. `buf lint` over the proto sources under `schemas/`.
 4. `buf breaking` against `.git#branch=main`. Off `main` the findings are reported as advisory, because a long-lived feature branch evolves the proto deliberately; on `main` the check hard-fails.
 5. `gofumpt -l .` — formatting. The walk from the repository root also reaches directories outside the checkout under test, such as other git worktrees under `.claude/worktrees/` and git-ignored scratch trees. The harness therefore judges only the Go files that `git ls-files --cached --others --exclude-standard` lists, and it keeps the whole report when git is unavailable.
@@ -881,7 +881,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 7. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
 8. `scripts/lint-schema.sh` — every tenant-scoped table has `tenant_id` as the leading index column (R-01).
 9. `scripts/lint-queries.sh` — no cross-tenant JOIN without the matching `a.tenant_id = b.tenant_id` clause (R-02), and the cross-tenant exception annotation inventory matches the documented list.
-10. `scripts/lint-migrations.sh` — every migration has a corresponding rollback script and a non-empty test under `tests/tier2_component/migrations/`.
+10. `scripts/lint-migrations.sh` — every migration has a corresponding rollback script and a non-empty test under `tests/component/migrations/`.
 11. `scripts/check-adr-catalog.sh` — every ADR file has a matching entry in `docs/adr/index.md` and the spec §19 table.
 12. `scripts/check-doc-examples.sh` — JSON Schema validation of every example payload under `docs/`.
 13. `scripts/check-helm-charts.sh` — `helm lint charts/lenny` and the chart policy (`conftest test` over the rendered chart).
@@ -891,7 +891,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 17. `scripts/lint-determinism.sh` — §17.4 determinism rules across the test surface. Findings are reported without failing the tier while the pre-existing violations are migrated to `testinfra`.
 18. `scripts/lint-test-conventions.sh` — §17.6 and §17.7 test-authoring conventions. Findings are reported without failing the tier.
 19. `scripts/check-markdown-links.sh` — `markdown-link-check` over `docs/` and `spec/`. Findings are reported without failing the tier, because many internal links resolve only in the rendered site; the PR workflow keeps a hard gate against the rendered site.
-20. `go test ./tests/tier0_static/...` — the tier-0 Go tests. They cover the license header on every Go source file, the CRD and JSON Schema inventories, the change-graph selection tables, and the generated-code no-drift check for `pkg/proto/`. The no-drift test reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A tier-0 test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
+20. `go test ./tests/static/...` — the static-tier Go tests. They cover the license header on every Go source file, the CRD and JSON Schema inventories, the change-graph selection tables, and the generated-code no-drift check for `pkg/proto/`. The no-drift test reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
 21. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
 22. `lenny-test validate-maps` — spec-map and change-graph integrity.
 
@@ -947,7 +947,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Profile.** `containers`. testcontainers-go starts the required stores. Migrations applied. Tests run against the resulting schema.
 
-**Suites.** Organized under `tests/tier2_component/`.
+**Suites.** Organized under `tests/component/`.
 
 #### 12.2.1 Store interface contracts
 
@@ -975,7 +975,7 @@ Every suite asserts the mandatory `DeleteByUser(ctx, tenantID, userID) error` an
 
 #### 12.2.2 RLS and tenant isolation
 
-`tests/tier2_component/rls/` is a self-contained suite that does not test a single component. It connects to Postgres directly, seeds tenants A and B with rows on every tenant-scoped table, and asserts:
+`tests/component/rls/` is a self-contained suite that does not test a single component. It connects to Postgres directly, seeds tenants A and B with rows on every tenant-scoped table, and asserts:
 
 - A query in tenant-A context returns zero rows for tenant-B data on every table.
 - A query without `SET LOCAL app.current_tenant` raises an exception via `lenny_tenant_guard`.
@@ -1172,7 +1172,7 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 | gvisor_isolation | Default isolation profile (sandboxed) creates pods on the gVisor (or provider-equivalent) node pool. Process namespace, syscall filtering, and capability dropping behave per documented sandbox semantics |
 | kata_isolation | Kata or microVM RuntimeClass pods boot, accept claims, and tear down within the documented latency budget. GKE and AKS variants validated; EKS validates Firecracker-via-Fargate as the equivalent shape |
 | multi_zone_dr | Postgres failover across zones with RPO=0 and RTO under 30 seconds. Session in-flight survives. Runs per provider against the provider's native multi-AZ Postgres offering (Cloud SQL HA, RDS Multi-AZ, Azure Database for PostgreSQL Flexible Server with HA) |
-| managed_ingress | Pre-release environment check; see Cadence below. An operator-supplied Ingress and provider-native external load balancer (GCP HTTPS LB, AWS ALB via the AWS Load Balancer Controller, or Azure Application Gateway) route external HTTPS traffic to the gateway Service, with TLS termination at the edge. Confirms Lenny deploys cleanly and the gateway is reachable over HTTPS on managed Kubernetes. Exercises no Lenny-specific code: the Helm chart renders no Ingress, and the `allow-gateway-ingress` NetworkPolicy (NET-038) is validated on Kind in tier 5 (`gateway_ingress_policy`) |
+| managed_ingress | Pre-release environment check; see Cadence below. An operator-supplied Ingress and provider-native external load balancer (GCP HTTPS LB, AWS ALB via the AWS Load Balancer Controller, or Azure Application Gateway) route external HTTPS traffic to the gateway Service, with TLS termination at the edge. Confirms Lenny deploys cleanly and the gateway is reachable over HTTPS on managed Kubernetes. Exercises no Lenny-specific code: the Helm chart renders no Ingress, and the `allow-gateway-ingress` NetworkPolicy (NET-038) is validated on Kind in the e2e_kind tier (`gateway_ingress_policy`) |
 | cloud_csi | `ArtifactStore` against the provider's native object storage: GCS on GKE, S3 on EKS, Azure Blob Storage on AKS. The same interface tests pass against every backend |
 | cloud_kms | T4 per-tenant keys against the provider's native KMS: Cloud KMS on GKE, AWS KMS on EKS, Azure Key Vault on AKS. KMS probe, key rotation, key-unavailable fail-closed validated for each |
 | cloud_oidc | Workload identity / IRSA / Workload Identity Federation: pods receive provider-issued tokens that map to cloud IAM roles per the documented configuration |
@@ -1181,7 +1181,7 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 | cloud_observability | OTLP delivery to the provider-native collector (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on Azure) |
 | cloud_billing_export | Per-tenant usage events flow to the provider's billing-export sink (BigQuery, Athena, Azure Data Lake) in the documented format |
 
-**Provider parity matrix.** A row in `tests/tier6_e2e_cloud/parity-matrix.yaml` lists every documented capability and the providers it is validated against. CI fails if a capability is claimed in the spec or chart but missing from the matrix.
+**Provider parity matrix.** A row in `tests/e2e_cloud/parity-matrix.yaml` lists every documented capability and the providers it is validated against. CI fails if a capability is claimed in the spec or chart but missing from the matrix.
 
 **Cadence.**
 - Nightly: critical-path subset (`gvisor_isolation`, `cloud_csi`, `cloud_kms` per provider) rotated across providers so each provider runs at least every 48 hours.
@@ -1191,7 +1191,7 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 
 ### 12.7 Tier 7 — Load and SLO
 
-Tier 7 is the two-stage load gate. Tier 7a (`load_local`) runs in-process and catches concurrency, ordering, atomicity, and error-propagation regressions before any cluster cost is incurred. Tier 7b (`load_kind`) runs the surviving scenarios on Kind to cover cases that genuinely require real Kubernetes primitives. The cloud-scale envelope is at §12.12 (tier 12, `load_cloud`).
+Tier 7 is the two-stage load gate. The load_local tier runs in-process and catches concurrency, ordering, atomicity, and error-propagation regressions before any cluster cost is incurred. The load_kind tier runs the surviving scenarios on Kind to cover cases that genuinely require real Kubernetes primitives. The cloud-scale envelope is at §12.12 (load_cloud tier, `load_cloud`).
 
 #### 12.7.a Tier 7a — Load and SLO (local)
 
@@ -1207,7 +1207,7 @@ type Scenario interface {
 }
 ```
 
-Scenarios register through `loadgen.Register(name, factory)` and are driven by `tests/tier7a_load_local/scaffolds_test.go`. k6 is not used at this tier; the JSON summary format the driver emits matches k6's so baselines remain comparable across tiers 7a, 7b, and 12.
+Scenarios register through `loadgen.Register(name, factory)` and are driven by `tests/load_local/scaffolds_test.go`. k6 is not used at this tier; the JSON summary format the driver emits matches k6's so baselines remain comparable across tiers 7a, 7b, and 12.
 
 **Catalogue.** Three groups of scenarios:
 
@@ -1223,16 +1223,16 @@ Scenarios register through `loadgen.Register(name, factory)` and are driven by `
 
 ```bash
 lenny-test --tier load_local
-go test -tags load_local -race -count=1 -timeout 10m ./tests/tier7a_load_local/...
+go test -tags load_local -race -count=1 -timeout 10m ./tests/load_local/...
 ```
 
-Tier 7a runs on every PR.
+The load_local tier runs on every PR.
 
 #### 12.7.b Tier 7b — Load and SLO (Kind)
 
 **Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent SandboxClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
 
-**Tooling.** `k6` is the primary load generator. `tests/tier7b_load_kind/scenarios/<name>/main.js` holds the scenario scripts; the Go wrapper port-forwards the gateway, invokes k6, and diffs the result against `tests/tier7b_load_kind/baselines/<scenario>.json`.
+**Tooling.** `k6` is the primary load generator. `tests/load_kind/scenarios/<name>/main.js` holds the scenario scripts; the Go wrapper port-forwards the gateway, invokes k6, and diffs the result against `tests/load_kind/baselines/<scenario>.json`.
 
 **Scenarios that remain at this tier.**
 
@@ -1259,10 +1259,10 @@ Tier 7a runs on every PR.
 
 ```bash
 lenny-test --tier load_kind
-go test -tags load_kind -count=1 -timeout 30m ./tests/tier7b_load_kind/...
+go test -tags load_kind -count=1 -timeout 30m ./tests/load_kind/...
 ```
 
-The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streaming sessions, the §12.12 catalogue) is phase-gated out of tier 7b and runs at tier 12.
+The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streaming sessions, the §12.12 catalogue) is phase-gated out of the load_kind tier and runs at the load_cloud tier.
 
 ### 12.8 Tier 8 — Chaos
 
@@ -1270,7 +1270,7 @@ The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streamin
 
 **Tooling.** Local: `toxiproxy` for store latency and partition; `kubectl delete pod --force` and `chaos-mesh`-equivalent Go primitives for pod kills. Cloud: `chaos-mesh`.
 
-**Scenarios.** Each runbook in `docs/runbooks/` implies at least one chaos scenario. The mapping is maintained in `tests/tier8_chaos/runbook-map.yaml`. The full list of runbooks is 56 entries (§spec/17.7 and `docs/runbooks/`); the chaos suite covers all of them, organized into groups:
+**Scenarios.** Each runbook in `docs/runbooks/` implies at least one chaos scenario. The mapping is maintained in `tests/chaos/runbook-map.yaml`. The full list of runbooks is 56 entries (§spec/17.7 and `docs/runbooks/`); the chaos suite covers all of them, organized into groups:
 
 - Store failures: Postgres failover, Postgres unavailable, Redis Sentinel failover, Redis cluster degraded, MinIO unavailable, MinIO replication lag, KMS unavailable, KMS key probe stale, dual-store unavailable, PgBouncer saturation.
 - Component failures: gateway replica failure, controller leader-election disruption, admission webhook outage, cert-manager outage, DNS outage, token service outage, ephemeral-container-cred-guard outage.
@@ -1357,13 +1357,13 @@ A direct database write that bypasses Lenny is followed by a chain-continuity ch
 
 Pre-release only. Production images are signed with cosign; trivy reports zero critical CVEs; SBOM is generated and stored.
 
-**External pen-test.** Pre-release ships an artifact bundle to the external pen-test partner. The pen-test driver under `tests/tier9_security/pentest/` is the harness for replaying the partner's findings against future builds.
+**External pen-test.** Pre-release ships an artifact bundle to the external pen-test partner. The pen-test driver under `tests/security/pentest/` is the harness for replaying the partner's findings against future builds.
 
 **Build tag and invocation.**
 
 ```bash
 lenny-test --tier security
-go test -tags security -count=1 -timeout 1h ./tests/tier9_security/...
+go test -tags security -count=1 -timeout 1h ./tests/security/...
 ```
 
 The tier runs under its own budget of one hour, which `LENNY_TEST_SECURITY_TIMEOUT` overrides with a Go duration such as `90m`. Several cases wait for a Ready agent workload on the Kind cluster, so the package runtime follows cluster load, and recorded whole-package runs range from about 70 seconds to about 1630 seconds. The load and chaos tiers share the separate 600-second long-tier budget that `LENNY_TEST_LONG_TIMEOUT` overrides.
@@ -1414,7 +1414,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 ### 12.12 Tier 12 — Load and SLO (cloud)
 
-**Scope.** Cloud-scale load against a real managed Kubernetes cluster (EKS, GKE, or AKS) with managed datastores (RDS / Cloud SQL / Flexible Server, ElastiCache / Memorystore / Cache for Redis). Tier 12 ratifies a release. It does not surface design bugs; tier 7a and tier 7b are where those land.
+**Scope.** Cloud-scale load against a real managed Kubernetes cluster (EKS, GKE, or AKS) with managed datastores (RDS / Cloud SQL / Flexible Server, ElastiCache / Memorystore / Cache for Redis). The load_cloud tier ratifies a release. It does not surface design bugs; the load_local tier and the load_kind tier are where those land.
 
 **Topology.** Three deployed surfaces in the same cloud account:
 
@@ -1473,7 +1473,7 @@ Bucket lifecycle: keep `report.html` and `manifest.json` indefinitely; expire ra
 
 Every endpoint authenticates through the same OIDC and JWT path Lenny's gateway uses. AI agents and CI pipelines drive the API programmatically.
 
-**Cadence.** On-demand and pre-release. A tier-12 run is the most expensive part of the pipeline; it gates the release rather than the PR.
+**Cadence.** On-demand and pre-release. A load_cloud-tier run is the most expensive part of the pipeline; it gates the release rather than the PR.
 
 **Build tag and invocation.**
 
@@ -1491,7 +1491,7 @@ curl -X POST https://loadctl.<provider>.example.com/api/v1/runs \
 
 **Scale profiles.** `small` (10–50 concurrent sessions, 5–10 child fan-out, 25–50 streaming sessions), `medium` (50–200 / 10–25 / 100–250), `production` (100+ / 50 / 500 — the full §12.7 envelope). The active scale selects the Terraform overlay under `deploy/terraform/cloud/<provider>/`.
 
-The detailed component layout, terraform module shapes, and operator runbooks for tier-12 are in §15 below.
+The detailed component layout, terraform module shapes, and operator runbooks for the load_cloud tier are in §15 below.
 
 ---
 
@@ -1510,19 +1510,19 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `scripts/setup-dev.sh`, `scripts/preflight.sh`, `scripts/setup-cluster.sh`.
 - ADR-007 (SandboxClaim optimistic locking) authored. ADR-008 (license) committed. LICENSE file at repo root.
 - `tests/testinfra/timectl/` and `tests/testinfra/randctl/`.
-- Tier 0 (Static) is partially live: license header check, markdown link check, ADR catalog cross-check, basic golangci-lint.
-- Tier 11 (Documentation) is partially live: link check, code-block syntax check.
+- The static tier is partially live: license header check, markdown link check, ADR catalog cross-check, basic golangci-lint.
+- The docs tier is partially live: link check, code-block syntax check.
 
 **Test group gating Phase 0 → Phase 1.**
-- `phase-0-gate`: Tier 0 and Tier 11 pass on the empty repo. `lenny-test validate-maps` passes (empty maps).
+- `phase-0-gate`: The static tier and the docs tier pass on the empty repo. `lenny-test validate-maps` passes (empty maps).
 
 ### 13.1 Phase 1 — Core types and wire contracts
 
 **Spec/18 components.** Core types (`Runtime`, `SandboxTemplate`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, `workspaceplan-v1.json`).
 
 **Test infrastructure to land.**
-- Proto and JSON Schema compilation in Tier 0.
-- `tests/tier3_contract/adapter_jsonl/` and `tests/tier3_contract/workspaceplan/` directories with stub failing tests for every documented contract.
+- Proto and JSON Schema compilation in the static tier.
+- `tests/contract/adapter_jsonl/` and `tests/contract/workspaceplan/` directories with stub failing tests for every documented contract.
 - `tests/tier1_unit/` table-driven tests for every state machine introduced in Phase 1 (TaskRecord state, suspended session state, input_required state).
 - buf-driven schema breaking-change detection.
 - Spec map entries for spec §1, §2, §3, §14, §15.4, §15.5.
@@ -1535,9 +1535,9 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Spec/18 components.** Migration tool selected. Initial schema migration. Schema and query linters (R-01, R-02). CI migration gate.
 
 **Test infrastructure to land.**
-- `scripts/lint-schema.sh` and `scripts/lint-queries.sh` operational and wired into Tier 0.
+- `scripts/lint-schema.sh` and `scripts/lint-queries.sh` operational and wired into the static tier.
 - `tests/testinfra/containers/postgres.go` operational. testcontainers-go starts Postgres, applies migrations, returns a clean schema.
-- `tests/tier2_component/migrations/` exists with migration round-trip tests, rollback tests, and idempotency tests.
+- `tests/component/migrations/` exists with migration round-trip tests, rollback tests, and idempotency tests.
 - A migration regression test: apply N, seed data, apply N+1, assert data integrity, roll back, assert reversibility.
 
 **Test group gating Phase 1.5 → Phase 2.**
@@ -1550,13 +1550,13 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure delivered in Phase 2.**
 - `cmd/runtimes/echo/` built. The binary passes `lenny-compliance --level basic`.
 - `cmd/lenny-compliance/` is the conformance harness. The Basic-level battery covers binary execution, empty-stdin shutdown, message-to-response round-trip, heartbeat acknowledgement, unknown-type forward compatibility, shutdown deadline, and sequential-message handling.
-- `tests/tier3_contract/adapter_jsonl/messages_test.go` passes against the echo runtime for Basic-level expectations. Standard-level expectations (tool-call correlation, response-shorthand normalisation, adapter-local tool path-traversal guard) are skipped until the relevant runtimes and the gateway-side normaliser ship.
-- `tests/tier7b_load_kind/scenarios/startup_latency/main.js` is the §6.3 startup benchmark. It drives `POST /v1/sessions/start` against the Kind e2e gateway and measures real claim-to-ready session start, not a host-process heartbeat round-trip. Two tier-7b arms run on every PR against the runc/standard class: pod-warm (the `echo` pool) and SDK-warm (the `preconnect-echo` pool, `capabilities.preConnect`), recording `baselines/startup_latency_pod_warm.json` and `baselines/startup_latency_sdk_warm.json`. The arms log the gate-canonical claim-to-ready P95 read from the server histogram `lenny_session_startup_duration_seconds{runtime_class}` (the metric whose envelope matches the §6.3 2s runc target); a noisy Kind smoke overshoot is logged, not failed, matching `pod_claim_latency`. The per-runtime-class SDK-warm measurement (runc, gVisor, Kata) runs in the tier-12 cloud load suite (`tests/tier12_load_cloud/session_startup_latency_test.go`) against an operator-provisioned cluster, since gVisor and Kata RuntimeClasses are not present on the Kind cluster; `scripts/cloud/<provider>/up-runtimeclass-pools.sh` provisions those node pools. spec-reviews: F-6.3.5, F-6.3.10, F-6.3.14.
+- `tests/contract/adapter_jsonl/messages_test.go` passes against the echo runtime for Basic-level expectations. Standard-level expectations (tool-call correlation, response-shorthand normalisation, adapter-local tool path-traversal guard) are skipped until the relevant runtimes and the gateway-side normaliser ship.
+- `tests/load_kind/scenarios/startup_latency/main.js` is the §6.3 startup benchmark. It drives `POST /v1/sessions/start` against the Kind e2e gateway and measures real claim-to-ready session start, not a host-process heartbeat round-trip. Two load_kind-tier arms run on every PR against the runc/standard class: pod-warm (the `echo` pool) and SDK-warm (the `preconnect-echo` pool, `capabilities.preConnect`), recording `baselines/startup_latency_pod_warm.json` and `baselines/startup_latency_sdk_warm.json`. The arms log the gate-canonical claim-to-ready P95 read from the server histogram `lenny_session_startup_duration_seconds{runtime_class}` (the metric whose envelope matches the §6.3 2s runc target); a noisy Kind smoke overshoot is logged, not failed, matching `pod_claim_latency`. The per-runtime-class SDK-warm measurement (runc, gVisor, Kata) runs in the load_cloud suite (`tests/load_cloud/session_startup_latency_test.go`) against an operator-provisioned cluster, since gVisor and Kata RuntimeClasses are not present on the Kind cluster; `scripts/cloud/<provider>/up-runtimeclass-pools.sh` provisions those node pools. spec-reviews: F-6.3.5, F-6.3.10, F-6.3.14.
 - `pkg/common/registry/resolver.go` implements `ImageResolver` with override > url > default precedence and digest enforcement. Tests in `pkg/common/registry/resolver_test.go`.
 
 **Test infrastructure deferred to later phases.**
 - `make run` end-to-end gateway smoke and the SQLite dev-mode schema are deferred to the gateway implementation phase. The harness for both requires a gateway binary that does not yet exist.
-- `tests/tier2_component/translators/image_resolver_test.go` is deferred to the same phase. The component-tier shape requires a translator stack to drive the resolver in context; the Phase 2 deliverable validates the resolver in isolation via the unit tests above.
+- `tests/component/translators/image_resolver_test.go` is deferred to the same phase. The component-tier shape requires a translator stack to drive the resolver in context; the Phase 2 deliverable validates the resolver in isolation via the unit tests above.
 - The checkpoint-duration baseline is deferred to Phase 8 (checkpoint/resume).
 - `pr-fast` `lenny-test --changed --max-tier component` end-to-end timing is deferred until Phase 1's component tier is wired into the default selectors.
 
@@ -1574,7 +1574,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/observability/metrics` is the typed Counter/Gauge/Histogram constructor with the §16.1.1 label-hygiene validator. The validator rejects metric names without the `lenny_` prefix and rejects any of the forbidden high-cardinality labels (`session_id`, `operation_id`, `root_session_id`, `credential_id`, `user_id`, `lease_id`, `request_id`).
 - `pkg/alerting/rules` is the typed `Rule` struct plus a PromQL validator (parsed via `prometheus/prometheus/promql/parser`) and a representative catalog (`WarmPoolExhausted`, `PostgresReplicationLagHigh`, `CredentialPoolLow`, `WarmPoolLow`, `CertExpiryImminent`). Tests cover validation, catalog hygiene, and the critical-severity-requires-runbook rule.
 - `tests/testinfra/mocks/otelcollector` is the in-process tracer-provider helper. It returns spans recorded synchronously so unit and component tests can assert what was emitted.
-- `tests/tier2_component/observability/integration_test.go` wires the correlation context, the slog handler, and the tracer wrapper together against the in-process collector and asserts that span attributes and log fields share the same correlation values.
+- `tests/component/observability/integration_test.go` wires the correlation context, the slog handler, and the tracer wrapper together against the in-process collector and asserts that span attributes and log fields share the same correlation values.
 
 **Test infrastructure deferred to later phases.**
 - "Every component emits the documented log fields and trace spans" is deferred to the phases that ship those components. The gateway, controllers, runtime adapter, token service, and `lenny-ops` do not exist yet; their per-component log-and-span assertions land alongside each binary.
@@ -1590,7 +1590,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure delivered in Phase 2.8.**
 - `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a CH-RUNTIMEOPS client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/runtime-ops-events.schema.json` is the JSON Schema for the CH-RUNTIMEOPS envelope. Example fixtures live under `schemas/examples/runtime-ops.*.json` and are validated by `tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesValidate`, whose fixture list `tests/tier0_static/schemas_test.go::TestRuntimeOpsEventExamplesBijection` holds to the set committed under `schemas/examples`.
+- `schemas/runtime-ops-events.schema.json` is the JSON Schema for the CH-RUNTIMEOPS envelope. Example fixtures live under `schemas/examples/runtime-ops.*.json` and are validated by `tests/static/schemas_test.go::TestRuntimeOpsEventExamplesValidate`, whose fixture list `tests/static/schemas_test.go::TestRuntimeOpsEventExamplesBijection` holds to the set committed under `schemas/examples`.
 - `cmd/lenny-compliance --level full` adds the Full-level conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). The harness opens a Unix-socket lifecycle server, writes a manifest pointing the runtime at it, and asserts each event round-trip.
 - `streaming-echo` passes both `lenny-compliance --level basic` (7/7) and `lenny-compliance --level full` (12/12).
 
@@ -1610,9 +1610,9 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure deferred to later phases.**
 - `tests/testinfra/kind/cluster.go` (Kind cluster harness with cert-manager) is deferred. Bringing it up requires Docker, kind, cert-manager CRDs, and a controller image — none of which exist on this branch.
-- `tests/tier2_component/controllers/poolscaling_test.go` against `envtest` is deferred. It requires the `envtest` binary plus the PoolScalingController binary; the strategy package above is the unit-testable substrate that test will drive.
-- `tests/tier5_e2e_kind/pool_upgrade_test.go` exercises the runtime-upgrade state machine end-to-end against real CRDs and pods. It is deferred until the WarmPoolController and PoolScalingController binaries exist alongside the Kind harness.
-- `tests/tier5_e2e_kind/mtls_enforcement_test.go` and `tests/tier9_security/mtls/` are deferred. The SPIFFE validation and deny-list units above are the substrate; the e2e tests need the gateway binary, cert-manager wiring, and a Kind cluster.
+- `tests/component/controllers/poolscaling_test.go` against `envtest` is deferred. It requires the `envtest` binary plus the PoolScalingController binary; the strategy package above is the unit-testable substrate that test will drive.
+- `tests/e2e_kind/pool_upgrade_test.go` exercises the runtime-upgrade state machine end-to-end against real CRDs and pods. It is deferred until the WarmPoolController and PoolScalingController binaries exist alongside the Kind harness.
+- `tests/e2e_kind/mtls_enforcement_test.go` and `tests/security/mtls/` are deferred. The SPIFFE validation and deny-list units above are the substrate; the e2e tests need the gateway binary, cert-manager wiring, and a Kind cluster.
 - The Redis pub/sub fan-out that propagates deny-list entries across gateway replicas is deferred to the phase that ships the gateway. The single-replica primitive is in place.
 
 **Test group gating Phase 3 → Phase 3.5.**
@@ -1629,8 +1629,8 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure deferred to later phases.**
 - The webhook binaries that wrap each decision package with a `k8s.io/api/admission/v1` AdmissionReview HTTP handler are deferred to the K8s-integration phase. The handlers are thin shims over the decision packages above; they need the controller-runtime stack and a cert-manager-issued serving certificate.
-- `tests/tier5_e2e_kind/admission_inventory_test.go`, `admission_policy_test.go`, `sandbox_claim_test.go` (ADR-007 concurrent-claim chaos test), `label_immutability_test.go`, and `lenny_ops_first_deploy_test.go` are deferred. They need Kind, cert-manager, the webhook binaries, and the rendered Helm chart.
-- `tests/tier8_chaos/admission_webhook_outage_test.go` (`failurePolicy: Fail` chaos) is deferred to the same phase.
+- `tests/e2e_kind/admission_inventory_test.go`, `admission_policy_test.go`, `sandbox_claim_test.go` (ADR-007 concurrent-claim chaos test), `label_immutability_test.go`, and `lenny_ops_first_deploy_test.go` are deferred. They need Kind, cert-manager, the webhook binaries, and the rendered Helm chart.
+- `tests/chaos/admission_webhook_outage_test.go` (`failurePolicy: Fail` chaos) is deferred to the same phase.
 - The `lenny-pool-config-validator` webhook is also deferred — its semantic rule set (the §10.1 tiered-cap vs `terminationGracePeriodSeconds` budget and the `checkpointBarrierAckTimeoutSeconds` floor) depends on §10.1 details that are out of scope for Phase 3.5.
 - `lenny-ops` first-deploy and its NetworkPolicies are deferred. The lenny-ops binary does not exist yet; the §25.4 correlation primitive shipped in Phase 2.5 (`pkg/observability/correlation`) is the substrate it will use.
 
@@ -1642,15 +1642,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure delivered in Phase 4.**
 - `pkg/api/v1/session` ships the externally-visible Session API surface from §15.1: the twelve-state `State` enum, `IsTerminal`, the §7.1 `FailureClass` enum, and the §15.1 state-mutating endpoint precondition table as a Go-callable `Validate` function. The validator returns `*PreconditionError` whose `Code()` and `ErrorCode()` match the spec's HTTP 409 INVALID_STATE_TRANSITION envelope, including the `details.allowedStates` slice for the gateway to echo back to clients.
 - `pkg/gateway/session/sessionstore` defines the §4.2 SessionStore interface (Create, Get, Update, List, Delete) with strict tenant isolation — cross-tenant reads return `ErrNotFound`, never leaking existence.
-- `pkg/gateway/session/sessionstore/memstore` is the in-memory implementation backing the minimal gateway and every tier-3 contract test. The Postgres-backed implementation that ships in a later phase swaps in behind the same interface without changing caller code.
+- `pkg/gateway/session/sessionstore/memstore` is the in-memory implementation backing the minimal gateway and every contract test. The Postgres-backed implementation that ships in a later phase swaps in behind the same interface without changing caller code.
 - `pkg/gateway/sessionserver` is the §15.1 REST `http.Handler`: `POST /v1/sessions`, `GET /v1/sessions/{id}`, `GET /v1/sessions`, `DELETE /v1/sessions/{id}`, plus the five state-mutating endpoints (`finalize`, `start`, `interrupt`, `terminate`, `resume`). Every state-mutating call drives `session.Validate` first and emits the §15.1 `INVALID_STATE_TRANSITION` envelope on rejection (HTTP 409 with `details.currentState` and `details.allowedStates`).
-- `cmd/lenny-gateway` is the minimal Lenny gateway binary that boots the handler against `memstore`. No OIDC, no Postgres, no Kubernetes — the tenant is taken from the dev `X-Lenny-Tenant-ID` header (defaulting to `default` per §10.2 single-tenant mode). Provides a concrete handler for the tier-3 / tier-4 harness to exercise before the production gateway ships.
-- `tests/tier3_contract/rest_sessions/` ships the §15.1 contract tests: happy-path lifecycle (created → finalize → start → interrupt → terminate), each state-transition rejection from the §15.1 precondition table, cross-tenant 404 existence-hiding, `INVALID_STATE_TRANSITION` envelope shape, and the `?state=` listing filter. Tests drive the handler via `httptest` so they run unchanged when the production store backend lands.
+- `cmd/lenny-gateway` is the minimal Lenny gateway binary that boots the handler against `memstore`. No OIDC, no Postgres, no Kubernetes — the tenant is taken from the dev `X-Lenny-Tenant-ID` header (defaulting to `default` per §10.2 single-tenant mode). Provides a concrete handler for the tier-3 / integration-tier harness to exercise before the production gateway ships.
+- `tests/contract/rest_sessions/` ships the §15.1 contract tests: happy-path lifecycle (created → finalize → start → interrupt → terminate), each state-transition rejection from the §15.1 precondition table, cross-tenant 404 existence-hiding, `INVALID_STATE_TRANSITION` envelope shape, and the `?state=` listing filter. Tests drive the handler via `httptest` so they run unchanged when the production store backend lands.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/session_lifecycle_test.go` (`create → upload → attach → complete` against the compose stack with real Postgres + MinIO) is deferred. It needs the workspace materialization, the upload handler, and the gateway-to-pod attach path; the contract tests above cover the state-machine surface against the in-memory backend.
-- The Tier 4 integration profile (`docker compose --profile default up` bringing up gateway, controller-sim, stores) is deferred to the K8s-integration phase. The fixtures it composes do not exist yet.
-- `tests/tier2_component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server with the pod-claim path wired in) is deferred. The minimal gateway's transitions short-circuit pod claim; the real orchestrator binary that ships in a later phase drives the WarmPoolController and asserts the resulting `Sandbox` state.
+- `tests/integration/session_lifecycle_test.go` (`create → upload → attach → complete` against the compose stack with real Postgres + MinIO) is deferred. It needs the workspace materialization, the upload handler, and the gateway-to-pod attach path; the contract tests above cover the state-machine surface against the in-memory backend.
+- The integration profile (`docker compose --profile default up` bringing up gateway, controller-sim, stores) is deferred to the K8s-integration phase. The fixtures it composes do not exist yet.
+- `tests/component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server with the pod-claim path wired in) is deferred. The minimal gateway's transitions short-circuit pod claim; the real orchestrator binary that ships in a later phase drives the WarmPoolController and asserts the resulting `Sandbox` state.
 - The OpenAPI document served at `GET /openapi.yaml` is deferred. The minimal gateway has no `/openapi.yaml` route; the production gateway will surface it.
 - The upload pipeline, the derive / replay flows, message injection, the elicitation / tool-approval endpoints, and the §11.6 admission controller wiring are deferred to their respective phases.
 
@@ -1662,24 +1662,24 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/auth` ships the §10.2 primitives that do not depend on a live OIDC provider or KMS: the `TokenType` enum (`user_bearer`, `session_capability`, `a2a_delegation`, `service_token`), the `Role` enum (`platform-admin`, `tenant-admin`, `tenant-viewer`, `billing-viewer`, `user`), `ValidateTenantID` for the `^[a-zA-Z0-9_-]{1,128}$` format constraint, and `ExtractTenant` for the §10.2 single-tenant / multi-tenant claim-extraction state machine. The function returns the spec-mandated rejection categories (`ErrTenantClaimMissing` → 401, `*TenantIDFormatError` → 401, `ErrTenantNotFound` → 403) so the gateway HTTP handler can map them to the §10.2 error codes.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier2_component/gateway_subsystems/admin_plane_test.go` (every admin endpoint against real stores) is deferred. The admin endpoints do not exist yet.
-- `tests/tier2_component/auth/` (JWT signature validation, signing-key rotation, KMS / HMAC backends) is deferred. The pure primitive in `pkg/auth` is the substrate; the `JWTSigner` interface and its KMS implementation land with the gateway binary.
-- `tests/tier4_integration/admin_bootstrap_test.go` (`lenny-ctl bootstrap --from-values` idempotency) is deferred. `lenny-ctl` does not yet implement the bootstrap subcommand.
-- `tests/tier5_e2e_kind/bootstrap_first_install_test.go` is deferred to the K8s-integration phase.
+- `tests/component/gateway_subsystems/admin_plane_test.go` (every admin endpoint against real stores) is deferred. The admin endpoints do not exist yet.
+- `tests/component/auth/` (JWT signature validation, signing-key rotation, KMS / HMAC backends) is deferred. The pure primitive in `pkg/auth` is the substrate; the `JWTSigner` interface and its KMS implementation land with the gateway binary.
+- `tests/integration/admin_bootstrap_test.go` (`lenny-ctl bootstrap --from-values` idempotency) is deferred. `lenny-ctl` does not yet implement the bootstrap subcommand.
+- `tests/e2e_kind/bootstrap_first_install_test.go` is deferred to the K8s-integration phase.
 - `tests/testinfra/mocks/oidc/` (a mock OIDC provider that mints tokens for the role matrix above) is deferred. The pure-Go primitives in `pkg/auth` can be exercised without it; the mock provider is needed only by the component-tier and integration-tier suites.
 
 ### 13.10 Phase 5 — ExternalAdapterRegistry + MCP/Completions/Open Responses + REST/MCP contract tests
 
 **Test infrastructure to land.**
-- `tests/tier3_contract/rest_mcp/` covers every overlapping operation per §12.3.1.
-- `tests/tier3_contract/rest_openai_chat/` and `tests/tier3_contract/rest_openai_responses/` cover the documented fidelity matrices.
-- `tests/tier2_component/translators/openai_translator_test.go` and `anthropic_translator_test.go` exercise the native translators.
-- `tests/tier4_integration/mcp_runtime_endpoints_test.go` exercises `type: mcp` runtime endpoints.
+- `tests/contract/rest_mcp/` covers every overlapping operation per §12.3.1.
+- `tests/contract/rest_openai_chat/` and `tests/contract/rest_openai_responses/` cover the documented fidelity matrices.
+- `tests/component/translators/openai_translator_test.go` and `anthropic_translator_test.go` exercise the native translators.
+- `tests/integration/mcp_runtime_endpoints_test.go` exercises `type: mcp` runtime endpoints.
 
 ### 13.11 Phase 5.4 — etcd encryption at rest
 
 **Test infrastructure to land.**
-- `tests/tier5_e2e_kind/etcd_encryption_test.go` writes a Kubernetes Secret, queries `etcdctl get` on the raw key, asserts ciphertext.
+- `tests/e2e_kind/etcd_encryption_test.go` writes a Kubernetes Secret, queries `etcdctl get` on the raw key, asserts ciphertext.
 - The chart's `etcdEncryption.enabled: true` default is asserted in the chart-template unit tests.
 
 **Hard prerequisite for Phase 5.5.** Without this test passing, Phase 5.5 must not proceed.
@@ -1690,15 +1690,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/credential` ships the §4.9 closed enums (`Provider`, `AssignmentStrategy`, `LeaseSource`, `RotationTrigger`) plus the rotation-trigger semantics: `IsFaultTriggered`, `IsCeilingApplicable` (the §4.7 300-second in-flight gate rule — only `proactive_renewal` escapes), and `CountsAgainstRotationBudget` (the §4.9 proactive-renewal exclusion from `maxRotationsPerSession`). `PoolConfig.Validate` rejects malformed admin-path `CredentialPool` definitions before the K8s/Postgres write.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier2_component/stores/token_store_test.go` (real Postgres + KMS stub) is deferred. It needs the Token Service binary and the schema migration to land.
-- `tests/tier2_component/gateway_subsystems/token_service_test.go` (AssignCredentials, RevokeCredentials, multi-replica leader election, K8s Secrets backend) is deferred to the K8s-integration phase that ships the Token Service.
-- `tests/tier4_integration/credential_lifecycle_test.go` (end-to-end credential lifecycle against the compose stack) is deferred to the same phase.
+- `tests/component/stores/token_store_test.go` (real Postgres + KMS stub) is deferred. It needs the Token Service binary and the schema migration to land.
+- `tests/component/gateway_subsystems/token_service_test.go` (AssignCredentials, RevokeCredentials, multi-replica leader election, K8s Secrets backend) is deferred to the K8s-integration phase that ships the Token Service.
+- `tests/integration/credential_lifecycle_test.go` (end-to-end credential lifecycle against the compose stack) is deferred to the same phase.
 - The `CredentialRenewalWorker` proactive-renewal loop, the materializedConfig schemas per provider, the §4.9.1 KMS-key-rotation procedure, and the SIEM-streaming audit-event pipeline all need the gateway binary and the Token Service to land first.
 
 ### 13.13 Phase 5.6 — Targeted security design review (credential)
 
 **Test infrastructure to land.**
-- A documented checklist in `tests/tier9_security/reviews/credential-review.md`. The review itself is a human activity; the infrastructure records findings and links them to commits.
+- A documented checklist in `tests/security/reviews/credential-review.md`. The review itself is a human activity; the infrastructure records findings and links them to commits.
 
 ### 13.14 Phase 5.75 — Minimum viable policy enforcement
 
@@ -1708,8 +1708,8 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/quota` ships the §11.2 quota arithmetic primitives that the `QuotaEvaluator` interceptor wraps with Redis I/O: the `ResetPeriod` enum, the soft-warning (80%) and hard-limit (100%) threshold tests, the global→tenant→user `Hierarchy` validator and `HierarchicalCheck` resolver, the §11.2 `FailOpenCeiling` formula (`min(tenant_limit / replicas, per_replica_hard_cap)`), the `PerUserFailOpenCeiling` companion, the `MaxOvershoot` formula, and the `ReconcileMax` MAX-rule for Redis-recovery counter reconciliation.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/policy_gate_test.go` (unauthenticated session-creation denial, per-tenant `maxConcurrentSessions` enforcement, token-budget rejection) is deferred. It needs the gateway, the `AuthEvaluator` and `QuotaEvaluator` interceptors, and Redis wired in.
-- `tests/tier8_chaos/redis_down_during_policy_check.go` (fail-open / fail-closed behaviour under Redis outage) is deferred. The arithmetic primitives are in place; the chaos test needs the gateway and a Redis instance the chaos harness can disable.
+- `tests/integration/policy_gate_test.go` (unauthenticated session-creation denial, per-tenant `maxConcurrentSessions` enforcement, token-budget rejection) is deferred. It needs the gateway, the `AuthEvaluator` and `QuotaEvaluator` interceptors, and Redis wired in.
+- `tests/chaos/redis_down_during_policy_check.go` (fail-open / fail-closed behaviour under Redis outage) is deferred. The arithmetic primitives are in place; the chaos test needs the gateway and a Redis instance the chaos harness can disable.
 - The `storage_quota_reserve.lua` Redis Lua script, the per-replica fail-open accounting goroutine, the cumulative fail-open timer (`quotaFailOpenCumulativeMaxSeconds`), and the §11.2.1 billing event emitter are all deferred to the K8s-integration phase.
 
 **Hard prerequisite for Phase 6 real-credential testing.**
@@ -1717,21 +1717,21 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.15 Phase 5.8 — LLM Proxy + `lenny-direct-mode-isolation` admission webhook
 
 **Test infrastructure to land.**
-- `tests/tier2_component/gateway_subsystems/llm_proxy_test.go` validates lease-token validation, native translator for `anthropic_direct`, SSE relay, circuit breaker.
-- `tests/tier2_component/translators/` pins the `anthropic_direct` and `openai_direct` request/response wire shapes against the canonical fixture corpus under `tests/testdata/`.
-- `tests/tier5_e2e_kind/llm_proxy_proxy_mode_test.go` exercises proxy-mode end-to-end with `streaming-echo`.
-- `tests/tier5_e2e_kind/admission_direct_mode_isolation_test.go` validates the new webhook.
+- `tests/component/gateway_subsystems/llm_proxy_test.go` validates lease-token validation, native translator for `anthropic_direct`, SSE relay, circuit breaker.
+- `tests/component/translators/` pins the `anthropic_direct` and `openai_direct` request/response wire shapes against the canonical fixture corpus under `tests/testdata/`.
+- `tests/e2e_kind/llm_proxy_proxy_mode_test.go` exercises proxy-mode end-to-end with `streaming-echo`.
+- `tests/e2e_kind/admission_direct_mode_isolation_test.go` validates the new webhook.
 
 ### 13.16 Phase 6 — Interactive sessions + SDKs
 
 **Test infrastructure to land.**
-- `tests/tier4_integration/streaming_reconnect_test.go` covers reconnect with cursor under controlled disconnects.
+- `tests/integration/streaming_reconnect_test.go` covers reconnect with cursor under controlled disconnects.
 - The full language-SDK test surface comes online per §14.13. Phase 6 ships the Go and TypeScript client SDKs (per spec/15.6); Python ships with Phase 6 or 6.5 depending on release packaging. Runtime-author SDKs (Go, Python, TypeScript) ship alongside the runtime scaffolder (Phase 2 onward, with full coverage by Phase 12b).
 
 ### 13.17 Phase 6.5 — Incremental load test (streaming)
 
 **Test infrastructure to land.**
-- `tests/tier7b_load_kind/scenarios/streaming_reconnect.go` operational.
+- `tests/load_kind/scenarios/streaming_reconnect.go` operational.
 - Phase 6.5 baseline JSON committed.
 
 ### 13.18 Phase 7 — Policy engine (quotas, budgets, audit hooks)
@@ -1741,8 +1741,8 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/idempotency` ships the §11.5 idempotency primitives: 128-character `MaxKeyLength` cap, 24-hour `TTL` constant, tenant-scoped `Key` shape with `Validate` returning `*KeyTooLongError` on length overflow, `HashBody` returning a stable 64-character SHA-256 hex digest, and `DetectReuse` returning the canonical action (`store_new` | `replay` | `reject`) with `*ReuseError` carrying the §11.5 `IDEMPOTENCY_KEY_REUSED` 422 envelope.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/quota_enforcement_test.go` and `quota_recovery_test.go` are deferred. The Phase 5.75 `pkg/quota` arithmetic is the substrate; integration tests need the gateway, Redis, and the storage_quota_reserve.lua script.
-- `tests/tier4_integration/policy_audit_test.go` is deferred to the K8s-integration phase that ships the gateway's policy interceptors and the §11.7 audit-log writer.
+- `tests/integration/quota_enforcement_test.go` and `quota_recovery_test.go` are deferred. The Phase 5.75 `pkg/quota` arithmetic is the substrate; integration tests need the gateway, Redis, and the storage_quota_reserve.lua script.
+- `tests/integration/policy_audit_test.go` is deferred to the K8s-integration phase that ships the gateway's policy interceptors and the §11.7 audit-log writer.
 - The §11.6 Redis-backed cache with pub/sub propagation, the admin API handlers, the 5-second cache-stale fallback path, and the §11.6 sampling-under-breaker-storms audit emitter are deferred to the K8s-integration phase.
 
 ### 13.19 Phase 8 — Checkpoint/resume + drain-readiness webhook
@@ -1751,9 +1751,9 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/checkpoint` ships the §4.4 checkpoint primitives: the `Level` enum (basic, standard, full, embedded) with the `ConsistencyForLevel` mapping (basic/standard → best-effort; full/embedded → consistent), the `Trigger` enum (periodic, pre_scale_down, eviction) with `IsEviction` and `RetryBudgetFor` returning the §4.4 per-trigger budget (200ms/5s/5s for non-eviction; 500ms/5s/30s for eviction), the `Outcome` enum (success, failed, aborted, partial), the `ResumeMode` enum (full, partial_workspace, conversation_only, coordinator_handoff) with `WorkspaceLost` mapping, the `CheckpointTimeout` 60-second constant, the `WorkspaceSizePreCheck` implementing the §4.4 "Hard workspace size limit" pre-check, and the `FreshnessCheck` implementing the §4.4 "Checkpoint freshness SLO" with the §16.5 `CheckpointStale` alert condition.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/checkpoint_resume_test.go` (eviction → checkpoint → resume on a new pod) is deferred. It needs the gateway, the adapter, MinIO, and the compose stack.
-- `tests/tier5_e2e_kind/drain_readiness_webhook_test.go` is deferred. The `lenny-drain-readiness` admission-decision logic that the webhook calls into is also deferred (Phase 3.5 covered the three webhooks whose decision logic was clearly bounded; drain-readiness depends on a MinIO health probe that does not exist yet).
-- `tests/tier8_chaos/minio_outage_during_checkpoint_test.go` and `tests/tier8_chaos/node_drain_during_minio_outage_test.go` (chaos tests) are deferred to the same phase that brings up the MinIO-bearing compose stack.
+- `tests/integration/checkpoint_resume_test.go` (eviction → checkpoint → resume on a new pod) is deferred. It needs the gateway, the adapter, MinIO, and the compose stack.
+- `tests/e2e_kind/drain_readiness_webhook_test.go` is deferred. The `lenny-drain-readiness` admission-decision logic that the webhook calls into is also deferred (Phase 3.5 covered the three webhooks whose decision logic was clearly bounded; drain-readiness depends on a MinIO health probe that does not exist yet).
+- `tests/chaos/minio_outage_during_checkpoint_test.go` and `tests/chaos/node_drain_during_minio_outage_test.go` (chaos tests) are deferred to the same phase that brings up the MinIO-bearing compose stack.
 - The SIGSTOP/SIGCONT embedded-adapter path and the §4.4 eviction-fallback Postgres minimal-state record are deferred to the K8s-integration phase. The pure primitives are in place.
 
 ### 13.20 Phase 9 — Delegation + `delegation-echo`
@@ -1764,14 +1764,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure deferred to later phases.**
 - `cmd/runtimes/delegation-echo/` (Standard-level reference runtime that exercises `lenny/delegate_task` through the platform MCP server) is deferred. The Standard-level conformance battery in `cmd/lenny-compliance` is also deferred to the same phase; the cycle and lease packages above are the pure substrate.
-- `tests/tier4_integration/delegation_test.go` is deferred to the K8s-integration phase that ships the gateway's `lenny/delegate_task` handler and the Redis-backed delegation budget counters (`budget_reserve.lua`, `budget_return.lua`).
-- `tests/tier7b_load_kind/scenarios/delegation_fanout.go` (Phase 9.5 incremental load test) is deferred to the gateway-bearing phase.
-- `tests/tier9_security/reviews/delegation-review.md` (the §9.1 security review) is a human activity, recorded by the documentation-only deliverable in Phase 17a.
+- `tests/integration/delegation_test.go` is deferred to the K8s-integration phase that ships the gateway's `lenny/delegate_task` handler and the Redis-backed delegation budget counters (`budget_reserve.lua`, `budget_return.lua`).
+- `tests/load_kind/scenarios/delegation_fanout.go` (Phase 9.5 incremental load test) is deferred to the gateway-bearing phase.
+- `tests/security/reviews/delegation-review.md` (the §9.1 security review) is a human activity, recorded by the documentation-only deliverable in Phase 17a.
 
 ### 13.21 Phase 9.5 — Incremental load test (delegation)
 
 **Test infrastructure to land.**
-- `tests/tier7b_load_kind/scenarios/delegation_fanout.go` operational.
+- `tests/load_kind/scenarios/delegation_fanout.go` operational.
 - Phase 9.5 baseline JSON committed.
 
 ### 13.22 Phase 10 — MCP fabric (virtual child interfaces, elicitation chain)
@@ -1780,22 +1780,22 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/elicitation` ships the §9.2 elicitation primitives: the `EnforcementMode` enum (off < detect-only < enforce) with the strict ordering and `ResolveEffective` platform-floor clamp (the stricter of platform floor and tenant stored mode wins); the `DepthPolicy` enum (allow_all, suppress_at_depth, block_all) with `ShouldSuppress` honouring the §9.2 connector-exempt rule; the `InitiatorType` enum (connector, agent); the canonicalised SHA-256 `Content.Digest` and `VerifyContent` implementing the §9.2 gateway-origin-binding tamper detector (alphabetical key ordering inside JSON objects so semantically-equal `{message, schema}` pairs produce identical digests); `Provenance.Validate` enforcing the §9.2 metadata shape (`origin_pod` required, connector initiators require `connector_id`, depth ≥ 0).
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/mcp_elicitation_chain_test.go` (the hop-by-hop forward chain end-to-end) is deferred to the K8s-integration phase that ships the gateway's virtual MCP server.
-- `tests/tier4_integration/mcp_provenance_test.go` (URL-mode elicitation allowlist, depth-based suppression integration) is deferred to the same phase.
-- `tests/tier2_component/mcp/integrity_test.go` (the integration of canonicalization with the audit pipeline and the §16.1 counter emission) is deferred.
+- `tests/integration/mcp_elicitation_chain_test.go` (the hop-by-hop forward chain end-to-end) is deferred to the K8s-integration phase that ships the gateway's virtual MCP server.
+- `tests/integration/mcp_provenance_test.go` (URL-mode elicitation allowlist, depth-based suppression integration) is deferred to the same phase.
+- `tests/component/mcp/integrity_test.go` (the integration of canonicalization with the audit pipeline and the §16.1 counter emission) is deferred.
 - The `respond_to_elicitation` authorization triple `(session_id, user_id, elicitation_id)` and the `maxElicitationWait` timer live in the gateway binary that ships in a later phase.
 
 ### 13.23 Phase 11 — Advanced credentials + multi-provider translators + revocation
 
 **Test infrastructure to land.**
-- `tests/tier2_component/translators/bedrock_translator_test.go`, `vertex_translator_test.go`, `azure_translator_test.go`.
-- `tests/tier4_integration/credential_rotation_test.go`, `credential_revocation_test.go`.
+- `tests/component/translators/bedrock_translator_test.go`, `vertex_translator_test.go`, `azure_translator_test.go`.
+- `tests/integration/credential_rotation_test.go`, `credential_revocation_test.go`.
 - `tests/testinfra/mocks/llm-provider/` extended to handle all four upstreams.
 
 ### 13.24 Phase 11.5 — Incremental load test (credential lifecycle)
 
 **Test infrastructure to land.**
-- `tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go` operational.
+- `tests/load_kind/scenarios/credential_rotation_under_load.go` operational.
 - Phase 11.5 baseline JSON committed.
 
 ### 13.25 Phase 12a — Token Service hardening (KMS envelope + OAuth)
@@ -1804,21 +1804,21 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/tokenexchange` ships the §13.3 RFC 8693 invariants as a pure `Validate` function: scope narrowing (`issued.scope ⊆ subject.scope`), tenant-scope match (`issued.tenant_id == subject.tenant_id == caller.tenant_id`), caller-type cannot-elevate (`agent < service < human`), audience cannot broaden, `typ` rules (only `actor_token`-bearing child minting produces `typ: a2a_delegation`; rotation preserves `typ`; mutation rejected), `delegation_depth = parent + 1` for child minting, `exp = min(requested, subject.exp, actor.exp, perDialectCap)` with the §13.3 ±1s skew and the RFC 7519 whole-second truncation. Every rejection path produces a typed `*ExchangeError` with the canonical RFC 8693 `Code` (`invalid_request`, `invalid_grant`, `invalid_scope`) and the §13.3 sub-reason.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier2_component/stores/token_store_kms_test.go` (KMS envelope encryption + the §13.3 write-before-issue Postgres transaction) is deferred to the K8s-integration phase that ships the Token Service binary.
-- `tests/tier4_integration/oauth_connector_test.go` (the full OAuth flow including PKCE, state, and storage) is deferred to the same phase.
+- `tests/component/stores/token_store_kms_test.go` (KMS envelope encryption + the §13.3 write-before-issue Postgres transaction) is deferred to the K8s-integration phase that ships the Token Service binary.
+- `tests/integration/oauth_connector_test.go` (the full OAuth flow including PKCE, state, and storage) is deferred to the same phase.
 - The Redis EventBus `token.revoked` cluster-wide propagation and the §16.5 `TokenRevocationPropagationLag` alert are deferred.
 
 ### 13.26 Phase 12b — `type: mcp` runtime support
 
 **Test infrastructure to land.**
-- `tests/tier4_integration/mcp_runtime_lifecycle_test.go`.
+- `tests/integration/mcp_runtime_lifecycle_test.go`.
 - A reference `type: mcp` runtime under `cmd/runtimes/mcp-reference/` (or via one of the bundled connectors).
 
 ### 13.27 Phase 12c — `sessionPolicy` presets and service mode
 
 **Test infrastructure to land.**
-- `tests/tier4_integration/session_recycle_test.go`, `session_concurrency_test.go`, and `service_mode_test.go`.
-- `tests/tier5_e2e_kind/execution_modes_test.go` confirms admission webhooks and pod-level isolation hold.
+- `tests/integration/session_recycle_test.go`, `session_concurrency_test.go`, and `service_mode_test.go`.
+- `tests/e2e_kind/execution_modes_test.go` confirms admission webhooks and pod-level isolation hold.
 
 ### 13.28 Phase 13 — Full observability + audit + `lenny-backup` + compliance webhooks
 
@@ -1826,10 +1826,10 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/audit` ships the §11.7 audit-log enums: `ChainIntegrity` (verified, broken, unchecked, rechained_post_outage, gap_suspected, redacted_gdpr) with `IsAlarming` mapping to the §16.5 `AuditChainGap` alert; `ComplianceProfile` (none, soc2, fedramp, hipaa) with `RequiresSIEM` mapping; `RetentionPreset` (soc2, fedramp-high, hipaa, nis2-dora, custom) with `PresetDays`, `PresetWindow`, `CompatibleProfiles`, and `ValidatePairing`; `OCSFTranslationState` (pending, retry_pending, succeeded, dead_lettered) with `IsTerminal` mapping.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier2_component/stores/event_store_test.go` (extended for hash-chain verifier, OCSF translator, EventBus publish state, retranscribe worker) is deferred. It needs the gateway's EventStore writer and the OCSF translator binary.
-- `tests/tier4_integration/audit_pipeline_test.go` (end-to-end including the SIEM mock) is deferred. It needs the gateway, Postgres, and the §11.7 per-tenant advisory lock implementation.
-- `tests/tier5_e2e_kind/admission_data_residency_test.go` and `tests/tier5_e2e_kind/admission_t4_node_isolation_test.go` are deferred to the K8s-integration phase that ships the corresponding admission webhooks.
-- `tests/tier5_e2e_kind/backup_restore_test.go` (§25.11 API end-to-end against Postgres and MinIO) is deferred to the K8s-integration phase that ships `lenny-backup`.
+- `tests/component/stores/event_store_test.go` (extended for hash-chain verifier, OCSF translator, EventBus publish state, retranscribe worker) is deferred. It needs the gateway's EventStore writer and the OCSF translator binary.
+- `tests/integration/audit_pipeline_test.go` (end-to-end including the SIEM mock) is deferred. It needs the gateway, Postgres, and the §11.7 per-tenant advisory lock implementation.
+- `tests/e2e_kind/admission_data_residency_test.go` and `tests/e2e_kind/admission_t4_node_isolation_test.go` are deferred to the K8s-integration phase that ships the corresponding admission webhooks.
+- `tests/e2e_kind/backup_restore_test.go` (§25.11 API end-to-end against Postgres and MinIO) is deferred to the K8s-integration phase that ships `lenny-backup`.
 
 ### 13.29 Phase 13.5 — Pre-hardening full-system load baseline
 
@@ -1847,15 +1847,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure deferred to later phases.**
 - The Kubernetes admission webhook that wraps `pkg/podsecurity.ValidateAgentPod` is deferred to the K8s-integration phase that ships the webhook server + cert-manager-issued serving certificate.
 - The `lenny-preflight` startup hard-fail is deferred to the same phase; it imports this package and stops the install when any Lenny-managed Deployment / DaemonSet / Job pod template fails the validator.
-- `tests/tier9_security/image_signing_test.go` (cosign verification at admission) is deferred; the §13.1 validator above is the orthogonal posture control.
-- `tests/tier9_security/network_policy/` (CIDR drift, default-deny, gateway-egress allowlist enforcement) is deferred to the K8s-integration phase.
-- seccomp profile assertions and the external pen-test driver under `tests/tier9_security/pentest/` are deferred to the same phase.
+- `tests/security/image_signing_test.go` (cosign verification at admission) is deferred; the §13.1 validator above is the orthogonal posture control.
+- `tests/security/network_policy/` (CIDR drift, default-deny, gateway-egress allowlist enforcement) is deferred to the K8s-integration phase.
+- seccomp profile assertions and the external pen-test driver under `tests/security/pentest/` are deferred to the same phase.
 
 ### 13.31 Phase 14.5 — Post-hardening SLO re-validation
 
 **Test infrastructure to land.**
 - Re-run of every Phase 13.5 scenario with full security hardening.
-- Delta documentation in `tests/tier7b_load_kind/baselines/`.
+- Delta documentation in `tests/load_kind/baselines/`.
 
 ### 13.32 Phase 15 — Environment resource + RBAC + cross-environment delegation
 
@@ -1863,9 +1863,9 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/environment` ships the §10.6 Environment primitives: the `Role` enum (viewer, creator, operator, admin) with `AtLeast` enforcing the escalation order; the K8s-style `Selector` evaluator with `MatchLabels`, `MatchExpressions` (operators `In`, `NotIn`, `Exists`, `DoesNotExist`), the §10.6 `Types` filter, and the `Include`/`Exclude` overrides (exclude beats include for deterministic deny precedence); `Requirement.Validate` rejects malformed operators and value lists; `Filter` returns the admitted subset for the transparent-filtering path.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/environment_resource_test.go` (full admin API surface for creating, listing, updating, deleting environments) is deferred to the K8s-integration phase that ships the admin API.
-- `tests/tier5_e2e_kind/cross_environment_delegation_test.go` (`crossEnvironmentDelegation: true` flow) is deferred. The selector primitives above are the substrate; the delegation policy resolver and the explicit-environment endpoint dispatcher land with the gateway.
-- `tests/tier9_security/rbac/environment_rbac_test.go` (OIDC-group resolution against the §10.6 `members` list) is deferred to the same phase.
+- `tests/integration/environment_resource_test.go` (full admin API surface for creating, listing, updating, deleting environments) is deferred to the K8s-integration phase that ships the admin API.
+- `tests/e2e_kind/cross_environment_delegation_test.go` (`crossEnvironmentDelegation: true` flow) is deferred. The selector primitives above are the substrate; the delegation policy resolver and the explicit-environment endpoint dispatcher land with the gateway.
+- `tests/security/rbac/environment_rbac_test.go` (OIDC-group resolution against the §10.6 `members` list) is deferred to the same phase.
 - The transparent-filtering middleware that wraps `Selector.Filter` and joins authorized runtimes across the user's environments is deferred to the gateway phase.
 
 ### 13.33 Phase 16 — Experiments + PoolScalingController integration
@@ -1874,8 +1874,8 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `pkg/experiment` ships the §10.7 experiment primitives: `Status` (active, paused, concluded) with `IsRoutable`, `TargetingMode` (percentage, external), `Sticky` (user, session, none), `Propagation` (inherit, control, independent). `Definition.Validate` enforces the admin-API admission rules — every variant id is unique, none equals the reserved `ControlVariantID`, each weight is in `(0, 1)`, and `Σ weights < 1` so a control group always exists. `AssignVariant` implements the §10.7 HMAC-SHA256 percentage-mode bucketing with the §10.7 anonymous-session rule (empty key → control). Tests cover determinism, the ±2% weight distribution over 10k trials, definition-order sensitivity, and experiment-id independence.
 
 **Test infrastructure deferred to later phases.**
-- `tests/tier4_integration/experiment_routing_test.go` is deferred. It needs the gateway, the ExperimentRouter interceptor wiring, and the PoolScalingController's variant-pool `minWarm` coupling.
-- `tests/tier7b_load_kind/scenarios/experiment_active_under_load.go` is deferred to the K8s-integration phase that ships the gateway and the load harness.
+- `tests/integration/experiment_routing_test.go` is deferred. It needs the gateway, the ExperimentRouter interceptor wiring, and the PoolScalingController's variant-pool `minWarm` coupling.
+- `tests/load_kind/scenarios/experiment_active_under_load.go` is deferred to the K8s-integration phase that ships the gateway and the load harness.
 - The OpenFeature / OFREP external-targeting integration, the §10.7 PSC variant-pool sizing path, and the §10.7 admin API surface (`POST /v1/admin/experiments`, etc.) are deferred to the same phase.
 
 ### 13.34 Phase 16.5 — Experiment load test SLO re-validation
@@ -1886,15 +1886,15 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.35 Phase 17a — Documentation + governance + community launch
 
 **Test infrastructure to land.**
-- Tier 11 fully exercised: every doc page builds, every link resolves, the playground and `lenny up` quick-starts run end-to-end as advertised.
-- `time-to-hello-world` benchmark under `tests/tier7b_load_kind/scenarios/tthw.go` confirms the < 5-minute target.
+- The docs tier fully exercised: every doc page builds, every link resolves, the playground and `lenny up` quick-starts run end-to-end as advertised.
+- `time-to-hello-world` benchmark under `tests/load_kind/scenarios/tthw.go` confirms the < 5-minute target.
 
 ### 13.36 Phase 17b — Memory, semantic caching, eval hooks
 
 **Test infrastructure to land.**
-- `tests/tier2_component/stores/memory_store_test.go` extended for custom backends and the preflight contract.
-- `tests/tier2_component/stores/semantic_cache_test.go`.
-- `tests/tier4_integration/eval_hooks_test.go`.
+- `tests/component/stores/memory_store_test.go` extended for custom backends and the preflight contract.
+- `tests/component/stores/semantic_cache_test.go`.
+- `tests/integration/eval_hooks_test.go`.
 
 ---
 
@@ -1904,7 +1904,7 @@ This section enumerates the suites that cut across multiple tiers and that the t
 
 ### 14.1 RLS and tenant isolation
 
-The single most important security suite. Every store, every query path, every API surface, every adapter is validated for cross-tenant isolation. The Tier 2 RLS suite is the foundation; the Tier 9 cross-store suite is the adversarial overlay.
+The single most important security suite. Every store, every query path, every API surface, every adapter is validated for cross-tenant isolation. The Tier 2 RLS suite is the foundation; the security tier cross-store suite is the adversarial overlay.
 
 Key tests:
 - Every query through PgBouncer is preceded by `SET LOCAL app.current_tenant`. Queries without it raise via the `lenny_tenant_guard` trigger.
@@ -1916,7 +1916,7 @@ Key tests:
 
 ### 14.2 Workspace plan and source handling
 
-`tests/tier2_component/workspace_plan/` and `tests/tier3_contract/workspaceplan/` together cover the workspace plan schema. Every source type (`inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`, `gitClone`) has positive and adversarial cases:
+`tests/component/workspace_plan/` and `tests/contract/workspaceplan/` together cover the workspace plan schema. Every source type (`inlineFile`, `uploadFile`, `uploadArchive`, `mkdir`, `gitClone`) has positive and adversarial cases:
 - Path traversal (`../../etc/passwd`) is rejected.
 - Setuid/setgid bits are rejected on every type.
 - Sticky on file is rejected; sticky on directory is allowed.
@@ -1929,7 +1929,7 @@ Key tests:
 
 ### 14.3 Credential leasing lifecycle
 
-End-to-end tests across Tier 2 (TokenStore, CredentialPoolStore, Token Service component), Tier 4 (compose integration with `delegation-echo` and `streaming-echo`), and Tier 5 (Kind e2e with real cert-manager and KMS stub).
+End-to-end tests across Tier 2 (TokenStore, CredentialPoolStore, Token Service component), Tier 4 (compose integration with `delegation-echo` and `streaming-echo`), and the e2e_kind tier (Kind e2e with real cert-manager and KMS stub).
 
 Coverage:
 - `AssignCredentials` writes a per-session lease atomically across all providers in `supportedProviders ∩ providerPools`.
@@ -1942,7 +1942,7 @@ Coverage:
 
 ### 14.4 Delegation and the task tree
 
-Coverage spans Tier 1 (policy evaluation, budget arithmetic), Tier 4 (`delegation-echo` flows), Tier 5 (e2e), and Tier 8 (chaos).
+Coverage spans Tier 1 (policy evaluation, budget arithmetic), Tier 4 (`delegation-echo` flows), the e2e_kind tier, and the chaos tier.
 
 Notable cases:
 - Token budget carving: parent 100K, child 30K, parent remaining 70K. Child cannot grant more than 30K to its own children.
@@ -1957,7 +1957,7 @@ Notable cases:
 
 ### 14.5 MCP elicitation chain
 
-Coverage spans Tier 2 (integrity), Tier 4 (chain flow), Tier 5 (provenance display, depth suppression), Tier 9 (tamper detection).
+Coverage spans Tier 2 (integrity), Tier 4 (chain flow), the e2e_kind tier (provenance display, depth suppression), the security tier (tamper detection).
 
 Notable cases:
 - Hop-by-hop chain: External Tool → Gateway connector → Child → Parent → Gateway edge → Client.
@@ -1970,7 +1970,7 @@ Notable cases:
 
 ### 14.6 Operability surface
 
-Coverage spans Tier 2 (each `lenny-ops` subsystem), Tier 4 (compose-level end-to-end), Tier 5 (Kind with the full chart), Tier 9 (RBAC and SSRF on webhook callbacks).
+Coverage spans Tier 2 (each `lenny-ops` subsystem), Tier 4 (compose-level end-to-end), the e2e_kind tier (Kind with the full chart), security tier (RBAC and SSRF on webhook callbacks).
 
 Notable cases:
 - `GET /v1/admin/health` reports healthy/degraded/unhealthy from in-process metrics with fallback when Prometheus is down.
@@ -1984,7 +1984,7 @@ Notable cases:
 
 ### 14.7 Multi-protocol gateway
 
-Coverage in Tier 3 contract is the canonical layer. Each surface (REST, MCP, OpenAI Completions, OpenAI Responses) is validated for: success-path equivalence, error-code equivalence, pagination semantics, streaming envelope semantics, idempotency-key handling, role-based access.
+Coverage in contract is the canonical layer. Each surface (REST, MCP, OpenAI Completions, OpenAI Responses) is validated for: success-path equivalence, error-code equivalence, pagination semantics, streaming envelope semantics, idempotency-key handling, role-based access.
 
 ### 14.8 The 13-phase request interceptor chain
 
@@ -1997,11 +1997,11 @@ The gateway's interceptor chain is exercised at Tier 2 (per-interceptor) and Tie
 
 ### 14.9 Pool and warm-pod lifecycle
 
-Coverage in Tier 5 e2e. Includes pod-warm vs. SDK-warm states, DemoteSDK on upload matching `sdkWarmBlockingPaths`, session mode strict one-session-only, task mode workspace scrub, concurrent workspace mode per-slot directories, projected SA token mount audience.
+Coverage in e2e_kind. Includes pod-warm vs. SDK-warm states, DemoteSDK on upload matching `sdkWarmBlockingPaths`, session mode strict one-session-only, task mode workspace scrub, concurrent workspace mode per-slot directories, projected SA token mount audience.
 
 ### 14.10 Compliance and erasure
 
-Coverage spans Tier 2 (every store's DeleteByUser/DeleteByTenant), Tier 4 (erasure_job orchestrator running the 19-step sequence in order), and Tier 5 (legal-hold override flow).
+Coverage spans Tier 2 (every store's DeleteByUser/DeleteByTenant), Tier 4 (erasure_job orchestrator running the 19-step sequence in order), and the e2e_kind tier (legal-hold override flow).
 
 Notable cases:
 - T3 SLA: erasure completes within 72 hours.
@@ -2023,7 +2023,7 @@ Coverage:
 
 ### 14.12 Web playground
 
-Coverage spans Tier 5 e2e (full chart with `playground.enabled: true`) and Tier 9 (security). Maps to the §spec/27 surface (§spec/27.2 placement, §spec/27.3 authentication, §spec/27.6 lifecycle, §spec/27.7 CSP and asset serving, §spec/27.8 metrics, §spec/27.9 security). spec-map-exceptions.yaml exempts §spec/27 from §22.2 spec coverage as post-v1; this section names the test surface that lands when the feature unblocks.
+Coverage spans e2e_kind (full chart with `playground.enabled: true`) and the security tier. Maps to the §spec/27 surface (§spec/27.2 placement, §spec/27.3 authentication, §spec/27.6 lifecycle, §spec/27.7 CSP and asset serving, §spec/27.8 metrics, §spec/27.9 security). spec-map-exceptions.yaml exempts §spec/27 from §22.2 spec coverage as post-v1; this section names the test surface that lands when the feature unblocks.
 
 Notable cases:
 - Three auth modes: OIDC, API Key, Dev. Dev mode requires `global.devMode: true` and synthetic principal.
@@ -2043,7 +2043,7 @@ Lenny publishes two SDK families across three languages (spec/15.6 and spec/15.7
 | Client SDK | External applications that talk to a Lenny gateway | Go, Python, TypeScript | REST + MCP + streaming + webhook signature verification |
 | Runtime-author SDK | Authors of agent binaries running on Lenny | Go, Python, TypeScript | Adapter binary protocol + MCP platform tools + CH-RUNTIMEOPS |
 
-Both families ship under `sdks/<family>/<language>/`. The harness runs each through its language-native test runner (`go test`, `pytest`, `vitest`) and includes results in the Tier 3 contract verdict and the Tier 10 conformance verdict.
+Both families ship under `sdks/<family>/<language>/`. The harness runs each through its language-native test runner (`go test`, `pytest`, `vitest`) and includes results in the contract verdict and the conformance verdict.
 
 **What gets tested per SDK.**
 
@@ -2073,9 +2073,9 @@ Both families ship under `sdks/<family>/<language>/`. The harness runs each thro
 8. Telemetry pass-through. `tracingContext` set via `lenny/set_tracing_context`; OTel context flows into the runtime's own tracer where the runtime author opts in.
 9. Quick-start TTHW. `lenny runtime init my-agent --language <lang> --template <minimal|coding|chat>` produces a runnable image within the documented five-minute target. The CI test mirrors the runtime author guide step-by-step.
 
-**Code generation.** The OpenAPI spec and the MCP tool schemas are the source of truth for SDK types. Each SDK has a `generate.sh` (Go: `oapi-codegen`; Python: `openapi-python-client` plus a hand-written streaming layer; TypeScript: `openapi-typescript`). The generators run in Tier 0 and `git diff --exit-code` ensures generated code is committed. Hand-written code lives in clearly demarcated directories (`*/streaming/`, `*/mcp/`, `*/lifecycle/`) and is reviewed separately from generated code.
+**Code generation.** The OpenAPI spec and the MCP tool schemas are the source of truth for SDK types. Each SDK has a `generate.sh` (Go: `oapi-codegen`; Python: `openapi-python-client` plus a hand-written streaming layer; TypeScript: `openapi-typescript`). The generators run in the static tier and `git diff --exit-code` ensures generated code is committed. Hand-written code lives in clearly demarcated directories (`*/streaming/`, `*/mcp/`, `*/lifecycle/`) and is reviewed separately from generated code.
 
-**SDK contract test harness.** `tests/tier3_contract/sdks/` is the shared harness. The same Go test driver exercises each SDK by spawning a language-native helper process (`sdks/client/python/test-helper`, `sdks/client/typescript/test-helper`) that accepts commands over stdin and reports outcomes over stdout. The harness runs the same operation matrix against every SDK and asserts equivalence — Python client → gateway behaves identically to Go client → gateway. This is the SDK equivalent of the REST ↔ MCP consistency suite.
+**SDK contract test harness.** `tests/contract/sdks/` is the shared harness. The same Go test driver exercises each SDK by spawning a language-native helper process (`sdks/client/python/test-helper`, `sdks/client/typescript/test-helper`) that accepts commands over stdin and reports outcomes over stdout. The harness runs the same operation matrix against every SDK and asserts equivalence — Python client → gateway behaves identically to Go client → gateway. This is the SDK equivalent of the REST ↔ MCP consistency suite.
 
 **Test runners required (local dependencies).**
 
@@ -2094,9 +2094,9 @@ Each language runtime is installed by `scripts/setup-dev.sh`. CI uses pre-built 
 - TypeScript: `eslint` with the project config; `tsc --noEmit` for type checks; `prettier`.
 
 **Cadence.**
-- PR: Tier 0 static, Tier 1 unit, the full Tier 3 SDK contract harness, the runtime-author quick-start TTHW.
-- Nightly: full Tier 4 integration with each SDK against the compose stack; the gateway-version compatibility matrix.
-- Pre-release: SDK conformance against the production-grade chart on Tier 5 (Kind) and Tier 6 (cloud); package-manager publication smoke tests (`go install`, `pip install`, `npm install`) against the staging registry.
+- PR: Static, unit, the full Tier 3 SDK contract harness, the runtime-author quick-start TTHW.
+- Nightly: full integration with each SDK against the compose stack; the gateway-version compatibility matrix.
+- Pre-release: SDK conformance against the production-grade chart on the e2e_kind tier (Kind) and the e2e_cloud tier; package-manager publication smoke tests (`go install`, `pip install`, `npm install`) against the staging registry.
 
 **Anti-goals.** The SDKs do not embed retry logic for non-retryable errors. They do not silently swallow errors. They do not store credentials on disk. They do not provide a "convenience" surface that diverges from the published API. The test suite asserts these anti-goals explicitly.
 
@@ -2108,7 +2108,7 @@ The operability surface is mandatory from Phase 3.5 onward (§spec/17.8.5, §spe
 
 ### 15.1 `lenny-ctl` command coverage
 
-Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) has at least one Tier 4 integration test against the compose stack and, for cluster-affecting commands, a Tier 5 Kind test. The full list below mirrors the spec section IDs one-to-one; each command lands its tests in the phase that ships it per §13.
+Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) has at least one integration test against the compose stack and, for cluster-affecting commands, an e2e_kind tier Kind test. The full list below mirrors the spec section IDs one-to-one; each command lands its tests in the phase that ships it per §13.
 
 - Bootstrap: idempotent re-run, dry-run shows accurate diff.
 - Preflight: DSN precedence (flags > env > values.yaml), probe timeouts respected.
@@ -2133,18 +2133,18 @@ Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) h
 
 ### 15.2 Runbook validation
 
-§spec/17.7 mandates that every operational runbook (`docs/runbooks/`) is executable end-to-end through the platform's APIs rather than ad-hoc `kubectl` commands. The repo currently carries 56 runbooks. Each has a Tier 8 chaos test that:
+§spec/17.7 mandates that every operational runbook (`docs/runbooks/`) is executable end-to-end through the platform's APIs rather than ad-hoc `kubectl` commands. The repo currently carries 56 runbooks. Each has a chaos test that:
 1. Triggers the runbook's condition.
 2. Confirms the documented alert fires.
 3. Executes the runbook's documented remediation through the API (not kubectl).
 4. Asserts the system returns to healthy.
 5. Confirms the audit trail records the operator action and any required justification.
 
-The mapping between runbook and test lives in `tests/tier8_chaos/runbook-map.yaml` and is validated by `lenny-test validate-maps`: every runbook has a matching test, and every test names its runbook.
+The mapping between runbook and test lives in `tests/chaos/runbook-map.yaml` and is validated by `lenny-test validate-maps`: every runbook has a matching test, and every test names its runbook.
 
 ### 15.3 Operability event stream
 
-Spec/25.5 defines an SSE event stream and an in-memory buffer. The Tier 4 integration suite exercises:
+Spec/25.5 defines an SSE event stream and an in-memory buffer. The integration suite exercises:
 - SSE connection and event delivery.
 - Event-type and severity filtering.
 - Primary source (Redis stream) with fallback to gateway buffer.
@@ -2153,13 +2153,13 @@ Spec/25.5 defines an SSE event stream and an in-memory buffer. The Tier 4 integr
 
 ### 15.4 MCP management server
 
-`/mcp/management` exposes admin operations as MCP tools. The Tier 3 contract suite validates: tool inventory, scope enforcement via `x-lenny-scope`, parameter validation, output format. The OpenAPI-to-MCP code generation is CI-enforced (Tier 0) so the tool inventory and the OpenAPI never diverge.
+`/mcp/management` exposes admin operations as MCP tools. The contract suite validates: tool inventory, scope enforcement via `x-lenny-scope`, parameter validation, output format. The OpenAPI-to-MCP code generation is CI-enforced (static tier) so the tool inventory and the OpenAPI never diverge.
 
 ---
 
 ## 16. Documentation tests
 
-Documentation is a first-class artifact. The Tier 11 suite verifies:
+Documentation is a first-class artifact. The docs-tier suite verifies:
 
 1. Every code block in `docs/` parses or compiles in its declared language.
 2. Every link resolves.
@@ -2178,12 +2178,12 @@ These checks run on PR. Failure on doc tests is treated the same as failure on a
 
 ## 17. Test authoring conventions
 
-The conventions below are mandatory. A test that violates them fails Tier 0 lint or `lenny-test validate-*`.
+The conventions below are mandatory. A test that violates them fails the static tier lint or `lenny-test validate-*`.
 
 ### 17.1 Naming
 
 - Test functions follow `Test<Subject><Behavior>`. The Subject is a noun (the component or store under test). The Behavior is a sentence fragment in declarative voice.
-- File names match the subject. `pkg/store/session/session.go` → `pkg/store/session/session_test.go`. Component-tier suites mirror the package path under `tests/tier2_component/`.
+- File names match the subject. `pkg/store/session/session.go` → `pkg/store/session/session_test.go`. Component-tier suites mirror the package path under `tests/component/`.
 - Build tags are mandatory above the tier. Unit tests carry no tag. Component tests: `//go:build component`. Contract: `//go:build contract`. Integration: `//go:build integration`. E2E: `//go:build e2e`. Load: `//go:build load`. Chaos: `//go:build chaos`. Security: `//go:build security`. Conformance: `//go:build conformance`.
 
 ### 17.2 Required annotations
@@ -2200,7 +2200,7 @@ func TestSandboxClaimSkipLocked(t *testing.T) { ... }
 
 - `spec:` is mandatory on every test from Tier 2 onward. It lists every spec section the test encodes.
 - `diagnosis:` is mandatory on every test from Tier 2 onward.
-- The harness extracts both at compile time. Missing or malformed annotations fail Tier 0 lint.
+- The harness extracts both at compile time. Missing or malformed annotations fail the static tier lint.
 
 ### 17.3 Table-driven by default
 
@@ -2242,9 +2242,9 @@ Each row is a subtest with a deterministic name. `go test -run TestWorkspacePlan
 ### 17.6 Parallelism
 
 - Tier 1 tests are `t.Parallel()` by default. The unit tier is embarrassingly parallel.
-- Tier 2 component tests are `t.Parallel()` within a suite. Each test reserves its own schema or namespace.
-- Tier 4 integration tests are serial by default within a suite. The compose stack has finite capacity.
-- Tier 5 e2e and beyond are serial within a suite; parallelism is at the suite level managed by CI.
+- Component tests are `t.Parallel()` within a suite. Each test reserves its own schema or namespace.
+- Integration tests are serial by default within a suite. The compose stack has finite capacity.
+- e2e_kind and beyond are serial within a suite; parallelism is at the suite level managed by CI.
 
 ### 17.7 Assertions
 
@@ -2353,7 +2353,7 @@ Decision factors:
 | Reusable workflows and composite actions | yes | Bounds YAML sprawl |
 | Mature community familiarity | yes | Lowers contributor friction |
 | Per-repo cache cap | 10 GB | Manageable with the strategy in §20.6 |
-| Hosted-runner wall-clock cap | 6 hours | Tier 7 sustained load and Tier 6 cloud must run on self-hosted |
+| Hosted-runner wall-clock cap | 6 hours | Tier 7 sustained load and e2e_cloud must run on self-hosted |
 
 Alternatives considered:
 - **Buildkite.** More programmable pipeline model, scales better for very complex matrices. Adds operational cost (agents must be hosted somewhere). Recommended reconsideration trigger: GHA YAML becomes a recurring debugging bottleneck.
@@ -2379,16 +2379,16 @@ Migration path when triggered: introduce a `dagger/` module that wraps each `len
 Lenny uses two runner classes.
 
 **Hosted runners (GitHub-managed).**
-- `ubuntu-latest` for Tier 0 (static), Tier 1 (unit), Tier 3 (contract), Tier 4 (integration with the compose stack), Tier 10 (conformance against bundled runtimes), Tier 11 (docs).
-- `macos-latest` for Tier 11 documentation diagram rendering (the `qlmanage` step) and SDK smoke tests against the macOS toolchain.
+- `ubuntu-latest` for the static tier, the unit tier, the contract tier, Tier 4 (integration with the compose stack), the conformance tier (conformance against bundled runtimes), the docs tier.
+- `macos-latest` for docs diagram rendering (the `qlmanage` step) and SDK smoke tests against the macOS toolchain.
 - Windows is not in scope.
 
 **Self-hosted runners.**
-- Tier 2 (component) optionally uses self-hosted for the cached-container performance win, but works fine on hosted.
-- Tier 5 (e2e on Kind) requires self-hosted: 14 GB RAM and 8 cores are the documented minimum; hosted runners cap at 7 GB / 4 cores.
-- Tier 6 (e2e on cloud) requires self-hosted with provider credentials accessible via OIDC.
+- The component tier optionally uses self-hosted for the cached-container performance win, but works fine on hosted.
+- The e2e_kind tier (e2e on Kind) requires self-hosted: 14 GB RAM and 8 cores are the documented minimum; hosted runners cap at 7 GB / 4 cores.
+- The e2e_cloud tier (e2e on cloud) requires self-hosted with provider credentials accessible via OIDC.
 - Tier 7 (load) requires self-hosted; sustained runs exceed the 6-hour hosted ceiling.
-- Tier 8 (chaos) and Tier 9 (security) run wherever Tier 5 runs.
+- The chaos tier and the security tier run wherever the e2e_kind tier runs.
 
 Self-hosted runner pool layout:
 
@@ -2539,8 +2539,8 @@ Workflow file: `.github/workflows/phase-gate.yml`, parameterized by `inputs.phas
 ### 20.12 Branch protection
 
 Required checks for `main`:
-- Tier 0 through Tier 6 critical-path on PR.
-- Tier 11 (docs).
+- The static tier through the e2e_cloud tier critical-path on PR.
+- The docs tier.
 - `lenny-test validate-maps`.
 - `lenny-test validate-diagnosis`.
 
@@ -2555,7 +2555,7 @@ The project minimizes long-lived secrets:
 - External pen-test report uploads: encrypted at rest, scoped to the pen-test partner via a separate org-level secret with two-person approval.
 - Real LLM provider keys (for pre-release smoke against real providers): held in `lenny-prerelease` environment with required reviewers.
 
-Secret scanning: GitHub's built-in scanner is on. `trivy fs --scanners secret` runs in Tier 0.
+Secret scanning: GitHub's built-in scanner is on. `trivy fs --scanners secret` runs in the static tier.
 
 Runner-image security: the ARC runner image is rebuilt weekly with the latest base image, signed with cosign, and digest-pinned in the ARC values file. Every PR that modifies the runner image requires review from a maintainer.
 
@@ -2601,7 +2601,7 @@ The threat model is supply-chain compromise of an external action. Tag refs like
 
 Updates are managed by `.github/dependabot.yml`, which proposes weekly SHA + comment changes together so reviewers see the version each bump moves to.
 
-The Tier 0 static gate enforces the rule via `scripts/check-action-pins.sh`. An unpinned external `uses:` line fails the gate.
+The static gate enforces the rule via `scripts/check-action-pins.sh`. An unpinned external `uses:` line fails the gate.
 
 The same threat model applies to `go install <path>@latest` invocations inside workflow YAMLs. Every `go install` reference inside `.github/workflows/*.yml` pins to a tagged version (`@vX.Y.Z`) or, when the upstream module lacks a usable tag, to a full 40-character commit SHA:
 
@@ -2610,7 +2610,7 @@ The same threat model applies to `go install <path>@latest` invocations inside w
 - run: go install github.com/avito-tech/go-mutesting/cmd/go-mutesting@48d0401f00fbfb9502adc2c5138497ad8ccfafb9
 ```
 
-`scripts/setup-dev.sh` is exempt; local developer setup may resolve to upstream HEAD because operators invoke that script interactively. Workflow installs are enforced by `scripts/check-tool-pins.sh` in the same Tier 0 sweep.
+`scripts/setup-dev.sh` is exempt; local developer setup may resolve to upstream HEAD because operators invoke that script interactively. Workflow installs are enforced by `scripts/check-tool-pins.sh` in the same static tier sweep.
 
 ### 20.17 Migration path off GHA
 
@@ -2647,7 +2647,7 @@ A check that completes without reaching a conclusion (for example, a tool the ch
 
 ### 21.4 Tracking
 
-`tests/flake-budget.yaml` lists the quarantined tests. Each entry names the test's owner and the reason for the quarantine, with an associated issue and ETA, and the file's `cap` field bounds how many tests the quarantine holds. `lenny-test validate-maps`, which tier 0 runs, fails on an entry without an owner, a reason, an issue, or a current ETA, and on a quarantine larger than the cap. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
+`tests/flake-budget.yaml` lists the quarantined tests. Each entry names the test's owner and the reason for the quarantine, with an associated issue and ETA, and the file's `cap` field bounds how many tests the quarantine holds. `lenny-test validate-maps`, which static tier runs, fails on an entry without an owner, a reason, an issue, or a current ETA, and on a quarantine larger than the cap. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
 
 ---
 
@@ -2673,7 +2673,7 @@ Every Tier 2-and-up test has a diagnosis. The harness validates and reports the 
 
 ### 22.4 Determinism gate
 
-Tier 1 unit tests must be deterministic. The harness runs them under `-count=10` weekly. Any flake fails the gate.
+Unit tests must be deterministic. The harness runs them under `-count=10` weekly. Any flake fails the gate.
 
 ### 22.5 Load baseline drift
 
@@ -2689,7 +2689,7 @@ The Time-to-Hello-World scenario must complete in under five minutes. The runtim
 
 ### 22.8 Supply-chain gate
 
-Action pinning (§20.16) is enforced by `scripts/check-action-pins.sh` at Tier 0. An unpinned external `uses:` line in `.github/workflows/*.yml` or `.github/actions/*` fails the gate. Updates land via the Dependabot PR queue.
+Action pinning (§20.16) is enforced by `scripts/check-action-pins.sh` at the static tier. An unpinned external `uses:` line in `.github/workflows/*.yml` or `.github/actions/*` fails the gate. Updates land via the Dependabot PR queue.
 
 ---
 
@@ -2728,7 +2728,7 @@ Phase 15 ships basic per-environment rules. Richer controls and runtime-level ex
 
 ## 24. Load-test platform components
 
-This section catalogues the binaries, terraform modules, and operator runbooks that back tier 7a and tier 12. It is the operator-facing index; the per-tier scope and cadence live in §12.7 and §12.12.
+This section catalogues the binaries, terraform modules, and operator runbooks that back load_local tier and the load_cloud tier. It is the operator-facing index; the per-tier scope and cadence live in §12.7 and §12.12.
 
 ### 24.1 Binaries
 
@@ -2776,7 +2776,7 @@ All five are build-time tooling. They are not shipped as part of the v1 producti
 - The control plane exposes a public API so AI agents and CI can drive runs.
 - `lenny-loadctl` deploys as a managed-container service per cloud (ECS / Cloud Run / Container Apps).
 - `lenny-loadrunner` deploys as a per-cloud VM pool (ASG / MIG / VMSS).
-- Tier-7a uses a pure-Go driver in `tests/testinfra/loadgen`; k6 stays in tier-7b and tier-12.
+- load_local-tier uses a pure-Go driver in `tests/testinfra/loadgen`; k6 stays in load_kind-tier and the load_cloud tier.
 - The documentation target for this overhaul is `TESTING.md`. The `/spec` files are untouched.
 
 ### 24.5 Operator runbooks

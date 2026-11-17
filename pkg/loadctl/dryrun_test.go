@@ -17,7 +17,7 @@ import (
 )
 
 // TestTier12LocalDryRun is the local equivalent of the production
-// AWS dry run. It exercises every code path tier-12 owns end-to-end
+// AWS dry run. It exercises every code path load_cloud-tier owns end-to-end
 // using an in-process dispatcher + runner so the same test runs on
 // a developer laptop in seconds and in CI without cloud credentials.
 //

@@ -10,7 +10,7 @@ envelope, vendored verbatim from
 
 Vendored 2026-07-06.
 
-`tests/tier3_contract/cloudevents/published_schema_test.go` validates
+`tests/contract/cloudevents/published_schema_test.go` validates
 one marshalled `Event` per kind against this file via
 `tests/testinfra/schematest`, so the wire envelope is checked against
 the CloudEvents specification's own schema and not only against
