@@ -105,12 +105,13 @@ After a change is implemented, the specification holds what it decided, and each
 
 A digest is generated from the branch at the end of each step and committed with the step as `digests/<step>.md`. Steps that share a branch share a digest named for the range, such as `0113.S1-S3.md`. It lists:
 
-- each requirement the step added, modified, or retired, with old and new text side by side;
-- the code sites and the tests of each requirement, from the annotations;
+- the step's commits;
+- each requirement, operation, and definition block the step added, modified, or retired, with old and new text side by side;
+- the code sites and the tests of each, from the annotations, and each requirement cited from more than three functions, so a reviewer checks that its decision is made once;
 - the documentation pages that describe each touched specification page, from their front matter, marked as edited in the step or not edited, and every catalog name the documentation mentions that the step renamed or removed;
 - the gate results, the review outcomes (fixes, open questions, and issues filed), and every default the agent applied without asking.
 
-Because it is generated from the diff, it states what the tree holds.
+Because it is generated from the diff, it states what the tree holds. `go run ./scripts/specshift digest <step>` generates every part except the gate results, the review outcomes, and the defaults applied, which the session fills in.
 
 ## `review-history.md`
 
@@ -123,6 +124,8 @@ An edit that changes no requirement, no defined value, and no operation lands as
 ## Programs
 
 A program is a plan over several changes: its goal, its member changes, milestones with exit criteria, and the current milestone. Members stay in their own folders, and the program lists them by number, so a change can belong to two programs or move between them. A program changes whenever the plan does, including after implementation starts; git history records each revision. Dependency edges live in the changes' steps. `BOARD.md` is generated from the steps and the program and is never edited by hand: for each milestone it lists the steps ready to start (every dependency landed and no open decision touching them), the steps building, and the blocked steps with what blocks them, and it lists the open decisions by change. A program may also state how agents read its member changes together while it runs, such as which state counts as the target and how a conflict between members is raised; agent instructions point to the active program's guidance.
+
+The plan section of `docs/about/status.md` is generated from the programs as well, by `python3 scripts/changes/changes.py status-page`: each program's goal, each milestone's title and exit criteria, and the share of the milestone's steps that have landed. Readers of the documentation see that text, so write the goal, the titles, and the exit criteria for them. The generator drops a parenthesized list of change numbers or step identifiers and replaces any other change number with the change's title, and tier 0 fails when the section is stale.
 
 ```yaml
 ---
@@ -151,7 +154,7 @@ A change moves through these activities. Their order is typical rather than fixe
 
 ## Helpers
 
-The helpers are skills under `.claude/skills/` that any of these activities can use, in any order. Most take their target and their conventions as arguments, so they also work on documents and code outside this folder. Those marked as bound to conventions read the layouts of this folder, `issues/`, and the specification. The logic of the bound helpers that needs no model is in `scripts/changes/changes.py`, which tier 0 tests.
+The helpers are skills under `.claude/skills/` that any of these activities can use, in any order. Most take their target and their conventions as arguments, so they also work on documents and code outside this folder. Those marked as bound to conventions read the layouts of this folder, `issues/`, and the specification. The logic of the bound helpers that needs no model is in `scripts/changes/changes.py` when it reads the change records, and in `scripts/specshift` when it reads the specification's registry or the code's annotations. Tier 0 tests both.
 
 | Helper | What it does | Generic or bound | Available |
 | :-- | :-- | :-- | :-- |
@@ -161,11 +164,11 @@ The helpers are skills under `.claude/skills/` that any of these activities can 
 | `ask` | Turns the open questions in a document into multiple-choice questions with the recommendation first, and records each answer with its date in the section the caller names. | Generic | Now |
 | `triage` | Classifies a list of items (issues, open items of a design, or review findings) into categories the caller gives, with a verifier for the claims that close an item. | Generic | When the first area's findings migrate |
 | `build` | Carries out a change's steps on a branch cut from `main`: the specification first, then the code and the tests, iterating with `lenny-test --changed`, then the documentation pages the change names and any page that names what the step changed. It writes the step's digest and stops on a choice the change does not settle, recording it as an open decision. | Bound | Now |
-| `change` | Creates a change folder from the template, sets a change's or a step's status, archives a change and rewrites the links into it, checks every step entry, and regenerates `BOARD.md`. | Bound | Now |
+| `change` | Creates a change folder from the template, sets a change's or a step's status, archives a change and rewrites the links into it, checks every step entry, and regenerates `BOARD.md` and the plan section of `docs/about/status.md`. | Bound | Now |
 | `issue` | Files an issue, links it to a change, and closes it. | Bound | When the first area's findings migrate |
-| `digest` | Generates the digest of a step or a branch under `digests/`. Until it exists, `build` writes the digest by hand. | Bound | With 0115 |
-| `where` | Shows a requirement's text, its code sites, its tests, the documentation pages that describe its page, its open issues, and the last change that touched it, and answers follow-up questions about how the code meets it. | Bound | With 0115 |
-| `since` | Lists the requirements added, modified, and retired since a date or a commit, and the packages changed under each area. | Bound | With 0115 |
+| `digest` | Generates the digest of a step or a branch under `digests/` with `go run ./scripts/specshift digest`, and fills in the gate results, review outcomes, and defaults applied. `build` writes a digest by hand only when the generator cannot run. | Bound | Now |
+| `where` | Shows a requirement's, an operation's, a definition block's, or a page's text, its code sites, its tests, the documentation pages that describe its page, its open issues, and the last commit that changed its text, with `go run ./scripts/specshift where`, and answers follow-up questions about how the code meets it. | Bound | Now |
+| `since` | Lists the requirements and operations added, modified, and retired since a date or a commit, and the Go packages changed under each area, with `go run ./scripts/specshift since`. | Bound | Now |
 
 ## Gates
 

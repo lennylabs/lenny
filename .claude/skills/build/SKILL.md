@@ -13,7 +13,7 @@ Build the named steps of a change on one branch, so the owner can review and mer
 1. Read the change: `change.md`, `decisions.md`, and the step entries in `steps.md`. Read the program's "Reading the program" section if the change belongs to one.
 2. Check that every step in `depends-on` without `(part)` is `Landed`, and that no open decision in `decisions.md` touches the step. If either fails, stop and report what blocks it. A `(part)` dependency that has not landed means the step's description names a part that waits; leave that part out and say so.
 3. Cut the branch from `main`: `change/<step>-<slug>`, such as `change/0127.S3-pod-git-path`, or with the first step's identifier when several steps share it.
-4. Set each step to `Building` with `python3 scripts/changes/changes.py step <step> Building`, set the change to `In progress` if it is not, regenerate the board, and commit.
+4. Set each step to `Building` with `python3 scripts/changes/changes.py step <step> Building`, set the change to `In progress` if it is not, regenerate the board and the status page (`board` and `status-page`), and commit.
 
 ## Building
 
@@ -31,6 +31,6 @@ When a choice comes up that neither the specification nor `decisions.md` settles
 
 ## Finishing
 
-1. Write the digest at `digests/<step>.md` in the change folder (or `<first>-<last>.md` for shared steps). Until 0115 adds the generator, write it by hand: the steps and their commits, the requirements added, modified, or retired, the documentation pages edited and their readers, the tests and tiers run with their results, the pre-existing failures, and every default applied without asking.
-2. Run `python3 scripts/changes/changes.py check` and `board`, and commit.
-3. Report to the owner: the branch, the digest, the test results, and the open decisions raised. Leave the steps `Building`. When the owner merges the branch, set each step to `Landed`, and the change to `Implemented` when its last step lands.
+1. Write the digest with the `digest` skill: `CGO_ENABLED=0 go run ./scripts/specshift digest <step>` (or `<first>-S<last>`, such as `0113.S1-S3`, for shared steps) writes `digests/<step>.md` in the change folder from the branch and its merge base with `main`. Act on what it lists, then fill in its gate results, review outcomes, and defaults applied, as the `digest` skill states. For a step with no specification change, when the generator cannot run, write the digest by hand under the same headings: the steps and their commits, the requirements added, modified, or retired, the documentation pages edited and their readers, the tests and tiers run with their results, the pre-existing failures, and every default applied without asking.
+2. Run `python3 scripts/changes/changes.py check`, `board`, and `status-page`, and commit.
+3. Report to the owner: the branch, the digest, the test results, and the open decisions raised. Leave the steps `Building`. When the owner merges the branch, set each step to `Landed`, set the change to `Implemented` when its last step lands, and regenerate the board and the status page.
