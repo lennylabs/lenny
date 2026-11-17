@@ -45,7 +45,7 @@ spanning channels is named for the invariant it enforces and carries no channel 
 of N4 is deferred. The remediation step that adds the adapter metrics endpoint and its catalog entries is
 the step that discharges it, because the adapter process emits those metrics inside the agent pod and they
 sit outside the default scrape target set until a deployer wires an adapter scrape target. The deferral
-is recorded as an issue that names that step, per §28.4.
+is recorded as an issue, per §28.4.
 
 **N5.** A link identifier and the channel identifiers it carries share no stem, so a search for one never
 returns the other.
@@ -161,11 +161,11 @@ reference to the channel.
 
 A mechanism this section specifies that the tree does not carry out, or carries out with no production
 caller, is recorded as an issue under `issues/`, filed under the code of the specification page that owns
-the mechanism's contract. The issue names the step that closes it, and `issues/README.md` states its layout.
+the mechanism's contract. When a step plans the issue, the issue's `change` field names that step.
 
 A mechanism the tree carries out has no record in this section. The `// spec:` annotation on the code that
 makes the mechanism's decision identifies where the tree carries it out, and the issue that recorded the
-mechanism closes when the step that carries it out lands.
+mechanism closes when the step that carries it out lands, as `issues/README.md` states.
 
 ### 28.5 Contract cards
 

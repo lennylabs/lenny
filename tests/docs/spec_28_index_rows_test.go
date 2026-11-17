@@ -1198,7 +1198,7 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
 		linePrefix: "carries a claim-register row with status `ABSENT` naming that step, per §28.4.",
 		from:       "carries a claim-register row with status `ABSENT` naming that step, per §28.4.",
-		to:         "is recorded as an issue that names that step, per §28.4.",
+		to:         "is recorded as an issue, per §28.4.",
 	},
 	{
 		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
@@ -1224,7 +1224,7 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
 		linePrefix: "means it is implemented and has no production caller.",
 		from:       "means it is implemented and has no production caller. `ABSENT` means it is specified and not implemented.",
-		to:         "the mechanism's contract. The issue names the step that closes it, and `issues/README.md` states its layout.",
+		to:         "the mechanism's contract. When a step plans the issue, the issue's `change` field names that step.",
 	},
 	{
 		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
@@ -1242,7 +1242,7 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
 		linePrefix: "the steps that follow.",
 		from:       "the steps that follow.",
-		to:         "mechanism closes when the step that carries it out lands.",
+		to:         "mechanism closes when the step that carries it out lands, as `issues/README.md` states.",
 	},
 	{
 		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
