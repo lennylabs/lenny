@@ -54,6 +54,8 @@ For small enhancements, open an issue with the `enhancement` label.
 
 For larger changes that affect the platform's architecture, use the **Discussions** forum to propose your idea as an RFC-style conversation. Architectural changes above a defined scope threshold require a formal ADR (Architecture Decision Record) before implementation begins. See [ADR process](#adr-process) below.
 
+Accepted changes live in the repository's `changes/` folder, one folder per change, each holding the change's design, its decisions, its steps, and its review history. The folder's `README.md` describes the workflow.
+
 ### Code contributions
 
 Once the first working slice lands:

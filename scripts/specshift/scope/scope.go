@@ -94,9 +94,11 @@ var readExcludedFiles = []string{
 	"tests/registers/line-citation-resolution.yaml",
 }
 
-// readExcludedPrefix is the staged-proposal tree, excluded for the same
-// reason the audit records are.
-const readExcludedPrefix = "proposals/"
+// readExcludedPrefixes are the staged-proposal tree and the change tree,
+// excluded for the same reason the audit records are: a proposal or a
+// change records a proposed or historical state rather than the current
+// contract.
+var readExcludedPrefixes = []string{"proposals/", "changes/"}
 
 // testdataSegment names the fixture directories excluded from every read
 // and write domain. A gate's own fixture has to present the retired form
@@ -355,8 +357,10 @@ func KeyWritable(target string) bool {
 // Readable reports whether a tracked path is inside the read domain the
 // passes and the gates share.
 func Readable(p string) bool {
-	if strings.HasPrefix(p, readExcludedPrefix) {
-		return false
+	for _, prefix := range readExcludedPrefixes {
+		if strings.HasPrefix(p, prefix) {
+			return false
+		}
 	}
 	if hasSegment(p, testdataSegment) {
 		return false
