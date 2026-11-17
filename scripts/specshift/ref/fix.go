@@ -139,7 +139,13 @@ func (f *fixer) fixFile(file string, res *FixResult) (int, error) {
 func (f *fixer) target(file, oldFile string, l link) (string, bool) {
 	if l.path == "" {
 		// A same-page fragment follows its identifier when the identifier
-		// moved to another page.
+		// moved to another page. Only a page of the new tree links its
+		// identifiers this way, as Check reads it; a same-page fragment in
+		// any other file, such as a documentation page, a rule, or a
+		// numbered file, is a local heading anchor and is left as written.
+		if _, isPage := f.x.pageByPath[file]; !isPage {
+			return "", true
+		}
 		if owner, ok := f.x.anchorFile[l.fragment]; ok && owner != file && l.fragment != "" {
 			return owner, true
 		}
