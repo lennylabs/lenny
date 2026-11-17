@@ -62,7 +62,7 @@ func TestKubeconfigSecretsReadsEveryUserCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(KubeconfigSecrets(path), "|")
-	for _, want := range []string{"Y2VydGlmaWNhdGUtZGF0YQ==", "certificate-data", "a2V5LWRhdGEtc2VjcmV0", "key-data-secret", "other-token-value"} {
+	for _, want := range []string{base64.StdEncoding.EncodeToString([]byte("certificate-data")), "certificate-data", fixtureKeyData, "key-data-fixture", "other-token-value"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("secrets lack %q: %s", want, got)
 		}
