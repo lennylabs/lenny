@@ -31,6 +31,8 @@ type verdict struct {
 	Verdict    string              `json:"verdict"`
 	NextAction string              `json:"next_action,omitempty"`
 	SpecStatus map[string]string   `json:"spec_section_status,omitempty"`
+	// Gate is set on a `lenny-test gate` run (cmd_gate.go).
+	Gate       *gateRecord `json:"gate,omitempty"`
 	startedAt  time.Time
 	finishedAt time.Time
 }

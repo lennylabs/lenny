@@ -105,13 +105,23 @@ The `make run` target starts the gateway with:
 
 For full Kubernetes-based development, see the [Quickstart Guide](../getting-started/quickstart).
 
+### Running the merge gate on macOS
+
+The merge gate runs in a Linux container on every host, because some static checks build Linux binaries and a cgo link step depends on the host's C toolchain. On macOS, run it as follows:
+
+1. Install Docker Desktop, or another container runtime that serves the Docker socket at `/var/run/docker.sock` to containers. The gate's component and integration tests start their databases as containers on that runtime.
+2. From the repository root, run `go run ./cmd/lenny-test gate`.
+3. Read the summary it prints. The verdict file it names, `tests/results/gate-<run>.json`, records the commit, every tier's result, and every failure.
+
+The first run builds the gate image and fills the Go module and build caches, which takes several minutes. Later runs reuse them. `go run ./cmd/lenny-test gate --rebuild` rebuilds the image.
+
 ---
 
 ## PR process and review expectations
 
 ### Before opening a PR
 
-1. **Ensure all tests pass locally.** Run `make test` for unit tests and `make test-integration` for integration tests.
+1. **Run the merge gate.** `lenny-test gate` runs the tiers a branch passes before it merges: the static checks, the unit tests of the changed packages and their importers, the component, contract, and integration tiers the change reaches, and the general documentation checks. It runs them in a Linux container built from `tests/gate/Dockerfile`, which pins the toolchain, and it writes a verdict file under `tests/results/`. Commit the work first, because the gate selects tiers from the committed changes against `main`. The branch merges only when the verdict for its head commit is `PASS`. The merge gate section of [TESTING.md](https://github.com/lennylabs/lenny/blob/main/TESTING.md) describes the verdict and the tiers.
 2. **Run the linter.** `make lint` must pass with zero warnings.
 3. **Check formatting.** `make fmt` should produce no diff.
 4. **Update documentation** if your change affects configuration, API, or operator-facing behavior.

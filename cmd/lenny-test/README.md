@@ -45,6 +45,10 @@ lenny-test --since main --tier unit --dry-run       # the same diff, unit tier o
 lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec 4.6.1,12.3 --dry-run
 
+# The merge gate, in the gate container (TESTING.md "Merge gate")
+lenny-test gate
+lenny-test gate --here      # in this environment instead of the container
+
 # Actually run (Phase 0: static + unit only)
 lenny-test --tier static
 lenny-test --tier unit
@@ -72,6 +76,7 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 |:-----|:--------|
 | `main.go` | Entry point; dispatches subcommands |
 | `cmd_run.go` | Default run command: parses selectors, resolves into tier plan, executes |
+| `cmd_gate.go` | `gate` subcommand: builds the gate image from `tests/gate/Dockerfile`, runs the merge gate in it, and writes `tests/results/gate-<run>.json` |
 | `cmd_validate.go` | `validate-maps` and `validate-diagnosis` subcommands |
 | `cmd_list.go` | `list` subcommand |
 | `cmd_infra.go` | `infra up/down/status/prune` (Phase 0 stubs) |
