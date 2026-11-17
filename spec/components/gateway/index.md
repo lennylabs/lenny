@@ -3,7 +3,7 @@ code: GW
 type: index
 summary: >-
   The gateway as a unit: the seam model and the isolation every seam has, the session core, the parts that apply to the whole replica, replicas, disruption budget, probes, ServiceAccount, RBAC, NetworkPolicy, process settings, and metrics.
-status: placeholder
+status: partial
 ---
 
 # Gateway
@@ -29,6 +29,12 @@ The gateway as a unit: the seam model and the isolation every seam has, the sess
 | [Upload handler](upload-handler.md) | `GWUPLOAD` | The upload handler seam: upload proxying, validation, and staging. |
 
 <!-- /generated:index -->
+
+## Seam model
+
+This page is written in part. It states the rule that holds each seam to its boundary, and the sources under "Content today" hold the rest of its content until the page is written.
+
+<a id="gw-r1"></a>**GW-R1. Seams and the session core reach each other only through the seam interface.** Each seam reaches the session core and every other seam only through the operations of the [seam interface](../../interfaces/gateway-seams.md). The session core reaches a seam only through the seam interface. In the Go tree, a package of a seam imports, from the gateway, only the seam interface package and the packages of its own seam, and a package of the session core imports no package of a seam.
 
 ## Content today
 

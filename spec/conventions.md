@@ -910,7 +910,7 @@ The table lists every page code with its page type, its path relative to `spec/`
 | `EVTOPS` | interface | [`interfaces/events/operational-events.md`](interfaces/events/operational-events.md) | The operational event types and their data schemas. |
 | `EVTHOOK` | interface | [`interfaces/events/session-webhooks.md`](interfaces/events/session-webhooks.md) | The session callback webhooks and their signing. |
 | `EXT` | interface | [`interfaces/extension-points.md`](interfaces/extension-points.md) | The Go extension points a deployer can replace: storage backends, the pool manager, and the cluster registry. |
-| `GWSEAM` | interface | [`interfaces/gateway-seams.md`](interfaces/gateway-seams.md) | The boundary between each gateway seam and the session core. |
+| `GWSEAM` | interface | [`interfaces/gateway-seams.md`](interfaces/gateway-seams.md) | The boundary between each gateway seam and the session core: the operations each side calls on the other, the values they carry, and the route registration interface of the API front. |
 | `IFS` | index | [`interfaces/index.md`](interfaces/index.md) | Lists the interfaces, the parties on each side, and the page that owns each. |
 | `INTCPTIF` | interface | [`interfaces/interceptor-protocol.md`](interfaces/interceptor-protocol.md) | The protocol between the gateway and a request interceptor: phases, payloads, verdicts, and authentication. |
 | `KADMIT` | interface | [`interfaces/kubernetes/admission.md`](interfaces/kubernetes/admission.md) | The writes Lenny's admission webhooks and policies refuse, with the refusal each returns. |

@@ -731,7 +731,7 @@
       "code": "GW",
       "path": "spec/components/gateway/index.md",
       "type": "index",
-      "status": "placeholder"
+      "status": "partial"
     },
     {
       "code": "GWAPI",
@@ -785,7 +785,7 @@
       "code": "GWSEAM",
       "path": "spec/interfaces/gateway-seams.md",
       "type": "interface",
-      "status": "placeholder"
+      "status": ""
     },
     {
       "code": "GWSTREAM",
@@ -1682,9 +1682,320 @@
       "status": ""
     }
   ],
-  "requirements": [],
-  "operations": [],
-  "terms": [],
+  "requirements": [
+    {
+      "id": "GW-R1",
+      "anchor": "gw-r1",
+      "file": "spec/components/gateway/index.md"
+    }
+  ],
+  "operations": [
+    {
+      "id": "GWSEAM-AdmitResume",
+      "anchor": "gwseam-admitresume",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ArchiveNode",
+      "anchor": "gwseam-archivenode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ArchivedNodeFor",
+      "anchor": "gwseam-archivednodefor",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ArchivedNodes",
+      "anchor": "gwseam-archivednodes",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-AttachCallingSession",
+      "anchor": "gwseam-attachcallingsession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-AuthorizeSession",
+      "anchor": "gwseam-authorizesession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-CancelApproval",
+      "anchor": "gwseam-cancelapproval",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-CheckChildCredentials",
+      "anchor": "gwseam-checkchildcredentials",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ChildrenReattachedFrame",
+      "anchor": "gwseam-childrenreattachedframe",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-CloseUploads",
+      "anchor": "gwseam-closeuploads",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-CreateSession",
+      "anchor": "gwseam-createsession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-DeliverHeld",
+      "anchor": "gwseam-deliverheld",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-EffectiveMaxRetries",
+      "anchor": "gwseam-effectivemaxretries",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-EnqueueInbox",
+      "anchor": "gwseam-enqueueinbox",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ExportPaths",
+      "anchor": "gwseam-exportpaths",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-FailNode",
+      "anchor": "gwseam-failnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ForgetInputWaits",
+      "anchor": "gwseam-forgetinputwaits",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ForwardRequest",
+      "anchor": "gwseam-forwardrequest",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ForwardToolCall",
+      "anchor": "gwseam-forwardtoolcall",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-Forwarded",
+      "anchor": "gwseam-forwarded",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-HandleRoute",
+      "anchor": "gwseam-handleroute",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-HoldMessage",
+      "anchor": "gwseam-holdmessage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-HoldUndeliveredForward",
+      "anchor": "gwseam-holdundeliveredforward",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-HoldsUndelivered",
+      "anchor": "gwseam-holdsundelivered",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-IncrementScrubFailureCount",
+      "anchor": "gwseam-incrementscrubfailurecount",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-IncrementSessionsServed",
+      "anchor": "gwseam-incrementsessionsserved",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-InspectForRecycle",
+      "anchor": "gwseam-inspectforrecycle",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-InvokeClientAPI",
+      "anchor": "gwseam-invokeclientapi",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ListTree",
+      "anchor": "gwseam-listtree",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-LockDelivery",
+      "anchor": "gwseam-lockdelivery",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-LookupSession",
+      "anchor": "gwseam-lookupsession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-MaterializeChild",
+      "anchor": "gwseam-materializechild",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-NodeUsage",
+      "anchor": "gwseam-nodeusage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ObserveHighWatermark",
+      "anchor": "gwseam-observehighwatermark",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-OldestRetainedSeq",
+      "anchor": "gwseam-oldestretainedseq",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-Orphaned",
+      "anchor": "gwseam-orphaned",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-PendingInputWaits",
+      "anchor": "gwseam-pendinginputwaits",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-Publish",
+      "anchor": "gwseam-publish",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RearmBudget",
+      "anchor": "gwseam-rearmbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ReattachNode",
+      "anchor": "gwseam-reattachnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecordLeak",
+      "anchor": "gwseam-recordleak",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecoverTree",
+      "anchor": "gwseam-recovertree",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecycleCounters",
+      "anchor": "gwseam-recyclecounters",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecyclePod",
+      "anchor": "gwseam-recyclepod",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RegisterApproval",
+      "anchor": "gwseam-registerapproval",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RegisterRoutes",
+      "anchor": "gwseam-registerroutes",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ResolveApproval",
+      "anchor": "gwseam-resolveapproval",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ResolveInputWait",
+      "anchor": "gwseam-resolveinputwait",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ResumeSuspended",
+      "anchor": "gwseam-resumesuspended",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ResumedFrame",
+      "anchor": "gwseam-resumedframe",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RetireOnSessionCount",
+      "anchor": "gwseam-retireonsessioncount",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RetirePod",
+      "anchor": "gwseam-retirepod",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ReturnBudget",
+      "anchor": "gwseam-returnbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-SendMessages",
+      "anchor": "gwseam-sendmessages",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-StartNode",
+      "anchor": "gwseam-startnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-Subscribe",
+      "anchor": "gwseam-subscribe",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-SubtreeTokens",
+      "anchor": "gwseam-subtreetokens",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-TreeUsage",
+      "anchor": "gwseam-treeusage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-WriteWorkspace",
+      "anchor": "gwseam-writeworkspace",
+      "file": "spec/interfaces/gateway-seams.md"
+    }
+  ],
+  "terms": [
+    {
+      "anchor": "holder-replica",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "anchor": "seam-interface",
+      "file": "spec/interfaces/gateway-seams.md"
+    }
+  ],
   "blocks": [],
   "retired": [],
   "moves": []
