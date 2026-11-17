@@ -25,6 +25,8 @@ Work through the step's lanes in order:
 
 Run the static tier and every tier the step reaches before finishing, then run the merge gate on the committed head: `lenny-test gate` (`.claude/rules/test-coverage.md`, "Gates"). Report the step only on a `PASS` verdict for the head commit with a clean tree. The digest commit that follows keeps that verdict only when it is a records-only commit as `.claude/rules/git-workflow.md` defines it: it touches nothing outside `changes/` and the generated plan section of `docs/about/status.md` (between the `<!-- generated:status -->` markers), and `python3 scripts/changes/changes.py check`, `board --check`, and, where `changes.py` has the command, `status-page --check` pass on it. Any other commit after the verdict needs a new gate run. A merge-gate failure is fixed on the branch, or, when it also fails on `main`, reported as a failure on `main` to fix or revert before the branch merges; it is never recorded as pre-existing. A failure that also occurs on `main` in a tier outside the merge gate is recorded in the digest as pre-existing rather than fixed here.
 
+When the branch changes the merge gate's own files, which `.claude/rules/git-workflow.md` ("Review changes to the merge gate") names, run the `review` skill over that diff before reporting, and record its outcome in the digest's review outcomes.
+
 ## Stopping on a choice
 
 When a choice comes up that neither the specification nor `decisions.md` settles, do not pick one silently. Add it to "Open decisions" in `decisions.md` with its options and a recommendation, commit, and continue with the work the choice does not touch. Report every such decision at the end.

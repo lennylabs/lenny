@@ -17,6 +17,13 @@ Integration history is explicit, `main` stays green, and branches are short-live
 - The merge commit message or the step's digest names the verdict's run identifier, so the green run behind each merge can be found.
 - `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges. Revert the merge that introduced the failure with `git revert -m 1 <merge>` when the fix is not immediate.
 
+## Review changes to the merge gate
+
+- The merge gate builds `lenny-test` from the branch under test, so a branch that changes the harness is judged by its own version of it, and a branch could turn a check off and still pass. A branch whose diff against its merge base with `main` touches `cmd/lenny-test/`, `tests/gate/`, `tests/flake-budget.yaml`, or `.gitleaks.toml` is reviewed with the `review` skill over that diff before it merges.
+- The review checks whether the diff removes, weakens, or skips a check, changes what a check reads, widens the quarantine, or adds an allowlist entry for a value that is not a fake secret by design. A finding that needs the owner's decision blocks the merge until the owner settles it.
+- The step's digest, or the merge commit message when there is no digest, records the review's outcome.
+- The owner revisits this rule when pull requests replace direct merges (change 0158, decision 1).
+
 ## Merge with a merge commit, not a fast-forward
 
 - `main` is the integration branch. Cut every proposal, draft, fix, and records branch from `main`, and merge it back into `main`. Merges are direct until a first version ships; pull requests replace them after that.
@@ -32,17 +39,18 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 ## Where these rules apply
 
-- Every merge.
+- Every merge, and the review of a branch that changes the merge gate.
 - Branch cleanup after a merge.
 - The state of `main` between merges.
 
 ## How to apply when merging
 
 1. Confirm the feature branch's work is complete, run `lenny-test gate` on its committed head, and confirm the verdict is `PASS` for that commit with a clean tree. Do not merge on any other verdict.
-2. Merge into the target with `git merge --no-ff`, with a message naming what the branch implemented.
-3. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.
-4. Push the updated integration branch.
-5. When the merge-gate tiers fail on `main` afterwards, fix or revert before the next merge.
+2. When the branch's diff touches a path that "Review changes to the merge gate" names, confirm that the `review` skill ran over that diff and that no finding awaits the owner.
+3. Merge into the target with `git merge --no-ff`, with a message naming what the branch implemented.
+4. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.
+5. Push the updated integration branch.
+6. When the merge-gate tiers fail on `main` afterwards, fix or revert before the next merge.
 
 ## Escape hatches
 
