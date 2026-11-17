@@ -9,15 +9,15 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 7 |
-| Waiting on decisions | 40 |
-| Blocked | 134 |
+| Waiting on decisions | 41 |
+| Blocked | 141 |
 | Cancelled | 1 |
 
 ## Program v1
 
-### M0: Workflow in place (current)
+### M0: Workflow in place
 
-### M1: Specification structure foundation
+### M1: Specification structure foundation (current)
 
 Not yet resolved to steps: 0116.
 
@@ -31,12 +31,22 @@ Not yet resolved to steps: 0116.
 | [0115.S7](0115-spec-structure/steps.md#0115s7-successor-stubs-and-the-frozen-reference) | Successor stubs and the frozen reference | Building |  |
 | [0115.S8](0115-spec-structure/steps.md#0115s8-helpers-that-read-the-structure) | Helpers that read the structure | Building |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Waiting on decisions | 0137 is `Draft` |
+| [0154.S1](0154-merge-gate/steps.md#0154s1-repair-tier-0-and-sweep-for-accidental-deletions) | Repair tier 0 and sweep for accidental deletions | Waiting on decisions | 0154 is `Draft` |
 | [0115.S6](0115-spec-structure/steps.md#0115s6-documentation-rule-and-gates) | Documentation rule and gates | Blocked | 0115.S3, 0115.S4 |
 | [0115.S9](0115-spec-structure/steps.md#0115s9-retire-the-root-plan-files) | Retire the root plan files | Blocked | 0115.S8 |
+| [0154.S2](0154-merge-gate/steps.md#0154s2-the-gate-container-the-gate-command-and-concurrent-static-checks) | The gate container, the gate command, and concurrent static checks | Blocked | 0154.S1 |
+| [0154.S3](0154-merge-gate/steps.md#0154s3-the-merge-policy) | The merge policy | Blocked | 0154.S2 |
+| [0155.S1](0155-test-tiers-by-name/steps.md#0155s1-name-the-tiers) | Name the tiers | Blocked | 0115.S9 |
+| [0155.S2](0155-test-tiers-by-name/steps.md#0155s2-split-the-static-tier) | Split the static tier | Blocked | 0155.S1, 0154.S2 |
+| [0155.S3](0155-test-tiers-by-name/steps.md#0155s3-unit-tests-beside-their-code-and-the-rule-for-documentation-checks) | Unit tests beside their code, and the rule for documentation checks | Blocked | 0155.S1 |
 
-### M2: Gateway package layout
+### M2: Gateway package layout and the journey pilot
 
 Not yet resolved to steps: 0117.
+
+| Step | Title | State | Waiting on |
+| :-- | :-- | :-- | :-- |
+| [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Blocked | 0155.S1 |
 
 ### M3+: Areas, one milestone each, ordered once 0115 lands
 
@@ -215,6 +225,7 @@ Not yet resolved to steps: 0117.
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
+| [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Blocked | 0155.S1 |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -222,6 +233,7 @@ Not yet resolved to steps: 0117.
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
 | [0115](0115-spec-structure/change.md) | Specification structure | `In progress` | 0 of 9 | 0 |
+| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Draft` | 0 of 0 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |
@@ -258,3 +270,7 @@ Not yet resolved to steps: 0117.
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 0 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
+| [0154](0154-merge-gate/change.md) | Green main line and merge gate | `Draft` | 0 of 3 | 5 |
+| [0155](0155-test-tiers-by-name/change.md) | Test tiers by name and the static and documentation tiers | `Draft` | 0 of 3 | 3 |
+| [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
+| [0157](0157-persona-journeys/change.md) | Persona journey tier | `Draft` | 0 of 1 | 3 |
