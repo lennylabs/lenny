@@ -8,6 +8,8 @@ Thanks for your interest in Lenny. This file is the canonical entry point; the l
 
 Lenny is in the **design phase**. The [technical specification](spec/) is complete and drives implementation under a spec- and test-driven workflow. The [Implementation Status](docs/about/status.md) page tracks what's wired up today.
 
+The specification is organized by capability, component, and interface. [`spec/README.md`](spec/README.md) is its root map, and [`spec/conventions.md`](spec/conventions.md) states the page types, where each kind of fact belongs, the identifiers pages use, and the registry of page codes.
+
 Because there is no merged codebase for PRs to land against yet, the highest-signal contributions right now are **design feedback**, not code.
 
 ## Best ways to contribute today

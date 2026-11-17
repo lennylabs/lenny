@@ -22,6 +22,8 @@ nav_order: 3
 
 Lenny is in the **design phase**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The public API surface described throughout these docs reflects the spec; the [Implementation Status](status) page tracks what's wired up today.
 
+The specification is organized by capability, component, and interface. Its [root map](https://github.com/lennylabs/lenny/blob/main/spec/README.md) lists the areas and reading paths by task, and its [conventions](https://github.com/lennylabs/lenny/blob/main/spec/conventions.md) state the page types, where each kind of fact belongs, the identifiers pages use, and the registry of page codes.
+
 ### Where to plug in right now
 
 - **Issues and discussions are open.** Questions, disagreements, concrete suggestions, and use-case reports are all welcome. File an [issue](https://github.com/lennylabs/lenny/issues) or start a [discussion](https://github.com/lennylabs/lenny/discussions).

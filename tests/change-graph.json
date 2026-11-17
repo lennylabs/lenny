@@ -1185,6 +1185,9 @@
     "scripts/changes/": {
       "static": ["tests/tier0_static/changes_records_test.go"]
     },
+    "scripts/specindex/": {
+      "static": ["tests/tier0_static/spec_folder_index_test.go"]
+    },
     "scripts/specshift": {
       "static": ["tests/tier0_static/..."],
       "unit": ["scripts/specshift/..."],
@@ -1392,7 +1395,7 @@
       "docs": ["tests/tier11_docs/..."]
     },
     "spec/": {
-      "static": ["tests/tier0_static/spec_link_check_test.go"],
+      "static": ["tests/tier0_static/spec_link_check_test.go", "tests/tier0_static/spec_folder_index_test.go"],
       "docs": ["tests/tier11_docs/..."]
     },
     "proposals/": {
