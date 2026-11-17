@@ -101,17 +101,20 @@ func unfencedRequestFindings(in fenceInputs) []string {
 		if !served {
 			findings = append(findings, fmt.Sprintf(
 				"%s.%s carries %s, %s declares no (*%s).%s handler, and no open or planned issue names %s",
-				gatewayToPodService, method, generationFenceField, adapterHandlerDir, adapterServerType, method, request))
+				gatewayToPodService, method, generationFenceField, adapterHandlerDir, adapterServerType, method, request,
+			))
 			continue
 		}
 		findings = append(findings, fmt.Sprintf(
 			"%s.%s carries %s, its handler (*%s).%s does not read it through %s, and no open or planned issue names %s",
-			gatewayToPodService, method, generationFenceField, adapterServerType, method, generationFenceGetter, request))
+			gatewayToPodService, method, generationFenceField, adapterServerType, method, generationFenceGetter, request,
+		))
 	}
 	if carried == 0 {
 		findings = append(findings, fmt.Sprintf(
 			"no request of the %s service declares %s, so the gate checks nothing",
-			gatewayToPodService, generationFenceField))
+			gatewayToPodService, generationFenceField,
+		))
 	}
 	return findings
 }
