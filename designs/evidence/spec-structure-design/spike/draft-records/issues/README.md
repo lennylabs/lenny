@@ -1,6 +1,6 @@
 # Issues
 
-This folder holds every known discrepancy that no change has finished: code or tests that disagree with the specification, a specification that contradicts itself or is silent where it has to decide, and questions for the owner. Planned work is a step of a change under `changes/`, and it is not filed here.
+This folder holds every known discrepancy that no change has finished: code, tests, or documentation that disagree with the specification, a specification that contradicts itself or is silent where it has to decide, and questions for the owner. Planned work is a step of a change under `changes/`, and it is not filed here.
 
 Draft, 2026-11-16, from the specification structure spike. It becomes `issues/README.md` when the structure lands.
 
@@ -25,7 +25,7 @@ An issue lives under the code of the specification page that owns the requiremen
 ---
 id: POOL-I12
 status: open            # open | planned | closed
-kind: build-gap         # build-gap | test-gap | spec-defect | question
+kind: build-gap         # build-gap | test-gap | doc-gap | spec-defect | question
 severity: medium        # critical | high | medium | low
 requirements: [POOL-R5, KLABEL-R2]
 change: 0113.S4         # the change step that will close it; set when status is planned

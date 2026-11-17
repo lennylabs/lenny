@@ -41,16 +41,17 @@ A change reads standalone. Terms come first, a label from another change is link
 | Mechanism sections | One section per mechanism | No |
 | Worked example | One scenario traced through the change | No |
 | Limits, and alternatives rejected | What the change does not guarantee, and the options it turned down | No |
-| Specification, non-specification, and documentation changes | The pages, packages, charts, and documentation pages the change edits | Yes, as a list |
+| Specification and non-specification changes | The specification pages, packages, charts, and schemas the change edits | Yes, as a list |
+| Documentation | Each documentation page the change adds, edits, or removes, with its reader (client, operator, runtime author, or contributor) and what changes for that reader, or a statement that no reader-facing behavior changes | Yes |
 | Tests | The tests by tier and the requirement each verifies | Yes |
 | Validation owed | What has to be measured or run before the change is trusted | When there is any |
 | Steps | The numbered steps with their dependencies | Yes |
 
-The specification and the code are edited on the change's branch, and the diff is the record of the edit. A change does not stage edits.
+The specification, the code, and the documentation are edited on the change's branch, and the diff is the record of the edit. A change does not stage edits.
 
 ### Steps
 
-Each step is numbered `<change>.S<n>` and states its lane (specification or code), the issues it closes, and the steps it depends on, in any change:
+Each step is numbered `<change>.S<n>` and states its lane (specification, code, or documentation), the issues it closes, and the steps it depends on, in any change. A code step that changes what a reader can observe carries its documentation edits in the same step, or names the documentation step that follows it:
 
 ```markdown
 ### 0113.S4 Add pod sets per pod-set key and scope claims to the revision
@@ -66,7 +67,7 @@ Each step is numbered `<change>.S<n>` and states its lane (specification or code
 | `Draft` | The change is being written, or it has open decisions. |
 | `Decided` | Every decision is settled, and no step has landed. |
 | `Spec landed` | The specification steps have landed, and code steps remain. |
-| `Implemented` | Every step has landed. The folder moves to `archive/`. |
+| `Implemented` | Every step has landed, the documentation included. The folder moves to `archive/`. |
 | `Cancelled` | The change will not be done. The reason is in `review-history.md`, and the folder moves to `archive/`. |
 
 After a change is implemented, the specification holds what it decided, and each decision's reason becomes rationale on the page that owns it. The archive keeps the history, the alternatives, and the evidence.
@@ -77,6 +78,7 @@ The digest is generated from the branch at the end of each step and committed wi
 
 - each requirement the step added, modified, or retired, with old and new text side by side;
 - the code sites and the tests of each requirement, from the annotations;
+- the documentation pages that describe each touched specification page, from their front matter, marked as edited in the step or not edited, and every catalog name the documentation mentions that the step renamed or removed;
 - the gate results, the review outcomes (fixes, open questions, and issues filed), and every default the agent applied without asking.
 
 Because it is generated from the diff, it states what the tree holds.
@@ -87,7 +89,7 @@ One entry per review or revision, newest last. An entry has the date, what trigg
 
 ## Edits that need no change
 
-An edit that changes no requirement, no defined value, and no operation lands as a plain commit with the gates green. Typos, glosses, links, page moves, and catalog regeneration are such edits.
+An edit that changes no requirement, no defined value, and no operation lands as a plain commit with the gates green. Typos, glosses, links, page moves, catalog regeneration, and documentation edits that bring a page in line with the current specification are such edits.
 
 ## Programs
 
@@ -114,7 +116,7 @@ A change moves through these activities. Their order is typical rather than fixe
 
 1. **Frame.** State the problem, the scope, and the open decisions, with evidence from the tree.
 2. **Decide.** The owner settles the open decisions, steering the design through as many rounds as it takes.
-3. **Build.** On one branch, edit the specification, then the code and the tests, until the gates and the tests pass. A choice that neither the specification nor the Decisions section settles becomes an open decision, and the work on other items continues.
+3. **Build.** On one branch, edit the specification, then the code and the tests, then the documentation each reader needs, until the gates and the tests pass. A choice that neither the specification nor the Decisions section settles becomes an open decision, and the work on other items continues.
 4. **Review.** Check the result, confirm or refute each finding, fix what needs no decision, and raise the rest as open decisions or issues.
 5. **Land.** Merge the step, close the issues it lists, and update the status. Archive the change after its last step, or when it is cancelled.
 
@@ -124,16 +126,16 @@ The helpers are skills and workflows that any of these activities can use, in an
 
 | Helper | What it does | Generic or bound |
 | :-- | :-- | :-- |
-| `review` | Reviews a target (documents, a diff, or a branch) with a few general-purpose reviewers, each given a short charter, then has a verifier confirm or refute each finding with evidence. It can fix confirmed findings that need no decision, and `--since <revision>` limits it to what changed. Default charters: a tree checker for claims about the code and the specification, an implementer for what is ambiguous or would fail, and a security reviewer on request. The caller can pass other charters. | Generic |
+| `review` | Reviews a target (documents, a diff, or a branch) with a few general-purpose reviewers, each given a short charter, then has a verifier confirm or refute each finding with evidence. It can fix confirmed findings that need no decision, and `--since <revision>` limits it to what changed. Default charters: a tree checker for claims about the code and the specification, an implementer for what is ambiguous or would fail, a reader who checks each edited documentation page against the specification and the code and against `doc-content.md`, and a security reviewer on request. The caller can pass other charters. | Generic |
 | `tidy` | Brings a document into a template given as an argument: section order, terms first, each statement made once, history moved out, and the documentation style applied. A verifier refuses the edit if any decision, requirement, or value changes meaning. | Generic |
 | `fact-check` | Checks each factual claim in a document against the tree and reports the claims it cannot confirm. | Generic |
 | `ask` | Turns the open questions in a document into multiple-choice questions with the recommendation first, and records each answer with its date in the section the caller names. | Generic |
 | `triage` | Classifies a list of items (issues, open items of a design, or review findings) into categories the caller gives, with a verifier for the claims that close an item. | Generic |
-| `build` | Carries out a change's steps on a branch: the specification first, then the code and the tests, iterating with `lenny-test --changed`. It stops on a choice the change does not settle and records it as an open decision. | Bound |
+| `build` | Carries out a change's steps on a branch: the specification first, then the code and the tests, iterating with `lenny-test --changed`, then the documentation pages the change names and any page the documentation check flags. It stops on a choice the change does not settle and records it as an open decision. | Bound |
 | `change` | Creates a change folder from the template, sets its status, and archives it. | Bound |
 | `issue` | Files an issue, links it to a change, and closes it. | Bound |
 | `digest` | Generates `digest.md` for a step or a branch. | Bound |
-| `where` | Shows a requirement's text, its code sites, its tests, its open issues, and the last change that touched it, and answers follow-up questions about how the code meets it. | Bound |
+| `where` | Shows a requirement's text, its code sites, its tests, the documentation pages that describe its page, its open issues, and the last change that touched it, and answers follow-up questions about how the code meets it. | Bound |
 | `since` | Lists the requirements added, modified, and retired since a date or a commit, and the packages changed under each area. | Bound |
 | `board` | Regenerates `BOARD.md`. | Bound |
 
@@ -146,3 +148,8 @@ These checks run on every commit and cost no model tokens. `changes/` is outside
 - The documentation style lint passes.
 - Every requirement a diff adds or modifies has at least one test that cites it.
 - Every specification annotation in new or changed code resolves and follows the annotation rule, and an area's count of old `§` citations does not rise.
+- Documentation stays in step with the specification ([../../draft-rules/doc-spec-links.md](../../draft-rules/doc-spec-links.md)):
+  - every documentation page names in its front matter the specification pages it describes, and each code resolves;
+  - every setting, metric, alert, error, label, annotation, event, and CLI command a documentation page names exists in the catalogs, and a default, limit, or unit it quotes matches the definition block;
+  - a diff that adds, modifies, or retires a requirement or a definition block on a specification page either edits a documentation page that names that page, or the change's Documentation section states that no reader-facing behavior changes;
+  - reference pages generated from the catalogs are current.

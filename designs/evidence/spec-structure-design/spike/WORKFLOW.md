@@ -65,6 +65,10 @@ The work inside option C therefore runs in this order:
 
 New code cites the specification far less than the current code does. Today 18,912 annotation lines cite the specification: 12,075 in tests and 6,837 in non-test code, and one file carries 133. A draft rule, [draft-rules/spec-annotations.md](draft-rules/spec-annotations.md), keeps citations where they map a requirement to its test or to the code that makes its decision, and a tier-0 lint enforces it. The rule replaces the citation part of `spec-driven-development.md` and the format part of `code-best-practices.md` when the structure lands. The code half of the spike applies it.
 
+## Documentation
+
+A change updates the documentation along with the specification and the code. Version 2 of this file left documentation implicit in the change template, and the owner's review of 2026-11-16 found that the workflow, the helpers, and the gates never named it. The changes README now gives every change a Documentation section, a documentation lane for steps, a reader charter in `review`, documentation in `build`, `where`, and the digest, and a gate. A draft rule, [draft-rules/doc-spec-links.md](draft-rules/doc-spec-links.md), makes the gate possible: every documentation page names in front matter the specification pages it describes, names and values it quotes are checked against the catalogs, and the reference pages that list catalog entries are generated. The rule extends `doc-content.md` when the structure lands.
+
 ## Helpers
 
 The changes README lists the helpers without assigning them to workflow activities, so the owner uses each where it helps. Two properties shape the list:
@@ -111,3 +115,4 @@ Recorded from the owner's reviews of 2026-11-16.
 10. **Process and helpers.** The workflow is described as activities, and the helpers are listed for the owner to use as needed. Helpers are as generic as their purpose allows, and adversarial review uses general-purpose reviewers with short charters.
 11. **Citations in code.** New code cites the specification far less than the current code, under a project rule.
 12. **Gate domain.** `changes/` is outside the domain of the tier-0 gates, as `proposals/` is. `designs/` stays inside it until it retires.
+13. **Documentation.** A change updates the documentation each affected reader needs, in the same change as the specification and the code, and a gate finds the documentation pages a specification change affects.
