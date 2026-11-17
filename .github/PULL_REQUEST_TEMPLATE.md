@@ -3,7 +3,7 @@ Thanks for opening a PR against Lenny.
 
 Note: Lenny is in the design phase. Large code contributions against core platform
 components open up once the first working slice lands (see CONTRIBUTING.md and
-ROADMAP.md). Small fixes — typos, broken links, documentation — are welcome any time.
+the v1 program in changes/programs/v1.md). Small fixes — typos, broken links, documentation — are welcome any time.
 -->
 
 ## What

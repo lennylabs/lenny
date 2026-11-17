@@ -35,4 +35,4 @@ Code contributions against core platform components open up once the first worki
 - Documentation: [`docs/`](docs/)
 - Long-form contributor guide: [`docs/about/contributing.md`](docs/about/contributing.md)
 - Governance and decision-making: [`GOVERNANCE.md`](GOVERNANCE.md)
-- Short-horizon roadmap: [`ROADMAP.md`](ROADMAP.md)
+- Plan toward v1: the [v1 program](changes/programs/v1.md), its [board](changes/BOARD.md), and the [implementation status](docs/about/status.md) page
