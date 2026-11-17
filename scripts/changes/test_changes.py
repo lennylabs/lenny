@@ -310,5 +310,76 @@ class StatusPageTest(Fixture):
         self.assertIn('no <!-- generated:status -->', err)
 
 
+
+class SymlinkTest(Fixture):
+    """The commands refuse to write through a symbolic link or into a
+    directory that resolves outside the repository."""
+
+    def setUp(self):
+        super().setUp()
+        self.outside = tempfile.mkdtemp()
+        self.victim = os.path.join(self.outside, 'victim.txt')
+        C.write(self.victim, 'untouched\n')
+
+    def tearDown(self):
+        shutil.rmtree(self.outside)
+        super().tearDown()
+
+    def test_board_refuses_a_symlinked_board(self):
+        os.symlink(self.victim, os.path.join(self.root, 'changes', 'BOARD.md'))
+        rc, _, err = self.run_cli('board')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(C.read(self.victim), 'untouched\n')
+
+    def test_status_page_refuses_a_symlinked_page_and_a_directory_outside(self):
+        C.write(os.path.join(self.root, 'changes', 'programs', 'p.md'), STATUS_PROGRAM)
+        page = '# Status\n\n<!-- generated:status -->\n<!-- /generated:status -->\n'
+        C.write(self.victim, page)
+        os.makedirs(os.path.join(self.root, 'docs', 'about'))
+        os.symlink(self.victim, os.path.join(self.root, 'docs', 'about', 'status.md'))
+        rc, _, err = self.run_cli('status-page')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(C.read(self.victim), page)
+        os.remove(os.path.join(self.root, 'docs', 'about', 'status.md'))
+        os.rmdir(os.path.join(self.root, 'docs', 'about'))
+        C.write(os.path.join(self.outside, 'status.md'), page)
+        os.symlink(self.outside, os.path.join(self.root, 'docs', 'about'))
+        rc, _, err = self.run_cli('status-page')
+        self.assertEqual(rc, 2)
+        self.assertIn('outside the repository', err)
+        self.assertEqual(C.read(os.path.join(self.outside, 'status.md')), page)
+
+    def test_new_refuses_a_change_folder_that_is_a_symlink(self):
+        os.symlink(self.outside, os.path.join(self.root, 'changes', '0106-zeta'))
+        rc, _, err = self.run_cli('new', 'zeta')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(sorted(os.listdir(self.outside)), ['victim.txt'])
+
+    def test_archive_refuses_an_archive_directory_outside_the_repository(self):
+        self.run_cli('step', '0100.S1', 'Landed')
+        self.run_cli('step', '0100.S2', 'Landed')
+        self.run_cli('status', '0100', 'Implemented')
+        os.symlink(self.outside, os.path.join(self.root, 'changes', 'archive'))
+        rc, _, err = self.run_cli('archive', '0100')
+        self.assertEqual(rc, 2)
+        self.assertIn('outside the repository', err)
+        self.assertTrue(os.path.isdir(os.path.join(self.root, 'changes', '0100-alpha')))
+        self.assertEqual(sorted(os.listdir(self.outside)), ['victim.txt'])
+
+    def test_step_refuses_a_symlinked_steps_file(self):
+        steps = os.path.join(self.root, 'changes', '0100-alpha', 'steps.md')
+        C.write(self.victim, C.read(steps))
+        os.remove(steps)
+        os.symlink(self.victim, steps)
+        before = C.read(self.victim)
+        rc, _, err = self.run_cli('step', '0100.S1', 'Building')
+        self.assertEqual(rc, 2)
+        self.assertIn('symbolic link', err)
+        self.assertEqual(C.read(self.victim), before)
+
+
 if __name__ == '__main__':
     unittest.main()

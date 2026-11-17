@@ -55,6 +55,24 @@ class Tree:
     def path(self, *p):
         return os.path.join(self.changes_dir, *p)
 
+    def checked(self, p):
+        """Return p when a write to it stays inside the repository: p is not
+        a symbolic link, and its parent directory resolves inside the root.
+        Every write and move of the commands goes through this check, so a
+        link planted in the tree cannot redirect a write outside it."""
+        shown = os.path.relpath(p, self.root)
+        if os.path.islink(p):
+            raise Error(f'{shown} is a symbolic link; refusing to write through it')
+        root = os.path.realpath(self.root)
+        parent = os.path.realpath(os.path.dirname(os.path.abspath(p)))
+        if parent != root and not parent.startswith(root + os.sep):
+            raise Error(f'the directory of {shown} resolves to {parent}, outside the repository; refusing to write')
+        return p
+
+    def write(self, p, text):
+        """Write text to p after the check of `checked`."""
+        write(self.checked(p), text)
+
     def change_dirs(self, archived=True):
         out = []
         for d in sorted(os.listdir(self.changes_dir)):
@@ -594,11 +612,11 @@ def cmd_new(tree, slug_, title, today):
     if not re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', slug_):
         raise Error(f'slug {slug_!r} is not lowercase words joined by hyphens')
     number = next_number(tree)
-    d = tree.path(f'{number}-{slug_}')
+    d = tree.checked(tree.path(f'{number}-{slug_}'))
     os.makedirs(d)
     title = title or slug_.replace('-', ' ').capitalize()
     for fn, t in TEMPLATE.items():
-        write(os.path.join(d, fn), t.format(title=title, number=number, date=today))
+        tree.write(os.path.join(d, fn), t.format(title=title, number=number, date=today))
     return f'{number}-{slug_}'
 
 
@@ -616,7 +634,7 @@ def cmd_status(tree, number, status, today):
     text = read(path)
     m = STATUS_LINE.search(text)
     text = text[:m.start()] + f'Status: `{status}`, revision {m.group(2)}, {today}.' + text[m.end():]
-    write(path, text)
+    tree.write(path, text)
 
 
 def cmd_step(tree, sid, status):
@@ -628,7 +646,7 @@ def cmd_step(tree, sid, status):
     s = steps[sid]
     lines = read(s['file']).split('\n')
     lines[s['status_line']] = f'- status: {status}'
-    write(s['file'], '\n'.join(lines))
+    tree.write(s['file'], '\n'.join(lines))
     c = changes[s['change']]
     states = [status if x == sid else steps[x]['status'] for x in c['steps']]
     p = status_problem(c['status'], states)
@@ -734,11 +752,13 @@ def move_folder(tree, old_rel, new_rel):
                 rel += '/'
             return f'{m.group(1)}{rel}{sep}{frag}{m.group(3)}'
         return fix
+    tree.checked(old_abs)
+    tree.checked(new_abs)
     for f in staying:
         text = read(f)
         out = rewrite_links(text, fixer(f, f))
         if out != text:
-            write(f, out)
+            tree.write(f, out)
     os.makedirs(os.path.dirname(new_abs), exist_ok=True)
     moved = subprocess.run(['git', 'mv', old_abs, new_abs], cwd=tree.root, capture_output=True)
     if moved.returncode:
@@ -748,7 +768,7 @@ def move_folder(tree, old_rel, new_rel):
         text = read(nf)
         out = rewrite_links(text, fixer(f, nf))
         if out != text:
-            write(nf, out)
+            tree.write(nf, out)
 
 
 def cmd_archive(tree, number, today):
@@ -812,7 +832,7 @@ def main(argv=None):
                     print('changes/BOARD.md is out of date; run `python3 scripts/changes/changes.py board`')
                     return 1
                 return 0
-            write(target, text)
+            tree.write(target, text)
         elif a.cmd == 'status-page':
             changes, steps, errors = load(tree)
             text = status_page(tree, changes, steps)
@@ -822,7 +842,7 @@ def main(argv=None):
                     print(f'{STATUS_PAGE} is out of date; run `python3 scripts/changes/changes.py status-page`')
                     return 1
                 return 0
-            write(target, text)
+            tree.write(target, text)
         elif a.cmd == 'links':
             def norm(f, t):
                 return re.sub(r'/(change|decisions|steps|review-history)\.md$', '/', f), t
