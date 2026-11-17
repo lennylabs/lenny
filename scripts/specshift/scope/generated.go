@@ -100,6 +100,16 @@ var producers = []Producer{
 		Outputs: []string{"charts/lenny/values.schema.json"},
 	},
 	{
+		// The registry of the specification tree is JSON, which carries
+		// no comment and no metadata field that declares generation. It
+		// holds a copy of every anchor and page path, so a pass that
+		// rewrote a site in it would desynchronize it from the pages, and
+		// the reference pass's check refuses a stale registry.
+		Command: "go run ./scripts/specshift ref registry",
+		Source:  "the front matter, anchors, and definition blocks of the pages under spec/",
+		Outputs: []string{"spec/registry.json"},
+	},
+	{
 		Command: "go run ./cmd/lenny-ocsf-mapping-gen",
 		Source:  "pkg/audit/ocsf/catalog.go",
 		Outputs: []string{"schemas/ocsf-mapping.yaml"},

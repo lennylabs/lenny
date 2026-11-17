@@ -499,10 +499,11 @@ func ReservedPhraseCarrier(target string) bool {
 	return !strings.Contains(target, "/") && filepath.Ext(target) == ".md"
 }
 
-// markdownAnchorExprs match the two markdown anchor identifiers the
-// naming law's reserved-phrase prohibition places outside its matcher,
-// which are the kramdown attribute that declares an anchor and the
-// fragment of an intra-repo markdown link.
+// markdownAnchorExprs match the markdown anchor identifiers the naming
+// law's reserved-phrase prohibition places outside its matcher, which are
+// the kramdown attribute that declares an anchor, the fragment of an
+// intra-repo markdown link, and the explicit HTML anchor that declares an
+// identifier on a page of the specification tree.
 //
 // Each expression carries one capture group naming the span the
 // prohibition does not reach. The group is the whole attribute for the
@@ -512,9 +513,16 @@ func ReservedPhraseCarrier(target string) bool {
 // site, so an expression spanning the whole destination would leave a
 // phrase there with no pass able to write it and no lint able to report
 // it.
+//
+// The third expression is the explicit HTML anchor the pages of the
+// specification tree declare for a requirement, an owned term, an
+// operation, or a definition block, as `<a id="pool-r5"></a>`. Like the
+// kramdown attribute, the element exists only to declare the identifier
+// a link fragment addresses, so it is excluded whole.
 var markdownAnchorExprs = []*regexp.Regexp{
 	regexp.MustCompile(`(\{:[^}\n]*#[A-Za-z0-9._-]+[^}\n]*\})`),
 	regexp.MustCompile(`\]\([^)\n]*(#[A-Za-z0-9._-]+)\)`),
+	regexp.MustCompile(`(<a\s+id="[A-Za-z0-9._-]+"\s*(?:/>|>\s*</a>))`),
 }
 
 // MarkdownAnchorIdentifiers returns the byte span of every markdown

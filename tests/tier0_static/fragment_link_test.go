@@ -68,6 +68,15 @@ var fragmentLinkExpr = regexp.MustCompile(`\]\(([^()\s]*)\)`)
 // text.
 var fragmentAnchorExpr = regexp.MustCompile(`\{:[^}\n]*#([A-Za-z0-9._-]+)[^}\n]*\}`)
 
+// fragmentExplicitAnchorExpr reads the explicit HTML anchor the pages of
+// the new specification tree declare for a requirement, an owned term,
+// an operation, or a definition block: `<a id="pool-r5"></a>`, written
+// on its own line or at the start of a table cell or a paragraph. It is
+// the form the specification's conventions page prescribes for an
+// identifier anchor, so a link to one resolves the way a link to a
+// kramdown attribute does.
+var fragmentExplicitAnchorExpr = regexp.MustCompile(`<a\s+id="([^"]+)"\s*(?:/>|>\s*</a>)`)
+
 // fragmentLinkFailure is one link in the domain whose fragment resolves
 // against neither a heading slug nor an anchor attribute of the page it
 // addresses. It names the citing file and line, so the correction is
@@ -265,8 +274,9 @@ func fragmentLinksIn(page, content string, markdown map[string]bool) []fragmentL
 }
 
 // fragmentLinkAnchors returns every anchor one markdown document
-// declares: the slug of each heading, and each explicit kramdown anchor
-// attribute, in either of the two positions a page writes the attribute.
+// declares: the slug of each heading, each explicit kramdown anchor
+// attribute, in either of the two positions a page writes the attribute,
+// and each explicit HTML anchor.
 func fragmentLinkAnchors(content string) map[string]bool {
 	out := map[string]bool{}
 	heading := map[int]bool{}
@@ -278,6 +288,9 @@ func fragmentLinkAnchors(content string) map[string]bool {
 		}
 	}
 	for _, line := range citation.ProseLines(content) {
+		for _, m := range fragmentExplicitAnchorExpr.FindAllStringSubmatch(line.Text, -1) {
+			out[m[1]] = true
+		}
 		if heading[line.Number] {
 			continue
 		}
@@ -539,5 +552,70 @@ func TestFragmentLinkGateFailsWhenItResolvesNoLink(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no fragment link") {
 		t.Errorf("the error %q does not state that the run resolved no fragment link", err)
+	}
+}
+
+// The explicit HTML anchor is the form the conventions page of the new
+// specification tree prescribes for a requirement, an owned term, and a
+// definition block. These cases hold the gate's reading of that form,
+// which is tooling for the specification's own structure, so they carry
+// no specification annotation.
+func TestFragmentLinkGatePassesALinkResolvedByAnExplicitAnchor(t *testing.T) {
+	t.Parallel()
+	tr := newFragmentTree(t)
+	tr.page("spec/capabilities/pools/warm-pools.md", strings.Join([]string{
+		"---",
+		"code: POOL",
+		"type: capability",
+		"summary: Warm pools.",
+		"---",
+		"# Warm pools",
+		"",
+		"| Term | Definition |",
+		"| :-- | :-- |",
+		`| <a id="pool"></a>Pool | A warmable deployment target. |`,
+		"",
+		`<a id="pool-r5"></a>**POOL-R5. Pool labels are immutable.** Text.`,
+		"",
+		`<a id="setting-pool-minwarm"></a>`,
+		"",
+		"Text.",
+		"",
+	}, "\n"))
+	tr.page("docs/reference/pools.md", strings.Join([]string{
+		"# Pools",
+		"",
+		"See [the term](../../spec/capabilities/pools/warm-pools.md#pool), [the rule](../../spec/capabilities/pools/warm-pools.md#pool-r5), and [the setting](../../spec/capabilities/pools/warm-pools.md#setting-pool-minwarm).",
+		"",
+	}, "\n"))
+
+	rep := tr.runOK()
+	if len(rep.Failures) > 0 {
+		t.Errorf("the gate reported %d failure(s) on links explicit anchors resolve: %s",
+			len(rep.Failures), strings.Join(fragmentFailureTexts(rep), "; "))
+	}
+	if rep.Links != 3 {
+		t.Errorf("the gate resolved %d link(s), want the three the fixture writes", rep.Links)
+	}
+}
+
+func TestFragmentLinkGateFailsOnAnAnchorOnlyAFenceDeclares(t *testing.T) {
+	t.Parallel()
+	tr := newFragmentTree(t)
+	tr.page("spec/capabilities/pools/warm-pools.md", strings.Join([]string{
+		"# Warm pools",
+		"",
+		`<a id="pool-r5"></a>**POOL-R5. Pool labels are immutable.** Text.`,
+		"",
+		"```markdown",
+		`<a id="pool-r6"></a>**POOL-R6. An example.**`,
+		"```",
+		"",
+	}, "\n"))
+	tr.page("docs/reference/pools.md", "# Pools\n\nSee [the rule](../../spec/capabilities/pools/warm-pools.md#pool-r6).\n")
+
+	rep := tr.runOK()
+	if len(rep.Failures) != 1 || rep.Failures[0].Fragment != "pool-r6" || rep.Failures[0].Line != 3 {
+		t.Errorf("want one failure for the anchor only a fence declares, got: %s", strings.Join(fragmentFailureTexts(rep), "; "))
 	}
 }
