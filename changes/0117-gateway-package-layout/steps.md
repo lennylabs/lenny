@@ -100,3 +100,15 @@ The rest of `sessionserver` and the core packages of "SP-1" to `pkg/gateway/core
 - Steps 0117.S3 to 0117.S12 are refactors under the escape hatch of `spec-driven-development.md` for a change that alters no behavior: each passes the same tests before and after, less the wiring tests "SP-4" deletes.
 - The domain steps 0117.S9, 0117.S10, and 0117.S12 depend on nothing but the gate and may run in any order relative to the splits; they are numbered by import sites. Steps that share no package may share a branch, as `changes/README.md` allows.
 - Member changes whose code steps edit a package this change moves land after the step that moves it, which milestone M2's place before the areas gives. 0153.S3 removes the archive extraction from the core after 0117.S11, and 0133.S2, 0138.S6, and 0124's removal delete packages the register lists.
+
+### 0117.S13 Move what removals left
+- status: Planned
+- lanes: [code, documentation]
+- depends-on: [0117.S12]
+
+Runs before v1 closes, after the member changes that remove packages listed in the layout gate's register have landed (decision 5). Every package in that register that its change did not delete, and every part of one that remains, moves into the layout as decision 2 places it and is named as decision 6 states. The step lands when the register is empty.
+
+### Notes on package names
+
+Each move step, 0117.S3 to 0117.S13, settles the names of the packages it moves under decision 6, in the same step: a package whose name does not fit its component page or concern is renamed there, with its importers, and none is left for a final pass.
+

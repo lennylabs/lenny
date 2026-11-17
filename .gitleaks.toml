@@ -1,0 +1,272 @@
+# SPDX-License-Identifier: MIT
+#
+# gitleaks configuration for the secret scan of the merge gate's static
+# tier (`lenny-test`, check "gitleaks dir (tracked files)", in
+# cmd/lenny-test/secretscan.go). The check scans the files git tracks and
+# reads this file explicitly; it ignores `gitleaks:allow` comments and any
+# .gitleaksignore file. The allowlist is therefore the entries below plus
+# the global allowlist of the default configuration this file extends,
+# which skips some files by path (images, fonts, office documents, go.mod
+# and go.sum, lockfiles, vendored trees, anything under node_modules, and
+# any path containing "gitleaks.toml") and some values by pattern. gitleaks
+# also skips archives and binary files without reading them. A diff to this
+# file is reviewed with the `review` skill before it merges
+# (.claude/rules/git-workflow.md, "Review changes to the merge gate").
+#
+# The configuration extends the default rules of the pinned gitleaks
+# release (tests/gate/Dockerfile). Each allowlist entry below covers values
+# that are fake secrets by design: a test fixture, a documentation example,
+# a placeholder in recorded spike evidence, or an identifier a rule
+# mistakes for a key. Each entry sets condition = "AND", so a value is
+# allowed only at the paths the entry names and only when it matches the
+# entry's regular expression, which is the exact value or a pattern that
+# admits no other kind of value. A real credential never gets an entry: it
+# is removed from the tree and rotated.
+#
+# The entries were built by running the scan on the tree on 2026-11-17
+# (change 0158, step S1) and reviewing every finding. The comment above
+# each entry lists the findings it covers and why each one is fake. A path
+# under changes/ also matches the folder's archived location
+# (changes/archive/<date>-<folder>), so archiving a change keeps its entry,
+# and a Go test fixture under pkg/ is matched by its file name, so a package
+# move keeps its entry; the value regex stays exact in both cases.
+
+title = "Lenny secret scan"
+minVersion = "v8.30.1"
+
+[extend]
+useDefault = true
+
+# Stub cloud tokens in the workload identity federation spike of change
+# 0127. A local stub server minted them for the fake hosts sts.gcp.test,
+# msi.azure.test, and a fake GCE metadata server; the values are a fixed
+# prefix plus a counter or a Unix time, and no cloud provider issued them.
+# Findings (generic-api-key), all under
+# changes/0127-egress-and-git/evidence/spike-federation/logs/:
+#   b-go-http.out:6          gcp-sts-at-v2-91eb2e
+#   b-go-imp-http.out:6      gcp-sa-at-from-gcp-sts-at-v2-91eb2e
+#   e-go-h.out:7,9           gce-md-at-1793604314
+#   e-go-remote.out:7,9      gce-md-at-1793604324
+#   f-go-default.out:3       az-msi-at-1793604347
+#   f-go-lo.out:3            az-msi-at-1793604336
+#   f-go-remote.out:3        az-msi-at-1793604346
+#   f-node-default.out:3     az-msi-at-1793604346
+#   f-node-lo.out:3          az-msi-at-1793604335
+#   f-node-remote.out:3      az-msi-at-1793604345
+#   f-node-uami.out:3        az-msi-at-1793604357
+#   f-py-default.out:3       az-msi-at-1793604346
+#   f-py-lo.out:3            az-msi-at-1793604335
+#   f-py-remote.out:3        az-msi-at-1793604345
+#   f-py-uami.out:3          az-msi-at-1793604357
+[[allowlists]]
+description = "Stub cloud tokens minted by the local stub server of the 0127 federation spike"
+condition = "AND"
+paths = ['''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-federation/logs/[^/]+\.out$''']
+regexes = ['''^(gcp-sts-at-v\d-[0-9a-f]{6}|gcp-sa-at-from-gcp-sts-at-v\d-[0-9a-f]{6}|gce-md-at-\d{10}|az-msi-at-\d{10})$''']
+
+# Placeholder credentials in the egress-proxy spikes of change 0127. The
+# spikes test that the egress proxy replaces a placeholder bearer header
+# with the real credential, so the scripts send a fixed placeholder.
+# Findings (curl-auth-header):
+#   changes/0127-egress-and-git/evidence/spike-inject/t1.sh:3    lenny-ph-acme
+#   changes/0127-egress-and-git/evidence/spike-owed-d/i2.sh:50   lenny-injected
+[[allowlists]]
+description = "Placeholder bearer values the 0127 egress spikes send for the proxy to replace"
+condition = "AND"
+paths = [
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-inject/t1\.sh$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-owed-d/i2\.sh$''',
+]
+regexes = ['''^(lenny-ph-acme|lenny-injected)$''']
+
+# Values in the 0127 spike outputs that a rule mistakes for a key.
+# Findings (generic-api-key):
+#   changes/0127-egress-and-git/evidence/spike-lsrefs/t1.out:41
+#     7b8b171c0dbfa8af665c24a63d91f2b185b8701b, the public commit ID of
+#     the snakeyaml master branch on bitbucket.org.
+#   changes/0127-egress-and-git/evidence/spike-owed-b/out/s2-long.out:9
+#     subject=CN=lenny-egress-ca-5, the subject name of a test CA.
+#   changes/0127-egress-and-git/evidence/spike-k8s/t1-out.txt:121
+#     eyJhbGciOiJSUzI1NiIsImtpZCI6Ii1WMTdEWVk4, the first 40 characters
+#     of a projected service account token from a disposable spike
+#     cluster. The spike truncated it on purpose: the 40 characters are
+#     the encoded JWT header ({"alg":"RS256","kid":...}), which carries no
+#     claims and no signature.
+[[allowlists]]
+description = "Commit ID, certificate subject, and truncated JWT header in 0127 spike outputs"
+condition = "AND"
+paths = [
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-lsrefs/t1\.out$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-owed-b/out/s2-long\.out$''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0127-egress-and-git/evidence/spike-k8s/t1-out\.txt$''',
+]
+regexes = ['''^(7b8b171c0dbfa8af665c24a63d91f2b185b8701b|subject=CN=lenny-egress-ca-5|eyJhbGciOiJSUzI1NiIsImtpZCI6Ii1WMTdEWVk4)$''']
+
+# Placeholder tokens in the Git identity spikes of change 0152. The
+# spikes run against a stub GitHub Enterprise host (ghes.example.test) and
+# a credential-injecting proxy; the scripts send named placeholders. The
+# live smoke test checks a token that is invalid by construction.
+# Findings:
+#   curl-auth-header, OTHER-TOKEN-x9, under
+#     changes/0152-user-git-identity/evidence/spike-gh/raw/gitopt/:
+#     uc5/held/{all,flagoff,none,norelease,rotated,suspended,twopools,twopoolson}.out:59
+#     uc6/held/{all,none,notnamed,rotated,twopoolson}.out:59
+#     uc6/held/{flagcleared,norelease,suspended,twopools}.out:69
+#   curl-auth-header, USER-FILE-CURRENT:
+#     changes/0152-user-git-identity/evidence/spike-gh/gitopt/t/t38.sh:5
+#   generic-api-key, Z2l0bGFiLWxmczpMRlNUT0tFTi (base64 of "gitlab-lfs:LFSTOKEN"):
+#     changes/0152-user-git-identity/evidence/spike-gh/gitopt/t/t30.py:16
+#   github-app-token, ghu_invalidsmoketesttoken000000000000000:
+#     changes/0152-user-git-identity/evidence/spike-ghlive/smoke.sh:34
+[[allowlists]]
+description = "Placeholder and invalid-by-construction tokens in the 0152 Git identity spikes"
+condition = "AND"
+paths = [
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-gh/''',
+  '''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-ghlive/smoke\.sh$''',
+]
+regexes = ['''^(OTHER-TOKEN-x9|USER-FILE-CURRENT|Z2l0bGFiLWxmczpMRlNUT0tFTi|ghu_invalidsmoketesttoken0+)$''']
+
+# The sample Sec-WebSocket-Key of RFC 6455 section 1.3, base64 of "the
+# sample nonce". The 0152 spikes replay the RFC's handshake.
+# Findings (generic-api-key), under changes/0152-user-git-identity/evidence/spike-gh/:
+#   gitopt/t/t20.py:139, gitopt/t/t26.py:164, gitopt/t/t29.py:36
+#   gitopt/go/cmd/attack/main.go.txt:672, go/cmd/attack/main.go.txt:656
+#   raw/gitopt/uc5/git/rows.table:109
+#   raw/gitopt/uc4/rows1.table:1669-1672,1831-1834,1993-1996
+#   raw/gitopt/uc5/rows2.table:2205-2208,2385-2388,2565-2568
+[[allowlists]]
+description = "RFC 6455 sample WebSocket key replayed by the 0152 spikes"
+condition = "AND"
+paths = ['''^changes/(?:archive/\d{4}-\d{2}-\d{2}-)?0152-user-git-identity/evidence/spike-gh/''']
+regexes = ['''^dGhlIHNhbXBsZSBub25jZQ==$''']
+
+# The development encryption key of the chart's dev preset, base64 of
+# "lenny-embedded-dev-aescbc-key-32by". The dev preset and the embedded
+# manifests rendered from it ship a published key on purpose, for local
+# development only.
+# Findings (generic-api-key):
+#   charts/lenny/presets/dev.yaml:248
+#   pkg/embedded/manifests/manifests.yaml:1519
+[[allowlists]]
+description = "Published development encryption key of the chart's dev preset"
+condition = "AND"
+paths = [
+  '''^charts/lenny/presets/dev\.yaml$''',
+  '''^pkg/embedded/manifests/manifests\.yaml$''',
+]
+regexes = ['''^bGVubnktZW1iZWRkZWQtZGV2LWFlc2NiYy1rZXktMzJieQ==$''']
+
+# The KMS master key fixture of a chart unit test, base64 of
+# "preserved-master-key-preserved-master-key". The test checks that an
+# upgrade keeps an existing key.
+# Findings: charts/lenny/tests/kms-master-key-secret_test.yaml:40
+# (kubernetes-secret-yaml, whose secret includes the "master-key: " key)
+# and :46 (generic-api-key).
+[[allowlists]]
+description = "KMS master key fixture of a chart unit test"
+condition = "AND"
+paths = ['''^charts/lenny/tests/kms-master-key-secret_test\.yaml$''']
+regexes = ['''^(?:master-key: )?cHJlc2VydmVkLW1hc3Rlci1rZXktcHJlc2VydmVkLW1hc3Rlci1rZXk=$''']
+
+# The bearer-trust HMAC key the Kind end-to-end install writes into its
+# test cluster, base64 of "lenny-e2e-bearer-trust-hmac-key-32bytes".
+# Finding (generic-api-key): tests/testinfra/kind/install.sh:1686
+[[allowlists]]
+description = "HMAC key of the Kind end-to-end test install"
+condition = "AND"
+paths = ['''^tests/testinfra/kind/install\.sh$''']
+regexes = ['''^bGVubnktZTJlLWJlYXJlci10cnVzdC1obWFjLWtleS0zMmJ5dGVz$''']
+
+# The backup encryption key of the integration tests, base64 of the bytes
+# 0x00 through 0x1f.
+# Findings (generic-api-key):
+#   tests/integration/backup_binary_test.go:112
+#   tests/integration/backup_degradation_test.go:292
+#   tests/integration/backup_restore_test.go:114
+[[allowlists]]
+description = "Backup encryption key fixture of the integration tests (bytes 0x00 to 0x1f)"
+condition = "AND"
+paths = ['''^tests/integration/backup_[a-z_]+_test\.go$''']
+regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=$''']
+
+# Literal fixture values in Go tests.
+# Findings (generic-api-key):
+#   pkg/gateway/podlifecycle/podsession/binder_test.go:2690
+#     0123456789abcdef, the hex alphabet the test trims a token against.
+#   pkg/gateway/mcpfabric/mcp/playground_redact_internal_test.go:20
+#     sk-live-abc123, an input the redaction test expects to be redacted.
+#   tests/integration/ops_mcp_scope_live_bearer_test.go:154
+#     tier4-scope-probe-secret-material, a signing secret the test
+#     generates for its own fixture issuer.
+#   tests/integration/ops_endpoints_test.go:925
+#     7c9e6679-7425-40de-944b-e07fc1f90ae7, an idempotency key.
+[[allowlists]]
+description = "Literal fixture values in Go tests"
+condition = "AND"
+paths = [
+  '''(?:^|/)binder_test\.go$''',
+  '''(?:^|/)playground_redact_internal_test\.go$''',
+  '''^tests/integration/ops_mcp_scope_live_bearer_test\.go$''',
+  '''^tests/integration/ops_endpoints_test\.go$''',
+]
+regexes = ['''^(0123456789abcdef|sk-live-abc123|tier4-scope-probe-secret-material|7c9e6679-7425-40de-944b-e07fc1f90ae7)$''']
+
+# Kubernetes Secret names, which a rule reads as key values because the
+# field is named secretRef.
+# Findings (generic-api-key), value anthropic-key-1 or anthropic-key-2:
+#   spec/04_system-components.md, three findings in the credential pool
+#     example
+#   docs/operator-guide/configuration.md:384,386
+#   docs/operator-guide/security.md:184
+#   proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre.spec-changes.md:43,49,69
+#   tests/integration/drift_gatewayreader_http_test.go:131
+#   pkg/gateway/externalapi/admin/credential_pools_test.go:37
+[[allowlists]]
+description = "Kubernetes Secret names in credential pool examples"
+condition = "AND"
+paths = [
+  '''^spec/04_system-components\.md$''',
+  '''^docs/operator-guide/(configuration|security)\.md$''',
+  '''^proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/''',
+  '''^tests/integration/drift_gatewayreader_http_test\.go$''',
+  '''(?:^|/)credential_pools_test\.go$''',
+]
+regexes = ['''^anthropic-key-\d$''']
+
+# Example upload tokens and client secrets in the documentation. Each
+# upload token is elided with "..." and so is not a usable value.
+# Findings (generic-api-key):
+#   docs/client-guide/session-lifecycle.md:128,151,185,407,502,540
+#   docs/client-guide/webhooks.md:42
+#   docs/tutorials/session-derive-replay.md:82,132
+#   docs/api/mcp.md:370
+#   docs/tutorials/using-connectors.md:42   secret_xyz789
+[[allowlists]]
+description = "Elided upload tokens and an example client secret in the documentation"
+condition = "AND"
+paths = [
+  '''^docs/client-guide/(session-lifecycle|webhooks)\.md$''',
+  '''^docs/tutorials/(session-derive-replay|using-connectors)\.md$''',
+  '''^docs/api/mcp\.md$''',
+]
+regexes = ['''^(sess_[A-Za-z0-9.]*\.\.\.[A-Za-z0-9.]*|secret_xyz789)$''']
+
+# Identifiers a rule mistakes for keys: a column name and test names.
+# Findings (generic-api-key):
+#   migrations/0128_ops_operation_baselines.up.sql:18     p50_duration_ms
+#   migrations/ops_operation_baselines_test.go:18         p50_duration_ms
+#   changes/archive/2026-11-17-0155-test-tiers-by-name/evidence/tests-before.txt:960
+#   changes/archive/2026-11-17-0155-test-tiers-by-name/evidence/tests-after.txt:960
+#                                                         TestChildMintingProducesA2ADelegation
+#   TEST-GAPS.md:7557                                     T4KmsKeyUnusable
+[[allowlists]]
+description = "Column and test names that a rule reads as keys"
+condition = "AND"
+paths = [
+  '''^migrations/0128_ops_operation_baselines\.up\.sql$''',
+  '''^migrations/ops_operation_baselines_test\.go$''',
+  '''^changes/archive/2026-11-17-0155-test-tiers-by-name/evidence/tests-(before|after)\.txt$''',
+  '''^TEST-GAPS\.md$''',
+]
+regexes = ['''^(p50_duration_ms|TestChildMintingProducesA2ADelegation|T4KmsKeyUnusable)$''']

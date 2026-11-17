@@ -838,6 +838,12 @@ func runStaticTier() (string, string, *tierResult) {
 			out, err := exec.Command("bash", script).CombinedOutput()
 			return string(out), err
 		}},
+		{name: "gitleaks dir (tracked files)", run: func() (string, error) {
+			// The secret scan over the files git tracks, with the
+			// allowlist in .gitleaks.toml (see secretscan.go). A host
+			// without gitleaks reports unverified rather than a pass.
+			return runSecretScan(repoRoot())
+		}, classify: classifyUnverified},
 		{name: "scripts/lint-determinism.sh", run: func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "lint-determinism.sh")
 			if _, err := os.Stat(script); err != nil {

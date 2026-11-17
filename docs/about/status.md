@@ -33,9 +33,10 @@ The work toward this goal is planned as milestones. A milestone is done when its
 | Milestone | Steps landed | State |
 |:----------|:-------------|:------|
 | Workflow in place | 10 of 10 | Done |
-| Specification structure foundation (current) | 15 of 23 | In progress |
+| Specification structure foundation (current) | 16 of 24 | In progress |
 | Gateway package layout and the journey pilot | 0 of 13 | Not started |
 | Areas, one milestone each, ordered once the "Specification structure" change lands | None assigned yet | Not started |
+| Closing v1 | 0 of 1 | Not started |
 
 ### Workflow in place
 
@@ -47,7 +48,7 @@ All 10 of its steps have landed.
 
 Exit criteria: Every merge passes the merge gate and `main` is green. The conventions, the identifier registry, the reference tool, the gates, and the annotation and documentation rules have landed, coverage and test selection are derived from annotations and the import graph, and the kind renames and the `PodSet` merge are done tree-wide. The test tiers carry names and the static tier is split.
 
-15 of its 23 steps have landed, and 1 is being built.
+16 of its 24 steps have landed, and 1 is being built.
 
 ### Gateway package layout and the journey pilot
 
@@ -60,6 +61,12 @@ Exit criteria: The gateway layout is decided and the package moves have landed. 
 Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its findings from the gap records are filed as issues and closed, and its test tiers pass. The area's docs-tier reconciliation tests and gap-record tests are deleted or replaced, its stores have conformance suites, and its persona journeys run.
 
 No steps are assigned to this milestone yet.
+
+### Closing v1
+
+Exit criteria: Every package a member change was to remove is gone or has moved into the layout, the layout gate's removal register is empty, and every package is named as the "Gateway package layout" change's decision 6 states.
+
+Its one step has not started.
 
 <!-- /generated:status -->
 
