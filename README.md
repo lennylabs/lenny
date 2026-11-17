@@ -297,7 +297,7 @@ The [quickstart](docs/getting-started/quickstart.md) walks through both paths.
 - **Operation:** [Operator guide](docs/operator-guide/) and [Agent operability](docs/operator-guide/agent-operability.md).
 - **Security review:** [Security principles](docs/operator-guide/security-principles.md) and the [security model specification](spec/13_security-model.md).
 - **Contribution:** [Contributor guide](docs/about/contributing.md).
-- **Reference:** the [technical specification](spec/) and the [roadmap](ROADMAP.md).
+- **Reference:** the [technical specification](spec/), the [v1 program](changes/programs/v1.md), and the [implementation status](docs/about/status.md).
 
 ## Contributing
 

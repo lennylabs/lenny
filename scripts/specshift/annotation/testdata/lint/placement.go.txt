@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: MIT
+
+// Package claim is a fixture for the placement checks.
+package claim
+
+// Claimer claims pods.
+//
+// spec: CLAIM-R4
+type Claimer struct {
+	// spec: CLAIM-R5
+	Hold int
+	TTL  int // spec: setting-claimholdttlseconds
+	// Plain field comment.
+	Name string
+}
+
+// Claim refuses a claim past the limit.
+//
+// spec: CLAIM-R4
+func (c *Claimer) Claim() error {
+	// spec: CLAIM-R6
+	if c.Hold > 0 {
+		return nil
+	}
+	f := func() int {
+		// spec: CLAIM-R7
+		return 1
+	}
+	_ = f()
+	return nil
+}
+
+// limit is a defined value.
+//
+// spec: limit-maxclaims
+const limit = 10

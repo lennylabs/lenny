@@ -444,3 +444,8 @@ stateDiagram-v2
 ### Safety invariant
 
 The old `SandboxTemplate` CRD is never deleted until the state machine explicitly reaches `Contracting` -> `Complete`. The WarmPoolController blocks `SandboxTemplate` deletion when an active `RuntimeUpgrade` references it.
+
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-state-machines -->
+
+<!-- /generated:reference-state-machines -->

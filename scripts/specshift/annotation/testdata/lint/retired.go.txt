@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+
+package claim
+
+// hold cites a requirement retired with a successor.
+//
+// spec: CLAIM-R2
+func hold() {}
+
+// expire cites a requirement retired with a removal record.
+//
+// spec: CLAIM-R3
+func expire() {}
+
+// moved cites an identifier that only a move record names.
+//
+// spec: CLAIM-R7
+func moved() {}
+
+// live cites a live requirement and a live block anchor.
+//
+// spec: CLAIM-R9, setting-claimholdttlseconds
+func live() {}

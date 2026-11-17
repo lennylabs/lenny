@@ -1,0 +1,152 @@
+# SPDX-License-Identifier: MIT
+#
+# A rendered chart in the form `helm template` prints, cut down to the
+# objects the contribution gate reads: two ServiceAccounts, the roles bound
+# to them, their workloads, and the NetworkPolicies that select the pods.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fixture-gateway
+  namespace: lenny-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fixture-controller
+  namespace: lenny-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fixture-gateway
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [lenny.dev]
+    resources: ["*"]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fixture-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fixture-gateway
+subjects:
+  - kind: ServiceAccount
+    name: fixture-gateway
+    namespace: lenny-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fixture-gateway-leader-election
+  namespace: lenny-system
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fixture-gateway-leader-election
+  namespace: lenny-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fixture-gateway-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: fixture-gateway
+    namespace: lenny-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fixture-gateway
+  namespace: lenny-system
+spec:
+  template:
+    metadata:
+      labels:
+        lenny.dev/component: gateway
+    spec:
+      serviceAccountName: fixture-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fixture-controller
+  namespace: lenny-system
+spec:
+  template:
+    metadata:
+      labels:
+        lenny.dev/component: controller
+    spec:
+      serviceAccountName: fixture-controller
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: lenny-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-egress
+  namespace: lenny-system
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              lenny.dev/component: controller
+      ports:
+        - port: 8443
+          protocol: TCP
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+      ports:
+        - port: 5432
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: lenny-agents
+          podSelector:
+            matchExpressions:
+              - key: lenny.dev/managed
+                operator: In
+                values: ["true"]
+      ports:
+        - port: 50051
+          endPort: 50060
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-gateway-ingress
+  namespace: lenny-system
+spec:
+  podSelector:
+    matchLabels:
+      lenny.dev/component: gateway
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: https

@@ -36,9 +36,9 @@ import (
 
 // Pass names one specshift pass. The write domain differs between the
 // name and identifier passes and the anchor and line passes, because a
-// reserved phrase in a build or queue record is part of what was written
-// at the time while a line citation in the same record is a pointer that
-// has to keep resolving.
+// reserved phrase in the root queue record is part of what was written at
+// the time while a line citation in the same record is a pointer that has
+// to keep resolving.
 type Pass string
 
 // The passes specshift carries.
@@ -108,13 +108,11 @@ var readExcludedPrefixes = []string{"proposals/", "changes/"}
 const testdataSegment = "testdata"
 
 // planningRecords are the tracked root-level records the reserved-phrase
-// and identifier classes exclude. A reserved phrase in a build or queue
-// record is part of what was written at the time and rewriting it would
-// edit the record, while a line citation in the same file is a pointer
-// that has to keep resolving.
+// and identifier classes exclude. A reserved phrase in the queue record
+// is part of what was written at the time and rewriting it would edit the
+// record, while a line citation in the same file is a pointer that has to
+// keep resolving.
 var planningRecords = []string{
-	"BUILD-PLAN.md",
-	"BUILD-PROGRESS.md",
 	"PROPOSAL-QUEUE.md",
 }
 
@@ -499,10 +497,11 @@ func ReservedPhraseCarrier(target string) bool {
 	return !strings.Contains(target, "/") && filepath.Ext(target) == ".md"
 }
 
-// markdownAnchorExprs match the two markdown anchor identifiers the
-// naming law's reserved-phrase prohibition places outside its matcher,
-// which are the kramdown attribute that declares an anchor and the
-// fragment of an intra-repo markdown link.
+// markdownAnchorExprs match the markdown anchor identifiers the naming
+// law's reserved-phrase prohibition places outside its matcher, which are
+// the kramdown attribute that declares an anchor, the fragment of an
+// intra-repo markdown link, and the explicit HTML anchor that declares an
+// identifier on a page of the specification tree.
 //
 // Each expression carries one capture group naming the span the
 // prohibition does not reach. The group is the whole attribute for the
@@ -512,9 +511,16 @@ func ReservedPhraseCarrier(target string) bool {
 // site, so an expression spanning the whole destination would leave a
 // phrase there with no pass able to write it and no lint able to report
 // it.
+//
+// The third expression is the explicit HTML anchor the pages of the
+// specification tree declare for a requirement, an owned term, an
+// operation, or a definition block, as `<a id="pool-r5"></a>`. Like the
+// kramdown attribute, the element exists only to declare the identifier
+// a link fragment addresses, so it is excluded whole.
 var markdownAnchorExprs = []*regexp.Regexp{
 	regexp.MustCompile(`(\{:[^}\n]*#[A-Za-z0-9._-]+[^}\n]*\})`),
 	regexp.MustCompile(`\]\([^)\n]*(#[A-Za-z0-9._-]+)\)`),
+	regexp.MustCompile(`(<a\s+id="[A-Za-z0-9._-]+"\s*(?:/>|>\s*</a>))`),
 }
 
 // MarkdownAnchorIdentifiers returns the byte span of every markdown
@@ -641,18 +647,12 @@ func DirReader(dir string) FileReader {
 // DirWriter returns a writer rooted at dir that preserves each file's
 // existing mode. The passes and the gates write through it, so a file
 // rewritten by a pass and a baseline rewritten by a gate keep the mode
-// they were committed with.
+// they were committed with. It writes through the check of WriteChecked,
+// so it refuses a target that is a symbolic link or whose directory
+// resolves outside dir, and it creates no directory.
 func DirWriter(dir string) func(target string, content []byte) error {
 	return func(target string, content []byte) error {
-		full := filepath.Join(dir, filepath.FromSlash(target))
-		mode := os.FileMode(0o644)
-		if info, err := os.Stat(full); err == nil {
-			mode = info.Mode().Perm()
-		}
-		if err := os.WriteFile(full, content, mode); err != nil {
-			return fmt.Errorf("write %s: %w", target, err)
-		}
-		return nil
+		return writeChecked(dir, target, content, 0o644, false)
 	}
 }
 

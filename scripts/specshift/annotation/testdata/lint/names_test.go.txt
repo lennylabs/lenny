@@ -1,0 +1,25 @@
+// SPDX-License-Identifier: MIT
+
+package claim
+
+import "testing"
+
+// spec: CLAIM-R4
+func TestClaimRefusesPastTheLimit(t *testing.T) {
+	t.Run("refuses the next claim", func(t *testing.T) {})
+	t.Run("§4.7 refuses the next claim", func(t *testing.T) {})
+	t.Run("spec 4.7.2 holds", func(t *testing.T) {})
+	t.Run("accepts version 1.2", func(t *testing.T) {})
+}
+
+func TestClaimHoldExpires_spec_4_7(t *testing.T) {}
+
+func TestClaimHoldMatchesSpec16_5(t *testing.T) {}
+
+func TestClaimReleasesTheHold_F_7_3_21(t *testing.T) {}
+
+func TestClaimRule1RefusesTwice(t *testing.T) {}
+
+func BenchmarkClaim_4_7(b *testing.B) {}
+
+func helper_4_7() {}

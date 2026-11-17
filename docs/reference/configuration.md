@@ -440,7 +440,7 @@ The web playground is an optional browser-based UI for testing runtimes. It is g
 
 ## Feature flags
 
-Feature-gated Helm values control which admission webhooks and subsystem templates are rendered. These are tied to the build-sequence phases (see [§18 Build Sequence](../../spec/18_build-sequence.md)): `false` omits the webhook/subsystem from the render AND excludes it from the `lenny-preflight` expected-set enumeration. Flipping a flag from `true` to `false` after a phase has been reached is an invalid downgrade.
+Feature-gated Helm values control which admission webhooks and subsystem templates are rendered. These are tied to the build-sequence phases: `false` omits the webhook/subsystem from the render AND excludes it from the `lenny-preflight` expected-set enumeration. Flipping a flag from `true` to `false` after a phase has been reached is an invalid downgrade.
 
 | Field | Type | Default | Description | Gates | First-deploy phase |
 |:------|:-----|:--------|:------------|:------|:-------------------|
@@ -449,6 +449,11 @@ Feature-gated Helm values control which admission webhooks and subsystem templat
 | `features.compliance` | bool | `false` | Enable data residency and T4 node isolation validators for regulated-tenant workloads. | `lenny-data-residency-validator`, `lenny-t4-node-isolation` admission webhooks | Phase 13 |
 
 Five webhooks are unconditionally rendered and always expected regardless of flag state: `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, the `lenny-crd-conversion` conversion webhook, and `lenny-ephemeral-container-cred-guard`. These form the Phase 3.5 baseline per [§17.2](../../spec/17_deployment-topology.md#172-namespace-layout).
+
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-settings -->
+
+<!-- /generated:reference-settings -->
 
 ---
 

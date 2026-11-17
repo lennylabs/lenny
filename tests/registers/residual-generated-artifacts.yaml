@@ -77,3 +77,9 @@ entries:
     disposition: in-class
     reason: |-
       a copy of a chart custom resource definition, which the copying producer writes without a generation marker
+  - member: |-
+      spec/registry.json
+    class: generated-artifacts
+    disposition: in-class
+    reason: |-
+      the registry of the specification tree that specshift ref registry writes as JSON, which carries no generation marker

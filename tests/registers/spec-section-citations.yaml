@@ -1,0 +1,1341 @@
+# SPDX-License-Identifier: MIT
+#
+# Per-package counts of section-number citations in // spec: annotations.
+#
+# Each count is how many citations of a numbered specification section
+# (the §N.M form or the bare N.M form) the Go package directory carries
+# in its // spec: annotations. The annotation rule in
+# .claude/rules/spec-annotations.md moves code to identifier citations
+# area by area, and an area's count reaches zero before its milestone
+# exits.
+#
+# The ratchet in tests/tier0_static fails a package whose count rises
+# above the count here, and a package with a citation and no entry. Until
+# the page a package implements exists, new code there may cite a section
+# as before, and the author raises the package's count here in the same
+# commit, so the rise is visible in review. A package whose count falls
+# is written back here by the run that measures the fall, and that run
+# fails so that the author commits the lowered count with the change.
+kind: spec-section-citation-count-baseline
+version: 1
+packages:
+    - package: cmd/cloud-metrics-collector
+      count: 1
+    - package: cmd/git-credential-lenny
+      count: 6
+    - package: cmd/lenny
+      count: 2
+    - package: cmd/lenny-adapter
+      count: 45
+    - package: cmd/lenny-backup
+      count: 6
+    - package: cmd/lenny-chart-schema-gen
+      count: 1
+    - package: cmd/lenny-compliance
+      count: 92
+    - package: cmd/lenny-controller
+      count: 52
+    - package: cmd/lenny-ctl
+      count: 2
+    - package: cmd/lenny-ctl/runtimescaffold
+      count: 15
+    - package: cmd/lenny-egress-capture
+      count: 1
+    - package: cmd/lenny-gateway
+      count: 1595
+    - package: cmd/lenny-migrate
+      count: 4
+    - package: cmd/lenny-ocsf-mapping-gen
+      count: 1
+    - package: cmd/lenny-ops
+      count: 284
+    - package: cmd/lenny-pool-scaling-controller
+      count: 8
+    - package: cmd/lenny-preflight
+      count: 25
+    - package: cmd/lenny-test
+      count: 15
+    - package: cmd/lenny-tier-promote
+      count: 1
+    - package: cmd/lenny-token-service
+      count: 85
+    - package: cmd/lenny-webhook
+      count: 2
+    - package: cmd/openapi-to-mcp
+      count: 3
+    - package: cmd/runtimes/echo-concurrent
+      count: 45
+    - package: cmd/runtimes/echo-embedded
+      count: 12
+    - package: cmd/runtimes/elicitation-echo
+      count: 2
+    - package: cmd/runtimes/preconnect-echo
+      count: 12
+    - package: cmd/runtimes/streaming-echo
+      count: 11
+    - package: cmd/runtimes/supervise-probe
+      count: 2
+    - package: migrations
+      count: 95
+    - package: pkg/adapter
+      count: 1430
+    - package: pkg/adapter/embeddedcheckpoint
+      count: 23
+    - package: pkg/adapter/gatewaycontrol
+      count: 28
+    - package: pkg/adapter/linefanout
+      count: 7
+    - package: pkg/adapter/mcp
+      count: 14
+    - package: pkg/adapter/prestop
+      count: 9
+    - package: pkg/adapter/scrub
+      count: 44
+    - package: pkg/adapter/sharedassets
+      count: 10
+    - package: pkg/adapter/slotlayout
+      count: 6
+    - package: pkg/adapter/statelessslot
+      count: 4
+    - package: pkg/adapter/workspace
+      count: 71
+    - package: pkg/admission/data_residency_validator
+      count: 7
+    - package: pkg/admission/direct_mode_isolation
+      count: 4
+    - package: pkg/admission/drain_readiness
+      count: 1
+    - package: pkg/admission/ephemeral_container_cred_guard
+      count: 1
+    - package: pkg/admission/label_immutability
+      count: 7
+    - package: pkg/admission/pool_config_validator
+      count: 29
+    - package: pkg/admission/registry_digest
+      count: 1
+    - package: pkg/admission/sandboxclaim_guard
+      count: 7
+    - package: pkg/admission/t4_node_isolation
+      count: 2
+    - package: pkg/admission/webhook
+      count: 65
+    - package: pkg/agentpodstate
+      count: 8
+    - package: pkg/agentpodstate/memstore
+      count: 23
+    - package: pkg/agentpodstate/pgstore
+      count: 17
+    - package: pkg/alerting/alertingmetrics
+      count: 3
+    - package: pkg/alerting/evaluator
+      count: 7
+    - package: pkg/alerting/inproceval
+      count: 7
+    - package: pkg/alerting/rules
+      count: 116
+    - package: pkg/api/v1/session
+      count: 65
+    - package: pkg/apis/lenny/v1alpha1
+      count: 41
+    - package: pkg/audit
+      count: 46
+    - package: pkg/audit/integrity
+      count: 45
+    - package: pkg/audit/jcs
+      count: 4
+    - package: pkg/audit/ocsf
+      count: 31
+    - package: pkg/audit/pgaudit
+      count: 7
+    - package: pkg/audit/siem
+      count: 16
+    - package: pkg/auth/introspection
+      count: 7
+    - package: pkg/auth/jwt
+      count: 88
+    - package: pkg/blobstore
+      count: 109
+    - package: pkg/blobstore/artifactcatalog
+      count: 20
+    - package: pkg/blobstore/azureblob
+      count: 37
+    - package: pkg/blobstore/cataloging
+      count: 52
+    - package: pkg/blobstore/gcs
+      count: 37
+    - package: pkg/blobstore/miniostore
+      count: 57
+    - package: pkg/blobstore/prefixlisttest
+      count: 2
+    - package: pkg/blobstore/providerflags
+      count: 14
+    - package: pkg/blobstore/replication/pgstore
+      count: 2
+    - package: pkg/blobstore/s3
+      count: 43
+    - package: pkg/chart/values
+      count: 17
+    - package: pkg/checkpoint
+      count: 3
+    - package: pkg/clockinject
+      count: 8
+    - package: pkg/common/registry
+      count: 8
+    - package: pkg/common/scopes
+      count: 8
+    - package: pkg/common/seqname
+      count: 21
+    - package: pkg/compliance
+      count: 12
+    - package: pkg/connectoroauth
+      count: 16
+    - package: pkg/controller/cidrdrift
+      count: 10
+    - package: pkg/controller/controllermetrics
+      count: 4
+    - package: pkg/controller/poolscaling
+      count: 120
+    - package: pkg/controller/poolscaling/convergence
+      count: 14
+    - package: pkg/controller/ratelimit
+      count: 1
+    - package: pkg/controller/runtime
+      count: 42
+    - package: pkg/controller/sandbox
+      count: 161
+    - package: pkg/controller/sandbox/lifecycle
+      count: 15
+    - package: pkg/controller/sandbox/podspec
+      count: 108
+    - package: pkg/controller/sandbox/resourceclass
+      count: 2
+    - package: pkg/controller/ssaretry
+      count: 10
+    - package: pkg/controller/statusdedup
+      count: 2
+    - package: pkg/controller/tenantdeletion
+      count: 34
+    - package: pkg/controller/warmpool
+      count: 236
+    - package: pkg/controller/warmpool/plan
+      count: 8
+    - package: pkg/credential
+      count: 67
+    - package: pkg/ctl
+      count: 6
+    - package: pkg/ctlcli
+      count: 181
+    - package: pkg/degradation
+      count: 16
+    - package: pkg/delegation/cycle
+      count: 3
+    - package: pkg/delegation/lease
+      count: 22
+    - package: pkg/delegation/recovery
+      count: 7
+    - package: pkg/deployenv
+      count: 4
+    - package: pkg/driftmonitor
+      count: 3
+    - package: pkg/elicitation
+      count: 6
+    - package: pkg/embedded/crds
+      count: 6
+    - package: pkg/embedded/devauth
+      count: 13
+    - package: pkg/embedded/k3s
+      count: 91
+    - package: pkg/embedded/localcli
+      count: 51
+    - package: pkg/embedded/manifests
+      count: 6
+    - package: pkg/embedded/stack
+      count: 343
+    - package: pkg/events
+      count: 19
+    - package: pkg/experiment
+      count: 10
+    - package: pkg/gateway/audit/auditretention
+      count: 12
+    - package: pkg/gateway/audit/auditscope
+      count: 2
+    - package: pkg/gateway/audit/auditstore
+      count: 71
+    - package: pkg/gateway/audit/auditstore/auditbatch
+      count: 7
+    - package: pkg/gateway/audit/jwtaudit
+      count: 4
+    - package: pkg/gateway/billing/billingcheckpoint
+      count: 2
+    - package: pkg/gateway/billing/billingfanout
+      count: 11
+    - package: pkg/gateway/billing/billingretention
+      count: 4
+    - package: pkg/gateway/billing/billingsink
+      count: 11
+    - package: pkg/gateway/billing/billingstore
+      count: 26
+    - package: pkg/gateway/billing/billingstore/failover
+      count: 20
+    - package: pkg/gateway/billing/billingstore/failover/redisstream
+      count: 19
+    - package: pkg/gateway/billing/billingstore/pgstore
+      count: 20
+    - package: pkg/gateway/billing/correctionstore
+      count: 1
+    - package: pkg/gateway/billing/correctionstore/pgstore
+      count: 4
+    - package: pkg/gateway/billing/usagestore
+      count: 1
+    - package: pkg/gateway/billing/usagestore/pgstore
+      count: 6
+    - package: pkg/gateway/callercheck
+      count: 14
+    - package: pkg/gateway/checkpoint/checkpointer
+      count: 278
+    - package: pkg/gateway/checkpoint/checkpointretention
+      count: 18
+    - package: pkg/gateway/checkpoint/partialmanifeststore
+      count: 48
+    - package: pkg/gateway/checkpoint/partialmanifeststore/pgstore
+      count: 3
+    - package: pkg/gateway/checkpoint/resumechunks
+      count: 24
+    - package: pkg/gateway/connectors/connectorauthz
+      count: 4
+    - package: pkg/gateway/connectors/connectorcredstore
+      count: 27
+    - package: pkg/gateway/connectors/connectorcredstore/pgstore
+      count: 11
+    - package: pkg/gateway/connectors/connectorinvoke
+      count: 33
+    - package: pkg/gateway/connectors/connectorsecret
+      count: 1
+    - package: pkg/gateway/connectors/connectorstore
+      count: 22
+    - package: pkg/gateway/connectors/connectorstore/pgstore
+      count: 6
+    - package: pkg/gateway/connectors/connectortools
+      count: 8
+    - package: pkg/gateway/coordination/barrier
+      count: 28
+    - package: pkg/gateway/coordination/coordfence
+      count: 18
+    - package: pkg/gateway/coordination/coordination
+      count: 75
+    - package: pkg/gateway/coordination/coordlease
+      count: 6
+    - package: pkg/gateway/coordination/coordlease/pgstore
+      count: 1
+    - package: pkg/gateway/coordination/gatewayleader
+      count: 5
+    - package: pkg/gateway/coordination/pdbwatcher
+      count: 10
+    - package: pkg/gateway/core/subsystem
+      count: 33
+    - package: pkg/gateway/credentials/credassign
+      count: 81
+    - package: pkg/gateway/credentials/credcache
+      count: 1
+    - package: pkg/gateway/credentials/credentialpoolstore
+      count: 26
+    - package: pkg/gateway/credentials/credentialpoolstore/pgstore
+      count: 6
+    - package: pkg/gateway/credentials/credentialserver
+      count: 21
+    - package: pkg/gateway/credentials/credentialstore
+      count: 26
+    - package: pkg/gateway/credentials/credentialstore/pgstore
+      count: 9
+    - package: pkg/gateway/credentials/credfallback
+      count: 9
+    - package: pkg/gateway/credentials/credleasestore
+      count: 13
+    - package: pkg/gateway/credentials/credleasestore/pgstore
+      count: 7
+    - package: pkg/gateway/credentials/credrenewal
+      count: 17
+    - package: pkg/gateway/credentials/credrenewal/propagator
+      count: 4
+    - package: pkg/gateway/credentials/denylist
+      count: 5
+    - package: pkg/gateway/credentials/denylist/propagator
+      count: 2
+    - package: pkg/gateway/credentials/impersonation
+      count: 50
+    - package: pkg/gateway/credentials/impersonation/impersonationtest
+      count: 1
+    - package: pkg/gateway/credentials/leaserevoke
+      count: 5
+    - package: pkg/gateway/credentials/revocation
+      count: 7
+    - package: pkg/gateway/credentials/revocation/propagator
+      count: 2
+    - package: pkg/gateway/credentials/usercreds
+      count: 14
+    - package: pkg/gateway/deployment/devmode
+      count: 5
+    - package: pkg/gateway/environment/customrolestore
+      count: 7
+    - package: pkg/gateway/environment/customrolestore/pgstore
+      count: 5
+    - package: pkg/gateway/environment/deploymentconfigstore
+      count: 3
+    - package: pkg/gateway/environment/envaccess
+      count: 1
+    - package: pkg/gateway/environment/environmentstore
+      count: 18
+    - package: pkg/gateway/environment/environmentstore/pgstore
+      count: 2
+    - package: pkg/gateway/environment/tenantaccessstore
+      count: 1
+    - package: pkg/gateway/environment/tenantaccessstore/pgstore
+      count: 2
+    - package: pkg/gateway/environment/tenantstore
+      count: 24
+    - package: pkg/gateway/environment/tenantstore/pgstore
+      count: 8
+    - package: pkg/gateway/environment/transcriptstore
+      count: 15
+    - package: pkg/gateway/environment/transcriptstore/pgstore
+      count: 7
+    - package: pkg/gateway/environment/translator
+      count: 224
+    - package: pkg/gateway/environment/userstore
+      count: 29
+    - package: pkg/gateway/environment/userstore/pgstore
+      count: 9
+    - package: pkg/gateway/eventbuffer
+      count: 8
+    - package: pkg/gateway/experiment/evalstore
+      count: 9
+    - package: pkg/gateway/experiment/evalstore/pgstore
+      count: 3
+    - package: pkg/gateway/experiment/experimentprovider
+      count: 7
+    - package: pkg/gateway/experiment/experimentsticky
+      count: 16
+    - package: pkg/gateway/experiment/experimentstore
+      count: 9
+    - package: pkg/gateway/experiment/experimentstore/pgstore
+      count: 5
+    - package: pkg/gateway/externalapi/admin
+      count: 1311
+    - package: pkg/gateway/externalapi/admintoken
+      count: 25
+    - package: pkg/gateway/externalapi/admintoken/k8ssecret
+      count: 1
+    - package: pkg/gateway/externalapi/admintoken/reclaimer
+      count: 14
+    - package: pkg/gateway/externalapi/errorclassify
+      count: 82
+    - package: pkg/gateway/externalapi/openapi
+      count: 49
+    - package: pkg/gateway/externalapi/openapi/internal/genopsschemas
+      count: 3
+    - package: pkg/gateway/externalapi/pagination
+      count: 3
+    - package: pkg/gateway/gatewaycontrol/inputwaitrecovery
+      count: 38
+    - package: pkg/gateway/gatewaycontrol/platformtools
+      count: 9
+    - package: pkg/gateway/llmproxy/credrouter
+      count: 19
+    - package: pkg/gateway/llmproxy/llmproxy
+      count: 64
+    - package: pkg/gateway/llmproxy/proxycache
+      count: 1
+    - package: pkg/gateway/llmproxy/semanticcache
+      count: 2
+    - package: pkg/gateway/llmproxy/semanticcache/redisstore
+      count: 4
+    - package: pkg/gateway/mcpfabric/delegation
+      count: 173
+    - package: pkg/gateway/mcpfabric/delegation/export
+      count: 5
+    - package: pkg/gateway/mcpfabric/delegation/exportwire
+      count: 2
+    - package: pkg/gateway/mcpfabric/delegation/fileexport
+      count: 5
+    - package: pkg/gateway/mcpfabric/delegationbudget
+      count: 22
+    - package: pkg/gateway/mcpfabric/delegationbudget/pgstore
+      count: 3
+    - package: pkg/gateway/mcpfabric/delegationpolicystore
+      count: 14
+    - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
+      count: 3
+    - package: pkg/gateway/mcpfabric/delegationtree/deadlock
+      count: 27
+    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+      count: 257
+    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg
+      count: 4
+    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
+      count: 13
+    - package: pkg/gateway/mcpfabric/delegationtree/orphancleanup
+      count: 50
+    - package: pkg/gateway/mcpfabric/delegationtree/resultrollup
+      count: 12
+    - package: pkg/gateway/mcpfabric/delegationtree/treearchive
+      count: 16
+    - package: pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore
+      count: 7
+    - package: pkg/gateway/mcpfabric/delegationtree/treebudget
+      count: 61
+    - package: pkg/gateway/mcpfabric/delegationtree/treerecovery
+      count: 14
+    - package: pkg/gateway/mcpfabric/elicitationfloor
+      count: 8
+    - package: pkg/gateway/mcpfabric/mcp
+      count: 126
+    - package: pkg/gateway/mcpfabric/mcpruntimes
+      count: 18
+    - package: pkg/gateway/mcpfabric/mcpschemagen
+      count: 11
+    - package: pkg/gateway/mcpfabric/mcptools
+      count: 678
+    - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
+      count: 1
+    - package: pkg/gateway/mcpfabric/playground
+      count: 93
+    - package: pkg/gateway/metrics/capacityplanning
+      count: 1
+    - package: pkg/gateway/metrics/extractionthreshold
+      count: 7
+    - package: pkg/gateway/metrics/gatewaymetrics
+      count: 238
+    - package: pkg/gateway/metrics/gcpause
+      count: 7
+    - package: pkg/gateway/middleware/auth
+      count: 82
+    - package: pkg/gateway/middleware/circuitbreaker
+      count: 11
+    - package: pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore
+      count: 1
+    - package: pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore
+      count: 5
+    - package: pkg/gateway/middleware/correlation
+      count: 18
+    - package: pkg/gateway/middleware/deprecation
+      count: 5
+    - package: pkg/gateway/middleware/environment
+      count: 1
+    - package: pkg/gateway/middleware/idempotency
+      count: 49
+    - package: pkg/gateway/middleware/ratelimit
+      count: 49
+    - package: pkg/gateway/middleware/recover
+      count: 6
+    - package: pkg/gateway/operability/health
+      count: 46
+    - package: pkg/gateway/operability/health/backends
+      count: 19
+    - package: pkg/gateway/operability/recommendations
+      count: 18
+    - package: pkg/gateway/pki/carotation
+      count: 1
+    - package: pkg/gateway/pki/carotationstore
+      count: 1
+    - package: pkg/gateway/pki/carotationstore/pgstore
+      count: 1
+    - package: pkg/gateway/pki/tlsprobe
+      count: 5
+    - package: pkg/gateway/podlifecycle/bindrelease
+      count: 6
+    - package: pkg/gateway/podlifecycle/drainreadiness
+      count: 8
+    - package: pkg/gateway/podlifecycle/podclaim
+      count: 190
+    - package: pkg/gateway/podlifecycle/podsession
+      count: 516
+    - package: pkg/gateway/podlifecycle/prestop
+      count: 49
+    - package: pkg/gateway/podlifecycle/slotreaper
+      count: 20
+    - package: pkg/gateway/policy/interceptor
+      count: 48
+    - package: pkg/gateway/policy/interceptor/interceptorstore
+      count: 4
+    - package: pkg/gateway/policy/policy
+      count: 31
+    - package: pkg/gateway/policy/ratelimit
+      count: 1
+    - package: pkg/gateway/policy/ratelimit/redisstore
+      count: 1
+    - package: pkg/gateway/provisioning/envblock
+      count: 1
+    - package: pkg/gateway/provisioning/gitref
+      count: 2
+    - package: pkg/gateway/provisioning/vcscred
+      count: 8
+    - package: pkg/gateway/quota/quotabudget
+      count: 16
+    - package: pkg/gateway/quota/quotacheckpoint
+      count: 35
+    - package: pkg/gateway/quota/quotacheckpoint/pgstore
+      count: 6
+    - package: pkg/gateway/quota/quotaerasure
+      count: 4
+    - package: pkg/gateway/quota/quotafailopen
+      count: 16
+    - package: pkg/gateway/quota/quotastore
+      count: 23
+    - package: pkg/gateway/quota/storagequota
+      count: 26
+    - package: pkg/gateway/quota/storagequota/redisstore
+      count: 3
+    - package: pkg/gateway/runtime/adapterclient
+      count: 121
+    - package: pkg/gateway/runtime/adapterregistry
+      count: 24
+    - package: pkg/gateway/runtime/externaladapterstore
+      count: 9
+    - package: pkg/gateway/runtime/poolstore
+      count: 42
+    - package: pkg/gateway/runtime/poolstore/pgstore
+      count: 4
+    - package: pkg/gateway/runtime/runtimecapoverride
+      count: 7
+    - package: pkg/gateway/runtime/runtimestore
+      count: 54
+    - package: pkg/gateway/runtime/runtimestore/pgstore
+      count: 4
+    - package: pkg/gateway/runtime/sdkwarm
+      count: 4
+    - package: pkg/gateway/runtime/slothealth
+      count: 23
+    - package: pkg/gateway/runtime/statelessproxy
+      count: 7
+    - package: pkg/gateway/runtime/statelessrouting
+      count: 2
+    - package: pkg/gateway/runtime/tenantaffinity
+      count: 16
+    - package: pkg/gateway/runtime/watchdog
+      count: 215
+    - package: pkg/gateway/serviceidentity
+      count: 9
+    - package: pkg/gateway/session/budgetstate
+      count: 22
+    - package: pkg/gateway/session/executor
+      count: 150
+    - package: pkg/gateway/session/inputwait
+      count: 11
+    - package: pkg/gateway/session/interactionstore
+      count: 12
+    - package: pkg/gateway/session/interactionstore/pgstore
+      count: 3
+    - package: pkg/gateway/session/memorystore
+      count: 13
+    - package: pkg/gateway/session/memorystore/memorystoretest
+      count: 2
+    - package: pkg/gateway/session/messagerouting
+      count: 4
+    - package: pkg/gateway/session/orphansession
+      count: 30
+    - package: pkg/gateway/session/recycle
+      count: 150
+    - package: pkg/gateway/session/routingcache
+      count: 14
+    - package: pkg/gateway/session/sessionage
+      count: 10
+    - package: pkg/gateway/session/sessionbudget
+      count: 29
+    - package: pkg/gateway/session/sessioncallback
+      count: 14
+    - package: pkg/gateway/session/sessioncheckpointmeta
+      count: 5
+    - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
+      count: 2
+    - package: pkg/gateway/session/sessionevents
+      count: 22
+    - package: pkg/gateway/session/sessionidle
+      count: 19
+    - package: pkg/gateway/session/sessioninbox
+      count: 73
+    - package: pkg/gateway/session/sessionlogstore
+      count: 23
+    - package: pkg/gateway/session/sessionstore
+      count: 156
+    - package: pkg/gateway/session/sessionstore/memstore
+      count: 130
+    - package: pkg/gateway/session/sessionstore/pgstore
+      count: 126
+    - package: pkg/gateway/session/sessionusage
+      count: 2
+    - package: pkg/gateway/session/sessionusage/pgstore
+      count: 6
+    - package: pkg/gateway/session/tokenanomaly
+      count: 21
+    - package: pkg/gateway/sessionserver
+      count: 3098
+    - package: pkg/gateway/storage/deadletterredaction
+      count: 6
+    - package: pkg/gateway/storage/derivelock
+      count: 11
+    - package: pkg/gateway/storage/dualstore
+      count: 9
+    - package: pkg/gateway/storage/erasure
+      count: 32
+    - package: pkg/gateway/storage/erasurejob
+      count: 108
+    - package: pkg/gateway/storage/erasurejob/pgstore
+      count: 3
+    - package: pkg/gateway/storage/erasurejob/saltlockpg
+      count: 3
+    - package: pkg/gateway/storage/eventbus
+      count: 37
+    - package: pkg/gateway/storage/evictionfallback
+      count: 36
+    - package: pkg/gateway/storage/evictionstatestore
+      count: 23
+    - package: pkg/gateway/storage/evictionstatestore/pgstore
+      count: 4
+    - package: pkg/gateway/storage/failopen
+      count: 41
+    - package: pkg/gateway/storage/issuedtokenstore
+      count: 61
+    - package: pkg/gateway/storage/leasestore
+      count: 15
+    - package: pkg/gateway/storage/leasestore/pgstore
+      count: 6
+    - package: pkg/gateway/storage/legalholdreconciler
+      count: 23
+    - package: pkg/gateway/storage/partitionmaint
+      count: 11
+    - package: pkg/gateway/storage/pgnotify
+      count: 4
+    - package: pkg/gateway/storage/pgtenant
+      count: 21
+    - package: pkg/gateway/storage/rediskeys
+      count: 3
+    - package: pkg/gateway/storage/redistopology
+      count: 2
+    - package: pkg/gateway/storage/retentiongc
+      count: 27
+    - package: pkg/gateway/storage/slotcounter
+      count: 125
+    - package: pkg/gateway/storage/sqlitestore
+      count: 10
+    - package: pkg/gateway/upgrade/runtimeupgrade
+      count: 5
+    - package: pkg/gateway/upgrade/runtimeupgradeguard
+      count: 3
+    - package: pkg/gateway/upgrade/runtimeupgradestore
+      count: 2
+    - package: pkg/gateway/upgrade/runtimeupgradestore/pgstore
+      count: 1
+    - package: pkg/idempotency
+      count: 7
+    - package: pkg/kms
+      count: 31
+    - package: pkg/kms/aws
+      count: 19
+    - package: pkg/kms/azure
+      count: 14
+    - package: pkg/kms/envelope
+      count: 10
+    - package: pkg/kms/gcp
+      count: 15
+    - package: pkg/kms/providerflags
+      count: 21
+    - package: pkg/kms/rekey
+      count: 8
+    - package: pkg/legalholdescrow
+      count: 19
+    - package: pkg/legalholdescrow/blobescrow
+      count: 4
+    - package: pkg/legalholdescrow/pgstore
+      count: 1
+    - package: pkg/loadctl
+      count: 1
+    - package: pkg/loadreport
+      count: 1
+    - package: pkg/mtls
+      count: 12
+    - package: pkg/mtls/certreload
+      count: 3
+    - package: pkg/mtls/interceptordial
+      count: 6
+    - package: pkg/mtls/spiffe
+      count: 10
+    - package: pkg/observability/audit
+      count: 29
+    - package: pkg/observability/logging
+      count: 6
+    - package: pkg/observability/metrics
+      count: 14
+    - package: pkg/observability/slo
+      count: 2
+    - package: pkg/observability/tracing
+      count: 7
+    - package: pkg/ops/backup
+      count: 80
+    - package: pkg/ops/backup/k8slauncher
+      count: 7
+    - package: pkg/ops/backup/pgstore
+      count: 2
+    - package: pkg/ops/backup/restoretest
+      count: 3
+    - package: pkg/ops/backup/runner
+      count: 55
+    - package: pkg/ops/baselinestore
+      count: 2
+    - package: pkg/ops/configservice
+      count: 2
+    - package: pkg/ops/conventions
+      count: 9
+    - package: pkg/ops/coordination
+      count: 46
+    - package: pkg/ops/coordination/pgstore
+      count: 16
+    - package: pkg/ops/coordination/redisstore
+      count: 41
+    - package: pkg/ops/diagnostics
+      count: 12
+    - package: pkg/ops/diagnostics/prodsource
+      count: 7
+    - package: pkg/ops/doctor
+      count: 11
+    - package: pkg/ops/driftservice
+      count: 22
+    - package: pkg/ops/driftservice/gatewayreader
+      count: 8
+    - package: pkg/ops/driftservice/pgstore
+      count: 4
+    - package: pkg/ops/escalation
+      count: 11
+    - package: pkg/ops/escalation/pgstore
+      count: 6
+    - package: pkg/ops/escalation/redisstore
+      count: 8
+    - package: pkg/ops/events
+      count: 129
+    - package: pkg/ops/eventsubscription
+      count: 25
+    - package: pkg/ops/eventsubscription/pgstore
+      count: 3
+    - package: pkg/ops/gateway
+      count: 7
+    - package: pkg/ops/mcp
+      count: 32
+    - package: pkg/ops/mcp/mcptoolgen
+      count: 10
+    - package: pkg/ops/me
+      count: 7
+    - package: pkg/ops/metrics
+      count: 16
+    - package: pkg/ops/operations
+      count: 11
+    - package: pkg/ops/opsaudit
+      count: 3
+    - package: pkg/ops/opsidem
+      count: 10
+    - package: pkg/ops/opsidem/pgstore
+      count: 2
+    - package: pkg/ops/opsinventory
+      count: 11
+    - package: pkg/ops/opsserver
+      count: 202
+    - package: pkg/ops/opsservice
+      count: 32
+    - package: pkg/ops/platformassets
+      count: 2
+    - package: pkg/ops/registryservice
+      count: 12
+    - package: pkg/ops/runbooks
+      count: 3
+    - package: pkg/ops/upgradeservice
+      count: 78
+    - package: pkg/ops/upgradeservice/pgstore
+      count: 1
+    - package: pkg/ops/versionsource
+      count: 6
+    - package: pkg/outputtype
+      count: 7
+    - package: pkg/pgwritemetrics
+      count: 3
+    - package: pkg/platform/store
+      count: 8
+    - package: pkg/podlifecycle
+      count: 28
+    - package: pkg/podregistry
+      count: 42
+    - package: pkg/podsecurity
+      count: 12
+    - package: pkg/preflight
+      count: 269
+    - package: pkg/preflight/infra
+      count: 12
+    - package: pkg/proto/adapter/v1
+      count: 27
+    - package: pkg/quota
+      count: 12
+    - package: pkg/recommendations/rules
+      count: 3
+    - package: pkg/redisconn
+      count: 15
+    - package: pkg/redisconn/clustertest
+      count: 1
+    - package: pkg/redisconn/slotguard
+      count: 4
+    - package: pkg/releasechannel
+      count: 8
+    - package: pkg/runtimekit
+      count: 21
+    - package: pkg/runtimekit/echocore
+      count: 2
+    - package: pkg/sandbox/condition
+      count: 5
+    - package: pkg/sandbox/egress
+      count: 1
+    - package: pkg/sandbox/isolation
+      count: 10
+    - package: pkg/sandbox/podscrub
+      count: 18
+    - package: pkg/sandbox/slotstate
+      count: 7
+    - package: pkg/sandbox/state
+      count: 5
+    - package: pkg/sandboxclaim/state
+      count: 10
+    - package: pkg/schemamigrate
+      count: 7
+    - package: pkg/session/state
+      count: 14
+    - package: pkg/sessionrecord
+      count: 37
+    - package: pkg/spiffeid
+      count: 8
+    - package: pkg/storerouter
+      count: 36
+    - package: pkg/supervisorselftest
+      count: 5
+    - package: pkg/tenantkms
+      count: 7
+    - package: pkg/tierpromotion
+      count: 25
+    - package: pkg/tokenexchange
+      count: 4
+    - package: pkg/tokenservice
+      count: 175
+    - package: pkg/tokenservice/cache
+      count: 16
+    - package: pkg/tokenservice/promemit
+      count: 12
+    - package: pkg/tokenservice/secretprobe
+      count: 8
+    - package: pkg/tokensvcproxy
+      count: 2
+    - package: pkg/upload
+      count: 7
+    - package: pkg/upload/archive
+      count: 15
+    - package: pkg/uploadtoken
+      count: 9
+    - package: pkg/webhookdelivery
+      count: 1
+    - package: pkg/workspacepack
+      count: 7
+    - package: pkg/workspaceplan
+      count: 23
+    - package: scripts/refactor
+      count: 4
+    - package: scripts/refactor/rewrite
+      count: 2
+    - package: scripts/specshift
+      count: 157
+    - package: scripts/specshift/anchor
+      count: 5
+    - package: scripts/specshift/gate
+      count: 11
+    - package: scripts/specshift/identifier
+      count: 4
+    - package: scripts/specshift/line
+      count: 2
+    - package: scripts/specshift/name
+      count: 6
+    - package: scripts/specshift/pass
+      count: 3
+    - package: sdks/client/go/lenny
+      count: 89
+    - package: sdks/runtime/go/runtime
+      count: 129
+    - package: tests/integration
+      count: 12
+    - package: tests/testinfra/ackruntime
+      count: 2
+    - package: tests/testinfra/admission
+      count: 4
+    - package: tests/testinfra/assertions
+      count: 9
+    - package: tests/testinfra/audit
+      count: 6
+    - package: tests/testinfra/auditquery
+      count: 7
+    - package: tests/testinfra/bindattempt
+      count: 8
+    - package: tests/testinfra/chaos
+      count: 5
+    - package: tests/testinfra/commitfault
+      count: 5
+    - package: tests/testinfra/containers
+      count: 4
+    - package: tests/testinfra/coordfixture
+      count: 12
+    - package: tests/testinfra/credsecretfake
+      count: 1
+    - package: tests/testinfra/embedded
+      count: 10
+    - package: tests/testinfra/embpg
+      count: 5
+    - package: tests/testinfra/envtest
+      count: 6
+    - package: tests/testinfra/fixtures
+      count: 1
+    - package: tests/testinfra/fixtures/generators
+      count: 3
+    - package: tests/testinfra/fixtures/seed
+      count: 3
+    - package: tests/testinfra/gateway
+      count: 1
+    - package: tests/testinfra/gatewaypki
+      count: 2
+    - package: tests/testinfra/golden
+      count: 4
+    - package: tests/testinfra/goleak
+      count: 2
+    - package: tests/testinfra/heartbeatsilence
+      count: 12
+    - package: tests/testinfra/heartbeatsilence/cmd/heartbeat-silence
+      count: 1
+    - package: tests/testinfra/helm
+      count: 3
+    - package: tests/testinfra/inputwaitrig
+      count: 3
+    - package: tests/testinfra/kind
+      count: 19
+    - package: tests/testinfra/kind/reinstall
+      count: 14
+    - package: tests/testinfra/lifecyclefence
+      count: 86
+    - package: tests/testinfra/lifecycleharness
+      count: 106
+    - package: tests/testinfra/load
+      count: 18
+    - package: tests/testinfra/matrix
+      count: 3
+    - package: tests/testinfra/mcpcreate
+      count: 3
+    - package: tests/testinfra/mcpschema
+      count: 2
+    - package: tests/testinfra/opsprocess
+      count: 12
+    - package: tests/testinfra/orphanfixture
+      count: 8
+    - package: tests/testinfra/ownerprincipal
+      count: 3
+    - package: tests/testinfra/ports
+      count: 3
+    - package: tests/testinfra/randctl
+      count: 6
+    - package: tests/testinfra/responsesstub
+      count: 10
+    - package: tests/testinfra/rotationgate
+      count: 7
+    - package: tests/testinfra/runtimenonce
+      count: 2
+    - package: tests/testinfra/runtimes/conformance-fixtures/always-busy
+      count: 2
+    - package: tests/testinfra/runtimes/conformance-fixtures/bare-ack-while-handling
+      count: 2
+    - package: tests/testinfra/runtimes/conformance-fixtures/sdk-delayed-response
+      count: 2
+    - package: tests/testinfra/sessiondriver
+      count: 23
+    - package: tests/testinfra/stackkey
+      count: 9
+    - package: tests/testinfra/stubs/externalmcp
+      count: 2
+    - package: tests/testinfra/stubs/interceptor
+      count: 3
+    - package: tests/testinfra/stubs/kms
+      count: 21
+    - package: tests/testinfra/stubs/llmprovider
+      count: 6
+    - package: tests/testinfra/stubs/mcpserver
+      count: 7
+    - package: tests/testinfra/stubs/oidc
+      count: 3
+    - package: tests/testinfra/stubs/siem
+      count: 3
+    - package: tests/testinfra/supervisedpod
+      count: 42
+    - package: tests/testinfra/superviseprobe
+      count: 42
+    - package: tests/testinfra/supervisorbuild
+      count: 1
+    - package: tests/testinfra/tcpfault
+      count: 2
+    - package: tests/testinfra/timectl
+      count: 8
+    - package: tests/testinfra/tlsredis
+      count: 1
+    - package: tests/testinfra/tokenservice
+      count: 2
+    - package: tests/testinfra/wait
+      count: 4
+    - package: tests/tier0_static
+      count: 362
+    - package: tests/tier10_conformance
+      count: 137
+    - package: tests/tier11_docs
+      count: 1202
+    - package: tests/tier12_load_cloud
+      count: 13
+    - package: tests/tier1_unit/flagdefaults
+      count: 4
+    - package: tests/tier1_unit/helm
+      count: 2
+    - package: tests/tier1_unit/lifecycle
+      count: 14
+    - package: tests/tier1_unit/rbac
+      count: 4
+    - package: tests/tier1_unit/supervisor
+      count: 5
+    - package: tests/tier2_component/admission
+      count: 20
+    - package: tests/tier2_component/auditintegrity
+      count: 5
+    - package: tests/tier2_component/auditstore
+      count: 54
+    - package: tests/tier2_component/breakers
+      count: 3
+    - package: tests/tier2_component/controllers
+      count: 56
+    - package: tests/tier2_component/coordination
+      count: 22
+    - package: tests/tier2_component/embedded
+      count: 5
+    - package: tests/tier2_component/evalaggregates
+      count: 3
+    - package: tests/tier2_component/eventstream
+      count: 14
+    - package: tests/tier2_component/gateway_subsystems
+      count: 11
+    - package: tests/tier2_component/healthchecks
+      count: 11
+    - package: tests/tier2_component/issuedtokencascade
+      count: 11
+    - package: tests/tier2_component/leasedenial
+      count: 8
+    - package: tests/tier2_component/leases
+      count: 2
+    - package: tests/tier2_component/legalholdescrow
+      count: 3
+    - package: tests/tier2_component/legalholdreconciler
+      count: 2
+    - package: tests/tier2_component/lifecycle
+      count: 9
+    - package: tests/tier2_component/migrations
+      count: 86
+    - package: tests/tier2_component/observability
+      count: 17
+    - package: tests/tier2_component/opsaudit
+      count: 3
+    - package: tests/tier2_component/opsbackup
+      count: 1
+    - package: tests/tier2_component/opsidem
+      count: 2
+    - package: tests/tier2_component/opsrevocation
+      count: 4
+    - package: tests/tier2_component/pgbouncerchart
+      count: 6
+    - package: tests/tier2_component/poolresume
+      count: 2
+    - package: tests/tier2_component/postclaimrelease
+      count: 4
+    - package: tests/tier2_component/preflight
+      count: 5
+    - package: tests/tier2_component/quota
+      count: 3
+    - package: tests/tier2_component/ratelimit
+      count: 1
+    - package: tests/tier2_component/rls
+      count: 37
+    - package: tests/tier2_component/runbooks
+      count: 1
+    - package: tests/tier2_component/runtimecapoverride
+      count: 2
+    - package: tests/tier2_component/secretprobe
+      count: 2
+    - package: tests/tier2_component/securitycaches
+      count: 3
+    - package: tests/tier2_component/slotrelease
+      count: 25
+    - package: tests/tier2_component/storagequota
+      count: 1
+    - package: tests/tier2_component/stores
+      count: 320
+    - package: tests/tier2_component/tenantsalt
+      count: 4
+    - package: tests/tier2_component/tokensigning
+      count: 10
+    - package: tests/tier2_component/translators
+      count: 43
+    - package: tests/tier2_component/treebudget
+      count: 2
+    - package: tests/tier2_component/warmlayout
+      count: 6
+    - package: tests/tier2_component/watchdog
+      count: 9
+    - package: tests/tier3_contract/adapter_artifact_scope
+      count: 9
+    - package: tests/tier3_contract/adapter_bind_attempt
+      count: 72
+    - package: tests/tier3_contract/adapter_checkpointbarrier
+      count: 2
+    - package: tests/tier3_contract/adapter_chunk_encoding
+      count: 4
+    - package: tests/tier3_contract/adapter_events
+      count: 3
+    - package: tests/tier3_contract/adapter_extendcredlease
+      count: 9
+    - package: tests/tier3_contract/adapter_frame_resolution
+      count: 6
+    - package: tests/tier3_contract/adapter_generation_fence
+      count: 12
+    - package: tests/tier3_contract/adapter_jsonl
+      count: 38
+    - package: tests/tier3_contract/adapter_negotiate
+      count: 6
+    - package: tests/tier3_contract/adapter_observedlevel
+      count: 4
+    - package: tests/tier3_contract/adapter_reportusage
+      count: 8
+    - package: tests/tier3_contract/adapter_session_address
+      count: 8
+    - package: tests/tier3_contract/adapter_session_seal
+      count: 2
+    - package: tests/tier3_contract/adapter_supervise
+      count: 12
+    - package: tests/tier3_contract/adapter_usage_wired
+      count: 10
+    - package: tests/tier3_contract/adapter_workspace_restore
+      count: 11
+    - package: tests/tier3_contract/admin_conflict_codes
+      count: 11
+    - package: tests/tier3_contract/admin_credential_pool_codes
+      count: 6
+    - package: tests/tier3_contract/admin_extension_denial
+      count: 9
+    - package: tests/tier3_contract/admin_impersonation
+      count: 2
+    - package: tests/tier3_contract/admin_tenant_suspend
+      count: 5
+    - package: tests/tier3_contract/admin_user_invalidate
+      count: 6
+    - package: tests/tier3_contract/admission_pod_security
+      count: 2
+    - package: tests/tier3_contract/checkpoint_stream
+      count: 24
+    - package: tests/tier3_contract/cloudevents
+      count: 16
+    - package: tests/tier3_contract/compose_mode
+      count: 7
+    - package: tests/tier3_contract/crd_schema
+      count: 12
+    - package: tests/tier3_contract/embedded_gatewaycallback
+      count: 18
+    - package: tests/tier3_contract/fullrevoke_release
+      count: 1
+    - package: tests/tier3_contract/gateway_ops
+      count: 21
+    - package: tests/tier3_contract/gatewaycontrol_scrub
+      count: 25
+    - package: tests/tier3_contract/holderforward
+      count: 8
+    - package: tests/tier3_contract/interceptor_immutable_envelope
+      count: 4
+    - package: tests/tier3_contract/interceptor_proto
+      count: 6
+    - package: tests/tier3_contract/lease_elicit_dismissal
+      count: 3
+    - package: tests/tier3_contract/lifecycle_tokens
+      count: 6
+    - package: tests/tier3_contract/mcp_runtimes
+      count: 4
+    - package: tests/tier3_contract/mcp_tool_approval_address
+      count: 2
+    - package: tests/tier3_contract/multiprotocol_journey
+      count: 4
+    - package: tests/tier3_contract/oauth_token
+      count: 33
+    - package: tests/tier3_contract/ocsf_audit
+      count: 29
+    - package: tests/tier3_contract/ops_endpoints
+      count: 114
+    - package: tests/tier3_contract/playground
+      count: 16
+    - package: tests/tier3_contract/rest_auth
+      count: 20
+    - package: tests/tier3_contract/rest_circuitbreaker
+      count: 6
+    - package: tests/tier3_contract/rest_idempotency
+      count: 6
+    - package: tests/tier3_contract/rest_mcp_consistency
+      count: 76
+    - package: tests/tier3_contract/rest_openai_chat
+      count: 4
+    - package: tests/tier3_contract/rest_openai_responses
+      count: 20
+    - package: tests/tier3_contract/rest_pools
+      count: 21
+    - package: tests/tier3_contract/rest_sessions
+      count: 109
+    - package: tests/tier3_contract/runtimeops_emitted
+      count: 3
+    - package: tests/tier3_contract/sdks
+      count: 121
+    - package: tests/tier3_contract/sdks/harness
+      count: 2
+    - package: tests/tier3_contract/tokenservice_release
+      count: 7
+    - package: tests/tier3_contract/tokenservice_secret_read
+      count: 10
+    - package: tests/tier3_contract/vcs_credential_read
+      count: 6
+    - package: tests/tier3_contract/workspaceplan
+      count: 15
+    - package: tests/tier4_integration
+      count: 719
+    - package: tests/tier5_e2e_kind
+      count: 236
+    - package: tests/tier6_e2e_cloud
+      count: 77
+    - package: tests/tier7a_load_local
+      count: 488
+    - package: tests/tier7a_load_local/directusage_teardown
+      count: 2
+    - package: tests/tier7a_load_local/scenarios/extension_episode_fanout
+      count: 2
+    - package: tests/tier7a_load_local/scenarios/low_resource_startup
+      count: 2
+    - package: tests/tier7a_load_local/scenarios/oversized_request_rejection_recovery
+      count: 1
+    - package: tests/tier7a_load_local/scenarios/singleshot_admission_ordering
+      count: 7
+    - package: tests/tier7a_load_local/scenarios/vm_restart_recycle_disposition
+      count: 4
+    - package: tests/tier7a_load_local/toolapproval_xreplica
+      count: 1
+    - package: tests/tier7a_load_local/usagemeter_contention
+      count: 4
+    - package: tests/tier7b_load_kind
+      count: 24
+    - package: tests/tier8_chaos
+      count: 340
+    - package: tests/tier9_security
+      count: 547
+    - package: tests/tier9_security/pentest
+      count: 6

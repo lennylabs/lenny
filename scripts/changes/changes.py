@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: MIT
-"""Commands over the changes/ records: the `change` and `board` helpers.
+"""Commands over the changes/ records: the `change` and `board` helpers, and the
+generated section of docs/about/status.md.
 
 Run from the repository root:
   python3 scripts/changes/changes.py new <slug> [<title>]
@@ -10,6 +11,7 @@ Run from the repository root:
   python3 scripts/changes/changes.py check
   python3 scripts/changes/changes.py board [--check]
   python3 scripts/changes/changes.py links [--baseline <file>] [--write-baseline <file>]
+  python3 scripts/changes/changes.py status-page [--check]
 
 changes/README.md defines the records these commands read and write. Every
 command takes --root <dir> to run against another tree, which the tests use.
@@ -52,6 +54,24 @@ class Tree:
 
     def path(self, *p):
         return os.path.join(self.changes_dir, *p)
+
+    def checked(self, p):
+        """Return p when a write to it stays inside the repository: p is not
+        a symbolic link, and its parent directory resolves inside the root.
+        Every write and move of the commands goes through this check, so a
+        link planted in the tree cannot redirect a write outside it."""
+        shown = os.path.relpath(p, self.root)
+        if os.path.islink(p):
+            raise Error(f'{shown} is a symbolic link; refusing to write through it')
+        root = os.path.realpath(self.root)
+        parent = os.path.realpath(os.path.dirname(os.path.abspath(p)))
+        if parent != root and not parent.startswith(root + os.sep):
+            raise Error(f'the directory of {shown} resolves to {parent}, outside the repository; refusing to write')
+        return p
+
+    def write(self, p, text):
+        """Write text to p after the check of `checked`."""
+        write(self.checked(p), text)
 
     def change_dirs(self, archived=True):
         out = []
@@ -265,6 +285,21 @@ def warnings(steps):
 
 # ---------------------------------------------------------------- board
 
+def scalar(lines, i, indent):
+    """The value of the key on lines[i]: an inline value, or a folded (`>`, `>-`)
+    or literal (`|`, `|-`) block whose lines are indented deeper than `indent`.
+    Returns the value and the index of the next line to read."""
+    v = lines[i].split(':', 1)[1].strip()
+    if v not in ('>', '>-', '|', '|-'):
+        return v.strip('"'), i + 1
+    j, body = i + 1, []
+    while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > indent):
+        body.append(lines[j].strip())
+        j += 1
+    sep = ' ' if v.startswith('>') else '\n'
+    return sep.join(x for x in body if x), j
+
+
 def programs(tree):
     pd = tree.path('programs')
     out = []
@@ -277,25 +312,35 @@ def programs(tree):
         if not text.startswith('---'):
             continue
         fm = text.split('---')[1]
-        ms, cur = [], None
-        for line in fm.split('\n'):
+        ms, cur, goal = [], None, ''
+        lines = fm.split('\n')
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith('goal:'):
+                goal, i = scalar(lines, i, 0)
+                continue
             m = re.match(r'^  - id: (.*)$', line)
             if m:
-                cur = {'id': m.group(1).strip(), 'title': '', 'refs': []}
+                cur = {'id': m.group(1).strip(), 'title': '', 'refs': [], 'exit': ''}
                 ms.append(cur)
+                i += 1
                 continue
-            if cur is None:
-                continue
-            m = re.match(r'^    title: (.*)$', line)
-            if m:
-                cur['title'] = m.group(1).strip()
-            m = re.match(r'^    steps: \[(.*)\]$', line)
-            if m:
-                cur['refs'] = [x.strip().strip('"') for x in m.group(1).split(',') if x.strip()]
+            if cur is not None:
+                m = re.match(r'^    title: (.*)$', line)
+                if m:
+                    cur['title'] = m.group(1).strip()
+                m = re.match(r'^    steps: \[(.*)\]$', line)
+                if m:
+                    cur['refs'] = [x.strip().strip('"') for x in m.group(1).split(',') if x.strip()]
+                if line.startswith('    exit:'):
+                    cur['exit'], i = scalar(lines, i, 4)
+                    continue
+            i += 1
         cm = re.search(r'^current: (.*)$', fm, re.M)
         pm = re.search(r'^program: (.*)$', fm, re.M)
         out.append({'name': pm.group(1).strip() if pm else fn[:-3], 'file': fn, 'milestones': ms,
-                    'current': cm.group(1).strip() if cm else None})
+                    'current': cm.group(1).strip() if cm else None, 'goal': goal})
     return out
 
 
@@ -383,6 +428,116 @@ def render_board(tree, changes, steps):
     return '\n'.join(out)
 
 
+# ---------------------------------------------------------------- status page
+
+STATUS_PAGE = os.path.join('docs', 'about', 'status.md')
+STATUS_BEGIN = '<!-- generated:status -->'
+STATUS_END = '<!-- /generated:status -->'
+REPO_URL = 'https://github.com/lennylabs/lenny/blob/main/'
+# A parenthesized list of change numbers or step identifiers, which readers of
+# the documentation do not see.
+CHANGE_REFS = re.compile(r'\s*\((?:\d{4}(?:\.S\d+)?(?:,\s*|\s+and\s+)?)+\)')
+CHANGE_NUMBER = re.compile(r'\b(\d{4})(\.S\d+)?\b')
+
+
+def for_readers(text, changes):
+    """Program text as a reader of the documentation sees it: a parenthesized
+    list of change numbers is dropped, and a change number or a step identifier
+    left in a sentence becomes the change's title. A four-digit number that names
+    no change, such as a year, stays."""
+    text = CHANGE_REFS.sub('', text)
+
+    def title(m):
+        c = changes.get(m.group(1))
+        if not c:
+            return m.group(0)
+        name = f'the "{c["title"]}" change'
+        return f'a step of {name}' if m.group(2) else name
+    return CHANGE_NUMBER.sub(title, text)
+
+
+def milestone_steps(m, changes, steps, placed):
+    """The steps a milestone's references resolve to, each placed in the first
+    milestone that names it, and whether some reference names no step yet."""
+    sids, unresolved = [], False
+    for r in m['refs']:
+        if r in steps:
+            sids.append(r)
+        elif re.fullmatch(r'\d{4}', r) and r in changes and changes[r]['steps']:
+            sids += changes[r]['steps']
+        else:
+            unresolved = True
+    sids = [s for s in dict.fromkeys(sids) if s not in placed]
+    placed.update(sids)
+    return sids, unresolved
+
+
+def render_status(tree, changes, steps):
+    """The generated section of docs/about/status.md: each program's goal and
+    its milestones with their exit criteria and the share of steps landed."""
+    out = [STATUS_BEGIN,
+           '<!-- Generated by `python3 scripts/changes/changes.py status-page` from the programs under '
+           'changes/programs/ and the step entries of each change. Edit the programs, not this section. -->', '']
+    for prog in programs(tree):
+        out += [f'## The {prog["name"]} program', '']
+        if prog['goal']:
+            out += [f'Goal: {for_readers(prog["goal"], changes)}', '']
+        out += ['The work toward this goal is planned as milestones. A milestone is done when its exit '
+                'criteria hold, and its work lands in steps that are each merged on their own. The '
+                f'[program]({REPO_URL}changes/programs/{prog["file"]}) states the plan, and the '
+                f'[board]({REPO_URL}changes/BOARD.md) lists the steps that are ready to start, building, and blocked.', '',
+                '| Milestone | Steps landed | State |', '|:----------|:-------------|:------|']
+        placed, rows, details = set(), [], []
+        for m in prog['milestones']:
+            sids, unresolved = milestone_steps(m, changes, steps, placed)
+            counted = [s for s in sids if steps[s]['status'] != 'Cancelled']
+            landed = sum(1 for s in counted if steps[s]['status'] == 'Landed')
+            building = sum(1 for s in counted if steps[s]['status'] == 'Building')
+            if counted and landed == len(counted) and not unresolved:
+                state = 'Done'
+            elif landed or building:
+                state = 'In progress'
+            else:
+                state = 'Not started'
+            heading = for_readers(m['title'], changes)
+            title = heading + (' (current)' if m['id'] == prog['current'] else '')
+            share = f'{landed} of {len(counted)}' if counted else 'None assigned yet'
+            rows.append(f'| {title} | {share} | {state} |')
+            details += [f'### {heading}', '']
+            if m['exit']:
+                details += [f'Exit criteria: {for_readers(m["exit"], changes)}', '']
+            if not counted:
+                line = 'No steps are assigned to this milestone yet.'
+            elif landed == len(counted):
+                line = f'All {len(counted)} of its steps have landed.' if len(counted) > 1 else 'Its one step has landed.'
+            elif len(counted) == 1:
+                line = 'Its one step is being built.' if building else 'Its one step has not started.'
+            else:
+                line = (f'{landed} of its {len(counted)} steps have landed, and {building} '
+                        f'{"is" if building == 1 else "are"} being built.')
+            if unresolved and counted:
+                line += ' Part of its work is not yet divided into steps, so the count covers only the steps listed.'
+            details += [line, '']
+        out += rows + [''] + details
+    while out and out[-1] == '':
+        out.pop()
+    out += ['', STATUS_END]
+    return '\n'.join(out)
+
+
+def status_page(tree, changes, steps):
+    """The status page with its generated section replaced. The text outside
+    the markers is written by hand and kept as it is."""
+    path = os.path.join(tree.root, STATUS_PAGE)
+    if not os.path.exists(path):
+        raise Error(f'{STATUS_PAGE} does not exist')
+    text = read(path)
+    b, e = text.find(STATUS_BEGIN), text.find(STATUS_END)
+    if b < 0 or e < b:
+        raise Error(f'{STATUS_PAGE} has no {STATUS_BEGIN} ... {STATUS_END} section to generate')
+    return text[:b] + render_status(tree, changes, steps) + text[e + len(STATUS_END):]
+
+
 # ---------------------------------------------------------------- edits
 
 TEMPLATE = {
@@ -457,11 +612,11 @@ def cmd_new(tree, slug_, title, today):
     if not re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', slug_):
         raise Error(f'slug {slug_!r} is not lowercase words joined by hyphens')
     number = next_number(tree)
-    d = tree.path(f'{number}-{slug_}')
+    d = tree.checked(tree.path(f'{number}-{slug_}'))
     os.makedirs(d)
     title = title or slug_.replace('-', ' ').capitalize()
     for fn, t in TEMPLATE.items():
-        write(os.path.join(d, fn), t.format(title=title, number=number, date=today))
+        tree.write(os.path.join(d, fn), t.format(title=title, number=number, date=today))
     return f'{number}-{slug_}'
 
 
@@ -479,7 +634,7 @@ def cmd_status(tree, number, status, today):
     text = read(path)
     m = STATUS_LINE.search(text)
     text = text[:m.start()] + f'Status: `{status}`, revision {m.group(2)}, {today}.' + text[m.end():]
-    write(path, text)
+    tree.write(path, text)
 
 
 def cmd_step(tree, sid, status):
@@ -491,7 +646,7 @@ def cmd_step(tree, sid, status):
     s = steps[sid]
     lines = read(s['file']).split('\n')
     lines[s['status_line']] = f'- status: {status}'
-    write(s['file'], '\n'.join(lines))
+    tree.write(s['file'], '\n'.join(lines))
     c = changes[s['change']]
     states = [status if x == sid else steps[x]['status'] for x in c['steps']]
     p = status_problem(c['status'], states)
@@ -597,11 +752,13 @@ def move_folder(tree, old_rel, new_rel):
                 rel += '/'
             return f'{m.group(1)}{rel}{sep}{frag}{m.group(3)}'
         return fix
+    tree.checked(old_abs)
+    tree.checked(new_abs)
     for f in staying:
         text = read(f)
         out = rewrite_links(text, fixer(f, f))
         if out != text:
-            write(f, out)
+            tree.write(f, out)
     os.makedirs(os.path.dirname(new_abs), exist_ok=True)
     moved = subprocess.run(['git', 'mv', old_abs, new_abs], cwd=tree.root, capture_output=True)
     if moved.returncode:
@@ -611,7 +768,7 @@ def move_folder(tree, old_rel, new_rel):
         text = read(nf)
         out = rewrite_links(text, fixer(f, nf))
         if out != text:
-            write(nf, out)
+            tree.write(nf, out)
 
 
 def cmd_archive(tree, number, today):
@@ -642,6 +799,7 @@ def main(argv=None):
     sub.add_parser('check')
     p = sub.add_parser('board'); p.add_argument('--check', action='store_true')
     p = sub.add_parser('links'); p.add_argument('--baseline'); p.add_argument('--write-baseline')
+    p = sub.add_parser('status-page'); p.add_argument('--check', action='store_true')
     a = ap.parse_args(argv)
     tree = Tree(a.root)
     try:
@@ -674,7 +832,17 @@ def main(argv=None):
                     print('changes/BOARD.md is out of date; run `python3 scripts/changes/changes.py board`')
                     return 1
                 return 0
-            write(target, text)
+            tree.write(target, text)
+        elif a.cmd == 'status-page':
+            changes, steps, errors = load(tree)
+            text = status_page(tree, changes, steps)
+            target = os.path.join(tree.root, STATUS_PAGE)
+            if a.check:
+                if read(target) != text:
+                    print(f'{STATUS_PAGE} is out of date; run `python3 scripts/changes/changes.py status-page`')
+                    return 1
+                return 0
+            tree.write(target, text)
         elif a.cmd == 'links':
             def norm(f, t):
                 return re.sub(r'/(change|decisions|steps|review-history)\.md$', '/', f), t

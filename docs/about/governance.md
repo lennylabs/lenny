@@ -158,15 +158,7 @@ Lenny uses the **Developer Certificate of Origin (DCO)**: contributors certify a
 
 ### Milestone-gated development
 
-Lenny follows a milestone-gated development process where each milestone has defined deliverables and exit criteria. The full plan lives in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) and enumerates Phase 0 through Phase 17b. The sequence is directional — ordering and timing will shift as implementation surfaces new constraints. The governance-relevant gates map to specific spec/18 phases:
-
-| Milestone | Spec/18 phase | Key deliverables |
-|:----------|:--------------|:-----------------|
-| **Foundation** | Phase 0 | License (ADR-008), ADR-007 verification, repository setup, branch-protection and DCO policy, CI pipeline. |
-| **First working slice** | Phase 2 | `make run` local dev mode, echo runtime, the `lenny runtime validate` conformance suite, runtime-author SDKs (Go, Python, TypeScript), `CONTRIBUTING.md`, `GOVERNANCE.md` draft, startup-latency benchmark. |
-| **Pre-hardening baselines** | Phase 13.5 | Tier 7 cloud load scenarios, Postgres write-pattern benchmark, HPA/KEDA pipeline, Tier 1→2 and Tier 2→3 promotion-gate validation. |
-| **SLO validation** | Phase 14.5 | Full security hardening active (Phase 14: pod-security webhook, release-time cosign signing, JWT signing-key rotation, NetworkPolicy parity audits), Phase 13.5 scenarios re-run under hardening. |
-| **Community launch** | Phase 17a | Reference runtime catalog (`claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`), `lenny-ctl install` wizard, `kubectl-lenny` krew plugin, embedded mode (`lenny up`), web playground, `GOVERNANCE.md` finalized, BDfN → steering committee transition. |
+Lenny is developed in milestones. Each milestone has exit criteria, and its work lands in steps that are each merged on their own. The [v1 program](https://github.com/lennylabs/lenny/blob/main/changes/programs/v1.md) states the milestones toward the first release, their order, and their exit criteria. The [board](https://github.com/lennylabs/lenny/blob/main/changes/BOARD.md) lists the steps that are ready to start, building, and blocked, and the [Implementation Status](status.html) page shows how much of each milestone has landed. Milestones and their order shift as implementation surfaces new constraints.
 
 ### Release cadence
 
@@ -195,7 +187,7 @@ During early development, releases follow an as-needed cadence driven by milesto
 | `CODE_OF_CONDUCT.md` | Repository root | Published. Contributor Covenant v2.1. |
 | `SECURITY.md` | Repository root | Published. Coordinated disclosure policy. |
 | `GOVERNANCE.md` | Repository root | Published. Finalized alongside steering-committee transition. |
-| `ROADMAP.md` | Repository root | Published. Short-horizon priorities; full sequence lives in `spec/18_build-sequence.md`. |
+| v1 program | `changes/programs/v1.md` | Published. The milestones toward the first release and their exit criteria. |
 | `CHANGELOG.md` | Repository root | Starts at first tagged release. |
 | ADRs | `docs/adr/` | Ongoing. New decisions recorded as they are made. |
 

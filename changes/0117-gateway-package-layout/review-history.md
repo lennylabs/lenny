@@ -1,0 +1,3 @@
+# Review history: 0117 Gateway package layout
+
+- 2026-11-16, revision 1. Created by hand under the number the v1 program reserves for milestone M2, and framed from TAXONOMY's "Gateway seams" and item 9 of its migration-spike items, the migration spike's code findings, the gateway rows of the map, 0115's placeholder pages for the gateway, §4.1 "Gateway Internal Subsystems", changes 0126, 0133, 0138, and 0153, and measurements of `pkg/gateway`, `cmd/lenny-gateway`, and their importers at `b1248f85b` ([evidence/](evidence/README.md)). Problem, scope, terms, the package tree mapped to the component pages, the seam interface, the layout gate, the moves and their order, the open decisions, and the steps.

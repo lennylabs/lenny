@@ -22,6 +22,8 @@ nav_order: 3
 
 Lenny is in the **design phase**. The [technical specification](https://github.com/lennylabs/lenny/tree/main/spec) is complete and drives implementation under a spec- and test-driven workflow. The public API surface described throughout these docs reflects the spec; the [Implementation Status](status) page tracks what's wired up today.
 
+The specification is organized by capability, component, and interface. Its [root map](https://github.com/lennylabs/lenny/blob/main/spec/README.md) lists the areas and reading paths by task, and its [conventions](https://github.com/lennylabs/lenny/blob/main/spec/conventions.md) state the page types, where each kind of fact belongs, the identifiers pages use, and the registry of page codes.
+
 ### Where to plug in right now
 
 - **Issues and discussions are open.** Questions, disagreements, concrete suggestions, and use-case reports are all welcome. File an [issue](https://github.com/lennylabs/lenny/issues) or start a [discussion](https://github.com/lennylabs/lenny/discussions).
@@ -31,7 +33,7 @@ Lenny is in the **design phase**. The [technical specification](https://github.c
 
 ### Code pull requests
 
-Large code contributions against core platform components are not the best fit yet — there is no merged codebase for PRs to land against, and the early build sequence is tightly coupled. Small fixes (typos, broken links, documentation improvements) are welcome anytime. Code PRs against the core open up once the first working slice — Phase 2 in [`spec/18_build-sequence.md`](https://github.com/lennylabs/lenny/blob/main/spec/18_build-sequence.md) (`make run` local dev mode plus the echo runtime) — lands. Until then, the early phases (Phase 0 through Phase 2) are maintainer-driven; unsolicited PRs against core platform components will not be reviewed or merged. This section will be updated the day that changes.
+Large code contributions against core platform components are not the best fit yet — there is no merged codebase for PRs to land against, and the early build sequence is tightly coupled. Small fixes (typos, broken links, documentation improvements) are welcome anytime. Code PRs against the core open up once the first working slice (`make run` local dev mode plus the echo runtime) lands. The [Implementation Status](status.html) page states the plan toward the first release. Until the first working slice lands, work on the core is maintainer-driven; unsolicited PRs against core platform components will not be reviewed or merged. This section will be updated the day that changes.
 
 ---
 
