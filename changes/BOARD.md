@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Waiting on decisions | 42 |
+| Ready | 2 |
+| Waiting on decisions | 40 |
 | Blocked | 135 |
 | Landed | 5 |
 | Cancelled | 1 |
@@ -17,8 +18,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0114.S1](0114-helpers/steps.md#0114s1-move-the-step-checker-board-generator-and-link-rewriter-into-scriptschanges-and-add-the-change-commands) | Move the step checker, board generator, and link rewriter into scripts/changes, and add the change commands | Waiting on decisions | 0114 is `Draft` |
-| [0114.S3](0114-helpers/steps.md#0114s3-the-review-workflow) | The review workflow | Waiting on decisions | 0114 is `Draft` |
+| [0114.S1](0114-helpers/steps.md#0114s1-move-the-step-checker-board-generator-and-link-rewriter-into-scriptschanges-and-add-the-change-commands) | Move the step checker, board generator, and link rewriter into scripts/changes, and add the change commands | Ready |  |
+| [0114.S3](0114-helpers/steps.md#0114s3-the-review-skill) | The review skill | Ready |  |
 | [0114.S2](0114-helpers/steps.md#0114s2-generic-skills) | Generic skills | Blocked | 0114.S1 |
 | [0114.S4](0114-helpers/steps.md#0114s4-the-build-skill) | The build skill | Blocked | 0114.S1 |
 | [0114.S5](0114-helpers/steps.md#0114s5-retire-the-proposal-pipeline-and-rewrite-the-governing-rule) | Retire the proposal pipeline and rewrite the governing rule | Blocked | 0114.S2, 0114.S3, 0114.S4 |
@@ -224,7 +225,7 @@ Not yet resolved to steps: 0117.
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
 | [0113](0113-records-and-workflow/change.md) | Records and workflow | `Implemented` | 5 of 5 | 0 |
-| [0114](0114-helpers/change.md) | Helpers | `Draft` | 0 of 5 | 6 |
+| [0114](0114-helpers/change.md) | Helpers | `Decided` | 0 of 5 | 0 |
 | [0115](0115-spec-structure/change.md) | Specification structure | `Draft` | 0 of 0 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 0 |
