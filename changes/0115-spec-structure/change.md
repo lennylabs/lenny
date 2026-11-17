@@ -4,7 +4,7 @@ Status: `In progress`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md)
 
 ## Problem
 
-The specification is about 493,000 words in 29 files, numbered by section, and agents struggle to piece facts together across it. One fact is often stated in several sections, so a change that edits one leaves the others stale, and a reader cannot tell which statement governs. Code cites it 18,912 times by section number, so any reorganization breaks the citations, and the registers keyed by section number or path (`tests/spec-map.json` is 687,000 lines) turn every move into hand edits.
+The specification is about 493,000 words in 29 files, numbered by section, and agents struggle to piece facts together across it. One fact is often stated in several sections, so a change that edits one leaves the others stale, and a reader cannot tell which statement governs. Code cites it 18,912 times by section number, so any reorganization breaks the citations, and the registers keyed by section number or path (`tests/spec-map.json` alone is 8,618 lines) turn every move into hand edits.
 
 The owner settled a structure organized by capability on 2026-11-16, after a spike that mapped the whole specification to 277 pages and migrated one area and its code ([evidence/spike/README.md](evidence/spike/README.md), [evidence/spike-migration/README.md](evidence/spike-migration/README.md)). [TAXONOMY.md](evidence/spike/TAXONOMY.md) version 2 holds the rules and the owner's decisions on them. The migration runs area by area at the target state (option C of [WORKFLOW.md](evidence/spike/WORKFLOW.md), "Migration order"), and it needs the structure and its tooling first.
 
