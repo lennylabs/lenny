@@ -9,3 +9,4 @@
   1. **What the agent may read.** Options: (a) only `docs/` and what a persona would see; (b) `docs/` and `spec/`. Recommendation: (a), because a journey then tests the documentation as a reader meets it, and a gap it finds is a documentation gap.
   2. **What a failing journey blocks.** Options: (a) a failing journey blocks the area's milestone exit; (b) it opens an issue and blocks nothing. Recommendation: (b) during the pilot and (a) once the pilot shows the verdicts are stable.
   3. **Budget per run.** The pilot measures cost per journey. Options: (a) set the budget from the pilot's measurements; (b) fix a budget now. Recommendation: (a).
+- 2026-11-17, revision 2. The owner settled how the journey agent runs, the spending cap, the cluster, the runtime, the pilot journeys, and the records (decisions 4 to 9).
