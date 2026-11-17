@@ -22,6 +22,11 @@ import (
 // it starts; an operator may set it to place fixtures elsewhere.
 const EnvRoot = "LENNY_TEST_TMPDIR"
 
+// EnvShared names a directory the Docker daemon resolves at the same
+// path the test process sees, for fixtures a test bind-mounts into a
+// container. The merge gate sets it; see SharedDir.
+const EnvShared = "LENNY_TEST_SHARED_TMPDIR"
+
 // HomeDirName is the directory under the home directory that holds
 // fixtures when no harness root is set and TMPDIR is under /tmp. The name
 // is short so a Unix socket path under it stays below the 108-byte limit.
@@ -73,6 +78,29 @@ func MkdirTemp(pattern string) (string, error) {
 		return "", err
 	}
 	return os.MkdirTemp(r, pattern)
+}
+
+// SharedDir creates a directory that the Docker daemon can bind-mount
+// into a container, and removes it at t's cleanup. Under
+// $LENNY_TEST_SHARED_TMPDIR, which the merge gate sets to a host
+// directory mounted at the same path inside its container, it creates a
+// directory named by pattern there. Otherwise it returns t.TempDir(),
+// which on a host is a path the daemon resolves. A fixture that only
+// the test process reads stays under Root: the shared directory lives
+// on the host's file share, whose permissions, renames, and directory
+// listings do not behave as a local file system's do under Docker
+// Desktop.
+func SharedDir(t testing.TB, pattern string) (string, error) {
+	root := os.Getenv(EnvShared)
+	if root == "" {
+		return t.TempDir(), nil
+	}
+	d, err := os.MkdirTemp(root, pattern)
+	if err != nil {
+		return "", err
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d, nil
 }
 
 // ShortDir creates a directory for a Unix socket under $HOME/.lenny-tmp,

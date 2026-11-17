@@ -29,7 +29,7 @@ func stubGateRunner() gateRunner {
 	}
 	return gateRunner{
 		static: func() (string, string, *tierResult) { return verdictstatus.Pass, "", &tierResult{Total: 2, Passed: 2} },
-		plan: func(string, int) (resolvedSelector, error) {
+		plan: func(string, int, bool) (resolvedSelector, error) {
 			return resolvedSelector{tiers: []tierPlan{
 				{name: tierStatic},
 				{name: tierUnit, pkgs: []string{"./cmd/lenny-test"}},
@@ -143,7 +143,9 @@ func TestGateLeavesUnselectedTiersOutOfTheRun(t *testing.T) {
 
 func TestGatePlanErrorFailsTheGate(t *testing.T) {
 	g := stubGateRunner()
-	g.plan = func(string, int) (resolvedSelector, error) { return resolvedSelector{}, errors.New("no merge base") }
+	g.plan = func(string, int, bool) (resolvedSelector, error) {
+		return resolvedSelector{}, errors.New("no merge base")
+	}
 	v := runStubGate(g)
 	if v.Verdict != verdictstatus.VerdictFail {
 		t.Fatalf("verdict %q; want FAIL when the changed tiers cannot be resolved", v.Verdict)
@@ -219,13 +221,14 @@ func TestGateDockerRunArgsMountTheTreeTheGitDirAndTheCaches(t *testing.T) {
 		"-w /work/lenny/.claude/worktrees/a",
 		"-v /work/lenny/.git:/work/lenny/.git:ro",
 		"-v " + gateModVolume + ":/go/pkg/mod",
-		"-v " + gateBuildVolume + ":/root/.cache/go-build",
+		"-v " + gateBuildVolume + ":" + gateGoCache,
 		"-e " + gateEnvImage + "=lenny-gate:0123456789ab",
 		"-e " + gateEnvImageID + "=sha256:feed",
 		"-v /var/run/docker.sock:/var/run/docker.sock",
-		"TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal",
+		"--network host",
+		"TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		"sha256:feed sh -c",
-		"go mod verify\ngo build",
+		"go mod verify\nmkdir -p \"$HOME/bin\"\ngo build",
 		"gate --here",
 	} {
 		if !strings.Contains(args, want) {
@@ -243,7 +246,7 @@ func TestGateDockerRunArgsOmitTheSocketAndAGitDirInsideTheTree(t *testing.T) {
 	if strings.Contains(args, ".git:/work/lenny/.git") {
 		t.Errorf("mounted a git directory the tree mount already carries:\n%s", args)
 	}
-	if strings.Contains(args, "docker.sock") || strings.Contains(args, "TESTCONTAINERS") {
+	if strings.Contains(args, ":"+gateContainerSocket+" ") || strings.Contains(args, "TESTCONTAINERS") {
 		t.Errorf("mounted a Docker socket the run was not given:\n%s", args)
 	}
 	if strings.Contains(args, gateEnvImageID) || !strings.Contains(args, "lenny-gate:x sh -c") {
@@ -251,14 +254,18 @@ func TestGateDockerRunArgsOmitTheSocketAndAGitDirInsideTheTree(t *testing.T) {
 	}
 }
 
-// TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath checks that TMPDIR
-// inside the container is a host directory mounted at its own path, so a
-// temporary directory a test bind-mounts into a testcontainer resolves
-// on the host daemon. go build keeps its work directories off the mount.
-func TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath(t *testing.T) {
+// TestGateDockerRunArgsSplitTheFixtureRootFromTheSharedDirectory checks
+// where the container's fixtures live. TMPDIR and the fixture root are a
+// path on the container's own file system, off every mount, so tests get
+// local file-system behavior on any host. The shared fixture directory is
+// a host directory mounted at its own path and named by
+// LENNY_TEST_SHARED_TMPDIR, so a fixture a test bind-mounts into a
+// testcontainer resolves on the host daemon. go build keeps its work
+// directories off the mounts.
+func TestGateDockerRunArgsSplitTheFixtureRootFromTheSharedDirectory(t *testing.T) {
 	root := "/Users/alice/lenny"
-	want := "/Users/alice/Library/Caches/lenny-test/gate-tmp/0123456789ab"
-	argv := gateDockerRunArgs(gateHost{root: root, image: "lenny-gate:x", tmpDir: want})
+	shared := "/tmp/lenny-gate-01234567"
+	argv := gateDockerRunArgs(gateHost{root: root, image: "lenny-gate:x", tmpDir: shared})
 	env := map[string]string{}
 	mounts := map[string]bool{}
 	for i := 0; i+1 < len(argv); i++ {
@@ -270,21 +277,26 @@ func TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath(t *testing.T) {
 			mounts[argv[i+1]] = true
 		}
 	}
-	if env["TMPDIR"] != want || env[testtmp.EnvRoot] != want {
-		t.Errorf("TMPDIR %q and %s %q; want both %q", env["TMPDIR"], testtmp.EnvRoot, env[testtmp.EnvRoot], want)
+	if env["TMPDIR"] != gateFixtureRoot || env[testtmp.EnvRoot] != gateFixtureRoot {
+		t.Errorf("TMPDIR %q and %s %q; want both %q", env["TMPDIR"], testtmp.EnvRoot, env[testtmp.EnvRoot], gateFixtureRoot)
 	}
-	if !mounts[want+":"+want] {
-		t.Errorf("the fixture root %q is not mounted at its host path: %v", want, mounts)
+	for m := range mounts {
+		if dst := m[strings.Index(m, ":")+1:]; pathWithin(gateFixtureRoot, strings.TrimSuffix(dst, ":ro")) {
+			t.Errorf("the fixture root %q lies on the mount %q rather than the container's own file system", gateFixtureRoot, m)
+		}
 	}
-	if g := env["GOTMPDIR"]; g == "" || pathWithin(g, root) || pathWithin(g, want) || testtmp.UnderTmp(g) {
+	if env[testtmp.EnvShared] != shared || !mounts[shared+":"+shared] {
+		t.Errorf("%s %q, mounts %v; want %q mounted at its host path", testtmp.EnvShared, env[testtmp.EnvShared], mounts, shared)
+	}
+	if g := env["GOTMPDIR"]; g == "" || pathWithin(g, root) || pathWithin(g, shared) || testtmp.UnderTmp(g) {
 		t.Errorf("GOTMPDIR %q; want a container path off the mounts and off /tmp", g)
 	}
-	if !strings.Contains(strings.Join(argv, " "), `find "$LENNY_TEST_TMPDIR" -mindepth 1 -delete`) {
-		t.Error("the container does not empty the fixture root before the run")
+	if !strings.Contains(gateContainerScript, `find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete`) {
+		t.Error("the container does not empty the shared fixture directory before the run")
 	}
 	bare := strings.Join(gateDockerRunArgs(gateHost{root: root, image: "lenny-gate:x"}), " ")
-	if strings.Contains(bare, " -e TMPDIR=") {
-		t.Errorf("a run with no fixture root sets TMPDIR:\n%s", bare)
+	if strings.Contains(bare, "-e "+testtmp.EnvShared+"=") {
+		t.Errorf("a run with no shared directory names one:\n%s", bare)
 	}
 }
 
@@ -292,9 +304,6 @@ func TestGateDockerRunArgsPutTheFixtureRootAtItsHostPath(t *testing.T) {
 // root out of the trees the static checks walk, and apart for two
 // worktrees.
 func TestGateHostTmpDirIsOutsideTheWorktreeAndPerWorktree(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
-	t.Setenv("HOME", cache)
 	a, err := gateHostTmpDir("/work/a")
 	if err != nil {
 		t.Fatal(err)
@@ -308,6 +317,127 @@ func TestGateHostTmpDirIsOutsideTheWorktreeAndPerWorktree(t *testing.T) {
 	}
 	if fi, err := os.Stat(a); err != nil || !fi.IsDir() {
 		t.Errorf("the fixture root was not created: %v", err)
+	}
+	if again, err := gateHostTmpDir("/work/a"); err != nil || again != a {
+		t.Errorf("a second run of the same worktree got %q (%v); want %q", again, err, a)
+	}
+}
+
+// TestGateFixtureDirectoriesLeaveRoomForATestSocket keeps the fixture
+// root and the shared fixture directory short enough that a Unix socket
+// under a test's t.TempDir() has at least as many bytes below the root as
+// on a macOS host, where lenny-test roots fixtures at $HOME/.lenny-tmp and
+// sun_path holds 104 bytes. Linux's sun_path holds 108. A socket path
+// that fits on a developer's host then fits in the gate, whatever the
+// worktree's path.
+func TestGateFixtureDirectoriesLeaveRoomForATestSocket(t *testing.T) {
+	const linuxSunPath, macSunPath = 108, 104
+	hostRoot := filepath.Join("/Users/alice", testtmp.HomeDirName)
+	shared, err := gateHostTmpDir("/Users/alice/projects/lenny/.claude/worktrees/agent-0123456789abcdef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(shared, gateTmpParent+"/"+gateTmpPrefix) {
+		t.Errorf("shared fixture directory %q is not under %s", shared, gateTmpParent)
+	}
+	for _, root := range []string{gateFixtureRoot, shared} {
+		if linuxSunPath-len(root) < macSunPath-len(hostRoot) {
+			t.Errorf("%q leaves %d bytes for a socket path below it; a macOS host root %q leaves %d", root, linuxSunPath-len(root), hostRoot, macSunPath-len(hostRoot))
+		}
+	}
+}
+
+// TestGateDockerRunArgsGrantWhatTheTestsNeed checks the container
+// options the tiers depend on: the Docker host's network namespace, so a
+// fixture published on 127.0.0.1 is reachable; CAP_SYS_ADMIN with the
+// /proc paths unmasked and no AppArmor profile, so unshare can create
+// namespaces and mount /proc; and the worktree owner's IDs, which the
+// container script runs the gate as.
+func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
+	argv := gateDockerRunArgs(gateHost{root: "/w", image: "lenny-gate:x", uid: 501, gid: 20})
+	args := strings.Join(argv, " ")
+	for _, want := range []string{
+		"--network host",
+		"--cap-add SYS_ADMIN",
+		"--security-opt systempaths=unconfined",
+		"--security-opt apparmor=unconfined",
+		"-e " + gateEnvUID + "=501",
+		"-e " + gateEnvGID + "=20",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("docker run args lack %q:\n%s", want, args)
+		}
+	}
+	if i := strings.Index(args, " lenny-gate:x "); i < 0 || strings.Contains(args[:i], "--privileged") {
+		t.Errorf("the container runs privileged or not from the image:\n%s", args)
+	}
+}
+
+// TestGateContainerScriptDropsToTheWorktreeOwner pins the steps of the
+// container script that run the gate unprivileged: it creates the
+// owner's user, adds the Docker socket's group, gives the user the cache
+// volumes, and runs the gate through setpriv, and it keeps running as
+// root when the owner is root.
+func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
+	for _, want := range []string{
+		`if [ "$uid" = 0 ]; then exec sh -c "$run" lenny-test-gate "$@"; fi`,
+		`useradd --uid "$uid" --gid "$gid"`,
+		`stat -c %g /var/run/docker.sock`,
+		`chown -R "$uid:$gid" "$d"`,
+		`exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`,
+		`exec "$HOME/bin/lenny-test" gate --here "$@"`,
+	} {
+		if !strings.Contains(gateContainerScript, want) {
+			t.Errorf("the container script lacks %q", want)
+		}
+	}
+	if strings.Index(gateContainerScript, "-delete") > strings.Index(gateContainerScript, "setpriv") {
+		t.Error("the container script empties the fixture root after dropping root, so it cannot remove what a root run left")
+	}
+}
+
+// TestGateDockerfileKeepsTheBuildCacheWhereTheRunMountsIt keeps GOCACHE in
+// the image on the path the build-cache volume is mounted at, outside
+// /root, which the unprivileged gate user cannot enter.
+func TestGateDockerfileKeepsTheBuildCacheWhereTheRunMountsIt(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join(repoRoot(), gateDockerfile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "GOCACHE="+gateGoCache+" ") || strings.HasPrefix(gateGoCache, "/root") {
+		t.Errorf("%s does not set GOCACHE=%s outside /root", gateDockerfile, gateGoCache)
+	}
+}
+
+// TestGateAllSelectsEveryTierUpToIntegrationInFull checks that --all
+// replaces the --changed selection with the whole unit tier and every
+// test of the component, contract, and integration tiers, and that the
+// verdict records it.
+func TestGateAllSelectsEveryTierUpToIntegrationInFull(t *testing.T) {
+	plan, err := gateChangedPlan("no-such-ref", 1, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, p := range plan.tiers {
+		names = append(names, p.name)
+		if p.pkgs != nil || p.tests != nil || p.subsets != nil {
+			t.Errorf("tier %s is narrowed: pkgs %v tests %v subsets %v", p.name, p.pkgs, p.tests, p.subsets)
+		}
+	}
+	if got, want := strings.Join(names, ","), strings.Join([]string{tierStatic, tierUnit, tierComponent, tierContract, tierIntegration}, ","); got != want {
+		t.Errorf("--all plan tiers %s; want %s", got, want)
+	}
+
+	g := stubGateRunner()
+	var gotAll bool
+	g.plan = func(_ string, _ int, all bool) (resolvedSelector, error) {
+		gotAll = all
+		return resolvedSelector{}, nil
+	}
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: 1, all: true, environment: "lenny-gate:test"})
+	if !gotAll || v.Gate == nil || !v.Gate.All || !strings.HasSuffix(v.Command, " --all") {
+		t.Errorf("--all did not reach the plan or the verdict: plan all %v, gate %+v, command %q", gotAll, v.Gate, v.Command)
 	}
 }
 

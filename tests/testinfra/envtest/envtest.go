@@ -111,17 +111,34 @@ func (e *Environment) RESTConfig() *rest.Config { return e.cfg }
 // AssetsPath returns the resolved kube-apiserver/etcd binary directory.
 func (e *Environment) AssetsPath() string { return e.assets }
 
+// newEnvironment returns the envtest environment Start and Shared boot:
+// the lenny.dev CRDs from charts/lenny/crds and the binaries in assets.
+//
+// The API server advertises 127.0.0.1, where envtest serves it. Without
+// an advertise address the API server takes the address of the host's
+// default route, and it refuses to start when that address is IPv6
+// while the service range is IPv4 ("service IP family must match public
+// address family"). The merge gate's container shares the Docker host's
+// network namespace, which under Docker Desktop has an IPv6 address and
+// no IPv4 default route.
+func newEnvironment(t testing.TB, assets string) *crenvtest.Environment {
+	t.Helper()
+	env := &crenvtest.Environment{
+		CRDDirectoryPaths:     []string{filepath.Join(schematest.RepoRoot(t), "charts", "lenny", "crds")},
+		ErrorIfCRDPathMissing: true,
+		BinaryAssetsDirectory: assets,
+	}
+	env.ControlPlane.GetAPIServer().Configure().Set("advertise-address", "127.0.0.1")
+	return env
+}
+
 // Start boots an envtest API server and etcd, installs the lenny.dev
 // CRDs from charts/lenny/crds, and registers a t.Cleanup that stops
 // them. It skips the test when the envtest binaries are not installed.
 func Start(t testing.TB) *Environment {
 	t.Helper()
 	assets := SkipUnlessAvailable(t)
-	env := &crenvtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join(schematest.RepoRoot(t), "charts", "lenny", "crds")},
-		ErrorIfCRDPathMissing: true,
-		BinaryAssetsDirectory: assets,
-	}
+	env := newEnvironment(t, assets)
 	cfg, err := env.Start()
 	if err != nil {
 		t.Fatalf("envtest: start API server: %v", err)

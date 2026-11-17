@@ -441,7 +441,7 @@ SV_CASE(end_closed_connection_during_grace)
 /*
  * sv_read_pids_current: a value, an absent file, a file that cannot be
  * opened (a dangling symbolic link refused by O_NOFOLLOW, and a mode-000
- * file for a non-root caller), and a file that opened but yielded no
+ * file where the mode is enforced), and a file that opened but yielded no
  * value.
  */
 SV_CASE(end_read_pids_current_results)
@@ -456,12 +456,20 @@ SV_CASE(end_read_pids_current_results)
 	snprintf(p, sizeof(p), "%s/link", d);
 	SV_EQ_INT(symlink("/nonexistent-target", p), 0);
 	SV_EQ_INT(sv_read_pids_current(p), -1);
-	if (getuid() != 0) {
-		snprintf(p, sizeof(p), "%s/unreadable", d);
-		sv_write_file(p, "2\n");
-		chmod(p, 0);
+	/*
+	 * The mode-000 file cannot be opened only where the mode is enforced:
+	 * not for root, and not on a file system that ignores modes, such as
+	 * a Docker Desktop file share. The case runs where the probe open
+	 * fails.
+	 */
+	snprintf(p, sizeof(p), "%s/unreadable", d);
+	sv_write_file(p, "2\n");
+	chmod(p, 0);
+	int probe = open(p, O_RDONLY | O_CLOEXEC);
+	if (probe >= 0)
+		close(probe);
+	else
 		SV_EQ_INT(sv_read_pids_current(p), -1);
-	}
 	snprintf(p, sizeof(p), "%s/empty", d);
 	sv_write_file(p, "");
 	SV_EQ_INT(sv_read_pids_current(p), -2);
