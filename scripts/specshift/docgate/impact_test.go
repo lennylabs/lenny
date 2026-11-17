@@ -121,17 +121,37 @@ func TestImpactPassesWhenTheDiffEditsADocumentationPageThatNamesThePage(t *testi
 	mustContain(t, "the output", out.String(), "1 landed page(s) touched, no problems")
 }
 
-func TestImpactPassesWhenTheChangeStatesNoReaderFacingBehaviorChanges(t *testing.T) {
+func TestImpactPassesWhenTheChangeWaivesThePageByCode(t *testing.T) {
 	t.Parallel()
 	r := newRepo(t, "")
-	r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\nNo reader-facing behavior changes.\n\n## Tests\n\n- Tier 0.\n"})
+	r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\n- No reader-facing behavior changes: CLAIM, POOL.\n\n## Tests\n\n- Tier 0.\n"})
 	r.commit("changes: state the documentation impact")
 	rep, err := CheckImpact(context.Background(), r.root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rep.Problems) > 0 || len(rep.Waivers) != 1 || rep.Waivers[0] != "changes/0300-pools" {
+	if len(rep.Problems) > 0 || len(rep.Waivers) != 1 || rep.Waivers[0].Folder != "changes/0300-pools" || strings.Join(rep.Waivers[0].Codes, ",") != "CLAIM,POOL" {
 		t.Errorf("waivers %v, problems:\n%s", rep.Waivers, joined(rep.Problems))
+	}
+}
+
+func TestImpactWaiverCoversOnlyThePagesItNames(t *testing.T) {
+	t.Parallel()
+	for name, doc := range map[string]string{
+		"the phrase in prose":    "No reader-facing behavior changes.\n",
+		"another page's code":    "No reader-facing behavior changes: CLAIM\n",
+		"the phrase in a clause": "This step has no reader-facing behavior changes: POOL is internal.\n",
+	} {
+		r := newRepo(t, "")
+		r.write(map[string]string{"changes/0300-pools/change.md": "# Pools\n\n## Documentation\n\n" + doc + "\n## Tests\n\n- Tier 0.\n"})
+		r.commit("changes: state the documentation impact")
+		rep, err := CheckImpact(context.Background(), r.root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rep.Problems) != 1 {
+			t.Errorf("%s waived POOL: waivers %v, problems:\n%s", name, rep.Waivers, joined(rep.Problems))
+		}
 	}
 }
 

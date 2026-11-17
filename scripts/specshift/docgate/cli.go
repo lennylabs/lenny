@@ -25,7 +25,8 @@ commands:
            the names and values the pages in scope quote against the catalogs
   impact   hold the branch's diff against main: a changed requirement, operation, or
            definition block on a landed page needs an edited documentation page that
-           names the page, or a change that states no reader-facing behavior changes
+           names the page, or a change whose Documentation section waives the page
+           with the line "No reader-facing behavior changes: CODE, CODE"
 `
 
 // ErrProblems is returned when a gate finds problems, after they are
@@ -143,7 +144,7 @@ func runImpact(ctx context.Context, root string, out io.Writer) error {
 		fmt.Fprintf(out, "not checked yet, because the page has not landed: %s\n", strings.Join(rep.NotYet, ", "))
 	}
 	for _, w := range rep.Waivers {
-		fmt.Fprintf(out, "%s states that no reader-facing behavior changes\n", w)
+		fmt.Fprintf(out, "%s states that no reader-facing behavior changes on %s\n", w.Folder, strings.Join(w.Codes, ", "))
 	}
 	if err := report(out, rep.Problems); err != nil {
 		return err
