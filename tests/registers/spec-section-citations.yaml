@@ -1208,7 +1208,7 @@ packages:
     - package: tests/static/chart
       count: 99
     - package: tests/static/lint
-      count: 18
+      count: 20
     - package: tests/static/structure
       count: 132
     - package: tests/testinfra/ackruntime
