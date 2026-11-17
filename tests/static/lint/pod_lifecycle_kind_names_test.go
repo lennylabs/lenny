@@ -41,6 +41,12 @@ var retiredNameExemptFiles = map[string]bool{
 	"gateway-runtime-comms.md":             true,
 	"gateway-runtime-comms-remediation.md": true,
 	"tests/static/lint/pod_lifecycle_kind_names_test.go": true,
+	// The component test that checks the API server refuses a retired kind
+	// names that kind on purpose.
+	"tests/component/controllers/pod_lifecycle_kinds_test.go": true,
+	// The section 28 supersession register quotes the text a staged
+	// proposal wrote, which named the retired kinds.
+	"tests/docs/spec_28_index_rows_test.go": true,
 }
 
 // retiredNameExempt reports whether a tracked path is a record the checks
@@ -106,7 +112,7 @@ var retiredNameText = regexp.MustCompile(strings.Join([]string{
 // retiredResourceInCode matches the resource name "sandboxes" in a code
 // context: a CRD name, a subresource, a quoted or backticked name, or a
 // kubectl argument. As a bare prose word it can name isolation sandboxes.
-var retiredResourceInCode = regexp.MustCompile("sandboxes\\.lenny\\.dev|sandboxes/(?:status|finalizers)|[`\"']sandboxes[`\"']|kubectl get sandbox(?:es)?\\b|lenny\\.dev_sandboxes|^\\s*-\\s+sandboxes\\s*$")
+var retiredResourceInCode = regexp.MustCompile("sandboxes\\.lenny\\.dev|sandboxes/(?:status|finalizers)|[`\"']sandboxes[`\"']|kubectl get sandbox(?:es)?\\b|lenny\\.dev_sandboxes|^\\s*-\\s+sandboxes\\s*$|/sandboxes(?:/|\\b)|--sandboxes\\b|\\bsandboxes\\.json\\b")
 
 // codeSpan matches a Markdown code span.
 var codeSpan = regexp.MustCompile("`[^`\n]+`")
@@ -128,7 +134,7 @@ var textExtensions = map[string]bool{
 // and line; replace the retired name with AgentPod, PodSet, or PodClaim and
 // the matching resource.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §4.6.3 (CRD Field Ownership and Write Boundaries)
+// spec: KAPI, KAPOD, KPSET, KPCLAIM
 func TestRetiredPodLifecycleKindNamesAbsent(t *testing.T) {
 	root := schematest.RepoRoot(t)
 	for _, rel := range schematest.TrackedFiles(t) {
@@ -227,7 +233,7 @@ func retiredNamesInText(rel, src string, markdown bool) []string {
 // TestRetiredPodLifecycleNameMatchers pins the matchers: each retired name
 // is reported, and the isolation-sense uses of the word are not.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle))
+// spec: KAPI
 func TestRetiredPodLifecycleNameMatchers(t *testing.T) {
 	idents := map[string]bool{
 		"SandboxClaimSpec": true, "getSandbox": true, "sandboxName": true, "Sandbox": true,
@@ -276,7 +282,7 @@ var retiredTableName = regexp.MustCompile(`(?:^|[^0-9_])sandbox_warm_pools\b`)
 // exempt, as are Go comments, which may state what an earlier migration
 // did. A failure names the file and line; replace the name with pools.
 //
-// spec: §5.2 (Pool Configuration and Execution Modes)
+// spec: POOL
 func TestRetiredPoolTableNameAbsent(t *testing.T) {
 	root := schematest.RepoRoot(t)
 	for _, rel := range schematest.TrackedFiles(t) {
@@ -332,7 +338,7 @@ var templateReference = regexp.MustCompile(`(?i)\btemplateRef\b`)
 // settings and the warm targets, so nothing refers to a template. A
 // failure names the file and line; read the field from the PodSet itself.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §4.6.3 (CRD Field Ownership and Write Boundaries)
+// spec: KPSET
 func TestPodSetTemplateReferenceAbsent(t *testing.T) {
 	root := schematest.RepoRoot(t)
 	for _, rel := range schematest.TrackedFiles(t) {

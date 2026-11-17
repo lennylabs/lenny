@@ -1178,6 +1178,22 @@ var stagedLineSupersessions = []stagedLineSupersession{
 			"[§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) " +
 			"**Replica address:** states the holder value |",
 	},
+	{
+		// The REG-PODSTATE writer cell names the per-pod kind by the name
+		// change 0137 gave it.
+		proposal:   "changes/0137-pod-lifecycle-controller (0137.S5)",
+		linePrefix: "| `REG-PODSTATE` |",
+		from:       "the mirrored `Sandbox` status columns",
+		to:         "the mirrored `AgentPod` status columns",
+	},
+	{
+		// The REG-CLAIM key cell names the claim kind by the name change
+		// 0137 gave it.
+		proposal:   "changes/0137-pod-lifecycle-controller (0137.S5)",
+		linePrefix: "| `REG-CLAIM` |",
+		from:       "| `SandboxClaim` named `claim-<podName>` |",
+		to:         "| `PodClaim` named `claim-<podName>` |",
+	},
 }
 
 // applySupersessions returns a copy of staged with every register entry

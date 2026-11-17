@@ -9,10 +9,11 @@
 // egressProfile) are authored only on the PodSet spec. Each pool has
 // one PodSet, which carries these fields together with the pool's warm
 // targets. The per-session AgentPod CR is a controller-produced
-// copy-down from an already-validated PodSet, so the PodSet is the only
-// admitted resource that can carry a forbidden combination. Scoping the
-// chart rule to podsets is therefore complete; matching AgentPods or
-// core Pods would add rules with no fields to inspect. spec: §17.2. F-17.2.14.
+// copy-down from an already-validated PodSet, so
+// the PodSet is the only admitted resource that can carry a
+// forbidden combination.
+// Scoping the chart rule to podsets is therefore complete; matching
+// AgentPods or core Pods would add rules with no fields to inspect. spec: §17.2. F-17.2.14.
 //
 // In a multi-tenant deployment two credential-delivery configurations
 // expose cross-tenant credential risk and are rejected:

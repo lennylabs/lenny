@@ -1921,14 +1921,14 @@ log "rolling idle warm pods whose runtime or platform container image is out of 
 roll_list() {
   kc -n lenny-agents get pods -l lenny.dev/managed=true -o json >"${REINSTALL_SYNC_DIR}/pods.json"
   kc get runtimes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/runtimes.json"
-  kc -n lenny-agents get agentpods.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/sandboxes.json"
+  kc -n lenny-agents get agentpods.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/agentpods.json"
   "${REINSTALL_SYNC}" stale-pods "$@" \
     --platform-image "adapter=$(image_ref lenny-adapter)" \
     --platform-image "lenny-supervisor-stage=$(image_ref lenny-supervisor)" \
     --platform-image "egress-capture=$(image_ref lenny-egress-capture)" \
     --pods "${REINSTALL_SYNC_DIR}/pods.json" \
     --runtimes "${REINSTALL_SYNC_DIR}/runtimes.json" \
-    --sandboxes "${REINSTALL_SYNC_DIR}/sandboxes.json"
+    --agentpods "${REINSTALL_SYNC_DIR}/agentpods.json"
 }
 rolled=0
 stale_idle=""

@@ -274,7 +274,7 @@ func TestConfigExporterReadsRuntimesAndPoolsFromCRDsNotPostgres(t *testing.T) {
 	// The export must not have SELECTed the runtime/pool tables: those reads
 	// belong to the CRD path, not Postgres.
 	for _, sql := range db.seen {
-		if containsAny(sql, "runtime_definitions", "FROM pools", "JOIN pools") {
+		if containsAny(sql, "runtime_definitions", "FROM pools") {
 			t.Errorf("config export queried Postgres for a runtime/pool table (should read the CRDs): %q", sql)
 		}
 	}

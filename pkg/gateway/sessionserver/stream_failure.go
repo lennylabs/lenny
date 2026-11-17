@@ -46,7 +46,7 @@ type streamEvicter interface {
 func (s *Server) ReportAttachStreamFailure(tenantID, sessionID, agentPodName string, cause error) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.streamFailureReportTimeout+s.sealMaxDuration)
 	defer cancel()
-	log := slog.With("tenant_id", tenantID, "session_id", sessionID, "sandbox", agentPodName,
+	log := slog.With("tenant_id", tenantID, "session_id", sessionID, "agent_pod", agentPodName,
 		"status_code", status.Code(cause).String())
 
 	bind := s.reportedStreamBinding(sessionID, agentPodName)

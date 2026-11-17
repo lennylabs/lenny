@@ -28,9 +28,9 @@ var finalizerTerminatingSeconds = func() *prometheus.GaugeVec {
 	g, err := metrics.NewGauge(prometheus.GaugeOpts{
 		Name: "lenny_agentpod_finalizer_terminating_seconds",
 		Help: "Seconds an AgentPod has been Terminating with the session-cleanup finalizer present.",
-	}, []string{"namespace", "sandbox"})
+	}, []string{"namespace", "agent_pod"})
 	if err != nil {
-		panic(fmt.Sprintf("sandbox: build finalizer-terminating gauge: %v", err))
+		panic(fmt.Sprintf("agentpod: build finalizer-terminating gauge: %v", err))
 	}
 	metrics.MustRegister(ctrlmetrics.Registry, g)
 	return g

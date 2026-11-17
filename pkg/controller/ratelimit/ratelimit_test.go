@@ -20,15 +20,15 @@ func TestClassifyRoutesRequestsToBuckets(t *testing.T) {
 		path   string
 		want   bucket
 	}{
-		{"create sandbox", http.MethodPost, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods", bucketCreate},
-		{"create sandbox trailing slash", http.MethodPost, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/sandboxes/", bucketCreate},
-		{"sandbox status patch", http.MethodPatch, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/sandboxes/pod-1/status", bucketStatus},
-		{"sandbox status put", http.MethodPut, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/sandboxes/pod-1/status", bucketStatus},
+		{"create agent pod", http.MethodPost, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods", bucketCreate},
+		{"create agent pod trailing slash", http.MethodPost, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods/", bucketCreate},
+		{"agent pod status patch", http.MethodPatch, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods/pod-1/status", bucketStatus},
+		{"agent pod status put", http.MethodPut, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods/pod-1/status", bucketStatus},
 		{"warmpool status patch", http.MethodPatch, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/podsets/p/status", bucketStatus},
-		{"sandbox get", http.MethodGet, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/sandboxes/pod-1", bucketOther},
-		{"sandbox list", http.MethodGet, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods", bucketOther},
-		{"sandbox delete", http.MethodDelete, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/sandboxes/pod-1", bucketOther},
-		{"finalizer patch on the object, not status", http.MethodPatch, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/sandboxes/pod-1", bucketOther},
+		{"agent pod get", http.MethodGet, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods/pod-1", bucketOther},
+		{"agent pod list", http.MethodGet, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods", bucketOther},
+		{"agent pod delete", http.MethodDelete, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods/pod-1", bucketOther},
+		{"finalizer patch on the object, not status", http.MethodPatch, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/agentpods/pod-1", bucketOther},
 		{"podclaim create is not a pod create", http.MethodPost, "/apis/lenny.dev/v1alpha1/namespaces/lenny-agents/podclaims", bucketOther},
 	}
 	for _, c := range cases {

@@ -10,7 +10,7 @@
 // `lenny-ctl bootstrap --force-update`.
 //
 //	reinstall-sync stale-pods [--warming] [--platform-image <container>=<image>]... \
-//	    --pods <file> --runtimes <file> --sandboxes <file>
+//	    --pods <file> --runtimes <file> --agentpods <file>
 //
 // reads `kubectl get -o json` lists of the agent pods, the Runtime CRs,
 // and the AgentPods, and prints one line per idle pod (per warming pod

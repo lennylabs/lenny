@@ -104,8 +104,8 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // classify routes a request to its bucket from the HTTP method and path.
-// POST to a sandboxes collection is a pod Create; PUT/PATCH to a
-// sandboxes or podsets status subresource is a status update.
+// POST to an agentpods collection is a pod Create; PUT/PATCH to an
+// agentpods or podsets status subresource is a status update.
 func classify(method, path string) bucket {
 	switch method {
 	case http.MethodPost:
@@ -129,12 +129,12 @@ func isAgentPodCollection(path string) bool {
 }
 
 // isStatusSubresource reports whether path addresses the /status
-// subresource of a sandbox or podset resource.
+// subresource of an agentpod or podset resource.
 func isStatusSubresource(path string) bool {
 	if !strings.HasSuffix(path, "/status") {
 		return false
 	}
-	return strings.Contains(path, "/sandboxes/") || strings.Contains(path, "/podsets/")
+	return strings.Contains(path, "/agentpods/") || strings.Contains(path, "/podsets/")
 }
 
 // WrapConfig installs the dual rate limiter on cfg. It disables the

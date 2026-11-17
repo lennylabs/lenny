@@ -408,7 +408,7 @@ func (b *Binder) ReleaseUncommitted(ctx context.Context, result *BindResult, req
 	}
 	if requireReclaimed && (cerr != nil || outcome != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED) {
 		slog.Warn("podsession: reclaim of an uncommitted restore not confirmed; releasing nothing",
-			"session_id", result.SessionID, "sandbox", result.AgentPodName,
+			"session_id", result.SessionID, "agent_pod", result.AgentPodName,
 			"outcome", outcome.String(), "error", cerr)
 		return fmt.Errorf("%w: session %s on pod %s", ErrReclaimUnconfirmed, result.SessionID, result.AgentPodName)
 	}

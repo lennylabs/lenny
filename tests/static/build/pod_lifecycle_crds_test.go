@@ -49,7 +49,7 @@ func yamlFiles(t *testing.T, dir string) []string {
 // lenny.dev/schema-version annotation equal to
 // preflight.CurrentCRDSchemaVersion.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §17.6 (Packaging and Installation)
+// spec: KAPI
 //
 // diagnosis: a CRD file was added, left behind, or renamed in one directory
 // and not the other, or preflight checks a different set than the chart

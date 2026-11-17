@@ -1087,7 +1087,7 @@ func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// necessarily change the AgentPod, so the reconciler also wakes
 		// on claim events for the AgentPod the claim references.
 		Watches(&lennyv1.PodClaim{}, handler.EnqueueRequestsFromMapFunc(claimToAgentPod)).
-		Named("sandbox").
+		Named("agentpod").
 		WithOptions(opts).
 		Complete(r)
 }

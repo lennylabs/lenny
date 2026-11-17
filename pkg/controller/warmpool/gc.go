@@ -237,7 +237,7 @@ func (g *ClaimGarbageCollector) evaluate(ctx context.Context, claim *lennyv1.Pod
 	active, err := g.Sessions.PodHasActiveSession(ctx, claim.Spec.AgentPodRef)
 	if err != nil {
 		logf.FromContext(ctx).Error(err, "orphan-claim session lookup failed; skipping",
-			"claim", claim.Name, "sandbox", claim.Spec.AgentPodRef)
+			"claim", claim.Name, "agent_pod", claim.Spec.AgentPodRef)
 		return nil
 	}
 	if active {
@@ -502,7 +502,7 @@ func (g *ClaimGarbageCollector) recordReclaimCondition(ctx context.Context, name
 		Message: "orphaned PodClaim collected; pod reclaimed",
 	}
 	if err := sandboxcond.Apply(ctx, g.Client, &live, cond); err != nil {
-		logf.FromContext(ctx).Error(err, "record orphan-claim condition", "sandbox", live.Name)
+		logf.FromContext(ctx).Error(err, "record orphan-claim condition", "agent_pod", live.Name)
 	}
 }
 

@@ -67,7 +67,7 @@ func podLifecycleClient(t *testing.T) (client.Client, *runtime.Scheme, func() *d
 // kind SandboxTemplate, and a request to the sandboxtemplates resource path
 // answers NotFound.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §17.6 (Packaging and Installation)
+// spec: KAPI
 // diagnosis: the CRD manifests under charts/lenny/crds/ register a resource
 // other than the four Lenny kinds, still install a retired kind, or miss
 // one of the renamed kinds. Regenerate the CRDs with `make generate` and
@@ -123,7 +123,7 @@ func (r podSetRows) List(context.Context, poolstore.ListFilter) ([]poolstore.Poo
 // PodSet and whose spec.podSetRef names it. No other PodSet exists for the
 // pool.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §4.6.2 (PoolScalingController (Pool Configuration)), §4.6.3 (CRD Field Ownership and Write Boundaries)
+// spec: KPSET, KAPOD, POOL
 // diagnosis: the PoolScalingController writes the pool into more than one
 // object or leaves the pool settings or the warm targets off the PodSet, or
 // the WarmPoolController does not own its AgentPods through the PodSet.
@@ -195,7 +195,7 @@ func TestOnePodSetCarriesThePoolSettingsAndWarmTargets(t *testing.T) {
 // update that changes either reference is refused, and lenny-podclaim-guard
 // refuses a second PodClaim on one agentPodRef with its message.
 //
-// spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §4.6.3 (CRD Field Ownership and Write Boundaries)
+// spec: KAPOD, KPCLAIM, KADMIT
 // diagnosis: the CRD manifests lost the required marker or the
 // self == oldSelf rule on spec.podSetRef or spec.agentPodRef, or the claim
 // guard reads a field other than spec.agentPodRef. Check

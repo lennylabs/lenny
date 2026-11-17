@@ -451,7 +451,7 @@ var alertSupportCatalog = []MetricSpec{
 	{"lenny_postgres_write_ceiling_iops", TypeGauge, "Per-tier Postgres sustained write-IOPS ceiling"},
 	{"lenny_postgres_write_burst_iops", TypeGauge, "Observed Postgres burst write IOPS, read by PostgresWriteBurstIops"},
 	{"lenny_postgres_write_burst_ceiling_iops", TypeGauge, "Per-tier Postgres burst write-IOPS ceiling"},
-	{"lenny_agentpod_finalizer_terminating_seconds", TypeGauge, "Seconds a sandbox has been blocked on finalizer cleanup, read by FinalizerStuck"},
+	{"lenny_agentpod_finalizer_terminating_seconds", TypeGauge, "Seconds an AgentPod has been blocked on finalizer cleanup, read by FinalizerStuck"},
 
 	// --- §16.5 burn-rate SLO support. The SessionCreationSuccessRate,
 	// SessionCreationLatency, and GatewayAvailability burn-rate alerts
