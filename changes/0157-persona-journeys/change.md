@@ -4,7 +4,7 @@ Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), mi
 
 ## Problem
 
-No tier checks that Lenny works as a person would use it: an operator installing and configuring it, a tenant admin setting up a tenant, an end user running sessions, or a runtime author connecting a runtime, each following the documentation. Agent-driven testing of this kind exists in practice, and it is trustworthy when the harness decides each verdict from deterministic checks of the system's state, keeps transcripts, and has a person review every failure ([test infrastructure review](../0154-merge-gate/evidence/test-infrastructure-review.md), "Question 3").
+No tier checks that Lenny works as a person would use it: an operator installing and configuring it, a tenant admin setting up a tenant, an end user running sessions, or a runtime author connecting a runtime, each following the documentation. Agent-driven testing of this kind exists in practice, and it is trustworthy when the harness decides each verdict from deterministic checks of the system's state, keeps transcripts, and has a person review every failure ([test infrastructure review](../archive/2026-11-17-0154-merge-gate/evidence/test-infrastructure-review.md), "Question 3").
 
 ## Scope
 

@@ -1,6 +1,6 @@
 # Green main line and merge gate
 
-Status: `Decided`, revision 2, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `Implemented`, revision 2, 2026-11-17. Programs: [v1](../../programs/v1.md), milestone M1.
 
 ## Problem
 

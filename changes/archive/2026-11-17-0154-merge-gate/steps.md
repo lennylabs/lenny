@@ -5,20 +5,20 @@
 ## Steps
 
 ### 0154.S1 Repair tier 0 and sweep for accidental deletions
-- status: Planned
+- status: Landed
 - lanes: [code]
 
 Restore `hack/boilerplate.go.txt`, make the runtime supervisor binary tests skip off Linux with a registered reason, and sweep the deletions of design-only commits since 2026-10-01 for others like it.
 
 ### 0154.S2 The gate container, the gate command, and concurrent static checks
-- status: Planned
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0154.S1]
 
 The container that pins the gate's toolchain, `lenny-test gate` with its verdict file, the static checks run concurrently with every failure reported, and `TESTING.md`.
 
 ### 0154.S3 The merge policy
-- status: Planned
+- status: Landed
 - lanes: [documentation]
 - depends-on: [0154.S2]
 
