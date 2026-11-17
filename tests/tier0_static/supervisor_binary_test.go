@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,19 @@ func staticELFViolations(path string) ([]string, error) {
 	return v, nil
 }
 
+// skipOffLinux skips a supervisor binary check on a host that is not
+// Linux. The checks build a Linux freestanding static ELF binary with the
+// host C compiler, and the macOS linker rejects the freestanding flags and
+// writes Mach-O rather than ELF, so the result off Linux says nothing about
+// the supervisor. The merge gate runs these checks in its Linux container
+// (`lenny-test gate`).
+func skipOffLinux(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("blocked: the runtime supervisor binary checks build a Linux freestanding static ELF binary and run only on Linux; run them through lenny-test gate")
+	}
+}
+
 // buildOrUnverified builds the given supervisor targets into a temporary
 // directory. It returns false after writing the unverified marker when
 // the host lacks the toolchain, and fails the test on a build error.
@@ -110,6 +124,7 @@ func buildOrUnverified(t *testing.T, targets ...string) (string, bool) {
 // time, which §4.7.11 item 8 excludes. Check supervisor/Makefile's link
 // flags and any new call that pulls in a C library routine.
 func TestRuntimeSupervisorBinaryIsFreestandingStatic_spec_4_7_11(t *testing.T) {
+	skipOffLinux(t)
 	out, ok := buildOrUnverified(t)
 	if !ok {
 		return
@@ -128,6 +143,7 @@ func TestRuntimeSupervisorBinaryIsFreestandingStatic_spec_4_7_11(t *testing.T) {
 // interpreter, a dynamic section, or a dlopen or NSS symbol, so the gate
 // above would pass a supervisor that §4.7.11 item 8 excludes.
 func TestRuntimeSupervisorBinaryCheckRejectsDynamicAndNSSBinaries_spec_4_7_11(t *testing.T) {
+	skipOffLinux(t)
 	if err := supervisorbuild.CheckToolchain(exec.LookPath); err != nil {
 		fmt.Println(verdictstatus.UnverifiedMarker + " runtime supervisor binary check fixtures: " + err.Error())
 		return
