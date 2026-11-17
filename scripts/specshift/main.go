@@ -83,6 +83,14 @@
 //	specshift pages [-root <path>] contributions -manifests <rendered.yaml>
 //
 // The pagegate package documents each gate.
+//
+// The docs subcommand runs the gates that keep the documentation under
+// docs/ in step with the specification:
+//
+//	specshift docs [-root <path>] check
+//	specshift docs [-root <path>] impact
+//
+// The docgate package documents each gate.
 package main
 
 import (
@@ -98,6 +106,7 @@ import (
 
 	"github.com/lennylabs/lenny/scripts/specshift/anchor"
 	"github.com/lennylabs/lenny/scripts/specshift/defs"
+	"github.com/lennylabs/lenny/scripts/specshift/docgate"
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
@@ -222,7 +231,7 @@ func passNames() string {
 }
 
 // run parses the command line and executes one pass, prints one pass's
-// write domain, or hands a ref, defs, pages, digest, where, or since
+// write domain, or hands a ref, defs, pages, docs, digest, where, or since
 // command to its package. Those subcommands are dispatched before the flags
 // are parsed, because they are driven by the generated registry and the
 // definition blocks rather than by a register, and take arguments of their
@@ -239,6 +248,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if len(args) > 0 && args[0] == pagegate.Command {
 		return pagegate.Run(ctx, args[1:], out)
+	}
+	if len(args) > 0 && args[0] == docgate.Command {
+		return docgate.Run(ctx, args[1:], out)
 	}
 	return runWith(ctx, builtPasses, args, out)
 }

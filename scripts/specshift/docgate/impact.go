@@ -1,0 +1,226 @@
+// SPDX-License-Identifier: MIT
+
+package docgate
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/lennylabs/lenny/scripts/specshift/annotation"
+	"github.com/lennylabs/lenny/scripts/specshift/defs"
+	"github.com/lennylabs/lenny/scripts/specshift/survey"
+)
+
+// ErrNoBase reports that the branch has no merge base with the integration
+// branch, so there is no diff to read. It is the annotation lint's.
+var ErrNoBase = annotation.ErrNoBase
+
+// changesDir is the folder of the change records.
+const changesDir = "changes"
+
+// changeFolder matches a change folder's path prefix.
+var changeFolder = regexp.MustCompile(`^changes/([0-9]{4}-[^/]+)/`)
+
+// noReaderChange matches the statement that a change alters no
+// reader-facing behavior.
+var noReaderChange = regexp.MustCompile(`(?i)no reader-facing behaviou?r changes?`)
+
+// documentationHeading matches the Documentation section of change.md.
+var documentationHeading = regexp.MustCompile(`(?m)^##\s+Documentation\s*$`)
+
+// ImpactReport is what the documentation-impact gate found on a branch.
+type ImpactReport struct {
+	// Base is the merge-base commit, and BaseRef the integration ref.
+	Base, BaseRef string
+	// Checked are the codes of the landed pages the diff touches.
+	Checked []string
+	// NotYet are the codes of the pages the diff touches that have not
+	// landed, which the gate does not check yet.
+	NotYet []string
+	// Waivers are the change folders whose Documentation section states
+	// that no reader-facing behavior changes.
+	Waivers []string
+	// Problems name each landed page whose documentation the diff leaves
+	// unedited.
+	Problems []Problem
+}
+
+// touchedPage is a specification page the diff changes items on.
+type touchedPage struct {
+	path, status string
+	items        []string
+}
+
+// CheckImpact runs the documentation-impact gate over the working tree at
+// root against its merge base with the integration branch. It returns
+// ErrNoBase when there is none.
+func CheckImpact(ctx context.Context, root string) (ImpactReport, error) {
+	var rep ImpactReport
+	base, ref, err := annotation.MergeBase(ctx, root)
+	if err != nil {
+		return rep, err
+	}
+	rep.Base, rep.BaseRef = base, ref
+	sc, err := survey.CompareSpec(ctx, root, base)
+	if err != nil {
+		return rep, err
+	}
+	touched := touchedPages(sc)
+	if len(touched) == 0 {
+		return rep, nil
+	}
+	pages, err := LoadPages(root)
+	if err != nil {
+		return rep, err
+	}
+	docsChanged, err := survey.ChangedFiles(ctx, root, base, DocsDir)
+	if err != nil {
+		return rep, err
+	}
+	edited := map[string]bool{}
+	for _, p := range docsChanged {
+		edited[p] = true
+	}
+	changed, err := survey.ChangedFiles(ctx, root, base, changesDir)
+	if err != nil {
+		return rep, err
+	}
+	if rep.Waivers, err = waivers(root, changed); err != nil {
+		return rep, err
+	}
+	codes := make([]string, 0, len(touched))
+	for c := range touched {
+		codes = append(codes, c)
+	}
+	sort.Strings(codes)
+	for _, code := range codes {
+		tp := touched[code]
+		if !defs.Landed(tp.status) {
+			rep.NotYet = append(rep.NotYet, code)
+			continue
+		}
+		rep.Checked = append(rep.Checked, code)
+		if len(rep.Waivers) > 0 {
+			continue
+		}
+		naming, anyEdited := describing(pages, code, edited)
+		if anyEdited {
+			continue
+		}
+		rep.Problems = append(rep.Problems, missingDocs(code, tp, naming))
+	}
+	return rep, nil
+}
+
+// touchedPages returns the specification pages that hold a changed item,
+// before or after the change, by code, with the status the page has after
+// the change, or before it when the change removed the page.
+func touchedPages(sc *survey.SpecChanges) map[string]*touchedPage {
+	out := map[string]*touchedPage{}
+	note := func(it *survey.Item) {
+		if it == nil || it.Code == "" {
+			return
+		}
+		tp := out[it.Code]
+		if tp == nil {
+			info, ok := sc.After.Pages[it.Code]
+			if !ok {
+				info = sc.Before.Pages[it.Code]
+			}
+			tp = &touchedPage{path: info.Path, status: info.Status}
+			out[it.Code] = tp
+		}
+		for _, id := range tp.items {
+			if id == it.ID {
+				return
+			}
+		}
+		tp.items = append(tp.items, it.ID)
+	}
+	for _, c := range sc.Changes {
+		note(c.Old)
+		note(c.New)
+	}
+	return out
+}
+
+// describing returns the documentation pages whose front matter names a
+// code, and whether the diff edits any of them.
+func describing(pages []*Page, code string, edited map[string]bool) ([]string, bool) {
+	var naming []string
+	anyEdited := false
+	for _, p := range pages {
+		if p.SpecError != "" {
+			continue
+		}
+		for _, c := range p.Codes {
+			if c == code {
+				naming = append(naming, p.Path)
+				anyEdited = anyEdited || edited[p.Path]
+				break
+			}
+		}
+	}
+	return naming, anyEdited
+}
+
+// missingDocs is the finding for a landed page whose documentation the
+// diff leaves unedited.
+func missingDocs(code string, tp *touchedPage, naming []string) Problem {
+	which := "no documentation page names it in its front matter yet"
+	if len(naming) > 0 {
+		which = "the pages that name it are " + strings.Join(naming, ", ")
+	}
+	return Problem{Path: tp.path, Message: fmt.Sprintf(
+		"the diff changes %s on %s and edits no documentation page whose front matter names %s (%s); "+
+			"edit the documentation that describes the change, or state under the Documentation section of the change's change.md that no reader-facing behavior changes",
+		strings.Join(tp.items, ", "), code, code, which)}
+}
+
+// waivers returns the change folders the diff touches whose change.md
+// states, in its Documentation section, that no reader-facing behavior
+// changes.
+func waivers(root string, changed []string) ([]string, error) {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range changed {
+		m := changeFolder.FindStringSubmatch(p)
+		if m == nil || seen[m[1]] {
+			continue
+		}
+		seen[m[1]] = true
+		b, err := os.ReadFile(filepath.Join(root, changesDir, m[1], "change.md"))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if noReaderChange.MatchString(documentationSection(string(b))) {
+			out = append(out, changesDir+"/"+m[1])
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// documentationSection returns the text of the Documentation section of a
+// change.md, up to the next level-two heading.
+func documentationSection(text string) string {
+	loc := documentationHeading.FindStringIndex(text)
+	if loc == nil {
+		return ""
+	}
+	rest := text[loc[1]:]
+	if i := strings.Index(rest, "\n## "); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
+}

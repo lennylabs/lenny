@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "pages": [
+    {
+      "code": "CLIPOOL",
+      "path": "spec/interfaces/cli/pools.md",
+      "type": "interface",
+      "status": ""
+    },
+    {
+      "code": "PLACE",
+      "path": "spec/capabilities/pools/placeholder.md",
+      "type": "capability",
+      "status": "placeholder"
+    },
+    {
+      "code": "POOL",
+      "path": "spec/capabilities/pools/warm-pools.md",
+      "type": "capability",
+      "status": "",
+      "aliases": [
+        "WARM"
+      ]
+    }
+  ],
+  "requirements": [],
+  "operations": [],
+  "terms": [],
+  "blocks": [],
+  "retired": [],
+  "moves": []
+}
