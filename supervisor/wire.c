@@ -60,7 +60,16 @@ const char *sv_reply_name(enum sv_req_type t)
 
 long sv_line_take(struct sv_linebuf *lb, const char **line)
 {
-	for (sv_size i = 0; i < lb->len; i++) {
+	/*
+	 * A message is one line of at most SV_MAX_LINE bytes before its "\n",
+	 * so a valid terminator lies within the first SV_MAX_LINE + 1 bytes,
+	 * which is the whole buffer. The scan stops there whatever len says,
+	 * so it never reads past the buffer.
+	 */
+	sv_size scan = lb->len;
+	if (scan > sizeof(lb->buf))
+		scan = sizeof(lb->buf);
+	for (sv_size i = 0; i < scan; i++) {
 		if (lb->buf[i] == '\n') {
 			*line = lb->buf;
 			return (long)i;
