@@ -1,11 +1,10 @@
 ---
 id: CHGWPOD-I15
-status: closed
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
-closed: obsolete
-closed-by: 0133
+change: 0133.S2
 ---
 
 # RotateCredentials does not check the coordination generation
@@ -23,10 +22,10 @@ closed-by: 0133
 
 ## Gap
 
-`RotateCredentialsRequest` carries `coordination_generation`, and the adapter's `RotateCredentials` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served.
+`RotateCredentialsRequest` carries `coordination_generation`, and the adapter's `RotateCredentials` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served. The gateway calls `RotateCredentials` today, so the gap is live until 0133.S2 removes the RPC.
 
 ## Suggested resolution
 
 The row deferred the work to step R16, "Eviction, the holder path", of `gateway-runtime-comms-remediation.md`.
 
-Closed at filing: 0133 removes `RotateCredentials` and credential rotation into pods ("LU-4 Removal" and the §4.7.1 row of its specification changes). Step 0133.S2 lands it.
+Planned for 0133.S2, which lists this issue under `closes`. 0133 removes `RotateCredentials` and credential rotation into pods ("LU-4 Removal" and the §4.7.1 row of its specification changes). Step 0133.S2 lands it.

@@ -10,7 +10,7 @@ requirements: []
 
 ## Specification
 
-§28.1 (Naming law), **N4.**: "The metric half of N4 is deferred." The deferral is recorded as an issue that names the step that discharges it, per §28.4 (Implementation status).
+§28.1 (Naming law), **N4.**: "The metric half of N4 is deferred." The deferral is recorded as an issue, per §28.4 (Implementation status).
 
 ## Evidence
 

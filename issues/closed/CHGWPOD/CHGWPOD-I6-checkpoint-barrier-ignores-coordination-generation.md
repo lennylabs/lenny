@@ -4,8 +4,8 @@ status: closed
 kind: build-gap
 severity: medium
 requirements: []
-closed: fixed
-closed-by: commit 4c8e48134
+closed: obsolete
+closed-by: 0116.S5
 ---
 
 # CheckpointBarrier does not check the coordination generation
@@ -19,7 +19,7 @@ closed-by: commit 4c8e48134
 - Claim register row (`tests/claim-map.json`, retired by 0116.S5): claim "CheckpointBarrierRequest.coordination_generation generation fence field", status `UNWIRED`, anchor `#2851-gateway-to-pod`, deferral `R16`.
 - Surface recorded on the row: "schemas/lenny-adapter.proto".
 - Note recorded on the row: "the field is carried on the request and no production reader compares it until the generation fence lands".
-- `CheckpointBarrier` in `pkg/adapter/coordination.go` refuses a generation that differs from the one the pod last fenced for the session with `coordinator_handoff_stale`. Commits `4c8e48134` and `08d03565c` (2026-09-06) landed the check after the row was written.
+- The row was in error when it was written. `CheckpointBarrier` in `pkg/adapter/coordination.go` already refused a generation that differs from the one the pod last fenced, with `coordinator_handoff_stale`, from commit `d353a8ef3` (2026-05-27), before commit `f0e36cd76` (2026-08-12) wrote the row. Commit `4c8e48134` (2026-09-06) only made the fenced state per session.
 
 ## Gap
 
@@ -29,4 +29,4 @@ None remains: the handler compares the generation.
 
 The row deferred the work to step R16, "Eviction, the holder path", of `gateway-runtime-comms-remediation.md`.
 
-Closed at filing: The tree carries the check; no member change was needed.
+Closed at filing by 0116.S5 as obsolete: the row recorded a gap the tree never had.

@@ -20,7 +20,7 @@ requirements: []
 
 ## Gap
 
-The adapter presents no client identity on the gateway-to-pod connection.
+The adapter presents no client identity on the gateway-to-pod connection. The same missing identity leaves the `CH-LLMPROXY` peer check of §28.5.5 (Pod-egress) with no SPIFFE URI to compare, so the proxy credential is not bound to the pod (CHEGRESS-I2).
 
 ## Suggested resolution
 

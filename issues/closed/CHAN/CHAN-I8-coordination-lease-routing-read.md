@@ -5,7 +5,7 @@ kind: build-gap
 severity: medium
 requirements: []
 closed: obsolete
-closed-by: proposal 0101
+closed-by: 0116.S5
 ---
 
 # Routing does not read the coordination mirror by session
@@ -19,6 +19,7 @@ closed-by: proposal 0101
 - Claim register row (`tests/claim-map.json`, retired by 0116.S5): claim "`coordlease.GetBySession` routing read", status `UNWIRED`, anchor `#register-entry-register`, deferral `R13`.
 - Surface recorded on the row: "definitions and tests only".
 - Revert `54292da1b` removed `GetBySession`, and no code under `pkg/` or `cmd/` names it.
+- Proposal 0101 (D2) made the `REG-COORDLEASE` holder value the routing authority and states that `REG-COORDMIRROR` is never read for routing (§10.1.1, **Replica address:**).
 
 ## Gap
 
@@ -28,4 +29,4 @@ None remains: the read the row recorded no longer exists.
 
 The row deferred the work to step R13, "Bind-time coordinator resolution", of `gateway-runtime-comms-remediation.md`.
 
-Closed at filing: Proposal 0101 (D2) made the `REG-COORDLEASE` holder value the routing authority and states that `REG-COORDMIRROR` is never read for routing (§10.1.1, **Replica address:**).
+Closed at filing by 0116.S5 as obsolete: the read the row recorded no longer exists, and proposal 0101 settled routing on the `REG-COORDLEASE` holder value.

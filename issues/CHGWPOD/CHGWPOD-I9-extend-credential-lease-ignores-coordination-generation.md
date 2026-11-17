@@ -1,11 +1,10 @@
 ---
 id: CHGWPOD-I9
-status: closed
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
-closed: obsolete
-closed-by: 0133
+change: 0133.S2
 ---
 
 # ExtendCredentialLease does not check the coordination generation
@@ -23,10 +22,10 @@ closed-by: 0133
 
 ## Gap
 
-`ExtendCredentialLeaseRequest` carries `coordination_generation`, and the adapter's `ExtendCredentialLease` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served.
+`ExtendCredentialLeaseRequest` carries `coordination_generation`, and the adapter's `ExtendCredentialLease` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served. The gateway calls `ExtendCredentialLease` today, so the gap is live until 0133.S2 removes the RPC.
 
 ## Suggested resolution
 
 The row deferred the work to step R16, "Eviction, the holder path", of `gateway-runtime-comms-remediation.md`.
 
-Closed at filing: 0133 ("LU-4 Removal") removes `ExtendCredentialLease` with direct delivery and the credentials file, and its non-specification changes remove the RPC from `schemas/lenny-adapter.proto`. Step 0133.S2 lands it.
+Planned for 0133.S2, which lists this issue under `closes`. 0133 ("LU-4 Removal") removes `ExtendCredentialLease` with direct delivery and the credentials file, and its non-specification changes remove the RPC from `schemas/lenny-adapter.proto`. Step 0133.S2 lands it.

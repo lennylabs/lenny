@@ -1,11 +1,10 @@
 ---
 id: CHGWPOD-I12
-status: closed
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
-closed: obsolete
-closed-by: 0133
+change: 0133.S2
 ---
 
 # ReportUsage does not check the coordination generation
@@ -23,10 +22,10 @@ closed-by: 0133
 
 ## Gap
 
-`ReportUsageRequest` carries `coordination_generation`, and the adapter's `ReportUsage` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served.
+`ReportUsageRequest` carries `coordination_generation`, and the adapter's `ReportUsage` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served. The gateway calls `ReportUsage` today (`pkg/gateway/runtime/adapterclient/client.go`), so the gap is live until 0133.S2 removes the RPC.
 
 ## Suggested resolution
 
 The row deferred the work to step R16, "Eviction, the holder path", of `gateway-runtime-comms-remediation.md`.
 
-Closed at filing: 0133 ("LU-4 Removal") removes `ReportUsage` and `FINAL_USAGE_REPORT`, replaced by proxy usage records. Step 0133.S2 lands it.
+Planned for 0133.S2, which lists this issue under `closes`. 0133 ("LU-4 Removal") removes `ReportUsage` and `FINAL_USAGE_REPORT`, replaced by proxy usage records. Step 0133.S2 lands it.
