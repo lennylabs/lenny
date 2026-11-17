@@ -25,3 +25,7 @@ The owner accepted three resolutions of conflicts between steps that the convers
 ## Owner ruling on 0137.S5 (2026-11-16)
 
 The owner ruled that 0137.S5, the kind renames and the `PodSet` merge, may be built while the rest of 0137 waits for the owner's cross-review, because S5 changes names only and no decision of 0137 is open. The rest of the change stays `Draft`.
+
+## Review of 0137.S5's gate paths (2026-11-17)
+
+The general and security reviewers read the parts of 0137.S5 under `cmd/lenny-test/`, `tests/static/`, and `tests/registers/`, and the security reviewer read the whole diff. No check was removed and no control weakened. Fixes that needed no decision: the webhook service account's unused read of `podsets`, the migrations exemption of the retired-table test, the `.claude/` exemption and the prose matching of the retired-name check, and a chart test comment. Two questions went to the owner and were settled as D14 and D15.

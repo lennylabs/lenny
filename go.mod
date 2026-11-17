@@ -33,14 +33,17 @@ require (
 	github.com/go-logr/logr v1.4.3
 	github.com/golang-migrate/migrate/v4 v4.19.1
 	github.com/google/uuid v1.6.0
+	github.com/h2non/filetype v1.1.3
 	github.com/jackc/pgx/v5 v5.9.2
 	github.com/launchdarkly/go-server-sdk/v6 v6.2.1
+	github.com/mholt/archives v0.1.2
 	github.com/minio/minio-go/v7 v7.1.0
 	github.com/moby/moby/api v1.54.1
 	github.com/open-feature/go-sdk v1.17.2
 	github.com/open-feature/go-sdk-contrib/providers/launchdarkly v0.1.6
 	github.com/open-feature/go-sdk-contrib/providers/statsig v0.0.4
 	github.com/open-feature/go-sdk-contrib/providers/unleash v0.1.1-alpha
+	github.com/pelletier/go-toml/v2 v2.2.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/prometheus v0.302.1
@@ -76,7 +79,26 @@ require (
 	sigs.k8s.io/yaml v1.4.0
 )
 
-require github.com/moby/moby/client v0.4.0 // indirect
+require (
+	github.com/STARRY-S/zip v0.2.1 // indirect
+	github.com/andybalholm/brotli v1.1.2-0.20250424173009-453214e765f3 // indirect
+	github.com/bodgit/plumbing v1.3.0 // indirect
+	github.com/bodgit/sevenzip v1.6.0 // indirect
+	github.com/bodgit/windows v1.0.1 // indirect
+	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
+	github.com/hashicorp/errwrap v1.1.0 // indirect
+	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+	github.com/klauspost/pgzip v1.2.6 // indirect
+	github.com/minio/minlz v1.0.0 // indirect
+	github.com/moby/moby/client v0.4.0 // indirect
+	github.com/nwaples/rardecode/v2 v2.1.0 // indirect
+	github.com/pierrec/lz4/v4 v4.1.21 // indirect
+	github.com/sorairolake/lzip-go v0.3.5 // indirect
+	github.com/therootcompany/xz v1.0.1 // indirect
+	github.com/ulikunitz/xz v0.5.12 // indirect
+	go4.org v0.0.0-20230225012048-214862532bf5 // indirect
+)
 
 require (
 	cel.dev/expr v0.25.1 // indirect

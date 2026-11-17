@@ -94,6 +94,8 @@ func main() {
 		os.Exit(runRun(args[1:]))
 	case "gate":
 		os.Exit(runGate(args[1:]))
+	case "secretscan":
+		os.Exit(runSecretScanSubcommand(args[1:]))
 	case "stress":
 		os.Exit(runStress(args[1:]))
 	case "conformance":
@@ -137,6 +139,9 @@ Usage:
   lenny-test gate [--base <ref>]           Run the merge gate in the gate container
                                            (tests/gate/Dockerfile) and write
                                            tests/results/gate-<run>.json.
+  lenny-test secretscan [--root <dir>]     Run the static tier's secret scan on the
+                                           committed tree at HEAD; exit 0 on PASS,
+                                           1 on FAIL, 3 on UNVERIFIED.
   lenny-test list [flags]                  Print the tests that would run for a
                                            given selector, without executing them.
   lenny-test infra <up|down|status|prune>  Manage cached test infrastructure.

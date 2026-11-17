@@ -1,12 +1,14 @@
 ---
 name: review
-description: Review a change, a document, a diff, or a branch with two subagents run in parallel, one for a general review and cross-reference (the target itself, the tree, the documentation, and the other changes of the same program) and one for security. Use when the owner asks for a review, or before asking the owner to decide or land something. One round; it never reruns itself.
+description: Review a change, a document, a diff, or a branch with two subagents run in parallel, one for a general review and cross-reference (the target itself, the tree, the documentation, and the other changes of the same program) and one for security. Use when the owner asks for a review, before asking the owner to decide or land something, and before merging a branch that changes the merge gate's own files (.claude/rules/git-workflow.md, "Review changes to the merge gate"). One round; it never reruns itself.
 argument-hint: <target> [--since <rev>] [--fix] [--record <file>]
 ---
 
 # Review
 
 Run one review round over a target and report verified findings. The owner decides whether to run another round.
+
+A branch that changes the merge gate's own files is reviewed before it merges, as `.claude/rules/git-workflow.md` ("Review changes to the merge gate") states. For that review the target is the branch's diff of those files against its merge base with `main`, and the general reviewer also checks the points that rule lists.
 
 ## Arguments
 

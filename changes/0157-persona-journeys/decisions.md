@@ -21,3 +21,10 @@ Settled by the owner on 2026-11-17:
 8. **The pilot journeys.** An operator installs Lenny with Helm and configures a pool; a tenant admin sets up a tenant, a user, and a credential; an end user creates a session, sends a message, and reads the result, each following only the documentation.
 9. **Records.** Transcripts and verdicts go under `tests/results/journeys/`, which is not committed, and each run's summary goes into the step's digest.
 
+Settled by the owner on 2026-11-17, on questions the review of 0157.S1 raised:
+
+10. **Isolation of the journey agent.** The agent runs in a container that holds only the `claude` CLI, `kubectl`, `helm`, `lenny-ctl`, a read-only copy of the journey's documentation, and the trial cluster's read-only internal kubeconfig, attached to the Kind cluster's network, with no host home directory, Docker socket, host kubeconfig, or cloud credentials. It authenticates with a long-lived token on the owner's subscription from `claude setup-token`, which the harness reads from a file and never records. A later cloud target supplies the network and the credentials its scenario names to the same container.
+11. **End-user identity in the pilot.** The end-user journey uses the platform-admin token, because the development install cannot issue a user token. The scenario and `TESTING.md` state this limit, and an issue tracks issuing user tokens in the development install.
+
+Owner constraint recorded on 2026-11-17: later journeys will deploy to AWS, GCP, and Azure. The harness keeps cluster provisioning behind an interface with Kind as the only target, records infrastructure cost on its own ledger line, verifies teardown on every exit path, and passes credentials per scenario.
+

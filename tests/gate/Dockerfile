@@ -19,6 +19,9 @@
 #                  testcontainers run on (Docker 29)
 #   jq             scripts/lib/versions.sh names 1.6 as the floor;
 #                  scripts/check-schema-breaking.sh needs it
+#   gitleaks       the static tier's secret scan (cmd/lenny-test,
+#                  secretscan.go); the release current on 2026-11-17,
+#                  which .gitleaks.toml names as its minVersion
 #
 # Every base image is pinned by the digest of its multi-arch index, which
 # covers linux/amd64 and linux/arm64. To move a base image to a new tag,
@@ -43,6 +46,7 @@ ARG HELM_VERSION=v4.2.0
 ARG BUF_VERSION=v1.69.0
 ARG ENVTEST_K8S_VERSION=1.31.0
 ARG JQ_VERSION=1.8.1
+ARG GITLEAKS_VERSION=8.30.1
 
 COPY --from=go /usr/local/go /usr/local/go
 # The Docker CLI of the official image is a static binary.
@@ -56,18 +60,21 @@ ENV GOPATH=/go \
 
 RUN git config --system --add safe.directory '*'
 
-# Prebuilt binaries. Helm, buf, and jq are checked against the SHA-256
-# their releases publish; envtest against the SHA-512 that controller-tools
-# publishes in envtest-releases.yaml.
+# Prebuilt binaries. Helm, buf, jq, and gitleaks are checked against the
+# SHA-256 their releases publish (gitleaks in
+# gitleaks_<version>_checksums.txt); envtest against the SHA-512 that
+# controller-tools publishes in envtest-releases.yaml.
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) helm_sha=97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096; \
              buf_arch=x86_64; buf_sha=c1989e0f23143c044cc4f3e1d5c0d3453fa5f83f8330aed6bab76080192740b2; \
              jq_sha=020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d; \
+             gitleaks_arch=x64; gitleaks_sha=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb; \
              envtest_sha512=5d96ae284610863ce5974e030aecd2eaad693f3210103ca778107aa0ea00f6f1d0a7b1b34aa74d7257cb0d7f713c2da365beba89b1d60823ce56c7b84b935423 ;; \
       arm64) helm_sha=1f8de130dfbd04de64978e7b852a7a547be1404956a366608276d2520b678670; \
              buf_arch=aarch64; buf_sha=8acd7161665ce25933a7cb2c982b3137bbcaa6e70ad58ea2cc311dba4f4f2f5c; \
              jq_sha=6bc62f25981328edd3cfcfe6fe51b073f2d7e7710d7ef7fcdac28d4e384fc3d4; \
+             gitleaks_arch=arm64; gitleaks_sha=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080; \
              envtest_sha512=72f5c8fd615c9db62eeb66e30edfda0f3879bffa3577c5776ec83363c018d7f51c174ac5ea807414072a21f8151a7bdf9826f414543f690686550e49db202ca0 ;; \
       *) echo "unsupported architecture ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
@@ -81,6 +88,9 @@ RUN set -eux; \
     curl -fsSLo jq "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-${TARGETARCH}"; \
     echo "${jq_sha}  jq" | sha256sum -c -; \
     install -m 0755 jq /usr/local/bin/jq; \
+    curl -fsSLo gitleaks.tgz "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${gitleaks_arch}.tar.gz"; \
+    echo "${gitleaks_sha}  gitleaks.tgz" | sha256sum -c -; \
+    tar -xzf gitleaks.tgz gitleaks; install -m 0755 gitleaks /usr/local/bin/gitleaks; \
     curl -fsSLo envtest.tgz "https://github.com/kubernetes-sigs/controller-tools/releases/download/envtest-v${ENVTEST_K8S_VERSION}/envtest-v${ENVTEST_K8S_VERSION}-linux-${TARGETARCH}.tar.gz"; \
     echo "${envtest_sha512}  envtest.tgz" | sha512sum -c -; \
     tar -xzf envtest.tgz; mkdir -p "${KUBEBUILDER_ASSETS}"; \
