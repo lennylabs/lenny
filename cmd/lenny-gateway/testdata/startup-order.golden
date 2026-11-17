@@ -1,0 +1,61 @@
+runGateway:
+  w.buildStartupGates
+  w.buildStores
+  w.buildHolderForwardTransport
+  defer func{w.tokenServiceConn.Close}
+  w.tokenServiceConn.Close
+  w.buildMetricsBackfill
+  w.buildAuditPipeline
+  w.buildAuxStores
+  w.buildPolicyChain
+  w.buildQuotaCheckpoint
+  w.buildInterceptorRegistration
+  w.buildSessionDeps
+  w.buildSessionServer
+  w.buildCredentialSurface
+  w.buildMCPSurface
+  w.buildRevocationWiring
+  w.buildAdminRouter
+  w.buildHTTPSurface
+  w.buildHolderForwardServer
+  w.buildLLMProxy
+  w.buildControlServer
+  w.scrubReportServiceWired
+  defer w.holdCoordinator.Stop
+  w.holdCoordinator.Stop
+  defer w.recycleBoundary.Stop
+  w.recycleBoundary.Stop
+  defer w.watchdogCancel
+  w.watchdogCancel
+  w.startBackgroundWorkers
+  w.runServers
+runServers:
+  w.gwMetrics.Registerer
+  w.gwMetrics.Gatherer
+  w.alertEvalPtr.Store
+  go alertEvaluator.Run
+  go periodic.Run
+  go w.ocsfTranslator.Run
+  w.ocsfTranslator.Run
+  go w.ocsfOutbox.Run
+  w.ocsfOutbox.Run
+  go w.auditBatchBuffer.Run
+  w.auditBatchBuffer.Run
+  go func{w.httpSrv.ListenAndServe}
+  w.httpSrv.ListenAndServe
+  w.startHolderForwardListener
+  go func{w.llmProxySrv.ListenAndServe}
+  w.llmProxySrv.ListenAndServe
+  go func{w.gatewayCtrlLis.Addr, w.gatewayCtrlSrv.Serve}
+  w.gatewayCtrlLis.Addr
+  w.gatewayCtrlSrv.Serve
+  w.shutdownSequence(*shutdownTimeout).run
+  w.shutdownSequence
+finalShutdownSteps:
+  trace
+  llm-proxy
+  gateway-control
+  postgres
+  sqlite
+  redis
+  openfeature
