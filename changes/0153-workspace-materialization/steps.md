@@ -142,11 +142,11 @@ Archive extraction in the helper and its removal from the gateway; the §7.4 and
 - status: Planned
 - aliases: [WM-D, WM-10]
 - lanes: [specification, code, documentation]
-- depends-on: [0153.S2, 0127.S3, 0147.S8, 0131.S1]
+- depends-on: [0153.S2, 0127.S3, 0131.S1, 0127.S5 (part), 0153.S9 (part)]
 
 Git in the helper: the pinned git, `gitClone`, the tree-size check, the index refresh, `capture-copy`, and `restore-complete`.
 
-The step needs EG proposal 3 ([0127.S3](../0127-egress-and-git/steps.md#steps)), which is also the egress step that carries the fetch grant, DR-11 ([0147.S8](../0147-tenant-derived-runtimes/steps.md#steps)), and the IC change for the capture copy, which is IC-1's "Git repositories" ([0131.S1](../0131-incremental-checkpoint/steps.md#steps)). 0153.S3 and 0153.S4 can land in either order after 0153.S2.
+The step needs EG proposal 3 ([0127.S3](../0127-egress-and-git/steps.md#steps)), which is also the egress step that carries the fetch grant, and the IC change for the capture copy, which is IC-1's "Git repositories" ([0131.S1](../0131-incremental-checkpoint/steps.md#steps)). Its store parts, step 2 of WM-10 (alternates), `capture-copy`, and `restore-complete`, need the stores of the rewritten draft 0111 ([0127.S5](../0127-egress-and-git/steps.md#steps)) and their fill (0153.S9), and land with them or after them. 0153.S3 and 0153.S4 can land in either order after 0153.S2.
 
 ### 0153.S5 Mid-session overlay
 - status: Planned
@@ -182,11 +182,11 @@ The step waits on the validation of "Validation owed", and on billing decision 7
 - status: Planned
 - aliases: [WM-H, WM-15]
 - lanes: [specification, code, documentation]
-- depends-on: [0153.S4, 0153.S9, 0118.S2, 0147.S8, 0140.S1]
+- depends-on: [0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1]
 
 The warm-up checkout: `prestage` of the `gitRepository` entries with `prestage: true`, adoption at bind by the first source of each repository, the background `discard`, and the reflink rebuild.
 
-The step needs PL-D (no pre-launch, [0118.S2](../0118-agent-pod-layout/steps.md#steps)), DR-11 ([0147.S8](../0147-tenant-derived-runtimes/steps.md#steps)), and the RV proposal that adds `prestage` (D29 of that design, [0140.S1](../0140-runtime-revisions/steps.md#steps)). It lands after pre-launched runtimes are gone, because a pre-launched process could hold a staged tree open.
+The step needs PL-D (no pre-launch, [0118.S2](../0118-agent-pod-layout/steps.md#steps)), the warm list and `prestage` of the rewritten draft 0111 ([0127.S5](../0127-egress-and-git/steps.md#steps), decision 67 of 0127), and the RV proposal that adds `prestage` (D29 of that design, [0140.S1](../0140-runtime-revisions/steps.md#steps)). It lands after pre-launched runtimes are gone, because a pre-launched process could hold a staged tree open. Tenant entries and trees staged from withheld stores arrive with the staging part of DR-11 ([0147.S8](../0147-tenant-derived-runtimes/steps.md#steps)).
 
 ### 0153.S9 lenny-store-fill
 - status: Planned

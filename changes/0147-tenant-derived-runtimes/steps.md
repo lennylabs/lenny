@@ -63,21 +63,21 @@ The required `gitClone.path` and `workingDirectory` land early, because a stored
 - status: Planned
 - aliases: [DR-9]
 - lanes: [specification, code, documentation]
-- depends-on: [0147.S3, 0147.S4, 0147.S5, 0127.S3, 0144.S1]
+- depends-on: [0147.S3, 0147.S4, 0147.S5, 0127.S3, 0144.S1, 0153.S4, 0118.S4]
 
 The field on every runtime, the write checks, the composition order on every path, the refusal details, the write scope, and the guardrail values.
 
-It depends on 0147.S3, 0147.S4, and 0147.S5, on the [egress design](../0127-egress-and-git/change.md)'s pod-side clone (0127.S3), on the materialization design's helper with the per-slot disk watch, and on the plan check function of [SD-1](../0144-session-derive/change.md#sd-1-one-route) (0144.S1), the derive route. A clone is code, it needs an owned pool's git path, and F-14.1.37 means no `gitClone` works in a deployed image today. A clone under a VCS pool with `userAuthorization: required` also needs [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization) (0152.S2).
+It depends on 0147.S3, 0147.S4, and 0147.S5, on the [egress design](../0127-egress-and-git/change.md)'s pod-side clone (0127.S3), on git in the materialization design's helper ([0153.S4](../0153-workspace-materialization/steps.md#steps)), which runs every clone at the slot UID, on the per-slot disk watch of the pod layout ([0118.S4](../0118-agent-pod-layout/steps.md#steps)), and on the plan check function of [SD-1](../0144-session-derive/change.md#sd-1-one-route) (0144.S1), the derive route. A clone is code, it needs an owned pool's git path, and F-14.1.37 means no `gitClone` works in a deployed image today. A clone under a VCS pool with `userAuthorization: required` also needs [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization) (0152.S2).
 
 ### 0147.S8 Shared assets and warm stores
 - status: Planned
 - aliases: [DR-11]
 - lanes: [specification, code, documentation]
-- depends-on: [0147.S7, 0118.S4, 0153.S9]
+- depends-on: [0147.S7, 0118.S4, 0127.S5, 0153.S9, 0153.S8 (part)]
 
 A tenant-derived runtime's `sharedAssets` with `TENANT_ASSETS_REQUIRE_OWNED_POOL`, the artifact upload route with its quota and garbage collection, the asset Helm values, the grant's `allowAssets`, `gitRepository` assets with their declarer and the protections of `platform`-declared ones, `maxWarmCloneBytes`, the owned pool's share of the warm list and its carrier, `prestage: true` with adoption by repository, `coveredStores` and `withheldStores` on the claim and the session row, the withholding of a store, the fill in `lenny-store-fill`, the volume, the pre-session reach, the age limit, the backoff, the fill limits, the environment rule at write and at render, and the exclusion from T of pods a platform-declared entry failed.
 
-It depends on 0147.S7, on draft 0111 as the egress design rewrites it and on the requirements under "Relationship to draft proposal 0111", on the materialization design's helper with the warm-up checkout, on the pod layout's store volume, and on the `lenny-store-fill` container of the egress design's decision 61. These supply the clone it warms, the warm list, store, slot repository, capture copy, and restore completion it reuses, the staged checkout, the fill, and the backstop under a checkout. This step adds no field to a default clone, so it can land after 0147.S7 with no format change to the clone. The session row's `coveredStores` lands with this step or with the platform chunk sets of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#platform-chunk-sets), whichever is first.
+It depends on 0147.S7, on draft 0111 as the egress design rewrites it in [0127.S5](../0127-egress-and-git/steps.md#steps) and on the requirements under "Relationship to draft proposal 0111", on the pod layout's store volume, and on the `lenny-store-fill` container of the egress design's decision 61. These supply the clone it warms, the warm list, store, slot repository, capture copy, and restore completion it reuses, the staged checkout, the fill, and the backstop under a checkout. Its staging part, `prestage: true` on a tenant's `gitRepository` assets, staging on the owned pool, and the removal of a tree staged from a withheld store, needs the warm-up checkout of [0153.S8](../0153-workspace-materialization/steps.md#steps) and lands with it or after it, and the rest of the step lands first. This step adds no field to a default clone, so it can land after 0147.S7 with no format change to the clone. The session row's `coveredStores` lands with this step or with the platform chunk sets of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#platform-chunk-sets), whichever is first.
 
 ### 0147.S9 Capacity reservation
 - status: Planned

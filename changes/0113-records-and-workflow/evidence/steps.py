@@ -169,6 +169,33 @@ def check(changes, steps, errors):
     return errors
 
 
+def part_cycles(steps):
+    """Cycles that need a partial edge to close. A part can land first, so such a
+    cycle is not a deadlock by itself, but it often hides one; the owner checks it."""
+    graph = {n: [base(d) for d in s['deps'] if base(d) in steps] for n, s in steps.items()}
+    index, low, stack, on, out, i = {}, {}, [], set(), [], [0]
+
+    def strong(v):
+        index[v] = low[v] = i[0]; i[0] += 1; stack.append(v); on.add(v)
+        for w in graph[v]:
+            if w not in index:
+                strong(w); low[v] = min(low[v], low[w])
+            elif w in on:
+                low[v] = min(low[v], index[w])
+        if low[v] == index[v]:
+            comp = []
+            while True:
+                w = stack.pop(); on.discard(w); comp.append(w)
+                if w == v:
+                    break
+            if len(comp) > 1:
+                out.append(sorted(comp))
+    for v in graph:
+        if v not in index:
+            strong(v)
+    return out
+
+
 def program(path):
     text = open(path).read()
     fm = text.split('---')[1]
@@ -324,6 +351,8 @@ def main():
     if sys.argv[1] == 'check':
         for e in errors:
             print(e)
+        for c in part_cycles(steps):
+            print('warning: steps that wait on each other through partial dependencies: ' + ', '.join(c))
         print(f'{len(steps)} steps in {len(changes)} changes; {len(errors)} problems')
         sys.exit(1 if errors else 0)
     if sys.argv[1] == 'board':

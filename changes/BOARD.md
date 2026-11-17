@@ -8,9 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Waiting on decisions | 39 |
-| Blocked | 133 |
+| Waiting on decisions | 40 |
+| Blocked | 132 |
 | Landed | 5 |
+| Cancelled | 1 |
 
 ## M0: Workflow in place (current)
 
@@ -26,7 +27,11 @@ Not yet resolved to steps: 0114.
 
 ## M1: Specification structure foundation
 
-Not yet resolved to steps: 0115; 0116; the kind renames of 0137 (pod lifecycle controller).
+Not yet resolved to steps: 0115; 0116.
+
+| Step | Title | State | Waiting on |
+| :-- | :-- | :-- | :-- |
+| [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Waiting on decisions | 0137 is `Draft` |
 
 ## M2: Gateway package layout
 
@@ -65,7 +70,7 @@ Not yet resolved to steps: 0117.
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Waiting on decisions | 0137 is `Draft` |
 | [0141.S1](0141-runtime-routing/steps.md#0141s1-interceptor-contract-and-scope) | Interceptor contract and scope | Waiting on decisions | 0141 is `Draft` |
 | [0142.S1](0142-security-oversight/steps.md#0142s1-security-roles) | Security roles | Waiting on decisions | a part waits on 0127.S8, 0127.S9 |
-| [0142.S4](0142-security-oversight/steps.md#0142s4-mirror-to-the-tenant-chain) | Mirror to the tenant chain | Waiting on decisions | a part waits on 0136.S5 |
+| [0142.S4](0142-security-oversight/steps.md#0142s4-mirror-to-the-tenant-chain) | Mirror to the tenant chain | Waiting on decisions | 0142 is `Draft` |
 | [0142.S8](0142-security-oversight/steps.md#0142s8-certificate-windows-and-the-remedy) | Certificate windows and the remedy | Waiting on decisions | 0142 is `Draft` |
 | [0144.S1](0144-session-derive/steps.md#0144s1-one-route) | One route | Waiting on decisions | 0144 is `Draft` |
 | [0146.S1](0146-session-lifecycle/steps.md#0146s1-states-and-their-rules) | States and their rules | Waiting on decisions | 0146 is `Draft` |
@@ -136,11 +141,10 @@ Not yet resolved to steps: 0117.
 | [0135.S5](0135-message-delivery/steps.md#0135s5-parents-and-children-and-the-names) | Parents and children and the names | Blocked | 0135.S1, 0135.S4, 0126.S1, 0146.S1 |
 | [0136.S3](0136-placement/steps.md#0136s3-classes-presets-rendering-and-enforcement) | Classes, presets, rendering, and enforcement | Blocked | 0136.S2 |
 | [0136.S4](0136-placement/steps.md#0136s4-node-tenancy-and-single-tenant-pools) | Node tenancy and single-tenant pools | Blocked | 0136.S3, 0147.S5, 0150.S2 |
-| [0136.S5](0136-placement/steps.md#0136s5-offerings-and-the-pool-placement-block) | Offerings and the pool placement block | Blocked | 0136.S4, 0141.S1, 0147.S9 |
+| [0136.S5](0136-placement/steps.md#0136s5-offerings-and-the-pool-placement-block) | Offerings and the pool placement block | Blocked | 0136.S4, 0141.S1, 0147.S9, 0142.S2, 0142.S4 |
 | [0136.S6](0136-placement/steps.md#0136s6-placement-requirements-and-region-placement) | Placement requirements and region placement | Blocked | 0136.S5, 0141.S1, 0149.S1, 0142.S2 |
-| [0137.S1](0137-pod-lifecycle-controller/steps.md#0137s1-specification-changes) | Specification changes | Blocked | 0119.S2, 0118.S3, 0145.S1, 0121.S1 |
-| [0137.S2](0137-pod-lifecycle-controller/steps.md#0137s2-kinds-fields-labels-and-identifiers) | Kinds, fields, labels, and identifiers | Blocked | 0137.S1, 0118.S3, 0145.S1, 0140.S1 |
-| [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Blocked | 0137.S1 |
+| [0137.S1](0137-pod-lifecycle-controller/steps.md#0137s1-specification-changes) | Specification changes | Blocked | 0137.S5, 0119.S2, 0118.S3, 0145.S1, 0121.S1 |
+| [0137.S2](0137-pod-lifecycle-controller/steps.md#0137s2-pod-set-names-labels-claim-scope-and-slot-fields) | Pod-set names, labels, claim scope, and slot fields | Blocked | 0137.S5, 0137.S1, 0118.S3, 0145.S1, 0140.S1 |
 | [0138.S1](0138-rest-only-client-api/steps.md#0138s1-rest-additions) | REST additions | Blocked | 0135.S5, 0146.S1, 0122.S1, 0120.S1 |
 | [0138.S2](0138-rest-only-client-api/steps.md#0138s2-authorization-of-adapter-requests) | Authorization of adapter requests | Blocked | 0149.S2, 0149.S7, 0138.S1 |
 | [0138.S3](0138-rest-only-client-api/steps.md#0138s3-webhook-subscriptions) | Webhook subscriptions | Blocked | 0138.S1, 0138.S2 |
@@ -152,7 +156,7 @@ Not yet resolved to steps: 0117.
 | [0139.S3](0139-runtime-protocol/steps.md#0139s3-sdks-executor-and-reference-runtimes) | SDKs, executor, and reference runtimes | Blocked | 0139.S1, 0139.S2 |
 | [0140.S1](0140-runtime-revisions/steps.md#0140s1-runtime-revisions) | Runtime revisions | Blocked | 0141.S2, 0139.S1 |
 | [0141.S2](0141-runtime-routing/steps.md#0141s2-runtime-routes-and-removal) | Runtime routes and removal | Blocked | 0141.S1 |
-| [0142.S2](0142-security-oversight/steps.md#0142s2-tenant-security-record-and-posture) | Tenant security record and posture | Blocked | 0142.S1, 0127.S2, 0127.S4, 0127.S9; a part waits on 0136.S5, 0136.S6, 0151.S1, 0151.S2, 0151.S4, 0151.S5, 0152.S2, 0152.S3 |
+| [0142.S2](0142-security-oversight/steps.md#0142s2-tenant-security-record-and-posture) | Tenant security record and posture | Blocked | 0142.S1, 0127.S2, 0127.S4, 0127.S9; a part waits on 0151.S1, 0151.S2, 0151.S4, 0151.S5, 0152.S2, 0152.S3 |
 | [0142.S3](0142-security-oversight/steps.md#0142s3-per-tenant-siem-destination) | Per-tenant SIEM destination | Blocked | 0142.S1, 0142.S2; a part waits on 0127.S8, 0127.S10, 0127.S11 |
 | [0142.S5](0142-security-oversight/steps.md#0142s5-operator-access-approval) | Operator access approval | Blocked | 0142.S1, 0142.S2, 0142.S4, 0142.S6 |
 | [0142.S6](0142-security-oversight/steps.md#0142s6-tool-use-approvals) | Tool-use approvals | Blocked | 0142.S1, 0142.S2 |
@@ -174,8 +178,8 @@ Not yet resolved to steps: 0117.
 | [0147.S12](0147-tenant-derived-runtimes/steps.md#0147s12-interactions) | Interactions | Blocked | 0147.S4, 0149.S1, 0149.S3, 0141.S1 |
 | [0147.S4](0147-tenant-derived-runtimes/steps.md#0147s4-tenant-runtime-records) | Tenant runtime records | Blocked | 0147.S1, 0127.S9, 0149.S3; a part waits on 0147.S3, 0119.S4 |
 | [0147.S5](0147-tenant-derived-runtimes/steps.md#0147s5-owned-pools) | Owned pools | Blocked | 0147.S2, 0147.S4, 0127.S9 |
-| [0147.S7](0147-tenant-derived-runtimes/steps.md#0147s7-default-git-clones) | Default git clones | Blocked | 0147.S3, 0147.S4, 0147.S5, 0127.S3, 0144.S1 |
-| [0147.S8](0147-tenant-derived-runtimes/steps.md#0147s8-shared-assets-and-warm-stores) | Shared assets and warm stores | Blocked | 0147.S7, 0118.S4, 0153.S9 |
+| [0147.S7](0147-tenant-derived-runtimes/steps.md#0147s7-default-git-clones) | Default git clones | Blocked | 0147.S3, 0147.S4, 0147.S5, 0127.S3, 0144.S1, 0153.S4, 0118.S4 |
+| [0147.S8](0147-tenant-derived-runtimes/steps.md#0147s8-shared-assets-and-warm-stores) | Shared assets and warm stores | Blocked | 0147.S7, 0118.S4, 0127.S5, 0153.S9; a part waits on 0153.S8 |
 | [0147.S9](0147-tenant-derived-runtimes/steps.md#0147s9-capacity-reservation) | Capacity reservation | Blocked | 0147.S5 |
 | [0148.S1](0148-tenant-outbound-connector/steps.md#0148s1-gateway-agent-and-identity) | Gateway, agent, and identity | Blocked | 0127.S2, 0127.S6, 0127.S8, 0127.S9, 0127.S10, 0127.S11 |
 | [0148.S2](0148-tenant-outbound-connector/steps.md#0148s2-hosts-and-policy) | Hosts and policy | Blocked | 0148.S1, 0127.S4, 0127.S6, 0127.S8, 0127.S9 |
@@ -204,12 +208,13 @@ Not yet resolved to steps: 0117.
 | [0153.S1](0153-workspace-materialization/steps.md#0153s1-asynchronous-worker-and-setup) | Asynchronous worker and setup | Blocked | 0145.S1, 0145.S3 |
 | [0153.S2](0153-workspace-materialization/steps.md#0153s2-lenny-materialize-for-files-and-uploads) | lenny-materialize for files and uploads | Blocked | 0153.S1, 0145.S2, 0118.S4 |
 | [0153.S3](0153-workspace-materialization/steps.md#0153s3-archive-extraction-in-the-helper) | Archive extraction in the helper | Blocked | 0153.S2 |
-| [0153.S4](0153-workspace-materialization/steps.md#0153s4-git-in-the-helper) | Git in the helper | Blocked | 0153.S2, 0127.S3, 0147.S8, 0131.S1 |
+| [0153.S4](0153-workspace-materialization/steps.md#0153s4-git-in-the-helper) | Git in the helper | Blocked | 0153.S2, 0127.S3, 0131.S1; a part waits on 0127.S5, 0153.S9 |
 | [0153.S5](0153-workspace-materialization/steps.md#0153s5-mid-session-overlay) | Mid-session overlay | Blocked | 0153.S2, 0131.S1, 0135.S5 |
 | [0153.S6](0153-workspace-materialization/steps.md#0153s6-resume-derive-and-snapshotless-rebuild) | Resume, derive, and snapshotless rebuild | Blocked | 0153.S2, 0153.S4, 0131.S5, 0144.S1 |
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
-| [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0147.S8, 0140.S1 |
+| [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
+| [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
 
@@ -237,7 +242,7 @@ Not yet resolved to steps: 0117.
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 4 | 0 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 0 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 6 | 17 |
-| [0137](0137-pod-lifecycle-controller/change.md) | Pod lifecycle controllers | `Draft` | 0 of 4 | 0 |
+| [0137](0137-pod-lifecycle-controller/change.md) | Pod lifecycle controllers | `Draft` | 0 of 5 | 0 |
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 0 |
 | [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 28 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 1 | 0 |

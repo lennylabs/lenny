@@ -47,9 +47,9 @@ Node tenancy and single-tenant pools. It depends on DR-5 (0147.S5) for owned poo
 - status: Planned
 - aliases: [PM-E, PM-3]
 - lanes: [specification, code, documentation]
-- depends-on: [0136.S4, 0141.S1, 0147.S9]
+- depends-on: [0136.S4, 0141.S1, 0147.S9, 0142.S2, 0142.S4]
 
-Offerings, the admin API, the pool `placement` block, the routing check, owned-pool choice, and the reserved overlay. It depends on RT-2's post-chain point, which 0141.S1 lands, and on DR-10 (0147.S9).
+Offerings, the admin API, the pool `placement` block, the routing check, owned-pool choice, and the reserved overlay. It depends on RT-2's post-chain point, which 0141.S1 lands, and on DR-10 (0147.S9). It also adds the offering grant mirror of SO-4a (0142.S4) and the posture's `placementOffering` and `placementConfigured` fields of SO-2 (0142.S2).
 
 ### 0136.S6 Placement requirements and region placement
 - status: Planned
@@ -57,7 +57,7 @@ Offerings, the admin API, the pool `placement` block, the routing check, owned-p
 - lanes: [specification, code, documentation]
 - depends-on: [0136.S5, 0141.S1, 0149.S1, 0142.S2]
 
-Placement requirements with `allowReusedPod`, `sessionIsolationLevel` fields, and region placement. It depends on RT-2 (0141.S1), on TS-1 (0149.S1), and on SO-2 (0142.S2) under O7. 0150.S3 (TSS-C) lands the operator's placement settings as sources once 0136.S4 and 0136.S6 are in.
+Placement requirements with `allowReusedPod`, `sessionIsolationLevel` fields, and region placement. It depends on RT-2 (0141.S1), on TS-1 (0149.S1), and on SO-2 (0142.S2) for the record, its write path, `weakeningDelaySeconds`, and the applier that activates an environment's pending relaxation. Under O7 it adds the record's `placement` section and the posture's placement fields. 0150.S3 (TSS-C) lands the operator's placement settings as sources once 0136.S4 and 0136.S6 are in.
 
 ### Notes on the steps
 
