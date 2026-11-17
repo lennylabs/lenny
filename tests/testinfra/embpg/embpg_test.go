@@ -98,12 +98,12 @@ func TestStartStopRoundTrip(t *testing.T) {
 // a fresh port. The test can hold the port only before the library's
 // check, so it exercises the retry; listening on 127.0.0.1 alone is what
 // turns the later collision into a start failure. It downloads the
-// PostgreSQL bundle, so it is skipped under -short.
-//
-// spec: 17.4 (C2 store removal; the embedded-postgres test wrapper)
+// PostgreSQL bundle, so it is skipped under -short. The retry is test
+// tooling with no specification section, so the test carries no spec
+// annotation.
 func TestStartMovesOffAPortAnotherProcessTookOnIPv4(t *testing.T) {
 	if testing.Short() {
-		t.Skip("downloads the PostgreSQL bundle; skipped under -short")
+		t.Skip("blocked: downloads the PostgreSQL bundle, which -short excludes")
 	}
 	held, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
