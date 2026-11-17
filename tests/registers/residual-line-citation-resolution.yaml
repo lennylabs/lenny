@@ -18,12 +18,6 @@ version: 1
 class: line-citation-resolution
 entries:
   - member: |-
-      §25\.4 line 215
-    class: line-citation-resolution
-    disposition: excluded
-    reason: |-
-      a regular-expression literal in the gate that catches this stale citation, rather than a citation of its own
-  - member: |-
       §30.1 is %v (present=%v), want lines 9-11
     class: line-citation-resolution
     disposition: excluded

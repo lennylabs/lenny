@@ -1062,9 +1062,6 @@ const checkpointGoSourceRoot = "pkg/gateway/checkpoint"
 // cites the credential leasing section legitimately, which is why the list is
 // enumerated rather than derived from a path glob over tests/.
 var checkpointGoCitationFiles = []string{
-	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
-	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
-	"tests/tier0_static/slot_absence_claim_comment_test.go",
 	"tests/tier2_component/migrations/checkpoint_slot_id_drop_test.go",
 	"tests/tier2_component/rls/checkpoint_manifest_test.go",
 	"tests/tier2_component/stores/partialmanifeststore_test.go",

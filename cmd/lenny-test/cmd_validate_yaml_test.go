@@ -366,65 +366,87 @@ exceptions:
 
 // ---- flake-budget.yaml --------------------------------------------
 
+// flakeEntry renders one quarantine entry with every required field,
+// leaving out the fields named in omit.
+func flakeEntry(test, eta string, omit ...string) string {
+	fields := []struct{ key, value string }{
+		{"test", test},
+		{"package", "pkg/foo"},
+		{"owner", "alice"},
+		{"reason", "fails one run in twenty when the scheduler is loaded"},
+		{"issue", "https://github.com/lennylabs/lenny/issues/42"},
+		{"eta", eta},
+		{"root_cause", "flaky-time"},
+	}
+	var b strings.Builder
+	for i, f := range fields {
+		if contains(omit, f.key) {
+			continue
+		}
+		prefix := "    "
+		if i == 0 {
+			prefix = "  - "
+		}
+		fmt.Fprintf(&b, "%s%s: %s\n", prefix, f.key, f.value)
+	}
+	return b.String()
+}
+
+func futureETA(days int) string {
+	return time.Now().UTC().AddDate(0, 0, days).Format("2006-01-02")
+}
+
 func TestValidateFlakeBudgetHappy(t *testing.T) {
-	future := time.Now().UTC().AddDate(0, 0, 30).Format("2006-01-02")
-	path := writeYAML(t, "flake-budget.yaml", fmt.Sprintf(`
-version: 1
-quarantined:
-  - test: TestFlaky
-    package: pkg/foo
-    owner: alice
-    issue: https://github.com/lennylabs/lenny/issues/42
-    eta: %s
-    root_cause: flaky-time
-`, future))
+	path := writeYAML(t, "flake-budget.yaml", "version: 1\ncap: 2\nquarantined:\n"+flakeEntry("TestFlaky", futureETA(30)))
 	expectPass(t, validateFlakeBudgetYAML(path))
 }
 
 func TestValidateFlakeBudgetEmpty(t *testing.T) {
 	path := writeYAML(t, "flake-budget.yaml", `
 version: 1
+cap: 5
 quarantined: []
 `)
 	r := validateFlakeBudgetYAML(path)
 	expectPass(t, r)
-	if !strings.Contains(r.detail, "0 quarantined") {
-		t.Errorf("detail should say 0 quarantined: %s", r.detail)
+	if !strings.Contains(r.detail, "0 quarantined") || !strings.Contains(r.detail, "cap of 5") {
+		t.Errorf("detail should say 0 quarantined of a cap of 5: %s", r.detail)
+	}
+}
+
+func TestValidateFlakeBudgetRefusesAQuarantineOverTheCap(t *testing.T) {
+	path := writeYAML(t, "flake-budget.yaml", "version: 1\ncap: 1\nquarantined:\n"+
+		flakeEntry("TestA", futureETA(7))+flakeEntry("TestB", futureETA(7)))
+	expectFail(t, validateFlakeBudgetYAML(path), "exceed the cap of 1")
+}
+
+func TestValidateFlakeBudgetRequiresACap(t *testing.T) {
+	for _, body := range []string{"version: 1\nquarantined: []\n", "version: 1\ncap: 0\nquarantined: []\n"} {
+		path := writeYAML(t, "flake-budget.yaml", body)
+		expectFail(t, validateFlakeBudgetYAML(path), "cap must be a positive quarantine cap")
+	}
+}
+
+func TestValidateFlakeBudgetRequiresAnOwnerAndAReason(t *testing.T) {
+	for _, field := range []string{"owner", "reason"} {
+		path := writeYAML(t, "flake-budget.yaml", "version: 1\ncap: 5\nquarantined:\n"+flakeEntry("TestX", futureETA(7), field))
+		expectFail(t, validateFlakeBudgetYAML(path), "missing "+field)
 	}
 }
 
 func TestValidateFlakeBudgetExpiredETA(t *testing.T) {
-	past := time.Now().UTC().AddDate(0, 0, -2).Format("2006-01-02")
-	path := writeYAML(t, "flake-budget.yaml", fmt.Sprintf(`
-version: 1
-quarantined:
-  - test: TestStale
-    issue: https://github.com/lennylabs/lenny/issues/1
-    eta: %s
-`, past))
+	path := writeYAML(t, "flake-budget.yaml", "version: 1\ncap: 5\nquarantined:\n"+flakeEntry("TestStale", futureETA(-2)))
 	expectFail(t, validateFlakeBudgetYAML(path), "has passed")
 }
 
 func TestValidateFlakeBudgetBadIssueURL(t *testing.T) {
-	future := time.Now().UTC().AddDate(0, 0, 7).Format("2006-01-02")
-	path := writeYAML(t, "flake-budget.yaml", fmt.Sprintf(`
-version: 1
-quarantined:
-  - test: TestX
-    issue: http://example.com/issue/1
-    eta: %s
-`, future))
+	body := strings.Replace(flakeEntry("TestX", futureETA(7)), "https://github.com/lennylabs/lenny/issues/42", "http://example.com/issue/1", 1)
+	path := writeYAML(t, "flake-budget.yaml", "version: 1\ncap: 5\nquarantined:\n"+body)
 	expectFail(t, validateFlakeBudgetYAML(path), "https")
 }
 
 func TestValidateFlakeBudgetBadETAFormat(t *testing.T) {
-	path := writeYAML(t, "flake-budget.yaml", `
-version: 1
-quarantined:
-  - test: TestX
-    issue: https://github.com/lennylabs/lenny/issues/1
-    eta: tomorrow
-`)
+	path := writeYAML(t, "flake-budget.yaml", "version: 1\ncap: 5\nquarantined:\n"+flakeEntry("TestX", "tomorrow"))
 	expectFail(t, validateFlakeBudgetYAML(path), "tomorrow")
 }
 

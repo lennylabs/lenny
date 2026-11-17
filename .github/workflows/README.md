@@ -4,7 +4,7 @@ Lenny's CI is documented in [`../../TESTING.md`](../../TESTING.md) §20. This di
 
 | Workflow | Trigger | Purpose |
 |:---------|:--------|:--------|
-| `pr.yml` | `pull_request`, `push` to feature branches | PR gate. Tiers 0–4 plus critical-path higher tiers. Target < 15 minutes. |
+| `pr.yml` | Disabled | PR gate. Tiers 0–4 plus critical-path higher tiers. Change 0154 disables it with `if: false` on its first job until pull requests replace direct merges; the merge gate is `lenny-test gate` (TESTING.md, "Merge gate"). |
 | `dco.yml` | `pull_request` | Verifies every PR commit carries a DCO `Signed-off-by` trailer. |
 | `secret-scan.yml` | `pull_request`, `push` to feature branches | Runs gitleaks over the introduced commits; fails on a positive hit. |
 | `nightly.yml` | `schedule` daily 05:00 UTC, `workflow_dispatch` | Full e2e Kind, rotated cloud subset, security, path-specific load. Target < 2 hours. |

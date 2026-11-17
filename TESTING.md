@@ -489,6 +489,8 @@ Every tier runs whatever an earlier tier reports, so one run reports every failu
 
 **Verdict.** The gate writes `tests/results/gate-<run>.json` and `tests/results/gate-latest.json` in the format of §7, and appends the run to `tests/results/history.jsonl`. `trigger.git_revision` is the commit the gate ran on, and every tier carries its result and its failures. The `gate` object adds the base ref, the merge base, whether the tree had uncommitted changes (`dirty`), the environment, and the tiers not run. A verdict for a dirty tree is not a verdict for the commit. The exit code is 0 for `PASS`, 1 for `FAIL`, 2 for `INCONCLUSIVE`, and 3 for `UNVERIFIED`.
 
+**Merge policy.** A branch merges into `main` only on a `PASS` verdict for its head commit, and `main` stays green: a merge-gate failure on `main` is fixed or reverted before any other branch merges. `.claude/rules/git-workflow.md` and `.claude/rules/test-coverage.md` ("Gates") state the policy, including the area and release gates that run the tiers outside the merge gate.
+
 **Running the gate on macOS.** The runtime supervisor checks of tier 0 build a Linux binary and skip on any other host, and a cgo link step depends on the host's C toolchain and SDK. On macOS the gate therefore runs in the container:
 
 1. Install Docker Desktop, or another runtime that serves the Docker socket at `/var/run/docker.sock` to containers.
@@ -2475,7 +2477,7 @@ Cross-cutting patterns live under `.github/workflows/reusable/` and `.github/act
 
 ### 20.8 PR pipeline (every push)
 
-Workflow file: `.github/workflows/pr.yml`. Triggered on `pull_request` and `push` to feature branches. Target wall-clock: under 15 minutes.
+Workflow file: `.github/workflows/pr.yml`. Triggered on `pull_request` and `push` to feature branches. Target wall-clock: under 15 minutes. The workflow is disabled until pull requests replace direct merges, and the merge gate of §6 ("Merge gate") decides merges in the meantime. When pull requests replace direct merges, the workflow is repaired to run `lenny-test gate --here` in the gate container.
 
 1. `lenny-test --group pr-fast` (changed-only, max-tier component). Fails fast on common bugs.
 2. `lenny-test --tier static`.
@@ -2635,7 +2637,7 @@ A check that completes without reaching a conclusion (for example, a tool the ch
 
 ### 21.4 Tracking
 
-`tests/flake-budget.yaml` lists currently quarantined tests and the owner. CI fails to merge a PR that adds a quarantined test without an associated issue and ETA.
+`tests/flake-budget.yaml` lists the quarantined tests. Each entry names the test's owner and the reason for the quarantine, with an associated issue and ETA, and the file's `cap` field bounds how many tests the quarantine holds. `lenny-test validate-maps`, which tier 0 runs, fails on an entry without an owner, a reason, an issue, or a current ETA, and on a quarantine larger than the cap. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
 
 ---
 
@@ -2645,7 +2647,7 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 ### 22.1 Coverage
 
-- Unit-tier coverage on new code: 80%, enforced per PR.
+- Unit-tier coverage on new code: 80%, a floor a reviewer may waive for wiring code, naming the code waived (`.claude/rules/test-coverage.md`).
 - Repository coverage: tracked but not gated. Refactoring is not penalized.
 - Mutation-survival rate on critical packages: tracked nightly; surviving mutants in `pkg/audit/`, `pkg/store/`, `pkg/policy/` are filed as issues.
 

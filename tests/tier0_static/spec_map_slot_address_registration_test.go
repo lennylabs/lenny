@@ -43,11 +43,6 @@ import (
 // invisible to it: this test closes that gap for the file.
 const slotAddressAbsenceTestFile = "tests/tier3_contract/rest_sessions/slot_address_absence_test.go"
 
-// addressRuleGateFile is the tier-0 gate that holds every address-guard case
-// to the section stating the rule. It carries its own `// spec:` annotation,
-// so the credit inventory must carry it as it carries every other case file.
-const addressRuleGateFile = "tests/tier0_static/address_rule_citation_test.go"
-
 // creditGateFile is this file, whose own cases the credit gate must account
 // for as it accounts for every other file in the inventory. Its subject is
 // tests/spec-map.json, so the accounting it owes is that it carries no
@@ -360,15 +355,10 @@ var slotAddressCaseFiles = []string{
 	"tests/testinfra/sessiondriver/sessiondriver_test.go",
 	"tests/tier0_static/adapter_proto_message_scope_test.go",
 	"tests/tier0_static/adapter_proto_parse_test.go",
-	"tests/tier0_static/address_rule_citation_test.go",
 	"tests/tier0_static/change_graph_slotreaper_selection_test.go",
-	"tests/tier0_static/checkpoint_dropped_slot_column_comment_test.go",
-	"tests/tier0_static/checkpoint_scoping_key_comment_test.go",
 	"tests/tier0_static/claim_register_generator_test.go",
 	"tests/tier0_static/claim_register_proto_agreement_test.go",
 	"tests/tier0_static/claim_register_test.go",
-	"tests/tier0_static/slot_absence_claim_comment_test.go",
-	"tests/tier0_static/slot_assignment_attribution_test.go",
 	"tests/tier0_static/spec_map_exception_blocker_retention_test.go",
 	"tests/tier0_static/spec_map_slot_address_registration_test.go",
 	"tests/tier10_conformance/concurrent_slot_conformance_test.go",
@@ -1157,10 +1147,7 @@ func TestTheCreditInventoryCarriesEveryAddressGuardCaseFile(t *testing.T) {
 	for _, file := range slotAddressCaseFiles {
 		inventory[file] = true
 	}
-	files := map[string]string{addressRuleGateFile: "the address-guard gate inventories"}
-	for file := range addressRuleCases {
-		files[file] = "the address-guard gate inventories"
-	}
+	files := map[string]string{}
 	for file, reason := range derivedInventoryCaseFiles(t) {
 		if _, seen := files[file]; !seen {
 			files[file] = reason
