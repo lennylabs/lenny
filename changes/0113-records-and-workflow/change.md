@@ -1,6 +1,6 @@
 # Records and workflow
 
-Status: `In progress`, revision 4, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `Implemented`, revision 4, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
 
 ## Problem
 

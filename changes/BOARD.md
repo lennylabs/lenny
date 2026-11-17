@@ -220,7 +220,7 @@ Not yet resolved to steps: 0117.
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0113](0113-records-and-workflow/change.md) | Records and workflow | `In progress` | 5 of 5 | 0 |
+| [0113](0113-records-and-workflow/change.md) | Records and workflow | `Implemented` | 5 of 5 | 0 |
 | [0114](0114-helpers/change.md) | Helpers | `Draft` | 0 of 0 | 0 |
 | [0115](0115-spec-structure/change.md) | Specification structure | `Draft` | 0 of 0 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
