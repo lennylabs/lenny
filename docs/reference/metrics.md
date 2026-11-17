@@ -458,6 +458,11 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `lenny_t4_kms_probe_last_success_timestamp` | Gauge | -- | Unix timestamp of the last successful T4 KMS envelope probe from the leader-elected gateway goroutine. Freshness signal for T4 envelope encryption availability. | `T4KmsKeyUnusable` alert. |
 | `lenny_t4_kms_probe_result_total` | Counter | `outcome` (`success` \| `failure`) | Count of T4 KMS probe attempts by outcome. Non-zero `failure` increments concurrently with freshness staleness drive the fail-closed alert. | `T4KmsKeyUnusable` alert. |
 
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-metrics -->
+
+<!-- /generated:reference-metrics -->
+
 ---
 
 ## Alert rules
@@ -569,3 +574,8 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `StartupLatencyGVisorBurnRate` | P95 < 5s (gVisor) | 1h, 14x | 6h, 3x | Critical / Warning |
 | `TTFTBurnRate` | P95 < 10s | 1h, 14x | 6h, 3x | Critical / Warning |
 | `CheckpointDurationBurnRate` | P95 < 2s (<=100MB) | 1h, 14x | 6h, 3x | Critical / Warning |
+
+<!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
+<!-- generated:reference-alerts -->
+
+<!-- /generated:reference-alerts -->

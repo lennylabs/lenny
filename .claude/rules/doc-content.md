@@ -94,6 +94,39 @@ Avoid stating a count of things the platform provides (such as `the nine built-i
 
 A deep protocol, wire-format, or schema reference belongs in the Reference section, where readers look things up. A guide page explains how and when to use that material and links to the reference, rather than embedding the full specification inline. When a guide page grows into an exhaustive field-by-field reference, move the reference content to `docs/reference/` and leave the guide pointing to it.
 
+## Documentation and the specification
+
+The specification states what Lenny does, and the documentation explains it to a reader. A change that alters what a reader can observe updates the documentation in the same change. A tool finds every documentation page a specification change affects, and checks every name and value a page quotes against the specification.
+
+- **Front matter names the specification pages.** Every page under `docs/` lists in its YAML front matter the codes of the specification pages it describes, such as `spec: [POOL, CLAIM]`. A page that describes no specification page, such as a contribution guide, says so with `spec: []`. The list stays in front matter, so a reader never sees a page code, a requirement identifier, or a section number.
+- **Names and values come from the catalogs.** A page that names a setting, metric, alert, error code, label, annotation, event type, or CLI command uses the name the specification's catalogs define. A default, a limit, or a unit the page quotes beside such a name matches the definition block.
+- **Reference pages are generated.** The pages under `docs/reference/` that list settings, metrics, alerts, errors, events, state machines, and glossary terms carry their lists in generated regions filled from the catalogs, after a hand-written introduction for the reader. Nobody edits a generated region by hand; a change edits the definition blocks and regenerates.
+- **A change carries its documentation.** A change that adds, modifies, or retires a requirement, an operation, or a definition block on a specification page edits the documentation pages whose front matter names that page, or states in the Documentation section of its `change.md` that no reader-facing behavior changes.
+
+### Transition
+
+The specification moves to its page structure area by area, and the documentation follows its area.
+
+- Front matter is added area by area, by the change that lands the area. A page with no `spec` key is not checked yet.
+- A gate applies to a page once every code in its `spec` list names a specification page whose status is neither `placeholder` nor `partial`. A page with `spec: []` is checked at once.
+- The documentation-impact check applies to a specification page once that page has landed in the same sense.
+- A generated region lists only the definition blocks and terms of landed pages. The hand-written rows of an area stay in the list above the region until the change that lands the area deletes them, so a reader sees one list and no name appears twice.
+
+### Gates
+
+Tier 0 holds this rule through `specshift`:
+
+- `go run ./scripts/specshift docs check` refuses a `spec` key that is not a list of codes, and a code that `spec/registry.json` does not register. On a page in scope, it refuses a name in a code span whose form fixes its kind (a metric under `lenny_`, a key under `lenny.dev/`, an event type under `dev.lenny.`, or a `lenny-ctl` command) when neither the catalogs nor a numbered section of the specification defines it, and a quoted default, limit, or unit that differs from the definition block. It reports as undecided, without failing, a name that only a numbered section still defines, a name that only its context classifies, and a value it cannot compare.
+- `go run ./scripts/specshift docs impact` reads the branch's diff against its merge base with `main` and names each landed specification page whose changed items no edited documentation page describes. It skips with a reason when there is no merge base.
+- `go run ./scripts/specshift defs generate --check` refuses a generated reference region that differs from what the catalogs produce.
+
+### How to apply when changing Lenny
+
+1. When framing a change, list in its Documentation section each page the change affects and its reader. `go run ./scripts/specshift where <CODE>` lists the documentation pages that describe a specification page.
+2. When building, edit the documentation after the code and the tests, in the same step or in a documentation step that the code step names.
+3. When adding a documentation page, give it `spec` front matter before writing its content.
+4. When renaming or removing a catalog name, run `docs check`: it names every page in scope that still uses the old name, and the step's digest lists the rest.
+
 ## Where these rules apply
 
 - All `.md` files under `docs/`.

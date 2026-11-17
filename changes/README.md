@@ -181,8 +181,8 @@ These checks run on every commit and cost no model tokens. 0115 builds them; unt
 - The documentation style lint passes.
 - Every requirement a diff adds or modifies has at least one test that cites it.
 - Every specification annotation in new or changed code resolves and follows the annotation rule, and an area's count of old `§` citations does not rise.
-- Documentation stays in step with the specification ([draft rule](0115-spec-structure/evidence/spike/draft-rules/doc-spec-links.md), which 0115 lands):
-  - every documentation page names in its front matter the specification pages it describes, and each code resolves;
-  - every setting, metric, alert, error, label, annotation, event, and CLI command a documentation page names exists in the catalogs, and a default, limit, or unit it quotes matches the definition block;
-  - a diff that adds, modifies, or retires a requirement or a definition block on a specification page either edits a documentation page that names that page, or the change's Documentation section states that no reader-facing behavior changes;
-  - reference pages generated from the catalogs are current.
+- Documentation stays in step with the specification, under "Documentation and the specification" in `.claude/rules/doc-content.md`. Each check applies to a page once the area it describes has landed:
+  - every documentation page names in its front matter the specification pages it describes, and each code resolves (`go run ./scripts/specshift docs check`);
+  - every setting, metric, alert, error, label, annotation, event, and CLI command a documentation page names exists in the catalogs, and a default, limit, or unit it quotes matches the definition block (`go run ./scripts/specshift docs check`, which reports what it cannot decide without failing);
+  - a diff that adds, modifies, or retires a requirement, an operation, or a definition block on a specification page either edits a documentation page that names that page, or the change's Documentation section states that no reader-facing behavior changes (`go run ./scripts/specshift docs impact`);
+  - the reference pages' regions generated from the catalogs are current (`go run ./scripts/specshift defs generate --check`).

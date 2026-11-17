@@ -41,3 +41,17 @@ func TestRunHandsAPagesCommandToThePagegatePackage(t *testing.T) {
 		t.Errorf("specshift pages check printed something other than its report:\n%s", out.String())
 	}
 }
+
+// The docs subcommand is specification tooling as well, so this case
+// carries no specification annotation. It pins that the command line
+// hands a docs command to the docgate package.
+func TestRunHandsADocsCommandToTheDocgatePackage(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{"docs", "-root", t.TempDir(), "check"}, &out); err != nil {
+		t.Fatalf("specshift docs check over an empty tree: %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "docs check: 0 page(s)") {
+		t.Errorf("specshift docs check printed something other than its report:\n%s", out.String())
+	}
+}
