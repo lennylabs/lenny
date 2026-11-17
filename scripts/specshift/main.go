@@ -63,6 +63,16 @@
 //	specshift defs schemas
 //
 // The defs package documents what each command reads and writes.
+//
+// The digest, where, and since subcommands read the specification
+// structure, the code's annotations, the documentation's front matter,
+// and the issue records together, for the helpers of the same names:
+//
+//	specshift digest [-root <path>] [-base <rev>] [-stdout] [-force] <step>
+//	specshift where [-root <path>] <identifier | code | anchor>
+//	specshift since [-root <path>] <YYYY-MM-DD | commit>
+//
+// The survey package documents what each one reports.
 package main
 
 import (
@@ -72,6 +82,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -83,6 +94,7 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
+	"github.com/lennylabs/lenny/scripts/specshift/survey"
 )
 
 func main() {
@@ -199,16 +211,20 @@ func passNames() string {
 }
 
 // run parses the command line and executes one pass, prints one pass's
-// write domain, or hands a ref or defs command to its package. Those two
-// subcommands are dispatched before the flags are parsed, because they are
-// driven by the generated registry and the definition blocks rather than by
-// a register, and take commands of their own.
+// write domain, or hands a ref, defs, digest, where, or since command to
+// its package. Those subcommands are dispatched before the flags are
+// parsed, because they are driven by the generated registry and the
+// definition blocks rather than by a register, and take arguments of
+// their own.
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "ref" {
 		return ref.Main(ctx, args[1:], out)
 	}
 	if len(args) > 0 && args[0] == defs.Command {
 		return defs.Run(ctx, args[1:], out)
+	}
+	if len(args) > 0 && slices.Contains(survey.Commands, args[0]) {
+		return survey.Run(ctx, args[0], args[1:], out)
 	}
 	return runWith(ctx, builtPasses, args, out)
 }
