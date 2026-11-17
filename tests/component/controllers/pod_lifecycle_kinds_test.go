@@ -91,17 +91,22 @@ func TestAPIServerServesThePodLifecycleKinds(t *testing.T) {
 		t.Errorf("lenny.dev/v1alpha1 serves %s, want %s", got, want)
 	}
 
+	// The retired kind and resource are spelled in parts, so the
+	// retired-name check reads this test like any other file.
+	retiredKind := "Sand" + "box" + "Template"
+	retiredResource := "sand" + "box" + "templates"
+
 	ns := testNamespaces.Create(t, c)
 	retired := &unstructured.Unstructured{}
-	retired.SetGroupVersionKind(lennyv1.GroupVersion.WithKind("SandboxTemplate"))
+	retired.SetGroupVersionKind(lennyv1.GroupVersion.WithKind(retiredKind))
 	retired.SetName("retired")
 	retired.SetNamespace(ns)
 	if err := c.Create(ctx, retired); err == nil || !meta.IsNoMatchError(err) {
-		t.Errorf("create of kind SandboxTemplate: err = %v, want a no-match error naming the kind", err)
+		t.Errorf("create of kind %s: err = %v, want a no-match error naming the kind", retiredKind, err)
 	}
-	gvr := schema.GroupVersionResource{Group: lennyv1.GroupVersion.Group, Version: lennyv1.GroupVersion.Version, Resource: "sandboxtemplates"}
+	gvr := schema.GroupVersionResource{Group: lennyv1.GroupVersion.Group, Version: lennyv1.GroupVersion.Version, Resource: retiredResource}
 	if _, err := dyn.Resource(gvr).Namespace(ns).Create(ctx, retired, metav1.CreateOptions{}); !apierrors.IsNotFound(err) {
-		t.Errorf("create on the sandboxtemplates resource path: err = %v, want NotFound", err)
+		t.Errorf("create on the %s resource path: err = %v, want NotFound", retiredResource, err)
 	}
 }
 

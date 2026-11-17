@@ -63,10 +63,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 

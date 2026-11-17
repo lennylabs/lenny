@@ -94,7 +94,7 @@ lenny-test coverage --diff <base-ref>
 
 Coverage is a floor. Cover the empty, error, concurrent, boundary, and spec-named-failure paths as well as the happy path. A high coverage number over happy-path-only tests does not satisfy this rule.
 
-The release gate's weekly run on `main` includes a mutation run (`lenny-test mutation --pkg <path>`) over the critical packages: `pkg/sandboxclaim` (claims), `pkg/admission`, and `pkg/credential`. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests.
+The release gate's weekly run on `main` includes a mutation run (`lenny-test mutation --pkg <path>`) over the critical packages: `pkg/podclaim` (claims), `pkg/admission`, and `pkg/credential`. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests.
 
 ## Test conventions
 

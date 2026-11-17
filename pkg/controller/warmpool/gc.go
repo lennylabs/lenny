@@ -19,9 +19,9 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/ssaretry"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // defaultClaimOrphanTimeout is the §4.6.1 default for --claim-orphan-timeout:

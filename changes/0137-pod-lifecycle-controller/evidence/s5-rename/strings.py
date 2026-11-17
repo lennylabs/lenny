@@ -49,13 +49,12 @@ TEXT_EXT = {
 }
 
 # Identifiers kept in the isolation sense of the specification's sandbox
-# isolation profile, the pkg/sandbox and pkg/sandboxclaim package paths,
+# isolation profile, the pkg/sandbox package path,
 # and product names. They are masked before the rules run.
 PROTECT = [
     "GKE Sandbox", "gVisor Sandbox", "Sandbox option",
     "assertScheduledOnSandboxGvisorNode", "TestT4SandboxKMSFailClosedTestbed",
-    "sandbox_proxy_testbed", "pkg/sandboxclaim", "sandboxclaim/state",
-    "sandboxclaimstate", "sandboxcond", "sandboxstate",
+    "sandbox_proxy_testbed", "sandboxcond", "sandboxstate",
 ]
 
 
@@ -84,6 +83,8 @@ RULES = [
     R(r"pkg/controller/sandbox\b", "pkg/controller/agentpod"),
     R(r"controller/sandbox/", "controller/agentpod/"),
     R(r"pkg/admission/sandboxclaim_guard", "pkg/admission/podclaim_guard"),
+    # D14: the claim binding-state machine moves with the kind.
+    R(r"pkg/sandboxclaim\b", "pkg/podclaim"),
     R(r"\bsandboxclaim_guard\b", "podclaim_guard"),
     R(r"\bsandboxclaim_guard(_test)?\.go\b", r"podclaim_guard\1.go"),
     R(r"\bsandboxtemplate_deletion_guard(_test)?\.go\b", r"podset_deletion_guard\1.go"),

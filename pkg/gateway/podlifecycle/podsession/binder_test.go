@@ -45,8 +45,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 const testPool = "claude-worker"

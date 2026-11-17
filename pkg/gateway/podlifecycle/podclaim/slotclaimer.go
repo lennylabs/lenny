@@ -19,8 +19,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // LabelTenant is the §5.2 tenant-pinning label. The gateway stamps it

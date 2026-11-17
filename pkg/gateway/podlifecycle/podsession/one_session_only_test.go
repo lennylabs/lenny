@@ -12,8 +12,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // spec: §6.1 — "After a session completes or fails in

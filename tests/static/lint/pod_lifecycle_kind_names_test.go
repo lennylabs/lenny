@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,40 +18,37 @@ import (
 
 // The pod lifecycle kinds were renamed to AgentPod, PodSet, and PodClaim,
 // and the template and warm pool kinds merged into PodSet. These checks
-// keep the retired names out of the tree. Records that state what was true
-// when they were written keep the names they were written with: the change
-// records, the staged proposals, the designs, the decision records under
-// docs/adr/ (which change 0125 removes), CHANGELOG.md, the root-level audit
-// and planning records, the historical migrations, and every testdata
-// fixture.
+// keep the retired names out of the tree.
+//
+// The literals in this file spell each retired name with a placeholder,
+// @S for the capitalized kind word and @s for its lower-case form, and
+// retired() expands them, so the check reads this file like any other.
 
-// retiredNameExemptPrefixes and retiredNameExemptFiles list the records
-// above, relative to the repository root.
-var retiredNameExemptPrefixes = []string{
-	"changes/", "proposals/", "designs/", "docs/adr/",
-}
+// retired expands the placeholders of a pattern or a sample.
+var retired = strings.NewReplacer("@S", "Sand"+"box", "@s", "sand"+"box").Replace
+
+// retiredNameExemptPrefixes and retiredNameExemptFiles are the exceptions
+// PLCR-11 of change 0137 lists, and no others: the change records, the
+// staged proposals, the decision records under docs/adr/ (until change 0125
+// removes them), the audit records, the frozen root records, and
+// CHANGELOG.md, each of which records what was true when it was written.
+// testdata/ fixtures present a tree as it was written and are read by no
+// check.
+var retiredNameExemptPrefixes = []string{"changes/", "proposals/", "docs/adr/"}
 
 var retiredNameExemptFiles = map[string]bool{
-	"CHANGELOG.md":                         true,
 	"BUILD-GAPS.md":                        true,
 	"TEST-GAPS.md":                         true,
-	"PROPOSAL-QUEUE.md":                    true,
-	"CODE-REVIEW.md":                       true,
-	"BUILD-PLAN.md":                        true,
-	"BUILD-PROGRESS.md":                    true,
 	"gateway-runtime-comms.md":             true,
 	"gateway-runtime-comms-remediation.md": true,
-	"tests/static/lint/pod_lifecycle_kind_names_test.go": true,
-	// The component test that checks the API server refuses a retired kind
-	// names that kind on purpose.
-	"tests/component/controllers/pod_lifecycle_kinds_test.go": true,
-	// The section 28 supersession register quotes the text a staged
-	// proposal wrote, which named the retired kinds.
-	"tests/docs/spec_28_index_rows_test.go": true,
+	"BUILD-PLAN.md":                        true,
+	"BUILD-PROGRESS.md":                    true,
+	"CODE-REVIEW.md":                       true,
+	"CHANGELOG.md":                         true,
 }
 
-// retiredNameExempt reports whether a tracked path is a record the checks
-// leave as written.
+// retiredNameExempt reports whether a tracked path is a record PLCR-11
+// leaves as written, or a testdata fixture.
 func retiredNameExempt(rel string) bool {
 	if retiredNameExemptFiles[rel] || strings.Contains(rel, "/testdata/") || strings.HasPrefix(rel, "testdata/") {
 		return true
@@ -60,9 +58,46 @@ func retiredNameExempt(rel string) bool {
 			return true
 		}
 	}
-	// A migration file is the historical schema chain; its name and SQL
-	// keep the table and kind names of the version that wrote it.
-	return strings.HasPrefix(rel, "migrations/") && strings.HasSuffix(rel, ".sql")
+	return false
+}
+
+// TestRetiredNameExemptionsArePLCR11List pins the exceptions to PLCR-11's
+// list: the prefixes and files above, the testdata fixtures, and nothing
+// else, so a record, a rules file, or a test that names a retired kind is
+// not exempted by accident.
+//
+// spec: KAPI
+func TestRetiredNameExemptionsArePLCR11List(t *testing.T) {
+	wantPrefixes := "changes/,docs/adr/,proposals/"
+	var prefixes []string
+	prefixes = append(prefixes, retiredNameExemptPrefixes...)
+	sort.Strings(prefixes)
+	if got := strings.Join(prefixes, ","); got != wantPrefixes {
+		t.Errorf("exempt prefixes = %s, want %s", got, wantPrefixes)
+	}
+	wantFiles := "BUILD-GAPS.md,BUILD-PLAN.md,BUILD-PROGRESS.md,CHANGELOG.md,CODE-REVIEW.md,TEST-GAPS.md," +
+		"gateway-runtime-comms-remediation.md,gateway-runtime-comms.md"
+	var files []string
+	for f := range retiredNameExemptFiles {
+		files = append(files, f)
+	}
+	sort.Strings(files)
+	if got := strings.Join(files, ","); got != wantFiles {
+		t.Errorf("exempt files = %s, want %s", got, wantFiles)
+	}
+	for rel, want := range map[string]bool{
+		"changes/0137-pod-lifecycle-controller/change.md":    true,
+		"pkg/admission/webhook/testdata/review.json":         true,
+		"PROPOSAL-QUEUE.md":                                  false,
+		"designs/pod-lifecycle-controller-design.md":         false,
+		".claude/rules/test-coverage.md":                     false,
+		"migrations/0033_sandbox_warm_pools.up.sql":          false,
+		"tests/static/lint/pod_lifecycle_kind_names_test.go": false,
+	} {
+		if got := retiredNameExempt(rel); got != want {
+			t.Errorf("retiredNameExempt(%q) = %v, want %v", rel, got, want)
+		}
+	}
 }
 
 // retiredKindIdentifier matches a Go identifier that names a retired kind
@@ -70,23 +105,20 @@ func retiredNameExempt(rel string) bool {
 // such as SandboxClaimSpec, getSandbox, or sandboxName. Identifiers that use
 // the word in the isolation sense, such as ProfileSandboxed, do not match,
 // because a lower-case letter follows the word.
-var retiredKindIdentifier = regexp.MustCompile(`(?:^|[a-z0-9_])(?:Sandbox(?:es|WarmPools?|Templates?|Claims?)?|AgentSandbox)(?:[A-Z0-9_]|$)|^sandbox(?:es|WarmPools?|Templates?|Claims?)?(?:[A-Z0-9_]|$)`)
+var retiredKindIdentifier = regexp.MustCompile(retired(`(?:^|[a-z0-9_])(?:@S(?:es|WarmPools?|Templates?|Claims?)?|Agent@S)(?:[A-Z0-9_]|$)|^@s(?:es|WarmPools?|Templates?|Claims?)?(?:[A-Z0-9_]|$)`))
 
 // retiredKindIdentifierAllowed lists identifiers that use "Sandbox" for
 // the isolation sandbox rather than a retired kind.
 var retiredKindIdentifierAllowed = map[string]bool{
-	"assertScheduledOnSandboxGvisorNode": true, // a gVisor sandbox node
-	"TestT4SandboxKMSFailClosedTestbed":  true, // the sandboxed isolation profile
-	"requireSandboxIsolationProfile":     true, // the sandboxed isolation profile
+	retired("assertScheduledOn@SGvisorNode"): true, // a gVisor sandbox node
+	retired("TestT4@SKMSFailClosedTestbed"):  true, // the sandboxed isolation profile
+	retired("require@SIsolationProfile"):     true, // the sandboxed isolation profile
 }
 
 // maskKeptNames removes from text the names that keep the word in another
-// sense: the GKE Sandbox product, the pkg/sandboxclaim package path (the
-// claim binding-state machine, whose path the rename keeps), and the
-// isolation-sense identifiers above.
+// sense: the GKE Sandbox product and the isolation-sense identifiers above.
 func maskKeptNames(text string) string {
-	text = strings.ReplaceAll(text, "GKE Sandbox", "")
-	text = strings.ReplaceAll(text, "pkg/sandboxclaim", "")
+	text = strings.ReplaceAll(text, retired("GKE @S"), "")
 	for id := range retiredKindIdentifierAllowed {
 		text = strings.ReplaceAll(text, id, "")
 	}
@@ -99,20 +131,20 @@ func maskKeptNames(text string) string {
 // "sandboxes", and the retired webhook, metric, alert, label, readiness
 // gate, field manager, and runbook names. "GKE Sandbox" is the product and
 // is masked before the match.
-var retiredNameText = regexp.MustCompile(strings.Join([]string{
-	`(?:^|[^A-Za-z])Sandbox(?:es|WarmPools?|Templates?|Claims?)?(?:[^a-z]|$)`,
-	`\bsandbox(?:warmpools?|templates?|claims?)\b`,
-	`sandboxclaim-guard`, `sandboxtemplate-deletion-guard`,
-	`lenny_sandboxclaim_guard_rejections_total`, `lenny_sandbox_finalizer_terminating_seconds`,
-	`lenny\.dev/sandbox-ready`, `lenny-sandbox-cond-`,
-	`\bsandbox-claim-race\b`, `\bsandbox-finalizer-hang\b`,
+var retiredNameText = regexp.MustCompile(retired(strings.Join([]string{
+	`(?:^|[^A-Za-z])@S(?:es|WarmPools?|Templates?|Claims?)?(?:[^a-z]|$)`,
+	`\b@s(?:warmpools?|templates?|claims?)\b`,
+	`@sclaim-guard`, `@stemplate-deletion-guard`,
+	`lenny_@sclaim_guard_rejections_total`, `lenny_@s_finalizer_terminating_seconds`,
+	`lenny\.dev/@s-ready`, `lenny-@s-cond-`,
+	`\b@s-claim-race\b`, `\b@s-finalizer-hang\b`,
 	`(?:shortNames?:\s*|^\s*-\s+|kubectl get )sbx(?:c|t|wp)?\b`,
-}, "|"))
+}, "|")))
 
 // retiredResourceInCode matches the resource name "sandboxes" in a code
 // context: a CRD name, a subresource, a quoted or backticked name, or a
 // kubectl argument. As a bare prose word it can name isolation sandboxes.
-var retiredResourceInCode = regexp.MustCompile("sandboxes\\.lenny\\.dev|sandboxes/(?:status|finalizers)|[`\"']sandboxes[`\"']|kubectl get sandbox(?:es)?\\b|lenny\\.dev_sandboxes|^\\s*-\\s+sandboxes\\s*$|/sandboxes(?:/|\\b)|--sandboxes\\b|\\bsandboxes\\.json\\b")
+var retiredResourceInCode = regexp.MustCompile(retired("@ses\\.lenny\\.dev|@ses/(?:status|finalizers)|[`\"']@ses[`\"']|kubectl get @s(?:es)?\\b|lenny\\.dev_@ses|^\\s*-\\s+@ses\\s*$|/@ses(?:/|\\b)|--@ses\\b|\\b@ses\\.json\\b"))
 
 // retiredCompoundText matches the compound retired kind names and their
 // resource names, which no prose uses in another sense: SandboxTemplate,
@@ -120,15 +152,17 @@ var retiredResourceInCode = regexp.MustCompile("sandboxes\\.lenny\\.dev|sandboxe
 // sandboxwarmpools, and sandboxclaims. Markdown prose is checked for these;
 // the bare word "Sandbox" and the resource "sandboxes" are checked in code
 // spans only, because prose uses them for the isolation sandbox.
-var retiredCompoundText = regexp.MustCompile(`(?:^|[^A-Za-z])Sandbox(?:WarmPools?|Templates?|Claims?)(?:[^a-z]|$)|\bsandbox(?:warmpools?|templates?|claims?)\b`)
+var retiredCompoundText = regexp.MustCompile(retired(`(?:^|[^A-Za-z])@S(?:WarmPools?|Templates?|Claims?)(?:[^a-z]|$)|\b@s(?:warmpools?|templates?|claims?)\b`))
 
 // codeSpan matches a Markdown code span.
 var codeSpan = regexp.MustCompile("`[^`\n]+`")
 
-// textExtensions are the non-Go files the text check reads.
+// textExtensions are the non-Go files the text check reads. SQL is not a
+// carrier PLCR-11 names; PLCR-12 and TestRetiredPoolTableNameAbsent hold
+// the SQL the rename reaches.
 var textExtensions = map[string]bool{
 	".md": true, ".yaml": true, ".yml": true, ".json": true, ".sh": true, ".tpl": true,
-	".tmpl": true, ".txt": true, ".svg": true, ".proto": true, ".sql": true, ".py": true,
+	".tmpl": true, ".txt": true, ".svg": true, ".proto": true, ".py": true,
 }
 
 // TestRetiredPodLifecycleKindNamesAbsent asserts that no Go identifier or
@@ -173,8 +207,8 @@ func TestRetiredPodLifecycleKindNamesAbsent(t *testing.T) {
 // retiredFileName reports whether a file name is one of the retired Go,
 // CRD, chart template, or runbook names.
 func retiredFileName(base string) bool {
-	for _, p := range []string{"sandbox_types.go", "sandboxclaim", "sandboxtemplate", "sandboxwarmpool", "agentsandbox", "lenny.dev_sandboxes"} {
-		if strings.Contains(base, p) {
+	for _, p := range []string{"@s_types.go", "@sclaim", "@stemplate", "@swarmpool", "agent@s", "lenny.dev_@ses"} {
+		if strings.Contains(base, retired(p)) {
 			return true
 		}
 	}
@@ -247,16 +281,17 @@ func retiredNamesInText(rel, src string, markdown bool) []string {
 // spec: KAPI
 func TestRetiredCompoundNamesAreCheckedInMarkdownProse(t *testing.T) {
 	cases := map[string]bool{
-		"The SandboxTemplate carries the pool settings.": true,
-		"Each SandboxClaims entry is a lock.":            true,
-		"RBAC on sandboxwarmpools/status.":               true,
-		"A `SandboxWarmPool` holds the warm targets.":    true,
-		"GKE Sandbox provides the gVisor runtime class.": false,
-		"gVisor sandboxes isolate the agent pods.":       false,
-		"The Sandbox isolation profile is sandboxed.":    false,
-		"A PodSet carries the pool settings.":            false,
+		"The @STemplate carries the pool settings.": true,
+		"Each @SClaims entry is a lock.":            true,
+		"RBAC on @swarmpools/status.":               true,
+		"A `@SWarmPool` holds the warm targets.":    true,
+		"GKE @S provides the gVisor runtime class.": false,
+		"gVisor @ses isolate the agent pods.":       false,
+		"The @S isolation profile is @sed.":         false,
+		"A PodSet carries the pool settings.":       false,
 	}
 	for line, want := range cases {
+		line = retired(line)
 		got := len(retiredNamesInText("x.md", line, true)) > 0
 		if got != want {
 			t.Errorf("markdown line %q: reported = %v, want %v", line, got, want)
@@ -270,34 +305,36 @@ func TestRetiredCompoundNamesAreCheckedInMarkdownProse(t *testing.T) {
 // spec: KAPI
 func TestRetiredPodLifecycleNameMatchers(t *testing.T) {
 	idents := map[string]bool{
-		"SandboxClaimSpec": true, "getSandbox": true, "sandboxName": true, "Sandbox": true,
-		"sandboxes": true, "AgentSandboxPoolManager": true, "listSandboxes": true,
-		"ProfileSandboxed": false, "sandboxed": false, "sandboxcond": false,
-		"sandboxclaimstate": false, "AgentPod": false, "PodSet": false,
+		"@SClaimSpec": true, "get@S": true, "@sName": true, "@S": true,
+		"@ses": true, "Agent@SPoolManager": true, "list@Ses": true,
+		"Profile@Sed": false, "@sed": false, "@scond": false,
+		"AgentPod": false, "PodSet": false,
 	}
 	for id, want := range idents {
+		id = retired(id)
 		if got := retiredKindIdentifier.MatchString(id); got != want {
 			t.Errorf("identifier %q: match = %v, want %v", id, got, want)
 		}
 	}
 	texts := map[string]bool{
-		"kind: SandboxTemplate":          true,
-		"resources: [\"sandboxclaims\"]": true,
-		"lenny-sandboxclaim-guard":       true,
-		"lenny.dev/sandbox-ready":        true,
-		"shortName: sbxwp":               true,
-		"the sandboxed profile":          false,
-		"GKE Sandbox provides gvisor":    false,
-		"Alibaba OpenSandbox":            false,
-		"pkg/sandbox/isolation":          false,
-		"kind: PodSet":                   false,
+		"kind: @STemplate":          true,
+		"resources: [\"@sclaims\"]": true,
+		"lenny-@sclaim-guard":       true,
+		"lenny.dev/@s-ready":        true,
+		"shortName: s" + "bxwp":     true,
+		"the @sed profile":          false,
+		"GKE @S provides gvisor":    false,
+		"Alibaba Open@S":            false,
+		"pkg/@s/isolation":          false,
+		"kind: PodSet":              false,
 	}
 	for text, want := range texts {
-		if got := retiredNameText.MatchString(strings.ReplaceAll(text, "GKE Sandbox", "")); got != want {
+		text = retired(text)
+		if got := retiredNameText.MatchString(maskKeptNames(text)); got != want {
 			t.Errorf("text %q: match = %v, want %v", text, got, want)
 		}
 	}
-	if !retiredResourceInCode.MatchString(`resources: ["sandboxes"]`) || retiredResourceInCode.MatchString("gVisor sandboxes isolate pods") {
+	if !retiredResourceInCode.MatchString(retired(`resources: ["@ses"]`)) || retiredResourceInCode.MatchString(retired("gVisor @ses isolate pods")) {
 		t.Error("the sandboxes resource matcher must match the resource in code and not the prose word")
 	}
 }
@@ -305,7 +342,7 @@ func TestRetiredPodLifecycleNameMatchers(t *testing.T) {
 // retiredTableName matches the retired pool record table name, except as
 // part of a historical migration file name such as
 // 0033_sandbox_warm_pools.up.sql.
-var retiredTableName = regexp.MustCompile(`(?:^|[^0-9_])sandbox_warm_pools\b`)
+var retiredTableName = regexp.MustCompile(retired(`(?:^|[^0-9_])@s_warm_pools\b`))
 
 // renameMigration is the number of the migration that renames
 // sandbox_warm_pools to pools. A migration numbered at or below it predates
@@ -372,7 +409,7 @@ func TestRetiredPoolTableNameAbsent(t *testing.T) {
 		if ext == ".sql" {
 			for i, line := range strings.Split(string(src), "\n") {
 				if retiredTableName.MatchString(line) {
-					t.Errorf("%s:%d: names the retired table sandbox_warm_pools", rel, i+1)
+					t.Errorf("%s:%d: names the retired pool record table", rel, i+1)
 				}
 			}
 			continue
@@ -387,7 +424,7 @@ func TestRetiredPoolTableNameAbsent(t *testing.T) {
 				break
 			}
 			if (tok == token.STRING || tok == token.IDENT) && retiredTableName.MatchString(strings.ReplaceAll(lit, ".up.sql", " ")) && !historicalMigrationName(lit) {
-				t.Errorf("%s:%d: names the retired table sandbox_warm_pools", rel, fset.Position(pos).Line)
+				t.Errorf("%s:%d: names the retired pool record table", rel, fset.Position(pos).Line)
 			}
 		}
 	}

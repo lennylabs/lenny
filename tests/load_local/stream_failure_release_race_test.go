@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 

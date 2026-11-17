@@ -1249,8 +1249,8 @@
     "pkg/sandbox/state": {
       "unit": ["pkg/sandbox/state/..."]
     },
-    "pkg/sandboxclaim/state": {
-      "unit": ["pkg/sandboxclaim/state/..."]
+    "pkg/podclaim/state": {
+      "unit": ["pkg/podclaim/state/..."]
     },
     "pkg/tokenservice": {
       "unit": ["pkg/tokenservice/..."],

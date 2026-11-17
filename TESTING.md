@@ -2396,7 +2396,7 @@ Each fuzz target runs with a small corpus per PR and a longer corpus nightly. Cr
 
 ### 19.3 Mutation
 
-`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/sandboxclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
+`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/podclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
 
 ---
 
@@ -2725,7 +2725,7 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 - Unit-tier coverage on new code: 80%, a floor a reviewer may waive for wiring code, naming the code waived (`.claude/rules/test-coverage.md`).
 - Repository coverage: tracked but not gated. Refactoring is not penalized.
-- Mutation score on the critical packages `pkg/sandboxclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
+- Mutation score on the critical packages `pkg/podclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
 
 ### 22.2 Spec coverage
 

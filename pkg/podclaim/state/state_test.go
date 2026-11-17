@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	"github.com/lennylabs/lenny/pkg/podclaim/state"
 )
 
 // spec: 4.6.1 (binding states), 4.6.3 (binding-state enumeration)

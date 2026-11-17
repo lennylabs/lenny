@@ -897,7 +897,7 @@ packages:
       count: 7
     - package: pkg/sandbox/state
       count: 5
-    - package: pkg/sandboxclaim/state
+    - package: pkg/podclaim/state
       count: 10
     - package: pkg/schemamigrate
       count: 7

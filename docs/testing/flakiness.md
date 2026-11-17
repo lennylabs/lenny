@@ -42,7 +42,7 @@ When a test fails the 50-run check, classify the root cause per TESTING.md §21.
 Re-run with `-race` if not already on:
 
 ```bash
-go test -race -count=10 -run TestPodClaim ./pkg/sandboxclaim/...
+go test -race -count=10 -run TestPodClaim ./pkg/podclaim/...
 ```
 
 ## Quarantine workflow

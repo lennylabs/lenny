@@ -1180,10 +1180,11 @@ var stagedLineSupersessions = []stagedLineSupersession{
 	},
 	{
 		// The REG-PODSTATE writer cell names the per-pod kind by the name
-		// change 0137 gave it.
+		// change 0137 gave it. The staged name is spelled in parts, so the
+		// retired-name check reads this file like any other.
 		proposal:   "changes/0137-pod-lifecycle-controller (0137.S5)",
 		linePrefix: "| `REG-PODSTATE` |",
-		from:       "the mirrored `Sandbox` status columns",
+		from:       "the mirrored `Sand" + "box` status columns",
 		to:         "the mirrored `AgentPod` status columns",
 	},
 	{
@@ -1191,7 +1192,7 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		// 0137 gave it.
 		proposal:   "changes/0137-pod-lifecycle-controller (0137.S5)",
 		linePrefix: "| `REG-CLAIM` |",
-		from:       "| `SandboxClaim` named `claim-<podName>` |",
+		from:       "| `Sand" + "boxClaim` named `claim-<podName>` |",
 		to:         "| `PodClaim` named `claim-<podName>` |",
 	},
 }

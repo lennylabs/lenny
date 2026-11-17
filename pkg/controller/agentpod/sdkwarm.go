@@ -16,8 +16,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/agentpod/lifecycle"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // defaultSDKConnectTimeout is the §6.1 sdkConnectTimeoutSeconds

@@ -58,9 +58,11 @@ var keep = map[string]bool{
 
 // overrides name identifiers whose mechanical rename reads badly.
 var overrides = map[string]string{
-	"lookupOutageAgentSandbox":                          "lookupOutageAgentPod",
-	"lookupOutageToolSandbox":                           "lookupOutageToolAgentPod",
-	"sandboxclaim_guard":                                "podclaim_guard",
+	"lookupOutageAgentSandbox": "lookupOutageAgentPod",
+	"lookupOutageToolSandbox":  "lookupOutageToolAgentPod",
+	"sandboxclaim_guard":       "podclaim_guard",
+	"sandboxclaimstate":        "podclaimstate", // D14
+	"sandboxclaim":             "podclaim",      // D14
 	"TestAgentSandboxIsTheDefaultPoolManager_spec_17_1": "TestCRDPoolManagerIsTheDefault",
 }
 
@@ -68,12 +70,13 @@ var overrides = map[string]string{
 // names.
 var pathMoves = map[string]string{
 	"github.com/lennylabs/lenny/pkg/admission/sandboxclaim_guard": "github.com/lennylabs/lenny/pkg/admission/podclaim_guard",
+	"github.com/lennylabs/lenny/pkg/sandboxclaim/state":           "github.com/lennylabs/lenny/pkg/podclaim/state", // D14
 }
 
 // keepRe matches identifiers in the isolation sense: the sandboxed
 // profile, GKE Sandbox, gVisor's runsc sandbox, and the pkg/sandbox
 // package qualifier.
-var keepRe = regexp.MustCompile(`(?i:sandboxed|gkesandbox|gvisorsandbox|sandboxisolation|sandboxprofile|sandboxruntimeclass)|^sandboxclaimstate$|^sandboxclaim$|^sandboxcond$|^sandboxstate$`)
+var keepRe = regexp.MustCompile(`(?i:sandboxed|gkesandbox|gvisorsandbox|sandboxisolation|sandboxprofile|sandboxruntimeclass)|^sandboxcond$|^sandboxstate$`)
 
 // rules are applied in order to an identifier's name. Each rule matches a
 // retired kind name at a camel-case word boundary.

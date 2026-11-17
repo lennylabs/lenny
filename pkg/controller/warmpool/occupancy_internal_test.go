@@ -5,8 +5,8 @@ package warmpool
 import (
 	"testing"
 
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // TestProjectOccupancyPhase exercises the §4.6.1 / §4.6.3 claim-driven

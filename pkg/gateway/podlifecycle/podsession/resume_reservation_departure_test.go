@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 )
 
 // reservationFault is one way reserveResumeSlot fails before or at the slot

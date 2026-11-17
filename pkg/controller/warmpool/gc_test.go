@@ -17,8 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // stubSessions is a fake §4.6.1 active-session oracle keyed on the pod

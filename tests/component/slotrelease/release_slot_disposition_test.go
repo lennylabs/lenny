@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 )
 
 // slotClaimer returns the claimer over the fixture's apiserver and Redis set,
