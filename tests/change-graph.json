@@ -354,6 +354,10 @@
       "unit": ["pkg/gateway/credentials/impersonation/...", "pkg/gateway/externalapi/admin/..."],
       "component": ["tests/component/tokensigning/..."]
     },
+    "pkg/gateway/seam/": {
+      "static": ["tests/static/lint/gateway_layout_test.go"],
+      "unit": ["pkg/gateway/seam/..."]
+    },
     "pkg/kms/kmstest/": {
       "unit": ["pkg/kms/...", "pkg/auth/jwt/..."]
     },

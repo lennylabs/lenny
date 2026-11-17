@@ -93,32 +93,58 @@ func TestEachRuleRefusesTheImportThatBreaksIt(t *testing.T) {
 		add  Package
 		want Violation
 	}{
-		{"seam imports the core", pkg("pkg/gateway/uploadhandler/up", "pkg/gateway/core/session"),
-			Violation{RuleSeamImports, "pkg/gateway/uploadhandler/up", "pkg/gateway/core/session"}},
-		{"seam imports another seam", pkg("pkg/gateway/uploadhandler/up", "pkg/gateway/streamproxy/bus"),
-			Violation{RuleSeamImports, "pkg/gateway/uploadhandler/up", "pkg/gateway/streamproxy/bus"}},
-		{"seam imports the API front", pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/api/pipeline"),
-			Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/api/pipeline"}},
-		{"seam imports a replica-level part", pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/drain"),
-			Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/drain"}},
-		{"core imports a seam", pkg("pkg/gateway/core/checkpoint", "pkg/gateway/platformtools/mcp"),
-			Violation{RuleCoreImports, "pkg/gateway/core/checkpoint", "pkg/gateway/platformtools/mcp"}},
-		{"core imports the API front", pkg("pkg/gateway/core/checkpoint", "pkg/gateway/api/pipeline"),
-			Violation{RuleCoreImports, "pkg/gateway/core/checkpoint", "pkg/gateway/api/pipeline"}},
-		{"API front imports a seam", pkg("pkg/gateway/api/admin", "pkg/gateway/streamproxy/bus"),
-			Violation{RuleAPIFrontImports, "pkg/gateway/api/admin", "pkg/gateway/streamproxy/bus"}},
-		{"API front imports the core", pkg("pkg/gateway/api/admin", "pkg/gateway/core/podclaim"),
-			Violation{RuleAPIFrontImports, "pkg/gateway/api/admin", "pkg/gateway/core/podclaim"}},
-		{"seam interface imports the core", pkg("pkg/gateway/seam/values", "pkg/gateway/core/podclaim"),
-			Violation{RuleSeamInterfaceImports, "pkg/gateway/seam/values", "pkg/gateway/core/podclaim"}},
-		{"seam interface imports a replica-level part", pkg("pkg/gateway/seam/values", "pkg/gateway/drain"),
-			Violation{RuleSeamInterfaceImports, "pkg/gateway/seam/values", "pkg/gateway/drain"}},
-		{"another component imports the core", pkg("pkg/podregistry", "pkg/gateway/core/podclaim"),
-			Violation{RuleOutsideImports, "pkg/podregistry", "pkg/gateway/core/podclaim"}},
-		{"another binary imports the seam interface", pkg("cmd/lenny-adapter", "pkg/gateway/seam"),
-			Violation{RuleOutsideImports, "cmd/lenny-adapter", "pkg/gateway/seam"}},
-		{"a package outside every directory", pkg("pkg/gateway/session/sessionstore"),
-			Violation{Rule: RulePlacement, Package: "pkg/gateway/session/sessionstore"}},
+		{
+			"seam imports the core", pkg("pkg/gateway/uploadhandler/up", "pkg/gateway/core/session"),
+			Violation{RuleSeamImports, "pkg/gateway/uploadhandler/up", "pkg/gateway/core/session"},
+		},
+		{
+			"seam imports another seam", pkg("pkg/gateway/uploadhandler/up", "pkg/gateway/streamproxy/bus"),
+			Violation{RuleSeamImports, "pkg/gateway/uploadhandler/up", "pkg/gateway/streamproxy/bus"},
+		},
+		{
+			"seam imports the API front", pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/api/pipeline"),
+			Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/api/pipeline"},
+		},
+		{
+			"seam imports a replica-level part", pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/drain"),
+			Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/drain"},
+		},
+		{
+			"core imports a seam", pkg("pkg/gateway/core/checkpoint", "pkg/gateway/platformtools/mcp"),
+			Violation{RuleCoreImports, "pkg/gateway/core/checkpoint", "pkg/gateway/platformtools/mcp"},
+		},
+		{
+			"core imports the API front", pkg("pkg/gateway/core/checkpoint", "pkg/gateway/api/pipeline"),
+			Violation{RuleCoreImports, "pkg/gateway/core/checkpoint", "pkg/gateway/api/pipeline"},
+		},
+		{
+			"API front imports a seam", pkg("pkg/gateway/api/admin", "pkg/gateway/streamproxy/bus"),
+			Violation{RuleAPIFrontImports, "pkg/gateway/api/admin", "pkg/gateway/streamproxy/bus"},
+		},
+		{
+			"API front imports the core", pkg("pkg/gateway/api/admin", "pkg/gateway/core/podclaim"),
+			Violation{RuleAPIFrontImports, "pkg/gateway/api/admin", "pkg/gateway/core/podclaim"},
+		},
+		{
+			"seam interface imports the core", pkg("pkg/gateway/seam/values", "pkg/gateway/core/podclaim"),
+			Violation{RuleSeamInterfaceImports, "pkg/gateway/seam/values", "pkg/gateway/core/podclaim"},
+		},
+		{
+			"seam interface imports a replica-level part", pkg("pkg/gateway/seam/values", "pkg/gateway/drain"),
+			Violation{RuleSeamInterfaceImports, "pkg/gateway/seam/values", "pkg/gateway/drain"},
+		},
+		{
+			"another component imports the core", pkg("pkg/podregistry", "pkg/gateway/core/podclaim"),
+			Violation{RuleOutsideImports, "pkg/podregistry", "pkg/gateway/core/podclaim"},
+		},
+		{
+			"another binary imports the seam interface", pkg("cmd/lenny-adapter", "pkg/gateway/seam"),
+			Violation{RuleOutsideImports, "cmd/lenny-adapter", "pkg/gateway/seam"},
+		},
+		{
+			"a package outside every directory", pkg("pkg/gateway/session/sessionstore"),
+			Violation{Rule: RulePlacement, Package: "pkg/gateway/session/sessionstore"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +158,8 @@ func TestEachRuleRefusesTheImportThatBreaksIt(t *testing.T) {
 // fails, so the register only shrinks.
 // spec: GW-R1
 func TestRegisteredViolationsPassAndStaleRowsFail(t *testing.T) {
-	pkgs := append(base(),
+	pkgs := append(
+		base(),
 		pkg("pkg/gateway/sessionserver", "pkg/gateway/platformtools/mcp"),
 		pkg("pkg/gateway/mcpfabric/mcptools", "pkg/gateway/sessionserver"),
 	)
@@ -180,7 +207,8 @@ func TestRegisteredViolationsPassAndStaleRowsFail(t *testing.T) {
 // and the imports of a removed package are not checked.
 // spec: GW-R1
 func TestPackagesInTransitAreImportableAndDomainPackagesStayOutside(t *testing.T) {
-	pkgs := append(base(),
+	pkgs := append(
+		base(),
 		pkg("pkg/gateway/quota/quotastore", "pkg/gateway/connectors/conn"),
 		pkg("pkg/gateway/connectors/conn", "pkg/gateway/core/podclaim", "pkg/gateway/streamproxy/bus"),
 		pkg("pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore", "pkg/gateway/connectors/conn"),
@@ -202,7 +230,8 @@ func TestPackagesInTransitAreImportableAndDomainPackagesStayOutside(t *testing.T
 // moves.
 // spec: GW-R1
 func TestARegisterRowOverridesTheDirectoryOfAMisplacedPackage(t *testing.T) {
-	pkgs := append(base(),
+	pkgs := append(
+		base(),
 		pkg("pkg/gateway/core/subsystem"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/core/subsystem"),
 	)
