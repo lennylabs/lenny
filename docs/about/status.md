@@ -32,9 +32,9 @@ The work toward this goal is planned as milestones. A milestone is done when its
 
 | Milestone | Steps landed | State |
 |:----------|:-------------|:------|
-| Workflow in place (current) | 10 of 10 | Done |
-| Specification structure foundation | 0 of 10 | In progress |
-| Gateway package layout | None assigned yet | Not started |
+| Workflow in place | 10 of 10 | Done |
+| Specification structure foundation (current) | 0 of 16 | In progress |
+| Gateway package layout and the journey pilot | 0 of 1 | Not started |
 | Areas, one milestone each, ordered once the "Specification structure" change lands | None assigned yet | Not started |
 
 ### Workflow in place
@@ -45,19 +45,19 @@ All 10 of its steps have landed.
 
 ### Specification structure foundation
 
-Exit criteria: The conventions, the identifier registry, the reference tool, the gates, and the annotation and documentation rules have landed, coverage is derived from annotations, and the kind renames and the `PodSet` merge are done tree-wide.
+Exit criteria: Every merge passes the merge gate and `main` is green. The conventions, the identifier registry, the reference tool, the gates, and the annotation and documentation rules have landed, coverage and test selection are derived from annotations and the import graph, and the kind renames and the `PodSet` merge are done tree-wide. The test tiers carry names and the static tier is split.
 
-0 of its 10 steps have landed, and 7 are being built. Part of its work is not yet divided into steps, so the count covers only the steps listed.
+0 of its 16 steps have landed, and 7 are being built. Part of its work is not yet divided into steps, so the count covers only the steps listed.
 
-### Gateway package layout
+### Gateway package layout and the journey pilot
 
-Exit criteria: The layout is decided and the package moves have landed.
+Exit criteria: The gateway layout is decided and the package moves have landed. Three pilot persona journeys run, and their cost per run is measured.
 
-No steps are assigned to this milestone yet.
+Its one step has not started. Part of its work is not yet divided into steps, so the count covers only the steps listed.
 
 ### Areas, one milestone each, ordered once the "Specification structure" change lands
 
-Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its findings from the gap records are filed as issues and closed, and its test tiers pass.
+Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its findings from the gap records are filed as issues and closed, and its test tiers pass. The area's documentation-tier reconciliation tests and gap-record tests are deleted or replaced, its stores have conformance suites, and its persona journeys run.
 
 No steps are assigned to this milestone yet.
 
