@@ -1,10 +1,10 @@
 # Helpers
 
-Status: `In progress`, revision 3, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `Implemented`, revision 3, 2026-11-16. Programs: [v1](../../programs/v1.md), milestone M0.
 
 ## Problem
 
-The proposal pipeline converges each proposal through many reviewer lenses and rounds. It is 11 workflows under `.claude/workflows/` (19,453 lines), 3 skills, 10 tools under `.claude/tools/` (3,951 lines), the `cp-writer` agent, and 26 test files under `.claude/tests/`. In proposals 0082 to 0112 the review log is 70 to 85 percent of a proposal's words. The owner replaced the pipeline on 2026-11-16 with a lighter loop and a set of helpers that the owner uses as needed ([changes README](../README.md), "Workflow" and "Helpers").
+The proposal pipeline converges each proposal through many reviewer lenses and rounds. It is 11 workflows under `.claude/workflows/` (19,453 lines), 3 skills, 10 tools under `.claude/tools/` (3,951 lines), the `cp-writer` agent, and 26 test files under `.claude/tests/`. In proposals 0082 to 0112 the review log is 70 to 85 percent of a proposal's words. The owner replaced the pipeline on 2026-11-16 with a lighter loop and a set of helpers that the owner uses as needed ([changes README](../../README.md), "Workflow" and "Helpers").
 
 The governing rule, `.claude/rules/spec-driven-development.md`, still tells agents to change the specification through `change-proposal` and `implement-proposal`, so an agent that follows it today uses the retired loop.
 
@@ -25,7 +25,7 @@ The governing rule, `.claude/rules/spec-driven-development.md`, still tells agen
 
 | Term | Meaning |
 | :-- | :-- |
-| Helper | A skill under `.claude/skills/` that any activity of the [workflow](../README.md#workflow) can use. The changes README lists the helpers. |
+| Helper | A skill under `.claude/skills/` that any activity of the [workflow](../../README.md#workflow) can use. The changes README lists the helpers. |
 | Generic helper | A helper that takes its target and its conventions as arguments, so it works on any document, diff, or branch. |
 | Bound helper | A helper that reads the layouts of `changes/`, `issues/`, or the specification. A change of those layouts touches the bound helpers alone. |
 | Skill | A `SKILL.md` under `.claude/skills/<name>/` that loads instructions into the session that invokes it. |
