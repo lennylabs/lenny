@@ -42,6 +42,12 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		sig := <-sigCh
+		if interruptOwned.Load() {
+			// The running command handles the signal and cleans up
+			// before it exits (the journeys tier deletes its cluster).
+			fmt.Fprintf(os.Stderr, "\nlenny-test: interrupted (%s); tearing down before exit.\n", sig)
+			return
+		}
 		fmt.Fprintf(os.Stderr, "\nlenny-test: interrupted (%s); cleaning up.\n", sig)
 		// 130 = 128 + SIGINT; 143 = 128 + SIGTERM.
 		if sig == syscall.SIGTERM {
@@ -82,6 +88,9 @@ func main() {
 	case "infra":
 		os.Exit(runInfra(args[1:]))
 	case "run":
+		if isJourneysTier(args[1:]) {
+			os.Exit(runJourneys(args[1:]))
+		}
 		os.Exit(runRun(args[1:]))
 	case "gate":
 		os.Exit(runGate(args[1:]))
@@ -106,7 +115,10 @@ func main() {
 	case "cached":
 		os.Exit(runCachedSubcommand(args[1:]))
 	default:
-		// Default to run.
+		// Default to run. The journeys tier takes its own flags.
+		if isJourneysTier(args) {
+			os.Exit(runJourneys(args))
+		}
 		os.Exit(runRun(args))
 	}
 }
@@ -164,6 +176,12 @@ Run flags:
                            With --changed, --since, --spec, or --pkg, runs that
                            selection restricted to the one tier (unit keeps the
                            selected packages).
+  --tier journeys          The persona journey tier, which takes its own flags:
+                           [--journey <name>] [--trials N] [--pilot <name>]
+                           [--run-cap-usd 6] [--pilot-cap-usd 54]
+                           [--skip-agent] [--probe] [--dry-run]. It creates a
+                           Kind cluster per trial and runs a Claude Code agent,
+                           so it costs money; --max-tier never reaches it.
   --max-tier <name>        Run all tiers up to and including <name>, in the
                            order the --tier list gives.
   --changed                Run tests affected by uncommitted changes (git diff).

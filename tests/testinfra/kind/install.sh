@@ -90,6 +90,11 @@
 #                        shared database is dirty or ahead of this branch's
 #                        highest migration. Default: the install stops
 #                        before migrating in either case.
+#   LENNY_INSTALL_STOP_AFTER
+#                        When "datastores", stop after Step 8, leaving the
+#                        cluster with its images, prerequisites, and data
+#                        stores and without the CRDs or the Lenny chart.
+#                        The journey tier's operator journey uses it.
 
 set -euo pipefail
 
@@ -1121,6 +1126,13 @@ kc -n lenny-system run lenny-e2e-minio-mb \
     mc --insecure mb --ignore-existing e2e/${MINIO_BUCKET}
   "
 log "MinIO bucket ${MINIO_BUCKET} is present"
+
+# The persona journey tier's operator journey installs the chart itself,
+# so it asks for the cluster with its prerequisites and stops here.
+if [[ "${LENNY_INSTALL_STOP_AFTER:-}" == "datastores" ]]; then
+  log "LENNY_INSTALL_STOP_AFTER=datastores: stopping before the CRDs and the Lenny chart"
+  exit 0
+fi
 
 # ---------------------------------------------------------------------
 # Step 9: apply the lenny.dev CRDs and install the Lenny Helm chart.

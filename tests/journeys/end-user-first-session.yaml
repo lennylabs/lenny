@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT
+#
+# Persona journey: an end user creates a session against the echo
+# reference runtime, sends a message, and reads the result. TESTING.md
+# ("Persona journeys") describes the format.
+name: end-user-first-session
+persona: end-user
+summary: An end user starts a session on the echo runtime, sends a message, and reads the reply.
+target: kind
+setup: lenny
+prepare:
+  - sessions-allowed:default
+docs:
+  - docs/tutorials/first-session.md
+  - docs/client-guide/session-lifecycle.md
+  - docs/api/rest.md
+goal: |
+  Our platform team set up an echo agent on Lenny for us to try. Start a
+  session with the echo runtime, which is registered as
+  echo-runtime-sidecar, send it the message hello-{{nonce}}, and show me
+  what it answered.
+steps:
+  - Create a session for the echo runtime.
+  - Send the message to the session.
+  - Read the session's output or transcript to find the reply.
+environment: |
+  Lenny is running, and the platform team gave you access: the gateway's
+  URL and your API token are in your environment. The echo runtime
+  answers each message by repeating it.
+credentials:
+  - gateway-url
+  - admin-token
+tools:
+  - lenny-ctl
+timeLimit: 30m
+postconditions:
+  - name: transcript-holds-echo-reply
+    description: A session's transcript holds the echo runtime's reply to hello-<nonce>.
+    api: {method: GET, path: /v1/sessions, as: default/lenny-admin/platform-admin}
+    forAny:
+      items: items.*.id
+      api: {method: GET, path: "/v1/sessions/{{item}}/transcript", as: default/lenny-admin/platform-admin}
+      expect:
+        matches: '\[echo seq=[0-9]+\] hello-{{nonce}}'
+  - name: session-reached-a-live-state
+    description: A session reached a state in which it accepts or has answered input, rather than failing.
+    api: {method: GET, path: /v1/sessions, as: default/lenny-admin/platform-admin}
+    expect:
+      path: items.*.state
+      matches: '^(running|input_required|completed)$'

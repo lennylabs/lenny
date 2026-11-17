@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: MIT
+#
+# Persona journey: an operator installs Lenny with Helm and configures a
+# warm pool for the echo reference runtime. TESTING.md ("Persona
+# journeys") describes the format.
+name: operator-install
+persona: operator
+summary: An operator installs Lenny with Helm into an empty cluster and configures a warm pool for the echo runtime.
+target: kind
+setup: prerequisites
+docs:
+  - docs/operator-guide/installation.md
+  - docs/tutorials/deploy-to-cluster.md
+  - docs/operator-guide/configuration.md
+  - docs/operator-guide/lenny-ctl.md
+goal: |
+  I run the platform team, and our developers want to start agent sessions
+  on Lenny. Install Lenny on our cluster with Helm, using the chart we
+  downloaded to {{chart}}, and set up a warm pool for the echo reference
+  runtime so that at least one pod is always warm and ready to take a
+  session. Tell me when Lenny is running and the pool has warm pods.
+steps:
+  - Check the prerequisites the installation guide lists against the environment described below.
+  - Write a Helm values file that points Lenny at the existing Postgres, Redis, and MinIO, and that uses the images already loaded on the nodes.
+  - Install the chart into the lenny-system namespace with helm install.
+  - Configure a pool for the echo runtime, through the chart's bootstrap values or the admin API, and register the runtime if the guide asks for it.
+  - Verify that the control plane is running and that the pool reports warm pods.
+environment: |
+  The cluster is a local Kind cluster named {{cluster}}, with one
+  control-plane node and two workers. It has no Lenny release yet.
+  cert-manager, the prometheus-operator CRDs, and ingress-nginx are
+  installed, and the lenny-system namespace exists.
+
+  The data stores run in the lenny-system namespace:
+  - Postgres at lenny-postgres.lenny-system.svc:5432, database lenny, user
+    lenny, password lenny, without TLS. The Lenny schema is already
+    migrated.
+  - Redis at redis://lenny-redis.lenny-system.svc:6379, without TLS or a
+    password.
+  - MinIO at lenny-minio.lenny-system.svc:9000 over TLS, access key
+    lennyminio, secret key lennyminio123, bucket lenny-artifacts. Its CA
+    certificate is in the ConfigMap lenny-minio-ca in lenny-system.
+
+  The nodes cannot pull images from any registry. Every Lenny image is
+  already loaded on every node under the tag {{imageTag}}, for example
+  lenny-gateway:{{imageTag}}, lenny-controller:{{imageTag}},
+  lenny-adapter:{{imageTag}}, lenny-supervisor:{{imageTag}}, and the echo
+  runtime lenny-runtime-echo:{{imageTag}}. Use an image pull policy that
+  does not pull.
+credentials:
+  - kubeconfig
+tools:
+  - kubectl
+  - helm
+  - lenny-ctl
+timeLimit: 60m
+postconditions:
+  - name: gateway-ready
+    description: The gateway Deployment has at least one ready replica.
+    within: 5m
+    kubectl: [-n, lenny-system, get, deployment, lenny-gateway, -o, "jsonpath={.status.readyReplicas}"]
+    expect:
+      atLeast: 1
+  - name: controller-ready
+    description: The controller Deployment has at least one ready replica.
+    within: 5m
+    kubectl: [-n, lenny-system, get, deployment, lenny-controller, -o, "jsonpath={.status.readyReplicas}"]
+    expect:
+      atLeast: 1
+  - name: warm-pool-has-ready-pods
+    description: A SandboxWarmPool in lenny-agents reports at least one ready warm pod.
+    within: 10m
+    kubectl: [-n, lenny-agents, get, sandboxwarmpools, -o, json]
+    expect:
+      path: items.*.status.readyCount
+      atLeast: 1
+  - name: echo-sandbox-idle
+    description: A Sandbox in lenny-agents is idle, warm and claimable.
+    within: 10m
+    kubectl: [-n, lenny-agents, get, sandboxes, -o, json]
+    expect:
+      path: items.*.status.phase
+      equals: idle
+  - name: echo-runtime-pod
+    description: A managed agent pod runs the echo runtime image.
+    within: 10m
+    kubectl: [-n, lenny-agents, get, pods, -l, lenny.dev/managed=true, -o, "jsonpath={.items[*].spec.containers[*].image}"]
+    expect:
+      contains: lenny-runtime-echo
