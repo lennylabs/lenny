@@ -190,7 +190,8 @@ func (c AgentConfig) DockerArgs(run AgentRun) []string {
 		"--network", "container:" + n.holder,
 	}
 	args = append(args, c.hardening()...)
-	args = append(args,
+	args = append(
+		args,
 		"--mount", "type=bind,source="+run.DocsDir+",target="+ContainerDocs+",readonly",
 		"--mount", "type=bind,source="+run.JourneyDir+",target="+ContainerJourneyDir+",readonly",
 		"--mount", "type=bind,source="+run.HomeDir+",target="+ContainerHome,
