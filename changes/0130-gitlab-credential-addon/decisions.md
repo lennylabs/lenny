@@ -1,0 +1,8 @@
+# Decisions: 0130 GitLab credential add-on
+
+## Decisions
+
+| # | Decision | Recommendation | Cost of the recommendation | Alternative |
+| :-- | :-- | :-- | :-- | :-- |
+| 1 | GitLab (formerly [`0152-user-git-identity` decision 26](../0152-user-git-identity/decisions.md#decisions)) | Option E of "Options" on 19.2 and later, per-session fine-grained tokens, with S13 selecting the parent. Option D below 19.2, on a VCS pool with `prAuthoring: bot`, and if S13 finds no programmatic path. Option F is withdrawn. Authorization ships regardless. A VCS pool's `prAuthoring` never selects option A. | GL-2 waits on S13, and depending on it the Token Service holds `api` parents, or users take a manual step. Each session mints and revokes a token, and S13 decides whether each one notifies the user. Older instances keep the bot author. A tenant can still build option A itself under the generic mechanism. | Option D for everyone, which gives up user attribution, half of the request. Option B, which breaks `glab`. Option F, which three texts refuse. |
+| 2 | Quick actions (formerly [`0152-user-git-identity` decision 31](../0152-user-git-identity/decisions.md#decisions)) | `gitlab-deny`'s `bodyPatterns` refuse lines naming commands that reach review or merge state, whatever the context. A tenant's rules can tighten them. | It is a deny list that fails open on a new command, and a literal `/merge` line in a code block is refused. | The prototype's refusal of every `/word` line, which rejects `/usr/bin/env` **[captured]**. Or no check, relying on the token, which S13 has not shown to bind quick actions. |

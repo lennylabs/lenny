@@ -15,3 +15,9 @@ An adversarial review read revision 2 on 2026-11-09. Revision 3 applies its find
 ## Move into changes (2026-11-16)
 
 Change 0113 moved this design from `designs/llm-response-cache-removal-design.md` into this folder. Its review history moved into this file, its proposal plan became "Steps", its evidence moved into `evidence/`, its status became `Draft` pending the owner's final cross-review, and every path to a design or its evidence, in links and in prose, now names its new location.
+
+## Status line before the split (2026-11-16)
+
+Change 0113 shortened the status line of `change.md` to the status, revision, date, and program, and moved the rest here as it stood:
+
+> after one adversarial review. Nothing here is built or staged. No decision is open: the owner settled O3 on 2026-11-13. It reads against [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) revision 21, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, and [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) revision 8. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RC-n, and requirements carry the label RCR-n. "Review history" at the end records the revisions. The owner's final cross-review of the moved designs is pending, so the status is `Draft`.

@@ -1,10 +1,8 @@
 # Client-defined tools
 
-Status: `Draft`, revision 11, 2026-11-15, with no independent review yet. Revision 11 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors.") under [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2: runtime tools, approvals, and reserved names name platform tools and the runtime's own tools, and connector tools and `deferredToolDiscovery` leave. Revision 10 applies the remaining instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) and its R16 under O12. Nothing here is built or staged. The owner chose on 2026-11-13 to move every client protocol adapter (MCP, A2A, OpenAI Chat Completions, Open Responses, and Anthropic Messages) out of Lenny into separate first-party repositories with optional Helm subcharts in front of the REST API (decision T17); [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) governs what leaves. Revision 9 applies two of that design's decisions, which the owner settled on 2026-11-14: under O8, in the owner's words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", banners mark the adapter-facing sections and the parts of them that move to the adapters, and nothing is deleted or moved; under the simplified O3, which the owner answered "yes", the "Held session" term leaves. It reads against [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) revision 12 together with the owner's decisions of 2026-11-09 on it, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0144-session-derive`](../0144-session-derive/change.md) revision 22, [`0126-delegation-availability`](../0126-delegation-availability/change.md) revision 12, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). It is built from the read-only assessment of client-defined tools of 2026-11-09, and it re-verifies that assessment's claims against the tree, the specification, and the live external documentation. "Decisions" lists what the owner settled on 2026-11-09: T1 to T16, and O1 to O10. No decision is open. The design stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label CT-n, requirements carry CTR-n, decisions that began as open questions carry O-n, and the proposals that land the design carry CT-A and CT-B under "Proposal split and order". "Review history" at the end records the revisions.
+Status: `Draft`, revision 11, 2026-11-15. Programs: [v1](../programs/v1.md).
 
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
-
-> **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the protocol mappings of client tools move to the repositories of the MCP, OpenAI Chat Completions, Open Responses, and Anthropic Messages adapters. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved. The runtime contract, the gateway core, and the REST surface still govern Lenny: "CT-1", "CT-2", "CT-4", "CT-5", "CT-8" to "CT-10", and proposal CT-A apart from its Chat Completions and Responses mappings. The adapter-facing sections carry a banner of their own, which names the parts that move: "CT-3", "CT-6", "CT-7", and "Proposal split and order". Decisions T4, T15, O5, O9, and O10 move with those parts, and every other decision still governs Lenny.
+> **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the protocol mappings of client tools move to the repositories of the MCP, OpenAI Chat Completions, Open Responses, and Anthropic Messages adapters. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved. The runtime contract, the gateway core, and the REST surface still govern Lenny: "CT-1", "CT-2", "CT-4", "CT-5", "CT-8" to "CT-10", and proposal CT-A apart from its Chat Completions and Responses mappings. The adapter-facing sections carry a banner of their own, which names the parts that move: "CT-3", "CT-6", "CT-7", and "Steps" in `steps.md`. Decisions T4, T15, O5, O9, and O10 move with those parts, and every other decision still governs Lenny.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -12,7 +10,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree or the specification on 2026-11-09. |
 | **[external]** | Read on an external documentation page or in a public SDK repository on 2026-11-09. "Sources" lists the pages. |
-| **[unverified]** | An external claim that the pages read on 2026-11-09 do not state. "Validation owed" lists each one. |
+| **[unverified]** | An external claim that the pages read on 2026-11-09 do not state. "Validation owed" in `steps.md` lists each one. |
 | **[design]** | What this design requires. Nothing implements it. |
 
 ## Problem
@@ -86,6 +84,7 @@ This design adds client tools as a turn-ending exchange. The runtime ends its tu
 | Function tool and custom tool | A function tool takes a JSON object as arguments and declares an input schema. A custom tool is the OpenAI tool type `custom`, which takes a string as input and may declare a grammar. The Anthropic tool field `type: "custom"` marks an ordinary function tool and is unrelated. |
 | Steer-declaring runtime | A runtime whose chosen revision declares the `steer` delivery intent. |
 | Violation | An end-of-turn `message` whose calls break a rule of "CT-4". |
+| Labels | Parts of the design carry the label CT-n, requirements carry the label CTR-n, and decisions that began as open questions carry the label O-n. |
 
 ### Terms from other designs and the platform
 
@@ -96,12 +95,12 @@ This design adds client tools as a turn-ending exchange. The runtime ends its tu
 | `CH-MSGSOCK` | The intra-pod channel between the adapter and the runtime process, which carries the JSONL frames `message`, `message_part`, `tool_call`, `tool_result`, and others ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod), with the frames of "MD-24" of the message delivery design). |
 | `MessageEnvelope` and `MessagePart` | The runtime-facing message format and its content parts ([§15.4.1](../../spec/15_external-api-surface.md#1541-message-format-and-binary-io-requirements), "`MessageEnvelope` — Unified Message Format", and [§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod), "Internal `MessagePart` Format"). |
 | Conversation input | The `conversation` member that [AM-4](../0120-anthropic-messages-api/change.md#am-4-conversation-input) adds to the `message` envelope: history entries with roles, client instructions, parameters, client tools, and the tool choice. A runtime receives it when its revision declares `capabilities.conversationInput`. |
-| Adapter-local tools | `read_file`, `write_file`, `list_dir`, and `delete_file`, which the adapter runs inside the pod, and any custom tools a custom adapter lists in the manifest's `adapterLocalTools` ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod), "Adapter-Local Tool Reference"). The owner retired them, with `adapterLocalTools`, on 2026-11-12 ([`0139-runtime-protocol`](../0139-runtime-protocol/change.md#decisions), D5), so no client tool name collides with one. |
+| Adapter-local tools | `read_file`, `write_file`, `list_dir`, and `delete_file`, which the adapter runs inside the pod, and any custom tools a custom adapter lists in the manifest's `adapterLocalTools` ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod), "Adapter-Local Tool Reference"). The owner retired them, with `adapterLocalTools`, on 2026-11-12 ([`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#decisions), D5), so no client tool name collides with one. |
 | Built-in adapter single-shot compute model | The §15 rule that a Chat Completions request runs an implicit session that claims a warm pod, runs one turn, and releases the pod within one HTTP call ([§15](../../spec/15_external-api-surface.md#15-external-api-surface)). |
 | Open Responses conversation sessions | The §15 rules for holding a Responses session after a turn and for serving a `previous_response_id` continuation warm on the session that served the response or cold in a new session, including the response records on the session row and the warm conditions 1 to 4. |
 | Provider-adapter session | An ordinary session that a provider adapter creates. It replaces the term "Held session": Lenny keeps no held-session state and no close-after-turn rule, under the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which the owner answered "yes" on 2026-11-14. The adapter may shorten the session's idle timeout, an operator lengthens it through the pool's idle timeout, a `one_shot` runtime ends its own session, and the adapter routes a follow-up request to the session by its conversation fingerprint ([`0120-anthropic-messages-api`, "Session lifetime"](../0120-anthropic-messages-api/change.md#session-lifetime)). |
 | Delivery paths | The named paths of [`0135-message-delivery`, "MD-5"](../0135-message-delivery/change.md#md-5-delivery-paths), which replace §7.2's numbered paths: the direct path writes a message when no turn is open or when it is a results message, the queue path holds a `queue` message in the session inbox until the open turn's end-of-turn `message`, and the resume path wakes or resumes a waiting or paused session. |
-| Open turn | A turn whose end-of-turn `message` has not arrived, which the gateway tracks from the frames it writes and reads. It replaces the specification's `ready_for_input` signal, which leaves the specification under decision O1 of [`0135-message-delivery`](../0135-message-delivery/change.md#decisions). |
+| Open turn | A turn whose end-of-turn `message` has not arrived, which the gateway tracks from the frames it writes and reads. It replaces the specification's `ready_for_input` signal, which leaves the specification under decision O1 of [`0135-message-delivery`](../0135-message-delivery/decisions.md#decisions). |
 | `PreRoute` chain and post-chain point | The interceptor phase that chooses a session's runtime and pool, and the single step after it and after revision selection where every check that depends on the runtime, the revision, or the pool runs ([`0141-runtime-routing`, RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract)). |
 | Revision | An immutable, numbered copy of a runtime's versioned fields, `capabilities` among them, chosen per session by the runtime's traffic weights ([`0140-runtime-revisions`, RV-1 and RV-2](../0140-runtime-revisions/change.md#rv-1-revisions)). |
 | Per-tenant capability override | The §5.1 mechanism that adjusts a runtime's capabilities for one tenant's sessions, which RV-1 restricts to narrowing ([`0140-runtime-revisions`, "Per-tenant capability override"](../0140-runtime-revisions/change.md#per-tenant-capability-override)). |
@@ -118,7 +117,7 @@ This design adds client tools as a turn-ending exchange. The runtime ends its tu
 | Labels | Source | What they name |
 | :-- | :-- | :-- |
 | AM-3, AM-4, AM-5, AM-6, AM-7, and AM-8 | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) | The Messages API request mapping, conversation input, continuity by conversation digest, responses and streaming, the client-tool bridge this design replaces, and the Anthropic error envelope. |
-| AM-A to AM-E | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md#steps) | That design's proposals. AM-A lands conversation input and moves the OpenAI translators onto it. AM-E was the client-tools proposal. |
+| AM-A to AM-E | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/steps.md#steps) | That design's proposals. AM-A lands conversation input and moves the OpenAI translators onto it. AM-E was the client-tools proposal. |
 | RT-2 | [`0141-runtime-routing`](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) | The `PreRoute` contract and the post-chain point. |
 | RV-1 and RV-2 | [`0140-runtime-revisions`](../0140-runtime-revisions/change.md#rv-1-revisions) | Revisions and their field classes, the per-tenant capability override, and revision selection with its rollout key. |
 | MP-5 | [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-5-intra-pod-servers) | The intra-pod MCP servers under the MCP upgrade. |
@@ -126,7 +125,7 @@ This design adds client tools as a turn-ending exchange. The runtime ends its tu
 | CR-1 and CR-3 | [`0124-connector-removal`](../0124-connector-removal/change.md) | The removal of connectors, connector tools, and `deferredToolDiscovery`; and the guidance by which a runtime reaches operator services through egress. |
 | SD-1 | [`0144-session-derive`](../0144-session-derive/change.md#sd-1-one-route) | The derive route, and "Reading client messages", which returns the messages a client sent to a session. |
 | AR O4 and AR O5 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) | Two decisions of the design that removes `type: mcp` runtimes and service mode, settled by the owner on 2026-11-13 in the words "O5 (b), yes to all the others". O4 removes `executionMode` and `conversationContinuity` from `sessionIsolationLevel` and from the hold rule of the Open Responses and Messages adapters. O5 removes `sessionId` from every runtime frame except `session_start`. |
-| MD O3 | [`0135-message-delivery`](../0135-message-delivery/change.md#decisions) | The owner's decision of 2026-11-09 that a message from another session to a session created on a provider surface is delivered on arrival, with its rule that client tools are offered only in turns a client request caused, which this design records as T16. |
+| MD O3 | [`0135-message-delivery`](../0135-message-delivery/decisions.md#decisions) | The owner's decision of 2026-11-09 that a message from another session to a session created on a provider surface is delivered on arrival, with its rule that client tools are offered only in turns a client request caused, which this design records as T16. |
 | MD-11 and S8 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-11-retraction) | Retraction: the runtime's `retract` frame, the `retract_result` frame with `retracted`, `too_late`, or `unknown` per id, and the owner's decision S8 that settles it. |
 
 ## High-level design
@@ -185,67 +184,6 @@ The rest of this section states each part in the design's terms, which "Terms" a
                                                    ▼
                      message envelope: toolResults (+ input) ──> runtime continues; held deliveries follow
 ```
-
-## Decisions
-
-Settled by the owner on 2026-11-09. T1 to T8 came with revision 1, and the owner revised T5 and added T9 with revision 2:
-
-| ID | Decision | Where |
-| :-- | :-- | :-- |
-| T1 | The mechanism is turn-ending. The runtime's end-of-turn `message` carries `clientToolCalls`, as the `response` frame did before the message delivery design's MD-24 replaced it. The next client request reaches the runtime as a `message` with a `toolResults` member. The tools arrive in `conversation.clientTools` and `conversation.toolChoice` on every turn. | CT-1 |
-| T2 | The v1 surfaces are Chat Completions, Responses, REST, and the Messages API. MCP gets client tools only as Lenny-specific tool arguments. | CT-6 |
-| T3 | Lenny is not prescriptive. `capabilities.clientTools` is the runtime author's declaration, and Lenny refuses client tools only on runtimes that do not declare it. Lenny's own reference runtimes do not declare it in v1. | CT-2 |
-| T4 | On Chat Completions, each tool round trip continues cold with the history. Superseded on 2026-11-14 by the conversation fingerprint rule of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-10-the-provider-adapters): a round trip continues warm on the session the fingerprint finds, under that design's conditional send (R16), and continues cold with the history otherwise. | CT-6, CT-7 |
-| T5 | A client message without the pending results is refused, apart from the REST exception of T9. For a runtime that does not declare the `steer` delivery intent of [`0135-message-delivery`](../0135-message-delivery/change.md), inter-session messages and other inbox deliveries wait until the results arrive, and are delivered right after them. For a steer-declaring runtime, inbox deliveries are not held while calls are pending, and the runtime places them after the results. The cold-history builder places a message that arrived while calls were pending after their results, so each call and its result stay adjacent. | CT-5, CT-7 |
-| T6 | The gateway passes `tool_choice` and the parallel limit to the runtime. It validates the runtime's response: declared tool names, arguments against `input_schema`, `tool_choice`, and the parallel limit. A violation fails the turn with a do-not-retry error and a per-revision metric. The gateway does not repair the response. The owner confirmed with revision 2 that the JSON arguments of a function tool are still validated against its input schema. | CT-4 |
-| T7 | Client tools are not delegated. | CT-9 |
-| T8 | This is a standalone design, landing after the Messages design's AM-A and alongside the F-15.1.82 fix. | "Proposal split and order" |
-| T9 | On REST, a client message without the pending results is refused unless the request sets `abandonPendingToolCalls: true`, which turns the pending calls into "cancelled by client" error results. MCP clients reach `abandonPendingToolCalls` as a generated argument in the MCP adapter. Chat Completions, Responses, and the Messages API always refuse such a message. | CT-5 |
-
-The owner's decisions of 2026-11-09 on [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) also bind this design: that surface has no open turns, the conversation input carries ordered entries with the new input marked (its O3), warm continuation uses an HMAC-SHA256 conversation digest with an in-flight join that reattaches a retry to the running turn (its O2 and M1), and every failure after dispatch carries `x-should-retry: false`.
-
-Settled by the owner on 2026-11-09 with revision 2, from the open decisions of revision 1. O1, O2, and O4 to O7 take revision 1's recommendation. O8 and O9 take the owner's own answers:
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| O1 | The form of the capability. | An object, `capabilities.clientTools.supported` with `reservedNames`, that requires `capabilities.conversationInput: true`. The cold path delivers earlier calls and results as structured history, which transcript rendering cannot express, so the dependency on conversation input is structural. `reservedNames` lets a runtime protect the names of its own model-visible tools, which the gateway cannot discover. O9 adds `customTools`. | CT-2 |
-| O2 | Whether a runtime may declare that it accepts results only warm. | No field. A declaring runtime accepts results cold from history, and for calls it no longer holds in memory, or answers with an end-of-turn `message` carrying `error`. A harness wrapper that parks a call in memory can declare the capability and fail a cold continuation with an error. A `warmOnly` field is revisited when a harness wrapper asks for it. | CT-7 |
-| O4 | REST sessions whose revision cannot accept a further message (`capabilities.interaction: one_shot`, or `capabilities.injection.supported: false`). | Client tools on such a session are refused at creation with `422 CLIENT_TOOLS_UNSUPPORTED`, naming the missing capability. On REST a session has no cold path with history, so a session that cannot take a second message can never receive its results. Chat Completions, Responses, and the Messages API are unaffected, because their cold path delivers results in a new session. | CT-2, CT-6 |
-| O5 | A retried Responses continuation that carries results. | The Messages API's in-flight join extends to Responses continuations: a continuation of response `R` whose input equals the input of the running continuation of `R` reattaches to that turn. The SDKs retry a dropped connection twice by default **[external]**, and a results request is the most frequent request in a tool loop. Chat Completions stays cold under T4. REST need no join, because a second results message finds no pending calls and is refused. | CT-7 |
-| O6 | How a deployer's output interceptors see call arguments. | The `PostAgentOutput` payload gains an optional `clientToolCalls` member beside the output parts, so an existing output filter covers arguments and custom tool input with no change to its registration. | CT-8 |
-| O7 | The per-tenant capability override for client tools. | A tenant may clear `clientTools.supported`, may clear `clientTools.customTools`, and may append to `clientTools.reservedNames`. A widening is refused. This is the narrowing form RV-1 gives `capabilities.interaction` and `capabilities.injection`. Clearing `customTools` follows from O9 under the same narrowing rule. | CT-2 |
-| O8 | A re-run of a session that used client tools. | Server-side replay no longer exists under [`0144-session-derive`](../0144-session-derive/change.md). A client that re-runs a session re-sends its messages itself and executes its own tools. A derive from a session with pending client calls copies them, and the derived session's first client request must carry the results. Revision 3 narrows the copy to `from: latest` (T10) and lets that request abandon the calls instead (T12). | CT-7 |
-| O9 | OpenAI `allowed_tools` and `custom` tools. | `allowed_tools` is accepted as a restriction in `toolChoice`, `allowedNames`, which the T6 check enforces. `custom` tools are accepted for runtimes that declare `clientTools.customTools`. For a custom tool call the gateway checks the name, that the input is a string, `tool_choice`, and the parallel limit, and never checks the grammar. Grammar conformance is the runtime's responsibility, and the client verifies it. | CT-1, CT-2, CT-3, CT-4, CT-6 |
-
-Settled by the owner on 2026-11-09 with revision 3, in the answer "Client tools: ok on everything". T10 changes revision 2's derive rule. T11 to T15 were choices revision 2 made without an owner decision, and the answer confirms them. O3 and O10 take revision 2's recommendation:
-
-| ID | Decision | Where |
-| :-- | :-- | :-- |
-| T10 | A derive copies the source's pending calls only under `from: latest`. A `from: start` derive copies none, because it restarts from the state before the source's turns, where no call was issued. | CT-7 |
-| T11 | A derive whose chosen revision does not declare `capabilities.clientTools`, or does not declare `customTools` while a copied call names a custom tool, is refused at the post-chain point with `422 CLIENT_TOOLS_UNSUPPORTED` before any pod is claimed. | CT-7 |
-| T12 | The derived session's first client message may set `abandonPendingToolCalls: true` in place of the results, on REST, as any client message may under T9. | CT-5, CT-7 |
-| T13 | A client message that sets `abandonPendingToolCalls` and also carries `toolResults` is refused with `409 CLIENT_TOOL_RESULTS_MISMATCH`. | CT-5 |
-| T14 | The "cancelled by client" results that `abandonPendingToolCalls` creates pass through `PreToolResult`, as every result does. | CT-5, CT-8 |
-| T15 | An OpenAI `allowed_tools` tool choice with `mode: required` maps to `toolChoice.type` `any`, and `mode: auto` maps to `auto`. | CT-3, CT-6 |
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| O3 | For a runtime that does not declare `steer`, what happens to held inbox deliveries when the results turn itself ends with new calls. A steer-declaring runtime is outside this decision under T5. | Held deliveries stay held until a turn ends with no pending calls, under their ordinary inbox TTL. The histogram `lenny_client_tool_held_delivery_age_seconds` records how long each one waited. T5 exists so that a runtime without `steer` never receives unrelated input while its model history holds an unanswered call, and delivery at the next turn end would break that for every multi-step tool loop. A runtime author who wants inbox deliveries during a tool loop declares `steer`. | CT-5 |
-| O10 | The Chat Completions stream form of a custom tool call. | A Chat Completions request with `stream: true` that declares a custom tool is refused with `400 invalid_request_error` naming the combination, until OpenAI documents a stream form. The Chat Completions streaming reference types `delta.tool_calls[].type` as `"function"` alone, stating "Currently, only `function` is supported", and the `openai-python` chunk type `ChoiceDeltaToolCall` declares `type: Literal["function"]` with no `custom` member **[external]**, so a client SDK has no documented field to accumulate the input into. A plain Chat Completions response and every Responses request carry custom tools under O9. | CT-3, CT-6 |
-
-Retraction of pending calls is settled in [`0135-message-delivery`](../0135-message-delivery/change.md) under its decision S8, and "CT-5" and "CT-6" state its effect on this design.
-
-Settled by the owner on 2026-11-09 with revision 4, through O3 of [`0135-message-delivery`](../0135-message-delivery/change.md). The owner asked "wouldn't it be simpler to just deliver the message whenever it arrives?" and then answered "yes", and that decision carries this rule:
-
-| ID | Decision | Where |
-| :-- | :-- | :-- |
-| T16 | Client tools are offered only in turns caused by a client request. A turn caused by another session's message, a system message, or an external message carries no `conversation.clientTools` and no `conversation.toolChoice`, and a call in it fails validation with `no_tools_declared`. This holds for an inbox delivery during pending calls, for a held delivery released after a turn with no pending calls, and for a message delivered on arrival to a held session on a provider surface. A turn that no client request caused could otherwise return calls that no waiting client receives. | CT-1, CT-4, CT-5 |
-
-Settled by the owner on 2026-11-13, in the answers to the consolidated list of open decisions:
-
-| ID | Decision | Where |
-| :-- | :-- | :-- |
-| T17 | The owner chose option (b) of the consolidated list, in the words "ok, go with (b)", and confirmed that the OpenAI and Anthropic adapters leave too and that the Lenny project maintains each adapter in a separate repository with an optional Helm subchart. Every client protocol adapter (MCP, A2A, OpenAI Chat Completions, Open Responses, and Anthropic Messages) moves out of Lenny into a separate first-party repository in front of the REST API. `0138-rest-only-client-api`, which is being written, carries the change and governs which of this design's surfaces leave with the adapters. This design does not apply the removal, and T2's list of v1 surfaces stands until that design lands. | Status |
 
 ## Requirements
 
@@ -335,9 +273,11 @@ Settled by the owner on 2026-11-13, in the answers to the consolidated list of o
 
 The assessment stated some external claims more firmly than the pages do, and this design corrects them: the Anthropic missing-result error text is an example, the Chat Completions page states no rule that every call needs a result message, and the MCP Tasks extension page does not list the request kinds an `input_required` task carries.
 
-## CT-1 Protocol members
+## Detailed design
 
-### `conversation.clientTools` and `conversation.toolChoice`
+### CT-1 Protocol members
+
+#### `conversation.clientTools` and `conversation.toolChoice`
 
 The conversation input of AM-4 carries the client's tools and tool choice on every envelope of a turn that has them **[design, T1]**:
 
@@ -371,11 +311,11 @@ The conversation input of AM-4 carries the client's tools and tool choice on eve
 - A turn with no client tools carries neither member.
 - Client tools are offered only in turns a client request caused **[design, T16]**. An envelope that opens a turn caused by another session's message, a system message, or an external message carries neither member, whatever tools the session's last client request declared. A client request steered into such a turn on a steer-declaring runtime carries its own members, and the runtime may call those tools from the point it consumes the request.
 
-### `toolResults`
+#### `toolResults`
 
 `toolResults` on the `message` envelope carries the results that answer the pending calls **[design, T1]**. Each entry has `callId`, `content` as `MessagePart` entries, and `isError`. `input` holds any user content the client sent with the results, such as Messages API text after the `tool_result` blocks, and is empty otherwise. On a warm turn `callId` is the runtime id. On a cold turn it is the external id, which the runtime treats as an opaque string ("CT-7").
 
-### `clientToolCalls`
+#### `clientToolCalls`
 
 `clientToolCalls` on the end-of-turn `message` frame ends the turn with calls pending **[design, T1]**:
 
@@ -395,15 +335,15 @@ The conversation input of AM-4 carries the client's tools and tool choice on eve
 
 Neither example carries `sessionId`. Under decision O5 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), settled by the owner on 2026-11-13, no frame carries `sessionId` except `session_start`, because a frame's session is the session of the slot whose connection carries it.
 
-### History entries
+#### History entries
 
 On a cold turn, `conversation.history` holds earlier assistant entries with their calls, `{"role":"assistant","content":[...],"clientToolCalls":[...]}`, and earlier user entries with their results, `{"role":"user","content":[...],"toolResults":[...]}` **[design]**. The final round's results arrive in the envelope's own `toolResults`, so warm and cold turns present the newest results in the same member. Under the owner's O3 decision on the Messages design, the conversation input carries ordered entries with the new input marked, and the marked entry's results are the envelope's `toolResults`.
 
-### Why members on existing frames
+#### Why members on existing frames
 
 The members reach a runtime that does not know them as fields it ignores under the "Message schemas" preamble, and the gateway sends them only to revisions that declare the capability. A new `MessagePart` type would collapse to `text` at every boundary that does not know it. The `tool_call` and `tool_result` frames keep their meaning: a `tool_call` blocks inside a turn, and a turn-ending call followed by an end-of-turn `message` would contradict "Delivery semantics" and "Correlation".
 
-## CT-2 Capability
+### CT-2 Capability
 
 ```yaml
 capabilities:
@@ -426,7 +366,7 @@ capabilities:
 
 A request with client tools on a revision that does not declare the capability is refused at the post-chain point before any pod is claimed: `422 CLIENT_TOOLS_UNSUPPORTED` on REST, and `400 invalid_request_error` on the Chat Completions, Responses, and Messages surfaces, each naming the runtime and revision. A request that declares a custom tool on a revision that does not declare `customTools` is refused the same way, naming `customTools`. A request with an empty `tools` array, or with `tool_choice` `none` and no tools, has no client tools.
 
-## CT-3 Admission
+### CT-3 Admission
 
 > **Adapter-facing section.** **Names.**, **Reserved names.**, **Schemas.**, **Custom tools [O9].**, and **Limits.** still govern Lenny for REST. The Chat Completions name limit of **Names.**, the OpenAI mapping of **Allowed tools [O9].** (T15), the provider forms of **Tool forms.**, and **Streamed custom tools [O10].** move to the OpenAI and Anthropic adapters. The parts that move govern the adapters rather than Lenny, stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification, under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md).
 
@@ -441,7 +381,7 @@ The surface decodes the tool definitions before session creation or warm dispatc
 - **Streamed custom tools [O10].** A Chat Completions request with `stream: true` that declares a custom tool is refused with `400 invalid_request_error` naming the combination. A plain Chat Completions request and every Responses request may declare custom tools.
 - **Limits.** `clientTools.maxTools` (default 128), `clientTools.maxSchemaBytes` per request (default 256 KiB), which counts input schemas and grammar definitions together, `clientTools.maxPendingCalls` per turn (default 32), and `clientTools.maxArgumentsBytes` per call (default 256 KiB), which bounds a function call's serialized arguments and a custom call's input, are Helm values and gateway flags, each operator-tunable. A request over a limit is refused with `413` or `400` as the surface pairs them. Result content follows the §28.5.3 part size rule: a part up to 64 KB is inline, a larger part up to 50 MB is staged as a `lenny-blob://` reference, and a larger one is refused with `413 MESSAGEPART_TOO_LARGE`.
 
-## CT-4 Response validation
+### CT-4 Response validation
 
 When an end-of-turn `message` arrives for a turn that had client tools, the gateway checks its calls before it records them or returns any of them **[design, T6]**:
 
@@ -481,9 +421,9 @@ The counter `lenny_client_tool_call_invalid_total{runtime, runtime_revision, rea
 
 Validation is a gateway check over data the gateway already holds for the turn, so it adds no round trip. Its cost is one schema validation per call, bounded by `maxPendingCalls` and `maxArgumentsBytes`.
 
-## CT-5 Pending calls and the hold rule
+### CT-5 Pending calls and the hold rule
 
-### Recording
+#### Recording
 
 After validation, the gateway mints an external id for each call and writes the pending set to the session row in the same write that completes the turn: for each call the runtime id, the external id, the name, and the arguments or custom input **[design]**. The session row holds at most one pending set. The transcript records the assistant entry with its calls and, later, the user entry with its results, so a cold walk of the conversation can rebuild them. `GET /v1/sessions/{id}` reports `pendingClientToolCalls` with external ids, names, and arguments or input.
 
@@ -491,7 +431,7 @@ The `tool_use` session event gains `target: "client"`, fires with phase `request
 
 The turn has ended, so a session with pending calls is `idle` under [`0146-session-lifecycle`, "SL-1"](../0146-session-lifecycle/change.md#sl-1-states), like any session between turns, and it becomes `dormant`, is suspended, resumes, and expires under its ordinary rules. Nothing blocks in the runtime, and pending calls add no session state.
 
-### Delivery rule for client messages
+#### Delivery rule for client messages
 
 For a session with pending calls, the gateway applies these rules before any §7.2 delivery path **[design, T5, T9]**:
 
@@ -504,19 +444,19 @@ For a session with pending calls, the gateway applies these rules before any §7
 
 Interrupt, cancel, terminate, and resume calls are unaffected. An interrupt finds no work in flight.
 
-### Hold rule for inbox deliveries
+#### Hold rule for inbox deliveries
 
 The hold rule applies to a session whose chosen revision does not declare the `steer` delivery intent **[design, T5]**. While such a session has pending calls, every inbox delivery is held in the session inbox as the queue path of [MD-5](../0135-message-delivery/change.md#md-5-delivery-paths) holds a message while a turn is open, and the gateway delivers none of the session's held messages. "Delivery of held messages" of §7.2 gains an exception: when the next client message is a results message, the gateway delivers the results message first on the direct path, and the held messages after it, in FIFO order, at the end of the turn the results message starts, one per turn end as MD-5 writes held entries for a runtime that does not declare `steer`. When the results turn itself ends with new calls, the held messages wait again, and they are delivered only after a turn ends with no pending calls, under their ordinary inbox TTL (O3).
 
 Each turn that a held delivery causes carries no client tools, because no client request caused it (T16). A resume that commits such a session to `running` while calls are pending delivers no held messages, because the results have not arrived. The histogram `lenny_client_tool_held_delivery_age_seconds{runtime}` records how long each held delivery waited behind pending calls.
 
-### Steer-declaring runtimes
+#### Steer-declaring runtimes
 
 A session whose chosen revision declares `steer` holds no inbox delivery because of pending calls **[design, T5]**. The gateway delivers each inbox delivery under the machinery of [`0135-message-delivery`](../0135-message-delivery/change.md), and pending calls change nothing in it. The runtime takes on one obligation: a message it receives while its model history holds unanswered calls is placed after the results of those calls when they arrive, so the model never sees a call followed by anything other than its result. The turn that such a delivery opens carries no `conversation.clientTools`, because no client request caused it (T16), so the runtime can make no new client call in it. The client-message rules above apply unchanged, so a client message still answers the pending calls first. O3 does not apply to such a session, and `lenny_client_tool_held_delivery_age_seconds` records nothing for it.
 
 The gateway carries the matching obligation for every history it builds ("CT-7", "Order of history entries"), so a cold turn presents the same order the runtime kept warm.
 
-### Retraction
+#### Retraction
 
 A runtime retracts some or all of its pending calls by their runtime ids with the `retract` frame of [`0135-message-delivery`](../0135-message-delivery/change.md) MD-11, and receives `retracted`, `too_late`, or `unknown` for each id in a `retract_result` frame **[design, S8 of that design]**:
 
@@ -525,15 +465,15 @@ A runtime retracts some or all of its pending calls by their runtime ids with th
 
 A client that already started a retracted call's tool learns of the retraction only from the event, and the tool's side effects stand. The audit event `client_tool_call.retracted` and the counter `lenny_retraction_total` belong to MD-11.
 
-### Cold sessions
+#### Cold sessions
 
 A provider adapter's session stays open after a turn that ends with calls, as any session does under the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-10-the-provider-adapters): it waits `idle` with its pending set on the row, becomes `dormant` at its idle timeout, and the next request continues it warm under that design's R16 or cold in a new session ("CT-7"). A session that a `one_shot` runtime completed at the end of such a turn, under MD-22's completion rule, keeps its pending set on the row for reads and audit until the session's retention ends, and its continuation is a cold turn in a new session.
 
-## CT-6 Surface mapping
+### CT-6 Surface mapping
 
 > **Adapter-facing section.** The REST rows of "Requests and results" and "Responses with calls", and the REST envelope and codes of "Errors", still govern Lenny. The Chat Completions, Responses, Messages API, and MCP rows, the paragraphs on what those surfaces return, and the provider envelopes of "Errors" move to the matching adapters, as T17 already records. The parts that move govern the adapters rather than Lenny, stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification, under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md).
 
-### Requests and results
+#### Requests and results
 
 | Surface | Tools and tool choice | Earlier calls and results in history | New results |
 | :-- | :-- | :-- | :-- |
@@ -545,7 +485,7 @@ A provider adapter's session stays open after a turn that ends with calls, as an
 
 T1 requires the tools on every turn, so a request that continues a conversation and carries results but no tools delivers the results with no client tools, and the runtime cannot call another client tool in that turn.
 
-### Responses with calls
+#### Responses with calls
 
 | Surface | Plain response | Stream |
 | :-- | :-- | :-- |
@@ -559,7 +499,7 @@ The runtime delivers calls whole, so no surface streams partial arguments. Each 
 
 On Chat Completions, Responses, and the Messages API a call returned to the client is never withdrawn. A runtime's retraction of it answers `too_late`, the client's results are delivered as on any results message, and the runtime ignores the results for the retracted calls ("CT-5", "Retraction").
 
-### Errors
+#### Errors
 
 Every refusal uses the surface's own error envelope: Lenny's REST envelope with the codes of this design on REST, the OpenAI envelope on Chat Completions and Responses, and the Anthropic envelope of AM-8 on the Messages API, with the Lenny code in `error.details.error_code`.
 
@@ -573,7 +513,7 @@ Every refusal uses the surface's own error envelope: Lenny's REST envelope with 
 | `CLIENT_TOOL_RESULTS_FORBIDDEN` | `POLICY` | 403 | Results or `abandonPendingToolCalls` from a sender other than the session's client. |
 | `CLIENT_TOOL_CALL_INVALID` | `PERMANENT` | 502 | The runtime's end-of-turn `message` broke a rule of "CT-4". |
 
-## CT-7 Continuation
+### CT-7 Continuation
 
 > **Adapter-facing section.** **Runtime obligations**, **Runtime revisions**, **Derive**, **Re-running a session**, and the REST parts of **Resume after pod failure**, **Idle suspension**, and **Retries** still govern Lenny. **Warm and cold** (with T4), the Responses and Messages API parts of the other paragraphs, and the join of O5 move to the provider adapters. **Order of history entries** binds the Open Responses adapter's cold walk, which moves with that adapter. The parts that move govern the adapters rather than Lenny, stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification, under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md).
 
@@ -595,7 +535,7 @@ Every refusal uses the surface's own error envelope: Lenny's REST envelope with 
 
 **Re-running a session [design, O8].** Server-side replay no longer exists, because [`0144-session-derive`](../0144-session-derive/change.md) removes `POST /v1/sessions/{id}/replay`. A client that re-runs a session reads its client messages through SD-1's "Reading client messages", sends them again, and executes its own tools when the new session returns calls. The read returns `toolResults` with each message, so the client can see what it answered.
 
-## CT-8 Security
+### CT-8 Security
 
 **Trust of results [design].** A result comes from the session's own client, so it has the client's trust level, and the envelope carries `from.kind: client`. A runtime treats result content as untrusted input, as it treats a user message. The new exposure is indirect: a client tool may return third-party content, such as a fetched page, and an instruction injected into that content can steer the agent toward its other tools, such as the tools of an operator service, which can act with the user's linked credentials through a `userCredential` binding. Tool-use approvals on platform tools, egress rules, and credential bindings apply to those downstream calls unchanged, and an operator service applies its own tool rules and approvals (CR-3).
 
@@ -611,11 +551,11 @@ Every refusal uses the surface's own error envelope: Lenny's REST envelope with 
 
 **Audit and events [design].** Audit records carry call ids, names, and each result's `isError`, and omit arguments, custom input, and result content. A results message delivered under `abandonPendingToolCalls` is audited as such. The transcript holds arguments, custom input, and result content, and the §12.8 erasure of the session removes them with the pending set (CTR-8). `tool_use` events carry arguments to readers of the session's event stream, who already read the session's output.
 
-## CT-9 Delegation
+### CT-9 Delegation
 
 A child session never receives client tools **[design, T7]**. The delegation `TaskSpec` of [§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism) has no client-tools field, the gateway writes no `conversation.clientTools` on an envelope addressed to a child, and an end-of-turn `message` from a child that carries calls is the violation `no_tools_declared`. A parent that wants a child to use the result of a client tool calls the tool itself and passes the result to the child as input. A compromised child therefore cannot direct the root client to execute anything.
 
-## CT-10 Runtime SDKs and conformance
+### CT-10 Runtime SDKs and conformance
 
 **SDKs [design].** The Go, Python, and TypeScript runtime SDKs add `Message.ToolResults` and the `Conversation` members (`ClientTools`, `ToolChoice`, and history entries with calls and results, with custom tool entries and calls and `ToolChoice.AllowedNames`), and `Reply.ClientToolCalls`, in each language's naming convention. The SDKs add no blocking helper: a runtime author who wants to park a model loop's call in memory between turns does so in the runtime, under the obligations of "CT-7".
 
@@ -658,7 +598,7 @@ Alice, a user of tenant `acme`, uses the OpenAI Python SDK with the Responses AP
 
 | Section (by heading) | Change |
 | :-- | :-- |
-| §28.5.3 Intra-pod, `CH-MSGSOCK` card, **Outbound: `response`**, the `tool_call` frame, and "Message schemas" | `clientToolCalls` on the end-of-turn `message` that "MD-24" of the message delivery design stages in place of `response`, with its validation by reference to the external API section. A sentence on the `tool_call` frame stating that client tools never use it. "Tool access by level", where revision 5 placed that sentence, leaves under decision D5 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#decisions). The JSONL schema references. No channel is added, so the §28.3 registers and the naming law are unaffected. |
+| §28.5.3 Intra-pod, `CH-MSGSOCK` card, **Outbound: `response`**, the `tool_call` frame, and "Message schemas" | `clientToolCalls` on the end-of-turn `message` that "MD-24" of the message delivery design stages in place of `response`, with its validation by reference to the external API section. A sentence on the `tool_call` frame stating that client tools never use it. "Tool access by level", where revision 5 placed that sentence, leaves under decision D5 of [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#decisions). The JSONL schema references. No channel is added, so the §28.3 registers and the naming law are unaffected. |
 | §15.4.1 Message Format and Binary I/O Requirements, "`MessageEnvelope` — Unified Message Format" and "Translation Fidelity Matrix" | `toolResults`, and the `clientTools` (function and custom entries), `toolChoice` (with `allowedNames`), and history-entry members of the conversation input that AM-4 adds, present only on envelopes of turns a client request caused (T16). Rows for calls and results per surface, including custom calls. |
 | §5.1 Runtime, capability fields and the derived-runtime rules | `capabilities.clientTools` with `supported`, `customTools`, and `reservedNames`, its dependency on `conversationInput`, and its override rule (O7). |
 | §7.2 Interactive Session Model, "Message delivery routing" and "Delivery of held messages" | The delivery rule for a session with pending calls, `abandonPendingToolCalls` (T9, T12 to T14), the refusals, the removal of retracted calls from the pending set, the hold rule with its exception to "Delivery of held messages" for runtimes that do not declare `steer` (T5 and O3), and the steer-declaring runtime's obligation to place a delivery after the results. The text cites the delivery intents that [`0135-message-delivery`](../0135-message-delivery/change.md) adds. |
@@ -725,19 +665,6 @@ Further observations surfaced while verifying. They bear on this design and are 
 | 10 | The conformance cases of "CT-10". |
 | 11 | The API pages and the runtime author guide against the gateway. |
 
-## Validation owed
-
-- The `status` of an OpenAI Responses response whose output ends with a function call, and whether any client SDK reads a value other than `completed` for it.
-- Whether the OpenAI Responses API carries `tools` across `previous_response_id`, which decides whether clients already resend tools as T1 requires.
-- The Open Responses specification's `function_call_output` item and `parallel_tool_calls`, which the specification page does not define, and whether Open Responses clients accept the `response.function_call_arguments.done` event it does not name.
-- Whether the OpenAI TypeScript SDK and the Anthropic SDKs accept one delta carrying a whole call, as `openai-python` does.
-- A stream form for a custom tool call on Chat Completions, whose publication would let the refusal of O10 be lifted. The streaming reference and the `openai-python` chunk type read on 2026-11-09 define none.
-- Whether an OpenAI `allowed_tools` list may name a custom tool, and in what entry form. The references read on 2026-11-09 type `tools` as a list of tool definitions and show function entries alone.
-- Whether `parallel_tool_calls: false` limits custom tool calls as it limits function calls. The function calling guide covers function tools alone.
-- Whether Open Responses clients send `custom` tools or `allowed_tools` with a `mode`, which the Open Responses specification does not define.
-- The `x-should-retry` handling of the OpenAI and Anthropic TypeScript SDKs, which this design read only for the Python SDKs.
-- Whether the session event bus delivers `tool_use` events to an adapter on the replica serving a forwarded warm turn, which the Messages design also lists.
-
 ## Instructions for reviewers of other designs
 
 - [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md): AM-7's bridge is replaced by this design. Remove AM-7's "Call" and "Result" subsections, the `target` and `endOfBatch` members of `tool_call`, the client-tool row of "Open turns" under AM-6, and the §28.5.3 row of its "Specification changes" that adds them. AM-7 becomes a pointer to this design's "CT-6" Messages rows, and its admission paragraph defers to "CT-2" and "CT-3", including the reserved names and the `RequiresClientTools` flag of the single-shot spec. AM-3's `tools` and `tool_choice` rows point to "CT-6". AM-4's `clientTools` and `toolChoice` take the CT-1 form, and its history entries carry `clientToolCalls` and `toolResults`, with the marked new entry's results in the envelope's `toolResults`. AM-5's digest covers `tool_use` and `tool_result` blocks, and its in-flight join covers a results request. AM-6's `stop_reason` list gains `tool_use` for a turn that ended with calls, and its streaming of `tool_use` blocks follows "CT-6". AM-8's table gains the codes of "CT-6", and `CLIENT_TOOL_CALL_INVALID` maps to `500 api_error` with `x-should-retry: false`. AMR-7 is restated as CTR-1 and CTR-3. Proposal AM-E is removed, and its client-tool work lands as CT-B. Its "Limits" bullet on client tools, its tier 5, 8, and 10 test rows for client tools, and O4 point to this design.
@@ -750,26 +677,6 @@ Further observations surfaced while verifying. They bear on this design and are 
 - [`0126-delegation-availability`](../0126-delegation-availability/change.md): no change. Client tools never reach a child under T7, independently of delegation availability.
 - [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md): F-13.3.26's list of session input routes gains results messages on every surface.
 - [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md): no change. Each round trip is a turn of an ordinary session.
-
-## Steps
-
-> **Adapter-facing section.** CT-A still governs Lenny for the runtime contract, the gateway core, and REST. Its MCP surface and its Chat Completions and Responses mappings of "CT-6", and all of CT-B, move to the adapters. The parts that move govern the adapters rather than Lenny, stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification, under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md).
-
-### 0122.S1 Runtime contract and gateway core
-- status: Planned
-- aliases: [CT-A, CT-1, CT-2, CT-3, CT-4, CT-5, CT-6 (part), CT-7, CT-8, CT-9, CT-10]
-- lanes: [specification, code, documentation]
-- depends-on: [0120.S1]
-
-The runtime contract and the gateway core (CT-1 to CT-5, CT-7 to CT-10), REST, and the Chat Completions and Responses mappings of CT-6. It turns AM-A's refusal of `tools` on the OpenAI translators into the mapping for declaring revisions, and lands alongside the F-15.1.82 fix.
-
-### 0122.S2 Messages API mapping
-- status: Planned
-- aliases: [CT-B, CT-6 (part)]
-- lanes: [code, documentation]
-- depends-on: [0122.S1, 0120.S2, 0120.S3]
-
-The Messages API rows of CT-6, replacing AM-E.
 
 ## Sources
 

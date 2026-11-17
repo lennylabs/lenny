@@ -1,8 +1,6 @@
 # Connector removal
 
-Status: `Draft`, revision 8, 2026-11-16, with no independent review yet. It records the owner's decision of 2026-11-15 to remove connectors from Lenny, both MCP tool connectors and agent (A2A) connectors, and designs what replaces them: operator services that a runtime reaches through egress, an identity assertion that `netagent` attaches to requests to those services, and a halt of a slot's egress at suspension. Lenny keeps no external-agent concept: a runtime that talks to an external agent does so itself, through egress, as it talks to any other service. Revision 2 applies the owner's answers of 2026-11-15 to the open decisions of revision 1, which "Owner decisions" quotes. Revision 3 applies two further answers of that day: the tool-capability fields `capabilityInferenceMode`, `toolCapabilityOverrides`, and `mcpAnnotationMapping` leave with capability inference (D10), and the deployer can turn off the deployment key set (D9). Revision 4 applies the owner's last answers of that day: O10 is withdrawn ("refusal on both (I changed my mind)"), so a session holding a `userCredential` binding or a repository under a VCS pool with `userAuthorization: required` runs on a pool without recycling, as before; O11 is settled as option (b) ("go with (b)"), a link prompt that [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) specifies as UC-8; and O15 is settled as option (a) ("remove the taxonomy"). Revision 5 applies two further answers of that day: an `identityAssertion` binding is refused on recycled pods and on pods that have served a session, as UC-3 refuses a `userCredential` binding there ("yes to refusal", D11), and the owner accepts three choices of the link prompt that UC-8 specifies ("2-4: ok", D12). Revision 8 follows [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 41, which records the owner's answer of 2026-11-16 on the `retireOnRelease` mark as its decision 44: the `retireOnRelease` term and CR-2's **The mark.** name the claim field `PodClaim.status.retireOnRelease` and its write in the status patch that first records the claim as `bound`, and link to UC-3, which owns the rule. It changes no rule of this design. Revision 7 follows [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) revision 2, which applies the security review of that design's revision 1 and the owner's answer of 2026-11-15, "O1-O7: go with your recommendations": the federation key set signs nothing else again, because exchange JWTs move to an exchange issuer of their own, and an `agent` caller's assertion carries `principal_type: agent` and the subject `lenny:<tenant>:agent:<id>`. Revision 6 follows [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) revision 1, which records the owner's answers of 2026-11-15 on service accounts, among them "I think we should also support 'A provider can be set up to trust Lenny's own issuer directly'": an identity assertion's `principal_type` and `sub` follow the session row's `caller_type`, and the federation key set, which CR-2 keeps apart from the identity key set, also signs that design's exchange JWTs. An `agent` caller's assertion now states a service subject, which earlier revisions left unstated, and no decision is open. Nothing here is built or staged, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline. The design reads against every design under `designs/` as implemented, in particular [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 41, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 46, [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) revision 2, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) revision 6, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 77, [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md) revision 32, [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) revision 8, [`0145-session-isolation`](../0145-session-isolation/change.md) revision 19, [`0126-delegation-availability`](../0126-delegation-availability/change.md) revision 12, and [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7. Proposals carry the labels CR-1 to CR-4, requirements CRR-n, and the proposals that land them CR-A to CR-D under "Proposal split and order". "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 8, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -11,8 +9,8 @@ Each factual claim carries one of these tags where the source matters:
 | **[source]** | Read in the Lenny tree, the specification, or a design under `designs/` on 2026-11-15. |
 | **[measured]** | Observed on 2026-11-15 in the tool-server spike or the harness-egress spike, on loopback with a Go stand-in for `netagent` and no model calls. The results are in [`evidence/connector-removal-design/`](evidence/README.md). |
 | **[external]** | Read on an external page on 2026-11-15, and not run. "Sources" lists the pages. |
-| **[unverified]** | Read only through a summary of an external page, or reasoned without a run. "Validation owed" lists each one that matters. |
-| **[pending]** | Waits on a run named in "Validation owed". |
+| **[unverified]** | Read only through a summary of an external page, or reasoned without a run. "Validation owed" in `steps.md` lists each one that matters. |
+| **[pending]** | Waits on a run named in "Validation owed" in `steps.md`. |
 | **[design]** | What this design requires. Nothing implements it. |
 
 ## Problem
@@ -91,6 +89,7 @@ The tool-server spike showed that stock MCP client SDKs of both protocol eras re
 | `CH-EGRESSHALT` | The intra-pod channel on which the adapter tells `netagent` to halt and resume a slot's egress (CR-4). The naming lint has the last word on the identifier. |
 | Harness | The agent program a runtime runs, such as Claude Code or Codex, which is an MCP client. |
 | Wrapper | The runtime's `command`, which configures the harness before launching it. |
+| Labels | Parts of the design carry the labels CR-1 to CR-4, and requirements carry the label CRR-n. |
 
 ### Terms from other designs and the platform
 
@@ -110,7 +109,7 @@ The tool-server spike showed that stock MCP client SDKs of both protocol eras re
 | Idle clock | `sessionPolicy.maxClientIdleSeconds`, 900 seconds by default, which runs in `running` and `idle` and which every qualifying activity resets ([`0146-session-lifecycle`, "SL-6 Idle pods and dormancy"](../0146-session-lifecycle/change.md#sl-6-idle-pods-and-dormancy)). `runtime.maxSessionAgeSeconds`, 7200 seconds by default, bounds a session's active time regardless of activity ([§11.3 Timeouts and Cancellation](../../spec/11_policy-and-controls.md#113-timeouts-and-cancellation)). |
 | Qualifying activity | The events that reset the idle clock under SL-6 **Qualifying activity.**, among them each `heartbeat_ack` with `busy: true`, each `activity` update, each message part, and each `request` that waits for its `reply`, from the request until the reply arrives or the request expires. |
 | Suspension | The stop of a session's open turn and the release of its pod. When the runtime cannot stop at a safe point, the suspension cannot take hold, and step 1 refuses and cancels the session's gateway-side calls before the pod is released ([`0146-session-lifecycle`, "SL-3 Suspension and the open turn"](../0146-session-lifecycle/change.md#sl-3-suspension-and-the-open-turn)). |
-| `request` with `kind: "question"` | The runtime-to-adapter frame by which a runtime asks a person or a parent a question, with a schema or a URL and `humanRequired`. Under B6 of [`0135-message-delivery`](../0135-message-delivery/change.md#decisions) a harness's own questions are elicitations, a URL-mode one is always human-required, and `humanRequired: true` sends it past every parent to the root's client ([`0135-message-delivery`, "MD-19 Harness approvals"](../0135-message-delivery/change.md#md-19-harness-approvals) and "MD-22 Parents and children"). |
+| `request` with `kind: "question"` | The runtime-to-adapter frame by which a runtime asks a person or a parent a question, with a schema or a URL and `humanRequired`. Under B6 of [`0135-message-delivery`](../0135-message-delivery/decisions.md#decisions) a harness's own questions are elicitations, a URL-mode one is always human-required, and `humanRequired: true` sends it past every parent to the root's client ([`0135-message-delivery`, "MD-19 Harness approvals"](../0135-message-delivery/change.md#md-19-harness-approvals) and "MD-22 Parents and children"). |
 | `runtimeOptions` | A session's options, validated at the post-chain point against the chosen revision's `runtimeOptionsSchema` and delivered in `session_start` (RV-7 of [`0140-runtime-revisions`](../0140-runtime-revisions/change.md)). |
 | Outbound connector | The tenant-run gateway of [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md) through which `lenny-egress` reaches hosts on a customer's private network. It is unrelated to §9.3 and keeps its name. |
 
@@ -124,7 +123,7 @@ The tool-server spike showed that stock MCP client SDKs of both protocol eras re
 | SO-5a | Tool-use approvals held at the gateway's tool dispatch, in [`0142-security-oversight`](../0142-security-oversight/change.md#so-5a-tool-use-approvals). |
 | B6, MD-19, MD-22 | The harness-questions decision, harness approvals and questions, and parents and children, in [`0135-message-delivery`](../0135-message-delivery/change.md). |
 | UC-2, UC-3, UC-8, decision 41 | Account links, the `userCredential` binding, link prompts, and the refusal of `userCredential` bindings on pods that can serve someone else, in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md). |
-| Decision 52 | The refusal of the repositories of a VCS pool with `userAuthorization: required` on pods that can serve someone else, in [`0152-user-git-identity`](../0152-user-git-identity/change.md#decisions). |
+| Decision 52 | The refusal of the repositories of a VCS pool with `userAuthorization: required` on pods that can serve someone else, in [`0152-user-git-identity`](../0152-user-git-identity/decisions.md#decisions). |
 | SL-3, SL-4, SL-6, L24 | Suspension, tree suspension, idle pods and dormancy, and the decision that a suspension refuses and cancels the session's calls, in [`0146-session-lifecycle`](../0146-session-lifecycle/change.md). |
 | RO-9 | The A2A adapter, which serves Lenny sessions to A2A clients, in [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). |
 | TS-3 | Session environment context, under which the platform tool surface a runtime reaches is allow-listed by tool name, in [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md). |
@@ -166,41 +165,6 @@ The parts:
 - **Identity assertion (CR-2).** A new `secret` kind, `identityAssertion`, for `delivery: inject` bindings, with its tenant key sets and the deployment key set.
 - **External services (CR-3).** Guidance for runtimes and operators on reaching MCP services, agent services, and memory services through egress.
 - **Egress halt at suspension (CR-4).** A suspension that cannot take hold halts the slot's egress through `netagent` on a new intra-pod channel.
-
-## Owner decisions
-
-| ID | Decision |
-| :-- | :-- |
-| D1 | Lenny offers no connectors of any kind, neither MCP tool connectors nor agent (A2A) connectors. In the owner's words of 2026-11-15: "Yes, let's drop connectors." The owner's reasoning: "An operator could build connectors outside of Lenny and just use egress to talk to its own 'connector' service." |
-| D2 | External MCP tools are reached by the harness over native MCP through `netagent`, with credentials from existing egress bindings. Lenny keeps no catalog of these services. Tool rules, approvals, and per-call audit are the operator service's job, and Lenny records egress traffic alone. Elicitation from the service reaches the user through B6, and a URL-mode elicitation is human-required. This is the owner's direction of 2026-11-15, recorded with D1. |
-| D3 | The owner's direction of 2026-11-15 named three hooks to replace what connectors gave. After the owner's answers to O8, O12, and O14 one of them remains, the injected identity assertion (CR-2), beside the egress halt at suspension that O9 accepts (CR-4). |
-| D4 | Lenny keeps no external-agent concept. The owner's earlier direction of 2026-11-15, an A2A client runtime shipped from a separate repository, is withdrawn by the owner's answer to O12 and O14. |
-| D5 | The earlier, unapplied connector proposals listed under "Scope", **Moot.**, are not added. This is the owner's direction of 2026-11-15. |
-| D6 | CA-0 and CA-10 stay. This is the owner's direction of 2026-11-15. |
-| D7 | One rule for removed fields: a write that names a removed field is refused with `400 VALIDATION_ERROR` naming the field. The owner settled it on 2026-11-13 as D6 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), and CR-1 applies it to the fields this design removes. |
-| O1 | Where a session's external service URLs are named. The owner answered on 2026-11-15: "existing mechanisms only". Service URLs come from the runtime's own configuration (`env`, the image, or a tenant-derived runtime), a `runtimeOptions` property that the runtime declares in its `runtimeOptionsSchema`, or files in the session's workspace plan, such as a project-scoped `.mcp.json`. Lenny adds no field. None of these mechanisms widens egress, because a host is reachable only when the tenant's egress policy allows it. |
-| O2 | Identity assertion lifetime and minting granularity. The owner answered on 2026-11-15, after a plain-language explanation of O2 to O7: "ok, keep this as described". `netagent` caches an assertion per session, binding, and host, and refreshes it at two thirds of its lifetime; `lifetimeSeconds` is 300 by default, from 60 to 900. Minting per HTTP request would put the Token Service on the path of every request and add no protection that a 300-second, audience-bound token lacks, and `jti` lets a service that keeps a replay cache refuse a second use. |
-| O3 | The claims. Under the same answer, an assertion carries the registered claims `iss`, `sub`, `aud`, `iat`, `nbf`, `exp`, and `jti`, and `tenant`, `environment`, `user`, `principal_type`, `session`, `root_session`, `depth`, and `binding`, with plain Lenny identifiers. The receiving service is the operator's own and needs the identifiers it already knows. A deployer who wants pseudonyms fronts its service with a gateway that maps them. |
-| O4 | Issuer and signing key. Under the same answer, each tenant has an issuer `https://<lenny>/identity/<tenant-id>` with its own key set, separate from the federation key set. The federation key set signs nothing else by design, a per-tenant issuer lets a service trust exactly one tenant, and a tenant's keys are destroyed with the tenant. |
-| D8 | A service that serves every tenant. The owner asked on 2026-11-15: "if every tenant has a different key, can a single operator service still work across all tenants?" The answer this design adopts: beside each tenant key set, Lenny publishes one deployment key set listing every live tenant's public keys, each tagged with its tenant by `kid` and a `tenant` member, so a service that serves every tenant configures one URL. Such a service takes the tenant from the verified key, checks that the token's `tenant` and `iss` match the key's tenant, and never trusts an unverified claim. A service may instead accept issuers under the deployment's identity prefix and fetch each issuer's keys on first use (CR-2). D9 lets the deployer turn the deployment key set off. |
-| O5 | The default `attach` header and coexistence with another `inject` binding on one host. Under the answer to O2 to O7, the default is `Authorization: Bearer {{secret}}`, and an `identityAssertion` binding may share a host with one other `inject` binding when their `attach` headers differ. Most MCP servers read a bearer token, and a service that needs both an API key and the caller's identity takes them in two headers. |
-| O6 | Impersonated input to a tree that holds an `identityAssertion` binding. Under the same answer, such input is refused as UC-3 **Impersonation** refuses it for a tree holding a `userCredential` binding, because the assertion lets a service act as the user. |
-| O7 | Multi-slot pools without slot attribution. Under the same answer, a session that would hold an `identityAssertion` binding on such a pool is refused with `422 IDENTITY_ASSERTION_UNSUPPORTED_POD`, because under the union scope `netagent` cannot tell whose identity to assert. Every measured runtime class records attribution (V10), so the refusal meets only fallback pools. D11 adds the refusal on recycled pods and on pods that have served a session, under the same code. |
-| O8 | Egress traffic as session activity. Revision 1 proposed counting requests through `netagent` as activity, under a bound. The owner pointed out on 2026-11-15 that SL-6 already counts each `heartbeat_ack` with `busy: true`, each `activity` update, each message part, and each pending `request` as qualifying activity. Egress activity is dropped: there is no `CH-EGRESSACTIVITY`, no `sessionPolicy.maxEgressActivitySeconds`, and no activity reporting by `netagent`. CR-3 states the runtime author's part. |
-| O9 | Egress during a suspension. The owner answered on 2026-11-15: "ok". Suspension step 1 halts the slot's egress through `netagent`, so the slot's work and its model calls outside the LLM proxy (LU-10), which SL-3 today states only the release stops, stop at the suspension (CR-4). |
-| O10 | `userCredential` bindings with `delivery: inject` on recycled and used pods. Revision 1 proposed lifting UC-3's refusals of a `userCredential` binding on recycled pods and on pods that have served a session when the binding's delivery is `inject`, keeping the multi-slot refusal on pools without attribution, on the grounds that the agent never holds the token and `netagent` flushes it at the slot's release. The owner answered "ok" on 2026-11-15, and the sweep of that day amended decision 41 of [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) to match. The owner then asked for the lift to become an operator setting, off by default. An adversarial review of the same day, on whether the lift should also reach the repositories of a VCS pool with `userAuthorization: required` under decision 52 of [`0152-user-git-identity`](../0152-user-git-identity/change.md#decisions) ([`evidence/connector-removal-design/decision52-review.md`](evidence/decision52-review.md)), found that the ground both decisions record is the pod-wide state a slot release does not reach, `netagent`, the adapter, the network and IPC namespaces, and the sandbox kernel, in which a compromised component waits for later sessions, and that `delivery: inject` does not address it. The owner answered: "refusal on both (I changed my mind)". O10 is withdrawn, and the request for a setting is superseded. Decision 41 stands unamended for every delivery, decision 52 stands, and no operator setting is added. A session holding a `userCredential` binding, under any delivery, or declaring a repository under a VCS pool with `userAuthorization: required` runs on a pool without recycling, on a pod that has served no session. The default pool configuration, `recycle.enabled: false` with `maxConcurrentSessionsPerPod` 1, serves such sessions with no change and no added cost, because each of its pods serves one session. |
-| O11 | A prompt to the user when an account link lapses during a session. The owner answered on 2026-11-15: "go with (b)", and preferred one prompt per user over one per session tree. When the Token Service moves a link to `user_act_required`, for example because the user revoked access and a refresh fails, the gateway raises a URL-mode, human-required elicitation carrying Lenny's own link URL on the event stream of each affected root session, under `initiator_type: platform` and `purpose: account_link`, and the link callback resolves it everywhere. The trigger is the Token Service's link state and never a host's 401. [`0151-user-credential-delivery`, "UC-8: Link prompts"](../0151-user-credential-delivery/change.md#uc-8-link-prompts) specifies it, because that design owns account links. |
-| O12, O14 | The runtime `origin` (O12) and the A2A client runtime (O14). The owner answered on 2026-11-15: "Connectors should be gone and external agents become a concern of the runtime that connects to them directly", and "this is not what I want. External agents should be gone". Lenny adds no `origin` field to runtime definitions, `discover_agents`, `start_child_session`, or `list_child_sessions`, and ships no A2A client runtime. A runtime that talks to an external agent does so itself through egress, like any other external service (CR-3). |
-| O13 | The `start_child_session` argument that names the runtime. The owner answered on 2026-11-15: "ok". It is `target`, as §8.2 and `docs/runtime-author-guide/platform-tools.md` state. |
-| D9 | Turning off the deployment key set. The owner asked on 2026-11-15, "Add a setting to turn off the deployment-wide key set, which lets anyone who reaches it list every tenant's identifier?", and answered "yes". The Helm value `tokenService.identityAssertion.deploymentKeySet.enabled`, `true` by default, governs it. When it is `false`, `GET https://<lenny>/identity/.well-known/jwks.json` answers `404`, and a service that serves every tenant uses the issuer-prefix method of CR-2 **What a verifier checks.**, which fetches each tenant's key set by the token's issuer (CR-2). |
-| D10 | The tool-capability fields. The owner asked on 2026-11-15, "Remove `capabilityInferenceMode`, `toolCapabilityOverrides`, and `tenantRbacConfig.mcpAnnotationMappings`?", and answered "yes". Their readers were the gateway's capability inference for the MCP tools of `type: mcp` runtimes, which [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) removes, and of connectors, which CR-1 removes. The gateway defines the platform tools itself and infers no class for them. A write that names one of the fields is refused under D7. §5.1 and §10.6 spell the tenant field `mcpAnnotationMapping`, and the refusal names that spelling (CR-1, **Tool capability classes.**). |
-| O15 | The `capabilities` taxonomy of the tenant RBAC config in §10.6, platform defaults and tenant custom classes. The owner answered on 2026-11-15, after an explanation of what the taxonomy is and why nothing reads it: "remove the taxonomy". Option (a) applies: it leaves, and a write that names it is refused under D7. After D10 and the removal of `mcpRuntimeFilters` and `connectorSelector`, no filter, approval rule, or other mechanism reads a capability class (CR-1, **Tool capability classes.**). |
-| D11 | `identityAssertion` bindings on recycled pods and on pods that have served a session. Revision 4 let such pods carry the binding, because the assertion is minted per session and flushed at the slot's release. The adversarial review of O10 ([`evidence/connector-removal-design/decision52-review.md`](evidence/decision52-review.md)) found that the ground of decision 41's refusals of a `userCredential` binding is the pod-wide state a slot release does not reach: `netagent`, the adapter, the pod's network and IPC namespaces, and the sandbox kernel. A component that an earlier session on the pod compromised waits there for later sessions. The same ground reaches an assertion, because the assertion lets a service act as the user, and a compromised component could take a later session's assertions. Asked on 2026-11-15 whether an `identityAssertion` binding is refused on those pods as UC-3 refuses a `userCredential` binding, the owner answered "yes to refusal". CR-2 **Pods (D11).** applies UC-3's refusal with the same check point, mark, and treatment of children, under `422 IDENTITY_ASSERTION_UNSUPPORTED_POD`, and keeps O7's refusal on pools with several slots and no slot attribution. The default pool configuration, `recycle.enabled: false` with `maxConcurrentSessionsPerPod` 1, serves these sessions at no added cost, because each of its pods serves one session. |
-| D12 | Three choices of the link prompt (O11). When `0151-user-credential-delivery` revision 37 specified the link prompt as UC-8, which this design's revision 4 recorded, it made three choices that the owner had not decided: `WatchLinkStates`, a server-streaming call on which each gateway replica receives the Token Service's link state events, with the `user_link_prompts` table that holds the one pending prompt per tenant, user, and link provider; a second trigger, a release on the pod credential API that the Token Service refuses with the reason `user_act_required`; and, for a prompt shown on several sessions, an expiry at the smallest `maxElicitationWait` among their pools. The owner answered on 2026-11-15: "2-4: ok". The three choices are settled ([`0151-user-credential-delivery`, "UC-8: Link prompts"](../0151-user-credential-delivery/change.md#uc-8-link-prompts), decision 42). |
-
-## Open decisions
-
-No decision is open. Revision 4 moved O11 and O15 to "Owner decisions", and revision 5 records the owner's answers D11 and D12 there.
 
 ## Requirements
 
@@ -260,7 +224,9 @@ The assets are the user's identity as an operator service sees it, the binding s
 | Egress | `netagent` attaches binding secrets, terminates TLS on bound hosts, scrubs reflections, and attributes connections to slots. Nothing can halt one slot's egress while the pod runs. |
 | Identity | The Token Service mints federation tokens under a per-tenant issuer. Nothing mints an assertion for an operator service, and LU-11's signed attribution is for LLM upstreams alone. |
 
-## CR-1 Removal
+## Detailed design
+
+### CR-1 Removal
 
 **Specification.** Every section in "Specification changes" loses its connector text **[design]**. §9.3's heading keeps its anchor and its body becomes a successor pointer that names where each part went: tool calls to external MCP servers are the harness's, through egress (§9.1 and §13 egress text); credentials are credential bindings, account links, and identity assertions; external agents are a runtime's own concern, reached through egress like any other service, and Lenny keeps no external-agent concept; and the identifiers that left are `ConnectorDefinition`, `transport: a2a`, `/v1/admin/connectors`, `connector:<id>`, `CallConnectorTool`, `ListConnectorTools`, `ListSessionConnectors`, `CH-MCP-CONNECTOR`, `PreConnectorRequest`, `PostConnectorResponse`, `connectorSelector`, `allowedExternalEndpoints`, `limit_tier: connector`, `deferConnectors`, `deferredToolDiscovery`, `toolProgress`, `tool_progress`, `CONNECTOR_LINK_REQUIRED`, `capabilityInferenceMode`, `toolCapabilityOverrides`, and `mcpAnnotationMapping`. §22.5 becomes a successor pointer to §9.3. `CH-MCP-CONNECTOR` leaves the channel register with a successor pointer under the channel naming law.
 
@@ -290,7 +256,7 @@ A Helm value `gateway.toolProgressMinIntervalMs` fails the chart's schema check.
 
 **Records.** BUILD-GAPS and TEST-GAPS findings that exist only for connectors or for external agents are resolved as obsolete with a pointer to CR-A. F-4.3.1 closes for connector tokens. Findings that name connectors in passing are corrected.
 
-## CR-2 Identity assertion
+### CR-2 Identity assertion
 
 An identity assertion is a short Lenny-signed token that `netagent` attaches to requests to a service, naming the tenant, user, and session, which the agent never sees. An operator service reads it to learn who is calling without trusting anything the agent sends.
 
@@ -400,7 +366,7 @@ The `/identity/` path is reserved on the gateway's ingress, as `/oidc/` is for f
 
 **Impersonation (O6).** A delegation tree that holds an `identityAssertion` binding refuses impersonated input as UC-3 **Impersonation** refuses it for a `userCredential` binding, with `403 FORBIDDEN` and reason `impersonation_identity_assertion`.
 
-## CR-3 External services
+### CR-3 External services
 
 This section is guidance for operators and runtime authors **[design]**.
 
@@ -420,7 +386,7 @@ This section is guidance for operators and runtime authors **[design]**.
 - **External agents (O12 and O14).** A runtime that talks to an external agent, such as an A2A agent or another Lenny deployment's A2A adapter ([RO-9](../0138-rest-only-client-api/change.md#ro-9-the-a2a-adapter)), does so itself, as it talks to any operator service: the agent's host is in the tenant's egress allow set, a binding on that host carries its credential, a private agent is reached through an outbound connector route, and the runtime implements the agent's protocol in its own process. Lenny sees HTTP traffic to an allowed host, and nothing in a runtime definition, a discovery entry, or a child listing marks the runtime as one that talks to an external agent. Two deployments that talk this way share no lease, budget, depth, or identity.
 - **External memory.** A memory service is an operator service like any other. CA-10's removal of built-in memory stands, and its external memory pattern now reads through this section.
 
-## CR-4 Egress halt at suspension
+### CR-4 Egress halt at suspension
 
 **The clause (O9).** SL-3 step 1, which runs when a suspension cannot take hold, gains a clause **[design]**: the gateway calls `HaltSessionEgress` naming the session on the adapter, and the adapter sends `halt_slot` for the session's slot to `netagent`. `netagent` closes the slot's open tunnels and in-flight requests, refuses the slot's new requests with `503`, and answers `halted`. The adapter answers the RPC once `halted` arrives. The gateway then continues with step 2 whether the RPC succeeds or reaches its deadline of 5 seconds, because the pod release of step 3 stops the slot's traffic in any case, and it counts the outcome in `lenny_egress_halts_total`.
 
@@ -442,7 +408,7 @@ This section is guidance for operators and runtime authors **[design]**.
 
 The naming lint has the last word on the identifier, which avoids the reserved spellings of the naming law. The specification's channel register gains the row when CR-C lands.
 
-## What replaces each connector guarantee
+### What replaces each connector guarantee
 
 | Guarantee | After removal |
 | :-- | :-- |
@@ -583,52 +549,6 @@ Revision 2 updated [`0123-connector-authorization-and-external-memory`](../0123-
 | Static | No `CallConnectorTool`, `ListConnectorTools`, `ConnectorDefinition`, `connector:<`, `tool_progress`, `toolProgress`, `deferredToolDiscovery`, `deferConnectors`, `CONNECTOR_LINK_REQUIRED`, `allowedExternalEndpoints`, `PreConnectorRequest`, `capabilityInferenceMode`, `toolCapabilityOverrides`, `mcpAnnotationMapping`, or the tenant RBAC config's `capabilities` taxonomy outside the successor pointers, the D7 refusal lists and their tests, the records, `proposals/`, and `testdata/` (CRR-2). |
 
 Every test carries the `// spec:` annotation, and tests at tier 2 and above carry `// diagnosis:`.
-
-## Validation owed
-
-| Item | Why it matters | Status |
-| :-- | :-- | :-- |
-| Claude Code and Codex each reach an HTTP MCP server through `netagent`'s proxy settings and trust its per-pod CA, with an injected credential | CR-3 depends on harnesses sending MCP traffic through the proxy and trusting the CA. | Done on 2026-11-15 for Claude Code 2.1.323 and Codex CLI 0.136.0, on loopback with a Go stand-in **[measured]** ([`evidence/connector-removal-design/harness-egress-spike/RESULTS.md`](evidence/harness-egress-spike/RESULTS.md)). A run in a pod on runc, gVisor, and Kata stays owed with CR-B. |
-| A headless harness surfaces a URL-mode elicitation from an MCP server so the runtime can forward it under B6 | CRR-8 and CR-3 **Questions.** | Codex measured through app-server: declined under `never`, forwarded under `on-request`. Claude Code unmeasured: whether its `Elicitation` hook fires under `-p` and can block until Lenny's `reply`, and which of its documented `-p` behaviours holds, stay owed. |
-| The identity assertion on multi-slot pods: per-slot attachment on runc, gVisor, and Kata | CRR-4 and O7. Attribution is measured (V10); the attach path with this binding is not. | Open, for CR-B. |
-| Claude Code's behaviour on a 401 with a configured `Authorization` header | The placeholder header of CR-3. | Done on 2026-11-15: with the placeholder, no OAuth discovery; without it, discovery and dynamic client registration **[measured]**. |
-| Claude Code's 60-second default for HTTP MCP requests, and whether a per-server `timeout` lifts it | CR-3 **Long calls.** **[unverified]**. | Open. |
-| Common JWT libraries select a key by `kid` from a JWKS whose keys carry an extra `tenant` member, and expose that member to the caller | CR-2's deployment key set and its verifier rule. | Open, for CR-B. The reference verifier does not depend on it. |
-
-## Steps
-
-### 0124.S1 Connector removal
-- status: Planned
-- aliases: [CR-A, CR-1]
-- lanes: [specification, code, documentation]
-- depends-on: [0123.S1]
-- closes: [F-4.3.1]
-
-The removal (CR-1), including the D7 refusals, the successor pointers, and the records. CA-0 (0123.S1) lands before it or with it.
-
-### 0124.S2 Identity assertion
-- status: Planned
-- aliases: [CR-B, CR-2]
-- lanes: [specification, code, documentation]
-- depends-on: [0127.S2, 0127.S4, 0127.S10, 0151.S3]
-
-The identity assertion (CR-2), with the tenant key sets, the deployment key set, the reference verifier, and the pod refusal of D11. It depends on the egress design's binding and Token Service steps, which the egress design's dependency table names as EG-2, EG-4, and EG-10: the pod credential API, `pkg/binding`, and slot attribution; the typed `secret` union and `inject`; and the `credential.mint` stream. It also depends on the step that lands UC-3's pod refusal and `retireOnRelease`, because D11 extends them.
-
-### 0124.S3 Egress halt at suspension
-- status: Planned
-- aliases: [CR-C, CR-4]
-- lanes: [specification, code, documentation]
-- depends-on: [0146.S1, 0146.S2, 0127.S2, 0127.S3]
-
-The egress halt at suspension (CR-4), with `CH-EGRESSHALT` and `HaltSessionEgress`. It depends on the session lifecycle design's SL steps and on the egress design's fetch-grant channel, which EG-3 adds and `CH-EGRESSHALT` follows. The egress design's dependency table also names EG-2, for slot attribution.
-
-### 0124.S4 Documentation of external services
-- status: Planned
-- aliases: [CR-D, CR-3]
-- lanes: [documentation]
-- depends-on: [0124.S1, 0124.S2]
-
-Documentation of CR-3.
 
 ## Sources
 

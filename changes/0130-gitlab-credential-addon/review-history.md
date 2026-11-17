@@ -14,3 +14,9 @@
 ## Move into changes (2026-11-16)
 
 Change 0113 moved this design from `designs/gitlab-credential-addon-design.md` into this folder. Its review history moved into this file, its proposal plan became "Steps", its evidence moved into `evidence/`, its status became `Draft` pending the owner's final cross-review, and every path to a design or its evidence, in links and in prose, now names its new location.
+
+## Status line before the split (2026-11-16)
+
+Change 0113 shortened the status line of `change.md` to the status, revision, date, and program, and moved the rest here as it stood:
+
+> Nothing in this document is built or staged. Revision 6 applies the cross-design review of 2026-11-13: it states per-slot `netagent` scopes in the `netagent` term and adds "Documentation" under the owner's extension of decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md#decisions) to every design, and changes no rule of this add-on. It reads against [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 45, and [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92. Decisions 1 and 2 carry recommendations for owner review. No live GitLab write, permission check, or quick action has run. The measurements cited ran against a recording stub, and **the stub proves forwarding only**. Statements about GitLab come from the pages under "Sources". Proposals carry the label GL-n. "Review history" at the end records how the document reached this form. The owner's final cross-review of the moved designs is pending, so the status is `Draft`.

@@ -1,8 +1,6 @@
 # Decision records
 
-Status: `Draft`, revision 1, 2026-11-16, with no independent review yet. Nothing here is built or staged. It records the owner's decision of 2026-11-16 to remove Architecture Decision Records (ADRs) from Lenny (D1), and lists every site that names them with the change each site takes. Changes under `changes/` and change proposals under `proposals/` become Lenny's decision records, and §19 stays as the summary table of resolved decisions. It reads against every design under `designs/` as implemented, in particular [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which renames the claim kind inside the §4.6.1 paragraph whose "ADR-007" label this design removes. The changes go through `change-proposal` after review. The design element carries the label REC-1, and requirements carry the label RECR-n. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 1, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -21,6 +19,7 @@ Each factual claim carries one of these tags where the source matters:
 | Change proposal | A directory under `proposals/` that stages specification edits and code changes for one change, with its problem statement, alternatives, review log, status, and implementation checklist. Its status is one of Draft, Reviewed, Approved, and Implemented, which `.claude/tools/proposal-status.mjs` reads and writes. An implemented proposal is never edited (`.claude/rules/spec-driven-development.md`). |
 | Resolved decisions table | [§19 Resolved Decisions](../../spec/19_resolved-decisions.md#19-resolved-decisions), a numbered table that summarizes the platform's settled decisions. |
 | Claim fencing verification | The §4.6.1 paragraph labelled **ADR-007: `SandboxClaim` optimistic-locking and failover fencing verification — Phase 1 blocking prerequisite.**, which requires two tests showing that the API server's optimistic concurrency fences concurrent claims and a failed-over leader's writes. |
+| Labels | The part of the design carries the label REC-1, and requirements carry the label RECR-n. |
 
 ### Labels from other designs
 
@@ -77,12 +76,6 @@ Keeping ADRs means writing a third record of each decision that a design and a p
 
 Lenny keeps two kinds of decision record and one summary. A change under `changes/` records a decision while it is being made: the problem, the options, the owner's answer in the owner's words, and the evidence. A change proposal under `proposals/` records the decision as it lands: the staged specification edits, the review, the approval, and the implementation. §19 lists the decisions that settle the platform's direction and points to the specification sections that carry them. `docs/adr/` goes, and so does every rule that asks for an ADR. The one specification paragraph that carries an ADR number in its label keeps its content and its two tests under a plain label.
 
-## Decisions
-
-| # | Question | Owner's answer | Applied in |
-| :-- | :-- | :-- | :-- |
-| D1 | Whether Lenny keeps Architecture Decision Records (2026-11-16). The owner said "Actually I've been wondering whether this whole ADR thing is needed at all", and was given the recommendation to remove ADRs through a separate short design and to take the ADR changes out of `0137-pod-lifecycle-controller`. | "ok" | The whole design. [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) records the same answer as its D9. |
-
 ## Requirements
 
 | ID | Requirement |
@@ -111,7 +104,9 @@ Lenny keeps two kinds of decision record and one summary. A change under `change
 | Designs | Revision 3 of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) names `docs/adr/` only to leave it to this design. At commit `b622d716c`, [`0127-egress-and-git`](../0127-egress-and-git/change.md) and [`0142-security-oversight`](../0142-security-oversight/change.md) each carry a documentation row `adr/` planning a new ADR. |
 | Proposals | Approved proposals 0002 and 0023 staged edits to `docs/adr/` (an ADR-0007 note and the ADR-0014 row), and the tree carries both. Several implemented proposals mention ADRs. All of them stay as written. |
 
-## REC-1 Removal
+## Detailed design
+
+### REC-1 Removal
 
 **Specification.** §19 stays as the summary table, and its rows that cite an ADR cite the `LICENSE` file or the section that carries the decision. The claim fencing verification of §4.6.1 keeps its requirement, its tests, and its rationale, and states the outcome as the tests' result rather than as a document. Phase gates that attached results to an ADR attach them to the gate **[design]**. "Specification changes" lists each edit.
 
@@ -196,32 +191,8 @@ The documentation site loses the "Architecture Decisions" navigation entry with 
 
 Every test carries the `// spec:` annotation for the section it verifies, and tests at tier 2 and above carry `// diagnosis:`.
 
-## Validation owed
-
-| Item | Why it matters | Status |
-| :-- | :-- | :-- |
-| Build the documentation site with `docs/adr/` removed and confirm that the navigation renders and that no page links into it. | The site's navigation reads `nav_order` and `parent` from the deleted files. | Open, for REC-B. |
-| Confirm that `lenny-test --tier static` passes with the stage removed and that no other harness path calls the script. | `cmd/lenny-test/cmd_run.go` is the one caller found **[source]**. | Open, for REC-B. |
-
 ## Instructions for other designs
 
 - [`0127-egress-and-git`](../0127-egress-and-git/change.md): the documentation row `adr/`, "A new ADR records the decisions in this design. The ADR index states that a change to the credential model warrants one.", is removed. The design is its own decision record.
 - [`0142-security-oversight`](../0142-security-oversight/change.md): the documentation row `adr/`, "A new ADR records the decisions here.", is removed.
 - [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md): revision 3 already leaves every ADR site to this design. PLCR-1 and PLCR-11 exempt `docs/adr/` until this design deletes it.
-
-## Steps
-
-### 0125.S1 Specification changes
-- status: Planned
-- aliases: [REC-A, REC-1 (part)]
-- lanes: [specification]
-
-The specification changes. PLC-A of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) edits the same §4.6.1 paragraph, §19 row 14, and §23.2 paragraph in other phrases, so either lands first. The rows under "Specification changes" state what each section reads under either order.
-
-### 0125.S2 Deletions, renames, comments, tests, registers, and documentation
-- status: Planned
-- aliases: [REC-B, REC-1 (part)]
-- lanes: [code, documentation]
-- depends-on: [0125.S1]
-
-The deletions, the renames, the comments, the tests, the registers, and the documentation. It lands after 0125.S1 so every `// spec:` citation and every document points to the new text.

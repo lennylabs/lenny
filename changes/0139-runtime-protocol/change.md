@@ -1,8 +1,6 @@
 # Runtime protocol
 
-Status: `Draft`, revision 13, 2026-11-16. Revision 13 applies the kind and field names of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which the owner accepted on 2026-11-16 as its O3, and changes no rule. Revision 12 is the final consistency pass of the connector removal: it restates the live text that still named connectors, `connector:<id>`, `tool_progress`, `toolProgress`, or `deferredToolDiscovery`, so that the tool frames, `toolServers`, the bridge, the specification rows, the documentation, and the tests name `server: "platform"` alone, and it drops the revision 10 banners from the sections it cleans. Revision 11 follows [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2, which applies the owner's answers of 2026-11-15: "RP-4" cites that design's "CR-3" for operator services and states that a runtime whose harness waits on one reports `busy: true`. Revision 10 applies the owner's decision of 2026-11-15 to remove connectors, in the owner's words "Yes, let's drop connectors.", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 1 designs: `server` takes `platform` alone, `toolServers` lists `platform` alone, the reference bridge serves `platform` alone, `tool_progress`, `toolProgress`, `deferredToolDiscovery`, and `gateway.toolProgressMinIntervalMs` are withdrawn, D11 is superseded apart from its duration rule, and the RP-3 example names the child's runtime with `target`. Revision 9 applies the owner's answers of 2026-11-15: the adapter-to-runtime frame `tool_progress` under the new capability `toolProgress`, with the rule that a tool call has no duration a runtime may assume and is stopped with `tool_cancel` (D11), and the handling of an unknown value of a known enum member as `other`, which keeps the protocol version and has conformance cases (D12). Nothing here is built or staged. An independent review read revision 1 on 2026-11-11, and revision 2 applied its fixes. Revision 3 read against [`0145-session-isolation`](../0145-session-isolation/change.md) revision 3, applied the simplifications its slot containers allow, and recorded the owner's decision D5 of 2026-11-12, which retires the adapter-local tools. Revision 4 applies the owner's decisions of 2026-11-12 from the consistency pass: the removal of pre-launched runtimes and of `preConnect` (D6), the settlement of O1 to O11 with the recommendations (D7), the removal of the embedded deployment model, and the fixed runtime-visible layout of [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md). Revision 5 applies the owner's decisions of 2026-11-13: the acceptance of the handshake at bind (D8), and the removal of `type: mcp` runtimes and service mode under [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) (AR), with its O5 (b), under which no frame other than `session_start` carries `sessionId`, and its removal of `startId` (D9). Revision 6 removes the `credentialRotation` capability, because [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) removes the rotation of credentials into pods and direct delivery mode. Revision 7 records open decision O13, on the state a session reaches when its resume or restore meets a handshake refusal that is not retryable, where this design and the session lifecycle design disagree, and states the slot release with its second Sweep. Revision 8 records the owner's settlement of O13 on 2026-11-13 as (b), together with SL-Q2 of the session lifecycle design (D10): a resume or a restore that meets a handshake refusal that is not retryable ends the session `failed`. The design reads against every design under `designs/` as implemented, in particular [`0145-session-isolation`](../0145-session-isolation/change.md) revision 18, [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) revision 16, [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) revision 12, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 24, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, [`0126-delegation-availability`](../0126-delegation-availability/change.md) revision 12, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0122-client-tools`](../0122-client-tools/change.md) revision 11, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 22, [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) revision 12, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, and [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 93. It is built from the owner's proposal of 2026-11-11 to move the platform MCP server out of the adapter and to add a protocol handshake, and from the owner's answers the same day.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 13, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -12,7 +10,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | **[external]** | Read in an external document. |
 | **[measured]** | Measured in a spike that another design records. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[unverified]** | A claim the pages and code read do not state. "Validation owed" lists each one. |
+| **[unverified]** | A claim the pages and code read do not state. "Validation owed" in `steps.md` lists each one. |
 
 ## Problem
 
@@ -126,7 +124,7 @@ This design states one framed protocol between the adapter and the runtime, a ha
 | Labels | Source | What they name |
 | :-- | :-- | :-- |
 | SI-1, SI-2, SI-3, SI-4, SI-5, SI-7, SIR-3, SIR-5, SIR-8, SIR-20, D4, D5, and SI-A to SI-C | [`0145-session-isolation`](../0145-session-isolation/change.md) | The slot containers, one per slot; per-slot socket names with peer checks in both directions; one runtime process per session, launched at bind, with the slot release; slot liveness and dead slots; the file-descriptor broker; per-slot credentials and manifests; the binding of each connection to its slot, the listener drain, broker-only access to slot files, and the closed set of broker operations; the owner's decisions of a fresh runtime process per session and of per-slot names with two-way checks; and the proposals that land slot containers, the broker, and the per-slot release. |
-| AR D2, AR O5, AR D5, AR D6, ARR-5, and ARR-6 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) | The removal of `startId` with service mode; the owner's choice that no frame other than `session_start` carries `sessionId`; the reasons `session_start` keeps it; the refusal of a write that names a removed field, the rule for every design; and the requirements for both frames. |
+| AR D2, AR O5, AR D5, AR D6, ARR-5, and ARR-6 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions) | The removal of `startId` with service mode; the owner's choice that no frame other than `session_start` carries `sessionId`; the reasons `session_start` keeps it; the refusal of a write that names a removed field, the rule for every design; and the requirements for both frames. |
 | PL-1, PL-2, and PL-3 | [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) | The pod blueprint, the removal of the embedded deployment model, and the fixed runtime-visible layout with `/workspace`, `/session`, and `/run/lenny/credentials.json`. |
 | WM-3 and WM-13 | [`0153-workspace-materialization`](../0153-workspace-materialization/change.md#wm-3-the-protocol) | The setup protocol through the supervisor, and the restore-then-overlay order at resume, both of which run before the runtime process launches. |
 | DR-12 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory) | The plan's `workingDirectory`, which reaches the runtime as `cwd` on `session_start`. |
@@ -136,12 +134,12 @@ This design states one framed protocol between the adapter and the runtime, a ha
 | CA-3, CA-4, CA-6, CA-8, and CA-9 | [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md#ca-8-runtime-capability-and-late-tools) | Connector access and environment; the link check at session creation, which probes a connector for a user with no token; the connectors a restart lists; `deferredToolDiscovery` with late tools; and the stdio bridge `lenny-mcp-stdio` with its `lenny-tools` init container. [`0124-connector-removal`](../0124-connector-removal/change.md) withdraws CA-1 to CA-9, so this design cites them only in its records and for the measurements of CA-9's stdio bridge spike, which the reference bridge of "RP-5" replaces. |
 | MP-5 and MP O1 | [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-5-intra-pod-servers) | The MCP versions the reference MCP bridge of "RP-5" serves, which the section titled "Intra-pod servers" now states for the bridge alone, with no MCP nonce; and the owner's decision that every surface Lenny serves supports the same MCP versions. |
 | LU-4 and LU-10 | [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) | The removal of LLM credential leases, direct delivery mode, and the rotation of credentials into running pods with `credentials_rotated` and `credentials_acknowledged`; and the usage frames as the runtime's own report of a model call outside the gateway's LLM proxy. |
-| CT-2, CT O9, and CTR-9 | [`0122-client-tools`](../0122-client-tools/change.md#decisions) | The client-tools capability, `capabilities.clientTools.supported`, which requires `capabilities.conversationInput`; its `customTools` member; and the requirement that client tools work at every integration level. |
+| CT-2, CT O9, and CTR-9 | [`0122-client-tools`](../0122-client-tools/decisions.md#decisions) | The client-tools capability, `capabilities.clientTools.supported`, which requires `capabilities.conversationInput`; its `customTools` member; and the requirement that client tools work at every integration level. |
 | AM-3 and AM-4 | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md#am-4-conversation-input) | The Messages API's request mapping, with `capabilities.conversationParameters`, and its conversation input, with `capabilities.conversationInput`. |
 | RV-1, RV-2, RV-3, and RV-6 | [`0140-runtime-revisions`](../0140-runtime-revisions/change.md#rv-1-revisions) | Revisions with their field classes and the per-tenant override; revision selection with its integration-level check; pod sets per pod hash; and sessions over time, under which a resumed session moves to a newer revision once its own is retired. |
 | SO-2 | [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) | The tenant security record and the applier of its changes. |
 | TS-3 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) | The allow-list of platform tools a pod may call. |
-| EG-3 | [`0127-egress-and-git`](../0127-egress-and-git/change.md#steps) | The egress design's pod git path, which removes `cmd/git-credential-lenny` and `lenny/vcs_token`. |
+| EG-3 | [`0127-egress-and-git`](../0127-egress-and-git/steps.md#steps) | The egress design's pod git path, which removes `cmd/git-credential-lenny` and `lenny/vcs_token`. |
 | F-4.8.28 | `BUILD-GAPS.md` | The finding that output streamed through `lenny/output` runs no `PostAgentOutput` chain and reaches no transcript entry. |
 | MD-E, SL-A, DA-A, CA-E, CA-H, and CA-I | The proposal tables of the designs above | The proposals that land parents and children, the session states, delegation availability, the link check, the stdio bridge, and late tools. CA-E, CA-H, and CA-I are withdrawn with connectors by [`0124-connector-removal`](../0124-connector-removal/change.md). |
 
@@ -171,160 +169,6 @@ When a session starts, `session_start` tells the runtime what the session may us
 ```
 
 The rest of this document states each part in the design's terms.
-
-## Decisions
-
-> **Revision 10.** [`0124-connector-removal`](../0124-connector-removal/change.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 10 did not rewrite is withdrawn and kept as the record. The platform statements stand.
-
-The owner proposed the move of the platform MCP server and the handshake on 2026-11-11, answered the follow-up questions the same day, settled the adapter-local tools on 2026-11-12, and later the same day removed pre-launched runtimes and settled the open decisions **[design]**.
-
-| ID | Question | Owner's answer | Where |
-| :-- | :-- | :-- | :-- |
-| D1 | Where the platform MCP server and the connector MCP servers run. | The owner proposed: "Should we move the platform MCP server to the runtime SDK? It could run as an MCP server in the runtime container, using JSONL behind the scenes. That would simplify things significantly for the adapter, I think. A reference MCP interface provided by the SDK (or separate from the SDK but still included in the repo) would still be covered by the spec, since it's not straightforward, but in its own section." On the connector servers: "they should move to the runtime. If the SDK is the right place for an off-the-shelf, reference implementation, I'm fine with that." Tool calls travel as frames, and the SDKs ship the reference bridge. Revision 10: the connector half is superseded by the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors."), which [`0124-connector-removal`](../0124-connector-removal/change.md) records; the platform half stands. | RP-3, RP-5 |
-| D2 | Whether every runtime performs a handshake with a protocol version. | The owner proposed: "Should we add an adapter to runtime protocol version number as part of the/a handshake? For future backward compatibility with older runtimes if the protocol changes. It may exist already. The supported version could/should be in the runtime capabilities definition, but that could get out of sync so it would be good to have a handshake." Then: "I also think a handhsake should be needed even for the most basic runtimes. It's not that big of a deal to implement that on the runtime side." The handshake extends the runtime connection handshake of §4.7.11 item 1 and replaces `lifecycle_capabilities` and `lifecycle_support`. A refused handshake keeps the slot out of service. | RP-1, RP-7 |
-| D3 | Whether the integration levels stay. | "yes to 2 and 3. In fact, w.r.t. #3: I don't like how today the docs and spec talk about Basic, Standard, and Full runtimes. I like the idea that runtimes publicize their capabilities, which is more of a spectrum. The only constraint is that some capabilities may depend on others." The levels leave the specification and the documentation, and capabilities with dependency rules take their place. | RP-2, RP-8 |
-| D4 | Whether a runtime learns what its session may use, and of changes. | The owner proposed: "The handshake should also include informing the runtime of what is / is not available (for example child sessions, if the lease doesn't allow it). This was done, in part, by dropping MCP tools by the adapter. If what's available changes over time (equivalent of new/dropped MCP tools), then that should be communicated too." The owner answered "yes" to reopening DA O4 for it. Availability travels per session on `session_start` and in `availability_changed`, and the gateway keeps checking every call. | RP-4 |
-| D5 | Whether the adapter-local tools stay under session isolation (2026-11-12, formerly O12). | The owner chose option (a): retire them. Under session isolation the adapter reaches a slot's entries only through the supervisor's broker (SIR-8), whose closed operation set (SIR-20) cannot back `write_file`'s overwrite or `delete_file`, and every runtime process already reads, writes, lists, and deletes its own workspace as the slot UID. `read_file`, `write_file`, `list_dir`, `delete_file`, custom adapter-local tools, the `adapterLocalTools` manifest field, and the **Adapter-Local Tool Reference** leave, and tool frames name only `platform` and `connector:<id>`. Revision 10: `connector:<id>` is withdrawn with connectors by [`0124-connector-removal`](../0124-connector-removal/change.md), so tool frames name `platform` alone. | RP-3, RP-6 |
-| D6 | Whether runtimes may launch before their session (2026-11-12). | "Pre-launched runtimes (SDK-warm / `preConnect`) are removed entirely. Every runtime launches at bind, after materialization and setup." Removed with them: `preConnect`, `sdkWarmBlockingPaths`, the `sdk_connecting` state and its watchdog, `ConfigureWorkspace` and `DemoteSDK` as separate paths, the demotion circuit breaker and its admin override, the `preconnect-echo` test runtime, and the pod-warm and SDK-warm terminology. "Warm pod" means infrastructure ready. | Scope, "Process model", RP-1, RP-2, RP-5 |
-| D7 | The open decisions O1 to O9 and O11 (2026-11-12). | "Go with your recommendations." O1 (a), O2 (d), O3 (b), O4 (a), O5 (a), O6 (e), O7 (a), O8 (b), O9 (a), and O11 (a). O2 (d) is applied with its bind check restated for runtimes that launch at bind (D6). | "Open decisions" |
-| D8 | Where a handshake refusal lands now that the runtime launches at bind (2026-11-13). | "RP handshake at bind: accepted." A refusal ends the bind, the slot is released and stays in service, and a refusal that is not retryable stops claims of the pod set's pods. This replaces the consequence D2's row records, that a refused handshake keeps the slot out of service, which held only while runtime processes launched at warm-up. | RP-1, RPR-3 |
-| D9 | The frame contract after non-agent runtimes leave (2026-11-13). | The owner removed `type: mcp` runtimes and service mode, and with them `startId` ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) D1 and D2), and settled AR's O5 as (b): "O5 (b), yes to all the others." No frame other than `session_start` carries `sessionId`. Asked why `session_start` keeps it, the owner answered "ok, let's keep it": the runtime reads it for log correlation, identity across process restarts, idempotency keys, and derived-session detection, and the adapter never acts on it (AR D5). | Scope, RP-3, RP-4, RP-6, RPR-8, RPR-18, RPR-21 |
-| D10 | The state of a session whose resume or restore meets a handshake refusal that is not retryable (O13, 2026-11-13). | "ok" to the recommendation, in the owner's answers to the consolidated list of open decisions of 2026-11-13, which settle O13 and SL-Q2 of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md#decisions) together: the session ends `failed`, as "SL-2" of that design states for every failure that is not retryable. | RP-1, RP-2, "Open decisions" |
-| D11 | Whether a runtime learns that a long tool call still runs (2026-11-15, item 2.1). | **Superseded on 2026-11-15** by the owner's decision to remove connectors ("Yes, let's drop connectors."), which [`0124-connector-removal`](../0124-connector-removal/change.md) records: `tool_progress`, `toolProgress`, and `gateway.toolProgressMinIntervalMs` have no producer left and are withdrawn. The rule that a tool call has no duration a runtime may assume, and that `tool_cancel` stops waiting for one, stands. The decision as recorded: "2.1: ok": a new adapter-to-runtime frame, `tool_progress`, names the pending `tool_call` and carries the tool server's progress, under a new capability, `toolProgress`. The gateway forwards a connector's MCP progress notifications for a pending call through it, and the reference bridge maps it to MCP progress notifications toward the harness with the harness's `progressToken`. A tool call has no duration a runtime may assume, and a runtime stops waiting for one with `tool_cancel`. | RP-2, RP-3, RP-5, RP-8, RPR-19, RPR-22, RPR-23 |
-| D12 | How a reader treats an unknown value of a known enum member (2026-11-15, item 2.2). | "2.2: ok": the value is handled as `other` and is never an error, as "MD-24" of [`0135-message-delivery`](../0135-message-delivery/change.md#md-24-runtime-frames-and-leniency) states under its U1. An added value therefore keeps the protocol version, and the conformance suite tests the rule. | RP-7, RP-8 |
-
-## Open decisions
-
-> **Revision 10.** [`0124-connector-removal`](../0124-connector-removal/change.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about `connector:<id>`, `CallConnectorTool`, `ListConnectorTools`, `ListSessionConnectors`, `CH-MCP-CONNECTOR`, connector links, `deferredToolDiscovery`, `tool_progress`, `toolProgress`, and `gateway.toolProgressMinIntervalMs` is withdrawn and kept as the record, and the removal design's own section of the same name governs those items. The platform statements stand.
-
-No decision is open. The owner settled O1 to O9 and O11 on 2026-11-12 with "go with your recommendations" (D7), session isolation retired O10, the owner settled O12 as D5, and the owner settled O13 on 2026-11-13 as D10. Each settled entry keeps its options and its reasoning as a record, and states the option taken.
-
-**O1. The versioning scheme.**
-
-- (a) An integer protocol version, issued only for a change that breaks an existing frame. Additions travel as new optional members, new frame types, and new capabilities, which the leniency rules of "MD-24" already make safe: an unknown member or frame type is ignored. The adapter supports the current version and the previous one.
-- (b) A semantic version string, as `lifecycle_capabilities` carries today (`"1.0"`) and as the gateway-to-adapter protocol uses ([§15.4.2](../../spec/15_external-api-surface.md#1542-rpc-lifecycle-state-machine), `INIT`).
-- (c) No version, with capabilities alone.
-
-**Recommendation: (a).** A minor version adds nothing that an optional member or a capability does not already say, and (c) leaves no way to retire a frame. The current protocol, with the frames of message delivery revision 14 and this design, becomes version 1, because no deployment exists to stay compatible with. "RP-7" states what happens to a session whose revision's image speaks only a retired version.
-
-**Settled (2026-11-12): (a)**, with the owner's "go with your recommendations" (D7).
-
-**O2. The role of the capabilities a Runtime definition declares.**
-
-- (a) The handshake is the only source. The gateway reads capabilities from the pod after the handshake.
-- (b) The runtime revision declares the capabilities, and the adapter checks them at the handshake against a declared set rendered into its configuration.
-- (c) The revision declares, and the handshake is advisory.
-- (d) The revision declares, the adapter checks only the version and the dependency rules at the handshake and reports the offered capabilities, and the session's effective capabilities are checked at bind: by the gateway against the handshake report stored on the pod's row, and by the adapter against the report of the slot the session binds to.
-
-**Recommendation: (d).** The gateway decides several things before any pod exists, and each reads the declaration: the platform tool list reads `childSessions` ("DA-4"), the link check reads `deferredToolDiscovery` ("CA-4"), client tools read `clientTools.supported` (CT-2), and a message's default intent reads `injection` ("MD-2"). So the declaration stays, which rules out (a), and the owner's concern was drift between the definition and the binary, which rules out (c). (b) fails under RV-1 and RV-3: `capabilities` are gateway-read fields outside the pod hash, so revisions that differ only in capabilities share one pod set, and a set rendered into the pod could hold only one revision's capabilities. Revision 3 placed the gateway's check against a report stored on the pod's row, because runtime processes then launched at warm-up.
-
-**Settled (2026-11-12): (d)** (D7), restated for runtimes that launch at bind (D6). No runtime process exists before its session binds, so no report exists on the pod before the bind. The adapter receives the session's effective capabilities with the bind and checks them against the `hello` of the runtime process it launched for the session, before it writes `session_start`. The gateway keeps the last report of each pod set and checks a session against it before the claim, so a pod set already known to lack a capability is never claimed for it. "RP-1" and "RP-2" state both checks.
-
-**O3. How a stdio bridge reaches the adapter.**
-
-Revision 2 recommended a tool multiplexer in the runtime process, because one connection then carried every frame of a session and because the adapter could not tell which session a second connection acted for. Session isolation changes the second reason: each slot has its own endpoint, the adapter binds every connection to the slot whose name it arrived on and checks the peer UID (SIR-3), every process in the slot container runs as the slot UID, and the slot holds at most one session at a time (D4, D5) **[source]**.
-
-- (a) Through the runtime process. The runtime process runs a tool multiplexer on a filesystem socket in the slot's `/tmp`, which no other container mounts ("SI-2"). Each bridge connects to it, and the multiplexer writes the bridge's frames on the runtime connection, rewrites each frame `id` to one unique on that connection, because several bridges choose their ids independently, routes each answer back to its bridge, and forwards each `availability_changed` to every bridge. Session isolation removes the multiplexer's token, its stamping of `sessionId`, and its separation of sessions.
-- (b) Directly. Each bridge opens a tool connection to its slot's `CH-MSGSOCK` endpoint, `@lenny-runtime-<n>`, named by `LENNY_ADAPTER_SOCKET`, as the runtime process does. The adapter binds it to the slot by name and peer UID, as it binds the runtime connection, and the session it acts for is the slot's session. Its `hello` declares `"role": "tools"`, and it carries tool frames alone.
-
-**Recommendation: (b).** Under session isolation a tool connection is identified exactly as the runtime connection is, so the multiplexer adds nothing the adapter does not already know, and (b) removes it. Each tool connection scopes its own frame `id`s, so no rewriting is needed. A runtime written without an SDK, such as a shell script that wraps a CLI, then serves platform and connector tools to a stdio harness by starting the bridge, which (a) could not do without a multiplexer ("O4"). The activity window, the seal, and the cancellation of L24 already act per slot under session isolation, so they cover every connection of the slot. The cost is order: a frame on a tool connection and a frame on the runtime connection reach the adapter in the order they arrive, as `CH-MCP-PLATFORM` calls and stdout frames do today. "MD-22"'s H1 rule, which places a `send_update` after every runtime-connection frame the adapter has read and answers the call only then, keeps its guarantee that the update precedes the turn's end, because the harness cannot end the turn before the call returns (RPR-16). (a) gave no stronger guarantee: the multiplexer could order only what the runtime process had already read from the harness. The developer loop's executor serves stdin and stdout and has no socket for a bridge, so under (b) it binds a filesystem socket for tool connections and names it in `LENNY_ADAPTER_SOCKET` ("O5").
-
-**Settled (2026-11-12): (b)** (D7). The multiplexer of (a) is not built.
-
-**O4. Where the stdio bridge ships.**
-
-- (a) With the runtime SDKs, inside the runtime image, and as a static release binary for runtimes written without an SDK. "CA-9"'s `lenny-tools` image, init container, volume, and webhook rule are withdrawn.
-- (b) As "CA-9" ships it: the platform delivers `lenny-mcp-stdio` to every sidecar pod through an init container, mounted into every slot container.
-
-**Recommendation: (a).** Under O3 (b) a bridge performs its own handshake, so the adapter and the bridge agree on a version whichever ships it, and the reason "CA-9" gave for platform delivery, keeping the bridge in step with the adapter, is met by the handshake. (a) saves the second of pod startup that "CA-9" measured for its init container **[measured]**, and the per-slot mounts that session isolation would add for its volume ("SI-7"). An image whose runtime process is a shell script needs only the release binary in its image.
-
-**Settled (2026-11-12): (a)** (D7). "CA-9"'s `lenny-tools` image, init container, volume, and webhook rule are withdrawn.
-
-**O5. The transport of `CH-MSGSOCK`.**
-
-The `CH-MSGSOCK` card says both that the adapter "communicates with the agent binary over stdin and stdout" and that the sidecar deployment uses abstract Unix sockets, and it names no socket (§28.5.3) **[source]**. The tree uses both: the sidecar adapter binds an abstract socket that the runtime finds through `LENNY_ADAPTER_SOCKET` (`pkg/adapter/socketruntime.go`), and `executor.SubprocessExecutor` runs the runtime as a child over stdin and stdout (`pkg/gateway/session/executor/subprocess.go`, "the `make run` developer-loop executor and the substrate the conformance harness exercises"), which `cmd/lenny-gateway/runtime_select.go` and `cmd/lenny-adapter/main.go` construct **[source]**. Session isolation names the sidecar endpoint `@lenny-runtime-<n>` per slot ("SI-2") **[source]**.
-
-- (a) State both transports: the per-slot abstract socket named by `LENNY_ADAPTER_SOCKET` in the sidecar model, and stdin and stdout in the developer loop and the conformance harness, where the executor also binds a filesystem socket for tool connections under O3 (b). The framed protocol and the handshake are the same on both, and only a socket carries the nonce line.
-- (b) Make the socket the only transport and move the developer loop onto it.
-
-**Recommendation: (a).** It states what the tree does. Moving tools and, under O7 (a), the lifecycle frames onto `CH-MSGSOCK` removes the transport obstacle that limits Source Mode on macOS to Basic today ([§15.4.3](../../spec/15_external-api-surface.md#1543-runtime-integration-levels), "Platform compatibility note"), because a filesystem socket works on macOS. Source Mode gains a capability only once the subprocess executor implements it: the handshake, tool forwarding and its tool socket, availability, and the checkpoint and interrupt frames. Proposal RP-C carries that work, and until it lands Source Mode states the capabilities its executor supports.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O6. Which running sessions a change of availability reaches, and when.**
-
-A session's availability depends on the delegation settings ("DA-2"), the pool's `elicitationDepthPolicy` ("DA-4"), connector links ("CA-8"), and connector access ("CA-3"). Delegation availability revision 3 listed the cost of pushing changes: "a per-session list in the adapter, a gateway-to-adapter RPC, a fan-out from every admin write path and from the SO-2 applier" ("DA-5", **Blast radius.**).
-
-- (a) Each write path finds the live sessions it affects and notifies each session's coordinating replica.
-- (b) Each write path publishes one change event with its scope (tenant, environment, runtime, or pool) to every replica. Each replica recomputes the availability of the sessions it coordinates within that scope and notifies a session only when the result differs from what it last sent.
-- (c) The coordinating replica recomputes the whole availability, tool servers included, at each turn's start and at each `session_start`, and notifies the runtime when it differs. A completed connector link also notifies at once.
-- (d) At each turn's start the coordinating replica sends a hint naming every tool server, without computing availability, and the harness lists again, so "DA-4"'s live list decides.
-- (e) At each turn's start the coordinating replica recomputes only `delegation` and `questions`, from the inputs "DA-4" already reads, and notifies when either differs, naming the `platform` server. Connector state changes only through the events "CA-8" already designs, which notify at once, and through each `session_start`.
-
-**Recommendation: (e).** Recomputing `toolServers` each turn, as (c) does, would run "CA-4"'s link check for each connector each turn, and "CA-4" probes a connector for a user with no token. (d) costs a list of every server by every harness each turn, and a connector list reaches the external server. (e) reads per turn only what "DA-4" reads per list, touches no admin write path, and leaves connector changes to the events that exist for them. Under every option the notice cannot be guaranteed to precede the turn's first model call: a turn the runtime opens with its own output ("MD-4") has no first message for the gateway to write the notice before, and a runtime may make a model call before it reads a frame the adapter has written. RPR-11 states what the design guarantees.
-
-**Settled (2026-11-12): (e)** (D7).
-
-**O7. Whether `CH-RUNTIMEOPS` merges into `CH-MSGSOCK`.**
-
-- (a) Merge. The frames of `CH-RUNTIMEOPS` travel on the runtime connection, sent only when the capability that needs them is effective for the session. The second socket, the `runtimeOps` manifest field, and the channel leave.
-- (b) Keep the second socket, opened by a runtime that declares `checkpoint`, `interrupt`, or `credentialRotation`.
-
-**Recommendation: (a), more firmly than in revision 2.** The handshake on `CH-MSGSOCK` already carries the capabilities that `lifecycle_support` carried, so the second socket keeps only a transport. Session isolation names per-slot endpoints for `CH-MSGSOCK` and `CH-SUPERVISE` only, and checks peers and closes the squatting windows for those names ("SI-2") **[source]**. Today's `@lenny-runtime-ops` is one pod-wide name, which under slot containers every slot could reach or bind. Under (b) session isolation would need a per-slot `@lenny-runtime-ops-<n>` with its own peer checks and its own drain between End and launch; under (a) none of that exists. One connection also gives a runtime one reader loop, works over stdin and stdout (O5), and orders a session's stop signal against its frames: under "SL-3" a runtime that acknowledges a suspension closes its turn with a `message` and answers `interrupt_acknowledged`, which today cross two connections in no stated order. Every runtime already reads its connection during a turn, because a `heartbeat` needs a `heartbeat_ack` within 10 seconds whatever the runtime is doing (§28.5.3, **Timing.**) **[source]**. The cost is that a large frame in flight delays a control frame behind it. A frame at the 50 MiB line limit takes tens of milliseconds on a local socket **[unverified]**, and the deadlines of `checkpoint_request` and `interrupt_request` are in seconds ("Validation owed").
-
-**Settled (2026-11-12): (a)** (D7). `CH-RUNTIMEOPS` leaves, and its frames travel on the runtime connection.
-
-**O8. How tool lists reach the runtime.**
-
-- (a) `session_start` and `availability_changed` carry the full tool list of every tool server.
-- (b) They carry the tool servers and their state. The runtime lists a server's tools with `list_tools` when it needs them, and a change notice names the servers whose lists changed.
-
-**Recommendation: (b).** "DA-4" computes the platform list at each list, and a connector's list comes from the external server, which "CA-4" probes only for a user with no token. Pushing full lists would make the gateway list every connector at every session start and every change. (b) keeps both designs' listing paths and adds only the notice. A change to an external connector's own tool list produces no notice under either option ("Limits").
-
-**Settled (2026-11-12): (b)** (D7).
-
-**O9. Whether every runtime answers `session_start`.**
-
-Today a runtime that keeps no per-session context and opens no `CH-RUNTIMEOPS` ignores `session_start` and writes no `session_started` (§28.5.3) **[source]**, and the adapter's wait for `session_started` depends on whether `CH-RUNTIMEOPS` completed its handshake first.
-
-- (a) Every runtime answers each `session_start` with `session_started`, and every start path waits for it: the sidecar adapter and the subprocess executor.
-- (b) Keep the conditional rule.
-
-**Recommendation: (a).** D2 already asks every runtime to read and write frames beyond `message`, and one answer per session start removes a condition from each start path and from the conformance suite. A runtime that keeps no context answers at once.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O10. Platform and connector tools on a pod that serves several sessions (retired by session isolation).**
-
-Revision 2 kept today's refusal of platform and connector calls on a pod with several sessions, because those sessions shared one runtime process and one container, and a process in Alice's session could write a frame naming Bob's session and act with Bob's connectors or under Bob's lease, while the gateway "dispatches under the session id the adapter presents" (`CallPlatformTool` in `pkg/gateway/mcpfabric/delegationtree/leasecontrol/platformtools.go`) **[source]**. Session isolation removes each premise: each session runs in its own slot container under its own UID with its own process namespace ("SI-1"), each slot has its own `CH-MSGSOCK` endpoint whose connections the adapter binds to the slot by name and peer UID, so that every frame on them acts for the slot's session (SIR-3), and each slot's manifest and nonce sit on a volume no other slot mounts ("SI-7") **[source]**. Session isolation states the consequence: "The adapter knows which session every frame acts for, so RP O10 can allow platform and connector tools on such pods once this design lands" ("SI-2", **Tools on pods with several slots.**) **[source]**. Under this design no frame other than `session_start` carries a session's identifier, so no frame can name another session ("RP-3", D9).
-
-**Resolution.** Platform and connector tools are available on every pod, pods with several slots included, from proposal SI-A on. Since revision 10 the resolution covers platform tools alone, because [`0124-connector-removal`](../0124-connector-removal/change.md) removes connectors. Service mode, the one place where the premise remained, is removed (D9). The embedded deployment model, whose pools session isolation's O6 concerned, is removed ([`0118-agent-pod-layout`, "PL-2"](../0118-agent-pod-layout/change.md#pl-2-removal-of-the-embedded-deployment-model)). The decision needs no answer from the owner, so it is retired, and its label stays for the references session isolation makes to it.
-
-**O11. How the specification retires a channel.**
-
-The naming law has a naming table for renamed channels and an escape hatch for a retired spelling, and no rule for removing a channel ([§28.1](../../spec/28_communication-channels.md#281-naming-law)) **[source]**.
-
-- (a) The retiring proposal removes each channel's register row, its card, its claim-register rows, and its rows in §28.6 and §28.8, and leaves a successor pointer under the channel-register heading that names the channel and the channel that now carries its conversation, as [`spec-citations.md`](../../.claude/rules/spec-citations.md) asks of a section that gives up content.
-- (b) Amend the naming law first with a retirement rule, then retire the channels under it.
-
-**Recommendation: (a), with a note to the owner that the naming law may need a retirement rule.** Naming-table rows record a spelling change, and a removed channel has no canonical spelling. Whether the law needs a rule is the owner's call, and (b) is the path if it does. A tool connection adds no channel: it carries a subset of `CH-MSGSOCK`'s frames, on its endpoint, between the same participants, so it takes `CH-MSGSOCK`'s identifier under the naming law's rule of one identifier per conversation ([§28.1](../../spec/28_communication-channels.md#281-naming-law), N4).
-
-**Settled (2026-11-12): (a)** (D7). The owner did not ask for a retirement rule in the naming law, so the successor pointers of (a) carry each retirement.
-
-**O12. The adapter-local tools under session isolation (settled as D5).**
-
-The owner settled this decision on 2026-11-12 with option (a), which retires the adapter-local tools. "Decisions" records it as D5. The options were (a) retiring the tools, (b) keeping them with new broker operations that open an existing file for writing with truncation and remove an entry, and (c) keeping `read_file` and `list_dir` only. The label stays for the references session isolation may make to it.
-
-**O13. The state of a session whose resume or restore meets a handshake refusal that is not retryable (settled as D10).**
-
-Revision 7 of this design moved such a session to `awaiting_client_action` in "RP-1" and "RP-2" and staged that rule for [§7.3 Retry and Resume](../../spec/07_session-lifecycle.md#73-retry-and-resume). The session lifecycle design owns the session states, and its "SL-2" sends a session in any non-terminal state to `failed` on a failure that is not retryable ([`0146-session-lifecycle`, "SL-2"](../0146-session-lifecycle/change.md#sl-2-transitions)) **[source]**. The two rules disagree for this case, and both designs stage a §7.3 statement.
-
-- (a) `awaiting_client_action`, as revision 7 of this design stated. The client can retry the resume once a revision with a fixed image builds a new pod set, or end the session.
-- (b) `failed`, as "SL-2" states. A refusal that is not retryable recurs on every pod of the pod set (RV-3), so a resume of the same revision meets it again, and the session ends under the one rule the session lifecycle design applies to every failure that is not retryable.
-
-**Recommendation: (b).** The session lifecycle design owns the states and their transitions, and one rule for every failure that is not retryable keeps §7.3 single-sourced. The session lifecycle design recorded the same question as SL-Q2.
-
-**Settled (2026-11-13): (b)** (D10). "RP-1", "RP-2", and the §7.3 row move such a session to `failed`, and SL-Q2 is settled by the same answer.
 
 ## Requirements
 
@@ -402,7 +246,9 @@ Revision 7 of this design moved such a session to `awaiting_client_action` in "R
 - `cmd/git-credential-lenny/helper.go` dials the platform MCP socket with the nonce and calls `lenny/vcs_token` **[source]**. "EG-3" removes both.
 - "CA-9" ran Claude Code 2.1.317 against a 144-line stdio bridge. Claude Code re-listed a server's tools at once on `notifications/tools/list_changed`, exposed a tool named `lenny/delegate_task` as `mcp__memory__lenny_delegate_task`, and opened and closed one connection before the working one **[measured]**.
 
-## RP-1 Handshake
+## Detailed design
+
+### RP-1 Handshake
 
 **Order.** Every connection opens with the same sequence **[design]**:
 
@@ -476,7 +322,7 @@ The time of the handshake counts toward the session's start. The owner asked for
 
 **What it replaces.** `lifecycle_capabilities` and `lifecycle_support` leave together with `CH-RUNTIMEOPS` (O7 (a)). §4.7.9 steps 8 and 9 become the handshake, which runs at bind. The manifest's `version` stays the version of the manifest's own schema, and the protocol version lives only in the handshake.
 
-## RP-2 Capabilities and their dependencies
+### RP-2 Capabilities and their dependencies
 
 **What a capability is.** A behaviour is a capability when the platform must know of it before it acts: the platform sends the runtime something the runtime must handle in a particular way, or the gateway decides something before a pod exists **[design]**. A frame the runtime starts needs no capability, because the runtime's use of it is the declaration: `message_part`, `activity`, `consumed`, `request`, `tool_call`, `list_tools`, `tool_cancel`, `retract`, `watch_child_session`, and `set_tracing_context`. A frame the platform sends that a runtime may ignore needs none either, because "MD-24" has a runtime ignore an adapter-to-runtime frame it does not know: `deadline_approaching`, `files_updated`, `availability_changed`, and `error`.
 
@@ -520,7 +366,7 @@ Every pod of a pod set runs the same image, so the gateway does not try another 
 
 **What leaves.** `integrationLevel`, its default, its ordering, and its validation leave §5.1, the CRD, the admin API, the database column, and the derived-runtime field table. `RUNTIME_LEVEL_UNDERPERFORMS` and `runtime.integrationLevel.underdeclared` leave, and `RUNTIME_CAPABILITY_MISSING` and `runtime.capabilities.underdeclared` replace them. The §26.1 catalog's `Level` column becomes a capabilities column. §15.4.3 becomes "Runtime Capabilities", with the catalog above in place of the comparison matrix and the Basic-level limitation list. Every sentence of the specification and the documentation that names a level is restated in capabilities (RPR-6). A runtime write that still names `integrationLevel`, or a `capabilities` object that still names `preConnect`, is refused with `400 VALIDATION_ERROR` naming the field, under the owner's rule of 2026-11-13 for removed fields in every design ([`0119-agent-runtimes-only`, "AR-4"](../0119-agent-runtimes-only/change.md#ar-4-admission-of-removed-fields), AR D6).
 
-## RP-3 Tool calls on frames
+### RP-3 Tool calls on frames
 
 **`tool_call` names its server.** A `tool_call` gains `server`, which names the tool server **[design]**:
 
@@ -577,7 +423,7 @@ The adapter answers `platform` from `ListPlatformTools`, which computes the sess
 
 **What leaves.** The adapter's MCP servers and their sockets; the manifest's `platformMcpServer` and `connectorServers`; the MCP nonce of §15.4.3 with its "Nonce wire format", "Strict MCP client libraries", "Deprecated location", and "Migration path — v2 out-of-band handshake" notes; the "only one session" refusal of the `CH-MCP-PLATFORM` card; the adapter-local tools and their custom extensions (D5); and the channels `CH-MCP-PLATFORM` and `CH-MCP-CONNECTOR`, which O11 (a) retires.
 
-## RP-4 Availability
+### RP-4 Availability
 
 **On `session_start`.** Each `session_start` carries `availability` and `capabilities` **[design]**:
 
@@ -617,7 +463,7 @@ The frame carries the full new availability, so a client never applies a differe
 
 **A harness's fixed configuration.** A harness such as Claude Code reads its MCP configuration at launch. A tool server that first appears mid-session cannot join a running harness, so the runtime configures every tool server in `toolServers` at launch, and a server whose list changes reaches the harness through `notifications/tools/list_changed` ("RP-5"). A tool server that first appears in a running session's availability reaches the harness at the session's next `session_start` ("Limits").
 
-## RP-5 Reference MCP bridge
+### RP-5 Reference MCP bridge
 
 **What it is.** The reference bridge is an MCP server for each tool server of a session, which a harness reaches as an ordinary MCP server **[design]**. It ships with the runtime SDKs in Go, Python, and TypeScript, and as a static release binary, in these forms:
 
@@ -640,7 +486,7 @@ Revision 9's row mapping `tool_progress` to MCP `notifications/progress` is with
 
 **CLI configuration.** Each runtime's wrapper writes its harness's MCP configuration before launch, from the session's `toolServers`: one stdio server entry per tool server, each running `lenny-mcp-bridge` with that server's name.
 
-## RP-6 What the adapter enforces
+### RP-6 What the adapter enforces
 
 The adapter-to-runtime boundary stays untrusted (§4.7.11), and session isolation draws it around each slot container **[design]**. The adapter enforces:
 
@@ -658,7 +504,7 @@ The gateway keeps every decision about what a call may do. What leaves the adapt
 
 **Manifest `version: 2`.** Each slot's manifest keeps `version`, `agentInterface`, `minPlatformVersion`, and `observability`, and `mcpNonce` becomes `connectionNonce`, which session isolation gives each slot its own of ("SI-7"). The manifest also names the adapter UID the client checks ("SI-2"). `platformMcpServer`, `connectorServers`, `adapterLocalTools`, `runtimeOps` (O7 (a)), and `runtimeMcpServers`, which AR removes with `type: mcp`, leave, and the §4.7.6 "Level reading requirements" leave. A runtime rejects a manifest version above the one it understands, as §4.7.6 states, so the SDKs and `pkg/runtimekit/handshake.go` move to version 2 with this change.
 
-## RP-7 Versioning
+### RP-7 Versioning
 
 Under O1 (a) **[design]**:
 
@@ -669,7 +515,7 @@ Under O1 (a) **[design]**:
 - Each SDK release states the protocol versions it speaks, and an SDK's own version is independent of the protocol's. `lenny.runtime.protocol_version` in §15.7 is replaced by this rule.
 - §15.5 gains an item for the adapter-to-runtime protocol beside item 3, which keeps the gateway-to-adapter `INIT` negotiation.
 
-## RP-8 Conformance by capability
+### RP-8 Conformance by capability
 
 **Selection.** `lenny runtime validate` reads the runtime's declared capabilities from `runtime.yaml`, runs the core cases, and runs the cases of each declared capability (RPR-15). It also performs the handshake and reports a declared capability the runtime does not offer as missing, and an offered capability it does not declare as under-declared. This replaces the observed-level probe of §5.1's first `integrationLevel` user **[design]**.
 
@@ -811,15 +657,6 @@ The owner asked on 2026-11-13 that every design's documentation list every setti
 | 9 | On a pod with two slots: a frame on slot 0's connections that carries slot 1's session identifier acts for slot 0's session; a tool connection from slot 1's UID on slot 0's endpoint refused; a slot 0 process that reads slot 0's manifest acts only for slot 0's session. A `tool_call` to a platform tool outside TS-3's allow-list, a call from a stale list after delegation was disabled, and a connection that skips the nonce line. |
 | 11 | No specification or documentation page names an integration level, and the conformance suite has a case for each catalog entry. |
 
-## Validation owed
-
-- The time to write a line at the 50 MiB limit on a local socket, and whether it fits inside the shortest `interrupt_request` deadline (O7).
-- Whether the Claude Agent SDK serves in-process MCP servers that a wrapper can back with frames ("RP-5").
-- Whether Codex honours `notifications/tools/list_changed` on a stdio server, which "CA-9" could not measure.
-- Whether a harness sends MCP `notifications/cancelled` for a call it abandons, so the bridge can write `tool_cancel`.
-- Whether Claude Code and Codex apply a timeout to a long platform tool call, such as `await_child_sessions`, under which the bridge sees `notifications/cancelled` (D11).
-- How many tool connections a real harness opens per slot, to set the per-slot bound ("RP-1").
-
 ## Instructions for reviewers of other designs
 
 - [`0145-session-isolation`](../0145-session-isolation/change.md): this design asks for these changes, each as a request:
@@ -843,44 +680,14 @@ The owner asked on 2026-11-13 that every design's documentation list every setti
 - [`0142-security-oversight`](../0142-security-oversight/change.md): `approvals.tools` matches platform calls that arrive from `tool_call` frames on runtime and tool connections, and the test naming a Standard-level runtime names a runtime that calls `start_child_session`.
 - [`0122-client-tools`](../0122-client-tools/change.md): CTR-9's "every integration level" becomes "every runtime", and `clientTools.supported`, `clientTools.customTools`, and `conversationInput` join the catalog with their dependencies.
 - [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md): "a Full-level runtime" becomes "a runtime that declares `checkpoint`", and "Basic-level or Standard-level" becomes "a runtime that does not", which now always gets a best-effort snapshot.
-- [`0127-egress-and-git`](../0127-egress-and-git/change.md#steps): "EG-3" lands before RP-B, because `cmd/git-credential-lenny` dials the platform MCP socket that RP-B removes. Its Terms row for integration levels and its supervisor-environment statements about the MCP dial and `CH-RUNTIMEOPS` are restated.
+- [`0127-egress-and-git`](../0127-egress-and-git/steps.md#steps): "EG-3" lands before RP-B, because `cmd/git-credential-lenny` dials the platform MCP socket that RP-B removes. Its Terms row for integration levels and its supervisor-environment statements about the MCP dial and `CH-RUNTIMEOPS` are restated.
 - [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): the §15.4.3 rows follow the capability section, and `llm_request_completed` needs no capability. The capability catalog has no `credentialRotation`, because that design removes rotation into pods.
 - [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md): the `integrationLevel` row of the derived field table leaves.
 - [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) and [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md): Terms rows and statements that name integration levels or the MCP channels are restated, and the capture table's platform call row reads the tool frames.
 
-## Steps
-
-### 0139.S1 Handshake, capabilities, and versioning
-- status: Planned
-- aliases: [RP-A, RP-1, RP-2, RP-6, RP-7, RP-8]
-- lanes: [specification, code, documentation]
-- depends-on: [0135.S5, 0146.S1, 0145.S1, 0145.S3]
-
-The handshake per slot with its refusal handling, the capability catalog with its dependency rules, the bind check at the gateway and the slot, versioning, conformance by capability, the removal of the integration levels from the specification, and the session-from-connection rule of RPR-18 with `sessionId` on `session_start` alone, with O7 and O9 as decided. AR's proposal AR-C (0119.S3) removes `startId` in the same release.
-
-It lands after 0135.S5 (MD-E), so the frame tables change once; after 0146.S1 (SL-A), so the lifecycle's level statements are restated once; after 0145.S1 (SI-A), for per-slot endpoints, the slot binding, and per-slot manifests; and after 0145.S3 (SI-C), for one session per runtime process, on which RPR-18 and the refusal handling rest.
-
-### 0139.S2 Tool calls on frames and the reference bridge
-- status: Planned
-- aliases: [RP-B, RP-3, RP-4, RP-5]
-- lanes: [specification, code, documentation]
-- depends-on: [0139.S1, 0145.S1, 0126.S1, 0127.S3]
-
-Tool calls on frames, tool connections under O3, the platform tools on every pod, availability with `UpdateAvailability`, manifest version 2, the retirement of the MCP channels under O11, the removal of the adapter-local tools under D5, and the reference bridge section.
-
-It supersedes the intra-pod part of MP-5 (0134.S3). CA-E, CA-H, and CA-I are withdrawn with connectors by [`0124-connector-removal`](../0124-connector-removal/change.md).
-
-### 0139.S3 SDKs, executor, and reference runtimes
-- status: Planned
-- aliases: [RP-C]
-- lanes: [code, documentation]
-- depends-on: [0139.S1, 0139.S2]
-
-The SDKs' handshake and bridge, the subprocess executor with its tool socket, the sample runtimes, the reference runtimes' wrappers, and the documentation.
-
 ## Sources
 
-- The owner's proposal and answers of 2026-11-11, quoted under "Decisions".
+- The owner's proposal and answers of 2026-11-11, quoted under "Decisions" in `decisions.md`.
 - The specification sections cited by heading above, read on 2026-11-11 and 2026-11-12.
 - The tree paths cited under "Current state", read on 2026-11-11.
 - [`0145-session-isolation`](../0145-session-isolation/change.md) revision 3, read in full on 2026-11-12.

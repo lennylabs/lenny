@@ -1,8 +1,6 @@
 # Runtime routing
 
-Status: `Draft`, revision 19, 2026-11-15, with no independent review yet. Revision 19 adds the identity assertion checks of [`0124-connector-removal`](../0124-connector-removal/change.md) revision 5 to the post-chain table. Revision 18 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors.") under [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2: the connector link check leaves the post-chain point, `LINKS_REQUIRED` reports account links alone, and connector interceptors leave the phases that carry session context. Revision 17 applies the instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) to "RT-4" and "RT-7": discovery lists aliases through R8, from which the provider adapters build their models lists, and the MCP and OpenAI documentation pages move to the adapters. Revision 16 applies the owner's answers of 2026-11-13 to the consolidated list of open decisions: a write that names a removed field is refused by name (D18), and the post-chain row of the user credential designs follows their settlement on pods with several slots. Revision 5 replaced the design that revision 4 described under the title "Built-in experiment provider removal" and the file name `experiment-provider-removal-design.md`. The owner has settled every decision in "Decisions". It reads against [`0144-session-derive`](../0144-session-derive/change.md) revision 22, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 77, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 45, [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0136-placement`](../0136-placement/change.md) revision 11, [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) revision 15, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) revision 6. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RT-n, and requirements carry the label RTR-n. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 19, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -12,7 +10,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | **[source]** | Read in the Lenny tree or the specification on 2026-11-08, or on 2026-11-09 for the claims revision 7 added. |
 | **[design]** | What this design requires. Nothing implements it. |
 
-**Evidence sources.** A *Go build overlay* is the Go toolchain's `-overlay` build flag, which substitutes files at build time and leaves the tree unchanged. The binary size comparison in "Current state" used one to replace `experimentprovider.go` with a stub. "Validation owed" lists the evidence still missing.
+**Evidence sources.** A *Go build overlay* is the Go toolchain's `-overlay` build flag, which substitutes files at build time and leaves the tree unchanged. The binary size comparison in "Current state" used one to replace `experimentprovider.go` with a stub. "Validation owed" in `steps.md` lists the evidence still missing.
 
 ## Problem
 
@@ -90,6 +88,7 @@ Rolling out a new version of one runtime is a related problem with a different o
 | Experimentation subsystem | Everything this design removes from §10.7: experiments, variants, external targeting, the sticky cache, variant pool sizing, and eval storage. |
 | OFREP | The OpenFeature Remote Evaluation Protocol, a vendor-neutral REST protocol for asking a flag service for a flag's value. The gateway's OFREP client is one of the removed paths. |
 | SDK path | External targeting through vendor SDKs for LaunchDarkly, Statsig, and Unleash compiled into the gateway, in the `experimentprovider` package. |
+| Labels | Parts of the design carry the label RT-n, and requirements carry the label RTR-n. |
 
 ### Terms from other designs and the platform
 
@@ -136,7 +135,7 @@ This design builds on mechanisms the specification, the tree, and other designs 
 | CR-1 | [`0124-connector-removal`](../0124-connector-removal/change.md) | The removal of connectors, with the connector link check, `details.connectors`, and the connector interceptor phases `PreConnectorRequest` and `PostConnectorResponse`. |
 | SD-1 | [`0144-session-derive`](../0144-session-derive/change.md#sd-1-one-route) | The derive route and its shared create path, with its target checks under "Checks" and "Stops". Revision 12 of that design refused a derive when an interceptor rewrote its runtime and added `evalRef` to derive, and "RT-2" and "RT-1" reverse both. Its SD-P4, the refusal of a target with no runtime supervisor, is withdrawn (AR O8). |
 | R8 | [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | [R8](../0138-rest-only-client-api/change.md#ro-2-rest-additions) the public runtime index, the single-runtime read, and the aliases on discovery, from which the provider adapters build their models lists. |
-| AR O2 and AR O8 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) | Decisions of the agent-runtimes-only design, which removes the `type: mcp` runtime and service mode. O2 removes `executionMode`, with the derive's mode check and `INCOMPATIBLE_RUNTIME`. O8 replaces SD-P4 and its reason `target_unsupervised` with the post-chain check of DR-4 that the final runtime row is `registered`, for every create, derive, and delegated child. The owner settled both on 2026-11-13. |
+| AR O2 and AR O8 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions) | Decisions of the agent-runtimes-only design, which removes the `type: mcp` runtime and service mode. O2 removes `executionMode`, with the derive's mode check and `INCOMPATIBLE_RUNTIME`. O8 replaces SD-P4 and its reason `target_unsupervised` with the post-chain check of DR-4 that the final runtime row is `registered`, for every create, derive, and delegated child. The owner settled both on 2026-11-13. |
 | RP-1 and RP-2 | [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-1-handshake) | [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake) the handshake the adapter runs with each runtime process it launches at bind, refused with `RUNTIME_HANDSHAKE_REFUSED`; [RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies) runtime capabilities and the claim-time check of a session's effective capabilities against the pod set's last handshake report, refused with `RUNTIME_CAPABILITY_MISSING` (its decision O2 (d)). |
 | EG decision 60 | [`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants) | Per-slot scopes on a pod with several slots, settled by the owner on 2026-11-13 as option (a): `netagent` applies each slot's own session's environment, host lists, and credentials, and a pod keeps the union scope only where slot attribution is unavailable. |
 | RV-2 and RV-7 | [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) | Revision selection, which runs on the final runtime after the `PreRoute` chain and before the post-chain checks, and session options, whose validation against the chosen revision's schema runs at the post-chain point. |
@@ -199,51 +198,6 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 "Limits" states what the change costs: Lenny keeps no scores and no experiment state, two concurrent tests on one runtime share one route or need an interceptor, and a tenant's remote service needs an in-cluster relay.
 
-## Decisions
-
-Settled by the owner on 2026-11-08:
-
-| ID | Decision |
-| :-- | :-- |
-| D1 | Eval storage is removed. |
-| D2 | Every feature specific to experimentation is removed, and Lenny keeps no experiment object. |
-| D3 | Routes are built in, implemented as a `PreRoute` interceptor against the contract external interceptors follow, and can be turned off and replaced. |
-| D4 | Interceptor registration stays with `platform-admin`. Tenant-written interceptors are out of scope. |
-| D5 | Interceptors run in the cluster. A deployer reaches a remote service through an in-cluster interceptor or relay of their own. |
-| D6 | Interceptor calls do not pass through `lenny-egress`. |
-| D7 | An interceptor registration may be scoped to a list of tenants. |
-| D8 | Routes match on the requested runtime alone. A deployer who wants rules on session labels writes an interceptor (formerly O1). |
-| D9 | A delegated child starts with its parent's routing labels, and the child's chain may change any key (formerly O2). |
-| D10 | A `tenant-admin` writes routes for their own tenant, and a `platform-admin` writes routes for any tenant (formerly O3). |
-| D11 | `evalRef` is retired. A derive runs the `PreRoute` chain with `kind: derive`, the route interceptor treats it like any creation, and derive's own checks run after the chain (formerly O4). |
-| D12 | This design adds no route that applies across tenants. Operator rollouts of a new version of one runtime belong to [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) (formerly O5). |
-| D13 | The interceptor changes listed in "RT-2" and "RT-6" beyond the `PreRoute` payload are part of this design: session context on every phase, the payload audit, the last modifier, the scope check on `interceptorRef`, and routing reuse on retry and resume. |
-
-Settled by the owner on 2026-11-09, during the review that compared every design with the others:
-
-| ID | Decision |
-| :-- | :-- |
-| D14 | A delegated child that crosses into another environment through a sharing path keeps its parent's routing labels, as any delegated child does under D9 (review question Q8). |
-| D15 | A tenant can see an interceptor that a `platform-admin` registers for it: [`0142-security-oversight`](../0142-security-oversight/change.md) mirrors the registration to each listed tenant, lists it in the tenant's security posture, and states whether operator access approval applies to it (review question Q7). |
-
-Settled by the owner on 2026-11-10:
-
-| ID | Decision |
-| :-- | :-- |
-| D17 | A route's requested name may name no runtime, which makes the route an alias, and the models list shows a tenant's aliases. Since 2026-11-14 Lenny's discovery routes carry the aliases and the provider adapters build their models lists from them (R8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md)). This settles O9 of [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) in the owner's words "go with the recommendation". A separate alias table would duplicate routes. The per-runtime admission limits move after the chain, so neither an alias nor a route moves a session past them ("RT-4", **Aliases.**, "Before the chain", and "Discovery"). |
-
-Settled by the owner on 2026-11-13:
-
-| ID | Decision |
-| :-- | :-- |
-| D18 | A write that names a field this design removes, the tenant's `experimentTargeting` or a request's `evalRef`, is refused with `400 VALIDATION_ERROR` naming the field ("RT-1", **Removed request fields.**). The owner answered "6 ok" to one rule for removed fields everywhere, which D6 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) records. |
-
-Open:
-
-| ID | Question | Recommendation |
-| :-- | :-- | :-- |
-| D16 | The plaintext interceptor dial in "Current state" is filed as its own `BUILD-GAPS.md` finding, F-10.3.27, because it contradicts NET-063 today, independent of this design. | **Settled**, in the owner's words "render the chart and file it" (2026-11-09). A render with an interceptor namespace confirmed that the chart passes none of the three TLS flags. |
-
 ## Requirements
 
 | ID | Requirement |
@@ -277,7 +231,7 @@ Open:
 
 **Derive [source].** `handleDerive` runs neither the `PreRoute` chain nor the `PostRoute` chain today (F-15.1.78). [SD-1](../0144-session-derive/change.md) adds both and refuses a derive whose runtime an interceptor rewrites.
 
-**Checks after a rewrite [source].** After the late `PreRoute` segment changes the runtime, `preRouteAfterExperiment` re-resolves the isolation level, and `create.go` re-runs the drain gate. The fail-closed isolation check against `minIsolationProfile` lives in the `ExperimentRouter` (`VARIANT_ISOLATION_UNAVAILABLE`), and no equivalent was found for a runtime an external interceptor selects. "Validation owed" records the check.
+**Checks after a rewrite [source].** After the late `PreRoute` segment changes the runtime, `preRouteAfterExperiment` re-resolves the isolation level, and `create.go` re-runs the drain gate. The fail-closed isolation check against `minIsolationProfile` lives in the `ExperimentRouter` (`VARIANT_ISOLATION_UNAVAILABLE`), and no equivalent was found for a runtime an external interceptor selects. "Validation owed" in `steps.md` records the check.
 
 **Re-checks in other designs [source].** Several designs each place their own checks after the experiment rewrite, at different call sites: TS-1 re-runs its environment checks on the final row ("A session's environment"), DR-4 refuses a tenant-view miss on the final row ("Reading"), CA-4 places its link check after `preRouteAfterExperiment` ("Placement"), CA-7 and DR-8 place theirs after `ApplyExperimentRouting`, and TS-3 re-checks a crossing on the final row. The "RT-2" post-chain point replaces those call sites with one.
 
@@ -285,7 +239,7 @@ Open:
 
 - Registration records `endpoint`, `phases`, `priority`, `failPolicy`, and `timeout`. It has no TLS or credential field, and no tenant scope. The interceptor store treats interceptors as platform resources, and every `/v1/admin/interceptors` route sits behind `requireAdmin`, which requires `platform-admin` (`pkg/gateway/externalapi/admin/routes.go`, `tenants.go`).
 - Transport security is gateway-wide. `dialInterceptor` in `cmd/lenny-gateway/policychain_seams.go` reads `--external-interceptor-tls-cert`, `--external-interceptor-tls-key`, and `--external-interceptor-ca`. The SPIFFE check of NET-063 applies only to a `.svc` host. Any other host gets CA and DNS name checks against the single CA bundle, so a public endpoint with a public certificate fails unless that bundle holds public roots.
-- When all three flags are empty, `dialInterceptor` dials in plaintext, and no dev-mode check guards that branch. The chart renders `--interceptor-namespaces` and an interceptor certificate (`lenny-interceptor-tls`) and renders none of the three flags (`charts/lenny/templates/gateway-deployment.yaml`). A chart install therefore appears to dial interceptors in plaintext with no SPIFFE check, which NET-063 forbids. "Validation owed" records the confirmation, and O6 asks whether to file it now.
+- When all three flags are empty, `dialInterceptor` dials in plaintext, and no dev-mode check guards that branch. The chart renders `--interceptor-namespaces` and an interceptor certificate (`lenny-interceptor-tls`) and renders none of the three flags (`charts/lenny/templates/gateway-deployment.yaml`). A chart install therefore appears to dial interceptors in plaintext with no SPIFFE check, which NET-063 forbids. "Validation owed" in `steps.md` records the confirmation, and O6 asks whether to file it now.
 - §4.8 admits "an external host:port" endpoint, and §13.2 says such an interceptor uses the gateway's public HTTPS rule, which admits TCP 443 only.
 
 **`evalRef` [source].** §15.1 defines `evalRef` on replay as a link "to an experiment or eval set", recorded in the new session's metadata and filterable on `GET /v1/sessions`. `replay.go` decodes it into its request struct, and no code stores it or filters on it. [`0144-session-derive`](../0144-session-derive/change.md) moves it to derive.
@@ -322,7 +276,9 @@ Open:
 | Migrations | `0011_session_experiment_context`, `0025_tenant_experiment_targeting`, `0029_eval_results`, `0030_experiment_definitions`, `0098_eval_results_idempotency_key`, and `0156_eval_aggregates_matview`. |
 | Documentation | `README.md`, `docs/index.md`, `docs/tutorials/evaluation-scoring.md`, `docs/operator-guide/openfeature-integration.md`, and the other pages under `docs/` that name experiments or eval, including `docs/reference/metrics.md` and `docs/reference/error-catalog.md`. |
 
-## RT-1 Removal
+## Detailed design
+
+### RT-1 Removal
 
 Delete every item under "Removed" in "Scope" from the carriers in "Footprint".
 
@@ -334,9 +290,9 @@ Delete every item under "Removed" in "Scope" from the carriers in "Footprint".
 - **Removed request fields.** A tenant write that names `experimentTargeting`, and a derive or session list request that names `evalRef`, are refused with `400 VALIDATION_ERROR` whose `details.field` names the member, whatever value it carries, under the one rule for removed fields (D18). The names stay in the validators' lists of removed fields and nowhere else.
 - **Build sequence.** §18 Phase 16 becomes "Runtime routes", and Phase 16.5 is deleted. `TESTING.md` §13.33 and §13.34 follow.
 
-## RT-2 The interceptor contract
+### RT-2 The interceptor contract
 
-### `PreRoute` payload
+#### `PreRoute` payload
 
 One Go type in `pkg/gateway/policy/interceptor` serializes the payload for every creation path. Its fields:
 
@@ -360,13 +316,13 @@ One Go type in `pkg/gateway/policy/interceptor` serializes the payload for every
 
 The immutable fields join the existing immutable field enforcement. `InterceptRequest.session_id` carries the same `session_id`, and `metadata` carries the session context below. The `PostRoute` payload carries `runtime_options` as an immutable field as well, so the options the post-chain point validates are the options the runtime receives.
 
-### One chain
+#### One chain
 
 The gateway runs the `PreRoute` chain once, in ascending priority, with the route interceptor as an ordinary member at priority 300. The split segments, `preRouteBeforeExperiment`, `preRouteAfterExperiment`, and the experiment pivot are deleted from `create.go` and `create_and_start.go`. The delegation and derive paths honour `requested_runtime`, `requested_pool`, and `routing` from a `MODIFY`, as the create paths do.
 
 A derive that omits `runtimeRef` asks for the source's resolved runtime. When Alice's source session asked for `claude-worker` and a route placed it on `claude-worker-v2`, her derive asks for `claude-worker-v2`, and a route keyed on `claude-worker` does not move it. A derive that names `claude-worker` is routed as a create is.
 
-### Post-chain point
+#### Post-chain point
 
 Session creation runs in this order on every path:
 
@@ -375,7 +331,7 @@ Session creation runs in this order on every path:
 3. The post-chain point runs every check that depends on the runtime, the revision, or the pool, on the chosen revision. A check that reads a field [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) versions, such as `workspaceDefaults` or `runtimeOptionsSchema`, reads it from the chosen revision. Declared capabilities are read there from the chosen revision.
 4. The claim-time capability check of [RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies): when the chosen revision's pod set has a recorded handshake report, the gateway compares the session's effective capabilities with the report's offer and refuses a session the offer does not cover with `RUNTIME_CAPABILITY_MISSING`, naming each missing capability, with no pod claimed. A pod set with no report yet passes, and the adapter's check at launch decides.
 5. The pod claim.
-6. At bind, after materialization and setup, the adapter launches the runtime process and runs the handshake of [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake). A refusal ends the bind and releases the slot, which stays in service, and the creation fails with `RUNTIME_HANDSHAKE_REFUSED`, or with `RUNTIME_CAPABILITY_MISSING` when the process offers less than the session's effective capabilities. A retryable refusal is retried on another pod. A refusal that is not retryable stops claims from that pod set. At a resume or a restore, a refusal that is not retryable ends the session `failed` ([`0139-runtime-protocol`, "Decisions"](../0139-runtime-protocol/change.md#decisions), D10, settled by the owner on 2026-11-13 together with SL-Q2 of `0146-session-lifecycle`).
+6. At bind, after materialization and setup, the adapter launches the runtime process and runs the handshake of [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake). A refusal ends the bind and releases the slot, which stays in service, and the creation fails with `RUNTIME_HANDSHAKE_REFUSED`, or with `RUNTIME_CAPABILITY_MISSING` when the process offers less than the session's effective capabilities. A retryable refusal is retried on another pod. A refusal that is not retryable stops claims from that pod set. At a resume or a restore, a refusal that is not retryable ends the session `failed` ([`0139-runtime-protocol`, "Decisions"](../0139-runtime-protocol/decisions.md#decisions), D10, settled by the owner on 2026-11-13 together with SL-Q2 of `0146-session-lifecycle`).
 
 Steps 4 and 6 belong to the runtime protocol design. This design fixes their place: after the post-chain point, so that every routing and policy refusal comes first and names the last modifier, and around the claim, because the report they read belongs to the pod set of the chosen revision rather than to the runtime.
 
@@ -384,7 +340,7 @@ The checks apply on every path and to every outcome, including a runtime the cli
 | Owner | Checks at the post-chain point |
 | :-- | :-- |
 | This design | The final pool's isolation profile satisfies the session's `minIsolationProfile`. The drain gate runs once, on the final pool. |
-| [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) | For every creation kind, `create`, `delegate`, and `derive`: the runtime is in the tenant view, and its runtime row is `registered`, the field the RuntimeReconciler mirrors from the `Runtime` resource. For a platform-derived runtime the base's row must also be `registered`. A miss and a row that is not `registered` both answer as for an absent name: `404 RESOURCE_NOT_FOUND`, or for a delegated child the delegation surface's own not-found answer, `TARGET_NOT_IN_SCOPE` ("Reading" and **Registered rows** under DR-4; decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions)). The pool is selectable by the tenant through an access row or as its owned pool ("Pods" under DR-5). |
+| [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) | For every creation kind, `create`, `delegate`, and `derive`: the runtime is in the tenant view, and its runtime row is `registered`, the field the RuntimeReconciler mirrors from the `Runtime` resource. For a platform-derived runtime the base's row must also be `registered`. A miss and a row that is not `registered` both answer as for an absent name: `404 RESOURCE_NOT_FOUND`, or for a delegated child the delegation surface's own not-found answer, `TARGET_NOT_IN_SCOPE` ("Reading" and **Registered rows** under DR-4; decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions)). The pool is selectable by the tenant through an access row or as its owned pool ("Pods" under DR-5). |
 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#ts-1-environment-scoping) | The environment rules on the final row that "A session's environment" under TS-1 lists: the selector for E, `ENVIRONMENT_REQUIRED`, the rule for pods with no per-session policy (`ENVIRONMENT_POLICY_NOT_ENFORCEABLE`), which under decision 60 (a) of the egress design applies only to a pod with several slots where slot attribution is unavailable. For `kind: delegate`, the rules start from the parent's E, a final runtime outside the parent's selector needs a live sharing path that sets the child's E to T, and the crossing re-check of "Cross-environment sharing" under TS-3 refuses a final row that leaves the path, changes T, or changes whether the hop crosses. |
 | [`0127-egress-and-git`](../0127-egress-and-git/change.md#effective-policy) | The refusal of a plan with a `gitClone` source on a pool with no git path ("Credentials"), and the refusal of `egress.allowedHosts` or `egressLockHosts` on a pod with several slots where slot attribution is unavailable, which the post-chain point reads from the pool's status ("Effective policy" and decision 60 (a), "Slot attribution and fetch grants"). The gateway's resolution of `gitClone` refs runs after these checks on every creation path, and before the pod claim where the plan arrives with the create request, because its gateway cause assertion names the final pool and the session's environment. At finalize, the pod was claimed at create, so a bad ref fails the finalize on a claimed pod ("Credentials", **The gateway runs no git.**, and "Effective policy", **Where the pool checks run**). |
 | [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md#flow) and [`0152-user-git-identity`](../0152-user-git-identity/change.md#ug-2-repository-authorization) | The account link check (step 1 of "Flow"), the refusal of a `userCredential` binding on a pod that can serve another session with `422 USER_CREDENTIAL_UNSUPPORTED_POD` ("Limits under both deliveries" under UC-3), which under the owner's settlement of 2026-11-13 of that design's decision 41 and the user git identity design's decision 52 refuses a binding, `lockEgressToHosts`, and a user git identity on a pool whose status records the union fallback and on a recycled or used pod, and admits them on a pool whose status records slot attribution, the refusal of a binding's `lockEgressToHosts`, and of a session row's `egressLockHosts`, on a pool with `egressProfile: internet`, whose raw sockets bypass the lock ([UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file)), and the repository check of [`0152-user-git-identity`](../0152-user-git-identity/change.md) ("When the check runs"). A missing link from either check is reported in the combined missing-links response, `403 LINKS_REQUIRED` with `details.userLinks`, which [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding) defines. |
@@ -399,23 +355,23 @@ When the chain changed the runtime or pool and the result fails a check, the gat
 
 F-10.6.17, filed in `BUILD-GAPS.md`, records that a rewrite after §10.6 admission escapes the environment selector check. TS-3 owns the rules that close it, and this post-chain point is where they run.
 
-### Last modifier
+#### Last modifier
 
 `interceptor.Result` gains `ModifiedBy`, the name of the interceptor whose `MODIFY` last changed the payload, set by `Chain.Run` and `Chain.RunRange`. Every phase records it in the audit row for the request, and a refusal at the post-chain point names it.
 
-### Session context on every phase
+#### Session context on every phase
 
 After creation, every `InterceptRequest` on every phase carries the same session context in `metadata`: `tenant_id`, `user_id`, `session_id`, `root_session_id`, `runtime`, `pool`, and the routing labels as `routing.<key>` entries. Today only the route paths set `tenant_id` and `user_id`. An LLM, delegation, or output interceptor can then apply rules per runtime or per routing label without a lookup.
 
-### Payload audit
+#### Payload audit
 
 The proposal runs `fidelity-review` over the payload table of §4.8 for every phase and corrects each payload the code sends to the fields §4.8 states, or corrects §4.8 where the code is right. `PostRoute` is the known case: its payload omits the credential pool assignment and the runtime tags that §4.8 lists, and it gains the session context and the routing labels.
 
-### Retry and resume
+#### Retry and resume
 
-A retried or resumed session uses the runtime, pool, and routing labels stored at creation and does not run the `PreRoute` chain again, and its revision follows [`0140-runtime-revisions`](../0140-runtime-revisions/change.md), so a route with `key: random` cannot move a resumed session. "Validation owed" records the confirmation against [§7.3](../../spec/07_session-lifecycle.md#73-retry-and-resume).
+A retried or resumed session uses the runtime, pool, and routing labels stored at creation and does not run the `PreRoute` chain again, and its revision follows [`0140-runtime-revisions`](../0140-runtime-revisions/change.md), so a route with `key: random` cannot move a resumed session. "Validation owed" in `steps.md` records the confirmation against [§7.3](../../spec/07_session-lifecycle.md#73-retry-and-resume).
 
-## RT-3 Routing labels
+### RT-3 Routing labels
 
 The session record gains `routing`, a map from string to string.
 
@@ -426,7 +382,7 @@ The session record gains `routing`, a map from string to string.
 3. After the post-chain point passes, the gateway writes the map to the session record. It does not change after that, including on retry and resume.
 4. A client request that sets `routing` is rejected with `400 VALIDATION_ERROR`. Client `labels` stay client-owned, so the §14 statement that labels are not used for internal routing remains true.
 
-Keys and values follow the bounds §14 sets for `labels` ("Validation owed").
+Keys and values follow the bounds §14 sets for `labels` ("Validation owed" in `steps.md`).
 
 **Consumption.**
 
@@ -442,9 +398,9 @@ The gateway makes no decision from `routing`. Placement and enforcement read onl
 
 Under D9 a child carries the labels of the routing decision that produced its tree, so a child that runs a different runtime can carry `routing.target` naming its parent's target. The session's runtime field records what the child runs. The delegation lease carries `routing` in place of `experimentContext`.
 
-## RT-4 Runtime routes
+### RT-4 Runtime routes
 
-### Resource
+#### Resource
 
 A route is a tenant-scoped admin resource:
 
@@ -468,23 +424,23 @@ targets:
 - Admission refuses a target outside the tenant view, a pool that does not belong to its target's runtime or that the tenant cannot select, and a target whose pools are all weaker than the requested runtime's default pool. The last rule moves the admission check of §10.7 to routes. Each rule holds for every active revision of the runtimes the route names.
 - A route write that names a target runtime whose default clones carry `write` values answers with a `Warning` header naming those runtimes, because the route can add push access to the sessions it moves. [`0147-tenant-derived-runtimes`, "Write scope"](../0147-tenant-derived-runtimes/change.md#write-scope) gives an experiment write the same warning today.
 - Updates use `If-Match`. A route has no status. Deleting it stops routing at once.
-- A `tenant-admin` writes routes for their own tenant, and a `platform-admin` writes routes for any tenant (D10). A route calls no external service and every target must be in the tenant view, so a `tenant-admin` route reaches only runtimes the tenant could already request. Each write emits the admin audit record ("Validation owed").
+- A `tenant-admin` writes routes for their own tenant, and a `platform-admin` writes routes for any tenant (D10). A route calls no external service and every target must be in the tenant view, so a `tenant-admin` route reaches only runtimes the tenant could already request. Each write emits the admin audit record ("Validation owed" in `steps.md`).
 
-### Before the chain
+#### Before the chain
 
 No check before the `PreRoute` chain refuses a requested name for naming no runtime. The tenant-view check at the post-chain point judges the final runtime, so an alias with no route behind it, an alias whose route a higher interceptor overrode with a name that is no runtime, and an alias asked for while `gateway.routes.enabled` is `false` answer as for an absent name.
 
 The create path applies the §11.1 per-runtime concurrency limit, the per-runtime and per-pool request rate limits, and the explicit environment's runtime selector to the requested name in `createAdmissionGates`, before the chain **[source]**. Each judges the wrong runtime once a route moves a session, and an alias would pass the first two, because no session counts against a name that is no runtime, and fail the third. The per-runtime and per-pool limits move to the post-chain point and judge the final runtime and pool. The selector check moves there under TS-1's environment rules, which the post-chain table already lists. The runtime-independent gates, the per-user and global limits among them, stay before the chain so that an over-limit create runs no interceptor.
 
-A refusal at the post-chain point, from these limits or from any other check in the post-chain table, releases every reservation the create made before it, such as the token-budget reservation that §4.8 assigns to `QuotaEvaluator` at `PostAuth`, before it answers. A refused create therefore holds no budget. The comments in `createAdmissionGates` state that the per-runtime limits run before the `PostAuth` chain so that an over-limit create reserves no token budget, and "Validation owed" records whether any reservation happens there today.
+A refusal at the post-chain point, from these limits or from any other check in the post-chain table, releases every reservation the create made before it, such as the token-budget reservation that §4.8 assigns to `QuotaEvaluator` at `PostAuth`, before it answers. A refused create therefore holds no budget. The comments in `createAdmissionGates` state that the per-runtime limits run before the `PostAuth` chain so that an over-limit create reserves no token budget, and "Validation owed" in `steps.md` records whether any reservation happens there today.
 
-### Discovery
+#### Discovery
 
 `GET /v1/runtimes` and the single-runtime read `GET /v1/runtimes/{name}` list a tenant's aliases beside its runtimes, each marked as an alias, while `gateway.routes.enabled` is `true`, under [R8](../0138-rest-only-client-api/change.md#ro-2-rest-additions) of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). An alias is listed for a caller when every target with a positive weight is a runtime the list would show that caller, so a listed name never places the caller on a runtime outside their view. Its name is the alias. A route over a runtime adds no entry, because the runtime is listed already.
 
 The provider adapters of that design build their models lists, `GET /v1/models` and `GET /v1/models/{model_id}` on the OpenAI and Anthropic adapters, from these routes, so a models list carries the same aliases under the same rule, with the alias as each entry's `id` and display name. Revision 16 placed the list on the OpenAI translators and the Messages API in the gateway, which leave Lenny under that design.
 
-### Assignment
+#### Assignment
 
 For a session whose `requested_runtime` matches a route, the route interceptor:
 
@@ -494,27 +450,27 @@ For a session whose `requested_runtime` matches a route, the route interceptor:
 
 Determinism replaces the sticky cache: a user under `key: user` reaches the same target in every session while the route is unchanged, and every session in a delegation tree under `key: session` reaches the same target. A derived session is its own root, so under `key: session` it is placed independently of its source. Changing weights or inserting a target moves the boundaries and reassigns some keys. Appending a target at the end of the list moves the fewest keys. Renaming a route reassigns every key.
 
-### Pools
+#### Pools
 
 Routes write no pool configuration. Each target's pool scales from its own demand history through the standard formula of §4.6.2. An operator who adds a target sets that pool's `minWarm` for its first sessions, as for any new pool. DP11 has no equivalent, because a route has no pool effects.
 
-### Turning routes off
+#### Turning routes off
 
 The Helm value `gateway.routes.enabled`, default `true`, controls the route interceptor. When it is `false`, the gateway registers no route interceptor and serves no `/v1/admin/routes` endpoint, and the stored routes stay in the database. An operator who replaces routes registers an external `PreRoute` interceptor at any priority above 100.
 
-### Contract tests
+#### Contract tests
 
 One contract test suite at tier 3 drives the `PreRoute` payload and `MODIFY` rules. It runs against the route interceptor in process and against a stub external interceptor over gRPC, so the two cannot drift.
 
-## RT-5 In-cluster interceptors
+### RT-5 In-cluster interceptors
 
 - **Endpoint.** Registration accepts only `<service>.<namespace>.svc` or `<service>.<namespace>.svc.<cluster domain>`, with a port, where the namespace is listed in `gateway.interceptorNamespaces`. Any other host, including an IP address, is refused with `400 INTERCEPTOR_ENDPOINT_NOT_IN_CLUSTER`. A deployer reaches a remote service through an in-cluster interceptor of their own, which holds its own credentials under its own namespace's egress policy.
-- **Transport.** The chart passes the gateway's mTLS leaf and the cluster CA to `--external-interceptor-tls-cert`, `--external-interceptor-tls-key`, and `--external-interceptor-ca`. The gateway dials plaintext only in dev mode or when `mtls.enabled` is `false` because a service mesh provides transport security ("Validation owed"). In any other mode it refuses to start while an interceptor is registered and the material is absent.
+- **Transport.** The chart passes the gateway's mTLS leaf and the cluster CA to `--external-interceptor-tls-cert`, `--external-interceptor-tls-key`, and `--external-interceptor-ca`. The gateway dials plaintext only in dev mode or when `mtls.enabled` is `false` because a service mesh provides transport security ("Validation owed" in `steps.md`). In any other mode it refuses to start while an interceptor is registered and the material is absent.
 - **Network.** §13.2 drops the sentence admitting interceptors through the public HTTPS rule. The interceptor rule of NET-039 is the only gateway egress to an interceptor.
 - **`lenny-egress`.** Interceptor calls do not pass through it (D6). Its tunnels carry TLS end to end and inject credentials only toward an upstream proxy, so it would add a dependency to every session creation without supplying trust or credentials.
 - **Every phase.** The rule applies to every registration, whatever its phases.
 
-## RT-6 Tenant-scoped interceptors
+### RT-6 Tenant-scoped interceptors
 
 - A registration gains `tenants`, a list of tenant IDs. An empty or absent list calls the interceptor for every tenant, as today.
 - The chain skips a scoped interceptor for a request of any other tenant, on every phase. The filter reads `Request.TenantID`, which every phase already carries.
@@ -525,7 +481,7 @@ One contract test suite at tier 3 drives the `PreRoute` payload and `MODIFY` rul
 - **Visibility to the tenant (D15).** A registration that lists tenants is a `platform-admin` write to a resource of each listed tenant. [`0142-security-oversight`](../0142-security-oversight/change.md) mirrors its create, update, and delete to each listed tenant's audit chain under SO-4a, lists the tenant's scoped interceptors in its security posture with their phases, priority, `failPolicy`, and Service name, and states whether its operator access approval covers the registration.
 - A SaaS provider either registers one scoped interceptor per customer or runs one unscoped dispatcher that forwards by `tenant_id`. Both use the in-cluster rule of "RT-5".
 
-## RT-7 Documentation
+### RT-7 Documentation
 
 The operator guide page `docs/operator-guide/openfeature-integration.md` is replaced by `docs/operator-guide/runtime-routing.md`, which states:
 
@@ -647,21 +603,6 @@ The following edits locate their targets by heading:
 
 Every test carries the `// spec:` annotation, and tests at tier 2 and above carry `// diagnosis:`, as `test-coverage.md` requires.
 
-## Validation owed
-
-| Item | Why it matters | Status |
-| :-- | :-- | :-- |
-| Run Kind to confirm that the gateway dials interceptors in plaintext | "Current state" infers it from the template and the dial code. | The chart render is done (2026-11-09): with `gateway.interceptorNamespaces` set, the gateway gets `--dev-mode=false` and none of the three TLS flags. Filed as F-10.3.27. The Kind run remains open. |
-| Confirm the isolation check the gateway applies to a directly requested runtime, and whether any check covers an external interceptor's rewrite | The post-chain checks of "RT-2" reuse the direct check. | Open. |
-| Confirm that retry and resume read the stored runtime and pool and run no `PreRoute` chain | "RT-2" and RTR-11 rely on it. | Open. |
-| Confirm that each check in the post-chain table reads only the final row and can move to one call site | "RT-2" moves checks that other designs place at separate call sites. | Open, for the proposal. |
-| Confirm the bounds §14 places on `labels` | "RT-3" reuses them for `routing`. If none exist, the proposal sets bounds for both. | Open. |
-| Confirm that admin writes emit a generic audit record | Routes rely on it in place of `experiment.status_changed`. | Open. |
-| Confirm the interceptor transport under `mtls.enabled: false` with a service mesh | "RT-5" admits plaintext to a mesh sidecar. | Open. |
-| Confirm whether the create path reserves token budget at `PostAuth` today | "Before the chain" requires a post-chain refusal to release it. The comments in `createAdmissionGates` say the reservation happens there, and no reservation call was found in the create path on 2026-11-10. | Open, for the proposal. |
-| Confirm that the shared Kind database's migration guard accepts the forward drop migration | "RT-1" relies on it. | Open, for the proposal. |
-| Confirm the §28 link row for the gateway-to-interceptor connection | "Specification changes" assumes the verifier finds or adds it. | Open, for the proposal's verifier. |
-
 ## Instructions for reviewers of other designs
 
 These designs refer to the removed subsystem, the `PreRoute` chain, derive, the checks after a rewrite, or interceptor registration:
@@ -685,24 +626,3 @@ These designs refer to the removed subsystem, the `PreRoute` chain, derive, the 
   - records F-10.6.17 as closed by TS-3's rules at the post-chain point of "RT-2".
   "SSRF and NetworkPolicy" needs no change, because "RT-5" removes interceptors from the external HTTPS path and adds no rule.
 - [`0142-security-oversight`](../0142-security-oversight/change.md) does not cover tenant-scoped interceptors. Its reviewer applies D15: SO-4a mirrors a registration's create, update, and delete to each listed tenant as `kind: admin_write`, "Posture" gains a section that lists the tenant's scoped interceptors, and the design states whether decision 15's approval gate covers a registration.
-
-## Steps
-
-The steps land in order.
-
-### 0141.S1 Interceptor contract and scope
-- status: Planned
-- aliases: [proposal 1, first proposal, interceptor contract proposal, RT-2, RT-5, RT-6]
-- lanes: [specification, code, documentation]
-
-"RT-2" without the route interceptor, "RT-5", and "RT-6". It stands alone: it corrects the delegation path and the phase payloads, adds the session context and the last modifier, closes the plaintext dial, and gives SaaS providers tenant scope while the `ExperimentRouter` still exists. If [`0144-session-derive`](../0144-session-derive/change.md) lands first, this proposal adds `kind: derive` to its create path. Otherwise the derive proposal adopts the payload this one lands.
-
-### 0141.S2 Runtime routes and removal
-- status: Planned
-- aliases: [proposal 2, second proposal, RT-1, RT-3, RT-4, RT-7]
-- lanes: [specification, code, documentation]
-- depends-on: [0141.S1]
-
-"RT-1", "RT-3", "RT-4", and "RT-7". It uses the payload and the single chain of 0141.S1. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) depends on the shared bucketing function of 0141.S2 and lands after it.
-
-Within 0141.S2, the specification edits land first, then routes and routing labels with their tests, then the removal and the migration, then the documentation and records.

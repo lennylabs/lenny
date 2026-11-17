@@ -1,10 +1,8 @@
 # GitLab credential add-on
 
-Status: `Draft`, revision 6, 2026-11-13. Nothing in this document is built or staged. Revision 6 applies the cross-design review of 2026-11-13: it states per-slot `netagent` scopes in the `netagent` term and adds "Documentation" under the owner's extension of decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#decisions) to every design, and changes no rule of this add-on. It reads against [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 45, and [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92. Decisions 1 and 2 carry recommendations for owner review. No live GitLab write, permission check, or quick action has run. The measurements cited ran against a recording stub, and **the stub proves forwarding only**. Statements about GitLab come from the pages under "Sources". Proposals carry the label GL-n. "Review history" at the end records how the document reached this form.
+Status: `Draft`, revision 6, 2026-11-13. Programs: [v1](../programs/v1.md).
 
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
-
-**Evidence sources.** A *stub* is a test HTTP server running stock git that stands in for a provider and records what reaches it. It shows what `netagent` forwards and nothing about what GitLab would do with it. A *spike* is a hands-on test, against a stub or a live provider. This document's spikes carry S-numbers and its validation rows carry V-numbers, and "Validation owed" lists both. *The capture* is the recording of traffic from `gh` 2.103.3, GitHub's command-line client, and `glab` 1.127.0 through a prototype `netagent` to a stub on 2026-11-03, which [`0129-github-credential-addon`, "Capture history"](../0129-github-credential-addon/change.md#capture-history) records. *The prototype* is that Go `netagent`. *The allowlist* is the provider filter of [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 3, which forwarded only the operations, headers, and input keys it listed. [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets)'s request rules replaced it.
+**Evidence sources.** A *stub* is a test HTTP server running stock git that stands in for a provider and records what reaches it. It shows what `netagent` forwards and nothing about what GitLab would do with it. A *spike* is a hands-on test, against a stub or a live provider. This document's spikes carry S-numbers and its validation rows carry V-numbers, and "Validation owed" in `steps.md` lists both. *The capture* is the recording of traffic from `gh` 2.103.3, GitHub's command-line client, and `glab` 1.127.0 through a prototype `netagent` to a stub on 2026-11-03, which [`0129-github-credential-addon`, "Capture history"](../0129-github-credential-addon/review-history.md#capture-history) records. *The prototype* is that Go `netagent`. *The allowlist* is the provider filter of [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 3, which forwarded only the operations, headers, and input keys it listed. [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets)'s request rules replaced it.
 
 Each factual claim about behaviour carries one of these tags where the source matters. They are the tags [`0152-user-git-identity`](../0152-user-git-identity/change.md) defines.
 
@@ -12,7 +10,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | :-- | :-- |
 | **[measured]** | A hands-on result from a validation round of [`0127-egress-and-git`](../0127-egress-and-git/change.md), or from the spike of 2026-11-03 that [`0152-user-git-identity`](../0152-user-git-identity/change.md) and [`0129-github-credential-addon`](../0129-github-credential-addon/change.md) record. Its origin was a recording stub, except where the sentence names another target, such as the Grape and Rails apps under "Preset body". |
 | **[captured]** | Seen at the stub or at the prototype `netagent` in the capture of 2026-11-03. It shows what the client sent and what the filter did. It shows nothing about what GitLab would do. |
-| **[stub cannot show]** | A question only GitLab can answer. Each one has a spike under "Validation owed". |
+| **[stub cannot show]** | A question only GitLab can answer. Each one has a spike under "Validation owed" in `steps.md`. |
 | **[live]** | Read from a provider's host, anonymously, with no write. |
 | **[documented]** | Stated on a GitLab page under "Sources". The page was read and its behaviour was not tested. |
 | **[pending]** | Waits on a measurement or decision named beside it. |
@@ -46,9 +44,10 @@ Out of scope: the link flow (the browser sign-in that creates a link), the bindi
 | Push option | A `git push -o` value GitLab acts on, such as `merge_request.create`, which opens a merge request for the pushed branch, and `merge_request.auto_merge`, which sets it to merge once its pipeline succeeds. |
 | Merge request approval rules and settings | Project settings that require approvals before a merge and limit who can approve. They include the rule that an author cannot approve their own merge request, which this document calls the creator rule, and "Prevent approvals by users who add commits", which excludes the Git author and Git committer of the merge request's commits and which S12 calls the committer rule. They are paid-tier features, and Free lacks them. |
 | Options A to F | The ways of authoring merge requests compared under "Options". E is the recommendation, and D is the project token path the [egress design](../0127-egress-and-git/change.md) has today. |
-| Spikes S10, S11, S12, S13, and S17, and validation row V5 | The validation this document owes, listed under "Validation owed". The spikes keep the numbers [`0152-user-git-identity`](../0152-user-git-identity/change.md) gave them. |
+| Spikes S10, S11, S12, S13, and S17, and validation row V5 | The validation this document owes, listed under "Validation owed" in `steps.md`. The spikes keep the numbers [`0152-user-git-identity`](../0152-user-git-identity/change.md) gave them. |
 | Grape and Rails | Ruby frameworks. GitLab's REST API is built on Grape, and GitLab's web application on Ruby on Rails. "Preset body" cites routing tests against each. |
 | RE2 | The regular expression engine the rule evaluator uses. Its `\s` matches ASCII whitespace alone. |
+| GL-n | This add-on's parts, GL-1 to GL-3, which "Scope" lists and "Detailed design" states. Each part lands in the step of `steps.md` that names its label as an alias. |
 
 ### Terms from other designs and the platform
 
@@ -122,9 +121,11 @@ The rest of this section states each part in the design's terms, which "Terms" a
                                        └──> lenny-egress ──> GitLab API
 ```
 
-## GL-1: The `gitlab` kind
+## Detailed design
 
-### Kind block and endpoints
+### GL-1: The `gitlab` kind
+
+#### Kind block and endpoints
 
 ```yaml
 linkProviders:
@@ -155,25 +156,25 @@ The `gitlab` kind block holds `host` alone, and the host is in the token trust r
 - **Verified email.** The kind reads the verified primary email from `GET /api/v4/user`. A self-managed administrator can change a user's email.
 - **Administrators.** The kind sets `provider_is_admin` from the user endpoint.
 
-### The repository check on GitLab
+#### The repository check on GitLab
 
 | Host | Read | Write | Tag |
 | :-- | :-- | :-- | :-- |
 | GitLab | `GET /api/v4/projects/:id` returning 200 with `read_api` | Effective access level of at least Developer | **[documented]** for the scopes. The field that reports inherited and shared access is S11. |
 
-### What authorization needs
+#### What authorization needs
 
 Repository authorization ([UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization)) on GitLab uses `read_api` and `read_user`, which grant no write **[documented]**. The token stays in the Token Service. It ships regardless of the choices below, on GitLab.com and on self-managed, with the same 2-hour refresh rules.
 
-## GL-2: User-authored merge requests
+### GL-2: User-authored merge requests
 
-### What merge request authoring has to face
+#### What merge request authoring has to face
 
 GitLab describes `api` as "complete read/write access to the API, including all groups and projects", and no OAuth scope limits a token to a project **[documented]**. **A user's `api` token in a binding with `delivery: inject` gives the agent the user's full power across every project and group if `netagent`'s request rules are its only limit, and a compromised `netagent` holds that token.** On self-managed, an administrator's token holds administrator power over the instance.
 
 `glab` needs nothing unusual: REST alone for the commands captured, `Private-Token` carrying the placeholder on all 234 requests, and no `Content-Encoding` **[captured]**. With default settings it also opened one `CONNECT gitlab.com:443` **[captured]**, which is a connection to `gitlab.com` beside the configured host. The variables `GLAB_CHECK_UPDATE=false` and `GLAB_SEND_TELEMETRY=false` in the pool's profile, the environment a runtime receives at launch as [`0127-egress-and-git`, "Injected configuration"](../0127-egress-and-git/change.md#injected-configuration) sets it, stopped it **[captured]**.
 
-### Options
+#### Options
 
 | Option | `glab` unchanged | MR author | What a compromised `netagent` holds | Approve and merge stopped by |
 | :-- | :-- | :-- | :-- | :-- |
@@ -192,7 +193,7 @@ Facts behind E:
 - `expires_at` has day granularity, so revocation at session end uses the egress design's durable pending-revocation record.
 - Whether each creation notifies the user is unknown.
 
-### Recommendation
+#### Recommendation
 
 **LFS (Git Large File Storage, which moves large files through `info/lfs` paths) is refused on GitLab until a live run passes.** GitLab's project tokens and stored tokens sit at the provider capability levels `mint-coarse` and `stored` of [`0127-egress-and-git`, "Target state"](../0127-egress-and-git/change.md#target-state), so the egress design refuses `info/lfs` on them (["Git on covered hosts"](../0127-egress-and-git/change.md#git-on-covered-hosts-netagent)), and `git push` of an LFS object fails there **[measured]**. An action is the entry in an LFS batch response that tells the client where to upload or download an object and which headers to send. GitLab's form of that response ran on a stub **[measured]**, and the one live object tried returned an error rather than an action **[live]**, so no live GitLab action has been read.
 
@@ -217,11 +218,11 @@ On Free, GitLab's approval settings are absent **[documented]**, so E gives attr
 
 Whichever token is in use, `gitlab-deny` stays on by default and the push option refusal applies, because S13 has not shown that a command in a description is limited by the token rather than by the user's own permissions. Commit author and committer follow [`0152-user-git-identity`, "Commit authorship"](../0152-user-git-identity/change.md#commit-authorship), and git itself stays on the project token until S13 shows a fine-grained `Git` permission works per session.
 
-Under [`0142-security-oversight` decision 25](../0142-security-oversight/change.md#decisions), the GitLab project token and the per-session fine-grained token are refused on the API host of a repository rule ([SO-5b](../0142-security-oversight/change.md#so-5b-repository-write-approvals)) for now, because neither is a `mint-scoped` token whose template follows repository entry state, so Lenny cannot limit what it reaches.
+Under [`0142-security-oversight` decision 25](../0142-security-oversight/decisions.md#decisions), the GitLab project token and the per-session fine-grained token are refused on the API host of a repository rule ([SO-5b](../0142-security-oversight/change.md#so-5b-repository-write-approvals)) for now, because neither is a `mint-scoped` token whose template follows repository entry state, so Lenny cannot limit what it reaches.
 
-## GL-3: The `gitlab-deny` preset
+### GL-3: The `gitlab-deny` preset
 
-### Request layout
+#### Request layout
 
 | Provider and host | Flavour | API host | `apiBase` | `restPrefix` | `graphqlPaths` | Uploads | `attach` |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -229,7 +230,7 @@ Under [`0142-security-oversight` decision 25](../0142-security-oversight/change.
 
 A binding that names `gitlab-deny` in `requestRules.preset` uses the `gitlab` flavour on any host.
 
-### Preset body
+#### Preset body
 
 ```yaml
 - name: gitlab-deny
@@ -256,7 +257,7 @@ A binding that names `gitlab-deny` in `requestRules.preset` uses the `gitlab` fl
 
 GitLab has no route inventory like the OpenAPI description of GitHub's REST API, which [`0129-github-credential-addon`, "Preset body"](../0129-github-credential-addon/change.md#preset-body) searched for write routes. The spike ran 67 rows, each a `glab` command or a `glab api` request, through the prototype to a stub. Of those, 8 were forwarded, 37 denied refused, 20 refused beyond the table's expected list, and 2 had no write **[measured]**. "Denied refused" counts requests the preset is meant to deny, which it refused. "Refused beyond the expected list" counts refused requests that the test table did not list as denied. A row with no write sent no write request to the stub. Its other evidence is Grape 3.3.5, an app built to match GitLab's routes under GitLab's pinned `grape ~> 3.2`, which routed `appr%6Fve`, a trailing slash, `//`, and `approve.json` to the approve handler **[measured]**. That is the framework rather than GitLab's whole application. A generic Rails 8.1.4 router routed a trailing slash, `//`, and `.json`, and answered 404 for `%65` **[measured]**. GitHub's stack, the framework that routes its API, is unknown.
 
-### Quick actions
+#### Quick actions
 
 **GitLab.** GitLab itself runs quick actions, whatever the tenant has installed: "Run automatically when you save descriptions or comments" **[documented]**. `glab mr create --description /merge` carries a merge inside an allowed route, and a route-only policy sent it to the stub with the injected token **[captured]**. Whether GitLab would execute it for that token is **[stub cannot show]**, and it is S17.
 
@@ -264,7 +265,7 @@ The prototype refused every line starting with `/word`, which caught `/merge`, a
 
 This list is a deny list, so a future GitLab command with merge power fails open until the preset changes. S17 tests each spelling against a live instance. On the bot path, a tenant lowers the risk further with a project token whose role cannot merge the target branch.
 
-## Configuration by scope
+### Configuration by scope
 
 | Setting | Scope | Who sets it | Default |
 | :-- | :-- | :-- | :-- |
@@ -290,35 +291,9 @@ Tenant `initech` runs `gitlab.initech.internal` at 19.4, Premium, and S13 has pa
 - Erin leaves the project: the sweep refuses, the binding change flushes, and the Token Service revokes the session's token through the durable pending-revocation record.
 - On GitLab 18.x or on a VCS pool with `prAuthoring: bot`, the same `glab` commands run under a project token, and the MR author is the bot. There the preset alone stops approval and merge, and Erin can approve the bot's MR unless "Prevent approvals by users who add commits" excludes her through a commit author the agent can edit.
 
-## Steps
-
-### 0130.S1 The gitlab kind
-- status: Planned
-- aliases: [GL-1]
-- lanes: [specification, code, documentation]
-- depends-on: [0152.S1, 0152.S2, 0151.S7]
-
-The design is in [GL-1](#gl-1-the-gitlab-kind), which covers the kind and the repository check. The dependencies cover the VCS kind rules, the release check, and the kind registry.
-
-### 0130.S2 User-authored merge requests
-- status: Planned
-- aliases: [GL-2]
-- lanes: [specification, code, documentation]
-- depends-on: [0130.S1, 0152.S3]
-
-The design is in [GL-2](#gl-2-user-authored-merge-requests). The dependencies cover the token path and the preset's behaviour on a live host. The spikes S13 and S17 under ["Validation owed"](#validation-owed) have to pass, and S13 runs before the step starts.
-
-### 0130.S3 The gitlab-deny preset
-- status: Planned
-- aliases: [GL-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0151.S4, 0152.S3]
-
-The design is in [GL-3](#gl-3-the-gitlab-deny-preset). The dependencies cover the rule evaluator, the preset format, and the default preset on a VCS pool's API host.
-
 ## Documentation
 
-The tenant admin and runtime author pages of [`0152-user-git-identity`, "Documentation"](../0152-user-git-identity/change.md#documentation) carry a GitLab section that states every item of this add-on that a reader meets, as decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#decisions) requires of every design:
+The tenant admin and runtime author pages of [`0152-user-git-identity`, "Documentation"](../0152-user-git-identity/change.md#documentation) carry a GitLab section that states every item of this add-on that a reader meets, as decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md#decisions) requires of every design:
 
 - **Settings and defaults.** `gitlab.host` on a `gitlab` link provider (no default; a configuration write must set it), `scopes` on a `gitlab` link provider (`read_api` and `read_user`), and the VCS pool's `prAuthoring`, under which `user` needs GitLab 19.2 or later and S13's result, and `bot` selects option D.
 - **Provider requirements.** The OAuth application each tenant registers on its instance with the scopes S13 settles; GitLab 19.2 or later for user-authored merge requests; the paid approval settings that two-person review rests on under option D; and that GitLab Free has none of them.
@@ -343,31 +318,11 @@ The tiers are the stages of the repository's test suite that [`.claude/rules/tes
 
 Against a test GitLab instance: a link, the repository check, a per-session fine-grained token once S13 passes, `glab mr create`, and refusal of approval and merge by the preset.
 
-## Validation owed
-
-No live GitLab write, permission check, or quick action has run.
-
-| Spike | Question | Decides | State |
-| :-- | :-- | :-- | :-- |
-| S10 | What does `glab` send? | Preset tests | **Done** for `mr create`, `view`, `list`, `note`, `update`, `close`, `revoke`, `approve`, `merge`, `rebase`, and `issue create` **[measured]**. 67 rows gave 8 forwarded, 37 denied refused, 20 refused beyond the expected list, and 2 with no write. Owed: `mr reopen`, a fork flow, and whether `glab` names a branch holding `/` with `%2F`, which `repository/branches/{encoded}` admits. |
-| S11 | GitLab: which field reports effective access including shared groups, and who authors a merge request from `merge_request.create`? | The check, and option B's record | Open, live |
-| S12 | GitLab: how does the committer rule ("Prevent approvals by users who add commits") match a commit's author, and on which tiers are external status checks, GitLab's way for an outside service to pass or fail a merge request, offered? | Commit authorship and [UG-4](../0152-user-git-identity/change.md#ug-4-independent-approval-check) on GitLab | Open, live |
-| S13 | Can an OAuth token call `POST /user/personal_access_tokens` with `granular_scopes`, and with which scope? Can a fine-grained token create one? Does each creation notify the user? Does `glab mr create` run under `Read` and `Create` alone, and `mr note` and `mr update` under which additions? **Under a `Create`-only token, does a description holding `/approve` or `/merge` execute?** | The GitLab recommendation and GL-2 | Open, live. Needs a free account and no Lenny code. |
-| S17 | On a live GitLab: do descriptions and notes created through the API run quick actions, under which permissions, with what case and whitespace rules, inside fences, and after a bare CR? How is an encoded project path routed? | `gitlab-deny`'s patterns | Open, live |
-| V5 | S13 and S17 above, for `gitlab-fine-grained` and `gitlab-deny` | Those two data files | Owed, live |
-
 ## Residual risks
 
 - **Compromised `netagent` on GitLab.** It holds one session's fine-grained token under GitLab option E, or one project's token under option D. `api` tokens are absent from pods, so a user's power over other projects is out of reach. 
 - **GitLab under option D.** Below 19.2 or on a VCS pool with `prAuthoring: bot`, the MR author is a bot, and two-person review rests on an agent-editable commit author and a paid setting, so an injected agent defeats it, and Free has no such setting. The independent approval check ([UG-4](../0152-user-git-identity/change.md#ug-4-independent-approval-check)) covers this where a tenant runs it.
 - **GitLab quick actions.** `gitlab-deny`'s patterns are a deny list over free text. A command they do not name, or a spelling GitLab accepts and they miss, runs under whatever permissions GitLab applies (S13, S17).
-
-## Decisions
-
-| # | Decision | Recommendation | Cost of the recommendation | Alternative |
-| :-- | :-- | :-- | :-- | :-- |
-| 1 | GitLab (formerly [`0152-user-git-identity` decision 26](../0152-user-git-identity/change.md#decisions)) | Option E of "Options" on 19.2 and later, per-session fine-grained tokens, with S13 selecting the parent. Option D below 19.2, on a VCS pool with `prAuthoring: bot`, and if S13 finds no programmatic path. Option F is withdrawn. Authorization ships regardless. A VCS pool's `prAuthoring` never selects option A. | GL-2 waits on S13, and depending on it the Token Service holds `api` parents, or users take a manual step. Each session mints and revokes a token, and S13 decides whether each one notifies the user. Older instances keep the bot author. A tenant can still build option A itself under the generic mechanism. | Option D for everyone, which gives up user attribution, half of the request. Option B, which breaks `glab`. Option F, which three texts refuse. |
-| 2 | Quick actions (formerly [`0152-user-git-identity` decision 31](../0152-user-git-identity/change.md#decisions)) | `gitlab-deny`'s `bodyPatterns` refuse lines naming commands that reach review or merge state, whatever the context. A tenant's rules can tighten them. | It is a deny list that fails open on a new command, and a literal `/merge` line in a code block is refused. | The prototype's refusal of every `/word` line, which rejects `/usr/bin/env` **[captured]**. Or no check, relying on the token, which S13 has not shown to bind quick actions. |
 
 ## Sources
 

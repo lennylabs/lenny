@@ -1,8 +1,6 @@
 # Session lifecycle
 
-Status: `Draft`, revision 12, 2026-11-15. Revision 12 applies the owner's decision of 2026-11-15, "Yes, let's drop connectors.", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2 designs: connector calls leave the suspension, the seal, and the qualifying activity, and a suspension that cannot take hold halts the slot's egress (that design's CR-4, which the owner accepted as its O9 with "ok"). Revision 11 applies the remaining instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), with a banner that names the parts moving to the adapters. Nothing here is built or staged. It reads against [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0126-delegation-availability`](../0126-delegation-availability/change.md) revision 12, [`0122-client-tools`](../0122-client-tools/change.md) revision 11, [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) revision 24, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) revision 12, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). It is built from the owner's review of 2026-11-11 of how a parent's and a child's lifecycles combine, which followed revision 9 of the message delivery design and the adversarial review of that revision. An adversarial review read revision 1 on 2026-11-11, and revision 2 applies its fixes and the owner's answers of the same day to the questions it raised, as L15 to L22. A re-review read revision 2 the same day, and revision 3 applies its findings and the owner's decisions L23 to L27. A regression review read revision 3 the same day, and revision 4 applies its findings and the owner's decision L28. Revision 5 applies the owner's decision L29 of the same day. Revision 6 applies the reviewer instructions of [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) revision 11 and [`0145-session-isolation`](../0145-session-isolation/change.md) revision 17, from the owner's decisions of 2026-11-12. Revision 7 applies the cross-design review of 2026-11-13: the owner's decision L30 on idle sessions under `checkpointPolicy: sealOnly` and `none`, the removal of non-agent runtimes of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), and the capability and channel terms of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) decisions D3 and D7. Revision 8 applies the read-only checks of 2026-11-13: the MCP Tasks projection moves to [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-4-tasks), the end of a session whose slot passes the disk watch's threshold, the cancellation of a running helper run as the materialization design states it, and two questions left open for the owner. Revision 9 applies the owner's answers of 2026-11-13 to the consolidated list of open decisions: SL-Q1 is settled as one MCP task per sent message (L32), SL-Q2 as `failed` (L33), and the disk watch's end is confirmed as written (L34). Revision 10 applies the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which the owner answered "yes" on 2026-11-14: a provider adapter's sessions are ordinary sessions that this design's states and timers govern, with no hold of their own. "Decisions" records every settled decision with the owner's words, and no decision is open. It stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label SL-n, requirements carry SLR-n, and decisions carry L-n. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 12, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the client protocol mappings of the session lifecycle move to the repositories of the MCP and A2A adapters. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved. The parts that move are the A2A table and the MCP Tasks pointer of "SL-11", where that design's D4 replaces the session-level A2A mapping with one task per message; the MCP tools `suspend_session` of "SL-4", `close_session` and `cancel_session` of "SL-7", and `resume_session` of "SL-2"; and decision L22. Those sections carry a mark of their own. The states, transitions, routes, timers, and the `state_change` paragraph of "SL-11" still govern Lenny. That design's R19, the turn interrupt, uses `interrupt_request` of "SL-3" on a runtime that declares `interrupt` and suspends nothing; an adapter that R19 refuses falls back to the suspend route of "SL-4" (its O11). The resume path of "SL-5" wakes a `dormant` provider-adapter session for its conditional send, R16.
 
@@ -12,7 +10,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree or the specification on 2026-11-11. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[unverified]** | A claim the pages and code read do not state. "Validation owed" lists each one. |
+| **[unverified]** | A claim the pages and code read do not state. "Validation owed" in `steps.md` lists each one. |
 
 ## Problem
 
@@ -90,6 +88,7 @@ This design states one session lifecycle that a top-level session and a child sh
 | Cancel | Ending a session with `cancelled` whatever its state: `DELETE /v1/sessions/{id}` and MCP `cancel_session`. |
 | Child event | A message the gateway writes into a parent's inbox on a child's behalf, with `from: { kind: "agent", id: <child id> }` ("MD-22"). |
 | Inbox | The gateway's per-session store of accepted messages. One inbox serves every sender of a session: its client, its children, and the system. |
+| Labels | Parts of the design carry the label SL-n, requirements carry the label SLR-n, and decisions carry the label L-n. |
 
 ### Terms from other designs and the platform
 
@@ -127,9 +126,9 @@ This design states one session lifecycle that a top-level session and a child sh
 | Labels | Source | What they name |
 | :-- | :-- | :-- |
 | MD-1, MD-3, MD-4, MD-5, MD-9, MD-18, MD-19, MD-22, MD-23, MD-24, MD-25, and O4 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-22-parents-and-children) | Delivery intents, inbox states with custody and deduplication, turn accounting, the named delivery paths, inter-session messages with their rate limits, files the agent produces, the `request` and `reply` frames, parents and children with the child events and `await_child_sessions`, the tool names, the runtime frames, a parent's watch of a child's stream, and custody that ends at consumption. |
-| B1 to B10, B16, B17, and B19 | [`0135-message-delivery`](../0135-message-delivery/change.md#decisions) | The owner's decisions of 2026-11-10 that make a child behave as a top-level session, and those of 2026-11-11 on when `await_child_sessions` returns, on its name, and on what a turn stopped by a suspension consumes. |
+| B1 to B10, B16, B17, and B19 | [`0135-message-delivery`](../0135-message-delivery/decisions.md#decisions) | The owner's decisions of 2026-11-10 that make a child behave as a top-level session, and those of 2026-11-11 on when `await_child_sessions` returns, on its name, and on what a turn stopped by a suspension consumes. |
 | DA-4 | [`0126-delegation-availability`](../0126-delegation-availability/change.md#da-4-tool-list) | The per-session platform tool list. |
-| MD-A and MD-E | [`0135-message-delivery`](../0135-message-delivery/change.md#steps) | The proposals that land the delivery core and the parents and children of the message delivery design. |
+| MD-A and MD-E | [`0135-message-delivery`](../0135-message-delivery/steps.md#steps) | The proposals that land the delivery core and the parents and children of the message delivery design. |
 | SI-3, WM-11, and WM-13 | [`0145-session-isolation`](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) and [`0153-workspace-materialization`](../0153-workspace-materialization/change.md#wm-11-the-worker-broker-requests-and-checkpoints) | SI-3 is the slot release, which ends one slot's runtime process and empties its volumes. WM-11 is the supervisor worker that runs one helper run or setup command at a time per slot, with its cancel pipe. WM-13 lists the helper run of each resume and derive path, the snapshotless rebuild included. |
 | MP-4 | [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-4-tasks) | The MCP Tasks extension on `2026-07-28`, with the projection of the session states onto its statuses. |
 | RP-1 | [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-1-handshake) | The runtime handshake, and where a refused resume or restore lands. |
@@ -187,84 +186,6 @@ The rest of this section states each part in the design's terms.
   any non-terminal state ──close──> completed (last turn finished) or cancelled (work cut off)
                          ──cancel──> cancelled     ──limit──> expired     ──failure──> failed
 ```
-
-## Decisions
-
-Settled by the owner on 2026-11-11, in a review of the combined lifecycle of a parent and its children after revision 9 of the message delivery design. The rows quote the owner.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L1 | Whether child events share the parent's inbox. | The owner asked: "child events/messages use the parent's inbox in the gateway and the inbox is shared across all children as well as the client, right?" They do. One inbox per session serves every sender, and the loss on a restore that the review found comes from O4, which leaves a resend to the sender. The gateway therefore acts as the sender of terminal child events ("SL-12"). | SL-12 |
-| L2 | What a client's suspension covers. | "shouldn't the solution be to suspend the entire tree, not just the parent? Your solution could/should be built on top as a safety net, but I think that if the client wants to suspend a session they mean everything, not just the parent (the client may or may not know children are running)". A suspension covers the session's subtree, and holding child events while a session is paused is the safety net. | SL-4, SL-5 |
-| L3 | Whether a client message resumes a suspended tree. | "Ok to client messages resuming". A message from the root's client resumes the suspended session and its tree, as `POST /resume` does. | SL-5 |
-| L4 | What happens to a tree whose suspended root ends. | "(a)". The descendants stay `blocked`, and each ends at its own `maxSuspendedSessionSeconds` or at `cascadeTimeoutSeconds`, whichever comes first, unless the policy is `close_all`. | SL-9 |
-| L5 | The name of the route that suspends. | "ok on interrupt->suspend". `POST /v1/sessions/{id}/interrupt` becomes `POST /v1/sessions/{id}/suspend`, with the MCP tool, and the delivery intent keeps the word `interrupt`. | SL-4 |
-| L6 | Whether `detach` stays. | "I don't think `detach` should be an option", and "retire `detach`". | SL-9 |
-| L7 | A child in `awaiting_client_action`. | "ok". The parent receives a child event marked recoverable, and its `message_child_session` resumes the child as a client's resume does. | SL-8 |
-| L8 | Whether a suspension ends the open turn. | "ok" to the recommendation. A suspension stops the open turn, and on resume a session whose turn was cut receives a notice that opens a turn, so the work continues. | SL-3 |
-| L9 | What a close records. | The owner first answered "option (a). Children can either be stopped explicitly or they are closed when the parent session is closed", and then asked: "My understanding is that `POST /terminate`, `DELETE`, close_child(cancel: false), close_child(cancel: true) all have the same ultimate effect ... what's the benefit of tagging the session one way or another? ... should we have one `close_child` with an argument or two separate tools?" After the review showed that only readers outside the gateway read the difference, the owner chose "(a)": the gateway derives the state from what happened to the work, `close_child_session` takes no argument, a close by the same rule replaces `POST /terminate`, and `DELETE` stays an explicit cancel. | SL-7 |
-| L10 | The cascade's names. | "ok". `cascadeOnFailure` becomes `onParentEnd`, with `close_all` and `let_finish`. | SL-9 |
-| L11 | An idle parent's pod while its children work. | "ok". An `idle` session keeps its pod while any descendant is `running`. | SL-6 |
-| L12 | A parent suspending a child. | "ok" to no tool in v1. | SL-4 |
-| L13 | Separate paused states. | "I think we should have different `suspended` states, given that how a session entered `suspended` matters later on. I'd like a clean state machine." The names followed: "i like suspended and blocked." | SL-1 |
-| L14 | Whether holding a pod is a state. | "ok" to option (c), after the owner asked for more context. `idle` splits into `idle`, which holds its pod, and `dormant`, which released it. The paused states keep a row property for the pod, because nothing reads it for a paused session except the path a resume takes. | SL-1, SL-10 |
-
-Settled by the owner on 2026-11-11 after the adversarial review of revision 1. The rows quote the owner's answers to the questions the review raised, and revision 2 applies them. The owner accepted the review's other fixes, which "Review history" lists.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L15 | What happens to a runtime that does not stop at a suspension. | "1: ok" to the recommendation. A runtime that does not declare `interrupt` receives no signal, so the gateway seals the session, checkpoints the workspace, and releases the pod at once, as an idle suspension does today. A runtime that declares `interrupt` and does not acknowledge `interrupt_request` within its deadline is treated the same way at the deadline. Revision 7 restates the owner's answer, which named integration levels, in the capability terms of RP D3. Frames a paused session writes open no turn and change no state. An acknowledged suspension keeps today's pod hold. | SL-3 |
-| L16 | A session whose turn a pod loss cut. | The owner asked to "elaborate on why both", and then answered "2. ok" to option (c). When the restore commits, the session receives the resume notice, which opens a turn, and its client receives a report that the turn was lost and that the session was told to continue: an `end_of_turn` child event with `error: "turn_lost"` for a parent, and `turn_end` with the same error for a top-level client. | SL-3, SL-8 |
-| L17 | A turn that goes silent. | "i think the proper solution would be to move sessions to idle when there has been no activity at all on the wire (no message either direction or progress update) after a configurable period of time. I thought that was already in place but I may be mossing something. Then the rule for runtimes should be "if you don't want to be put on idle state in the middle of a long-running task, make sure to send activity updates or streaming messages on a regular basis"". §6.2 already runs the idle clock in `running`, and revision 1 had moved it to `idle` alone. The owner then answered "3. ok on both counts" to the two details: when the clock fires on an open turn, the turn is cut and the session becomes `dormant` at once, because it has already been silent for a whole window, and a pending approval or question counts as activity until it is answered or expires. | SL-6 |
-| L18 | Suspending a recovering session. | "4: ok". A top-level session in `resume_pending`, `resuming`, or `awaiting_client_action` can be suspended. The suspension is recorded on its row, its descendants are `blocked`, and the session becomes `suspended` when its restore commits. | SL-4 |
-| L19 | An end-of-turn child event lost on a parent's restore. | "5: ok" to option (a). The gateway resends each end-of-turn child event the parent consumed after its checkpoint, from the child's transcript, as it resends `ended` events from `session_tree_archive`. | SL-12 |
-| L20 | The budget keys of a long-lived dormant root. | "6: ok". The gateway re-arms the TTL of the tree's budget keys when the root enters `dormant`, as it does when the root enters or leaves `suspended`. | SL-10 |
-| L21 | Closing a session whose client tool calls are pending. | "7: ok". The turn that returned the calls is unfinished, so the close records `cancelled`. | SL-7 |
-| L22 | How the paused states appear on A2A and MCP Tasks. | "8: ok". Neither protocol has a paused state, so `suspended` and `blocked` map to `working` with `metadata.paused: true`. | SL-11 |
-
-Settled by the owner on 2026-11-11 after a re-review of revision 2. The owner answered "ok" to each recommendation below, and accepted the re-review's other fixes, which "Review history" lists.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L23 | When the tree's budget keys are re-armed for a `dormant` root. | "ok". The gateway re-arms them when the root enters and when it leaves `dormant`, as §8.3 does for `suspended` today, and §8.3's clause on the time a root spends outside `suspended` covers `dormant` as well. It extends L20. | SL-10 |
-| L24 | A suspension that cannot take hold. | "ok". The seal answers "not sealed" while a platform or connector call is in flight, and a failed checkpoint keeps the pod today. When a suspension cannot take hold, the gateway refuses the session's new LLM-proxy, platform, and connector calls and cancels those in flight, then seals the session and releases the pod. It retries a failed checkpoint, and at `maxSuspendedPodHoldSeconds` it forces the release, and the session resumes from its last good checkpoint. A runtime's calls to a provider outside the proxy stop only at the pod release: these were direct-mode calls when the owner settled L24, and they are the calls of [LU-10](../0133-llm-upstreams-and-cost-budgets/change.md#lu-10-calls-outside-the-proxy) since `0133-llm-upstreams-and-cost-budgets` removed direct mode. Superseded in part on 2026-11-15 by [`0124-connector-removal`](../0124-connector-removal/change.md): connector calls leave with connectors, and step 1 also halts the slot's egress (its CR-4, which the owner accepted as O9 with "ok"), so calls outside the proxy stop at the suspension except on a pool without slot attribution. | SL-3 |
-| L25 | Where a session lands under a tree resume that admission refuses in part. | "ok". A session lands `blocked` under its nearest paused ancestor, whether that ancestor is `suspended` or `blocked`. A tree resume that admission refuses for one session leaves that session's subtree `blocked` under it, and the subtree resumes when the session does. | SL-4 |
-| L26 | What a turn stopped by a suspension consumes. | "ok". The end-of-turn `message` that closes the stopped turn consumes only the message ids it lists, and every other `delivered` message of the session returns to `pending`, so the resume delivers it again. The message delivery design records the same rule as B19. | SL-3 |
-| L27 | The choices of revision 2. | "ok". The owner accepted the `idle_timeout` report without a resume notice after an idle cut, and the absence of the notice and the report after a restore that delivers the cut turn's causing message again. | SL-3, SL-6 |
-
-Settled by the owner on 2026-11-11 after a regression review of revision 3. The owner answered "b, go ahead", and accepted the review's fixes, which "Review history" lists.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L28 | A question pending when a suspension stops the turn. | "b, go ahead". A question the session raised through `ask_question` or a `request` with `kind: "question"`, and that is pending when a suspension stops its turn, is withdrawn. The gateway expires it as §9.2 "Elicitation Timeout Semantics" item 6 expires a session's elicitations when the session leaves its pod, extended to every suspension that stops a turn, whether or not the pod is released yet. The client's view drops it, a later answer is refused as not found, and the resume notice names each withdrawn question so the runtime may ask again. The rejected option kept the question open and delivered a later answer as a held message, which would reverse item 6, need `maxElicitationWait` to pause, and add a second answer path. | SL-3 |
-
-Settled by the owner on 2026-11-11 after revision 4 showed that a pending approval stayed open while a pending question was withdrawn.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L29 | A tool-use approval pending when a suspension stops the turn. | "Withdraw approvals the same way". A pending approval, from a `request` with `kind: "approval"` or an approval-gated `tool_call` that the gateway holds, is withdrawn as L28 withdraws a question. It leaves the client's view, a later decision is refused as not found, its timeout and the unattended policy's answer no longer fire, and the resume notice names it so the runtime can ask again if it retries the tool. The rejected option kept the approval open with a paused timeout and held the decision until the resume, the machinery L28 rejected for questions. | SL-3 |
-
-Settled by the owner on 2026-11-13, in the cross-design review of that day.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L30 | What the idle clock does to a session whose checkpoint policy takes no checkpoint. | "(a)". A session whose effective `checkpointPolicy` is `sealOnly` or `none` stays `idle` on its pod, and the idle timeout ends the session instead of making it `dormant`. | SL-6, SL-3 |
-| L31 | The `type: mcp` and service-mode exceptions to dormancy. | Moot under the owner's removal of non-agent runtimes ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), D1). Every session can become `dormant` subject only to its checkpoint policy. | SL-6 |
-
-Settled by the owner on 2026-11-13, in the answers to the consolidated list of open decisions of that day. The read-only checks of 2026-11-13 raised SL-Q1 and SL-Q2, and L32 and L33 settle them.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| L32 | How an `idle` or `dormant` session appears to an MCP Tasks client (SL-Q1). | "ok", after the owner asked whether one task per call is how MCP Tasks are used. One MCP task per message a client sends, which completes at the end of the turn that consumes the message. `idle`, `dormant`, and `awaiting_client_action` no longer map to `input_required`, which is left to elicitations. The answer also settles MP O7 of [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-4-tasks), which owns the mapping; under the owner's choice of the same day to move every client protocol adapter out of Lenny, the mapping moves with the MCP adapter, and `0138-rest-only-client-api` governs that move. | SL-11 |
-| L33 | Where a resume or a restore lands when the runtime handshake refuses it with a reason that is not retryable (SL-Q2). | "ok" to the recommendation: `failed`. The same answer settles O13 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#open-decisions), whose RP-1, RP-2, and §7.3 row now send such a session to `failed`. | SL-2 |
-| L34 | The end of a session whose slot volume passes the disk watch's threshold. | "ok": confirmed as written. A best-effort checkpoint when the session's checkpoint policy and the slot's capture budget allow it, then `failed` with the reason `workspace_size_limit` and the code `WORKSPACE_SIZE_LIMIT_EXCEEDED`, and the release of that slot alone. | SL-2 |
-
-The rows below keep the questions as they were raised, as the record of SL-Q1 and SL-Q2.
-
-| ID | Question | State and recommendation as raised | Where |
-| :-- | :-- | :-- | :-- |
-| SL-Q1 | How an `idle` or `dormant` session appears to an MCP Tasks client. | Settled as L32. When raised: "SL-11" and MP-4 of [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md#mp-4-tasks) give a session one task whose ID is the session's ID, and an `idle` or `dormant` session reads as `input_required`. Under the Tasks extension `input_required` carries `inputRequests` that the client answers with `tasks/update`, and an idle session has none, as finding 6 of the REST-only spike of 2026-11-13 states. Recommendation: one task per message a client sends, which completes at the end of the turn that consumes the message, so that a waiting session has no task in `input_required` and that status is left to elicitations. MP-4 owns the projection and decides with the owner. | SL-11 |
-| SL-Q2 | Where a resume or a restore lands when the runtime handshake refuses it with a reason that is not retryable. | Settled as L33. When raised: "SL-2" sends every non-retryable failure to `failed`, and RP-1 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-1-handshake) and its §7.3 row send such a refusal to `awaiting_client_action`, where the client can wait for a revision with a fixed image. Recommendation: `failed`, because this design owns the states, a refusal that is not retryable recurs on every pod of the pod set, and `awaiting_client_action` would hold the session and its caps until `maxAwaitingClientActionSeconds`. Until the owner answers, this design keeps `failed`, and RP-1 keeps its text. | SL-2 |
 
 ## Requirements
 
@@ -334,7 +255,9 @@ The rows below keep the questions as they were raised, as the record of SL-Q1 an
 - The watchdog's `idleSuspendable` and `sessionidle.Resolver.IdleSuspendable` decide idle suspension **[source]**.
 - `cascadeOnFailure` is read in `pkg/api/v1/session/session.go`, `pkg/gateway/sessionserver`, and `pkg/gateway/mcpfabric/mcptools/mcptools.go` **[source]**.
 
-## SL-1 States
+## Detailed design
+
+### SL-1 States
 
 | State | Meaning | Open turn | Holds a pod | Counts against the caps |
 | :-- | :-- | :-- | :-- | :-- |
@@ -358,7 +281,7 @@ The rows below keep the questions as they were raised, as the record of SL-Q1 an
 
 The pod reference the row carries today stays, and decides whether a paused session resumes at once or through a restore (L14).
 
-## SL-2 Transitions
+### SL-2 Transitions
 
 | From | Event | To |
 | :-- | :-- | :-- |
@@ -395,7 +318,7 @@ A restore after a pod loss loses the open turn, so the gateway sets `last_turn_e
 
 **Disk watch [design].** The adapter's per-slot disk watch measures each disk-backed volume of a slot and acts at `adapter.diskWatchThresholdPercent` of the volume's `sizeLimit`, 90% by default, before the kubelet evicts the whole pod ([`0118-agent-pod-layout`, "PL-5"](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction) states the trigger and the measurement). When it acts, the session of that slot ends `failed` with the reason `workspace_size_limit` and the error code `WORKSPACE_SIZE_LIMIT_EXCEEDED`, which its client and, for a child, its parent's `ended` child event receive. When the session's effective `checkpointPolicy` is `full` and the slot's spool cap has room, the adapter first takes a best-effort checkpoint. The slot release then runs on that slot container alone, so the pod's other sessions keep running. The specification has no code for this end, so the code is new. The owner confirmed this end as written on 2026-11-13 (L34).
 
-## SL-3 Suspension and the open turn
+### SL-3 Suspension and the open turn
 
 The owner settled L8 on 2026-11-11, and L15 and L16 after the review of revision 1 **[design]**.
 
@@ -449,7 +372,7 @@ A turn that ended with its end-of-turn `message` before the write of the paused 
 
 **Without the notice.** A resumed tree would sit idle until the root's client sent a message and the root's model steered each child again. The notice restarts each session on its own work.
 
-## SL-4 Tree suspension
+### SL-4 Tree suspension
 
 The owner settled L2, L5, and L12 on 2026-11-11, and L18 after the review of revision 1 **[design]**.
 
@@ -473,7 +396,7 @@ The owner settled L2, L5, and L12 on 2026-11-11, and L18 after the review of rev
 
 **Resuming a tree.** Resuming the suspension root resumes the root, and each session that enters a live state then resumes the descendants whose `paused_ancestor_id` names it, top-down, each through resume admission ("SL-10"). A descendant in `suspended` keeps its own suspension, and the sessions `blocked` under it stay `blocked`. A descendant that admission refuses stays `blocked`, and the sessions `blocked` under it stay `blocked` under it until it resumes (L25). Each resumed session receives the resume notice of "SL-3" first, and its held messages follow at the delivery points of "MD-5", the commit to `idle` among them, oldest first.
 
-## SL-5 Messages to a waiting or paused session
+### SL-5 Messages to a waiting or paused session
 
 The owner settled L3 on 2026-11-11, and L2 makes the hold a safety net under the tree suspension **[design]**.
 
@@ -495,7 +418,7 @@ A provider adapter's conditional send to a `dormant` session, R16 of [`0138-rest
 
 The delivery paths of "MD-5" read these states: the resume path covers `dormant`, `suspended`, and `blocked`, and `awaiting_client_action` for a message from the session's client or the root's client, under this table, and the direct, steer, interrupt, and queue paths cover `idle` and `running`.
 
-## SL-6 Idle pods and dormancy
+### SL-6 Idle pods and dormancy
 
 The owner settled L11 and L14 on 2026-11-11, and L17 after the review of revision 1 **[design]**.
 
@@ -517,7 +440,7 @@ The gateway checkpoints the workspace and releases the pod in the sequence that 
 
 §6.2's separate rule that counts each `await_children` call and each partial result of its stream as activity leaves, because the in-flight rule covers a parent that waits inside `await_child_sessions`.
 
-Traffic through `netagent` is not qualifying activity (O8 of [`0124-connector-removal`](../0124-connector-removal/change.md#owner-decisions)). A runtime whose harness waits on a call to an operator service keeps its session active under the rule for runtime authors below, and a question it forwards from the service is a `request` that counts until its `reply` arrives ([CR-3](../0124-connector-removal/change.md#cr-3-external-services)).
+Traffic through `netagent` is not qualifying activity (O8 of [`0124-connector-removal`](../0124-connector-removal/decisions.md#owner-decisions)). A runtime whose harness waits on a call to an operator service keeps its session active under the rule for runtime authors below, and a question it forwards from the service is a `request` that counts until its `reply` arrives ([CR-3](../0124-connector-removal/change.md#cr-3-external-services)).
 
 **The rule for runtime authors.** A runtime that works through a long task without writing frames reports `busy: true` on each heartbeat, as §28.5.3 already requires, or sends activity updates, or streams message parts. A runtime that does none of these for `maxClientIdleSeconds` has its turn cut.
 
@@ -527,7 +450,7 @@ Traffic through `netagent` is not qualifying activity (O8 of [`0124-connector-re
 
 **Timers.** `maxSessionAge` and `maxClientIdleSeconds` pause in `dormant`, and `maxSuspendedSessionSeconds` expires a `dormant` session, as both apply to an idle-suspended session today. The tree's budget keys are re-armed when the root enters and when it leaves `dormant` (L20, L23).
 
-## SL-7 Closing a session
+### SL-7 Closing a session
 
 The owner settled L9 on 2026-11-11, and L21 after the review of revision 1 **[design]**.
 
@@ -559,7 +482,7 @@ A close of a `running` session cuts its turn at once, as `POST /terminate` does 
 
 **Results.** `close_child_session` returns the child's `TaskResult`, and the parent receives no child event for a child it closed itself. `TaskResult.output` of a `completed` close is the last end-of-turn message, and of a completion by `complete: true` the completing message ("MD-22").
 
-## SL-8 Parents, children, and their states
+### SL-8 Parents, children, and their states
 
 **Child events by the parent's state.**
 
@@ -590,7 +513,7 @@ A close of a `running` session cuts its turn at once, as `POST /terminate` does 
 
 **No deadlock to detect.** The subtree deadlock detector of §8.8 looks for sessions blocked in `input_required`, which leaves. A session that waits for its client is `idle` and waits for no other session. `await_child_sessions` returns at once for a covered child that is waiting or paused with nothing new to report, and as soon as a covered child ends for any reason ("MD-22"). An elicitation that travels the §9.2 chain is bounded by its per-hop forwarding timeout. The detector, `deadlock_detected`, `maxDeadlockWaitSeconds`, and `DEADLOCK_TIMEOUT` therefore leave.
 
-## SL-9 When a parent ends
+### SL-9 When a parent ends
 
 The owner settled L4, L6, and L10 on 2026-11-11 **[design]**.
 
@@ -615,7 +538,7 @@ The owner settled L4, L6, and L10 on 2026-11-11 **[design]**.
 
 **A child's result.** A child closed by a cascade has a `TaskResult` in `session_tree_archive` under the close rule, readable through `list_child_sessions` and the task tree. No parent receives it, because the parent is terminal.
 
-## SL-10 Admission, caps, and timers
+### SL-10 Admission, caps, and timers
 
 **Caps [design, SLR-12].** `CountsTowardConcurrencyCaps` and `countedStatePredicate` count every non-terminal state except `dormant`, `suspended`, and `blocked`. An `idle` session counts, as a `running` session with no open turn counts today, and a `dormant` session does not, as an idle-suspended session does not today.
 
@@ -636,7 +559,7 @@ The owner settled L4, L6, and L10 on 2026-11-11 **[design]**.
 
 **Budget keys (L20, L23).** §8.3 re-arms the TTL of the tree's budget keys when the root enters or leaves `suspended` or leaves `awaiting_client_action` for `resume_pending`. The gateway also re-arms them when the root enters and when it leaves `dormant`, and §8.3's rule that a root meets `BUDGET_KEYS_EXPIRED` after more than the TTL "outside `suspended`" counts the time outside `suspended` and `dormant`, so a root that alternates between `idle` and `dormant` for longer than `delegation.budgetKeyTTLSeconds` keeps its tree's budget. A `blocked` root cannot exist, because a root has no ancestor.
 
-## SL-11 External mappings
+### SL-11 External mappings
 
 > **Adapter-facing parts.** The A2A table, the MCP Tasks pointer, and decision L22 move to the A2A and MCP adapters under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), where that design's D4 replaces the session-level A2A mapping below with one task per message; they stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification. **`state_change`** and **Removed text** still govern Lenny.
 
@@ -658,7 +581,7 @@ Every turn end therefore reads as input required on A2A. That is accurate there:
 
 **Removed text.** Every rule that names `input_required` is rewritten or removed in the sections "Current state" lists, §11.3's `maxRequestInputWait` among them, and "Specification changes" names each.
 
-## SL-12 Recovery of child events
+### SL-12 Recovery of child events
 
 The owner's question L1 confirmed one inbox per session, and the owner settled L19 after the review of revision 1 **[design]**.
 
@@ -724,8 +647,8 @@ Alice, of tenant `acme`, runs a `claude-code` session `sess_A` through REST. `cl
 
 | Section (by heading) | Change |
 | :-- | :-- |
-| [§6.2 Pod State Machine](../../spec/06_warm-pod-model.md#62-pod-state-machine), "`suspended` state", "Graceful pod release during extended suspension", "Pod failure while `suspended`", "`resuming` failure transitions", "Idle suspension", the `maxSessionAge` and `maxClientIdleSeconds` per-state tables, and "`suspended → expired` trigger mechanism" | The states `idle`, `dormant`, `suspended`, and `blocked` with their transitions, and the reason field removed. A suspension that stops the open turn, cascades to the subtree, and releases the pod at once when the runtime does not acknowledge it, and the frames of a paused session. The resume notice. The egress halt of step 1 of a suspension that cannot take hold, with its scope and its lifting, which CR-C of [`0124-connector-removal`](../0124-connector-removal/change.md#steps) lands in this section. A paused session that loses its pod stays paused without one. The move to `dormant` from `idle`, and from `running` with the turn cut, in place of the idle suspension. The qualifying activity with the frame names of the message delivery design and a pending `request`, the in-flight rule in place of the `await_children` activity rule, and the rule that keeps an idle session's pod while a descendant runs. The expiry with `max_idle_time` of a session under `checkpointPolicy: sealOnly` or `none`, which stays `idle` on its pod and never becomes `dormant`, the removal of the `type: mcp` and service-mode idle exemptions, the pod kept by such a session's suspension that cannot take hold, and the timers of "SL-10". "`interrupt_request` does NOT cascade" is replaced by the tree suspension. Step 3 of "Graceful pod release during extended suspension" gains the forced release at `maxSuspendedPodHoldSeconds` for a suspension that cannot take hold, and "`resuming` failure transitions" names `close` in place of `terminate` and lands a restore in the states of "SL-2". |
-| [§4.7.1 Role and Gateway RPC Contract](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract), **Session seal.**, and §4.7's `Interrupt` RPC | The gateway calls `SealSession` at the move to `dormant` and, with an activity window of zero, at a suspension that the runtime does not acknowledge, in place of "only at the start of an idle suspension attempt", after it has cancelled the session's platform calls in flight and called `HaltSessionEgress`, which CR-C of [`0124-connector-removal`](../0124-connector-removal/change.md#steps) adds to this section with the statement that `UnsealSession` lifts the halt. The activity list takes the frame names of the message delivery design. The `Interrupt` RPC's timeout returns `INTERRUPT_TIMEOUT` and writes no session state. |
+| [§6.2 Pod State Machine](../../spec/06_warm-pod-model.md#62-pod-state-machine), "`suspended` state", "Graceful pod release during extended suspension", "Pod failure while `suspended`", "`resuming` failure transitions", "Idle suspension", the `maxSessionAge` and `maxClientIdleSeconds` per-state tables, and "`suspended → expired` trigger mechanism" | The states `idle`, `dormant`, `suspended`, and `blocked` with their transitions, and the reason field removed. A suspension that stops the open turn, cascades to the subtree, and releases the pod at once when the runtime does not acknowledge it, and the frames of a paused session. The resume notice. The egress halt of step 1 of a suspension that cannot take hold, with its scope and its lifting, which CR-C of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) lands in this section. A paused session that loses its pod stays paused without one. The move to `dormant` from `idle`, and from `running` with the turn cut, in place of the idle suspension. The qualifying activity with the frame names of the message delivery design and a pending `request`, the in-flight rule in place of the `await_children` activity rule, and the rule that keeps an idle session's pod while a descendant runs. The expiry with `max_idle_time` of a session under `checkpointPolicy: sealOnly` or `none`, which stays `idle` on its pod and never becomes `dormant`, the removal of the `type: mcp` and service-mode idle exemptions, the pod kept by such a session's suspension that cannot take hold, and the timers of "SL-10". "`interrupt_request` does NOT cascade" is replaced by the tree suspension. Step 3 of "Graceful pod release during extended suspension" gains the forced release at `maxSuspendedPodHoldSeconds` for a suspension that cannot take hold, and "`resuming` failure transitions" names `close` in place of `terminate` and lands a restore in the states of "SL-2". |
+| [§4.7.1 Role and Gateway RPC Contract](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract), **Session seal.**, and §4.7's `Interrupt` RPC | The gateway calls `SealSession` at the move to `dormant` and, with an activity window of zero, at a suspension that the runtime does not acknowledge, in place of "only at the start of an idle suspension attempt", after it has cancelled the session's platform calls in flight and called `HaltSessionEgress`, which CR-C of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) adds to this section with the statement that `UnsealSession` lifts the halt. The activity list takes the frame names of the message delivery design. The `Interrupt` RPC's timeout returns `INTERRUPT_TIMEOUT` and writes no session state. |
 | [§28.5.3 Intra-pod](../../spec/28_communication-channels.md#2853-intra-pod), the `interrupt_request` row and the **Degradation.** of the card that carries it, `CH-MSGSOCK` under RP O7 (a) | At the deadline the adapter returns `INTERRUPT_TIMEOUT` and writes no session state, in place of "the adapter transitions the session to `suspended` anyway". The gateway releases the pod for a suspension ("SL-3"). SL-A owns this row together with §4.7's `Interrupt` RPC. The `queue` fallback for an `interrupt` message at the deadline is staged by MD-A of the message delivery design ("MD-5"), whose row points here for the rest. |
 | [§4.1 Edge Gateway Replicas](../../spec/04_system-components.md#41-edge-gateway-replicas), "Gateway Internal Subsystems", item 4 **LLM Proxy**, which [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) rewrites as the metering proxy | The proxy refuses each new call of a session whose suspension cannot take hold and cancels its calls in flight, from the pod in use until that pod is released, and a restored pod carries no refusal (L24). A runtime's calls outside the proxy are stopped by the egress halt of "SL-3" step 1, and on a pool without slot attribution by the pod release (LU-10, CR-4). |
 | [§15.4.3 Runtime Integration Levels](../../spec/15_external-api-surface.md#1543-runtime-integration-levels), the `Interrupt` row, which `0139-runtime-protocol` replaces with the `interrupt` capability | A suspension of a runtime that does not declare `interrupt` checkpoints the workspace and releases the pod at once. |
@@ -764,7 +687,7 @@ Alice, of tenant `acme`, runs a `claude-code` session `sess_A` through REST. `cl
 - `pkg/api/v1/session/session.go`: the states `idle`, `dormant`, and `blocked`, `input_required` removed, `CountsTowardConcurrencyCaps` over the states of "SL-10", and the cascade values.
 - `pkg/gateway/session/sessionstore` and `pgstore`: `countedStatePredicate`, the row fields `paused_ancestor_id`, `suspension_requested`, `ended_suspended`, `last_turn_end`, and `resume_notice_due`, the reason values removed, and a migration of stored `suspended` rows by their reason (`Idle` to `dormant`, the others to `suspended`) and of `input_required` rows to `idle`.
 - `pkg/gateway/sessionserver`: `session_transitions.go` with the suspend and close transitions, `route_table.go` with the renamed routes, the tree suspension and tree resume, the computation of the nearest paused ancestor at every landing, the release at once for a suspension the runtime does not acknowledge, the frames of a paused session, the resume notice and the `turn_lost` report, the message table of "SL-5" in the delivery paths and the backlog resume code with the sweep that finishes a partial suspension, the TTL of held messages, `suspend_release.go` over the new states, `SESSION_PAUSED` on a paused caller's tool calls, the cascade order of "SL-9", and the `ended`, `awaiting_client_action`, `suspended`, and `resumed` child events.
-- The LLM proxy and the platform tool call path: the refusal of a session's new calls and the cancellation of its calls in flight when its suspension cannot take hold. The gateway's call of `HaltSessionEgress` at step 1, with `lenny_egress_halts_total`, and the adapter's and `netagent`'s side of the halt land with CR-C of [`0124-connector-removal`](../0124-connector-removal/change.md#steps).
+- The LLM proxy and the platform tool call path: the refusal of a session's new calls and the cancellation of its calls in flight when its suspension cannot take hold. The gateway's call of `HaltSessionEgress` at step 1, with `lenny_egress_halts_total`, and the adapter's and `netagent`'s side of the halt land with CR-C of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps).
 - `pkg/adapter`: the `Interrupt` RPC's timeout without a session write, `SealSession` with an activity window of zero, and the activity list with the frame names of the message delivery design.
 - `pkg/gateway/runtime/watchdog` and `pkg/gateway/session/sessionidle`: the idle clock in `running` and `idle`, the cut of a silent turn, the pending `request` as activity, the move to `dormant`, the expiry of a session that cannot become `dormant`, and the rule that a running descendant keeps the pod.
 - `pkg/gateway/mcpfabric/mcptools`: `suspend_session`, `close_session`, `close_child_session`, and the removal of the deadlock detector's event.
@@ -799,14 +722,6 @@ The owner directed on 2026-11-13 that every design document all of its relevant 
 | 10 | A runtime that declares `interrupt` ends its turn on `interrupt_request` and resumes from the notice, the suspension of a runtime that does not declare it releases its pod at once, and a runtime that reports `busy` through a long tool run keeps its turn. |
 | 11 | The lifecycle page's state diagram against the transition table. |
 
-## Validation owed
-
-- Whether each reference harness ends its turn promptly on `interrupt_request` and what it writes when it does, which decides how often "SL-3" falls back to the release at the deadline.
-- How each reference harness treats the resume notice, which decides whether its text needs to vary by runtime.
-- Whether each reference runtime reports `busy` on heartbeats through a long tool run inside the pod, which decides how often "SL-6" cuts a working turn.
-- Whether models leave a boolean tool argument unset more often than they set it, which "SL-7" **One tool.** assumes.
-- How many sessions an operator's dashboards count by state today, which decides how the migration of stored `suspended` rows is announced.
-
 ## Instructions for reviewers of other designs
 
 - [`0135-message-delivery`](../0135-message-delivery/change.md): revision 12 links this design from "MD-22", carries the child events `ended`, `awaiting_client_action`, `suspended`, and `resumed` and the `end_of_turn` errors `turn_lost` and `idle_timeout`, lists the resume path over `dormant`, `suspended`, `blocked`, and `awaiting_client_action`, and states the TTL of held messages, the frame rule of a paused session in "MD-4", and the exports at a suspension that releases the pod at once in "MD-18". Revision 12 adds the commit to `idle` as a delivery point, the consumption rule of a stopped turn (B19), and pointers to SL-A for the rows the two designs share. No further change.
@@ -821,25 +736,6 @@ The owner directed on 2026-11-13 that every design document all of its relevant 
 - [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-1-handshake): RP-1 and its §7.3 row send a resume or a restore refused for a reason that is not retryable to `failed`, as "SL-2" does (L33, RP D10). No further change.
 - [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction): PL-5 states the disk watch's trigger, and the end it causes is `failed` with the reason `workspace_size_limit` and the code `WORKSPACE_SIZE_LIMIT_EXCEEDED`, after a best-effort checkpoint under `checkpointPolicy: full` when the spool cap has room ("SL-2").
 - Every design that names `POST /interrupt`, `POST /terminate`, `interrupt_session`, `terminate_session`, `cascadeOnFailure`, `detach`, or `input_required`: the cross-design sync takes the names of this design.
-
-## Steps
-
-### 0146.S1 States and their rules
-- status: Planned
-- aliases: [SL-A, SL-1, SL-2, SL-3 (part), SL-4 (part), SL-5, SL-6 (part), SL-7, SL-9, SL-10, SL-11]
-- lanes: [specification, code, documentation]
-
-The states and their rules: "SL-1" to "SL-7" and "SL-9" to "SL-11", with every specification change above except those 0146.S2 takes. Where those parts state a child event, 0146.S2 lands that statement, and this step lands the session's own reports: `turn_end` with `turn_lost` and `idle_timeout`, and the resume notice. This step owns the rows it shares with the message delivery design, the §28.5.3 `interrupt_request` row with §4.7's `Interrupt` RPC and the TTL rows of the §7.2 dead-letter table, and that design's rows point to it. Until MD-E lands, its text names the end-of-turn frame by its specification name, `response`, the delegation tools by their specification names, `lenny/delegate_task`, `lenny/cancel_child`, and `lenny/await_children`, and its qualifying activity takes the frame names of MD-E when MD-E lands. The egress halt of step 1 of "SL-3" lands with CR-C of [`0124-connector-removal`](../0124-connector-removal/change.md#steps), which depends on this step.
-
-It has no dependency. It lands with MD-A of the message delivery design, in one proposal or in two applied together, because MD-A's delivery paths name the new states and this step's transitions read MD-A's turn accounting.
-
-### 0146.S2 Child events
-- status: Planned
-- aliases: [SL-B, SL-8, SL-12, SL-3 (part), SL-4 (part), SL-6 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0146.S1, 0135.S5]
-
-Every child event of the lifecycle, wherever this design states it: "SL-8" and "SL-12", the `suspended` and `resumed` child events of "SL-4", the `end_of_turn` child events with `turn_lost` and `idle_timeout` of "SL-3" and "SL-6", the return to `pending` of the child events a cancelled `await_child_sessions` had taken, and the resend of `ended` and end-of-turn child events, with the parts of the §7.3, §8.8, and §8.10 rows that state them. It needs MD-E of the message delivery design for the child events.
 
 ## Sources
 

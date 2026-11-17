@@ -10,9 +10,11 @@ changes/
   README.md                          this file
   BOARD.md                           generated: steps ready, building, and blocked, by milestone
   0113-pod-lifecycle-controller/
-    change.md                        the change, in the template below
+    change.md                        the design, in the template below
+    decisions.md                     open decisions, then settled decisions
+    steps.md                         validation owed, then the steps
+    review-history.md                one entry per review or revision, and the history of the status
     digests/                         one digest per landed step, such as 0113.S2.md
-    review-history.md                one entry per review or revision
     evidence/                        spikes and test runs the change cites, with a README
   programs/
     v1.md
@@ -24,31 +26,43 @@ A change folder is named `<number>-<slug>`. Numbers continue from the last propo
 
 ## `change.md`
 
-A change reads standalone. Terms come first, a label from another change is linked and glossed, and interfaces are named. The template fixes the order of the sections, and a change keeps only the sections it needs:
+A change is split by how often each part changes. `change.md` holds the design, which changes only in a revision. `decisions.md` changes while the owner decides, and `steps.md` changes while the change is built. The three files read standalone together: terms come first in `change.md`, a label from another change is linked and glossed, and interfaces are named.
+
+The template fixes the order of the sections of `change.md`, and a change keeps only the sections it needs:
 
 | Section | Holds | Small change |
 | :-- | :-- | :-- |
-| Status line | Status, revision, date, and the programs the change belongs to | Yes |
+| Status line | Status, revision, date, and the programs the change belongs to, and nothing else. What a revision changed goes in `review-history.md`. | Yes |
 | Problem | What is wrong or missing, with evidence | Yes |
 | Scope | What the change covers and what it leaves out | When it is not obvious |
 | Terms | Every term the change uses, defined or glossed with a link | When it adds terms |
 | High-level design | A plain-language description a reader can follow without the rest of the file | No |
-| Decisions | Settled decisions, each with the owner's answer and its date | When there are any |
-| Open decisions | Questions waiting on the owner, each with its options and a recommendation | When there are any |
 | Requirements | The requirements the change adds, modifies, or retires, by identifier | Yes |
 | Current state | What the tree does today, with file references | When it differs from the specification |
-| Mechanism sections | One section per mechanism | No |
+| Detailed design | One subsection per mechanism, such as "CT-1 Protocol members" | No |
 | Worked example | One scenario traced through the change | No |
 | Limits, and alternatives rejected | What the change does not guarantee, and the options it turned down | No |
 | Specification and non-specification changes | The specification pages, packages, charts, and schemas the change edits | Yes, as a list |
 | Documentation | Each documentation page the change adds, edits, or removes, with its reader (client, operator, runtime author, or contributor) and what changes for that reader, or a statement that no reader-facing behavior changes | Yes |
 | Tests | The tests by tier and the requirement each verifies | Yes |
-| Validation owed | What has to be measured or run before the change is trusted | When there is any |
-| Steps | The steps, each with its status and dependencies | Yes |
 
 The specification, the code, and the documentation are edited on the change's branch, and the diff is the record of the edit. A change does not stage edits.
 
-### Steps
+## `decisions.md`
+
+| Section | Holds |
+| :-- | :-- |
+| Open decisions | Questions waiting on the owner, each with its options and a recommendation |
+| Decisions | Settled decisions, numbered, each with the owner's answer and its date |
+
+When the owner settles an open decision, it moves to Decisions with the answer. A change with no decisions has no `decisions.md`.
+
+## `steps.md`
+
+| Section | Holds |
+| :-- | :-- |
+| Validation owed | What has to be measured or run before a step is trusted, and which step waits on it |
+| Steps | The step entries |
 
 A change decides once and lands in steps. A step is the unit that is built, reviewed, and merged: one branch, carrying the specification edits, then the code and the tests, then the documentation that the step needs. A large change has many steps, and a small one has one.
 

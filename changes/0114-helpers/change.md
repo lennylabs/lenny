@@ -9,11 +9,3 @@ The proposal pipeline under `.claude/workflows/` (11 workflows, 19,453 lines) co
 ## Scope
 
 This change builds the first helpers: `review`, `tidy`, `fact-check`, `ask`, `change`, and `build`. They run against the current specification, so later changes can use them before the specification structure lands. The helpers that read the new structure (`digest`, `where`, `since`, and `board`) come with 0115, and `triage` and `issue` come when the first area's findings migrate. The old workflows retire once nothing in flight depends on them.
-
-## Open decisions
-
-To be framed.
-
-## Steps
-
-To be framed.

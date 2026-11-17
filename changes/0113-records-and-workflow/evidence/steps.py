@@ -65,11 +65,15 @@ def load():
         status = m.group(1) if m else None
         if status not in CHANGE_STATUS:
             errors.append(f'{d}: status line missing or status {status!r} unknown')
-        secs = sections(text)
+        dp = f'{ROOT}/{d}/decisions.md'
+        secs = sections(open(dp).read()) if os.path.exists(dp) else {}
         open_dec = secs.get('Open decisions', '')
         n_open = len(re.findall(r'(?m)^(\d+\.|-) ', open_dec)) if not re.search(r'(?i)^\s*(none|to be framed)', open_dec.strip()) else 0
         changes[num] = {'dir': d, 'title': title, 'status': status, 'open': n_open, 'steps': []}
-        lines = text.split('\n')
+        sp = f'{ROOT}/{d}/steps.md'
+        lines = open(sp).read().split('\n') if os.path.exists(sp) else []
+        if re.search(r'(?m)^### \d{4}\.S', text):
+            errors.append(f'{d}: change.md holds step entries; they belong in steps.md')
         in_steps = False
         for i, line in enumerate(lines):
             if line.startswith('## '):
@@ -203,7 +207,7 @@ def board(changes, steps):
         c = changes[steps[sid]['change']]
         h = f'{sid} {steps[sid]["title"]}'.lower().replace('`', '')
         h = re.sub(r'[^\w\- ]', '', h).replace(' ', '-')
-        return f'[{sid}]({c["dir"]}/change.md#{h})'
+        return f'[{sid}]({c["dir"]}/steps.md#{h})'
 
     def classify(sid):
         s = steps[sid]

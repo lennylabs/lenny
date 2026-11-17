@@ -1,8 +1,6 @@
 # Message delivery
 
-Status: `Draft`, revision 24, 2026-11-16. Revision 24 applies the kind and field names of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which the owner accepted on 2026-11-16 as its O3, and changes no rule. Revision 23 follows the owner's answer of 2026-11-15 on external agents, "Connectors should be gone and external agents become a concern of the runtime that connects to them directly", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2 applies: the advisory `origin` that revision 22 added to `discover_agents` entries, the `start_child_session` result, and `list_child_sessions` entries is withdrawn with MDR-58, and `target` stays the argument of `start_child_session`. Revision 22 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors."), which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 1 designs: the `start_child_session` argument is `target`, and the statements about connector tool calls and connector messages are withdrawn, while B6 stands. Revision 21 applies the owner's answer of 2026-11-15 on unknown values ("2.2: ok", U1): "MD-24"'s leniency rules handle an unknown value of a known enum member as `other`, never as an error. Revision 20 applies the remaining instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), with a banner that names the parts moving to the adapters. An adversarial review read revision 4 on 2026-11-10, and revision 5 applies its findings. A re-review of revision 5's file export read it on 2026-11-10, and revision 6 applies the fixes the owner approved that day with decisions A18 to A21. A short review then read revision 6 the same day, and revision 6 also applies its fixes and the owner's revision of A19. Nothing here is built or staged. It reads against [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0122-client-tools`](../0122-client-tools/change.md) revision 11, [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) revision 12, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 22, [`0144-session-derive`](../0144-session-derive/change.md) revision 22, [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) revision 25, [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) revision 36, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 59, [`0126-delegation-availability`](../0126-delegation-availability/change.md) revision 12, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) revision 8, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). It is built from the read-only investigation of 2026-11-09 into messages that arrive while a runtime works, whose recommendations S1 to S10 the owner accepted on 2026-11-09 with the additions recorded under "Decisions". Revision 3 adds what a runtime reports to clients during a turn: activity, streamed output, reasoning, files, approvals raised inside a harness, and turn and usage events. It comes from a proposal of 2026-11-10 that two reviews read, one for its design and one for its coverage of the agent harnesses, and the owner settled its decisions as A1 to A11 and G3 on 2026-11-10. Revision 4 moves file uploads onto the chunks, packs, and grants of the incremental checkpoint design, which the owner approved as A12 on 2026-11-10. Revision 5 corrects the file export after the adversarial review, under the owner's decisions A13 to A17 of 2026-11-10. Revision 6 corrects it again after the re-review, under the owner's decisions A18 to A21 of 2026-11-10, with A19 as the owner revised it that day. This design re-verifies the tree and specification claims it rests on. It stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label MD-n, requirements carry MDR-n, decisions that began as open questions carry O-n or A-n, defects carry MDF-n, and the proposals that land the design carry MD-A to MD-D under "Proposal split and order". "Review history" at the end records the revisions. Revision 7 adds the per-session post-terminal deadline and the pool-level seal window that closes F-5.2.57, which the owner approved as A22 and A23 on 2026-11-10. Revision 8 states the `capabilities.harnessApprovalRequests` declaration in "MD-19", at the request of the delegation availability design's revision 4. Revision 9 makes a child session behave as a top-level session whose client is its parent, pushes a child's messages and ends to the parent, lets every session message its client during a turn, replaces `lenny/request_input` with replying, adds `humanRequired` to elicitations, moves harness approvals and questions onto frames, drops sibling messaging and the `lenny/` tool prefix, and renames the platform tools, under the owner's decisions B1 to B10 of 2026-11-10. It withdraws revision 8's declaration. Revision 10 applies the adversarial review of revision 9 and the owner's answers of 2026-11-11 to the points revision 9 left open: one `message` frame in both directions with optional members and leniency rules, `message_part` for streamed parts, one `request` frame and one `reply` frame, the delivery rules of a `message`, a parent's watch of a child's stream, files from a child to its parent, tool names that name the session, and the move of the session state machine to [`0146-session-lifecycle`](../0146-session-lifecycle/change.md). Revision 11 applies the adversarial review that read revision 10 and that design's revision 1 on 2026-11-11, with the owner's decisions B16 and B17 of the same day. Revision 12 applies a re-review of revision 11 of the same day with the owner's decisions B18 and B19, and revision 13 applies a regression review of revision 12 with the owner's decision B20. Revision 14 applies the owner's decision B21 of the same day. Revision 15 applies the owner's decisions of 2026-11-12 in the consistency pass across the designs, reading against [`0145-session-isolation`](../0145-session-isolation/change.md) revision 17, [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) revision 15, [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) revision 11, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, and [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) revision 24: the fixed workspace layout and the spool volume's paths, the output-file rule that makes "MD-18" the only route by which a file reaches the user, child-file imports written by the materialization helper from a staged file, and the session of a frame taken from its connection on a session-mode pod. Revision 16 applies the cross-design review of 2026-11-13: C1 settled as the removal of `startId`, `sessionId` on no frame but `session_start` under [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) O5 (b), the removal of `conversationContinuity` and of service mode, the capabilities and the single runtime connection of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) decisions D3 and D7, and the shared staging space of [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) O9. Revision 17 applies the read-only checks of that day: an import whose wait for staging space reaches its run's deadline fails with `details.reason: "staging_timeout"`, and the seal and the drain wait in the pod's checkpoint queue. Revision 18 applies the owner's answers of 2026-11-13 to the consolidated list of open decisions that touch this design: the MCP Tasks projection gives each sent message its own task (MP O7 and SL-Q1, settled as L32 of the session lifecycle design), and a write that names a removed field is refused by name ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) D6). Revision 19 applies the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which the owner answered "yes" on 2026-11-14: no session is held, a provider adapter creates ordinary sessions and routes follow-ups by conversation fingerprint, and a Chat Completions session is no longer released after its turn. No decision is open.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 24, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the client protocol mappings of message delivery move to the repositories of the MCP, A2A, OpenAI Chat Completions, Open Responses, and Anthropic Messages adapters. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved. The parts that move are the client-facing MCP tool and its generated retraction tool in "MD-7"; the surface rules of "MD-8" and requirement MDR-14; the MCP, MCP Tasks, A2A, and provider rows of "MD-21"'s surface table and decision A9; and the client-facing tool names of "MD-23". Those sections carry a banner of their own. "MD-8"'s consumption attribution stays in Lenny, and R2 and R3 of that design expose it. Every other part, the runtime contract, the gateway core, and the REST surface, still governs Lenny.
 
@@ -12,7 +10,7 @@ Each factual claim about behaviour carries one of these tags where the source ma
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree or the specification on 2026-11-09, or on 2026-11-10 for "MD-15" to "MD-21". |
 | **[external]** | Read on an external documentation page or in a public repository on 2026-11-09 or 2026-11-10. "Sources" lists the pages. |
-| **[unverified]** | A claim that the pages and code read do not state. "Validation owed" lists each one. |
+| **[unverified]** | A claim that the pages and code read do not state. "Validation owed" in `steps.md` lists each one. |
 | **[design]** | What this design requires. Nothing implements it. |
 
 ## Problem
@@ -151,6 +149,7 @@ A person who watches a coding agent also expects to see what it does while a tur
 | Import | The copy of a child's output file into its parent's workspace ("MD-26"). |
 | Waiting and paused states | `idle` and `dormant`, in which a session has no open turn and waits for its client, and `suspended` and `blocked`, in which the root's client paused it or an ancestor. [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) defines them. |
 | AG-UI | The Agent-User Interaction Protocol, an open event protocol between agent backends and user interfaces that CopilotKit maintains. Version 1.0 was published on 2026-09-17 **[external]**. |
+| MD-n, MDR-n, MDF-n, and MD-A onward | The parts of this design under "Detailed design" carry MD-n, its requirements under "Requirements" carry MDR-n, and the defects under "Defects found while verifying" carry MDF-n. MD-A, MD-B, and the later letters name the steps of `steps.md` that land the design, and each step lists the parts it lands. `decisions.md` gives each owner decision an ID, such as S-n, O-n, A-n, or B-n. |
 
 ### Terms from other designs and the platform
 
@@ -161,7 +160,7 @@ A person who watches a coding agent also expects to see what it does while a tur
 | Revision | An immutable, numbered copy of a runtime's versioned fields, `capabilities` among them, chosen per session ([`0140-runtime-revisions`, RV-1](../0140-runtime-revisions/change.md#rv-1-revisions)). |
 | Per-tenant capability override | The §5.1 mechanism that adjusts a runtime's capabilities for one tenant's sessions, which RV-1 restricts to narrowing ([`0140-runtime-revisions`, "Per-tenant capability override"](../0140-runtime-revisions/change.md#per-tenant-capability-override)). |
 | `CH-MSGSOCK` | The intra-pod channel between the adapter and the runtime process, which carries the JSONL frames `message`, `response`, `tool_call`, `tool_result`, `heartbeat_ack`, and others ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). |
-| `CH-RUNTIMEOPS` | Today's second intra-pod socket on which the adapter sends `interrupt_request`, `checkpoint_request`, and other operational frames ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). Under decision O7 (a) of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#open-decisions), settled on 2026-11-12, it leaves and its frames travel on `CH-MSGSOCK`, sent only when the capability that needs them is effective for the session. |
+| `CH-RUNTIMEOPS` | Today's second intra-pod socket on which the adapter sends `interrupt_request`, `checkpoint_request`, and other operational frames ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). Under decision O7 (a) of [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#open-decisions), settled on 2026-11-12, it leaves and its frames travel on `CH-MSGSOCK`, sent only when the capability that needs them is effective for the session. |
 | `CH-ATTACH` | The per-session stream between the gateway and the adapter that carries envelopes to the pod and relays the runtime's frames back ([§28.5.1](../../spec/28_communication-channels.md#2851-gateway-to-pod)). |
 | `MessageEnvelope` | The runtime-facing message format, with `id`, `from`, `inReplyTo`, `threadId`, `delivery`, `delegationDepth`, `sessionId`, and `input` ([§15.4.1](../../spec/15_external-api-surface.md#1541-message-format-and-binary-io-requirements), "`MessageEnvelope` — Unified Message Format"). Under AR O5 (b) the envelope the adapter writes to a runtime carries no `sessionId`, because no frame but `session_start` carries one ("MD-24"). |
 | `from.kind` | The sender kind on every envelope, written by the adapter: `client`, `agent`, `system`, or `external`. |
@@ -172,7 +171,7 @@ A person who watches a coding agent also expects to see what it does while a tur
 | `lenny/request_input` | The platform tool by which a runtime blocks on a question, answered by a message whose `inReplyTo` matches (§7.2 path 1). Revision 9 removes it ("MD-22"). |
 | Client tool call and pending calls | A call a runtime returns for the client to execute, recorded on the session row until the client's results arrive ([`0122-client-tools`, CT-5](../0122-client-tools/change.md#ct-5-pending-calls-and-the-hold-rule)). |
 | Results message | A client message whose `toolResults` answer a session's pending calls ([`0122-client-tools`](../0122-client-tools/change.md#terms)). |
-| `abandonPendingToolCalls` | The flag by which a REST client sends a text message while calls are pending, turning the pending calls into "cancelled by client" error results ([`0122-client-tools`, T9](../0122-client-tools/change.md#decisions)). |
+| `abandonPendingToolCalls` | The flag by which a REST client sends a text message while calls are pending, turning the pending calls into "cancelled by client" error results ([`0122-client-tools`, T9](../0122-client-tools/decisions.md#decisions)). |
 | Conversation input | The `conversation` member of the envelope, with ordered `entries`, that [`0120-anthropic-messages-api`, AM-4](../0120-anthropic-messages-api/change.md#am-4-conversation-input) adds. |
 | Provider-adapter session | An ordinary session that a provider adapter creates. It replaces the term "Held session": Lenny keeps no held-session state and no close-after-turn rule, under the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which the owner answered "yes" on 2026-11-14. The adapter may shorten the session's idle timeout, an operator lengthens it through the pool's idle timeout, a `one_shot` runtime ends its own session (**Completion (B5, M9).** in "MD-22"), and the adapter routes a follow-up request to the session by its conversation fingerprint ([`0120-anthropic-messages-api`, "Session lifetime"](../0120-anthropic-messages-api/change.md#session-lifetime)). |
 | Warm and cold turn | A warm turn continues the session that served the conversation's previous request, which the adapter finds by the conversation's fingerprint. A cold turn starts a new session and delivers the earlier conversation as history. |
@@ -207,8 +206,8 @@ A person who watches a coding agent also expects to see what it does while a tur
 | Labels | Source | What they name |
 | :-- | :-- | :-- |
 | T5, T9, O3, CT-5, CT-7, CTR-4, and CTR-5 | [`0122-client-tools`](../0122-client-tools/change.md) | The settled rule that inbox deliveries wait while client calls are pending for a runtime that does not declare `steer`, the settled `abandonPendingToolCalls` rule, the settled decision on deliveries held across a tool loop, the pending-calls part with its "Steer-declaring runtimes" subsection, continuation with its "Order of history entries" rule, and the requirements that no inbox delivery reaches a runtime without `steer` while calls are pending and that no call is outstanding inside a runtime. |
-| T16 | [`0122-client-tools`](../0122-client-tools/change.md#decisions) | The settled rule that client tools are offered only in turns a client request caused, which that design takes from O3 of this design. |
-| CT-A | [`0122-client-tools`](../0122-client-tools/change.md#steps) | That design's core proposal. |
+| T16 | [`0122-client-tools`](../0122-client-tools/decisions.md#decisions) | The settled rule that client tools are offered only in turns a client request caused, which that design takes from O3 of this design. |
+| CT-A | [`0122-client-tools`](../0122-client-tools/steps.md#steps) | That design's core proposal. |
 | AM-4, AM-5, AM-6, and AM-A | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) | Conversation input, continuity with the in-flight join, the mapping of output parts to Messages content blocks, and the proposal that lands conversation input on the OpenAI translators. |
 | RV-1 and RV-2 | [`0140-runtime-revisions`](../0140-runtime-revisions/change.md#rv-1-revisions) | Revisions with their field classes and the per-tenant capability override, and revision selection with the `runtime_revision` metric label. |
 | SD-1 | [`0144-session-derive`](../0144-session-derive/change.md#sd-1-one-route) | The derive route, and "Reading client messages", which gives transcript entries a sender and a delivery state. |
@@ -317,153 +316,6 @@ A child session behaves as a top-level session whose client is its parent. The p
                                                                                    turn_start, turn_end, usage events
  client attaches ──> replayed events, then one activity snapshot of the open activities
 ```
-
-## Decisions
-
-Settled by the owner on 2026-11-09. S1 to S10 are the investigation's recommendations, which correspond to its decisions D1 to D10, and the owner accepted them generally with the additions in the rows below:
-
-| ID | Decision | Where |
-| :-- | :-- | :-- |
-| S1 | Lenny adds a non-interrupting mid-turn delivery mode, `steer`, as an opt-in runtime declaration. | MD-1, MD-2 |
-| S2 | A client does nothing by default: a message takes the runtime's preferred intent, `steer` when declared. One optional per-message field overrides it, mirroring the Claude Agent SDK's `priority` (`next`, `later`, and `now`). | MD-1 |
-| S3 | REST returns `delivered` once the message is written, and report consumption and output as events. | MD-7 |
-| S4 | The gateway keeps custody of a delivered message until the runtime reports consumption, with at-least-once delivery and deduplication by id. | MD-3 |
-| S5 | `response` lists the message ids it consumed, and an unsolicited `response` is accepted. | MD-4 |
-| S6 | Client tools: for a `steer` runtime, inbox deliveries are not held while calls are pending, and the runtime places them after the results. T5's hold and the client-tools design's O3 apply only to other runtimes. The cold-history builder places a message that arrived while calls were pending after their results. | MD-10 |
-| S7 | Client tools: on REST, a client text message without the pending results is refused unless it sets `abandonPendingToolCalls: true`. Provider surfaces always refuse. The client-tools design records it as its T9. | MD-10 |
-| S8 | Retraction, settled on 2026-11-09. The owner wrote: "let's support retraction, including the retraction of any message generated by the runtime. For tool calls, the behavior would be what you described. For other messages, either ignore for now or retract if not delivered to the client yet (assuming that's a small blast radius)." A runtime may retract any message it generated, by id, and receives `retracted`, `too_late`, or `unknown`. On REST a retraction cancels pending client tool calls and the client receives a retraction event. On provider surfaces a returned call cannot be withdrawn, the client still sends results, the runtime ignores them, and the result is `too_late`. A message to another session that is still `pending` becomes `retracted` and is never delivered, and one already delivered or consumed is `too_late`. Retraction of output and session events is ignored for now, because its blast radius is not small. | MD-11 |
-| S9 | The tree's path 4 and path 5 divergences and the executor and lock defects are filed in `BUILD-GAPS.md`, cited here, and fixed later under a holistic plan. | "Defects found while verifying" |
-| S10 | `capabilities.injection.modes` is defined in §5.1, and the CRD comment is corrected. | MD-2 |
-| G1 | The delivery machinery is a general per-message model: every message carries an intent, each runtime declares the intents it accepts, the inbox gives messages explicit states and keeps custody until consumption, each message records `from.kind`, and a runtime acknowledges consumption by message id. The design names the future cases it covers and states the extension rule. | MD-1 to MD-4, MD-14 |
-
-The owner's decisions on the client-tools design (T1 to T8, and the updates to that design's O3, T5, S7, O8, and O9) and on the Messages design bind this design as that design and the owner's record state them.
-
-Settled by the owner on 2026-11-09 with revision 2, from the open decisions of revision 1. The owner answered "ok" to O1, O2, and O5, which take revision 1's recommendation, and to O4, which takes option (a) in place of revision 1's recommendation of (b). O3 changes revision 1's recommendation on the owner's own answer. G2 records the owner's answer on multi-thread sessions. No decision is open.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| O1 | How the gateway decides that a runtime can take a held message, in place of `ready_for_input`. | Option (a). The term leaves the specification, the gateway tracks an open turn from the frames it writes and reads, and a `queue` message waits for the turn's `response`. The term was introduced to stop a message from being written to stdin while tool calls are in flight. Waiting for the turn's `response` covers that concern and is stricter, because no tool call of a turn is in flight once its `response` has arrived. No frame ever carried the signal (F-7.2.49), so no runtime depends on it. [§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod) "Intra-pod" makes the stdout `response` "always required to signal task completion" at every integration level, and a process that exits non-zero before writing one makes the adapter synthesize `RUNTIME_CRASH`, so every turn ends in a frame the gateway observes. Mid-turn delivery becomes opt-in through `steer`. A reply to `lenny/request_input` by `inReplyTo` takes the reply path as before, and a message that is not `steer` still waits while the runtime is blocked in `lenny/request_input`. | MD-4, MD-5 |
-| O2 | Whether a runtime reports consumption during a turn. | Option (a). `CH-MSGSOCK` gains the `consumed` frame, which a runtime that declares `steer` writes when it consumes messages, and `response.consumed` reports the rest. A steered message is consumed mid-turn, and a coding turn can run for many minutes after it. With consumption reported on `response` alone, the client's `message_state` event, the transcript position of the message, and the release of custody would all wait for the turn's end. The frame costs a runtime one line per consumption, and the SDK writes it ("MD-12"). | MD-4, MD-12 |
-| O3 | Inbox deliveries to a session created on a provider surface. | The owner asked "wouldn't it be simpler to just deliver the message whenever it arrives?" and then answered "yes", which replaces revision 1's recommendation to keep such deliveries `pending` until the next client turn. A message from another session to a session created on the Messages, Chat Completions, or Responses surface is delivered on arrival under the ordinary intent rules, and those surfaces add no handling of their own. Rule 1: client tools are offered only in turns a client request caused, so a turn caused by another session's message carries no `conversation.clientTools`. Rule 2: a turn that no client request caused never appears in a provider-surface response. Its output goes to the transcript and to the session's REST event stream, and the client's next response is the output of the turn its own message caused, under the `consumed` attribution of "MD-4". A client request that arrives during such a turn is steered into it on a runtime that declares `steer`, and waits for the turn to end on any other runtime. Tool-use approvals work through the approvals API as on any session. Elicitation and `lenny/request_input` stay refused on those surfaces. "MD-8" records the scenarios in which such a message arrives. | MD-8, MD-10 |
-| O4 | When custody of a consumed message ends. | Option (a). Custody ends when the runtime reports consumption. A redelivery of a consumed message after a restore can repeat side effects that a checkpoint cannot undo, for example a push, so at-most-once delivery after consumption is the safer default. A runtime that never checkpoints would otherwise keep every consumed message in the inbox until the session ends. In place of the redelivery, when a session resumes from a checkpoint, the gateway emits a `message_state` event with the state `consumed_unrecorded` for each message consumed after that checkpoint, so a client or a parent can decide whether to send it again. | MD-3, MD-7 |
-| O5 | Whether a client may retract a message it sent, as S8 lets a runtime do. | Option (a). A client retracts its own message through `DELETE /v1/sessions/{id}/messages/{messageId}` and the generated MCP tool, with the results and rules of "MD-11". S8 builds the operation for runtimes, and the client route reuses it with no further state or store change. A `queue` message can wait for a long turn, and the user who queued it may change their mind, as Claude Code and Cursor let a user remove a queued message **[external]**. Retraction succeeds only while the message is `pending`, so it never races the runtime. | MD-7, MD-11 |
-| G2 | Whether a session carries several concurrent conversations, each named by `threadId`. | Left out of v1. The owner wrote: "ok to leave out of v1". No harness keeps separate concurrent conversations in one process. Threads would multiply the per-thread delivery machinery, because intents, open turns, attribution, and custody would each be kept per thread. Separate sessions and delegation cover the use cases. `threadId` and `inReplyTo` already let a later version add threads with no schema change. | "Scope" |
-
-Settled by the owner on 2026-11-10 with revision 3, from the activity proposal of 2026-11-10 and its two reviews. The owner answered A1 and A8 with a change to the recommendation, proposed the recording rule of A2, asked for JSON Patch in A3, and answered "ok" to the rest. The owner also noted that replay "is being redesigned completely and moved out of Lenny", which [`0144-session-derive`](../0144-session-derive/change.md) records: a client reads its own messages with SD-1's read and re-sends them, so activity in the transcript has no effect on replay.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| G3 | Whether Lenny's events follow AG-UI. | The owner wrote: "Lenny's event model needs to be translatable into AG-UI without losing information. But we should not give up on anything we believe is important that isn't supported by AG-UI yet." Every event has a lossless AG-UI projection, through `CUSTOM` where AG-UI has no event, and Lenny keeps the features AG-UI lacks. v1 adds no AG-UI endpoint, because Lenny is session-based while AG-UI is run-based and the client re-sends state on each run, and because it would be a fourth client surface. | MD-21 |
-| A1 | Whether reasoning is conversation content or activity. | The owner wrote: "I think it could be either, depending on what the runtime implements." The runtime chooses: a `reasoning_trace` part for content, or a `thinking` activity. Lenny does not convert between them. | MD-17 |
-| A2 | Whether activity persists. | The owner asked whether the runtime could "indicate which activities should be recorded to history" with a cap on "events written to history per unit of time", and then answered "ok" to recording each recorded activity's final state only. Activity stays out of the transcript unless the runtime sets `record: true`, the gateway writes one row when such an activity ends, `activity.recordPerMinute` caps the rows, and every open activity is sent on attach and resume. | MD-15 |
-| A3 | Which update operations activity has. | The owner asked to "support JSON Patch where applicable". `start`, `update`, `patch` for an object or array `detail`, `append` for a string, and `end`. The gateway applies each patch before forwarding it. | MD-15 |
-| A4 | Whether approvals raised inside a harness reach the client. | "ok". `lenny/request_approval` feeds the `tool_use` approval path, with `harnessApprovals` for unattended sessions. | MD-19 |
-| A5 | How output streams. | "ok". `append`, `end`, and `reset` on a streaming part. A session with a `PostAgentOutput` interceptor receives each part once, completed. | MD-16 |
-| A6 | Whether `lenny/output` stays. | "ok". It is removed, and the stdout `output` frame is the only output path. | MD-16 |
-| A7 | Whether a child session's activity is relayed to its parent. | "ok". It is not relayed. The parent links to the child by `childSessionId`. | MD-15 |
-| A8 | Where mid-turn usage comes from. | The owner wrote: "we should support both". Usage events carry `source: gateway` from metering and `source: runtime` from `llm_request_completed`. Budgets read only the gateway source. | MD-20 |
-| A9 | What the provider surfaces show. | "ok". Output and reasoning only. Activity on the Messages API behind a request header is future work. | MD-21 |
-| A10 | How large an activity frame can be. | "ok", and the owner wrote: "I don't think we need to store activity frames as files." An adapter-enforced cap of 1 MiB by default, configurable by the operator, with no blob references. An oversized frame is dropped and the client receives `lost`. | MD-15 |
-| A11 | How a large file the agent produces reaches the user. | The owner chose "straight to storage" (A11a), a "5 GiB default. Runtimes can lower it" (A11b), and the "same retention as the session" (A11c). The owner had asked whether the gateway can pull a workspace file and proposed that the file be "stored in blob storage by sending it via stdout through the adapter/gateway first". The design keeps the copy in blob storage and moves the bytes on the checkpoint transfer path, because stdout is limited to 50 MiB per line, base64 grows binary content by a third, and a large file on stdout would hold every later frame behind it. `ExportPaths` returns all its files in one response, so it cannot move a large file. The owner asked whether this works for gVisor and Kata: it does, because checkpoint transfer works under every isolation profile. | MD-18 |
-| A12 | How an output file is copied to storage. | The owner answered "yes" on 2026-11-10 to reusing the incremental checkpoint design's machinery, after a check of that design found that one `PUT` of up to 5 GiB breaks its security property S5, which bounds a compromised pod's writes to `checkpointGrantWindow × packMaxBytes` by refusing any grant larger than 32 MiB, and its requirement R5, which gives the pod no multipart capability. An output file is chunked and packed as a checkpoint is, chunks the session already stored are not uploaded again, a reflink clone freezes the file where the filesystem allows one, the gateway renders downloads from the packs with byte ranges, and the file's packs follow the session's retention through an output-file record. The confirmed point is that file and checkpoint uploads of a session share one grant window, so S5's bound is unchanged. A separate window would double it. | MD-18 |
-
-Settled by the owner on 2026-11-10 with revision 5. An adversarial review of revision 4 found defects in the file export and asked five questions, D1 to D5 of that review, which this design records as A13 to A17. The owner answered "go with all your recommendations", which approves every recommendation below and every fix the review proposed.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| A13 | Whether a pool keeps its own grant window. | Review decision D1. The per-pool override `PodSet.checkpointGrantWindow` stays, and the specification gives it a maximum of 8. S5's bound is then the pool's effective window times `packMaxBytes`, at most 256 MiB. Removing the override would change a setting the tree already carries, and the maximum keeps the bound a stated constant. | MD-18 "Grant window" |
-| A14 | How S5 states the exposure. | Review decision D2. S5's sentence "The residual exposure matches today's" is corrected. Today's bound is `checkpointGrantWindow × partialChunkSizeBytes`, 4 × 16 MiB, and the pack format raises it to 4 × 32 MiB by default. The bound limits a burst of chosen bytes in the session's own prefix, which the tenant's quota pays for and garbage collection reclaims. | MD-18 "Grant window" |
-| A15 | What ends an export other than its own outcome. | Review decision D3. The seal waits for exports up to `exportTimeoutSeconds` and then fails them. A drain runs the eviction checkpoint first, and exports continue only with the budget left. An export counts as agent work for idle suspension. A new coordinator reopens the stream for each part still exporting. A pod loss fails the part. The runtime learns of every failure from `output_failed`. A19 replaces the seal rule, and revision 6 keeps each `output_failed` notice until the runtime acknowledges it, so the runtime learns of a failure after a resume. | MD-18 "Export lifecycle" |
-| A16 | Whether holds cover output files. | Review decision D4. A security hold's `include: artifacts` of FE-3 covers output files, and the hold copies an output file's packs and its `output_files` row to escrow. The §12.8 legal-hold escrow copies every pack a pack-backed item references, and the item's row. | MD-18 "Retention" |
-| A17 | How an export shares the pod with a checkpoint's capture pass. | Review decision D5. During a checkpoint's capture pass, the adapter pauses export reading, hashing, and compression, and uploads of packs already built continue. | MD-18 "Grant window" |
-
-Settled by the owner on 2026-11-10 with revision 6. A re-review of revision 5 found further defects in the file export and asked the questions R1, R3, R5, and R8, which this design records as A18 to A21. The owner answered "R1, R3, R5: ok" and "R8: ok", and approved the re-review's other fixes, which "Review history" lists. A short review then read revision 6 the same day. The owner revised A19 after it, as A19's row records, and approved the short review's other fixes.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| A18 | How a pack ID stays unique when S1 refuses every key the catalog holds. | Re-review decision R1, "ok". The adapter writes a random 128-bit nonce into every pack's footer, for checkpoints and exports alike, so no two packs share a pack ID, and the pack ID stays the SHA-256 of the pack's bytes. S1 stays strict: the gateway never signs a key `(tenant_id, owner_session_id, pack_id)` its catalog holds, in any state, soft-deleted rows included. The "already stored" answer applies only to a pack in the session's allowed set, which covers a resend after a lost `PackCommitted`, because the adapter resends the pack it built, with the same nonce. A retry reuses the chunks of confirmed packs under lease through the dedup set, and the adapter never rebuilds a pack to reuse it, so a file chunked again gets new pack IDs and new grants. | MD-18 "Copy", MDR-33 |
-| A19 | How long the seal waits for exports. | Re-review decision R3. The owner first answered "ok" to option (b), on the condition that `maxWorkspaceSealDurationSeconds` can be overridden at the runtime level, derived runtimes included. Option (b) ran the seal checkpoint within the seal window and then gave exports still running a separate wait, the runtime field `files.sealExportWaitSeconds`, 120 seconds by default under a platform ceiling of 900 seconds, which raised §7.1's terminal pipeline budget and with it the claim orphan timeout. After the short review of revision 6, the owner replaced the separate wait on 2026-11-10: "I'm not sure why the export wait at seal would need to be higher than the seal window. The logic being that the exported file exists in the workspace, which is also checkpointed as a whole and therefore the checkpoint should take longer than the export no matter what." The owner answered "yes" to the design that replaces it. The seal checkpoint runs first, and the session's exports finish within the same `maxWorkspaceSealDurationSeconds` window, in the time the seal leaves, because the seal and the exports share one dedup set, so an exported file's chunks upload once, by whichever reaches them first. Under `checkpointPolicy: none`, which takes no seal snapshot, the exports get the whole window. An export still running when the window ends fails with `seal_timeout`. The terminal pipeline budget stays the seal window plus the release allowance of 30 s. The owner's condition stands: `maxWorkspaceSealDurationSeconds` is also a runtime field, versioned and gateway-read under RV-1, whose value overrides the pool's, bounded by the chart ceiling `gateway.workspaceSealMaxDurationCeilingSeconds`, 600 seconds by default, and a tenant-derived runtime may set it within the ceiling. As the owner asked, "the chart should compute the worst case automatically and adjust the 900 s default up if needed": the chart computes the default claim orphan timeout from the ceiling. | MD-18 "Seal window" and "Export lifecycle" |
-| A20 | Whether the gateway verifies the whole-file SHA-256. | Re-review decision R5, option (a), "ok". The verification on the first full read, its `checksum_mismatch` failure and deletion, and the `sha256_verified_at` column are removed. The whole-file SHA-256 stays as metadata: the gateway publishes it as `sha256` on the file part and in a `Repr-Digest` header on `GET /v1/blobs/{ref}`, so a client can verify its download end to end, and the gateway compares it only where it already reads the whole file before release, which is the `PostAgentOutput` scanner's read. S4's per-chunk check is the storage-integrity guarantee, the `ExportReady` metadata checks catch missing or overlapping chunks, and the whole-file hash cannot detect a compromised pod, which writes both the chunk list and the hash. The tier 1 and tier 10 tests catch adapter ordering bugs. | MD-18 "Download", MDR-29 |
-| A21 | Which files a reflink pool clones. | Re-review decision R8, "ok". On a reflink pool, a file larger than the remaining export share of the spool, 256 MiB at the default `checkpointCaptureBudgetBytes` of 512 MiB, is read in place with the identity check and is not cloned. Clones of parts waiting for the export cap also count against the share. "Freeze" and "Limits" state it. | MD-18 "Freeze", "Limits" |
-| A22 | How the post-terminal window follows each session's budget. | The owner answered "go with (b), your recommendation" on 2026-11-10. The terminal write stores `post_terminal_until` on the session row, the slot queries, `InPostTerminalWindow`, and the retention collector read it, and the store-wide cap is removed. The rejected option (a) kept one cap at the seal window ceiling plus 30 seconds, which is safe and holds a pod up to the ceiling's extra time after a crash. | MD-18 |
-| A23 | What the design states for F-5.2.57. | The owner answered "yes to the 4 points" on 2026-11-10: the seal window's resolution order (revision, pool, gateway flag, each at most the ceiling), the pool field on the pool record that the admin pool API writes, copied from the template for an owned pool, the §5.2 rewrite under which pool admission's ceiling check meets the `claimOrphanTimeout` bound, and MD-D as the proposal that closes F-5.2.57. | MD-18 |
-
-Settled by the owner on 2026-11-10 with revision 9, after a review of how parents and children message each other and whether `lenny/request_input` and `lenny/send_message` should stay. The rows quote the owner. B1 to B10 replace the parts of earlier decisions they contradict: A4's tool, O3's statement that `lenny/request_input` stays refused on provider surfaces, which no longer has a tool to refuse, and O1's reply path for `lenny/request_input`.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| B1 | How a child relates to its parent. | "I like the idea of a child session behaving like a top-level session in all ways (except that it may be more constrained). It would make it much easier to reason about runtimes, and it would allow for actual recursion". A child behaves as a top-level session, constrained by its delegation lease, and its parent is its client for messages. The owner had agreed to the framing with "it does". | MD-9, MD-22 |
-| B2 | How a parent learns of its children's messages and ends. | "Claude Code can spin up subagents and steer them and also get notified when they reply back with messages and when they end." A child's mid-turn messages, end-of-turn messages, completion, and failure are pushed to the parent's inbox as child events, delivered once each, and `await_children` stays for synchronous waits. | MD-22 |
-| B3 | Who shows the model which child a message came from. | "the runtime should handle it. Runtimes that can't shouldn't advertise the capability to handle children". The runtime renders `from`, declares `capabilities.childSessions`, and a revision without it cannot delegate. | MD-22, DA-4 |
-| B4 | Whether a session can message its client during a turn. | "If indicating an end of turn is relevant, then I would give all sessions a way to message their client in the middle of a turn". Every session can, through `send_update` and the `message` frame, and the end-of-turn frame says that it ends the turn. Streamed output is unchanged. | MD-22 |
-| B5 | Whether a turn end carries a status, and what replaces `lenny/request_input`. | "do we need the turn_end status? I would say only if there is a use for them between client and top-level agent". No status marks a question. Asking is replying, so `lenny/request_input` and its `input_required` sub-state leave, and completion is one runtime-driven signal, `complete: true`, for top-level and child sessions. | MD-22 |
-| B6 | Whether elicitation changes. | "let's not change the elicitation mechanism. I can see how parents being able to provide answers is useful. Maybe the elicitation could carry a parameter to indicate if a human must decide, in which case it would be sent to the top." The §9.2 chain stays, and `humanRequired: true` sends an elicitation to the human-facing edge past every parent. A URL-mode elicitation is always human-required. | MD-19, MD-22 |
-| B7 | Who answers a child's harness approval. | "approvals (a)". The person at the human-facing edge, always. A parent never answers one. | MD-19 |
-| B8 | Which operations are tools and which are frames. | "lenny/send_message, lenny/request_approval, etc. become utilities for agents but runtimes can still use all the messaging machinery via JSONL ... Especially lenny/request_approval, which really only the harness should trigger and not the agent." Frames carry everything the harness or its host program triggers, including approvals, harness questions, messages, completion, and tracing context. Platform tools exist only for decisions the model makes. Parent-side operations are tools only in v1, and frames for them can be added later. `lenny/request_approval` and `capabilities.harnessApprovalRequests` are withdrawn. | MD-19, MD-23 |
-| B9 | Whether siblings message each other. | "I agree we can probably drop sibling messaging". The `siblings` messaging scope leaves, and `interrupt` travels only from a session's client to the session. | MD-9 |
-| B10 | The tool names. | "go with your recommendations except I prefer await_children and discover_agents". No `lenny/` prefix on any platform tool, and the renames of "MD-23". | MD-23 |
-
-Settled by the owner on 2026-11-11 with revision 10. Revision 9 left B-O1 to B-O6 open. An adversarial review of revision 9 found the defects H1 to H5 and M1 to M10 and smaller ones, and the owner answered "Rest sound good" to its fixes, with the changes the rows below record. The session lifecycle the review raised is settled in [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) as L1 to L14, and the rows here point to it where it applies.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| B-O1 | What `await_child_sessions` returns now that a turn end is not completion. | "B-O1: ok". It returns each covered child's next end-of-turn, `ended`, or `awaiting_client_action` child event. `any` returns at the first, and `all` once every covered child has one. Events pending in the inbox when the call covers their child join the result, and a child that waits with nothing new to report counts as answered (review finding H3). | MD-22 |
-| B-O2 | How idle children are bounded, now that a child stays open after a turn. | "B-O2: ok but see my previous comment", which asked that a client's suspension cover the whole tree and that the combined lifecycle be stated. The lifecycle design settles it: an idle child becomes `dormant` and releases its pod, `onParentEnd` closes children when their parent ends, and a child waiting when its parent ends is closed at once (L2, L4, L6, L10, and L11). | MD-22, lifecycle design |
-| B-O3 | How a child's result maps to `TaskResult`. | Settled by the close rule the owner chose as "(a)" (L9). `TaskResult.state` is the child's terminal state. `TaskResult.output` is what the completing `message` delivers, or, for a close that records `completed`, what the child's last end-of-turn `message` delivered. | MD-22 |
-| B-O4 | A loop guard between sessions. | The owner asked to "elaborate" and then answered "B-O4: ok" to adding no mechanism. Every round of a loop between a parent and a child needs a `message_child_session`, which the parent's `messagingRateLimit` bounds per minute and over the session's life. The gateway reports a session that reaches its lifetime cap on the root's stream, and no rate limit refuses an end-of-turn or terminal child event. | MD-9 |
-| B-O5 | Messaging across environments. | "B-O5: ok but we should also make sure rules that are expected to apply to the session as a whole aren't loosened in the process". A message passes the sending environment's rules on the way out and the receiving environment's on the way in, and the rules that bind the whole tree apply on every edge whatever the environments. | MD-9 |
-| B-O6 | The wire name of the end-of-turn frame. | The owner asked: "Why different frames as opposed to fields in the frame? I'd like to simplify as much as possibe and use optional parameters where possible because runtimes may have a hard time running in practice if Lenny is very picky about these things. Obviously I don't want to drop any of the capabilities we have been talking about, but conversations shouldn't get stuck just because the runtime did something slightly off (ideally). I want to think about the DX for runtime authors too". The owner then answered "B-O6: ok" and "ok on interrupt->suspend and message_part renames". `message` names the frame in both directions, with the JSONL schema split by direction, `endOfTurn` defaults to `true`, `complete` implies the end of the turn, `consumed` has a default, one `request` frame with `kind` and an optional `requestId` and one `reply` frame replace the approval and elicitation frames, `message_part` replaces `output`, and the leniency rules of "MD-24" apply. The owner had asked whether `output` should be named `progress`, and the review answered that its parts are the session's answer, which `message_part` names. | MD-23, MD-24 |
-| B11 | Whether the agent-facing tools name the session. | "I wonder if the MCP tools should refer to sessions (like `suspend_child_session`)", then "P6: ok". Every tool that acts on a child names the session, which replaces B10's preference for `await_children`. | MD-23 |
-| B12 | What a `message` delivers to its recipient. | "P5: ok", after the owner asked "could we stream everything to the parent and let it decide how to handle?" A `message` delivers the parts it carries or names by `id`, and a `message` with no parts delivers everything the session wrote since its previous `message`, reasoning excluded. | MD-24 |
-| B13 | Whether a parent's runtime can receive a child's stream. | "P7: ok". A parent's runtime may watch a child's event stream with a frame and a resume sequence number, opt-in per child, and child events stay the discrete messages its model receives. | MD-25 |
-| B14 | How a child returns files to its parent. | "Related: we need to make sure child sessions can send back files to parents, including large files", then "P8: ok". The child event carries a reference to each file part, and the parent imports it on demand through a tool and a frame, over the checkpoint restore path, under import limits that mirror `fileExportLimits` and with §8.7's content scanning. | MD-26 |
-| B15 | How approvals stay with people (review finding M7). | The review proposed refusing the approve routes to principals that carry a session claim. The owner asked "in what scenario would a pod hold a client credential?", and the check found none: a pod authenticates with its projected service-account token and never holds a client bearer. The fix is dropped, and "MD-19" states why approvals reach only people. | MD-19 |
-
-Settled by the owner on 2026-11-11 with revision 11. An adversarial review read revision 10 and the lifecycle design's revision 1 the same day, and this design writes its findings as R10-H1 to R10-H6, R10-M1 to R10-M14, and R10-L1 to R10-L7. The owner accepted the fixes, which "Review history" lists, among them R10-H1, which narrows B-O4's exemption from rate limits to end-of-turn events whose turn consumed a message from the parent ("MD-9"). The owner's answers to the review's questions on the lifecycle are L15 to L22 of the lifecycle design.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| B16 | When `await_child_sessions` returns for a child that ends without an event. | The review proposed counting every terminal child as answered (R10-H6). The owner answered: "ok but it should also return the moment a child ends (if the child is running the momebt await_child_sessions is called, but ends before replying for whatever reason)". A pending call returns for a covered child as soon as the child ends for any reason, whether it completes, is closed or cancelled, fails, or expires, and whether or not it sent an event. The gateway writes the child's terminal entry from the session-tree record, and an ended child counts as answered with its final state. A waiting or paused child with no unconsumed event also counts as answered. | MD-22 |
-| B17 | Whether `await_child_sessions` keeps its name. | "await_child_sessions works". B11's name stands. | MD-23 |
-
-Settled by the owner on 2026-11-11 with revision 12, after a re-review of revision 11 and the lifecycle design's revision 2 the same day. The owner answered "ok" to each row, and accepted the re-review's fixes, which "Review history" lists. The lifecycle answers of the same day are L23 to L27 of the lifecycle design.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| B18 | The choices of revision 11. | "ok". The owner accepted the failure of every export with `suspend_hold_expired` at a suspension that releases the pod at once, the coverage of an `await_child_sessions` call without names, and the hold of a watched streaming part until it completes when the parent's content policy names an interceptor. | MD-18, MD-22, MD-25 |
-| B19 | What a turn stopped by a suspension consumes. | "ok". The end-of-turn `message` that closes a turn a suspension stopped consumes only the message ids it lists, and every other `delivered` message of the session returns to `pending`, so the resume delivers it again. It is L26 of the lifecycle design. | MD-4 |
-
-Settled by the owner on 2026-11-11 with revision 13, after a regression review of revision 12 and the lifecycle design's revision 3. The owner answered "b, go ahead".
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| B20 | A question pending when a suspension stops the turn. | "b, go ahead". The question, from `ask_question` or a `request` with `kind: "question"`, is withdrawn: the gateway expires it as §9.2 "Elicitation Timeout Semantics" item 6 does when a session leaves its pod, extended to every suspension that stops a turn whether or not the pod is released yet. The client's view drops it, a later answer is refused as not found, and the resume notice names each withdrawn question so the runtime may ask again. It is L28 of the lifecycle design, which stages the §9.2 row. | MD-19, MD-22 |
-| B21 | A tool-use approval pending when a suspension stops the turn. | "Withdraw approvals the same way". A pending approval, from a `request` with `kind: "approval"` or an approval-gated `tool_call` that the gateway holds, is withdrawn as B20 withdraws a question: it leaves the client's view, a later decision is refused as not found, its timeout and the unattended policy's answer no longer fire, and the resume notice names it so the runtime can ask again if it retries the tool. The rejected option kept the approval open with a paused timeout and held the decision until the resume. It is L29 of the lifecycle design. | MD-19, MD-22 |
-
-Applied on 2026-11-13 with revision 15, from the owner's decisions of 2026-11-12 recorded in the designs that own them.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| PL O2 | Which files a runtime offers to the user. | The owner accepted O2 of [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#open-decisions) as recommended: a file reaches the user as an output file only when the runtime emits a `file` part naming it, and §26's `/workspace/output/` convention is removed. | MD-18 |
-| WM O4 | Where a child-file import waits before it is written. | The owner replaced the options with a files-only mechanism: the adapter stages each verified file on the spool volume and passes its descriptor to the helper over a socketpair, one file at a time in one helper run, and deletes the staging file once the helper has applied it. There is no streaming path ([`0153-workspace-materialization`](../0153-workspace-materialization/change.md#open-decisions)). | MD-26 |
-| SI D4, RP RPR-18 | Which session a frame acts for. | A runtime process serves one session, and a frame's session is the session of the slot whose connection carries it ([`0139-runtime-protocol`](../0139-runtime-protocol/change.md#requirements), RPR-18). | MD-24 |
-| RP D5 | The adapter-local tools. | Retired by the owner on 2026-11-12 ([`0139-runtime-protocol`](../0139-runtime-protocol/change.md#decisions)). | MD-2 |
-
-Settled by the owner on 2026-11-13 and applied with revision 16, from the owner's decisions recorded in the designs that own them.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| C1 | Whether `startId` stays. | Settled as (c), removal, by the owner's removal of non-agent runtimes: "With service mode gone, `startId` goes (the owner's point)" ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), D2). A runtime process receives one `session_start` in its life, so `startId` tells apart nothing. Revision 15 had recommended keeping it in case service mode needed it, and service mode is gone. | MD-24 |
-| AR O5 | Whether a frame other than `session_start` carries `sessionId`. | "O5 (b)": no frame carries `sessionId` except `session_start`, and the owner then answered "ok, let's keep it" for `session_start`, which keeps it as data the runtime reads and the adapter never acts on. A runtime that still writes it on another frame is unaffected, because an unknown member is ignored silently. | MD-24, the frame examples |
-| AR O4 | Whether `sessionIsolationLevel` keeps `conversationContinuity`. | Removed, with `executionMode` (AR O4). The hold rule of the provider surfaces reduces to the runtime's capabilities, so the worked example names no `conversationContinuity`. Since 2026-11-14 no hold rule remains, under the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). | "Worked example" |
-| RP D3 and D7 (O7) | Integration levels and the second socket. | Capabilities replace the integration levels, and the frames of `CH-RUNTIMEOPS` travel on `CH-MSGSOCK` ([`0139-runtime-protocol`](../0139-runtime-protocol/change.md#decisions)). Revision 16 restates this design's level and channel statements to match. | MD-2, MD-4, MD-5, MD-24, "Terms", "Limits", "Specification changes", "Tests" |
-| WM O9 | How much spool space a child-file import may use while it waits for the helper. | One pod-wide `spoolSizeLimitBytes`, 16 GiB by default, whose usable half holds each slot's spool cap and a staging space the slots share. The gateway refuses an import larger than the parent pool's staging space before it signs a grant, and an import that fits waits for free space ([`0153-workspace-materialization`](../0153-workspace-materialization/change.md#open-decisions), D19). | MD-26 |
-
-Settled by the owner on 2026-11-15 and applied with revision 21.
-
-| ID | Question | Decision | Where |
-| :-- | :-- | :-- | :-- |
-| U1 | How a reader treats an unknown value of a known enum member, such as a child event's `event` or `state`, a tool result's content type, or an error code. | "2.2: ok": the value is handled as `other` and is never an error, in both directions. A value that selects what the adapter does, such as a `request`'s `kind`, keeps the malformed-frame rule, which answers with an `error` frame and continues the session. | MD-24, MDR-57 |
 
 ## Requirements
 
@@ -608,7 +460,9 @@ These were read in the tree and the specification on 2026-11-10 **[source]**:
 
 The harness survey of 2026-11-10 found these **[external]**. Every harness streams assistant text token by token. Claude Code, Codex, Gemini CLI in its Agent Client Protocol mode, and Cursor in its Agent Client Protocol mode report tool runs with streamed output, plans or todo lists, reasoning, and permission requests for their own tools. The Claude Messages API requires thinking blocks to return with their signatures. AG-UI 1.0 has events for streaming text, tool calls, reasoning with encrypted values, open-typed activity snapshots with JSON Patch deltas, subagents, and interrupts that end a run.
 
-## MD-1 Delivery intents
+## Detailed design
+
+### MD-1 Delivery intents
 
 **Values [design].** `delivery` on the `MessageEnvelope` takes `steer`, `queue`, or `interrupt`, or is absent. `immediate` and `queued` leave the enum, because Lenny has no deployments to keep. An unknown value is refused with `400 INVALID_DELIVERY_VALUE`, whose message lists the defined values.
 
@@ -630,7 +484,7 @@ Claude Code's `now` first moves background-capable work to the background and le
 
 **Ordering [design].** Messages of one intent reach the runtime in the order the gateway accepted them. A `steer` message overtakes `queue` messages that are still `pending`, as the harnesses' steered messages overtake their queued ones.
 
-## MD-2 Runtime declaration
+### MD-2 Runtime declaration
 
 ```yaml
 capabilities:
@@ -650,7 +504,7 @@ capabilities:
 - The fields are versioned and gateway-read under RV-1, so the session's revision decides. The per-tenant capability override may keep a subset of `modes` that still contains `queue`, as RV-1 states for `injection.modes`, and may set `defaultMode` to one of the remaining intents. When an override removes the revision's `defaultMode`, the default falls back to the rule of "MD-1".
 - The CRD comment on `InjectionCapabilityCRD.Modes` states the meaning above.
 
-## MD-3 Inbox states and custody
+### MD-3 Inbox states and custody
 
 **States [design, G1].**
 
@@ -682,7 +536,7 @@ Transitions: `pending` to `delivered`, `retracted`, `expired`, or `dropped`; `de
 
 **Expiry [design].** A `pending` entry keeps today's TTL rules, except as the lifecycle design states in "SL-5": an entry held for a `dormant`, `suspended`, or `blocked` session takes no TTL and expires when the session ends, and a child event takes no TTL while its parent lives, because the child cannot send it again (MDR-51). A `delivered` entry has no TTL while the session lives, because the runtime holds it. When the session ends, its `pending` and `delivered` entries become `expired` with `reason: "target_terminated"`, and the sender is notified as §15.4.1 states today.
 
-## MD-4 Turn accounting
+### MD-4 Turn accounting
 
 **`message.consumed` [design, S5].** The end-of-turn `message` frame gains `consumed`, an array of message ids that the runtime consumed in the turn the frame closes and has not reported in a `consumed` frame:
 
@@ -709,7 +563,7 @@ The open turn replaces `ready_for_input` as the condition a `queue` message wait
 
 **Errors [design].** An end-of-turn `message` with `error` closes the turn as a failed turn, and the messages it lists in `consumed` are `consumed`. A message the failed turn did not consume stays `delivered`, and the runtime may consume it later. The gateway reads `error`, which the executor ignores today (client-tools design, "Defects found while verifying").
 
-## MD-5 Delivery paths
+### MD-5 Delivery paths
 
 §7.2 "Message delivery routing" is rewritten as named paths, evaluated in order, where the first match wins **[design]**. Names in place of numbers let a later path join the list without renumbering its neighbours, as the specification's naming law asks of channel identifiers.
 
@@ -732,7 +586,7 @@ The session stays `running` on the interrupt path. Suspension is a separate oper
 
 **Removed rules [design, O1].** The `ready_for_input` definition, the delivery timeout of 30 seconds and its fall-through to the inbox, and the `input_required` overlap rule between old paths 3 and 5 leave §7.2. §29.3 step 8 is rewritten: the adapter relays `consumed` and end-of-turn `message`, and the gateway derives the open turn from them.
 
-## MD-6 Executor, lock, and waiting
+### MD-6 Executor, lock, and waiting
 
 **Writer [design, S9].** `PodExecutor` gains `Deliver(ctx, sessionID, []Envelope) ([]WriteResult, error)`, which writes each envelope on the session's `CH-ATTACH` stream and returns once the writes succeed or the stream fails. It takes no turn token, and a write is allowed while a turn is open. `attachConn.token`, `acquireTurn`, and the turn registration leave `podstream.go`.
 
@@ -744,7 +598,7 @@ The session stays `running` on the interrupt path. Suspension is a separate oper
 
 **Classification [design].** `messagerouting.Classify` takes the session row, the open-turn state, the resolved intent, the revision's declared intents, and whether the message is a results message, and returns a named path. Its comment that a synchronous executor is ready by construction leaves with the turn token.
 
-## MD-7 REST
+### MD-7 REST
 
 <a id="md-7-rest-and-mcp"></a>
 
@@ -765,7 +619,7 @@ The session stays `running` on the interrupt path. Suspension is a separate oper
 
 **Clients [design].** The Go client SDK, the `lenny session send` command, and the web playground read output from the event stream. `lenny session send` without an attached stream prints the receipt and exits, as §24 states today.
 
-## MD-8 Provider surfaces
+### MD-8 Provider surfaces
 
 > **Moves to the provider adapters.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), the surface rules of this section and requirement MDR-14 govern the OpenAI Chat Completions, Open Responses, and Anthropic Messages adapters and no longer govern Lenny. They stay here unchanged until each adapter's repository takes them, and stage no edit to Lenny's specification. The consumption attribution the adapters read, the `consumed` list of "MD-4" and the cut point at a message's consumption, stays in Lenny, and R2 and R3 of that design expose it.
 
@@ -789,7 +643,7 @@ Tool-use approvals in such a turn work through the approvals API as on any sessi
 - Asynchronous delegation, the main case. A runtime served on the Messages API or Responses starts a child, replies to its client, and after that reply the child sends a mid-turn message, ends a turn, completes, or fails. Each reaches the parent as a child event ("MD-22"), and the parent runtime takes it in a turn of its own. The client sees that turn on the session's REST event stream, and in a provider response only when the runtime refers to it in a later turn the client caused.
 - The same session used from REST, through the session id the response headers carry. A REST client message causes a turn whose output reaches the REST event stream and no provider-surface response.
 
-## MD-9 Inter-session messages, system messages, and delegation
+### MD-9 Inter-session messages, system messages, and delegation
 
 **Inter-session messages [design, B1].** A session sends messages to other sessions only along the delegation tree. A parent sends to a child with `message_child_session`. A session sends to its client, which for a child is its parent, with `send_update` or a mid-turn `message` frame, and ends its turn with an end-of-turn `message` ("MD-22"). `message_child_session` carries `delivery` in its message and resolves the target's default intent when absent. The cross-tenant check, the messaging scope, the rate limits, and the `PreMessageDelivery` interceptor run before the intent check, as §7.2 orders them today. The call returns its receipt once the message is written or held, so a sender never waits for the target's turn. A parent learns the outcome of its own messages as a client does ("MD-22", **Outcomes**).
 
@@ -811,7 +665,7 @@ Tool-use approvals in such a turn work through the approvals API as on any sessi
 
 **Sender kind [design].** The adapter writes `from` as today, and the inbox entry and the transcript row record it (MDR-1), so a runtime that weighs a client's correction above an agent's suggestion can tell them apart. A child event carries the child's session id in `from.id` ("MD-22").
 
-## MD-10 Client tools
+### MD-10 Client tools
 
 The client-tools design's revision 2 already scopes its hold rule to runtimes that do not declare `steer` ("Steer-declaring runtimes" under CT-5) and adds the history rule ("Order of history entries" under CT-7). This part states the delivery machinery's side of both.
 
@@ -823,11 +677,11 @@ The client-tools design's revision 2 already scopes its hold rule to runtimes th
 
 **Cold-history ordering [design, S6, MDR-7].** The cold-history builder, which the client-tools design's CT-7 and AM-4 use, places each entry by the turn and the position at which the runtime consumed it, from `consumed` frames and `message.consumed`. An entry consumed while client calls were pending moves to after the entry that carries their results, as CT-7 "Order of history entries" requires, and entries that move keep their relative order. An entry reported only on an end-of-turn `message` is placed after the output that turn streamed before the end-of-turn `message`, and before the end-of-turn `message`'s own output. The builder never places an entry between an assistant entry that carries calls and the entry that carries their results.
 
-## MD-11 Retraction
+### MD-11 Retraction
 
 The owner settled S8 on 2026-11-09: a runtime may retract any message it generated. Retraction is one operation in the delivery machinery, keyed by id, and it changes only what no recipient has received **[design, S8, MDR-10]**.
 
-### Request and result
+#### Request and result
 
 A runtime writes a `retract` frame on `CH-MSGSOCK`, inside or outside a turn:
 
@@ -854,7 +708,7 @@ The adapter relays it on `CH-ATTACH` to the stream of the session it names, as a
 - `unknown`: the id names nothing this session may retract (MDR-11).
 - The frames add no channel, so the §28.3 registers and the naming law are unaffected. A runtime that never writes `retract` never receives `retract_result`.
 
-### What a runtime may retract
+#### What a runtime may retract
 
 | Item | Id the runtime names | `retracted` when | `too_late` when | Effect of `retracted` |
 | :-- | :-- | :-- | :-- | :-- |
@@ -866,17 +720,17 @@ The adapter relays it on `CH-ATTACH` to the stream of the session it names, as a
 
 A retracted `interrupt` message is never delivered, and an interrupt the gateway already requested for it proceeds, because the runtime may already be stopping.
 
-### Ordering
+#### Ordering
 
 A message retraction runs on the recipient's coordinating replica under the recipient's delivery lock, which the message paths and the delivery of held messages also take ("MD-6"), so a retraction and a write of the same entry never interleave: the one that takes the lock first wins. The gateway routes a retraction to the recipient as it routes the `message_child_session` call that sent the message, including the forwarding to a coordinating replica on another gateway replica. A client-call retraction and a results message race on the session row's conditional write, and exactly one of them takes effect.
 
-### Audit and interceptors
+#### Audit and interceptors
 
 Each retraction that changes state writes the audit event `message.retracted`, or `client_tool_call.retracted` for a call, naming the retracting session and principal, the item's id and kind, the recipient session, the surface, and the result (MDR-12). The counter `lenny_retraction_total{kind, result}` counts every result, including `too_late` and `unknown`, so an operator can see a runtime that retracts often or names ids it does not own. Audit records carry no message content.
 
 No interceptor phase runs on a retraction. A retraction removes content from a recipient's path and adds none, and the retracted content already passed `PreMessageDelivery` for a message, or `PostAgentOutput` for a call's arguments, when it was sent. A deployer who needs to observe retractions reads the audit event.
 
-### Blast radius
+#### Blast radius
 
 The owner asked for retraction of messages other than client calls if its blast radius is small. It is small for messages, because "MD-3" already gives every inbox entry a state and a lock-held transition, and a runtime's message to another session lives in one place:
 
@@ -893,7 +747,7 @@ The owner asked for retraction of messages other than client calls if its blast 
 
 Output and session events are not small, so they are ignored for now. Output parts and events carry no id a runtime could name. An `output` event fans out at once to every outbound channel of the session, enters the event store's replay sequence, and enters the transcript, and the provider adapters fold it into response records. Recalling one part would need ids on parts, a tombstone in the replay sequence, and a rule for channels that already received it. "MD-14" lists it as a future case.
 
-## MD-12 Runtime SDKs
+### MD-12 Runtime SDKs
 
 **Drain call [design].** The Go, Python, and TypeScript SDKs add a call on the handler's context, `DrainMessages(ctx) []Message` in Go, `drain_messages()` in Python, and `drainMessages()` in TypeScript. It returns, in arrival order, the messages that reached the runtime for the session while the handler runs, and removes them from the session's queue. A model loop calls it between model steps, after the step's tool results are in hand, and appends what it returns after those results. The SDK treats every returned message as consumed, writes a `consumed` frame for their ids, and keeps them out of a later `OnMessage`.
 
@@ -911,7 +765,7 @@ Output and session events are not small, so they are ignored for now. Output par
 
 **Activity, output, files, and approvals [design].** The SDKs add `ReportActivity(ctx, Activity)` in Go, `report_activity()` in Python, and `reportActivity()` in TypeScript, which write `activity` frames, with helpers for each operation and an `End` that sets the final status. `Output` writes the `message_part` frame, with a streaming writer that emits `append`, `end`, and `reset`. A file helper emits a `file` part by workspace path with a fresh part `id`. The SDKs report the `output_failed` frame of "MD-18" to the runtime through `OnOutputFailed(ctx, OutputFailure)` in Go, `on_output_failed()` in Python, and `onOutputFailed()` in TypeScript, with the part `id` and the reason, so a runtime can emit the file again. When the handler returns, the SDK writes `output_failed_ack` with the part `id`, and it drops a later notice for a part `id` it has already acknowledged, because the gateway sends an unacknowledged notice again after a resume. `RequestApproval` and `RequestElicitation` write a `request` frame of `kind` `approval` and `question` and return the matching `reply`, through the `Request` call below. `SendUpdate` writes a mid-turn `message` frame, and `Complete` writes the end-of-turn frame with `complete: true` ("MD-22"). The client SDKs keep events as `{type, data}` strings, so the new kinds reach applications with no client SDK release, and typed helpers for the conventional kinds are optional.
 
-## MD-13 Reference runtimes
+### MD-13 Reference runtimes
 
 The tree holds no reference-runtime adapter source, so each change is a declaration in §26 and `pkg/embedded/stack/catalog.go`, and an adapter change in the runtime's own repository **[design]**:
 
@@ -937,7 +791,7 @@ Each runtime that declares `interrupt` handles `interrupt_request` today, becaus
 
 A generic adapter for Agent Client Protocol harnesses is a runtime SDK deliverable, because several harnesses expose that protocol.
 
-## MD-14 Future use cases and the extension rule
+### MD-14 Future use cases and the extension rule
 
 **Cases the machinery covers [design].** None ships in v1.
 
@@ -963,11 +817,11 @@ A generic adapter for Agent Client Protocol harnesses is a runtime SDK deliverab
 6. The enum stays closed: an unknown intent is refused with `400 INVALID_DELIVERY_VALUE`, and registration refuses an unknown declared intent.
 7. A new intent comes with a conformance case in §15.4.6 and a mapping row on each surface that exposes it.
 
-## MD-15 Activity
+### MD-15 Activity
 
 The owner settled A2, A3, A7, and A10 on 2026-11-10 and kept the activity `kind` open-ended under conventions. Activity is the runtime's own report of what it is doing. The gateway shows it to clients, keeps the current state of every open activity, and keeps it out of model history **[design]**.
 
-### Frame
+#### Frame
 
 ```json
 {
@@ -1001,7 +855,7 @@ The owner settled A2, A3, A7, and A10 on 2026-11-10 and kept the activity `kind`
 
 `kind`, `lifetime`, `record`, `parentId`, and `agent` are fixed at `start`. A frame that changes one is dropped with the reason `immutable_field`.
 
-### Operations
+#### Operations
 
 | `op` | Effect |
 | :-- | :-- |
@@ -1013,7 +867,7 @@ The owner settled A2, A3, A7, and A10 on 2026-11-10 and kept the activity `kind`
 
 A frame for an `id` the session never started is dropped with the reason `unknown_id`. Every drop is counted on `lenny_activity_dropped_total{runtime, runtime_revision, reason}`, and the gateway emits an `activity` event with `op: "lost"`, the `id`, and the reason, so a client knows its copy of that activity missed a change.
 
-### Conventional kinds
+#### Conventional kinds
 
 The kinds below are conventions that runtime authors and clients share. A runtime may send any kind.
 
@@ -1034,19 +888,19 @@ The kinds below are conventions that runtime authors and clients share. A runtim
 | `mode` | The harness changed its mode, such as a plan mode. | `mode`. |
 | `model` | The harness changed its model. | `model`. |
 
-### Turn and close rules
+#### Turn and close rules
 
 - Activity never opens or closes a turn ("MD-4"). The gateway stamps each activity event with `turn`, the ordinal of the open turn, when a turn is open.
 - When a turn closes, every open activity of that turn with `lifetime: turn` ends `cancelled` with `reason: "turn_ended"`. When the runtime process ends, every open activity ends `cancelled` with `reason: "runtime_exit"`. When the session ends, every open `session` activity ends `cancelled` with `reason: "session_ended"`. A client spinner therefore always stops.
 - Activity counts as qualifying activity for the idle clock of the lifecycle design's "SL-6", as §6.2 counts `agent_output` and `tool_use`.
 
-### Current state and attach (A2)
+#### Current state and attach (A2)
 
 The gateway keeps the current state of every open activity of a session in a Redis hash keyed by activity id, on the session's data shard, so any gateway replica that coordinates the session holds it. The hash is bounded by `activity.maxOpen` (default 256) and `activity.snapshotMaxBytes` (default 8 MiB) per session. A `start` past either bound is dropped with the reason `open_limit`.
 
 On every attach and every resume, after the replayed events, the gateway sends one `activity` event with `op: "snapshot"` that lists every open activity, with a fresh `SeqNum` as the synthesized frames of §10.4 "Coordinator-handoff reattach" take. Activity events are volatile events under §10.4 "volatile vs. reconstructible events": a resume whose range lost only activity events receives the snapshot and no `gap_detected` for them. When the replay ring must evict, it evicts first an activity event whose `id` has a later event in the ring, so activity does not push other events out of the ring.
 
-### Recording (A2)
+#### Recording (A2)
 
 Activity stays out of the transcript unless the runtime starts it with `record: true`. When a recorded activity ends, the gateway writes one transcript row with the role `activity` that carries the activity's `kind`, `summary`, `detail`, final `status`, `agent`, `parentId`, `turn`, and its start and end times, at the position of its `start`. Intermediate updates are not recorded.
 
@@ -1054,23 +908,23 @@ Activity stays out of the transcript unless the runtime starts it with `record: 
 
 Recorded rows never reach a model: the cold-history builders of CT-7 and AM-4, conversation input, and SD-1's `GET /v1/sessions/{id}/messages?from=client` skip them. `GET /v1/sessions/{id}/transcript` returns them. Transcript retention, [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) erasure, and legal holds apply to them as to every transcript row.
 
-### Adapter rules
+#### Adapter rules
 
 - **Size (A10).** The adapter parses each `activity` frame and drops one larger than `activity.maxFrameBytes` (default 1 MiB, operator-configurable) with the reason `oversize`. The session continues. Activity has no blob references: content larger than the cap is a file part ("MD-18") that an activity names by path.
 - **Coalescing.** The adapter holds the newest `update` per `id` for at most `activity.minIntervalMs` (default 250 ms) and concatenates consecutive `append` frames to the same `id` and `path`. It never holds `start`, `patch`, or `end`, and before it relays any other session-scoped frame of the session it relays every held frame in the order of their newest writes. Coalescing therefore skips intermediate states and never reorders an activity against output, `tool_call`, `consumed`, or end-of-turn `message`.
 - **Routing.** `activity` and `output` join `sessionScopedFrameTypes` in `pkg/adapter/attach.go`, so the demultiplexer relays them to their own session's stream alone.
 
-### Gateway rules
+#### Gateway rules
 
 - **Interceptors.** A new interceptor phase, `PostAgentActivity`, receives each activity frame as JSON before the gateway applies and forwards it. `MODIFY` may change `summary`, `detail`, `patch`, and `text`, and may not change `id`, `kind`, `op`, `parentId`, or `status`. `REJECT` drops the frame, writes the audit record other phases write, and never fails the turn. A rejected `end` still closes the activity, with its `summary` and `detail` removed, so the close rule holds. The phase follows the failure policy each interceptor declares, as the other phases do. `PostAgentOutput` does not fit, because its payload is `MessagePart[]`.
 - **Trust.** Activity is the runtime's claim about itself. No audit record, policy decision, budget, or approval reads it.
 - **Opt-out.** A subscriber passes `activity: "none"` on `attach_session` and on `GET /v1/sessions/{id}/events` to receive no activity events. The default delivers them.
 
-### Child sessions (A7)
+#### Child sessions (A7)
 
 A delegated child session's activity stays on the child's stream. The parent's `tool_use` event for `start_child_session` carries `childSessionId`, and a client that wants the child's detail attaches to the child. A subagent that a harness runs inside its own process is a `subagent` activity of the session, because Lenny learns of it only from the harness. A parent's runtime may watch a child's stream, activity included ("MD-25").
 
-## MD-16 Output streaming
+### MD-16 Output streaming
 
 The owner settled A5 and A6 on 2026-11-10 **[design]**.
 
@@ -1101,7 +955,7 @@ A streaming part still open when its turn closes ends `failed`, except a file pa
 
 **Events.** The `output` SessionEvent carries the frame's entries, so a client applies `append`, `end`, and `reset` as the runtime wrote them. The `outputDeltas` adapter capability leaves under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md): an adapter reads the same entries from the REST event stream and coalesces the part operations itself when its protocol needs whole parts.
 
-## MD-17 Reasoning
+### MD-17 Reasoning
 
 The owner settled A1 on 2026-11-10: "I think it could be either, depending on what the runtime implements." The runtime chooses where its reasoning goes, declares nothing, and Lenny does not convert one form into the other **[design]**.
 
@@ -1110,11 +964,11 @@ The owner settled A1 on 2026-11-10: "I think it could be either, depending on wh
 
 A runtime has to emit reasoning as content when a Messages API client must send thinking blocks back with their signatures, or when the reasoning must survive in the transcript and in cold history.
 
-## MD-18 Files
+### MD-18 Files
 
 The owner settled A11 on 2026-11-10: the file goes "straight to storage", the size limit is a "5 GiB default. Runtimes can lower it", and the file has the "same retention as the session". Under A12, also of 2026-11-10, an output file is copied with the chunks, packs, and grants of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md). A file the agent produces for the user is copied into the artifact store and offered as a download. Its bytes never travel on stdout, on `CH-ATTACH`, or through the gateway **[design]**.
 
-**The only route to the user (PL O2).** A file reaches the user as an output file only when the runtime emits a `file` part that names it. The platform defines no output directory: §26.2's `/workspace/output/` convention, under which agents "MUST write intended outputs here", and §26.3's statement that files under it "are sealed as session artifacts" are removed, and §24.18's scaffold stops generating the convention, under decision O2 of [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#open-decisions), which the owner accepted on 2026-11-12. Nothing implemented either rule **[source]**. A runtime may keep its own folder for outputs, and it emits a part for each file in it that it offers. The whole workspace stays downloadable through `GET /v1/sessions/{id}/workspace`, which is a download of the workspace rather than an output file.
+**The only route to the user (PL O2).** A file reaches the user as an output file only when the runtime emits a `file` part that names it. The platform defines no output directory: §26.2's `/workspace/output/` convention, under which agents "MUST write intended outputs here", and §26.3's statement that files under it "are sealed as session artifacts" are removed, and §24.18's scaffold stops generating the convention, under decision O2 of [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md#open-decisions), which the owner accepted on 2026-11-12. Nothing implemented either rule **[source]**. A runtime may keep its own folder for outputs, and it emits a part for each file in it that it offers. The whole workspace stays downloadable through `GET /v1/sessions/{id}/workspace`, which is a download of the workspace rather than an output file.
 
 **Part.** A `file` part may name a workspace path in place of `inline` or `ref`:
 
@@ -1212,14 +1066,14 @@ The reasons are `duplicate_part_id`, `too_many_exports`, `file_not_found`, `outs
 
 **Performance.** The incremental checkpoint design's benchmarks bear on exports **[source]**:
 
-- Reading dominates on sandboxed and microvm pools. A 4 KiB file costs 5 to 13 µs to read under runc and on a Kata block volume, and 46 to 129 µs under gVisor and on Kata's shared file system. A large file is read sequentially, and its export time is then set by the hashing and compression CPU and the upload bandwidth, which those benchmarks did not measure for a single large file ("Validation owed").
+- Reading dominates on sandboxed and microvm pools. A 4 KiB file costs 5 to 13 µs to read under runc and on a Kata block volume, and 46 to 129 µs under gVisor and on Kata's shared file system. A large file is read sequentially, and its export time is then set by the hashing and compression CPU and the upload bandwidth, which those benchmarks did not measure for a single large file ("Validation owed" in `steps.md`).
 - The adapter's CPUs matter. With 2 CPUs in place of 4, the first checkpoint of a 5.9 GiB checkout under gVisor took 208 s against 139 s.
 - Deployer levers that speed exports as they speed checkpoints: gVisor's pod-share mount hint, which made restore 3.2 times faster, Kata's `virtio_fs_cache = "metadata"`, and a Kata block volume, which measured close to runc.
 - Deduplication removes most of the cost of exporting a file that a checkpoint already captured, and a retry after a failure uploads only the chunks that no confirmed pack holds.
 
-**Isolation profiles.** The export works on `standard`, `sandboxed` (gVisor), and `microvm` (Kata) pools, because it uses the reads, the egress policy, and the pack grants that checkpoints use under every isolation profile ([§13.2](../../spec/13_security-model.md#132-network-isolation), NET-071). The reflink clone is limited to runc on a filesystem that supports it, and the copy to pools whose reflink probe finds copy mode, such as gVisor. The freeze opens the file through the slot's file-descriptor broker, whose `openat2` resolution runs in the slot container and was measured under runc and gVisor in the session isolation spikes and under Kata in the AWS runs of 2026-11-12 ([`0145-session-isolation`, "Validation record"](../0145-session-isolation/change.md#validation-record)).
+**Isolation profiles.** The export works on `standard`, `sandboxed` (gVisor), and `microvm` (Kata) pools, because it uses the reads, the egress policy, and the pack grants that checkpoints use under every isolation profile ([§13.2](../../spec/13_security-model.md#132-network-isolation), NET-071). The reflink clone is limited to runc on a filesystem that supports it, and the copy to pools whose reflink probe finds copy mode, such as gVisor. The freeze opens the file through the slot's file-descriptor broker, whose `openat2` resolution runs in the slot container and was measured under runc and gVisor in the session isolation spikes and under Kata in the AWS runs of 2026-11-12 ([`0145-session-isolation`, "Validation record"](../0145-session-isolation/steps.md#validation-record)).
 
-## MD-19 Harness approvals
+### MD-19 Harness approvals
 
 The owner settled A4 on 2026-11-10, revision 9 moved its transport onto frames under B7 and B8, and revision 10 merges the frames into one request frame and one reply frame under B-O6. Coding harnesses ask permission before running their own tools, for example Claude Code's `can_use_tool`, Codex's `item/*/requestApproval`, and the Agent Client Protocol's `session/request_permission` **[external]**. Each of these asks the program that hosts the harness and never the model. Lenny's tool-use approval path (SO-5a) covers only tools that Lenny routes **[source]**, so today an adapter has to approve a harness's tools automatically or leave the harness waiting **[design]**.
 
@@ -1245,7 +1099,7 @@ The adapter writes back `{ "type": "reply", "requestId": "ap_3", "decision": "ap
 
 **Harness questions [design, B6].** A harness's structured question to the user, such as Claude Code's AskUserQuestion, and a plan proposed for approval, such as Codex plan mode or Claude Code's ExitPlanMode, are elicitations. The runtime writes a `request` with `kind: "question"`, the message, the requested schema or URL, and `humanRequired`, and receives a `reply` with the answer. The elicitation then follows the §9.2 chain as one from `ask_question` does ("MD-22", **Questions and approvals**). A question pending when a suspension stops the turn is withdrawn, and its `request` receives a `reply` with `outcome: "withdrawn"` while the pod is held (B20).
 
-## MD-20 Turn and usage events
+### MD-20 Turn and usage events
 
 The owner settled A8 on 2026-11-10: "we should support both" **[design]**.
 
@@ -1260,7 +1114,7 @@ The owner settled A8 on 2026-11-10: "we should support both" **[design]**.
 - When both sources report the same call, a client sees two events, and the runtime author guide tells clients to prefer the gateway figure.
 - The fill of the model's context window is the `context` activity kind.
 
-## MD-21 Surfaces and AG-UI
+### MD-21 Surfaces and AG-UI
 
 The owner settled G3 on 2026-11-10: "Lenny's event model needs to be translatable into AG-UI without losing information. But we should not give up on anything we believe is important that isn't supported by AG-UI yet." Lenny adds no AG-UI endpoint in v1 **[design]**.
 
@@ -1287,13 +1141,13 @@ The owner settled G3 on 2026-11-10: "Lenny's event model needs to be translatabl
 | :-- | :-- | :-- | :-- |
 | REST SSE (`GET /v1/sessions/{id}/events`) | `event: activity`, with the snapshot on attach and on `Last-Event-ID` resume. | `event: output` with the frame's entries. | `ref`, downloaded with `GET /v1/blobs/{ref}`. |
 | MCP, both served versions | `notifications/lenny/activity` on the attach stream. When the attach request carries a `progressToken`, the newest active top-level activity's `summary` also goes out as `notifications/progress`, with a per-request counter as `progress`. MCP logging is not used, because `2026-07-28` deprecates it **[external]**. | Streaming content on the attach stream. | A `resource_link` to the gateway's download URL. |
-| MCP `2026-07-28` with Tasks | The newest active top-level activity's `summary` as the status message of the task whose message the open turn consumed, because each message a client sends is its own task, completed at the end of the turn that consumes it ([`0146-session-lifecycle`](../0146-session-lifecycle/change.md#decisions) L32) **[unverified]**, beside `notifications/lenny/activity` on `attach_session`. | As above. | As above. |
+| MCP `2026-07-28` with Tasks | The newest active top-level activity's `summary` as the status message of the task whose message the open turn consumed, because each message a client sends is its own task, completed at the end of the turn that consumes it ([`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md#decisions) L32) **[unverified]**, beside `notifications/lenny/activity` on `attach_session`. | As above. | As above. |
 | A2A, when its adapter ships | `TaskStatusUpdateEvent` in state `working` with the `summary` and a data part carrying the activity, coalesced to at most one per second per session for webhooks. | `TaskArtifactUpdateEvent` with `append` and `lastChunk`. | A file part with the gateway's download URL. |
 | Messages API, Chat Completions, and Responses | None (A9). | Their native deltas. A signed `reasoning_trace` maps to a Messages `thinking` block, and a redacted one to `redacted_thinking` (AM-6). | A text part with the file's name, size, and REST download route. A file part still exporting, or waiting for the export cap, at `turn_end` is a text part with the file's name and size, a statement that the copy is still in progress, and the listing route `GET /v1/sessions/{id}/artifacts`, where the file appears once it is released. The response does not wait for the export, because a provider-surface response ends with its turn, and the export's outcome reaches the session's REST event stream. On a session with a `PostAgentOutput` interceptor the response carries nothing about such a part, as MDR-21 requires. |
 
 **Provider surfaces later (A9).** A later version may let a Messages API client set a request header, such as `Lenny-Events: activity`, to also receive activity as additional server-sent event types, such as `event: lenny_activity`. Anthropic's streaming documentation asks clients to tolerate event types they do not know **[external]**. Stock SDK clients would not set the header. v1 builds none of it, and nothing in v1 blocks it.
 
-## MD-22 Parents and children
+### MD-22 Parents and children
 
 The owner settled B1 to B6 and B9 on 2026-11-10, and B-O1 to B-O5, B11 to B14, and the fixes of the adversarial review of revision 9 on 2026-11-11 **[design]**. [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) states the states a top-level session and a child share, `running`, `idle`, `dormant`, `suspended`, and `blocked`, with tree suspension, the close rule, `onParentEnd`, and the recovery of child events. This part states the messages between a parent and its children.
 
@@ -1364,7 +1218,7 @@ Without the third rule, a parent that awaits a waiting child would wait for an e
 
 **Recovery.** After a parent's restore, the gateway resends each `ended` child event the parent consumed after its checkpoint, from `session_tree_archive`, and each `end_of_turn` child event, from the child's transcript, each with its original message id, so the deduplication of "MD-3" drops a resend that the restored runtime already holds (R10-M11). Mid-turn `message` events take the `consumed_unrecorded` notice of "MD-3" (lifecycle design, "SL-12").
 
-## MD-23 Tool and frame names
+### MD-23 Tool and frame names
 
 The owner settled B10 on 2026-11-10: "go with your recommendations except I prefer await_children and discover_agents", and B11 on 2026-11-11, which names the session in every tool that acts on a child. The platform MCP tools carry no `lenny/` prefix, agent-facing and client-facing alike. The MCP specification's "Tool Names" rule, in versions `2026-07-28` and `2025-11-25`, says names SHOULD use only ASCII letters, digits, `_`, `-`, and `.`, and the Anthropic Messages API requires a tool name to match `^[a-zA-Z0-9_-]{1,128}$` **[external]**, so every harness rewrites a name with `/` before a model sees it. The MCP server's name, `lenny`, provides the namespace, and harnesses add it themselves, as Claude Code shows `mcp__<server>__<tool>`. A tool that leaves keeps its specification spelling where this design describes its removal.
 
@@ -1393,9 +1247,9 @@ The owner settled B10 on 2026-11-10: "go with your recommendations except I pref
 
 **Frames.** "MD-24" lists the frames. `message` names the frame that carries a message in both directions, and `message_part` the frame that streams a part (B-O6).
 
-**This document.** Revision 10 renames the end-of-turn frame `message` and the streaming frame `message_part` in the design's own sections. "Decisions", "Current state", "Alternatives rejected", "Defects found while verifying", the earlier reviewer instructions, and the revision notes keep the names their entries were written with.
+**This document.** Revision 10 renames the end-of-turn frame `message` and the streaming frame `message_part` in the design's own sections. "Decisions" in `decisions.md`, "Current state", "Alternatives rejected", "Defects found while verifying", the earlier reviewer instructions, and the revision notes keep the names their entries were written with.
 
-## MD-24 Runtime frames and leniency
+### MD-24 Runtime frames and leniency
 
 The owner settled B-O6 and B12 on 2026-11-11 **[design]**. The owner asked to "simplify as much as possibe and use optional parameters where possible", without dropping a capability, so that "conversations shouldn't get stuck just because the runtime did something slightly off".
 
@@ -1415,7 +1269,7 @@ The owner settled B-O6 and B12 on 2026-11-11 **[design]**. The owner asked to "s
 
 `interrupt_request`, `checkpoint_request`, and the other operational frames of today's `CH-RUNTIMEOPS` travel on `CH-MSGSOCK` under RP O7 (a), and [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-1-handshake) states them with its handshake. The handshake is the one exchange every runtime must perform: a first frame other than `hello` is refused, and the leniency rules below do not soften it. The required member is `type` on every frame.
 
-**The session of a frame (RPR-18, AR O5).** Every connection of a slot serves the slot's one session, and a runtime process serves one session over its life ([`0145-session-isolation`](../0145-session-isolation/change.md#decisions) D4). The adapter therefore takes a frame's session from the connection that carries it, as RPR-18 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames) states, and no frame carries `sessionId` except `session_start`. `session_start` keeps `sessionId` as data the runtime reads, for log and support correlation, for its identity across process restarts, for idempotency keys of actions outside Lenny, and for detecting a derived session, and the adapter never acts on it. A runtime that still writes `sessionId` on another frame is unaffected: the member is unknown and is ignored silently under the leniency rules below. `startId` leaves `session_start` and `session_started`: the adapter writes one `session_start` per runtime process, accepts the first `session_started` after it, and drops any later one with a `runtime_warning`, as [`0119-agent-runtimes-only`, "AR-3"](../0119-agent-runtimes-only/change.md#ar-3-runtime-protocol-frames) states. The owner settled both on 2026-11-13 (C1, and AR O5 (b)).
+**The session of a frame (RPR-18, AR O5).** Every connection of a slot serves the slot's one session, and a runtime process serves one session over its life ([`0145-session-isolation`](../0145-session-isolation/decisions.md#decisions) D4). The adapter therefore takes a frame's session from the connection that carries it, as RPR-18 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames) states, and no frame carries `sessionId` except `session_start`. `session_start` keeps `sessionId` as data the runtime reads, for log and support correlation, for its identity across process restarts, for idempotency keys of actions outside Lenny, and for detecting a derived session, and the adapter never acts on it. A runtime that still writes `sessionId` on another frame is unaffected: the member is unknown and is ignored silently under the leniency rules below. `startId` leaves `session_start` and `session_started`: the adapter writes one `session_start` per runtime process, accepts the first `session_started` after it, and drops any later one with a `runtime_warning`, as [`0119-agent-runtimes-only`, "AR-3"](../0119-agent-runtimes-only/change.md#ar-3-runtime-protocol-frames) states. The owner settled both on 2026-11-13 (C1, and AR O5 (b)).
 
 **One name in each direction.** `message` names the frame in both directions, because a runtime receives messages and sends them. The JSONL schema `schemas/lenny-adapter-jsonl.schema.json` splits into a runtime-to-adapter union and an adapter-to-runtime union, each discriminated on `type`. stdin and stdout are separate streams, so no reader meets both unions on one stream.
 
@@ -1437,7 +1291,7 @@ Rule 3 lets the simplest streaming runtime work unchanged. Rules 1 and 2 let a r
 - A runtime ignores an adapter-to-runtime frame of a type it does not know, such as `error`, `reply`, `child_session_event`, or `output_failed` for a runtime that uses none of them, and keeps reading. A runtime that wrote every stdin line to its model as a message would otherwise answer an `error` frame. The runtime SDKs ignore such frames, and the conformance suite of §15.4.6 has a case for it (MDR-53).
 - An unknown value of a known enum member is handled as `other` and is never an error, in both directions (MDR-57). The owner settled this on 2026-11-15 ("2.2: ok"). A runtime that reads a child event whose `event` it does not know, an `ended` event whose `state` it does not know, a `tool_result` content block whose `type` it does not know, an `error.code` it does not know on a `tool_result` or an `error` frame, or a `retract_result` value it does not know, handles the value as the member's generic case: it shows a child event by its sender and its parts, keeps a content block it cannot render as opaque content, and treats an unknown code as a failure described by the frame's `message`. It never answers such a frame with an error and never stops reading. The adapter and the gateway apply the same rule to a runtime's frame where a member's value describes rather than selects what they do, such as an activity's `toolKind` or a `notice`'s `severity`: the value is carried as `other`, and the frame is not refused. A value that selects what the adapter does, such as a `request`'s `kind` or a `message_part`'s operation, names an action the adapter cannot take, so that frame is malformed and the rule above answers it with an `error` frame while the session continues. The runtime SDKs expose an unknown value as `other` with the value it carried beside it, so a runtime can log it, and the conformance suite of §15.4.6 has cases for it ("RP-8" of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#rp-8-conformance-by-capability)). An added value of an enum member therefore keeps the protocol version, as "RP-7" of that design states.
 
-## MD-25 Watching a child's stream
+### MD-25 Watching a child's stream
 
 The owner settled B13 on 2026-11-11 **[design]**. The owner asked "could we stream everything to the parent and let it decide how to handle? ... it would create more parity between parent sessions and root clients". Claude Code's harness receives a sub-agent's whole stream, which is how it shows the sub-agent's progress, and its model sees only the result **[unverified]**, so the parity is between the root's client and the parent's runtime.
 
@@ -1451,7 +1305,7 @@ The owner settled B13 on 2026-11-11 **[design]**. The owner asked "could we stre
 
 **No tool.** The harness, which hosts the model, decides what its model sees, so the operation is a frame (B8).
 
-## MD-26 Files from a child
+### MD-26 Files from a child
 
 The owner settled B14 on 2026-11-11 **[design]**: "we need to make sure child sessions can send back files to parents, including large files". §8.8's `TaskResult.output.artifactRefs` names a child's stored files, and nothing puts one into the parent's workspace today **[source]**. A child's file part is copied to the artifact store under "MD-18", up to 5 GiB by default, and its bytes never travel through stdout or the gateway. The parent's pod holds no credential that reads the store.
 
@@ -1459,7 +1313,7 @@ The owner settled B14 on 2026-11-11 **[design]**: "we need to make sure child se
 
 **Import.** The model calls `import_child_session_file` with the child's session id, the part's `id`, and a destination path relative to the parent's workspace, or the harness writes a `request` with `kind: "import_file"` and the same members. The gateway checks that the child is a direct child of the caller, that the part is a released output file of the child, and the import limits. It then drives an `ImportFile` stream to the parent's adapter, which follows the restore of [IC-5](../0131-incremental-checkpoint/change.md#ic-5-restore-derive-download-and-seal): the gateway signs short-lived `GET` grants for the file's packs, and the adapter downloads them and verifies every chunk under S4.
 
-**Write.** The adapter writes nothing into the parent's workspace itself. It stages the verified file in the parent slot's staging area on the spool volume, `/adapter/spool/<n>/staging/`, and runs the materialization helper's `overlay` as the parent's slot UID, under the files-only rule of [WM O4](../0153-workspace-materialization/change.md#open-decisions) that the owner settled on 2026-11-12, with the shared staging space of WM O9 settled on 2026-11-13 ([WM-12](../0153-workspace-materialization/change.md#wm-12-mid-session-uploads-and-child-file-imports)):
+**Write.** The adapter writes nothing into the parent's workspace itself. It stages the verified file in the parent slot's staging area on the spool volume, `/adapter/spool/<n>/staging/`, and runs the materialization helper's `overlay` as the parent's slot UID, under the files-only rule of [WM O4](../0153-workspace-materialization/decisions.md#open-decisions) that the owner settled on 2026-11-12, with the shared staging space of WM O9 settled on 2026-11-13 ([WM-12](../0153-workspace-materialization/change.md#wm-12-mid-session-uploads-and-child-file-imports)):
 
 - At the start of the run the adapter gives the helper one end of a socketpair. It sends the staged file's read-only descriptor over the socket, the helper writes the file at the destination, and the adapter then deletes the staging file. The adapter never reads what the helper writes on the socket. An import carries one file, so the run applies one source.
 - The helper resolves the destination beneath `/workspace` without following a link or crossing a mount, and refuses an existing file at the destination with `target_exists` unless the call sets `overwrite: true`. It assembles the file in its overlay directory and moves it into place with one rename, so the runtime never sees a partly written file.
@@ -1638,7 +1492,7 @@ A third example covers what Alice sees during a turn. Her session runs `claude-c
 | §8.5 Delegation Tools and §8.8 TaskRecord and TaskResult Schema, "TaskResult" | `await_child_sessions` with the coverage and the rules of "MD-22", its return for a child that ends for any reason, and `settled` as a synonym of `all` that no longer waits for terminal states (B16). |
 | §15.4.6 Conformance Test Suite | A case in which the adapter writes a frame of an unknown type and the runtime ignores it and keeps reading (R10-L7), and cases in which the adapter writes a known frame with an unknown value of an enum member, a child event's `event`, an `ended` event's `state`, a `tool_result` content block's `type`, and an `error.code`, and the runtime handles each as `other` and keeps reading (MDR-57). |
 | §21 Planned post-v1, A2A | A completion maps to `completed`, and an A2A message carries what a `message` delivers (B5, B12). The state mapping of `input-required` belongs to [`0146-session-lifecycle`](../0146-session-lifecycle/change.md). |
-| §28.5.3 Intra-pod, `CH-MSGSOCK` card | The runtime-to-adapter `response` frame becomes `message`, with `endOfTurn` defaulting to `true`, `complete`, `parts` under the delivery rules, and the `consumed` default; the `output` frame becomes `message_part`; the `request` and `reply` frames with an optional `requestId`; `watch_child_session` and `child_session_event`; the `error` frame; the leniency rules, with an unknown value of a known enum member handled as `other` (MDR-57); the session of a frame taken from its connection (RPR-18 of `0139-runtime-protocol`), with `sessionId` on no frame but `session_start`, a `sessionId` member on another frame ignored silently as an unknown member, and no `startId` on `session_start` or `session_started` (AR O5 (b) and C1 (c)); and the frame list split by direction (B4, B5, B8, B-O6, B12, B13). `startId` leaves `session_start` and `session_started`, and no frame but `session_start` carries `sessionId`; proposal AR-C of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#steps) stages those two changes with this row. |
+| §28.5.3 Intra-pod, `CH-MSGSOCK` card | The runtime-to-adapter `response` frame becomes `message`, with `endOfTurn` defaulting to `true`, `complete`, `parts` under the delivery rules, and the `consumed` default; the `output` frame becomes `message_part`; the `request` and `reply` frames with an optional `requestId`; `watch_child_session` and `child_session_event`; the `error` frame; the leniency rules, with an unknown value of a known enum member handled as `other` (MDR-57); the session of a frame taken from its connection (RPR-18 of `0139-runtime-protocol`), with `sessionId` on no frame but `session_start`, a `sessionId` member on another frame ignored silently as an unknown member, and no `startId` on `session_start` or `session_started` (AR O5 (b) and C1 (c)); and the frame list split by direction (B4, B5, B8, B-O6, B12, B13). `startId` leaves `session_start` and `session_started`, and no frame but `session_start` carries `sessionId`; proposal AR-C of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/steps.md#steps) stages those two changes with this row. |
 | §9.2 Elicitation Chain, the opening paragraph and "Deep elicitation suppression" | The opening statement that an elicitation travels one hop at a time gains the exception for `humanRequired`, a human-required elicitation reaches the root's stream with `originSessionId`, and the suppression and depth rules apply to it (B6, H5, M6). |
 | §15 External API Surface, "SessionEvent Kind Registry", and §15.1 REST API | `runtime_warning` and `messaging_limit_reached`, `originSessionId` on `tool_use` and on the elicitation projection, the approve and deny routes on the root's id for a descendant's approval, and `harnessApprovals` taken from the root (H5, B-O4, B-O6). |
 | §15.4 Runtime Adapter Specification, "`MessageEnvelope` — Unified Message Format" | The `event` member of a child event with the values of "MD-22", and the file-part reference a child event carries (B2, B14). |
@@ -1744,25 +1598,6 @@ Further observations bear on this design and are recorded for the specification 
 | 10 | Conformance for a `steer` runtime: it consumes a message during a tool call and places it after the result in its recorded model request, reports consumption, drops a redelivered id, and accepts a message while client calls are pending. A `steer` runtime that receives a client request steered into a turn another session's message caused writes `consumed` for it before the output that answers it. Conformance for `interrupt`, for a `queue`-only runtime that declares no capability, and for a runtime that retracts its pending client calls and then ignores results answered `too_late`. Conformance for activity frames, streaming output with `reset`, a file part, and the approval frames, and the platform-tool case without `lenny/output`. A runtime that receives `output_failed` for a file part emits the file again under a new part id and writes `output_failed_ack`. An adapter writes contiguous chunk offsets in file order and a whole-file SHA-256 that matches the file it read, for a cloned file and a file read in place. Revision 9: a runtime renders `from` for child events when it declares `capabilities.childSessions`, and a runtime that declares no capability completes a session and forwards an approval with frames alone. Revision 10: a runtime that declares no capability and writes only `message` frames without optional members completes a conversation, and a runtime that writes a `request` without `requestId` receives replies in order. Revision 11: a runtime that receives an `error` frame and a frame of an unknown type ignores both and keeps reading. A runtime that reads a child event with an unknown `event`, an `ended` event with an unknown `state`, a `tool_result` with a content block of an unknown `type` and an unknown `error.code`, and a `retract_result` with an unknown result handles each as `other` and keeps reading; the adapter carries an unknown `toolKind` as `other` and answers a `request` with an unknown `kind` with an `error` frame while the session continues (MDR-57). |
 | 11 | The runtime author guide's intent table and drain example against the SDKs, and the REST page's receipts against the gateway. The conventional kinds table, the streaming writer, the file helper, and the AG-UI projection table against the SDKs and the gateway. |
 
-## Validation owed
-
-- Whether Claude Code run with `--input-format stream-json` honours `priority` on each `SDKUserMessage` written to stdin, and how it places a folded message after `tool_result` blocks. The documentation states the placement for the interactive mode.
-- Whether the Python Agent SDK documents `priority`, which the Python pages did not state.
-- A steering interface for `cursor-agent` run headless.
-- Whether Gemini CLI's model steering leaves its experimental status, and how a hint travels with `functionResponse` parts in a headless run.
-- Mid-run input in Mastra, the OpenAI Assistants API, and CrewAI.
-- Whether OpenAI's Responses API states an adjacency rule for function call outputs, which the investigation found only for Chat Completions through a third-party error page.
-- Export throughput of a single multi-gigabyte file on runc, gVisor, and Kata, which the checkpoint benchmarks measured for workspaces of many files and not for one large file.
-- The name of the task status-message field under MCP `2026-07-28` with Tasks.
-- The Claude Code flags `--include-partial-messages`, `--include-hook-events`, and `--forward-subagent-text` in the version the reference runtime pins.
-- How AG-UI carries a file or binary content part, which the pages read did not state.
-- How Claude Code shows its model a sub-agent's notice and the sub-agent's id, which revision 9 describes from the agent system it runs on and not from a documentation page.
-- Whether each reference harness can show its model a message's sender when the adapter writes a child event to it, which decides whether its runtime declares `capabilities.childSessions`.
-- Settled on 2026-11-12: the freeze of "MD-18" opens files through the slot's file-descriptor broker, whose `openat2` resolution with `RESOLVE_BENEATH`, `RESOLVE_NO_XDEV`, `RESOLVE_NO_SYMLINKS`, and `RESOLVE_NO_MAGICLINKS` worked under runc and gVisor in the session isolation spikes and under Kata in the AWS runs of that day ([`0145-session-isolation`, "Validation record"](../0145-session-isolation/change.md#validation-record), [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md)).
-- Whether the identifier `CH-FILEIMPORT` meets the naming law's rule that no two channels on one boundary share a stem, beside `CH-OUTPUTFILE`.
-- Whether each reference harness can take a watched child's stream and show it without passing it to its model.
-- How Claude Code returns a sub-agent's last message as its result, which the delivery rules cite, and whether its harness receives the sub-agent's whole stream.
-
 ## Instructions for reviewers of other designs
 
 - [`0122-client-tools`](../0122-client-tools/change.md): revision 2 already scopes T5's hold, that design's O3, and CTR-4 to runtimes that do not declare `steer`, adds T9's `abandonPendingToolCalls`, and adds "Order of history entries". What remains: its "Out of scope" entry that calls retraction an open decision of this design changes to the settled S8. CT-5's hold rule cites the queue path in place of path 5, its exception delivers held messages at the turn end in place of "the runtime's next `ready_for_input`", and its "Terms" entries for `ready_for_input` and the delivery paths take the named paths (O1). A T9 message is a results message that takes the direct path. "Order of history entries" takes the consumption positions of "MD-10". Under S8, a runtime retracts pending calls by runtime id with the `retract` frame of "MD-11": CT-5 gains the removal of retracted calls from the pending set and the rule that a results message answers the calls that remain, the `tool_use` event gains phase `retracted`, the error catalog gains `CLIENT_TOOL_CALLS_RETRACTED`, and CT-6 states that a provider surface answers `too_late` and keeps the pending set. The `error` member of `response`, which that design records as unread, is read under "MD-4". Under O3, client tools are offered only in turns a client request caused: a turn caused by another session's message carries no `conversation.clientTools`, and a client request steered into such a turn carries its own. Revision 4 of that design records the rule as T16 and states it where it discusses inbox deliveries during pending calls.
@@ -1813,53 +1648,6 @@ Further observations bear on this design and are recorded for the specification 
 - [`0145-session-isolation`](../0145-session-isolation/change.md), for revision 16: under AR O5 (b) a `sessionId` member on a frame other than `session_start` is an unknown member that the adapter ignores, so SIR-3's refusal of a frame naming another session becomes a statement that the adapter takes a frame's session from its connection and ignores the member. Revision 5 of that design applies it under its decision D27.
 - [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#ar-3-runtime-protocol-frames), for revision 16: "AR-3" says that a runtime that still sends `startId` has the member "ignored and reported". Under "MD-24" an unknown member is ignored silently, and only an unknown frame type produces `runtime_warning`. ARR-6, O5's recommendation, and the tier 1 and tier 4 tests that refuse a frame naming another session follow O5 (b). Revision 2 of that design applies it.
 - [`0153-workspace-materialization`](../0153-workspace-materialization/change.md#wm-12-mid-session-uploads-and-child-file-imports), for revision 16: "MD-26" takes the staging space of WM O9, settled on 2026-11-13, and the refusal of an import over the parent pool's staging space with `IMPORT_LIMIT_EXCEEDED` and `details.reason: "staging_limit"`, which WM revision 4 states.
-
-## Steps
-
-### 0135.S1 Delivery core
-- status: Planned
-- aliases: [MD-A, MD-1, MD-2, MD-3, MD-4, MD-5, MD-6, MD-7, MD-9 (part), MD-11 (part), MD-12 (part), MD-14]
-- lanes: [specification, code, documentation]
-
-The delivery core: MD-1 to MD-7, MD-9, MD-12, and MD-14, and the message rows of MD-11 (the `retract` and `retract_result` frames, the `retracted` state, routing, audit, and the SDK call), with the specification changes to §5.1, §7.2, §7.3, §8.5, §11.7, §15.1, §15.2, §15.4, §15.7, §16.1, §24, §28.5.3, and §29.3. It replaces the mechanisms of MDF-1 to MDF-5 under the owner's holistic plan.
-
-SL-A of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md#steps) lands with this step, because the delivery paths name the states `idle`, `dormant`, `suspended`, and `blocked`.
-
-### 0135.S2 Provider surfaces and client tools
-- status: Planned
-- aliases: [MD-B, MD-8, MD-10, MD-11 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0135.S1, 0120.S1, 0122.S1]
-
-Provider surfaces and client tools: MD-8 and MD-10, the client-call rows of MD-11, and the cold-history ordering rule.
-
-### 0135.S3 Reference runtimes
-- status: Planned
-- aliases: [MD-C, MD-13 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0135.S1, 0135.S4]
-
-Reference runtimes: MD-13, with the adapter changes in each runtime's repository. It needs 0135.S4 for the translation of activity, output, and approvals.
-
-### 0135.S4 Runtime reports during a turn
-- status: Planned
-- aliases: [MD-D, MD-15, MD-16, MD-17, MD-18, MD-19 (part), MD-20, MD-21, MD-12 (part), MD-13 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0135.S1, 0131.S1, 0131.S2, 0131.S3, 0131.S4, 0131.S5, 0131.S6, 0131.S7]
-
-Runtime reports during a turn: MD-15 to MD-21, the reference-adapter translation of MD-13, and the SDK calls of MD-12, with the specification changes to §4.6.1, §4.7, §4.8, §5.1, §5.2, §6.2, §7.1, §8.3, §8.5, §9, §10.1, §10.4, §11.2, §11.3, §12, §13, §15, §15.1, §15.4.6, §16.1, §17.8.1, §28.3, §28.4, §28.5.1, §28.5.3, §28.5.5, and §28.6. It replaces the mechanisms of MDF-6 to MDF-10.
-
-It needs the steps of the incremental checkpoint design that land IC-1 to IC-7, because file exports use its capture spool and reflink probe, chunks, packs, stream, catalog, download rendering, reclamation, and spool cap.
-
-### 0135.S5 Parents and children and the names
-- status: Planned
-- aliases: [MD-E, MD-22, MD-23, MD-24, MD-25, MD-26, MD-9 (part), MD-19 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0135.S1, 0135.S4, 0126.S1, 0146.S1]
-
-Parents and children and the names: MD-22 to MD-26, the rules of MD-9 and MD-19 that revisions 9 and 10 add, the removal of `lenny/request_input` and the `siblings` scope, with the specification changes to §4.7, §5.1, §7.2, §8.2, §8.3, §8.5, §8.7, §8.8, §8.9, §9.1, §9.2, §15, §15.1, §15.2, §15.4.1, §15.4.3, §15.4.6, §21, §28.3, §28.4, §28.5.1, and §28.5.3.
-
-It needs 0135.S4 for the frame changes and the output files that MD-26 imports, DA-A of [`0126-delegation-availability`](../0126-delegation-availability/change.md#steps) for `capabilities.childSessions`, and SL-A of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) for the states. SL-B of that design follows this step.
 
 ## Sources
 

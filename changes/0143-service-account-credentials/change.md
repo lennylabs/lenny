@@ -1,8 +1,6 @@
 # Service account credentials
 
-Status: `Draft`, revision 2, 2026-11-15. Revision 1 recorded the owner's answers of 2026-11-15 to the question of service accounts, which "Owner decisions" quotes, and designed what they adopt: a service account owns credentials under the `userCredential` machinery of [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md), a `clientCredentials` source runs the OAuth 2.0 client credentials grant for it, and an `issuerExchange` source exchanges a JWT that Lenny's own issuer signs at a provider that trusts that issuer. Revision 2 applies the adversarial security review of revision 1, kept as [`evidence/service-account-credentials-design/security-review.md`](evidence/security-review.md), and the owner's answer of 2026-11-15 to its summary, "O1-O7: go with your recommendations". Vendor profiles post only to fixed endpoints with fixed audiences, the generic profiles bind the JWT's audience to the issuer whose token endpoint they call, and an `issuerExchange` type needs the tenant security admin's approval. Service, agent, and human callers hold subjects in disjoint namespaces (SA-6). Exchange JWTs move to an exchange issuer of their own, which reverses revision 1's recommendation for O1 because of review finding 3. `issuerExchange` serves service accounts alone, a service account cannot write its own rows, AWS credentials reach a pod under `delivery: metadata` behind a grant of their own with a 900-second duration, and `registered` types admit persons alone unless a tenant opts in. No decision is open. Nothing here is built or staged, and nothing in `spec/` changes until a proposal lands it through the change-proposal pipeline. The design reads against every design under `designs/` as implemented, in particular [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 45, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) revision 9, [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md) revision 32, [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) revision 35, and [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19. The revisions named for the user credential, egress, connector removal, VCS layer, tenant scoping, and security oversight designs apply the changes this design asks of them. Proposals carry the labels SA-1 to SA-6, requirements SAR-n, security properties SAP-n, the owner's decisions D1 to D3, SD1 to SD3, and O1 to O7, and the proposals that land them SA-A to SA-D under "Proposal split and order". "Revision history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 2, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -10,7 +8,7 @@ Each factual claim carries one of these tags where the source matters:
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree, the specification, or a design under `designs/` on 2026-11-15. |
 | **[documented]** | Read on a standards document or a vendor page on 2026-11-15, and not tested. "Sources" lists the pages. Nothing in this document was run against a provider. |
-| **[unverified]** | Reasoned from a page without a statement that settles it, or not read at all. "Validation owed" lists each one that matters. |
+| **[unverified]** | Reasoned from a page without a statement that settles it, or not read at all. "Validation owed" in `steps.md` lists each one that matters. |
 | **[design]** | What this design requires. Nothing implements it. |
 
 ## Problem
@@ -76,6 +74,7 @@ The security review of revision 1 found that Lenny's subjects did not keep a per
 | Principal subject | The `sub` of an exchange JWT: `lenny:<tenant>:service:<principal-id>`, where `<principal-id>` is the service account's canonical subject, the format identity assertions use. |
 | `refusalGraceSeconds` | How long consecutive refusals of an exchange count as `unavailable` before the row moves to `user_act_required` (SA-4). |
 | `userCredentialMetadataDelivery` | The per-tenant platform grant that admits `delivery: metadata` on a `userCredential` binding of an `awsWebIdentity` type (SA-5). |
+| Labels | Parts of the design carry the label SA-n, requirements carry the label SAR-n, and security properties carry the label SAP-n. Decisions carry the labels Dn, SDn, and On, which `decisions.md` lists. |
 
 ### Terms from other designs and the platform
 
@@ -109,7 +108,7 @@ The security review of revision 1 found that Lenny's subjects did not keep a per
 | Labels | Design | What they name |
 | :-- | :-- | :-- |
 | UC-1 to UC-8, UCP-1 to UCP-12, UCR-n, and decisions 4, 14, 41, and 43 | [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) | Types and `registered`, account links, the binding, request rules, `delivery: file`, leak scanning, add-ons, and link prompts; its security properties and requirements; decision 4 on a tenant admin writing a token under a user's name; decision 14 on sessions with no user, which this design supersedes; decision 41 on pods that can serve someone else; and decision 43, which records this design's change to UCP-1. |
-| EG-2, EG-4, EG-9, P2, P3, and P4 | [`0127-egress-and-git`](../0127-egress-and-git/change.md#steps) | The pod network agent with the mint path, credential delivery, and the single write path for tenant opt-ins; and the egress security properties that keep long-lived credentials out of pods (P2), keep egress credentials away from the agent (P3), and keep tenants apart (P4) ([Security properties](../0127-egress-and-git/change.md#security-properties)). |
+| EG-2, EG-4, EG-9, P2, P3, and P4 | [`0127-egress-and-git`](../0127-egress-and-git/steps.md#steps) | The pod network agent with the mint path, credential delivery, and the single write path for tenant opt-ins; and the egress security properties that keep long-lived credentials out of pods (P2), keep egress credentials away from the agent (P3), and keep tenants apart (P4) ([Security properties](../0127-egress-and-git/change.md#security-properties)). |
 | CR-2 | [`0124-connector-removal`](../0124-connector-removal/change.md#cr-2-identity-assertion) | The identity assertion, whose `sub` format this design's principal subject shares. |
 | SO-2, SO-4a, and SP2 | [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) | The tenant security record with its guardrails and posture, the mirror of a platform admin's write to the tenant's chain, and the property that keeps a tenant admin from acting on a security role holder. |
 | TS-4, TS-6, and TS-8 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4) | User lifecycle and invalidation, which reads the subject and so covers a service account; identity sources, the verifier registry, and canonical subjects; and the SCIM server. |
@@ -181,7 +180,9 @@ Alice and Bob are developers at `acme`, Carol is its tenant admin, and Dave is i
 - SAR-12. A service account cannot create, change, or remove its own credential rows.
 - SAR-13. An `issuerExchange` type takes effect only after the tenant's `security-admin`, or a platform admin with a justification, approves its token trust record.
 
-## SA-1 Principal-owned credentials
+## Detailed design
+
+### SA-1 Principal-owned credentials
 
 **The release rule.** UCP-1 becomes: a session receives only the token of the principal on its session row, and only when that row's `caller_type` is `human` or `service` and equals the principal type the token's row records. A delegated child's row copies its root's principal and `caller_type`. An empty value or `agent` receives nothing. No client or pod input names another principal, and the Token Service holds this from its own read through `pkg/binding` **[design]**.
 
@@ -241,7 +242,7 @@ POST   /v1/admin/service-accounts/{subject}/credentials/{type}/keys/{kid}/activa
 
 **Audit.** `credential.mint` gains `principalType`, and `tokenSource` gains `serviceRegistered` for a service account's `registered` row, `clientCredentials`, and `issuerExchange`, beside UC-3's values. It also gains `sessionOrigin`, which reads `playground` for a session the playground created and is absent otherwise, so a release to a session minted from a pasted service bearer under the playground's `apiKey` mode is distinguishable from the job's own sessions. The record carries no principal identifier, as UC-3's carries no user identifier, and the join lives in rows that erasure deletes.
 
-## SA-2 The `clientCredentials` source
+### SA-2 The `clientCredentials` source
 
 The client credentials grant of RFC 6749 section 4.4 lets a confidential client obtain an access token with its own credentials. The request carries `grant_type=client_credentials` and an optional `scope`, the client must authenticate, and the response should include no refresh token **[documented]**.
 
@@ -319,7 +320,7 @@ The audit events `user_credential.key_generated`, `user_credential.key_activated
 
 **Hostile endpoints.** A token endpoint, and an issuer used for discovery, are tenant-registered input under C9. Each must be HTTPS and pass the egress design's check for a tenant-registered public service: resolved at registration, refused on the exclusion list, a registered `ipBlock`, or the cluster's addresses, and re-resolved periodically. A private endpoint is an outbound host of [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md), reached through its route. C8 holds, so a tenant cannot register a public provider's host behind its own network.
 
-## SA-3 The `issuerExchange` source
+### SA-3 The `issuerExchange` source
 
 A provider that trusts an external OIDC issuer accepts a JWT that issuer signed and returns its own access token. Under `issuerExchange` the Token Service signs an exchange JWT naming the session's service account under the tenant's exchange issuer, presents it at the provider, and releases the resulting access token on the pod credential API, so `netagent` injects it and no pod sees the JWT **[design]**.
 
@@ -357,7 +358,7 @@ The author names a profile and the identifiers the profile needs. No type field 
 - **Key set.** Each tenant has its own exchange key set in the Token Service's key store (`kms.go`), RSA 3,072-bit keys signing with RS256, separate from the federation key set and from the identity key set, and destroyed when the tenant is deleted. It signs exchange JWTs and nothing else. RS256 is the algorithm Entra's page states it tests for workload identity federation, and AWS and Google accept it **[documented]**.
 - **Discovery and key set routes.** The Token Service serves, unauthenticated, `GET https://<lenny>/exchange/<tenant-id>/.well-known/openid-configuration` with `issuer`, `jwks_uri`, `response_types_supported: ["id_token"]`, `subject_types_supported: ["public"]`, `id_token_signing_alg_values_supported: ["RS256"]`, and `claims_supported` listing the claims below, which are the fields AWS's page lists for an IAM OIDC identity provider **[documented]**, and `GET https://<lenny>/exchange/<tenant-id>/jwks.json` with each key's `kid`, `kty`, `n`, `e`, `alg: RS256`, and `use: sig`. Both carry `Cache-Control: max-age=300`. A `kid` begins with the tenant identifier. The `/exchange/` path on the gateway ingress is reserved for the Token Service, as `/oidc/` and `/identity/` are. Providers fetch these documents, so the path must be publicly routable with a publicly trusted certificate, and a deployment without one cannot offer `issuerExchange`.
 - **Registration.** A tenant registers the exchange issuer at each provider as a trust of its own: an IAM OIDC identity provider at AWS, a workload identity pool provider at Google, and a federated identity credential per service account at Entra. A registration of the federation issuer admits no exchange JWT, and the reverse holds, because each provider checks the issuer.
-- **Rotation.** The Token Service rotates a tenant's exchange key every `tokenService.exchangeIssuer.keyRotationDays`, 30 by default. A new key is published in the key set at least `tokenService.exchangeIssuer.prePublishSeconds`, 86,400 by default, before the Token Service first signs with it, so a provider that cached the earlier key set has refreshed it by then. None of the pages read for Entra, Google, or AWS states how long the provider caches an issuer's key set **[documented]**, so the default is a margin of one day that "Validation owed" asks to measure. The previous key stays published for 600 seconds, the longest exchange JWT lifetime, plus the same period after its last use. An emergency rotation through the admin API drops the previous key at once and signs with the new key at once, and refusals within `prePublishSeconds` after it count as `unavailable` under SA-4 whatever their duration, so a provider's stale cache moves no row to `user_act_required`. The audit events `token_service.exchange_key_published`, `token_service.exchange_key_activated`, and `token_service.exchange_key_retired` name the tenant, the `kid`, and the reason.
+- **Rotation.** The Token Service rotates a tenant's exchange key every `tokenService.exchangeIssuer.keyRotationDays`, 30 by default. A new key is published in the key set at least `tokenService.exchangeIssuer.prePublishSeconds`, 86,400 by default, before the Token Service first signs with it, so a provider that cached the earlier key set has refreshed it by then. None of the pages read for Entra, Google, or AWS states how long the provider caches an issuer's key set **[documented]**, so the default is a margin of one day that "Validation owed" in `steps.md` asks to measure. The previous key stays published for 600 seconds, the longest exchange JWT lifetime, plus the same period after its last use. An emergency rotation through the admin API drops the previous key at once and signs with the new key at once, and refusals within `prePublishSeconds` after it count as `unavailable` under SA-4 whatever their duration, so a provider's stale cache moves no row to `user_act_required`. The audit events `token_service.exchange_key_published`, `token_service.exchange_key_activated`, and `token_service.exchange_key_retired` name the tenant, the `kid`, and the reason.
 
 Revision 1 recommended the federation issuer for exchange JWTs. The security review's finding 3 showed that AWS and Entra cannot condition a trust on a custom claim, that AWS uses one audience for both kinds of JWT, and that the egress group's address does not tell the pod's SDK from the Token Service, so a trust that does not pin an exact subject admitted an agent-readable federation JWT as a service account. The owner settled O1 as the separate exchange issuer that revision 1 listed as its alternative.
 
@@ -439,7 +440,7 @@ The federation and exchange issuers share the design of the tenant tombstone, th
 
 **Human callers (O3).** `issuerExchange` admits service accounts alone. A type naming `human` in `principalTypes` is refused, so a provider never receives an exchange JWT with a person's subject, and a tenant admin cannot attach a person to a provider identity through Lenny. A person reaches such a provider with `registered` or `oauth2Link`.
 
-## SA-4 Provider calls, caching, and failure
+### SA-4 Provider calls, caching, and failure
 
 **Route and bounds.** Every provider call, a token request, a discovery fetch, and an exchange, goes through `lenny-egress` on the Token Service's identity with the tenant asserted, whatever the host's route, as UC-2's link provider calls do. The decision service honours the assertion for the endpoints the tenant's types record, and it sees each call. Each call is bounded at 10 seconds and a 64 KiB response, follows no redirect, uses the CA from the host's endpoint or outbound host record, and names its expected route on the CONNECT, which the decision service refuses when the route it would choose differs, as UC-1 states for every call that carries a token or a secret. A Token Service connection is reused only within one tenant, route, and CA **[design]**.
 
@@ -469,7 +470,7 @@ A row in `user_act_required` releases nothing, and the release is refused with t
 
 **Stopping a credential.** UC-3's "Stopping a credential" applies, with these differences. `DELETE` and `revoke` on a row stop releases and flush `netagent` by binding change, and the access token already issued stays valid at the provider until it expires, because Lenny revokes no access token there. Deleting a client secret or certificate at the provider stops new tokens at the next refresh. Removing the trust at the provider stops new exchanges at the next refresh. AWS credentials served under `metadata` stay valid for the rest of their 900 seconds.
 
-## SA-5 Delivery
+### SA-5 Delivery
 
 **`inject`**, the default, attaches the access token through the type's `attach` template on the type's hosts, with `requestRules` available, as for any `userCredential` binding. The pod holds the placeholder alone.
 
@@ -490,7 +491,7 @@ A row in `user_act_required` releases nothing, and the release is refused with t
 
 **The gate classes.** `userCredentialDelivery` covers a principal's token under `file`, whatever the principal type. `userCredentialMetadataDelivery` covers a service account's AWS credentials under `metadata`. A service account's token is per principal and released under a `userCredential` binding, with exposure records and the per-principal checks, so it belongs with those classes. `agentReadableDelivery` stays the class of a tenant's credential.
 
-## SA-6 Subject namespaces
+### SA-6 Subject namespaces
 
 A Lenny subject names one caller type. Before this design a person and a service account could hold the same subject string, as when `subject_claim` maps a value a person can choose or an identity source reissues an identifier, and session ownership (§10.2 rules 1, 2, and 5), derive (SD-P1), invalidation (TS-4), and erasure (§12.8) all key on the bare subject. The security review's finding 2 showed that a person could then send input to a service account's session that holds its credential. SA-6 closes this at the identity boundary, so every one of those controls stays keyed on the subject and needs no change **[design]**.
 
@@ -514,7 +515,7 @@ A source identifier is never `svc` or `agt`, so a customer source's human subjec
 
 **Existing subjects.** No Lenny deployment runs outside development, so no stored subject is migrated. From the release that lands SA-6, a person whose identity source presents a canonical subject beginning with `~svc~` or `~agt~` is refused at authentication with `401 SUBJECT_RESERVED`, and the `auth_failure` event names the reason. On a customer source the canonical subject begins with the source identifier, so this arises only on a deployment source whose `sub` begins with `~`, which TS-6 already refuses once customer sources are enabled. The operator then has the deployment issuer emit another `sub` for that person.
 
-## Configuration by scope
+### Configuration by scope
 
 | Setting | Scope | Who sets it | Default |
 | :-- | :-- | :-- | :-- |
@@ -539,7 +540,7 @@ A source identifier is never `svc` or `agt`, so a customer source's human subjec
 
 Every non-spec default is operator-tunable and documented as such, except the values marked fixed.
 
-### Refusals
+#### Refusals
 
 - Bob's human session names a binding of `graph-reports`, a type with `principalTypes: [service]`: no token, and with `required: true`, `USER_CREDENTIAL_NOT_FOUND` with `details.reason: principal_type`.
 - A session of `deploy-bot` names the binding: no row for `deploy-bot`, so `USER_CREDENTIAL_NOT_FOUND` with `no_row`. It never receives `report-bot`'s token.
@@ -620,29 +621,6 @@ The assets are each principal's long-lived material (a client secret, a private 
 | Provider calls | The Token Service calls link provider endpoints and VCS mint endpoints through the mint path **[source]**. It runs no client credentials grant and no exchange of its own JWT. |
 | Identity assertions | `sub` is `lenny:<tenant>:user:<user-id>` or `lenny:<tenant>:service:<principal-id>` under the identity issuer **[source]**. |
 
-## Owner decisions
-
-| ID | Decision |
-| :-- | :-- |
-| D1 | Service accounts own per-principal credentials under the `userCredential` machinery. The owner asked on 2026-11-15, "what about service accounts? A user may be a legitimate service account but have no human behind it", and adopted option (b): a tenant admin or backend (`registeredBy: [service]`) writes a token for a service account under a `source: registered` type, the Token Service releases it only to sessions whose row names that service account, and UCP-1 becomes the token of the principal on the session row for `human` and `service` callers. One token per principal, the rotation, revocation, and request rules, UC-3's refusals on reused pods and on pods without slot attribution, and the impersonation refusal are reused. `oauth2Link` stays human-only, `agent` callers stay refused (O4), and long-lived bearer `registered` tokens stay supported, as the owner confirmed (SA-1). |
-| D2 | `source: clientCredentials`. The owner answered on 2026-11-15: "b + client credentials ... go ahead". The Token Service runs the client credentials grant of RFC 6749 section 4.4 with a service account's client identifier and client secret or private key, which no pod reads, caches the access token, requests a new one before expiry, and `netagent` injects it (SA-2, SA-4). |
-| D3 | Provider trust of Lenny's issuer. The owner answered on 2026-11-15: "I think we should also support 'A provider can be set up to trust Lenny's own issuer directly'". The Token Service signs a JWT for the session's principal and exchanges it at the provider through the JWT bearer grant of RFC 7523 or the token exchange of RFC 8693, with cloud workload identity federation as the common case, and `netagent` injects the result, so Lenny stores no secret (SA-3). |
-| Review | The owner answered the summary of the security review of revision 1 and its updated recommendations on 2026-11-15: "O1-O7: go with your recommendations". Revision 2 applies every finding of [`evidence/service-account-credentials-design/security-review.md`](evidence/security-review.md) and settles O1 to O7 below as recommended. |
-| O1 | Exchange JWTs are signed under a separate exchange issuer, `https://<lenny>/exchange/<tenant-id>`, with its own RS256 key set, separate from the federation issuer and from the identity issuer of CR-2 (SA-3). This reverses revision 1's recommendation of the federation issuer, because review finding 3 showed that AWS and Entra cannot condition on a custom claim and AWS uses one audience for both kinds of JWT, so a trust that does not pin an exact subject admitted an agent-readable federation token as a service account. The cost is another public route, another key set to rotate, and another registration at each provider. |
-| O2 | `delivery: file` of an access token from a `clientCredentials` or `issuerExchange` row is admitted under the `userCredentialDelivery` grant, a type ceiling of `file`, and the binding's opt-in, with the file holding the access token alone (SA-5). The agent can read an access token that lives up to the provider's lifetime, often one hour. |
-| O3 | `issuerExchange` serves service accounts alone. A type naming `human` in `principalTypes` is refused (SA-3). Review finding 4 showed that `entraFederated` returns an application token with tenant-wide permissions rather than acting as the person, and that a tenant admin writing a person's row would attach that person to any provider identity. A person reaches such a provider with `registered` or `oauth2Link`. |
-| O4 | `agent` callers stay refused for every source. §25.1's `agent` callers are operability service accounts holding `platform-admin` or `tenant-admin`, the roles that write credentials, so a credential owned by one would be written and used by the same automation. A deployer whose agent needs a provider credential runs it under a `service` principal. An `agent` caller's identity assertion carries `principal_type: agent` and the subject `lenny:<tenant>:agent:<id>` ([`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion)), and its Lenny subject carries `~agt~` (SA-6). |
-| O5 | Mutual TLS client authentication of RFC 8705 is left out of the first version. `private_key_jwt` gives the same property, no shared secret, through the mint path as it stands. A provider that offers only `tls_client_auth` or `self_signed_tls_client_auth` cannot be used. |
-| O6 | The `awsWebIdentity` profile is admitted, and its credentials reach a pod under `delivery: metadata`, behind the new grant `userCredentialMetadataDelivery`, with `DurationSeconds` fixed at 900, exposure records, `lockEgressToHosts`, `leakScan`, and per-slot attribution (SA-5). The cost is AWS signing credentials within the agent's reach for 900 seconds, usable from anywhere unless the role conditions on the source address, with role chaining possible. |
-| O7 | The default of `principalTypes` on a `registered` type is `[human]`. A tenant opts a type into service accounts by writing `[service]` or `[human, service]`, so every existing type is unchanged. This reverses revision 1's default of `[human, service]`. |
-| SD1 | The source name `issuerExchange`, chosen by this design under the owner's instruction to choose a clear name. |
-| SD2 | A dedicated admin route for a service account's rows, beside the person route, so a write states which principal type it means. |
-| SD3 | The identifiers `userCredential`, `user_credential`, `USER_CREDENTIAL_*`, and `manage_user_credentials` keep their names for both principal types, because renaming them touches every design, schema, and error code for no change in behaviour. The documentation states that "user" in these names covers a service account. The grant `userCredentialMetadataDelivery` follows the same stem. |
-
-## Open decisions
-
-None.
-
 ## Documentation changes
 
 Each page below states every setting, default, limit, failure mode, and contract this design adds. The changelog names every new field, route, error code, reason, event, metric, and alert.
@@ -721,19 +699,6 @@ Every test carries a `// spec:` annotation once the specification sections land,
 | 9 | A cross-tenant probe on every route and row; a hostile token endpoint with redirects, oversized bodies, and an SSRF target at registration; a hostile issuer whose metadata names a vendor host; a captured client assertion replayed at another server; a federation token presented to a stand-in that trusts the exchange issuer; an `error_description` carrying markup and control characters rendered in the notification; and no secret, JWT, or token in any slot file, environment, or response under `inject`. |
 | 11 | Every error code, reason, metric, alert, and audit event of this design has its documentation page. |
 
-## Validation owed
-
-| Item | Why it matters | Status |
-| :-- | :-- | :-- |
-| Entra accepts a client assertion with `aud` equal to the issuer identifier under RFC 10070, or still requires the token endpoint | The default of `assertionAudience` for Entra | Owed. The Entra page shows the token endpoint **[documented]**. |
-| Entra, Google, and AWS accept an exchange JWT signed with RS256 by a 3,072-bit key under the exchange issuer, with a principal subject | O1 and the vendor profiles | Owed **[documented]** for RS256, **[unverified]** for the key size. |
-| How long Entra, Google, and AWS cache an issuer's key set | The default of `prePublishSeconds` | Owed. None of the pages read states it **[documented]**. |
-| AWS accepts `urn:lenny:exchange:aws` as an IAM OIDC identity provider audience | The `awsWebIdentity` audience | Owed. AWS's page describes the audience as a client identifier of any value **[documented]**. |
-| AWS `AssumeRoleWithWebIdentity` answers `AccessDenied` for a subject the trust policy does not name | SA-4's mapping for `awsWebIdentity` | Owed **[unverified]**. The key retrieval case of `InvalidIdentityToken` is **[documented]** on the IAM page. |
-| Google STS accepts an exchange JWT carrying `principal_type`, and an attribute condition on it holds | The documented Google condition | Owed. |
-| Which providers read an `audience` parameter on the client credentials grant | Whether `audience` belongs on the type | Owed **[unverified]**. |
-| Entra refuses an assertion signed with a key whose registered certificate has expired | The certificate expiry alert | Owed **[unverified]**. |
-
 ## Alternatives rejected
 
 | Alternative | Reason |
@@ -752,46 +717,6 @@ Every test carries a `// spec:` annotation once the specification sections land,
 | Give the runtime a per-principal JWT in a file | It puts a JWT that a provider trusts for the principal within the agent's reach, which `delivery: federation` already offers per binding behind `agentReadableDelivery`. The owner asked for the Token Service to exchange and `netagent` to inject (D3). |
 | Re-discover the token endpoint at run time | A discovery answer that changed would move a stored secret to a new endpoint without a record change. |
 | Map provider refusals to a link prompt | No person stands behind a service account to answer it, and the tenant's admins learn of it through the audit event, the notification, and the alert. |
-
-## Steps
-
-### 0143.S1 Subject namespaces and principal-owned credentials
-- status: Planned
-- aliases: [SA-A, SA-6, SA-1]
-- lanes: [specification, code, documentation]
-- depends-on: [0151.S1, 0151.S3, 0127.S9, 0149.S6]
-
-SA-6 and SA-1: the subject namespaces at the identity boundary, the subject-naming writes, and token issuance; the release rule, `principalTypes`, the principal-keyed rows, the service account routes with the self-write refusal, the reasons at create, and the audit fields. The step closes no finding.
-
-SA-6 lands in this step because a service account must not own a credential while its subject can equal a person's. This step can land with `registered` alone.
-
-### 0143.S2 Client credentials source
-- status: Planned
-- aliases: [SA-B, SA-2, SA-4]
-- lanes: [specification, code, documentation]
-- depends-on: [0143.S1, 0127.S2]
-
-SA-2 with the shared parts of SA-4: the client credentials grant, client assertions with the audience binding, generated keys and the one-key-per-row rule, discovery, the cache per row, the lease, the failure states, the stored error text, and the metrics.
-
-It needs the mint path of 0127.S2 (EG-2). This step adds a source.
-
-### 0143.S3 Issuer exchange source
-- status: Planned
-- aliases: [SA-C, SA-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0143.S2, 0127.S4, 0142.S2]
-
-SA-3: the exchange issuer with its key set, routes, and rotation, the exchange JWT, the `entraFederated`, `gcpSts`, `jwtBearer`, and `tokenExchange` profiles with their fixed or bound endpoints and audiences, the approval through `tokenTrust.allowedRecords`, and the egress design's revision 92 hooks. This step adds a source.
-
-### 0143.S4 Delivery for the new sources
-- status: Planned
-- aliases: [SA-D, SA-5]
-- lanes: [specification, code, documentation]
-- depends-on: [0143.S2, 0143.S3, 0151.S5, 0127.S4]
-
-SA-5's `file` for the new sources, and the `awsWebIdentity` profile with `delivery: metadata`, the `userCredentialMetadataDelivery` grant, the 900-second duration, and the exposure records.
-
-It needs the `metadata` delivery of 0127.S4 (EG-4).
 
 ## Sources
 

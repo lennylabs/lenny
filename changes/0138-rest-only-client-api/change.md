@@ -1,8 +1,6 @@
 # REST-only client API
 
-Status: `Draft`, revision 6, 2026-11-15. Revision 6 follows the owner's answer of 2026-11-15 to O11 of [`0124-connector-removal`](../0124-connector-removal/change.md) revision 4, "go with (b)": R4's provenance names the link prompt of [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) UC-8, and R12 leaves that prompt pending under `inputPolicy: decline`. Revision 5 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors.") under [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2: MCP toward operators is the harness's own, `LINKS_REQUIRED` names account links alone, connector prompts leave R4, R12, and the MCP adapter, and connector-link management leaves the ineligible operations. The A2A adapter of "RO-9" is unrelated and unchanged. Revision 4 applies the owner's answers of 2026-11-15: a `poolAttach` binding attaches through any adapter, and "RO-4"'s `credential-use` class covers a plan's `onRequest` `userCredential` binding entries alone, with no post-chain check (S2); and the codes `409 INTERRUPT_UNSUPPORTED` and `504 INTERRUPT_TIMEOUT` are confirmed. Revision 3 applies the owner's answers of 2026-11-14 to O11 to O13: R19 sends `interrupt_request` only to a runtime that declares `interrupt`, refuses the others with `409 INTERRUPT_UNSUPPORTED`, answers `504 INTERRUPT_TIMEOUT` when the runtime does not acknowledge within the deadline, and never suspends a session on its own; an adapter that must stop the turn falls back to the suspend route. O12 and O13 are settled as recommended. Nothing here is built or staged. Two security reviews of 2026-11-14 read the authorization rule of "RO-4" and O1, and no full independent review has read the design. It is written from the owner's answers of 2026-11-13 to items 23 to 26 of the consolidated list of open decisions, from the spike of the same day, "REST-only Lenny with external protocol adapters", with its proof of concept, and from the owner's answers of 2026-11-14 to O1 to O10 and to both security reviews. It reads against every design under `designs/` as implemented, in particular [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) revision 12, [`0122-client-tools`](../0122-client-tools/change.md) revision 11, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0126-delegation-availability`](../0126-delegation-availability/change.md) revision 12, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0144-session-derive`](../0144-session-derive/change.md) revision 22, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, and [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) revision 8. The design stages no specification edit; the changes go through `change-proposal` after review. Parts carry the label RO-n, requirements carry ROR-n, REST additions carry R1 to R19 (R1 to R14 keep the spike's numbers, and R18 is withdrawn under O3), and the proposals that land the design carry RO-A to RO-F under "Proposal split and order". "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 6, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -11,8 +9,8 @@ Each factual claim carries one of these tags where the source matters:
 | **[source]** | Read in the Lenny tree, the specification, the documentation, or a design under `designs/` on 2026-11-13, or on 2026-11-14 for revision 2's additions. |
 | **[external]** | Read on a protocol's specification site or repository on 2026-11-13. "External protocol versions" and "Sources" list the pages. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[inference]** | Reasoned from the sources and not run. "Validation owed" lists each one that matters. |
-| **[unverified]** | A claim the pages and code read do not state. "Validation owed" lists each one. |
+| **[inference]** | Reasoned from the sources and not run. "Validation owed" in `steps.md` lists each one that matters. |
+| **[unverified]** | A claim the pages and code read do not state. "Validation owed" in `steps.md` lists each one. |
 
 ## Problem
 
@@ -27,7 +25,7 @@ Each protocol puts its wire format, version policy, identifiers, and state insid
 - A2A: an outbound push channel that signs with `X-Lenny-Signature`, agent cards generated at write time, and an aggregated `/.well-known/agent.json` (§21.1).
 - All of them: the adapter interface and its outbound dispatcher, a runtime registration endpoint with a validation gate, the translation fidelity matrix, the protocol columns of the §28.5.3 type registry, and contract tests that run every built-in adapter ([§15.2.1 REST/MCP Consistency Contract](../../spec/15_external-api-surface.md#1521-restmcp-consistency-contract)).
 
-Every revision of an external protocol therefore changes the gateway. MCP published `2025-06-18`, `2025-11-25`, and `2026-07-28` within about thirteen months. A2A 1.0 renamed the card path and every operation that §21.1 names. Anthropic added the API version `2026-10-21` **[external]**. The spike of 2026-11-13 found that every client-facing MCP and A2A feature Lenny uses maps onto REST once REST gains a few additions, and that MCP `2026-07-28` removed the connection state that made an MCP server inside the gateway attractive. The owner decided on 2026-11-13 that Lenny keeps only its REST API, with its server-sent event stream, as the client-facing API, and that every client protocol adapter moves into a separate first-party repository maintained by the Lenny project ("Decisions").
+Every revision of an external protocol therefore changes the gateway. MCP published `2025-06-18`, `2025-11-25`, and `2026-07-28` within about thirteen months. A2A 1.0 renamed the card path and every operation that §21.1 names. Anthropic added the API version `2026-10-21` **[external]**. The spike of 2026-11-13 found that every client-facing MCP and A2A feature Lenny uses maps onto REST once REST gains a few additions, and that MCP `2026-07-28` removed the connection state that made an MCP server inside the gateway attractive. The owner decided on 2026-11-13 that Lenny keeps only its REST API, with its server-sent event stream, as the client-facing API, and that every client protocol adapter moves into a separate first-party repository maintained by the Lenny project ("Decisions" in `decisions.md`).
 
 This design states what REST gains, how an adapter works in front of REST, how one is deployed and versioned, how adapters are tested, how Lenny's own clients move to REST, what leaves Lenny, and what changes in the designs that specify adapters.
 
@@ -102,6 +100,7 @@ The LLM proxy's `/llm-proxy/v1/chat/completions`, `/llm-proxy/v1/responses`, and
 | Per-message task | The MCP Tasks extension task, or the A2A task, that represents one message a client sent, completed at the end of the turn that consumed it (D4). |
 | Adapter conformance kit | The test kit Lenny publishes that drives an adapter against a deployed Lenny and checks the outcome through REST ("RO-6"). |
 | Umbrella chart | The `lenny` Helm chart, which lists each adapter's chart as an optional dependency ("RO-5"). |
+| Labels | Parts of the design carry the label RO-n, requirements carry the label ROR-n, and REST additions carry R1 to R19. R1 to R14 keep the numbers of the spike of 2026-11-13. |
 
 ### Terms from other designs and the platform
 
@@ -176,34 +175,6 @@ Inside the adapters, MCP and A2A tasks represent one message each: a send create
                                        │
                                        └── webhook deliveries (R6) ──► A2A push relay ──► A2A client
 ```
-
-## Decisions
-
-| # | Question | Owner's answer | Recorded as | Applied in |
-| :-- | :-- | :-- | :-- | :-- |
-| D1 | Whether MCP leaves the gateway with the other adapters (item 23 of the consolidated list, options (a) keep MCP built in and (b) move it out as well). | "ok, go with (b)". MCP leaves too. Under the spike's recommendation that the owner took, the MCP adapter is a first-party component that the chart deploys by default on the gateway's origin under one protected resource, REST gains the additions the adapters need first, and Lenny's own clients move to REST. | Decision file, "Owner answers, 2026-11-13 (second round on the consolidated list)", item 23; MP D6 | "RO-2" to "RO-8" |
-| D2 | Whether the OpenAI and Anthropic adapters leave as well (item 24). | "yes". The OpenAI Chat Completions, Open Responses, and Anthropic Messages adapters leave. | Same, item 24; AM O13, CT T17 | "RO-10", "RO-11" |
-| D3 | Who maintains the adapters and how they ship (item 25). | "yes". The Lenny project maintains each adapter in a separate repository, each with an optional Helm subchart. | Same, item 25 | "RO-5", "RO-6" |
-| D4 | How a waiting session appears on MCP Tasks (item 26; MP O7 and SL-Q1). | "ok". One MCP task per message a client sends, completed at the end of the turn that consumes it. The A2A adapter takes the same rule, because A2A states that a terminal task cannot restart and a follow-up opens a new task in the same context **[external]**. | Same, item 26; MP O7 (revision 5); SL L32 (revision 9) | "RO-8", "RO-9" |
-| O1 | Which resource identifier an adapter and the client API share. Options were (a) the adapter's endpoint URL, such as `https://lenny.acme.com/mcp`, with per-tenant forms under login routing, and (b) the origin. | "This should be a generic capability in case future adapters need the same setup. Run an agent to look for security holes". (a), as a capability every adapter registration takes rather than an MCP rule. Two security reviews followed, and the owner accepted their fixes (S1). | Owner answers, 2026-11-14, REST-only O1 | R9, "RO-4" |
-| O2 | Whether `callbackUrl` stays a separate mechanism once webhook subscriptions exist. Options were (a) keep it for terminal events alone and (b) make it one subscription. | The owner asked for an elaboration, then answered "ok" to (b): `callbackUrl` and `callbackSecret` on session creation create one webhook subscription for the `terminated` kind, delivered, retried, signed, listed, and logged as every subscription is, under the webhook rules of "RO-4". | Owner answers, 2026-11-14, REST-only O2 | R6 |
-| O3 | Whether Lenny or the adapter closes a provider session after its turn. Revision 1 recommended an option on session creation under which Lenny closes the session when its first client turn ends (R18), and a rule that kept some provider sessions on their pods. | First: "the idea was not to close the session until after some time, because it would be too expensive to spin up a new runtime for every turn". Then: "how does lenny know which sessions require holding? I wonder if there's anything simpler we can do". Then "yes" to the simplified rule: no concept of a session kept for a provider surface and no close-after-turn option, so R18 is withdrawn. A provider adapter creates ordinary sessions and may shorten the per-session idle timeout, which the most-restrictive resolution allows; an operator lengthens it through the pool's idle timeout; a `one_shot` runtime ends its own session under the completion rule; and the adapter routes a follow-up request by conversation fingerprint, stored as a client reference (R17), waking a `dormant` session. Chat Completions keeps its sessions the same way. R16 stays. | Owner answers, 2026-11-14, REST-only O3 | "RO-10", R16, R17 |
-| O4 | What MCP `tasks/cancel` and A2A `CancelTask` do to a task whose turn already runs. Revision 1 recommended a suspension of the session. | "why not an interrupt? (if you decide interrupt works, make sure it works with all runtimes)". Then "ok" to: retract the message while it is unconsumed; once its turn runs, interrupt the turn where the runtime declares `interrupt`, and otherwise suspend the session, which seals it, checkpoints the workspace, and releases the pod; report the task `cancelled` in each case. R19 carries the interrupt on a runtime that declares `interrupt`, and the adapter falls back to the suspend route on every other runtime and on an unacknowledged interrupt, so a cancel works with every runtime (O11). | Owner answers, 2026-11-14, REST-only O4 | R19, "RO-8", "RO-9" |
-| O5 | How the MCP adapter serves the `2025-11-25` handshake era without durable state. | "ok" to (a): the adapter mints `Mcp-Session-Id` as a signed, self-contained token holding the negotiated version, the client's capabilities, a digest of the bearer's subject, and an expiry, and `DELETE` answers `405`. | Owner answers, 2026-11-14, REST-only O5 | "RO-3", "RO-8" |
-| O6 | Where the MCP tool catalogue is defined. | "yes" to (b): Lenny guarantees a stable `operationId` and summary on every client route and publishes its OpenAPI document per release, and the MCP adapter's repository holds the catalogue, keyed by `operationId`. | Owner answers, 2026-11-14, REST-only O6 | R7, "RO-8" |
-| O7 | How adapter releases are versioned against Lenny releases. | "ok" to (a): each adapter has its own semantic version, each release names the oldest Lenny release whose client API it requires, and the umbrella chart pins the versions that passed the conformance kit. | Owner answers, 2026-11-14, REST-only O7 | "RO-5" |
-| O8 | Where the adapter specifications and designs live. | "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something". The adapter designs stay where they are, now as changes under `changes/`, and nothing is deleted. Each design that specifies an adapter carries a banner naming the sections that move to the adapter's repository and the sections that still govern Lenny. When a repository is created, it copies the moving sections into its own specification, and Lenny's designs keep them under the banner. | Owner answers, 2026-11-14, REST-only O8 | "RO-5", "Instructions for reviewers of other designs" |
-| O9 | Which optional additions ship with the first release: R10, a per-principal stream of state changes; R11, a creation held until missing links exist; and R13, signed download URLs. | "what use cases would warrant these?", then: R13 ships in the first release, and R10 and R11 are deferred. R13's URLs are served on a separate download origin, as the first security review asked. "RO-2" states the use cases that would warrant R10 and R11. | Owner answers, 2026-11-14, REST-only O9 | R10, R11, R13 |
-| O10 | How the A2A adapter treats agent elicitations. | "sure. That is for the A2A adapter to spec and implement". (b): the A2A adapter's specification states, and the adapter implements, `input-required` for a pending elicitation of a task's turn, with the elicitation's schema in a data part, answered through R4's respond route. Lenny provides R4 and states no A2A mapping. | Owner answers, 2026-11-14, REST-only O10 | "RO-9" |
-| O11 | Where the fallback of a turn interrupt runs (R19). Options were (a) Lenny suspends the session when the runtime lacks `interrupt` or does not acknowledge, and (b) R19 refuses those cases and the adapter calls the suspend route itself. | "I wouldn't change Lenny's behavior for this. The adapter can fall back": (b). R19 sends `interrupt_request` only when the session's effective capabilities include `interrupt`, answers `409 INTERRUPT_UNSUPPORTED` when they do not, and answers `504 INTERRUPT_TIMEOUT` when the runtime does not acknowledge within the `interrupt_request` deadline. Lenny suspends nothing on R19's behalf, and an adapter that must stop the turn calls `POST /v1/sessions/{id}/suspend`. The codes `409 INTERRUPT_UNSUPPORTED` and `504 INTERRUPT_TIMEOUT`, which revision 3 chose, were confirmed on 2026-11-15 ("3: ok"). | Owner answers, 2026-11-14, REST-only O11; 2026-11-15, item 3 | R19, "RO-7", "RO-8", "RO-9" |
-| O12 | How R16 treats a session that became `dormant`. Options were (a) the restore condition refuses only a restore from a checkpoint taken before the named turn ended, and (b) any restore refuses. | "O12: ok": (a). The move to `dormant` checkpoints after the turn, so a woken `dormant` session continues warm, and a recovery from pod failure to an older checkpoint runs cold. | Owner answers, 2026-11-14, REST-only O12 | R16, "RO-10" |
-| O13 | Defaults and details of the security rule set. | "O13: ok": `binding` defaults to `attested` for a first-party registration and `header` otherwise; `webhooks.maxRestrictedLifetimeSeconds` is 604,800; `maxStreamsPerSubject` defaults to 32; `downloads.urlTtlSeconds` is 300 and at most 3,600; the token pre-filter refuses a bearer over 16 KiB; the stream close at a token's `exp` and revocation applies to every reader; the push relay binds its sealed data to the tenant, the session, and a per-subscription nonce that also derives the subscription's secret; and a token with a `cnf` claim is refused on a narrowed request. | Owner answers, 2026-11-14, REST-only O13 | "RO-4", R6, R13, "RO-9" |
-| S1 | The fixes of the two security reviews of 2026-11-14 to the authorization rule of revision 1. | "Ok on the adapter security fixes". Before that: "1.1 ok" to the `Lenny-Resource` narrowing header, "run another security review" on per-adapter operation sets, "2 yes" to the mutual TLS hop between adapters and the gateway, and "3 yes to all" to the medium and low fixes. "RO-4" states the combined rule set. | Owner answers, 2026-11-14, REST-only security review | "RO-4", R5, R6, R7, R9, R13, "RO-3", "RO-5", "RO-6" |
-| S2 | Whether a narrowed request needs `credential-use` when its final pool attaches a `userCredential` binding through `poolAttach`. Revision 3 added a post-chain check that required it, for the owner's review. | "(b). In this scenario, a user would nevertheless need to be authenticated even if using MCP, right? If that's the case I see no problem with (b)". The request is authenticated as the user whatever adapter carries it, so a `poolAttach` binding attaches through any adapter, and no post-chain check reads it. `credential-use` covers a plan's `onRequest` `userCredential` binding entries, the request fields through which a client asks for a user's credentials. | Owner answers, 2026-11-15, item 1 | "RO-4" |
-
-## Open decisions
-
-The owner settled O1 to O13 on 2026-11-14 ("Decisions"), and no decision is open. The owner confirmed on 2026-11-15 the codes that revision 3 chose within O11, `INTERRUPT_UNSUPPORTED` at HTTP `409` and `INTERRUPT_TIMEOUT` at HTTP `504`, which reuses the status that the `Interrupt` RPC already returns at the deadline, and settled the `poolAttach` question of "RO-4" as S2.
 
 ## Requirements
 
@@ -334,7 +305,9 @@ No A2A route, no `AgentProtocolAdapter`, and no client-facing Anthropic Messages
 - `tests/tier3_contract/`: `rest_mcp_consistency/` (13 files), `rest_openai_chat/`, `rest_openai_responses/`, `mcp_tool_approval_address/`, `multiprotocol_journey/`, and `holderforward/` move to the adapter repositories or the conformance kit; `playground/` and `sdks/` change. `tests/tier2_component/translators/` moves. Tier 4 `multi_protocol_same_deployment`, `source_mode_protocols`, `open_responses_*`, `holder_forward_responses`, `openai_cross_tenant`, `held_attach_stream_multi_turn`, and `elicitation` (MCP parts); tier 5 `mcp_conformance_test` and `openai_conformance_test`; tier 7a, tier 8, tier 9, and tier 11 `open_responses_*` and the MCP elicitation tests move to the adapter repositories. `tests/testinfra/responsesstub` moves.
 - `TESTING.md` and `TEST-GAPS.md`: the §15.2 and §15.2.1 entries move; T-META.10 is withdrawn, as MP already states.
 
-## RO-1 The client contract
+## Detailed design
+
+### RO-1 The client contract
 
 **One client API [design].** The gateway serves REST under `/v1`, the event stream `GET /v1/sessions/{id}/events`, the OpenAPI documents, the RFC 9728 metadata of R9, the playground's assets and token routes, and nothing else on the client listener. The adapter listener of "RO-4" serves the same REST routes and event stream to attested adapters, and the download origin serves R13's downloads alone. §15's introduction states this in place of **REST vs MCP split (operator vs session).**: sessions and administration both use REST, and protocol adapters are separate projects that call REST.
 
@@ -346,7 +319,7 @@ No A2A route, no `AgentProtocolAdapter`, and no client-facing Anthropic Messages
 
 **Shared error taxonomy [design].** §15.2.1 rule 3 moves to §15.1 **Error response envelope.**, because other sections cite it for every REST error.
 
-## RO-2 REST additions
+### RO-2 REST additions
 
 | ID | Addition | Needed by | Size |
 | :-- | :-- | :-- | :-- |
@@ -378,7 +351,7 @@ R1 to R5, R7 to R9, R12 to R17, and R19 land before any adapter leaves the gatew
 
 **R3. Turn resource [design].** `GET /v1/sessions/{id}/turns/{turn}` and `GET /v1/sessions/{id}/turns` (paginated, filterable by `causedBy` sender kind) return for each turn: `turn`, `status` (`running`, `completed`, `failed`, `interrupted`, `runtime_exit`, or `cut` with its cause, as SL-3 records), `causedBy` with the sender kind, `consumed` with each consumed message and the output position at which it was consumed, `output` (the turn's output parts from the transcript, in order), `endOfTurn` (the end-of-turn `message`'s own parts), `clientToolCalls` with external ids, `usage` (the totals of `turn_end`, by source), `error`, `startedAt`, `endedAt`, and `firstSeq` and `lastSeq` on the event stream. A client cuts a response at the consumption of its own message, as MD-8 requires of the provider surfaces, by taking the output from that message's position. The turn's data exists in the `turn_end` payload (MD-20) and the transcript **[source]**; R3 exposes it durably, where the replay buffer holds only recent events.
 
-**R4. Pending input [design].** `GET /v1/sessions/{id}/elicitations?state=pending` and `GET /v1/sessions/{id}/approvals?state=pending` list a session's open elicitations and its pending tool-use and harness approvals. Each entry carries its identifier, `turn`, `mode` (form or URL), `message`, `requestedSchema` or `url`, provenance (the asking session and hop, or, for a link prompt the gateway raises, `initiator_type: platform`, `purpose: account_link`, and the link provider), and `createdAt`. An elicitation from an operator service reaches R4 as its runtime's question under B6 of [`0135-message-delivery`](../0135-message-delivery/change.md#decisions). A link prompt ([`0151-user-credential-delivery`, "UC-8: Link prompts"](../0151-user-credential-delivery/change.md#uc-8-link-prompts)) is one per user and link provider, so the same entry appears in the list of each root session it is shown on, and a response or a dismissal from any of them resolves it on all. Pending elicitations are already durable, because a coordinator handoff re-synthesizes them from Postgres (§10.4) **[source]**. The respond, dismiss, approve, and deny routes are unchanged.
+**R4. Pending input [design].** `GET /v1/sessions/{id}/elicitations?state=pending` and `GET /v1/sessions/{id}/approvals?state=pending` list a session's open elicitations and its pending tool-use and harness approvals. Each entry carries its identifier, `turn`, `mode` (form or URL), `message`, `requestedSchema` or `url`, provenance (the asking session and hop, or, for a link prompt the gateway raises, `initiator_type: platform`, `purpose: account_link`, and the link provider), and `createdAt`. An elicitation from an operator service reaches R4 as its runtime's question under B6 of [`0135-message-delivery`](../0135-message-delivery/decisions.md#decisions). A link prompt ([`0151-user-credential-delivery`, "UC-8: Link prompts"](../0151-user-credential-delivery/change.md#uc-8-link-prompts)) is one per user and link provider, so the same entry appears in the list of each root session it is shown on, and a response or a dismissal from any of them resolves it on all. Pending elicitations are already durable, because a coordinator handoff re-synthesizes them from Postgres (§10.4) **[source]**. The respond, dismiss, approve, and deny routes are unchanged.
 
 **R5. Idempotent sends [design].** `POST /v1/sessions/{id}/messages` accepts `Idempotency-Key` under §11.5's rules. Every key of §11.5 is scoped by the tenant, the subject, the effective audience (none for a request that is not narrowed), the token's `azp` or `client_id`, the method, the route template, the path parameters, and the key, in place of `(tenant_id, key)`. Two users of one tenant who send the same A2A `messageId` therefore do not collide, and a key that one adapter or route used never replays a response for another. A retry with the same key within §11.5's 24-hour window returns the original receipt, `seq` included. Each first-party adapter prefixes the keys it derives with its registration name, such as `a2a:` before an A2A `messageId`, and a provider adapter's key is a digest of the request, so an identical retry within the window returns the original receipt. The operation check of "RO-4" runs before the replay, so a narrowed request never receives a stored response for an operation outside its registration. The MCP tool argument `idempotencyKey` leaves §11.5 with the MCP API.
 
@@ -441,7 +414,7 @@ Otherwise the send answers `412 MESSAGE_PRECONDITION_FAILED` with `details.faile
 
 A runtime with `interrupt` keeps its pod, and its session stays `idle`. `lenny session interrupt` calls the route and, on either code, reports it and names `lenny session suspend`; the playground's Stop button calls the route and falls back to the suspend route on either code ("RO-7").
 
-## RO-3 The adapter model
+### RO-3 The adapter model
 
 **Unprivileged [design].** An adapter holds no Lenny credential, service account binding, role, or network policy exception toward Lenny's stores. Its client certificate on the adapter listener names its registration, which narrows what a forwarded bearer may do and grants nothing ("RO-4"). Every REST call carries the bearer its client sent, unchanged. A request without a bearer is answered with the protocol's own `401` and R9's challenge, without a REST call.
 
@@ -468,7 +441,7 @@ A runtime with `interrupt` keeps its pod, and its session stays `idle`. `lenny s
 
 **Cost [inference].** Every event crosses one more process and is encoded twice, and an attached client holds two connections, one to the adapter and one from the adapter to the gateway. The gateway's connection budget for stream readers counts the adapter's streams as it counts a direct client's.
 
-## RO-4 Authorization of adapter requests
+### RO-4 Authorization of adapter requests
 
 MCP requires a server to accept only tokens issued for it as the audience and forbids it to "accept or transit any other tokens" **[external]**. An adapter that forwards its client's bearer to the client API transits that token, so the rule holds only when the client API accepts the token as issued for that adapter and lets it do only what that adapter needs. The rules below apply to every adapter, first-party or third-party, as one capability of the platform (O1).
 
@@ -557,7 +530,7 @@ Narrowing only removes authority. A `rest` or `mixed` token on a narrowed reques
 
 **Provider credentials [design].** The Anthropic adapter accepts a Lenny bearer in `Authorization: Bearer` or `x-api-key`, forwards it as `Authorization: Bearer`, refuses a value starting with `sk-ant-` without echoing it, as AM-2 states, and refuses a request whose `Authorization` and `x-api-key` differ. The gateway's auth middleware reads `Authorization` alone.
 
-## RO-5 Packaging, versioning, and deployment
+### RO-5 Packaging, versioning, and deployment
 
 **Repositories [design].** The Lenny project creates one public repository per first-party adapter under the project's organization, beside the client SDK repositories that §15.6 names: `lenny-adapter-mcp`, `lenny-adapter-a2a`, `lenny-adapter-openai-chat`, `lenny-adapter-open-responses`, and `lenny-adapter-anthropic-messages`. Each holds its specification, its designs (O8), its code, its tests, its image build, and its Helm chart, and publishes a container image and a chart per release. The adapters carry Lenny's licence and governance.
 
@@ -585,7 +558,7 @@ Every provider adapter serves `GET /v1/models` in both the OpenAI and the Anthro
 
 **Third-party adapters [design].** A third party builds an adapter the same way and deploys it with its own chart. The operator registers it in `auth.adapters[]`, preferably on an external origin, and Lenny accepts its clients' tokens only under that registration ("RO-4"). Lenny runs no conformance gate on a third party's adapter; the conformance kit is how a third party shows conformance.
 
-## RO-6 Conformance
+### RO-6 Conformance
 
 **What replaces §15.2.1 [design].** Rule 1 holds by construction, because one API exists. Rules 2 and 4 become R7. Rule 3 moves to §15.1. Rule 5 and `RegisterAdapterUnderTest` become the adapter conformance kit, and the production gate of `POST /v1/admin/external-adapters/{name}/validate` leaves with the endpoint.
 
@@ -608,7 +581,7 @@ Each adapter repository adds its protocol's own conformance tests, such as MCP s
 
 **Where it runs [design].** Each adapter repository runs the kit in CI against Lenny's latest release and against Lenny's main branch. Lenny's release pipeline runs the kit for every first-party adapter version it intends to pin, at tier 5 on Kind, and a failure blocks the release or the pin.
 
-## RO-7 Lenny's own clients
+### RO-7 Lenny's own clients
 
 **Client SDKs [design].** The Go, Python, and TypeScript client SDKs drop their MCP clients (`mcp.go`, `mcp.py`, `mcp.ts`). They wrap REST and the event stream: a send returns the receipt with R1's `seq`, a stream opens at that cursor, a dropped stream reconnects with `Last-Event-ID` and surfaces `gap_detected`, and helpers read R2, R3, and R4. §15.6 lists the Python SDK, which §18.19 already names **[source]**, and states that the SDKs are generated from the OpenAPI document with hand-written streaming.
 
@@ -629,7 +602,7 @@ Each adapter repository adds its protocol's own conformance tests, such as MCP s
 
 **Web playground [design].** The chat pane sends with `POST /v1/sessions/{id}/messages` and reads the event stream with `fetch` and a streaming body, carrying the bearer in `Authorization`, because `EventSource` cannot set the header; this is MP-9's approach applied to the REST stream. Stop calls R19 for the open turn and falls back to the suspend route on `INTERRUPT_UNSUPPORTED` or `INTERRUPT_TIMEOUT`, Suspend and Cancel call the REST routes, prompts use the elicitation and approval routes, and a browser close sends `DELETE` with `keepalive: true`. The raw-frame inspector shows SSE frames. The "Copy as client SDK snippet" button emits REST SDK code that compiles against the current SDKs. `POST /v1/playground/token` mints the same bearer it mints today, and §27 calls it a client API bearer. The WebSocket `/mcp/v1/ws`, its `Sec-WebSocket-Protocol` carrier, close code `4401`, and `lenny_playground_ws_connect_total` leave, as MP-9 already removes them. The package moves from `pkg/gateway/mcpfabric/playground` to `pkg/gateway/playground`.
 
-## RO-8 The MCP adapter
+### RO-8 The MCP adapter
 
 The MCP adapter carries MP-1 to MP-4, MP-8's window, and the client half of MP-7 as its own specification, with these changes for a stateless program in front of REST **[design]**.
 
@@ -662,7 +635,7 @@ The MCP adapter carries MP-1 to MP-4, MP-8's window, and the client half of MP-7
 
 **Discovery.** `list_runtimes` maps to `GET /v1/runtimes`.
 
-## RO-9 The A2A adapter
+### RO-9 The A2A adapter
 
 The A2A adapter serves A2A `1.0` in the HTTP+JSON, JSON-RPC, and gRPC bindings, and its specification replaces §21.1 **[design]**.
 
@@ -674,7 +647,7 @@ The A2A adapter serves A2A `1.0` in the HTTP+JSON, JSON-RPC, and gRPC bindings, 
 
 **Context.** A client-chosen `contextId` is stored as the session label `a2a-context`, found through `GET /v1/sessions?labels=`. `ListTasks` within a context lists the session's client messages; across contexts it lists the labelled sessions first (O9).
 
-## RO-10 The provider adapters
+### RO-10 The provider adapters
 
 The provider adapters carry the protocol parts of AM, CT-6, MD-8, and §15's single-shot and conversation-session rules as their own specifications. Each request is one turn, and each adapter creates sessions with `inputPolicy: decline` (R12), so a runtime's question fails at once as AM-6 states **[design]**.
 
@@ -717,7 +690,7 @@ The provider adapters carry the protocol parts of AM, CT-6, MD-8, and §15's sin
 - `request-id` is `<sessionId>.<messageId>`, so support finds the session and turn behind it through R2, which replaces the `messages_requests` table.
 - The tables `conversation_turns` and `messages_requests`, `anthropicMessages.digestKey` as a gateway secret, and the forward of `anthropic-version` between replicas leave Lenny: the references live on messages and are erased with them, the key is the adapter's, and the REST send forwards internally under §29.3.
 
-## RO-11 What leaves Lenny
+### RO-11 What leaves Lenny
 
 - **Endpoints:** `/mcp`, `/mcp/environments/{name}`, `/mcp/v1/ws`, `/v1/chat/completions`, `/v1/responses`, `/v1/responses/{id}`, `/v1/messages` and its refused sub-paths, `/v1/models` and `/v1/models/{id}`, and the planned `/.well-known/agent.json`, `/a2a/...`, and `/ap/v1/agent` routes.
 - **Framework:** the `ExternalAdapterRegistry`, `ExternalProtocolAdapter`, `BaseAdapter`, `OutboundChannel`, `OutboundSubscription`, `OutboundCapabilitySet`, the back-pressure policy with `adapter.outboundBufferDepth`, `adapter.outboundSendTimeoutMs`, and `lenny_outbound_channel_buffer_drop_total`, `AdapterCapabilities` with `adapterCapabilities` in discovery and `?adapter=`, the dispatch-filter rule, the capability-consistency invariant, `HandleDiscovery`, `SessionMetadata` and the adapter lifecycle hooks, `unexpected_event_kind`, and `push_delivery_failed`.
@@ -728,7 +701,7 @@ The provider adapters carry the protocol parts of AM, CT-6, MD-8, and §15's sin
 - **Translation tables:** the fidelity matrix's protocol columns, the protocol columns of the §28.5.3 type registry, and `outputpartfidelity`'s protocol mappings.
 - **Lenny's MCP clients:** the client SDKs' MCP clients and the CLI's and playground's MCP use.
 
-## RO-12 What simplifies
+### RO-12 What simplifies
 
 - **One creation path for clients.** Every client-created session enters through `POST /v1/sessions` or `POST /v1/sessions/start`; the MCP creators and `BindSingleShot` leave TS-3's list of root creators, F-13.3.26's impersonation rule has one surface, and the link check of CA-4 has one placement.
 - **No session state per protocol.** The session row loses the response records; the gateway loses the handshake record, the digest tables, and the request records. Erasure under §12.8 names no protocol table.
@@ -741,7 +714,7 @@ The provider adapters carry the protocol parts of AM, CT-6, MD-8, and §15's sin
 
 ## Limits
 
-- **One more hop.** Every adapter request and event crosses an extra process and is re-encoded, and an attached client holds two connections. No measurement exists ("Validation owed").
+- **One more hop.** Every adapter request and event crosses an extra process and is re-encoded, and an attached client holds two connections. No measurement exists ("Validation owed" in `steps.md`).
 - **Registered adapters only.** An adapter forwards bearers only under a registration in `auth.adapters[]`, on the gateway's origin or on an external origin the operator routes. An adapter that the operator has not registered cannot forward bearers, and Lenny offers no token exchange for it.
 - **Narrowed authority.** A client that reaches Lenny through an adapter can do only what the adapter's registration lists, under the `user` role ceiling by default. An administrator works through REST, the CLI, or `lenny-ops`.
 - **Sender-constrained tokens.** A DPoP or certificate-bound token cannot pass through an adapter, and the gateway refuses one on a narrowed request.
@@ -770,19 +743,6 @@ The provider adapters carry the protocol parts of AM, CT-6, MD-8, and §15's sin
 - **A close-after-turn option (revision 1's R18) and a rule that kept some provider sessions on their pods.** Lenny would have had to decide per revision which sessions to keep. Ordinary sessions with an idle timeout that an adapter may shorten serve the same purpose (O3).
 - **Lenny suspending a session on R19's behalf (revision 2's O11 (a)).** The owner kept Lenny's behaviour unchanged: R19 refuses a runtime without `interrupt` and an unacknowledged interrupt, and the adapter falls back to the suspend route (O11).
 - **A suspension for every task cancel (revision 1's O4 (b)).** A runtime that declares `interrupt` stops its turn and keeps its pod, so a suspension is needed only as the fallback (O4).
-
-## Validation owed
-
-- Whether MCP clients in common use, with their authorization servers, obtain a token whose audience is `https://<host>/mcp` through RFC 8707, and whether such a client accepts the RFC 9728 document R9 serves; TS's "Residual risks" already lists the per-tenant case as unproven.
-- Whether the identity providers in common use write the requested RFC 8707 resource, or a configured resource mapping, into `aud`, and which need a client ID alias ("RO-4").
-- Whether common ingress controllers strip client-sent `Lenny-*`, `X-Forwarded-*`, and method-override headers as "RO-4" requires, and route `downloads.host` and external origins as "RO-5" states.
-- Whether a restored `dormant` session holds the conversation state a warm turn needs for each first-party runtime, which O12's reading of R16 assumes.
-- The latency and throughput cost of the extra hop for streaming and for a provider request, measured on Kind with the MCP and Anthropic adapters.
-- Whether common ingress controllers route the protocol paths of "RO-5" without buffering SSE, and pass `Last-Event-ID` and `Mcp-*` headers unchanged.
-- Whether the REST message send's forwarding of §29.3 shares `holder_forward.go` with the Responses and MCP forwards that leave.
-- Whether `pkg/gateway/mcpfabric/elicitationfloor` serves the client surface or the runtime-facing elicitation chain.
-- The proof of concept did not cover the push relay, R9, the adapter listener, narrowing, R13, R19, the `2025-11-25` era, uploads, the A2A JSON-RPC and gRPC bindings, or any provider adapter; each needs a test in its repository or in Lenny before the adapter replaces the in-gateway surface.
-- Whether the Anthropic SDKs' retries reach the join of "RO-10" before the first request's message is written, the window in which a retry sends a second message; R5's key closes it when the adapter sends the request digest as `Idempotency-Key` as well.
 
 ## Specification changes
 
@@ -878,62 +838,6 @@ The tests that leave Lenny are listed under "Root records and tests"; each moves
 - [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md): the "Implicit session" term no longer keeps the built-in adapters' implicit sessions, and the term for a session a provider surface keeps on its pod leaves under O3.
 - [`0127-egress-and-git`](../0127-egress-and-git/change.md) and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md): documentation rows that name `docs/api/mcp.md` point to the MCP adapter's documentation; `/mcp/management` is unaffected.
 - Every design that names `ExternalAdapterRegistry`, `AdapterCapabilities`, `OutboundChannel`, or "REST and MCP" for a client surface states the REST rule. Revision notes and review records keep their wording.
-
-## Steps
-
-### 0138.S1 REST additions
-- status: Planned
-- aliases: [RO-A, RO-2, R1, R2, R3, R4, R5, R7, R8, R12, R13, R14, R15, R16, R17, R19]
-- lanes: [specification, code, documentation]
-- depends-on: [0135.S5, 0146.S1, 0122.S1, 0120.S1]
-
-The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, and R19, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. It needs MD-E's events, SL's routes, CT-A, and AM-A, so that the message and conversation members exist.
-
-This step goes first because every adapter and every Lenny client depends on it.
-
-### 0138.S2 Authorization of adapter requests
-- status: Planned
-- aliases: [RO-B, RO-4, R9]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S2, 0149.S7, 0138.S1]
-- closes: [F-10.2.39]
-
-R9 and the rules of "RO-4": the adapter registry, computed identifiers, audiences, metadata, challenges, narrowing, evaluation, leaf enforcement, minting refusals, the refusal code, the adapter listener, and their tests. It needs 0138.S1 for R7's tags and R5's key scope.
-
-### 0138.S3 Webhook subscriptions
-- status: Planned
-- aliases: [RO-C, R6]
-- lanes: [specification, code, documentation]
-- depends-on: [0138.S1, 0138.S2]
-
-R6 webhook subscriptions with their target, capability, and lifetime rules, and `callbackUrl` as a subscription under O2.
-
-### 0138.S4 Lenny's clients on REST
-- status: Planned
-- aliases: [RO-D, RO-7]
-- lanes: [specification, code, documentation]
-- depends-on: [0138.S1]
-
-Lenny's clients on REST: SDKs, CLI, and playground ("RO-7").
-
-### 0138.S5 Conformance kit, chart, and adapter repositories
-- status: Planned
-- aliases: [RO-E, RO-5, RO-6, RO-8, RO-9, RO-10]
-- lanes: [specification, code, documentation]
-- depends-on: [0138.S1, 0138.S2, 0138.S3]
-
-The conformance kit, the umbrella chart's dependencies and routes, and the creation of the adapter repositories with their first releases. It needs 0138.S3 for the A2A adapter.
-
-### 0138.S6 Removal of the surfaces that leave Lenny
-- status: Planned
-- aliases: [RO-F, RO-11]
-- lanes: [specification, code, documentation]
-- depends-on: [0138.S4, 0138.S5]
-- closes: [F-15.1.80, F-15.1.81, F-15.1.82, F-15.1.83, F-15.2.27, F-15.2.28, F-15.2.30, F-15.2.31]
-
-The removal of "RO-11" from the specification, the code, the chart, and the documentation, and the BUILD-GAPS closures. It needs 0138.S5 for the MCP adapter, so that a default deployment serves MCP throughout.
-
-This step goes last so that the MCP surface and the playground never disappear between steps, although Lenny has no deployments to protect.
 
 ## Sources
 

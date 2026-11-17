@@ -1,8 +1,6 @@
 # Tenant scoping and identity
 
-Status: `Draft`, revision 42, 2026-11-15. Revision 42 follows [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) revision 2, which applies the security review of that design's revision 1 and the owner's answer of 2026-11-15, "O1-O7: go with your recommendations": a service caller's Lenny subject is `~svc~` followed by its canonical subject and an `agent` caller's is `~agt~` followed by it, the identity boundary refuses a human token whose canonical subject begins with either prefix, and no `source_id` takes either value, so a person and a service account never share a user key. Revision 41 follows [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) revision 1, which records the owner's answers of 2026-11-15 on service accounts: a `userCredential` token is released to the principal on the session row when its `caller_type` is `human` or `service`, so a service account receives its own credentials, and invalidation of a service account's subject stops them. Revision 40 applies the owner's decision of 2026-11-15, "Yes, let's drop connectors.", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2 designs: environments select runtimes alone, `connectorSelector` and §10.6 **Connectors are never cross-environment** leave, and a crossing child reaches operator services through its target environment's egress. Revision 39 applies the remaining instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) to TS-1, TS-3, and "Discovery". Revision 38 reconciles "Discovery" with [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md): the gateway computes the protected resource identifiers of the adapters from that design's adapter registry, and the client API accepts a deployment-source token whose `aud` carries `auth.oidc.clientId` or one of those identifiers, in place of revision 37's requirement of `auth.oidc.clientId` in `aud` on `/mcp`. Nothing here is built or staged, and no test or spike was run for it. It reads against [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) revision 2, [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 45, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), [`0136-placement`](../0136-placement/change.md) revision 11, and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) revision 9. No decision under "Decisions" remains open. Statements about the tree were checked by reading the code and specification. No production component, identity provider, or directory has been exercised. Proposals carry the label TS-n, and requirements carry the label TSR-n. "Review history" at the end records what each revision changed and which text each review read.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 42, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -49,6 +47,7 @@ This design covers environment scoping of the objects in [`0127-egress-and-git`]
 | Hold | An invalidation entry on a user row for one caller class (`admin`, `sync`, or `scim:<source_id>`), with its invalidation level. A user is active only when no hold remains. See "User lifecycle (TS-4)". Two other holds are unrelated to users. An issuer-level hold stops fetches from a shared issuer whose address resolves into an excluded range, and a deployment-level hold pauses the lapse count of every domain-pinned row while many TXT records go missing at once. "Issuer pin and proof" and "Failure behaviour (identity)" state both. |
 | `manage_user_lifecycle` | A permission TS-4 adds that covers the `invalidate` and `reinstate` calls alone, so a sync worker or a custom role such as `identity-sync` can deprovision users without assigning roles. |
 | Hook | Work that a proposal of the egress design carries for this design, because adding it later would force rework of a stored record format, a wire contract, or a shipped enforcement point. The egress design lists its hooks under "Reserved for other designs". |
+| Labels | Parts of the design carry the label TS-n, and requirements carry the label TSR-n. |
 
 ### Terms from other designs and the platform
 
@@ -133,15 +132,15 @@ Proposals, properties, and defects in other designs carry a label whose prefix n
 
 | Labels | Design | What they name |
 | :-- | :-- | :-- |
-| EG-1, EG-2, EG-3, EG-4, EG-5, EG-6, EG-8, EG-9, and EG-10 | [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) | Proposals of the egress design: EG-1 git prerequisites, EG-2 the pod network agent and proxied egress, EG-3 the pod git path, EG-4 credential delivery, EG-5 the git mirror and warm fill, EG-6 per-tenant routing and replacement, EG-8 tenant visibility, EG-9 egress policy objects with the single write path for tenant opt-ins, and EG-10 evidence ingest. |
-| EG decision 60 | [`0127-egress-and-git`, "Decisions"](../0127-egress-and-git/change.md#decisions) | Per-slot scopes on a pod with several slots, settled by the owner on 2026-11-13 as option (a): each slot uses its own session's environment, readable and writable sets, allowed hosts, lock, and bindings where slot attribution answers, and the pod keeps the union scope where it does not (["Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants)). |
+| EG-1, EG-2, EG-3, EG-4, EG-5, EG-6, EG-8, EG-9, and EG-10 | [`0127-egress-and-git`, "Steps"](../0127-egress-and-git/steps.md#steps) | Proposals of the egress design: EG-1 git prerequisites, EG-2 the pod network agent and proxied egress, EG-3 the pod git path, EG-4 credential delivery, EG-5 the git mirror and warm fill, EG-6 per-tenant routing and replacement, EG-8 tenant visibility, EG-9 egress policy objects with the single write path for tenant opt-ins, and EG-10 evidence ingest. |
+| EG decision 60 | [`0127-egress-and-git`, "Decisions"](../0127-egress-and-git/decisions.md#decisions) | Per-slot scopes on a pod with several slots, settled by the owner on 2026-11-13 as option (a): each slot uses its own session's environment, readable and writable sets, allowed hosts, lock, and bindings where slot attribution answers, and the pod keeps the union scope where it does not (["Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants)). |
 | P4 and P7 | [`0127-egress-and-git`, "Security properties"](../0127-egress-and-git/change.md#security-properties) | Egress security properties: P4 keeps one tenant's data and credentials away from another tenant's pods, and P7 keeps one pod's load from removing another tenant's egress, through quotas per pod and per tenant. |
 | UC-1, UC-2, UC-3, and UC-5 | [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) | Proposals of the user credential design: [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) credential types and the `registered` source, [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) the `oauth2Link` source and account linking, [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding) the `userCredential` binding, and [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) `delivery: file`. |
 | UG-1 and UG-2 | [`0152-user-git-identity`](../0152-user-git-identity/change.md) | Proposals of the VCS layer: [UG-1](../0152-user-git-identity/change.md#ug-1-vcs-link-kinds) VCS link kinds and [UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization) repository authorization. |
 | SO-1, SO-2, SO-4, and SP1 | [`0142-security-oversight`](../0142-security-oversight/change.md) | [SO-1](../0142-security-oversight/change.md#so-1-security-roles) security roles, [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) the tenant security record and posture, which holds a tenant's guardrails and delays any change that weakens one, and [SO-4](../0142-security-oversight/change.md#so-4-operator-access-transparency) operator access transparency. [SP1](../0142-security-oversight/change.md#security-properties) is the property that only an active security principal row, presented on a bearer issued after the row took effect, grants a security role. |
 | FE-n | [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) | Proposals of the forensics and evidence preservation design. |
 | DR-1, DR-8, DF-3, and DF-5 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) | [DR-1](../0147-tenant-derived-runtimes/change.md#dr-1-to-dr-3-prerequisites) is a prerequisite proposal, and [DR-8](../0147-tenant-derived-runtimes/change.md#dr-8-interactions) covers interactions with other features. DF-3 and DF-5 are defects in that design's [current state](../0147-tenant-derived-runtimes/change.md#current-state), under which no derived runtime runs a session today. |
-| OC-1 and OC-2 | [`0148-tenant-outbound-connector`, "Proposals"](../0148-tenant-outbound-connector/change.md#steps) | The outbound connector's gateway, agent, and identity (OC-1), and its hosts and policy (OC-2), which reach a private host. |
+| OC-1 and OC-2 | [`0148-tenant-outbound-connector`, "Proposals"](../0148-tenant-outbound-connector/steps.md#steps) | The outbound connector's gateway, agent, and identity (OC-1), and its hosts and policy (OC-2), which reach a private host. |
 | RT-2, RT-3, and RT-4 | [`0141-runtime-routing`](../0141-runtime-routing/change.md) | [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) the interceptor contract, with one `PreRoute` chain on every creation path and the post-chain point, [RT-3](../0141-runtime-routing/change.md#rt-3-routing-labels) routing labels, and [RT-4](../0141-runtime-routing/change.md#rt-4-runtime-routes) runtime routes. |
 | PM-3, PM-4, and PM-7 | [`0136-placement`](../0136-placement/change.md) | [PM-3](../0136-placement/change.md#pm-3-placement-offerings-and-per-pool-nodeplacement) placement offerings and their grants to tenants; [PM-4](../0136-placement/change.md#pm-4-placement-requirements) placement requirements, the filters on the pools a session may run on that a tenant, an environment, or the operator sets, with their union, the effective requirements, checked at the post-chain point; and [PM-7](../0136-placement/change.md#pm-7-region-placement) region placement with the residency check. |
 | TSS-8 | [`0150-tenant-security-settings`, "TSS-8"](../0150-tenant-security-settings/change.md#tss-8-data-classes) | The data classes Public, Internal, Confidential, and Secret, which replace the tiers T1 to T4, and the removal of `workspaceTier` with its environment-level override. |
@@ -228,9 +227,11 @@ Each row was checked against the named source.
 | A session records its environment | Yes for a create that names one, in `sessions.environment`. Absent for a transparent-path create. No code sets it on a delegated child or a derived session. | `create.go`, `derive.go`, `replay.go`, `delegation/service.go` |
 | A precedent for environment-scoped credentials exists | Yes. User credentials and connector tokens carry an `environment` column in which the empty string means the no-environment scope (§4.3 and migration 0059). | `credentialstore.go` |
 
-## TS-1: Environment scoping
+## Detailed design
 
-### A session's environment
+### TS-1: Environment scoping
+
+#### A session's environment
 
 TS-1 relies on [TS-3](#ts-3-session-environment-context-and-cross-environment-sharing), which makes `sessions.environment` dependable. A session has a value E when its create named an environment through `/v1/environments/{name}/sessions` or the `environment` body field, which a protocol adapter's environment-scoped form becomes. Both already run the explicit admission check (membership, at least `creator`, and the runtime selector). A transparent-path session has no E, and the formulas below write that as E = ∅.
 
@@ -238,9 +239,9 @@ A new session with E = ∅ (a root create, a derive, or a delegated child) is re
 
 The `PreRoute` chain can change a session's runtime and pool after admission. Under [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract), every creation path runs one chain, and any `PreRoute` interceptor, including the route interceptor that applies runtime routes, may change the runtime and the pool on every path. The gateway then selects a revision of the final runtime and runs every check that depends on the runtime, the revision, or the pool once, at the post-chain point ([`0141-runtime-routing`, "Post-chain point"](../0141-runtime-routing/change.md#post-chain-point)). The runtime-dependent checks in this section are post-chain checks on the final row: the selector for E, `ENVIRONMENT_REQUIRED`, the rule for pods with no per-session policy, the refusal of `lockEgressToHosts` on a pool with `egressProfile: internet`, which [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) owns, the refusal in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) of a `userCredential` binding on a pod that can serve another session, and the environment's `placementRequirements`, which join the session's effective placement requirements that [PM-4](../0136-placement/change.md#pm-4-placement-requirements) checks on the final pool, refusing with `422 PLACEMENT_REQUIREMENT_UNMET` and `details.source: environment`. They run for every creation kind, whether or not an interceptor changed the runtime. For `kind: delegate`, the `environment` field of the `PreRoute` payload is the parent's E, and the post-chain point settles the child's own environment: the parent's E when its selector admits the final runtime, or T when a live sharing path applies, as "Cross-environment sharing" under TS-3 states. A miss on the tenant view of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md), the read interface through which every session path resolves the runtimes a tenant can see, is a post-chain check of that design, and it refuses on any name. A derive naming a `targetPool`, the derive request's optional field that names the pool for the derived session, meets the same checks, because a child under `lockEgressToHosts` moved to a pool with `egressProfile: internet` would otherwise bypass the lock through its raw sockets. A check that fails refuses the create, the derive, or the delegation with its own code. When the chain changed the runtime or the pool, the refusal names the last modifier, and the gateway never falls back to the requested runtime, as RT-2 states. A pool that is not known until the pod claim, rather than at the post-chain point, is checked at claim, before bind.
 
-Until the interceptor contract proposal of [`0141-runtime-routing`, "Proposal split and order"](../0141-runtime-routing/change.md#steps) lands, today's tree runs no post-chain point. TS-1 then runs these checks after the last `PreRoute` segment and the experiment rewrite (`routeExperiment` and `preRouteAfterExperiment` in `create.go` and `create_and_start.go`, and `ApplyExperimentRouting` in `buildChildSession`), and that proposal moves them to the post-chain point.
+Until the interceptor contract proposal of [`0141-runtime-routing`, "Steps"](../0141-runtime-routing/steps.md#steps) lands, today's tree runs no post-chain point. TS-1 then runs these checks after the last `PreRoute` segment and the experiment rewrite (`routeExperiment` and `preRouteAfterExperiment` in `create.go` and `create_and_start.go`, and `ApplyExperimentRouting` in `buildChildSession`), and that proposal moves them to the post-chain point.
 
-### What is scoped
+#### What is scoped
 
 Scoping applies to objects the platform evaluates per session.
 
@@ -252,17 +253,17 @@ Scoping applies to objects the platform evaluates per session.
 | A user's token (a `registered` row or a link) | The `registered` row has an `environment` column, and §4.3's empty value means no environment. A link has none, and it is keyed on the link provider's name. | The Token Service takes the session's E, then the no-environment row. A link records a fact about a person on a provider, so a member of two environments links once. |
 | `requestRules` and presets | No | They are part of a binding, which is scoped. An environment that needs other rules has its own binding on that host, and the one-binding-per-host rule applies per session. |
 | Always-allowed, session-requestable, and denied hosts | Yes, through `environmentPolicies` | Read per decision |
-| Egress routes and git routes | Yes, through `environmentPolicies` | Read per decision. A route can name an outbound connector once [OC-2](../0148-tenant-outbound-connector/change.md#steps) (the outbound connector's hosts and policy, whose validator admits the `outboundConnector` route target) lands, with no further change. A token trust record covers every such route on its host, across every environment, as [`0151-user-credential-delivery`, "Token trust record"](../0151-user-credential-delivery/change.md#token-trust-record) states under **Route value**, so one environment's scoped route, a move between environments, or a reorder on a token's host makes that token unusable for all environments, and an asserted route, the expected route that a call carrying a user token names on its CONNECT and that the decision service compares with its own choice, uses `routes(E)` for the session's E. The covered host set reads every git route and VCS pool of the tenant, unfiltered by environment, so a session in E2 on a host only E1 names gets a refused push rather than an opaque tunnel, in which `netagent` would pass the connection through without terminating TLS, as [`0127-egress-and-git`, "Git on covered hosts"](../0127-egress-and-git/change.md#git-on-covered-hosts-netagent) states. |
+| Egress routes and git routes | Yes, through `environmentPolicies` | Read per decision. A route can name an outbound connector once [OC-2](../0148-tenant-outbound-connector/steps.md#steps) (the outbound connector's hosts and policy, whose validator admits the `outboundConnector` route target) lands, with no further change. A token trust record covers every such route on its host, across every environment, as [`0151-user-credential-delivery`, "Token trust record"](../0151-user-credential-delivery/change.md#token-trust-record) states under **Route value**, so one environment's scoped route, a move between environments, or a reorder on a token's host makes that token unusable for all environments, and an asserted route, the expected route that a call carrying a user token names on its CONNECT and that the decision service compares with its own choice, uses `routes(E)` for the session's E. The covered host set reads every git route and VCS pool of the tenant, unfiltered by environment, so a session in E2 on a host only E1 names gets a refused push rather than an opaque tunnel, in which `netagent` would pass the connection through without terminating TLS, as [`0127-egress-and-git`, "Git on covered hosts"](../0127-egress-and-git/change.md#git-on-covered-hosts-netagent) states. |
 | Tenant warm-up additions | No | They apply before any session exists. |
 | Tenant pool overlay | No | It applies at pod creation or per pool and tenant. |
 | Egress group and CA trust bundle | No | Each is fixed at pod creation or dialled by tenant. |
 | Client config files, such as `.npmrc` and `pip.conf` | No | `netagent` writes them at tenant binding. See decision 4. |
 | Per-class gates | No | They remain platform grants per tenant. |
-| Tenant-registered upstreams and git endpoints, and outbound connectors and outbound hosts | No | The registration is tenant-wide, and a scoped route selects it. Decision 4 leaves outbound connectors and outbound hosts out of the scoped objects, so TS-1 has no dependency on [OC-2](../0148-tenant-outbound-connector/change.md#steps). |
+| Tenant-registered upstreams and git endpoints, and outbound connectors and outbound hosts | No | The registration is tenant-wide, and a scoped route selects it. Decision 4 leaves outbound connectors and outbound hosts out of the scoped objects, so TS-1 has no dependency on [OC-2](../0148-tenant-outbound-connector/steps.md#steps). |
 
-### API
+#### API
 
-The objects gain these fields through the admin API resources that the egress design's proposals [EG-1](../0127-egress-and-git/change.md#steps) (git prerequisites), [EG-4](../0127-egress-and-git/change.md#steps) (credential delivery), and [EG-9](../0127-egress-and-git/change.md#steps) (egress policy objects) define:
+The objects gain these fields through the admin API resources that the egress design's proposals [EG-1](../0127-egress-and-git/steps.md#steps) (git prerequisites), [EG-4](../0127-egress-and-git/steps.md#steps) (credential delivery), and [EG-9](../0127-egress-and-git/steps.md#steps) (egress policy objects) define:
 
 ```yaml
 vcsCredentialPool:
@@ -298,25 +299,25 @@ The rules for these fields are:
 - A tenant warm-up addition, a `gitRepository` warm fill, or a warm-list entry of either declarer, whether or not it sets `prestage: true`, cannot name a repository whose only covering pool is scoped, because a pod with no session has no E (decision 28). The write is refused unless the repository lies under no VCS pool prefix, or credential selection at E = ∅ resolves it to a VCS pool with no `environments` list whose allowlist names it, which is the predicate the fill evaluates. A write of a `gitRepository` asset on a tenant-derived runtime answers `422 INVALID_DERIVED_RUNTIME`, whether a tenant admin or a platform admin sends it.
 - A VCS pool write that makes a warm-list entry fail that predicate, such as one that adds `environments` to the covering pool or deletes or narrows a tenant-wide pool that covered it, passes with a `Warning` naming each runtime and entry it affects. The PoolScalingController applies the same predicate at each render, so the entry leaves the rendered list and is reported as suspended with the reason `environmentScoped`. The drain of [`0147-tenant-derived-runtimes`, "Warm stores"](../0147-tenant-derived-runtimes/change.md#warm-stores) then reaches idle pods holding the store, `coveredStores` refuses such pods at the next claim, and the entry returns once the pool is unscoped again.
 - Two pools can hold the same repository prefix only when their `environments` lists are disjoint, and neither may be tenant-wide. Selection takes the longest prefix among the pools visible to E, so exactly one pool answers for any repository and environment. This lets two environments use separate GitHub Apps on one organization.
-- A credential binding's `hosts` must lie within the allow set of each environment the binding lists, that is `always(E) ∪ requestable(E)` for each E, or within the tenant's set for a tenant-wide binding. TS-1 extends the "each host must lie within the tenant's effective allow set" validator of [EG-4](../0127-egress-and-git/change.md#steps) in this way, or the `payments-stripe` example above would fail.
+- A credential binding's `hosts` must lie within the allow set of each environment the binding lists, that is `always(E) ∪ requestable(E)` for each E, or within the tenant's set for a tenant-wide binding. TS-1 extends the "each host must lie within the tenant's effective allow set" validator of [EG-4](../0127-egress-and-git/steps.md#steps) in this way, or the `payments-stripe` example above would fail.
 - The mirror prefetch resource is a tenant admin's alone. Every prefetch record carries a pool: when a request omits the pool and exactly one pool covers the repository, the API stores that pool, and when several pools cover it, the API refuses a request that omits the pool.
 - A shadow policy's candidate carries its own `environmentPolicies`, and each decision evaluates the candidate with the session's E. `environments` lists sit on objects and stay outside the candidate.
 - A write that adds `denied` or route entries to an environment answers with a `Warning` header and a count when live sessions in it run on pods with no per-session policy, because those sessions cannot adopt the entries.
 - A write that adds an environment's first `denied` or route entry answers with a `Warning` header listing the runtimes its selector admits, because transparent creates on those runtimes will now answer `ENVIRONMENT_REQUIRED`. A tenant admin learns this before those clients break. A selector or runtime label change that extends such an environment to new runtimes answers with the same `Warning`.
 
-The effective-policy read gains an optional `environment` parameter and lists `environment` among the layers that decided each host. `GET /v1/egress/decisions` and the evidence export gain an `environment` filter. Both wait for [EG-8](../0127-egress-and-git/change.md#steps), the egress design's tenant visibility proposal.
+The effective-policy read gains an optional `environment` parameter and lists `environment` among the layers that decided each host. `GET /v1/egress/decisions` and the evidence export gain an `environment` filter. Both wait for [EG-8](../0127-egress-and-git/steps.md#steps), the egress design's tenant visibility proposal.
 
-### Data model
+#### Data model
 
 - VCS pool and binding rows gain a nullable `environments` text array. NULL means tenant-wide.
 - The tenant egress policy document gains `environmentPolicies`, keyed by environment name.
 - Neither is a foreign key, following the reasoning in migration 0059. The write check and the delete guard hold the reference.
 - The environment record gains `placementRequirements`, which holds the requirements of [PM-4](../0136-placement/change.md#pm-4-placement-requirements) that an environment may set: `requireNodeSeparation`, `nodeTenancy: dedicated`, `allowSharedPod: false`, and `allowReusedPod: false`. They add to the tenant's requirements and cannot remove one. An empty or absent value adds nothing. Adding a requirement applies at once. Removing one, or moving one to a weaker value, is a relaxation under the rules of the tenant security settings: the write needs a `justification`, the relaxation is recorded in the tenant's audit chain, and it takes effect after the tenant security record's weakening delay, during which the tenant's `security-admin` or a `platform-admin` can cancel it ([PM-4](../0136-placement/change.md#pm-4-placement-requirements), decision 29). `dataResidencyRegion` stays where it is today.
-- The environment record holds no data-classification override. The stricter-only environment override of `workspaceTier` leaves with the setting, under decision O6 (a) of [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#open-decisions), and environments inherit the tenant's security settings.
+- The environment record holds no data-classification override. The stricter-only environment override of `workspaceTier` leaves with the setting, under decision O6 (a) of [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md#open-decisions), and environments inherit the tenant's security settings.
 - The existing `sessions.environment` column holds E.
 - All tables are tenant-scoped under the existing row-level security policy.
 
-### Effective policy
+#### Effective policy
 
 Define the following, where E = ∅ selects no environment entries:
 
@@ -344,7 +345,7 @@ Consequent rules:
 - **Bound.** The pool ceiling bounds every environment entry. A tenant deny applies in every environment, so an environment cannot re-allow a host the tenant denies.
 - **Repositories.** Readable repositories are the session's `gitClone` sources, the allowlists of `visible(VCS pools, E)`, and the public platform entries of the pool's warm list. Before a session binds, a pod's readable repositories are the pool's warm list plus the repositories of the warm-up policy that applies to it, with no environment entry applying, and every entry on the list passes the predicate under "API" at E = ∅. Writable repositories must lie within `visible(VCS pools, E)` at bind and at each mint.
 - **Bindings.** A session attaches bindings with `scope: always` from `visible(bindings, E)`, and it can name bindings with `scope: onRequest` from the same set.
-- **User credentials.** A `userCredential` binding needs its type visible too, as `visible(types, E)`. It takes `scope: onRequest`, or `scope: poolAttach` under [`0152-user-git-identity`, "The attach rule"](../0152-user-git-identity/change.md#the-attach-rule), whose trigger is a declared writable repository under such a pool in `visible(VCS pools, E)`. The credential-pinned host rule (`credentialPinned`) of a VCS pool with `userAuthorization: required`, under which `netagent` terminates TLS for the pool's hosts and refuses a request when the host has no binding, is outside `visible`, because it reads every VCS pool of the tenant. The pod refusal in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) covers E = ∅ on a pod with no per-session policy, because such a pod refuses the binding outright. Under the owner's settlement of 2026-11-13 of that design's decision 41 and [`0152-user-git-identity`](../0152-user-git-identity/change.md#decisions) decision 52, user credential bindings, `lockEgressToHosts`, and a user git identity are allowed on a pool whose status records slot attribution, and refused on a pool whose status records the union fallback and on a recycled or used pod (decision 31). Which runtime classes answer slot attribution is measured by a spike that the egress design owes ("Validation owed").
+- **User credentials.** A `userCredential` binding needs its type visible too, as `visible(types, E)`. It takes `scope: onRequest`, or `scope: poolAttach` under [`0152-user-git-identity`, "The attach rule"](../0152-user-git-identity/change.md#the-attach-rule), whose trigger is a declared writable repository under such a pool in `visible(VCS pools, E)`. The credential-pinned host rule (`credentialPinned`) of a VCS pool with `userAuthorization: required`, under which `netagent` terminates TLS for the pool's hosts and refuses a request when the host has no binding, is outside `visible`, because it reads every VCS pool of the tenant. The pod refusal in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) covers E = ∅ on a pod with no per-session policy, because such a pod refuses the binding outright. Under the owner's settlement of 2026-11-13 of that design's decision 41 and [`0152-user-git-identity`](../0152-user-git-identity/decisions.md#decisions) decision 52, user credential bindings, `lockEgressToHosts`, and a user git identity are allowed on a pool whose status records slot attribution, and refused on a pool whose status records the union fallback and on a recycled or used pod (decision 31). Which runtime classes answer slot attribution is measured by a spike that the egress design owes ("Validation owed" in `steps.md`).
 - **Pods with several slots.** Where the pool's runtime class answers slot attribution, every rule above applies per slot with that slot's session's E, at the decision service, the Token Service, and the mirror, and the rules below do not apply. A pod with several slots therefore needs no environment refusal of its own when its pool answers, with one exception for shared warm stores. A session on a concurrent pool whose runtime class answers slot attribution is refused with `422 ENVIRONMENT_POLICY_NOT_ENFORCEABLE`, naming the entry, when its environment denies the host of an entry on the pool's warm list, because the warm store is shared by every slot of the pod and cannot be withheld from one slot ([`0147-tenant-derived-runtimes`, "Warm stores", **Withheld stores.**](../0147-tenant-derived-runtimes/change.md#warm-stores), its decision 41, settled 2026-11-13). The cause is the one the code names elsewhere: a pod that cannot apply the session's environment to a resource its other sessions share (decision 30).
 - **Pods with no per-session policy.** A pod with several slots whose pool's status records that slot attribution is unavailable evaluates with E = ∅ for every session on the pod, including at the Token Service and in the readable and writable sets. [`0127-egress-and-git`, "Git on covered hosts"](../0127-egress-and-git/change.md#git-on-covered-hosts-netagent) makes those sets the union over the pod's sessions there, because `netagent` cannot attribute a request to a slot, so a scoped repository on such a pod would be open to every slot. The post-chain point reads the pool's status. The rules follow from this:
   - A plan that names an object visible to E alone (for example a repository whose only covering pool is scoped) is refused with `422 ENVIRONMENT_POLICY_NOT_ENFORCEABLE`.
@@ -355,7 +356,7 @@ Consequent rules:
   - An environment that needs such a runtime uses a derived runtime and its owned pool under `oneSessionPerPod: true`, under a platform grant, whose pods are one-session pods with E's full policy. That route does not work today, because no derived runtime runs a session and §15.1 reserves creating a runtime or a pool to a `platform-admin`. The owner chose [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) as the design that lets a `tenant-admin` holding a grant do this. A pool on a runtime class that answers slot attribution is the other route, and it keeps several slots per pod.
   - The `Warning` under "API" above also covers a write that gives an environment its first entry or scoped object, listing the runtimes on pools with no per-session policy that its selector admits.
 
-### Enforcement points
+#### Enforcement points
 
 The session create check alone is insufficient. An agent can run `git fetch` at any time against any repository on the tenant's allowlist, and bindings with `scope: always` attach with no plan entry, so most of the enforcement happens after create.
 
@@ -371,7 +372,7 @@ The session create check alone is insufficient. An agent can run `git fetch` at 
 
 `netagent` needs no environment concept. The cache key [`0127-egress-and-git`](../0127-egress-and-git/change.md) uses for bindings with `scope: always` (the tenant pin) stays safe because the flush at session end precedes the next session.
 
-### Failure behaviour
+#### Failure behaviour
 
 | Condition | Result |
 | :-- | :-- |
@@ -387,7 +388,7 @@ The session create check alone is insufficient. An agent can run `git fetch` at 
 | A session on a concurrent pod with slot attribution whose environment denies the host of a warm-list entry | `422 ENVIRONMENT_POLICY_NOT_ENFORCEABLE` naming the entry, because the shared store cannot be withheld from one slot (decision 30). |
 | An environment vanishes under a live session through a store-level race | `visible` finds no entries for E, which narrows the session to unscoped objects. |
 
-### Who can do what
+#### Who can do what
 
 | Action | `platform-admin` | `tenant-admin` | Environment `admin` | Environment `creator` | `user` with no role in E |
 | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -398,17 +399,17 @@ The session create check alone is insufficient. An agent can run `git fetch` at 
 | Set `dangerouslyAllowCrossEnvironmentSharing` | Yes | Yes, own tenant, subject to [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) | No | No | No |
 | Add or remove a `dangerouslyShare` entry | Yes | Yes, own tenant, subject to [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture), as does a custom role holding `manage_environments` | No | No | No |
 
-Writes pass through the single write path for tenant opt-ins that the egress design's proposal [EG-9](../0127-egress-and-git/change.md#steps) (egress policy objects) adds, so they carry its audit event and any [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) guardrail. A `tenant-admin` remains able to scope any object to any environment and add itself as a member, which matches §10.2's statement of tenant authority.
+Writes pass through the single write path for tenant opt-ins that the egress design's proposal [EG-9](../0127-egress-and-git/steps.md#steps) (egress policy objects) adds, so they carry its audit event and any [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) guardrail. A `tenant-admin` remains able to scope any object to any environment and add itself as a member, which matches §10.2's statement of tenant authority.
 
-### Why not separate tenants
+#### Why not separate tenants
 
 A customer can give each team its own tenant today. That yields tenant pinning, row-level isolation, and separate keys, which environments do not provide. It also means no shared policy, no shared admin, no combined billing rollup, and no delegation between environments, since Lenny has no grouping above a tenant. Teams needing an isolation boundary should be tenants, and teams needing separate configuration under one administration should be environments. The documentation states this choice.
 
-### Does TS-1 need a hook
+#### Does TS-1 need a hook
 
-The outline, which was the first version of this document, said no, on the basis that TS-1 adds an optional field and a check at create. That holds for the fields, which are additive. It does not hold overall, because enforcement is at run time in components [EG-2](../0127-egress-and-git/change.md#steps) (the pod network agent and proxied egress) ships, evidence records are written from day one, and [EG-1](../0127-egress-and-git/change.md#steps) (git prerequisites) fixes the prefix rule. [`0127-egress-and-git`, "Reserved for other designs"](../0127-egress-and-git/change.md#reserved-for-other-designs) carries those hooks. The mirror's request on the pod credential API needs one more, which "Changes requested of 0127-egress-and-git" states.
+The outline, which was the first version of this document, said no, on the basis that TS-1 adds an optional field and a check at create. That holds for the fields, which are additive. It does not hold overall, because enforcement is at run time in components [EG-2](../0127-egress-and-git/steps.md#steps) (the pod network agent and proxied egress) ships, evidence records are written from day one, and [EG-1](../0127-egress-and-git/steps.md#steps) (git prerequisites) fixes the prefix rule. [`0127-egress-and-git`, "Reserved for other designs"](../0127-egress-and-git/change.md#reserved-for-other-designs) carries those hooks. The mirror's request on the pod credential API needs one more, which "Changes requested of 0127-egress-and-git" states.
 
-## TS-3: Session environment context and cross-environment sharing
+### TS-3: Session environment context and cross-environment sharing
 
 TS-1 cannot rest on the current propagation. TS-3 lands first and depends on nothing in [`0127-egress-and-git`](../0127-egress-and-git/change.md), apart from the evidence field step the dependency table names.
 
@@ -416,7 +417,7 @@ TS-1 cannot rest on the current propagation. TS-3 lands first and depends on not
 - **Delegated child's environment.** The child takes the parent's E, set on the row `buildChildSession` writes, when `runtimeSelector` of the parent's E admits the final runtime that the child's `PreRoute` chain leaves at the post-chain point. Otherwise it needs a sharing path under "Cross-environment sharing", and with none it answers `TARGET_NOT_IN_SCOPE`.
 - **The gate reads the session.** A call from inside a pod authenticates as a principal with no groups (`WithSessionPrincipal` builds it), and the delegation gate's checks, `runtimeAuthorizedForCaller` and `crossEnvReachable`, resolve environments from that principal. A session whose owner belongs through a group therefore has no environments in the delegation gate. Under `noEnvironmentPolicy: deny-all` its delegations answer `TARGET_NOT_IN_SCOPE`, including within its own environment, and under `noEnvironmentPolicy: allow-all` every runtime is admitted, regardless of selectors. Tests set `Groups` on the principal directly, which hides this. TS-3 gates a session with E on the session's E and the live declarations, with no reference to the principal or to the owner's membership. A session with E = ∅ keeps the existing check, adds `ENVIRONMENT_REQUIRED`, and cannot cross.
 - **The parent is the calling session.** The delegation tools take the parent session from their arguments, and the gateway accepts any session with the same owner: `lenny/delegate_task` reads `parentSessionId` and `lenny/await_children` reads `sessionId`, and `lookupCallerSession` admits any session of the same owner. A runtime can therefore name another session as parent and escape its limit, its environment, and its crossing mark, or read another session's child results. When the principal carries `SessionID`, as `WithSessionPrincipal` sets it, TS-3 uses that session on both tools and answers `403 PARENT_SESSION_MISMATCH` to a different value, as `callerSessionID` does for `lenny/get_task_tree`. A client at the gateway edge still names its parent, and the rules read that session's row. F-10.2.29 is separate: it is the finding that the gateway serves a call a pod's runtime adapter forwards under whatever session ID the adapter presents, so a compromised adapter can present another session's ID, and this rule does not stop that. TS-3 does not depend on F-10.2.29, and its tier 9 tests cover a runtime's tool calls and no forged adapter call.
-- **The intra-pod tool surface.** `platformtools.Bridge` forwards any registered tool, so a runtime can call `lenny/create_session` or `lenny/create_and_start_session` and start a new root with no limit, another environment, and no crossing mark. TS-3 allow-lists the Bridge's list and call to §9.1's **Platform MCP Server Tools** table, which omits those tools, and any other name answers `ErrPlatformToolNotFound`. The list also holds `lenny/vcs_token` until [EG-3](../0127-egress-and-git/change.md#steps), the egress design's pod git path, removes that tool, because `git-credential-lenny` calls it over the platform MCP socket, so TS-3 keeps depending on nothing. The gateway edge is unchanged. A later proposal for F-10.2.32, the finding that the MCP and adapter session surfaces skip §10.2's permission matrix, must not reopen this by exempting in-pod principals.
+- **The intra-pod tool surface.** `platformtools.Bridge` forwards any registered tool, so a runtime can call `lenny/create_session` or `lenny/create_and_start_session` and start a new root with no limit, another environment, and no crossing mark. TS-3 allow-lists the Bridge's list and call to §9.1's **Platform MCP Server Tools** table, which omits those tools, and any other name answers `ErrPlatformToolNotFound`. The list also holds `lenny/vcs_token` until [EG-3](../0127-egress-and-git/steps.md#steps), the egress design's pod git path, removes that tool, because `git-credential-lenny` calls it over the platform MCP socket, so TS-3 keeps depending on nothing. The gateway edge is unchanged. A later proposal for F-10.2.32, the finding that the MCP and adapter session surfaces skip §10.2's permission matrix, must not reopen this by exempting in-pod principals.
 - **Fail closed.** The session gate refuses on every read error, where `runtimeAuthorizedForCaller` returns true on a `Runtimes.Get` error today. [DR-8](../0147-tenant-derived-runtimes/change.md#dr-8-interactions) in [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md), which covers that design's interactions with delegation and environments, depends on this delegation gate. `lenny/discover_agents` answers from the session's E and its live sharing paths, in place of the principal's groups, and it omits sharing paths from a session under `lockEgressToHosts`.
 - **Effects on existing features.** Billing rollup, retention tier, default delegation policy, and §4.3 credential scope read the same field, so a child and a derived session follow the session's environment in each. The `environment` claim of an identity assertion that `netagent` attaches for an operator service reads it too ([`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion)).
 - **Deletion guard.** §15.1 says deletion of an environment is blocked while sessions are active in it. `handleDeleteEnvironment` and the store's `Delete` contain no such check. TS-3 adds it.
@@ -424,7 +425,7 @@ TS-1 cannot rest on the current propagation. TS-3 lands first and depends on not
 - **Transparent create.** `requireEnvironmentAdmission` admits any member of any environment on the transparent path, with no role check or selector check. A `viewer` can therefore create a session on a runtime the transparent filter hides from it. No other check was found in `pkg/gateway/sessionserver`. TS-3 requires at least `creator` in an environment whose selector admits the runtime. TS-1 adds the `ENVIRONMENT_REQUIRED` refusal to the same check.
 - **Groups on Lenny-issued tokens.** `mintToken` writes no `groups` claim, so a token from `/v1/oauth/token` cannot satisfy an `oidc-group` member, and §13.3's claim structure does not list one. The playground mint already copies the subject's groups. TS-3 copies them on exchange in the same way. No deny or route depends on this, because `ENVIRONMENT_REQUIRED` reads no groups.
 
-### Client delegation limits (decision 26)
+#### Client delegation limits (decision 26)
 
 The owner settled this on 2026-11-03, in the words "yes, add it with maxDepth: 0". `delegationLease.maxDepth: 0` at session creation means this session cannot delegate. It needs no gate, because it only narrows. TS-3 carries it, because it reworks the delegation gate, and it closes F-8.2.34 apart from `delegationPolicyRef`.
 
@@ -461,13 +462,13 @@ Only the Helm layer is wired today, because `adm.policyCeiling` is 0 and the cod
 | :-- | :-- |
 | Intra-pod `@lenny-platform-mcp` `tools/list` with one session | Yes. `ListPlatformTools` already takes the session identifier, and `Bridge.ListPlatformTools` ignores it today, so it drops `lenny/delegate_task` there. `lenny/discover_agents` answers with no targets. |
 | Intra-pod list on a process with no session or several | No. `platformToolProvider.List` refuses it, as it does today. |
-| A runtime that cached the list | Yes. Under [`0145-session-isolation`](../0145-session-isolation/change.md#decisions) decision D4 a runtime process serves one session, and since the owner removed pre-launched runtimes on 2026-11-12 it launches at bind, so a list it cached was made for its own session, whose stored lease does not change. |
+| A runtime that cached the list | Yes. Under [`0145-session-isolation`](../0145-session-isolation/decisions.md#decisions) decision D4 a runtime process serves one session, and since the owner removed pre-launched runtimes on 2026-11-12 it launches at bind, so a list it cached was made for its own session, whose stored lease does not change. |
 
-### Cross-environment sharing (decision 14)
+#### Cross-environment sharing (decision 14)
 
 The owner settled decision 14 on 2026-11-03: keep cross-environment delegation, under option B with guardrails, in the words "go with B with these guardrails". Option B is opt-in sharing under which a crossing child runs under the target environment's policy unchanged, as "Model" below states. TS-3 carries it, because it needs TS-3's session-based delegation gate and child propagation, which also close F-10.6.15 and F-10.6.16.
 
-**Model.** A crossing child runs under the target environment's policy, unchanged: the target's allow list, denies, routes, bindings, pools, and repositories. A shared runtime has the same egress and credentials for every caller. Nothing in those sets is intersected with the caller's. A child still takes what binds any child from its parent, which "Delegation inheritance" under "Terms from other designs and the platform" describes: isolation monotonicity, `treeVisibility`, `contentPolicy`, and its stored `maxDepth`. What moves across is the `TaskSpec`'s `input` and exported files, `lenny/send_message` between parent and child, and between siblings under that scope, `runtimeRef` in `lenny/get_task_tree`, and the parent's routing labels, with which the child's `routing` map starts under [RT-3](../0141-runtime-routing/change.md#rt-3-routing-labels), as for any delegated child ([`0141-runtime-routing` decision D14](../0141-runtime-routing/change.md#decisions)). A crossing child takes T's `placementRequirements` together with its parent's effective placement requirements, because [PM-4](../0136-placement/change.md#pm-4-placement-requirements) adds a delegated child's parent's requirements to its own, so a child never runs on weaker placement than its parent or than its target environment requires. Its results return to the caller.
+**Model.** A crossing child runs under the target environment's policy, unchanged: the target's allow list, denies, routes, bindings, pools, and repositories. A shared runtime has the same egress and credentials for every caller. Nothing in those sets is intersected with the caller's. A child still takes what binds any child from its parent, which "Delegation inheritance" under "Terms from other designs and the platform" describes: isolation monotonicity, `treeVisibility`, `contentPolicy`, and its stored `maxDepth`. What moves across is the `TaskSpec`'s `input` and exported files, `lenny/send_message` between parent and child, and between siblings under that scope, `runtimeRef` in `lenny/get_task_tree`, and the parent's routing labels, with which the child's `routing` map starts under [RT-3](../0141-runtime-routing/change.md#rt-3-routing-labels), as for any delegated child ([`0141-runtime-routing` decision D14](../0141-runtime-routing/decisions.md#decisions)). A crossing child takes T's `placementRequirements` together with its parent's effective placement requirements, because [PM-4](../0136-placement/change.md#pm-4-placement-requirements) adds a delegated child's parent's requirements to its own, so a child never runs on weaker placement than its parent or than its target environment requires. Its results return to the caller.
 
 **Opt-ins.** Sharing is off for each tenant by default, and it needs both of these:
 
@@ -531,9 +532,9 @@ The first statement includes anything the caller's agent can read, such as a tok
 | `ENVIRONMENT_REQUIRED` | It does not apply, because the child has E = T. |
 | Default delegation policy | T's. It applies only to discovery, because §10.6's step 4, which applies the `DelegationPolicy` to a cross-environment delegation, has no code today. |
 
-## Identity model (TS-2, TS-4, and TS-6 to TS-9)
+### Identity model (TS-2, TS-4, and TS-6 to TS-9)
 
-### Owner's decision
+#### Owner's decision
 
 The owner decided decision 8 on 2026-11-03, reversing revision 12's recommendation, in these words: "I think we need to support per-tenant OIDC and serve SCIM. In that model, a deployer can use a broker by default but change to a customer's SSO when needed". The evidence for the need remains vendor documentation with no first-hand complaint found, so the decision rests on the owner's judgment of the product rather than on that evidence.
 
@@ -564,7 +565,7 @@ This table records what each side costs. Column B is now designed below, and col
 
 No effort estimate was measured. Column B is a new subsystem, and it does not remove the need for a customer-facing portal.
 
-### What comparable systems do
+#### What comparable systems do
 
 - Keycloak's organizations link customer IdPs to an organization inside one realm, so one issuer serves all customers. Its token claim is an object keyed by organization alias. Keycloak's SCIM is per realm, and its documentation says organization groups cannot have members managed through SCIM ([project documentation](https://www.keycloak.org/docs/latest/server_admin/index.html)). A vendor extension adds [per-organization SCIM as experimental](https://phasetwo.io/blog/orgs-scim-experimental/) (vendor source).
 - Auth0 organizations put `org_id` in tokens, and its documentation calls validating that identifier the preferred method ([vendor documentation](https://auth0.com/docs/organizations/using-tokens)). Its [device flow does not natively carry organizations](https://support.auth0.com/center/s/article/missing-org-id-in-auth0-device-authentication-flow) (vendor source), which matters to a CLI login.
@@ -573,7 +574,7 @@ No effort estimate was measured. Column B is a new subsystem, and it does not re
 - [Coder](https://coder.com/docs/admin/users/idp-sync.md) syncs groups, roles, and organizations from claims per organization, and it overwrites membership at login (vendor documentation).
 - Microsoft states that [`sub` is pairwise per application, `oid` is immutable across applications, and `email` must never be used for authorization](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference) (provider documentation). Three design choices below follow from those statements: a per-source subject claim, per-issuer `iss` values such as Entra's tenant-specific URI, and no automatic match on email.
 
-### Identity source record (TS-6)
+#### Identity source record (TS-6)
 
 `tenant_identity_sources` is a tenant-scoped table under the existing row-level security policy.
 
@@ -603,12 +604,12 @@ No effort estimate was measured. Column B is a new subsystem, and it does not re
 
 **Client secret.** The same mechanism applies as for a link provider's client secret in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md). The Token Service stores the submitted value envelope-encrypted under the tenant's Token-Service-only key, in a row keyed on tenant and `source_id`, sealed with a digest of `tenant_id`, `source_id`, `issuer`, `token_endpoint`, and `client_id`. No route returns it, and no field names a Secret, so a tenant cannot point at another tenant's. The Token Service alone reads it, and a source with a secret has its code exchange done by the Token Service over mTLS, which sends the value only when the digest matches and returns the token response to the gateway. A change to any sealed field leaves the secret unusable until a write re-supplies it.
 
-A tenant holds at most a small number of sources, a Helm value that defaults to 5, so the registry and its caches stay bounded. A write creating a row that names an issuer on `identity.deniedIssuers`, a Helm list that ships with known shared issuers, is refused unless `identity.sharedIssuers` lists it, and a write naming the deployment issuer is always refused. Writes go through a new admin resource, `/v1/admin/tenants/{id}/identity-sources`, with `If-Match`, and through the single write path for tenant opt-ins that the egress design's proposal [EG-9](../0127-egress-and-git/change.md#steps) (egress policy objects) adds, once it lands. §10.6's `identityProvider` keeps its introspection settings and gains no issuer.
+A tenant holds at most a small number of sources, a Helm value that defaults to 5, so the registry and its caches stay bounded. A write creating a row that names an issuer on `identity.deniedIssuers`, a Helm list that ships with known shared issuers, is refused unless `identity.sharedIssuers` lists it, and a write naming the deployment issuer is always refused. Writes go through a new admin resource, `/v1/admin/tenants/{id}/identity-sources`, with `If-Match`, and through the single write path for tenant opt-ins that the egress design's proposal [EG-9](../0127-egress-and-git/steps.md#steps) (egress policy objects) adds, once it lands. §10.6's `identityProvider` keeps its introspection settings and gains no issuer.
 
 **Activation rule.** A source can be drafted by a `tenant-admin`, a `security-admin`, or a `platform-admin`. Activation is the power to decide who every user in a tenant is, so it follows a stricter rule (decision 17):
 
 - A `platform-admin` activates a source, with a justification, once the proofs pass. A `tenant-admin` cannot, because a stolen tenant admin credential could otherwise plant a lasting backdoor.
-- At a tenant with a `security-admin` row in any state, activation and a change to `deploymentIssuerAllowed` take the weakening delay of [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture). Any reachable `security-admin` must also approve and can cancel. Invalidating the security team therefore does not remove the delay. This extends [`0142-security-oversight` decision 23](../0142-security-oversight/change.md#decisions)'s rule for `identityProvider.*`, since an operator able to repoint an issuer silently could regain what the pin removes.
+- At a tenant with a `security-admin` row in any state, activation and a change to `deploymentIssuerAllowed` take the weakening delay of [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture). Any reachable `security-admin` must also approve and can cancel. Invalidating the security team therefore does not remove the delay. This extends [`0142-security-oversight` decision 23](../0142-security-oversight/decisions.md#decisions)'s rule for `identityProvider.*`, since an operator able to repoint an issuer silently could regain what the pin removes.
 - A deployment can set `identity.allowTenantActivation: true`, default `false`, under which a tenant's `security-admin` activates alone, with the proofs passing and the same delay, and no operator action. A tenant with no `security-admin` always goes through the operator.
 - Every change on an active source or a deployment settings row, including `roles_claim`, `groups_claim`, `group_source`, `client_id`, `clientSecret`, endpoints, an added `email_domains` or `audiences` entry, `match_claim`, and `scim_deactivate_mode`, creates a `pending_version` under the same rule. Further widening writes are refused while one exists. A stated narrowing applies at once: removing an audience other than the last, a `role_map` entry, or an email domain. A narrowing, a suspension, or a retirement cancels the pending version, and its proposer can submit it again.
 - Before activation, a preflight reads the proof's preview. At a tenant with a `security-admin` row in any state, it refuses unless a `security-admin` row exists on a canonical subject of the new source, so oversight survives activation, and it lists what stays on old subjects: principals, `lifecycleSubjects`, role rows, and owners of running sessions. On a reactivation it also lists role rows, custom roles, and SCIM credentials written by that source's subjects. The preflight refuses or lists, and it migrates nothing.
@@ -623,7 +624,7 @@ A tenant holds at most a small number of sources, a Helm value that defaults to 
 
 **Which issuer a tenant accepts.** The tenant record holds `deploymentIssuerAllowed`, true by default. Activating a customer source sets it false, and retiring that source leaves it false, so retiring a compromised source does not reopen the tenant to the broker. Every move of a customer source to `active` sets it false. Setting it back to true follows the activation rule, and it is refused while a customer source is `active` or `pending_effective`. Any such move, and a pending reactivation, cancels a pending change to true, and the change is checked again at effect. A tenant therefore accepts either the deployment issuer or its customer sources, and never both.
 
-### Verifier registry
+#### Verifier registry
 
 `pkg/auth/jwt` gains a registry member that `composeBearerVerifier` and `buildCallerVerifier` join behind the Lenny key set, so the gateway and the Token Service run one implementation:
 
@@ -637,7 +638,7 @@ A tenant holds at most a small number of sources, a Helm value that defaults to 
 
 The snapshot is rebuilt from Postgres on a version change announced through Redis and on a poll, and it survives a store outage with its last value. It reads a dedicated view exposing `tenant_id`, `source_id`, `issuer`, the pin fields, `audiences`, `client_id`, `require_directory_row`, `state`, `tokens_not_before`, `deploymentIssuerAllowed`, and the mapping fields to a dedicated role, because a pre-authentication read across tenants cannot use §12's `__all__` path, the `app.current_tenant = '__all__'` setting through which a platform-admin path reads across tenants under row-level security. `lenny-ops` keeps its single issuer, and a customer source's user reaches it only through a Lenny-issued token. TS-2 closes F-13.3.27: `/v1/oauth/token` refuses a playground-origin `subject_token`, the token being exchanged, because `mintToken` drops `origin` and `lenny-ops` would otherwise accept the result. It reverses `TestPlaygroundOriginSubjectTokenAccepted_spec_13_3` and the `authenticateCaller` comment that pin today's behaviour. Tenant administration uses the gateway's admin API. Reasons are counted without the `iss` value, because it is attacker-chosen.
 
-### Keys and caches
+#### Keys and caches
 
 Each source has its own `OIDCVerifier` on each gateway and Token Service replica, built lazily on the first token for that issuer. A shared issuer has one verifier for all its rows, so key refresh, maximum staleness, and the refetch limit apply per issuer. A tenant's reactivation there fetches keys first and swaps them on success, so it does not interrupt other tenants. `OIDCVerifier.key` holds its mutex across a fetch, so one slow IdP can pile up waiting requests. TS-6 therefore refreshes in the background with no lock held. `MinRefetchInterval` already limits fetches for an unknown `kid`, per issuer. A refresh re-reads discovery, because `jwksURI` is otherwise cached until restart.
 
@@ -645,7 +646,7 @@ These verifiers accept keys that a tenant's issuer chooses, and verification run
 
 A refresh failure keeps the previous keys, as `refreshLocked` does today. A replica that restarts during an IdP outage has none, so that source's tokens fail on that replica until the IdP returns. For a customer source this design adds a maximum staleness, a Helm value that defaults to 24 hours, past which that source's tokens are refused with `503` and its alert fires, because an IdP that rotated out a compromised key while unreachable would otherwise stay trusted indefinitely. The deployment issuer keeps today's behaviour. Decision 22 covers the value.
 
-### Claim allowlist and mapping
+#### Claim allowlist and mapping
 
 TS-2 changes the IdP boundary for every issuer. Today an IdP-verified token keeps `caller_type`, `act`, `authorized_tools`, and `scope`, and `normalizeUserBearer` clears only `typ`, `session_id`, `delegation_depth`, and `origin`. The boundary instead builds claims from an allowlist, each read by exact key, because Go's struct decoding also matches other cases: `iss`, `aud`, `azp`, `exp`, `nbf`, `iat`, `jti`, `sub` or `subject_claim`, `scope`, the roles claim, and the groups claim, plus the tenant claim on the deployment issuer. `match_claim`, `service_claim`, `nonce`, `email`, and the provider identity claim that a link provider with `identityBinding: claim` names under [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) ([`0151-user-credential-delivery`, "Identity binding"](../0151-user-credential-delivery/change.md#identity-binding)), are read by exact key and returned only to the purpose that needs them. Everything else is dropped. An absent or empty subject claim refuses the token.
 
@@ -653,7 +654,7 @@ TS-2 changes the IdP boundary for every issuer. Today an IdP-verified token keep
 
 The tenant has no mapping on a customer source, because the record supplies it. `role_map` is explicit because customer IdPs emit a `roles` claim for their own purposes, as Entra's token reference shows, and today's code would read it as Lenny roles. The mapping can name tenant-scoped built-in roles and custom roles, and a write naming `platform-admin` or a `security-*` role is refused. `groups_claim` must yield an array of strings. Past Entra's overage limit [the claim is absent](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference) (provider documentation), which reads as no groups and refuses the environment, so a tenant with users in many groups uses `group_source: scim`.
 
-### Issuer pin and proof
+#### Issuer pin and proof
 
 An issuer pins to one tenant through the partial unique index, checked at activation, unless `identity.sharedIssuers` lists it, and the deployment issuer can never be registered as a customer source (decision 18). A conflict returns a generic refusal, so the answer does not say whether another tenant holds the issuer. `email_domains` are unique in the same way. The harm being prevented is specific. A tenant pointing at an issuer it runs gains nothing outside itself, because the tenant comes from the record. A tenant claiming another customer's issuer can squat it, so the customer that owns it cannot register, and with a claimed email domain it can route that customer's users to its own tenant's login.
 
@@ -699,7 +700,7 @@ A **shared-issuer row** is a row with a `pin_audience` or `pin_claim_value`, wha
 
 No mechanical proof binds a customer to a hosted issuer, so the pin rests on proofs 2 and 3 together with proof 4. A disputed issuer is resolved by a `platform-admin` retiring the wrong row and deleting it, with an audit event, which releases the index. At a tenant with a `security-admin` row in any state, the delete takes [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)'s delay. If the tenant's own `security-admin` cancels the retirement, the operator invalidates that principal first, which applies at once, and then retires. "Residual risks" states this.
 
-### SSRF and NetworkPolicy
+#### SSRF and NetworkPolicy
 
 Every customer issuer, `jwks_uri`, `authorization_endpoint`, and `token_endpoint` passes one checker, shared with TS-4's `introspectionEndpoint` check. The deployment issuer is exempt, because an operator can run a broker in the cluster:
 
@@ -711,10 +712,10 @@ Every customer issuer, `jwks_uri`, `authorization_endpoint`, and `token_endpoint
 The consequences in the chart are these:
 
 - **Gateway.** `allow-gateway-egress-llm-upstream`, the NetworkPolicy that lets the gateway reach external LLM providers, is the gateway's only external HTTPS path, and it already excludes private ranges (§13.2.4). When `gateway.llmUpstreamEgress.enabled` is false or `egressCIDRs.llmProviders` replaces the broad rule with a CIDR list, a customer's issuer is unreachable. The chart refuses `identity.customerSources.enabled` with the rule disabled, and it warns on a CIDR list, which gains an `identity.issuerCIDRs` value for strict deployers. NetworkPolicy cannot match names, so a strict deployer maintains addresses per customer.
-- **Token Service.** `allow-token-service`, the Token Service's NetworkPolicy, renders `kms.endpointCIDR` on TCP 443 unconditionally, which is open with no excepts under the local provider's default and closed to issuers once a cloud KMS narrows it. An except is an entry in a NetworkPolicy rule's `except` list, here the private ranges and the instance metadata address that an external HTTPS rule excludes. "Defects found while verifying" records this, and the Token Service should use `lenny.kmsEgressRule`, as the gateway does. That chart helper renders the KMS rule only for a cloud KMS, and it refuses an unrestricted CIDR. Without that change, the excepts of the rule below are void under the local provider, because NetworkPolicy allows are additive: the unrestricted port 443 rule already admits the addresses another rule excepts. Only the dialer's check would then hold. [`0127-egress-and-git`, "Credentials"](../0127-egress-and-git/change.md#credentials) adds a direct rule for provider APIs with the gateway's exclusions, and this design uses the same rule, which also widens the egress of the component that holds every provider credential. TS-6 renders the rule when [EG-1](../0127-egress-and-git/change.md#steps), the egress design's git prerequisites, has not.
+- **Token Service.** `allow-token-service`, the Token Service's NetworkPolicy, renders `kms.endpointCIDR` on TCP 443 unconditionally, which is open with no excepts under the local provider's default and closed to issuers once a cloud KMS narrows it. An except is an entry in a NetworkPolicy rule's `except` list, here the private ranges and the instance metadata address that an external HTTPS rule excludes. "Defects found while verifying" records this, and the Token Service should use `lenny.kmsEgressRule`, as the gateway does. That chart helper renders the KMS rule only for a cloud KMS, and it refuses an unrestricted CIDR. Without that change, the excepts of the rule below are void under the local provider, because NetworkPolicy allows are additive: the unrestricted port 443 rule already admits the addresses another rule excepts. Only the dialer's check would then hold. [`0127-egress-and-git`, "Credentials"](../0127-egress-and-git/change.md#credentials) adds a direct rule for provider APIs with the gateway's exclusions, and this design uses the same rule, which also widens the egress of the component that holds every provider credential. TS-6 renders the rule when [EG-1](../0127-egress-and-git/steps.md#steps), the egress design's git prerequisites, has not.
 - **Private-address IdPs.** An issuer on a private address is refused in the first version. The issuer, `jwks_uri`, `authorization_endpoint`, and `token_endpoint` must all pass the checker, so publishing metadata alone is not enough, and that customer stays behind a broker that can reach its IdP or exposes those endpoints (decision 21).
 
-### Browser login (TS-6)
+#### Browser login (TS-6)
 
 A browser login is part of the same boundary as the registry. The playground, the sign-in proof, and the link start page under [`0151-user-credential-delivery`, "Flow"](../0151-user-credential-delivery/change.md#flow) all use this path, and this design lands it in TS-6 because customers register these URIs at their IdPs and a later change forces them to register again.
 
@@ -727,7 +728,7 @@ A browser login is part of the same boundary as the registry. The playground, th
 
 How each provider behaves on these flows is untested, including silent single sign-on and RFC 9207 support. Which spelling of Google's issuer a given flow returns is also untested, and `issuerAliases` admits both.
 
-### Login routing (TS-7)
+#### Login routing (TS-7)
 
 Only the deployment source can use the bare URLs, because nothing else identifies a tenant before a token exists.
 
@@ -741,7 +742,7 @@ Only the deployment source can use the bare URLs, because nothing else identifie
 
 RFC 9728 metadata names the deployment issuer for the deployment resource, and per-tenant documents name only that tenant's issuers (decision 20). One shared document listing all issuers would disclose every customer, and [the MCP specification leaves selection to the client](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization). The per-tenant document is public, so it discloses a tenant identifier and its IdP host to anyone who guesses the identifier, as the [egress design](../0127-egress-and-git/change.md)'s `/oidc/<tenant-id>` path already does for its identifier. The specification also says a client without dynamic client registration, the OAuth mechanism through which a client registers itself at an authorization server, needs a client ID by hand, so a customer IdP lacking that feature needs one configured in each MCP client. The audience check that MCP requires of `/mcp` applies to each per-tenant resource URL as "Discovery" states. How MCP clients behave against these documents is unproven.
 
-### Several IdPs in one tenant, and namespacing
+#### Several IdPs in one tenant, and namespacing
 
 A customer source's user key is the canonical subject `~<source_id>~<value of subject_claim>`. `subjectPattern` in `userstore` already admits `~` and limits a subject to 256 printable characters, and a longer result is refused at the boundary. A deployment source's `sub` keeps its form, so a single-company deployment and every tenant that never moves are unchanged. Once customer sources are enabled, a deployment token whose `sub` begins with `~` is refused, and a deployment group beginning with `~` is dropped, so no presented value can collide. `(tenant_id, subject)` stays the user key throughout.
 
@@ -751,7 +752,7 @@ The `~<source_id>~` prefix in `user_id` names which issuer vouched, so §11.7 ev
 
 **Caller-type namespaces.** Under [`0143-service-account-credentials`, "SA-6 Subject namespaces"](../0143-service-account-credentials/change.md#sa-6-subject-namespaces), the user key also names the caller type. A token whose `caller_type` is `service` takes the Lenny subject `~svc~<canonical subject>`, one whose `caller_type` is `agent` takes `~agt~<canonical subject>`, and a person keeps the canonical subject, so a person and a service account whose canonical subjects are equal hold two users. The one resolver of "Verifier registry" and the deployment issuer's path form the Lenny subject after the claim allowlist sets `caller_type`, and they refuse a token whose `caller_type` is `human` and whose canonical subject begins with `~svc~` or `~agt~` with `401 SUBJECT_RESERVED` and an `auth_failure` event naming the reason, on the gateway, on `lenny-ops`, and on the Token Service. A customer source's canonical subject begins with `~<source_id>~`, and no `source_id` is `svc` or `agt`, so the refusal reaches only a deployment `sub` beginning with `~`, which this section already refuses once customer sources are enabled. Every Lenny-issued token carries a `user_id` and a `caller_type` that agree, and a verifier refuses one that does not. The writes that first name a subject check its prefix: the SCIM server of TS-8 provisions persons and refuses a reserved prefix with `400`, the TS-4 lifecycle calls and role assignment through `/v1/admin/users` take the Lenny subject in any namespace, and `lifecycleSubjects` and a VCS pool's `serviceIdentities` take only `~svc~` subjects. Ownership, derive, invalidation, erasure, and role rows key on the Lenny subject, so none of them joins a person with a service account. `userstore`'s 256-character limit applies to the prefixed subject. No deployment runs outside development, so no stored subject is migrated, and a person whose deployment `sub` begins with a reserved prefix is refused until the issuer emits another `sub` for that person.
 
-### Role boundary
+#### Role boundary
 
 §10.2 **Role assignment:** allows an OIDC claim to carry any built-in role. In code, an IdP-verified token's `roles` reach `Principal.Roles` unchanged, and `platform-admin` then spans all tenants. TS-2 closes this for every issuer, and TS-6 extends it:
 
@@ -766,7 +767,7 @@ The `~<source_id>~` prefix in `user_id` names which issuer vouched, so §11.7 ev
 
 **An issuer's power over its principals.** An issuer controls every principal it authenticates. It can assert the subject of a `tenant-admin` or a security principal, and it chooses the `iat` value read by [SP1](../0142-security-oversight/change.md#security-properties), the security oversight property under which a security principal row grants its role only on a bearer issued after the row took effect, and the row then grants the role, whatever `securityRoleSource` says. `securityRoleSource: managed` stops a role claim, and it does not separate a principal from its issuer. On a tenant on the deployment source, an operator's broker can therefore assert a `security-approver`'s `sub` and approve the operator's own request. Posture reports each principal's issuer. A tenant that needs separation from its operator moves to a customer source, and decision 25 leaves a second factor out of the first version.
 
-### Broker contract
+#### Broker contract
 
 These go into §10.2 as requirements on the issuer named by `auth.oidc.issuerUrl`, and they are the contract for the default source.
 
@@ -780,7 +781,7 @@ These go into §10.2 as requirements on the issuer named by `auth.oidc.issuerUrl
 
 The broker must also keep token lifetimes short enough for the operator's offboarding bound, and keep the operator tenant's IdP link operator-only. It delivers lifecycle events through a sync worker, or the customer's directory calls Lenny's SCIM directly.
 
-### Discovery
+#### Discovery
 
 §10.2 calls the gateway an MCP-standard protected resource server. Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the MCP endpoint at `/mcp` and `/t/{tenantId}/mcp` is served by the MCP adapter on the gateway's origin, as one interface of a protected resource whose other interface is the client API. [The MCP authorization specification](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), at the `2026-07-28` version that [`0134-mcp-protocol-upgrade`, "MP-1 Gateway versions and negotiation"](../0134-mcp-protocol-upgrade/change.md#mp-1-gateway-versions-and-negotiation) adopts, requires such a server to serve RFC 9728 metadata, to answer an invalid token with HTTP 401 and a `WWW-Authenticate` challenge that names the metadata's location, and to accept only tokens issued for it as the audience. No route, handler, or specification text in the tree serves the metadata or the challenge, so a client learns the issuer out of band. TS-2 adds `/.well-known/oauth-protected-resource`, naming `auth.oidc.issuerUrl`, and the client API's challenge header. TS-7 adds the per-tenant documents.
 
@@ -788,7 +789,7 @@ The broker must also keep token lifetimes short enough for the operator's offboa
 
 **Audience check.** The verifier registry holds one audience rule for the client API, whichever interface a token reaches it through. A token from the deployment source must carry in `aud` either `auth.oidc.clientId`, the client API's own audience, or one of the computed adapter identifiers (registry step 4 and the broker contract). A token from a customer source must carry a value in the source's `audiences`, with the `azp` rule (registry steps 4 and 5), and a customer that uses an adapter lists the adapter's per-tenant identifier there. A token issued for any other audience is refused with `401 TOKEN_INVALID` and the challenge header. A token whose audience is an adapter identifier carries the authority that the adapter registry of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) gives that adapter, and that design states which tenant a per-tenant identifier admits. This replaces the rule of revision 37, which required `auth.oidc.clientId` in `aud` on `/mcp`: an MCP client names the MCP adapter's identifier in its RFC 8707 `resource` parameter, so its token carries that identifier as its audience. Whether a token that an MCP client obtains through its own login carries that audience at each IdP is unproven, as **Unproven.** under "Residual risks" states.
 
-### SCIM server (TS-8)
+#### SCIM server (TS-8)
 
 The server implements RFC 7643 and RFC 7644 at `/scim/v2/{tenantId}/{sourceName}`, on the gateway's ingress behind its own middleware rather than the OIDC chain. A tenant on the deployment source uses the source name `deployment`.
 
@@ -829,7 +830,7 @@ A store failure answers `503` with `Retry-After`. Microsoft's service [retries a
 
 **Conformance.** The test corpus is a set of recorded and hand-written request sequences per directory, because no live directory is available to the suite. Passing it shows agreement with the corpus and no more, and each directory's own validator is a manual step per release. No directory has been tried.
 
-### Directory groups (TS-9)
+#### Directory groups (TS-9)
 
 `directory_users` holds `tenant_id`, `source_id`, the SCIM `id`, `external_id`, `user_name`, `active`, and the bound subject, if any. `directory_groups` holds the SCIM `id`, `external_id`, and `display_name`, and `directory_group_members` joins them. All are tenant-scoped under row-level security.
 
@@ -838,13 +839,13 @@ A store failure answers `503` with `Retry-After`. Microsoft's service [retries a
 - **`token`**, the default, keeps today's behaviour.
 - **`scim`** makes the auth middleware replace `Principal.Groups` from `directory_group_members`, at the same point introspection replaces them today, for IdP tokens and Lenny-issued tokens alike.
 
-A tenant with a customer source refuses `introspectionEnabled` on every source kind, because a tenant-set endpoint would receive every bearer presented for the tenant. Activation refuses while it is on. A deployment-source tenant is left to [`0142-security-oversight` decision 23](../0142-security-oversight/change.md#decisions).
+A tenant with a customer source refuses `introspectionEnabled` on every source kind, because a tenant-set endpoint would receive every bearer presented for the tenant. Activation refuses while it is on. A deployment-source tenant is left to [`0142-security-oversight` decision 23](../0142-security-oversight/decisions.md#decisions).
 
 `envaccess`, the environment membership resolver, keeps its `Caller` input, so `Membership` and `AuthorizedRuntimes` are unchanged, and the new reader sits ahead of it. The read is cached for 30 seconds, a SCIM write invalidates it through Redis, and a store failure answers `503`, as `GROUP_INTROSPECTION_UNAVAILABLE` does. `GET /v1/admin/environments/{name}/access-report`, which §15.1 describes as a resolved member list with group expansion, can read these tables for a source with `group_source: scim` and can do no such expansion for a source with `group_source: token`.
 
 **Erasure and classification.** §12.9 adds directory users, groups, and memberships to the Confidential class beside user identifiers, source records to the Confidential class, and SCIM credential hashes and the stored client secret to the Secret class. `DeleteByUser` removes the directory row, the memberships, and any proof preview naming that subject, and `DeleteByTenant` removes all of them. An unbound directory row has no subject to find, so an erasure job addresses it by SCIM `id`. §12.8's tombstone refuses re-provisioning an erased subject, with the `409` above. Group display names can carry personal or organizational data, so they are Confidential as well.
 
-### When SCIM and token claims disagree
+#### When SCIM and token claims disagree
 
 | Disagreement | Which wins | Reason |
 | :-- | :-- | :-- |
@@ -862,7 +863,7 @@ For the TS-1 rules:
 - A running session keeps E, and `visible`, the delegation gate, and `ENVIRONMENT_POLICY_NOT_ENFORCEABLE` read E alone, so a SCIM group removal does not reach a running session. Only a lifecycle event does, under TS-4's levels.
 - A Lenny-issued token carries groups copied at exchange under TS-3, and under `group_source: scim` they are replaced at each request, so they cannot outlive a removal. Under `group_source: token`, they last until that token's expiry.
 
-### User lifecycle (TS-4)
+#### User lifecycle (TS-4)
 
 A directory reaches Lenny either directly through the SCIM server or through a broker or vendor endpoint and a sync worker that calls the routes below. Both end in the same invalidation code. Today that code fails in these ways:
 
@@ -890,11 +891,11 @@ When a worker or a directory cannot reach Lenny, the event waits with it, and a 
 
 Offboarding latency is the directory's delivery time, plus the sync worker's on that path. Microsoft documents incremental cycles [at intervals defined per application](https://learn.microsoft.com/en-us/entra/identity/app-provisioning/how-provisioning-works) (provider documentation), with no general figure on that page. Until delivery, a user can create sessions while a token is valid. Lenny-issued tokens default to 900 seconds and are capped at 24 hours for `lenny-gateway` (§13.3 **`exp` granularity and parent-expiry handling.**), and a running session does not depend on its creator's token, so only invalidation ends it.
 
-### What stays with an operator's portal
+#### What stays with an operator's portal
 
 Lenny supplies admin APIs and no customer-facing identity UI, which §10.2 lists as a future goal. These remain the operator's: the page where a customer enters issuer details, instructions for registering an application at each IdP and for publishing the DNS record, sign-up and contract records behind the request, SAML bridging through a broker, support for a customer's IdP misconfiguration, and any directory connection other than SCIM.
 
-### Failure behaviour (identity)
+#### Failure behaviour (identity)
 
 | Condition | Result |
 | :-- | :-- |
@@ -911,7 +912,7 @@ Lenny supplies admin APIs and no customer-facing identity UI, which §10.2 lists
 | Registry snapshot cannot refresh | The last snapshot serves, and an alert fires past a staleness bound. A source retired during the outage stays trusted until refresh on that replica. |
 | Row read fails | Fails closed on the gateway and the Token Service, as role resolution does |
 
-### Who can do what (identity)
+#### Who can do what (identity)
 
 | Action | `platform-admin` | `security-admin` | `tenant-admin` | Customer IdP admin | SCIM credential or sync worker |
 | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -930,7 +931,7 @@ Lenny supplies admin APIs and no customer-facing identity UI, which §10.2 lists
 | Place and clear holds | Yes | Yes | Yes, and no self-reinstatement | No | Yes, own tenant, own class |
 | Assign groups | Through broker | No | No | Directory | SCIM writes them |
 
-## Configuration by scope
+### Configuration by scope
 
 | Setting | Description | Scope | Managed by |
 | :-- | :-- | :-- | :-- |
@@ -1056,7 +1057,7 @@ Every setting in the [`0127-egress-and-git`, "Scopes and who manages them"](../0
 - **Operator reach into a pinned tenant.** A `platform-admin` keeps impersonation and can activate a source. At a tenant with no `security-admin` row in any state, nothing delays that, and [SO-4](../0142-security-oversight/change.md#so-4-operator-access-transparency), the security oversight design's operator access transparency, is what makes it visible. Where the delay applies, a stolen `platform-admin` can first invalidate the principals who could cancel and write its own justifications, so the delay, the SIEM event, and any outage are what remain to warn the customer.
 - **Unchanged reactivation.** With no reachable principal, a stolen `platform-admin` with a login at a compromised issuer can undo a `security-admin`'s emergency retirement at once, by returning the row unchanged. This has no delay, because retirement has to stay reversible during an incident. `tokens_not_before` still refuses older tokens.
 - **Cached keys.** An IdP rotating out a compromised key while unreachable stays trusted up to the maximum staleness.
-- **A stolen `tenant-admin`.** It can mint a SCIM credential, which posture lists, and it can write role rows and custom roles. On a deployment-source tenant with no security principal, it can also set `introspectionEndpoint` and capture bearers, which [`0142-security-oversight` decision 23](../0142-security-oversight/change.md#decisions) governs.
+- **A stolen `tenant-admin`.** It can mint a SCIM credential, which posture lists, and it can write role rows and custom roles. On a deployment-source tenant with no security principal, it can also set `introspectionEndpoint` and capture bearers, which [`0142-security-oversight` decision 23](../0142-security-oversight/decisions.md#decisions) governs.
 - **A stolen SCIM credential.** It can deactivate any unprotected user in its tenant, within its quotas, and under `group_source: scim` it can change group membership, and so environment membership. It cannot authenticate as anyone, assign a role, or clear another class's hold.
 - **Egress for issuers.** The gateway's external rule and the Token Service's are wide, and each customer issuer depends on them. A strict deployer maintains addresses per customer.
 - **Published metadata.** A per-tenant metadata document discloses a tenant identifier and its IdP host, and the typed-email page discloses which domains are customers.
@@ -1134,11 +1135,11 @@ The `environments` fields, `environmentPolicies`, the effective-policy parameter
 - §4.9: `environments` on VCS credential pools and credential bindings, and the overlap rule.
 - §5.2 and §6.4: a warm-list entry of any declarer needs a repository that resolves at E = ∅ to an unscoped VCS pool or lies under no prefix, at write and at render, with the suspended reason `environmentScoped`.
 - §7.3: the refusal at resume on a pod with no per-session policy.
-- §5.2 and §13.2: a pod with several slots applies each session's environment per slot where its pool's runtime class answers slot attribution, and the environment refusals of TS-1 apply only where the pool's status records it as unavailable, beside the per-slot scopes that [`0127-egress-and-git`](../0127-egress-and-git/change.md#decisions) stages under its decision 60.
+- §5.2 and §13.2: a pod with several slots applies each session's environment per slot where its pool's runtime class answers slot attribution, and the environment refusals of TS-1 apply only where the pool's status records it as unavailable, beside the per-slot scopes that [`0127-egress-and-git`](../0127-egress-and-git/decisions.md#decisions) stages under its decision 60.
 - §8.2: "Every effective delegation lease MUST carry a positive integer `maxDepth`" allows 0 as an explicit client or parent value, the **Effective `maxDepth` resolution** order becomes a minimum, `maxChildrenTotal: 0` is stored as `maxDepth: 0` and a positive value is a per-parent cap, the parent is the calling session, depth comes from the parent's row, the environment a delegated child takes, refusal at placement, and no second crossing.
 - §8.3: `inherit`'s check runs under `dangerouslyShare`.
 - §8.10: the stored `maxDepth` on the lease record.
-- §9.1: the **Platform MCP Server Tools** table becomes the intra-pod allow-list, with `lenny/vcs_token` until [EG-3](../0127-egress-and-git/change.md#steps), the egress design's pod git path, and `lenny/delegate_task` is hidden per session where the surface allows.
+- §9.1: the **Platform MCP Server Tools** table becomes the intra-pod allow-list, with `lenny/vcs_token` until [EG-3](../0127-egress-and-git/steps.md#steps), the egress design's pod git path, and `lenny/delegate_task` is hidden per session where the surface allows.
 - §14: `delegationLease` semantics, including 0 and the create-and-start request, and that `delegationPolicyRef` has no effect.
 - §25.1: an IdP token's `scope` is filtered to `tools:` values at the boundary, and `caller_type: "agent"` comes from the source's mapping.
 - §10.6: the environment record's `placementRequirements`, which add to the tenant's, and the removal of the environment-level `workspaceTier` override with §12.9's **Per-tenant workspace classification.**, which [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#specification-changes) stages. [`0136-placement`](../0136-placement/change.md#specification-changes) stages the requirements themselves.
@@ -1166,121 +1167,6 @@ The `environments` fields, `environmentPolicies`, the effective-policy parameter
 - §24: `lenny-ctl` commands for reinstatement and for scoped fields.
 
 The sections that [`0127-egress-and-git`](../0127-egress-and-git/change.md) lists change first, and the TS-1 edits apply on top of the text those proposals land.
-
-## Steps
-
-### 0149.S1 Environment scoping
-- status: Planned
-- aliases: [TS-1]
-- lanes: [specification, code, documentation]
-- depends-on: [0127.S1, 0127.S2, 0127.S3, 0127.S4, 0127.S9, 0149.S3, 0127.S5 (part), 0127.S6 (part), 0127.S8 (part), 0127.S10 (part)]
-
-The fields, the formulas, enforcement in the gateway, the decision service, the Token Service, and the mirror, the refusal rules including the post-chain checks on the final row, the binding host validator, the delete guard for references, shadow policy evaluation, and the read filters.
-
-It needs 0127.S1, 0127.S2, 0127.S3, 0127.S4, and 0127.S9 for the objects it scopes, the resolver, and the git inputs, and 0149.S3 for a dependable session environment. Its mirror steps need [0127.S5](../0127-egress-and-git/change.md#steps) (EG-5) for pool selection and the fill request. Its route step needs [0127.S6](../0127-egress-and-git/change.md#steps) (EG-6) for the upstreams routes name. Its read filters step needs [0127.S8](../0127-egress-and-git/change.md#steps) (EG-8) and the envelope field in [0127.S10](../0127-egress-and-git/change.md#steps) (EG-10) for the reads it extends.
-
-Its post-chain step, shared with 0149.S3, depends on the interceptor contract proposal of [`0141-runtime-routing`](../0141-runtime-routing/change.md#steps), 0141.S1, which lands [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract), and whichever of the two lands second moves the checks to the post-chain point, at which the environment rules run on the final row. Until 0141.S1 lands, the rules run after the experiment rewrite, as "A session's environment" under TS-1 states.
-
-The guardrails of [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (0142.S2) act on this step's writes through the single write path for tenant opt-ins that [0127.S9](../0127-egress-and-git/change.md#steps) (EG-9) adds, and they can forbid an environment's use of an opt-in with no TS change. [UC-1](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) (0151.S1) and [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) (0151.S2) of the user credential design define types and link providers. This step adds their `environments` field when both have landed, and neither waits.
-
-### 0149.S2 Identity model and platform boundary
-- status: Planned
-- aliases: [TS-2]
-- lanes: [specification, code, documentation]
-- closes: [F-10.2.38, F-10.2.39, F-10.2.40, F-13.3.27, F-15.1.74]
-
-The specification statement, the broker contract, the deployment protected resource metadata route, the claim allowlist, RSA and token size bounds, the IdP role boundary, the operator tenant and the chart's refusal of `auth.platformAdminTenant: platform`, the playground-origin `subject_token` refusal, claim names, and the §15.1 listing of `/v1/admin/users`.
-
-It has no dependency. It can land at any point, and it should land early because it closes a High defect. The claim allowlist lands early, because a stored format, a registered URI, or a shipped enforcement point would otherwise need rework.
-
-### 0149.S3 Session environment context
-- status: Planned
-- aliases: [TS-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0127.S10 (part)]
-- closes: [F-8.2.34 (part), F-8.2.35, F-8.3.12, F-9.1.13, F-10.6.15, F-10.6.16, F-10.6.17, F-10.6.18, F-10.6.19, F-10.6.20, F-10.6.23, F-10.6.24]
-
-Derive and delegation propagation, the session-based delegation gate, cross-environment sharing with its opt-ins, the check, no second crossing, both environments on records, the client delegation limits with one reading of `maxDepth` and a stored value on every root creator, depth from the parent's row, the calling-session parent rule, the Bridge allow-list, and `DELEGATION_DISABLED`, groups on exchanged tokens, the active-session delete guard, the transparent create check, and the naming correction. It closes F-8.2.34 apart from `delegationPolicyRef`. It closes F-10.6.17 with its rules running at the post-chain point of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract).
-
-Its evidence field step needs the envelope field in [0127.S10](../0127-egress-and-git/change.md#steps) (EG-10) to put both environments on `credential.mint` and evidence. The rest of the step has no dependency and can land at any point.
-
-Its guardrail case depends on [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (0142.S2), whichever lands second adding the case, for `crossEnvironmentSharing: forbid` and the delay. Its lock case depends on [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) (0151.S5), whichever lands second adding the case, because check 2 reads the lock UC-5 adds. Its post-chain step, shared with 0149.S1, depends on 0141.S1 in the same way, as 0149.S1 states.
-
-### 0149.S4 User lifecycle path
-- status: Planned
-- aliases: [TS-4]
-- lanes: [specification, code, documentation]
-- closes: [F-11.4.19, F-11.4.20, F-11.4.21, F-10.6.21 (part), F-10.6.22 (part)]
-
-Upsert on invalidate, holds per caller class, refusal at authentication including deleted rows, the impersonation cascade on disables, reinstate as the only reversal, ordering, the permission, and `identityProvider` hardening. It also closes the read half of F-10.6.21 and the address check of F-10.6.22.
-
-It has no dependency. 0149.S2's contract refers to it, and either order works. Holds land early, because a stored format, a registered URI, or a shipped enforcement point would otherwise need rework.
-
-[UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization) (0152.S2, repository authorization) and [UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding) (0151.S3, the `userCredential` binding) read this step's invalidation level through `pkg/binding`, which returns it from [0127.S2](../0127-egress-and-git/change.md#steps) (EG-2).
-
-### 0149.S5 Delegated environment administration
-- status: Planned
-- aliases: [TS-5]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S1]
-
-Environment `admin` writes to its own environment's scoped objects. Decision 7 defers it.
-
-It needs 0149.S1 for the scoped fields.
-
-### 0149.S6 Identity sources and the verifier registry
-- status: Planned
-- aliases: [TS-6]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S2, 0149.S4]
-
-The operator tenant warning in preflight and posture, `identity.sharedIssuers` with the pin fields, selection after verification, and the domain pin's lapse, the record and its state machine, including `suspended` and reactivation, the activation rule and preflight, retirement with `tokens_not_before`, reactivation, `pending_version` and the approval digest, the deployment settings row, the client secret, the registry and active-source check, per-issuer caches, claim mapping, canonical subjects and the group form, per-source callbacks and the shared resolver, the pin and proofs, the address checker's use on issuers, and the Token Service's egress rules and chart checks.
-
-It needs 0149.S2 for the role boundary and 0149.S4 for the shared address checker. Per-source callbacks, the deployment settings row, the group form, `suspended`, and reactivation land early, because a stored format, a registered URI, or a shipped enforcement point would otherwise need rework.
-
-Its activation under a delay depends on [SO-1](../0142-security-oversight/change.md#so-1-security-roles) (0142.S1) and [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (0142.S2), whichever lands second adding the case, for `security-admin` approval and the weakening delay. [`0142-security-oversight`](../0142-security-oversight/change.md) narrows the question of SO-1 (security roles): under `securityRoleSource: managed`, a `security-*` claim is ignored from any issuer. A customer source's `role_map` cannot name one, so `securityRoleSource: oidc` needs SO's own rule to read such a claim, which this step leaves to whichever lands second.
-
-UC-2's start page uses this step's callback and resolver, so [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) (0151.S2) depends on this step's login path on every source, and a broker's URI is registered once.
-
-### 0149.S7 Login routing
-- status: Planned
-- aliases: [TS-7]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S2, 0149.S6]
-
-The `/t/{tenantId}` prefix, per-tenant metadata and challenges, the playground's per-tenant pages, chooser, cookie scope, and mint under the prefix, and email domain routing.
-
-It needs 0149.S2 for the deployment route and 0149.S6 for the sources it names.
-
-### 0149.S8 SCIM server
-- status: Planned
-- aliases: [TS-8]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S4, 0149.S6]
-
-The surface, credentials and quotas, the retirement step that revokes credentials, subject matching, deprovisioning into TS-4, user rows, and the conformance corpus.
-
-It needs 0149.S4 for invalidation levels and the permission, and 0149.S6 for source identifiers. Its retirement step also needs 0149.S6, because retirement names the credentials.
-
-### 0149.S9 Directory groups
-- status: Planned
-- aliases: [TS-9]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S3, 0149.S8]
-
-Group tables, `group_source`, the group reader ahead of `envaccess`, the access report's expansion, and erasure and classification.
-
-It needs 0149.S3 for groups on exchanged tokens and 0149.S8 for directory data.
-
-### Notes on the steps
-
-Dependencies are stated in each step's fields and in the other design documents. Steps from different designs can interleave as long as these hold.
-
-No proposal of the egress design (`EG-`), the forensics design (`FE-`), or the outbound connector design (`OC-`) depends on a TS step. The security oversight design's [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (0142.S2) reports in posture the records that 0149.S3, 0149.S6, 0149.S8, and 0149.S9 add, which are sharing paths, identity sources, SCIM credentials, and directory groups, and those fields report `unknown` until the TS step that adds each record lands, as that design's dependency table states.
-
-The hooks of this design sit inside the egress design's proposals [EG-1](../0127-egress-and-git/change.md#steps) (0127.S1, git prerequisites), [EG-2](../0127-egress-and-git/change.md#steps) (0127.S2, the pod network agent and proxied egress), [EG-5](../0127-egress-and-git/change.md#steps) (0127.S5, the git mirror and warm fill), [EG-9](../0127-egress-and-git/change.md#steps) (0127.S9, egress policy objects), and [EG-10](../0127-egress-and-git/change.md#steps) (0127.S10, evidence ingest), so those steps do not wait.
-
-Routes to an outbound connector under [OC-2](../0148-tenant-outbound-connector/change.md#steps) (0148.S2, the connector's hosts and policy) can appear under `environmentPolicies` with no OC change.
 
 ## Documentation
 
@@ -1462,59 +1348,6 @@ No runtime adapter contract changes.
 
 - Helm keys in identity pages and tutorials exist in `values.yaml`.
 - Examples of scoped objects, sources, and SCIM requests validate against the schemas.
-
-## Validation owed
-
-- **Slot attribution per runtime class (decision 31).** Measured. The owner asked on 2026-11-13 for a spike that measures which runtime classes answer slot attribution, which this item then gave as runc by design, Kata likely and unmeasured, and gVisor unknown. The AWS spike of 2026-11-14 measured it ([its report, "Test 1: per-slot attribution"](../0118-agent-pod-layout/evidence/attribution-and-quota-spike/RESULTS.md#test-1-per-slot-attribution)): runc answers `sock_diag`, gVisor with either network mode and Kata with either volume mode answer only `/proc/net/tcp`, and every answering reader gave each connection its own slot's UID, so no measured runtime class is a fallback pool, as [`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants) states from its revision 83 **[measured]**. User credential bindings, `lockEgressToHosts`, and a user git identity on a pod with several slots follow each pool's attribution status. What stays owed, the production `netagent` under a burst of connections and the managed runtimes of EKS, GKE Sandbox, and AKS, is listed under **Slot attribution** in that design's ["Validation still owed"](../0127-egress-and-git/change.md#validation-still-owed).
-- **Ref resolution after the post-chain point.** Confirm in the tree that the `kind: derive` and `kind: delegate` paths can resolve `gitClone` refs after the post-chain point of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) and before the pod claim. Today `POST /v1/sessions` and `POST /v1/sessions/start` resolve refs in `resolveSubmittedPlan` before the `PreRoute` chain and before the session row exists. [`0127-egress-and-git`, "Validation still owed"](../0127-egress-and-git/change.md#validation-still-owed) carries the same item.
-
-## Decisions
-
-Settled in revision 2:
-
-- **Decision 2, tenant-wide objects.** A session in E sees the union of tenant-wide objects and E's objects. An environment cannot exclude a tenant-wide binding, and the tenant admin scopes it instead. Limiting E to its own objects would require every shared object to list every environment, and TSR-2 would no longer hold.
-- **Decision 9, an IdP token asserting `platform-admin`.** The role is removed, the request continues, and an audit event and an alert follow. A mapping error stays quiet to the caller, and an operator using claim-based staff roles must add rows.
-- **Decision 13, user rows at login.** No row is created at login, and the upsert happens at invalidation or SCIM provisioning. A customer listing users sees only those with rows.
-
-Decided by the owner on 2026-11-03:
-
-- **Decision 3, a transparent session when an environment policy applies.** Refused by runtime with `ENVIRONMENT_REQUIRED`, regardless of the caller's groups or `noEnvironmentPolicy`, with a resume exempt, and a `Warning` on the write that adds an environment's first `denied` or route entry, listing the runtimes it affects. A transparent client breaks when a tenant admin first adds a deny to any environment sharing the runtime. A caller outside every such environment has no path to that runtime until a tenant admin adds the member or separates the runtime, and a member of several environments can choose the environment with fewer denies.
-- **Decision 26, disabling delegation.** A client can disable delegation for a session with `delegationLease.maxDepth: 0`, in the owner's words "yes, add it with maxDepth: 0". A client can only narrow, resolution becomes a minimum, `maxChildrenTotal: 0` is stored as `maxDepth: 0`, children never widen, and the gateway enforces it with `DELEGATION_DISABLED`. The cost is a changed §8.2 order, under which a preset above a Runtime default no longer wins, and a nil stored value refusing delegation.
-- **Decision 14, cross-environment delegation.** Keep it as opt-in sharing with guardrails, in the owner's words "go with B with these guardrails". A crossing child runs under the target's policy unchanged, with `dangerouslyAllowCrossEnvironmentSharing` and a two-sided `dangerouslyShare`, the tenant's denies, user authorization on VCS pools with `userAuthorization: required`, no second crossing, named environments only, a `security-admin` forbid with the weakening delay and posture, and both environments on records. The accepted risk is that on a declared path, an injected caller can hand data to a target runtime, which can send it anywhere the target allows, skipping the caller's denies and proxy, and that a non-member's agent can drive the target's credentials and receive results, on any pool with no user check. The cost also includes a new session column. The alternative, a stored bound intersecting the caller's and target's sets, is retired.
-- **Decision 8, identity model.** Per-tenant OIDC and a SCIM server in Lenny, with a deployer able to use a broker by default and to configure a customer's SSO when needed. This reverses revision 12's recommendation of a broker alone. The evidence for the need is vendor documentation, with no first-hand complaint found, so this is the owner's call and the priority inside it is uncertain. The cost is a new subsystem in Lenny, customer IdP support for the operator, wider token verifier egress, and a tenant boundary with two forms. The owner also removed migration between issuers from this design.
-- **Decision 18, how an issuer pins.** One exact issuer pins to one tenant, unless a platform admin lists it in `identity.sharedIssuers`, in which case the pin must include the audience, an organization claim, or both, as the entry states. The owner's words: "platform admins should be able to configure a list of issuers for which pinning has to include audience/organization", because one issuer per tenant "is not a practical solution in many cases", "but we should maintain optionality because clearly unique issuers shouldn't be shared across tenants". This replaces the recommendation that such customers stay behind a broker. The cost is one key set and one availability domain across a listed issuer's tenants, a tenant boundary that rests on the provider and on the platform admin's entry, and the fields and checks under "Issuer pin and proof". Google, Okta, and Entra were read from documentation, and none has run. The owner also accepted the DNS requirement on domain values and the suspension when that record goes, and asked for exact match against several values, recorded as `issuerAliases`. The chart refuses `pinBy: audience` on Google's issuer, because a review showed any service account can obtain that audience.
-- **Decision 19, where groups come from.** One of `token` or `scim` per source, never merged, with `scim` excluding introspection, in the owner's words "accept as written". A misconfigured source uses the wrong one, which posture reports, and under `group_source: scim` a directory that lags delays both grants and removals.
-- **Decision 21, an issuer on a private address.** Refused in the first version, which the owner accepted. That customer stays behind a broker that can reach its IdP or exposes its endpoints. A later private route would make login depend on that route, and the path of the [outbound connector design](../0148-tenant-outbound-connector/change.md) is a candidate, with the lockout that follows when an admin cannot log in to repair it.
-- **Decision 4, which objects are scoped.** Pools, bindings, user credential types and link providers, host lists, and routes. Client config files stay tenant-wide, in the owner's words "keep files tenant-wide". An environment cannot have its own `.npmrc` or `pip.conf` through these files, and it uses a tenant file, a runtime image, a setting at run time, or a dedicated derived runtime. A wrong file breaks an install and exposes nothing, because the scoped host lists and bindings are the enforcement. Writing the files at session binding needs a change to `netagent`'s write timing and a clearing step on recycling pools, and it can follow if requested.
-- **Decision 5, sequentially reused pods across environments.** The residual is accepted, in the owner's words "go with your recommendation". State the scrub does not reach passes from one environment's session to another's in the tenant, as it does between users today. An environment that needs separation uses a pool with `recycle.enabled: false` or a separate tenant, and an environment pin stays additive later.
-- **Decision 7, environment self-service.** TS-5 is deferred, in the owner's words "Accept the TS 7 deferral", and a `tenant-admin` writes scoped objects. Central IT handles each environment's requests. §10.2's statement that an environment `admin` gains management within the environment remains unimplemented: `RoleAdmin` has no use outside `pkg/environment`, and all environment routes need `manage_environments`. TS-5 would add a delegated authority over hosts and secrets, which needs a security review of its own.
-- **Decision 1, how an object names its environments.** A list on pools and bindings, and an `environmentPolicies` section for host lists and routes, in the owner's words "go with your recommendation". It differs from §10.6's label selectors for runtimes and connectors, and each new environment needs edits on each shared scoped object. Selectors on the environment cannot express "absent means tenant-wide", and a label edit would silently widen access.
-- **Decision 6, a per-environment egress quota.** None for now, with §10.6's billing rollup for cost, in the owner's words "go with your recommendations", which also covers decisions 10 and 12. One environment can exhaust the tenant's quota under [P7](../0127-egress-and-git/change.md#security-properties), the egress property that bounds egress load per pod and per tenant, and billing rollup does not cover egress bytes. A per-environment bucket in the decision service is additive later.
-- **Decision 10, claim names.** `roles` and `groups` stay the defaults for the deployment issuer, `lenny_role` leaves the specification, and `auth.rolesClaim` and `auth.groupsClaim` are added. A customer source has its own `roles_claim`, `groups_claim`, and `role_map`. The cost is more Helm values and a code path reading a named claim.
-- **Decision 12, reference issuers.** No broker is named as required. Selection criteria are published, and one integration runs on Keycloak in test infrastructure, as a broker in one realm and as a customer issuer in another. SCIM conformance runs on a recorded corpus, since Keycloak's SCIM provisions into Keycloak and sends nothing to Lenny, so a manual check per release carries the remainder.
-- **Decision 11, what a directory deactivation does.** `scim_deactivate_mode` per source, defaulting to `full_revoke`, and the same value documented as the recommended sync worker action, in the owner's words "go with your recommendation". Sessions end on deactivation, including a mistaken one, reinstating restores neither sessions nor links, and an operator can select a weaker mode by mistake.
-- **Decision 15, environments on concurrent and service pods.** These pods evaluate with E = ∅, and a session is refused when its environment has anything of its own, whether a deny, a route, an entry that adds access, or an object that lists it. The owner's words: "go with the refusal, but also refuse sessions whose environment had only entries that add access. We can't guarantee the runtime will work well without the additional access". The owner confirmed that the refusal covers an object that lists E as well as an entry, in the words "cover both". The cost is that any environment with its own policy or objects uses one-session pods through a derived runtime and its owned pool, and a service-mode runtime has no such route. No derived runtime runs a session today ([`0147-tenant-derived-runtimes`, "Current state"](../0147-tenant-derived-runtimes/change.md#current-state), DF-3 and DF-5), so this route depends on that design, which the owner chose on 2026-11-04. A pin of each pod to one environment stays additive later. Amended on 2026-11-13, with no new owner answer needed: the owner settled the egress design's decision 60 as option (a), so a pod with several slots applies each session's own environment per slot wherever its pool's runtime class answers slot attribution, and this decision's rule now applies only to a pod with no per-session policy, the fallback where attribution is unavailable. The owner's removal of the non-agent runtimes ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md)) leaves no service pod for it to cover. The owner's words above are kept as the record.
-- **Decision 16, scoping of user credentials.** `environments` on types and link providers, with a `registered` row's `environment` column honoured and links having none, in the owner's words "go with your recommendation". An admin keeps two lists straight, and one link serves a person in several environments, so a runtime holding that token under `delivery: file` has all of that person's access. A link per environment would not change that for one account. An admin who needs access to differ uses two link providers, each scoped to one environment.
-- **Decision 20, MCP discovery for a customer source.** Per-tenant resource URLs and metadata documents. Clients need a tenant URL, the documents disclose a tenant identifier and an IdP host, and client behaviour is unproven. An opaque slug in place of the tenant identifier is additive later. The owner's words for decisions 20, 22, and 23 are "go with your recommendations".
-- **Decision 22, maximum staleness of a customer source's keys.** 24 hours, a Helm value, past which that source's tokens are refused. An IdP metadata outage past that value stops a tenant whose IdP might still be signing, and on a shared issuer it stops every tenant on that issuer. The figure is a judgment and is untested.
-- **Decision 23, SAML.** Not in Lenny. A SAML-only customer stays behind a broker on the deployment source, so the operator needs a broker for those customers, and such a customer cannot pin.
-- **Decision 17, who activates an identity source.** A `platform-admin` activates with a justification and the proofs. At a tenant with a `security-admin` row in any state, activation also takes [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)'s delay, with a reachable `security-admin` approving. `identity.allowTenantActivation` lets a tenant's `security-admin` activate alone, and it is off by default. The cost is that a customer waits on the operator, with an operator action per customer IdP, and that a tenant with no `security-admin` has no delay on an operator's repointing. The owner's words for decisions 17, 24, and 25 are "go with your recommendations".
-- **Decision 24, where operators' staff authenticate.** The deployment issuer stays the default, and the operator tenant can hold a customer source naming the operator's own IdP. The owner also adopted a warning: on a deployment with more than one tenant, preflight and the operator tenant's posture read report that the operator tenant accepts the deployment issuer. A single-tenant deployment gets no warning, since the issuer has no other tenant to reach. The accepted risk is that an operator who ignores the warning leaves a path from a broker compromise to platform authority. The alternative of requiring a separate issuer is retired, and so is refusing a customer source on that tenant.
-- **Decision 25, a second factor for security approvals.** The first version has none, and posture reports each principal's issuer. The accepted risk is that an issuer can act as any principal it authenticates, so a tenant on the broker trusts the broker for its approvals. A tenant that needs separation from its operator moves to a customer source, which refuses broker tokens. A factor on approvals alone would leave the same forged token acting as a `tenant-admin` or a `security-admin`, its recovery would need its own delay so that an operator reset does not undo it, and an operator with database rights goes around it, as [`0142-security-oversight`, "Residual risks"](../0142-security-oversight/change.md#residual-risks) states.
-
-Decided by the owner on 2026-11-08:
-
-- **Decision 27, the chart and the reserved tenant ID.** The chart refuses `auth.platformAdminTenant: platform` at render time, with a message naming the reservation of the tenant ID `platform` in [§10.2](../../spec/10_gateway-internals.md#102-authentication) **`tenant_id` format validation.**, in the owner's word "ok". The operator tenant holds user rows, and the admin API and the bootstrap seed refuse to create a tenant with the ID `platform`, so an install naming it would have an operator tenant that cannot exist. The cost is one more chart validation rule.
-
-- **Decision 28, warm-list entries under a scoped VCS pool.** Settled by the owner on 2026-11-08, with [`0147-tenant-derived-runtimes` decision 36](../0147-tenant-derived-runtimes/change.md#decisions). The warm fill rule under "API" names every warm-list entry, of either declarer, beside tenant warm-up additions and `gitRepository` warm fills. Since 2026-11-14 every warm-list entry is a `gitRepository` entry of a runtime's `sharedAssets`, under [`0147-tenant-derived-runtimes` decision 42](../0147-tenant-derived-runtimes/change.md#decisions), so the warm default clones, cache-only entries, and private pool-row entries this decision first named no longer exist, and the rule is unchanged for what remains. Such an entry is refused at write unless its repository lies under no VCS pool prefix, or credential selection at E = ∅ resolves it to an unscoped VCS pool whose allowlist names it. A later VCS pool write that breaks this passes with a `Warning`, the PoolScalingController applies the same predicate at render, the entry leaves the rendered list as suspended with `environmentScoped`, the existing drain and `coveredStores` reach idle pods and claims, and the entry returns when the pool is unscoped. The cost is that a tenant cannot warm a repository that only a scoped pool covers. The alternative, refusing the VCS pool write while an entry depends on it, would block a security narrowing.
-
-Decided by the owner on 2026-11-13, in the answers to the consolidated list of open decisions across the designs:
-
-- **Decision 29, relaxing an environment's placement requirements.** The owner answered "5 ok": removing an environment's `placementRequirements`, or moving one to a weaker value, is a relaxation under the rules of the tenant security settings, with a `justification` and the weakening delay, as [PM-4](../0136-placement/change.md#pm-4-placement-requirements) states under its D18. This replaces revision 33's rule that a `tenant-admin` removes one at once with no delay.
-- **Decision 30, a denied warm-list host on a concurrent pod with slot attribution.** The owner answered "13 ok", settling [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#decisions) decision 41: the session is refused with `ENVIRONMENT_POLICY_NOT_ENFORCEABLE` naming the entry, and this design lists the case under that code ("Pods with several slots", "Failure behaviour").
-- **Decision 31, user credentials on pods with several slots.** The owner answered "4 ok", settling [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) decision 41 and [`0152-user-git-identity`](../0152-user-git-identity/change.md#decisions) decision 52 together: user credential bindings, `lockEgressToHosts`, and a user git identity are allowed on a pool whose status records slot attribution, and refused on a pool whose status records the union fallback and on a recycled or used pod. The owner asked for a spike that measures which runtime classes answer slot attribution, which the egress design owes.
-
-No decision in this document remains open.
 
 ## Evidence for the need
 

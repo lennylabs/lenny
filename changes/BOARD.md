@@ -10,7 +10,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Waiting on decisions | 39 |
 | Blocked | 133 |
-| Landed | 4 |
+| Landed | 5 |
 
 ## M0: Workflow in place (current)
 
@@ -18,10 +18,11 @@ Not yet resolved to steps: 0114.
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0113.S1](0113-records-and-workflow/change.md#0113s1-create-the-records) | Create the records | Landed |  |
-| [0113.S2](0113-records-and-workflow/change.md#0113s2-move-the-designs) | Move the designs | Landed |  |
-| [0113.S3](0113-records-and-workflow/change.md#0113s3-exclude-changes-from-the-gates-and-update-the-agent-instructions) | Exclude `changes/` from the gates, and update the agent instructions | Landed |  |
-| [0113.S4](0113-records-and-workflow/change.md#0113s4-convert-the-moved-designs-proposals-into-steps-and-generate-the-board) | Convert the moved designs' proposals into steps, and generate the board | Landed |  |
+| [0113.S1](0113-records-and-workflow/steps.md#0113s1-create-the-records) | Create the records | Landed |  |
+| [0113.S2](0113-records-and-workflow/steps.md#0113s2-move-the-designs) | Move the designs | Landed |  |
+| [0113.S3](0113-records-and-workflow/steps.md#0113s3-exclude-changes-from-the-gates-and-update-the-agent-instructions) | Exclude `changes/` from the gates, and update the agent instructions | Landed |  |
+| [0113.S4](0113-records-and-workflow/steps.md#0113s4-convert-the-moved-designs-proposals-into-steps-and-generate-the-board) | Convert the moved designs' proposals into steps, and generate the board | Landed |  |
+| [0113.S5](0113-records-and-workflow/steps.md#0113s5-split-each-change-folder-nest-the-detailed-design-and-shorten-the-status-lines) | Split each change folder, nest the detailed design, and shorten the status lines | Landed |  |
 
 ## M1: Specification structure foundation
 
@@ -37,184 +38,184 @@ Not yet resolved to steps: 0117.
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0118.S1](0118-agent-pod-layout/change.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Waiting on decisions | 0118 is `Draft` |
-| [0119.S1](0119-agent-runtimes-only/change.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
-| [0119.S2](0119-agent-runtimes-only/change.md#0119s2-removal-of-service-mode) | Removal of service mode | Waiting on decisions | 0119 is `Draft` |
-| [0120.S1](0120-anthropic-messages-api/change.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
-| [0123.S1](0123-connector-authorization-and-external-memory/change.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
-| [0125.S1](0125-decision-records/change.md#0125s1-specification-changes) | Specification changes | Waiting on decisions | 0125 is `Draft` |
-| [0127.S1](0127-egress-and-git/change.md#0127s1-git-prerequisites) | Git prerequisites | Waiting on decisions | 0127 is `Draft` |
-| [0127.S11](0127-egress-and-git/change.md#0127s11-egress-pki) | Egress PKI | Waiting on decisions | 0127 is `Draft` |
-| [0127.S9](0127-egress-and-git/change.md#0127s9-egress-policy-objects) | Egress policy objects | Waiting on decisions | 0127 is `Draft` |
-| [0128.S1](0128-forensics-evidence-preservation/change.md#0128s1-cases-and-custody) | Cases and custody | Waiting on decisions | 0128 is `Draft` |
-| [0131.S1](0131-incremental-checkpoint/change.md#0131s1-capture-in-passes) | Capture in passes | Waiting on decisions | 0131 is `Draft` |
-| [0131.S2](0131-incremental-checkpoint/change.md#0131s2-storage-format) | Storage format | Waiting on decisions | 0131 is `Draft` |
-| [0131.S3](0131-incremental-checkpoint/change.md#0131s3-checkpoint-stream) | Checkpoint stream | Waiting on decisions | 0131 is `Draft` |
-| [0131.S4](0131-incremental-checkpoint/change.md#0131s4-catalog-reference-closure-and-quota) | Catalog, reference closure, and quota | Waiting on decisions | 0131 is `Draft` |
-| [0131.S5](0131-incremental-checkpoint/change.md#0131s5-restore-derive-download-and-seal) | Restore, derive, download, and seal | Waiting on decisions | 0131 is `Draft` |
-| [0131.S6](0131-incremental-checkpoint/change.md#0131s6-retention-garbage-collection-erasure-and-legal-hold) | Retention, garbage collection, erasure, and legal hold | Waiting on decisions | 0131 is `Draft` |
-| [0131.S7](0131-incremental-checkpoint/change.md#0131s7-size-limits-and-drain-budgets) | Size limits and drain budgets | Waiting on decisions | 0131 is `Draft` |
-| [0131.S9](0131-incremental-checkpoint/change.md#0131s9-removal-of-the-embedded-sigstop-checkpoint-path) | Removal of the embedded SIGSTOP checkpoint path | Waiting on decisions | 0131 is `Draft` |
-| [0132.S1](0132-llm-response-cache-removal/change.md#0132s1-removal-of-the-llm-response-cache) | Removal of the LLM response cache | Waiting on decisions | 0132 is `Draft` |
-| [0133.S1](0133-llm-upstreams-and-cost-budgets/change.md#0133s1-metering-corrections) | Metering corrections | Waiting on decisions | 0133 is `Draft` |
-| [0134.S1](0134-mcp-protocol-upgrade/change.md#0134s1-versions-and-conformance) | Versions and conformance | Waiting on decisions | 0134 is `Draft` |
-| [0135.S1](0135-message-delivery/change.md#0135s1-delivery-core) | Delivery core | Waiting on decisions | 0135 is `Draft` |
-| [0136.S1](0136-placement/change.md#0136s1-removal-of-allowcrosstenantreuse) | Removal of allowCrossTenantReuse | Waiting on decisions | 0136 is `Draft` |
-| [0136.S2](0136-placement/change.md#0136s2-components-priority-classes-and-namespaces) | Components, priority classes, and namespaces | Waiting on decisions | 0136 is `Draft` |
-| [0137.S4](0137-pod-lifecycle-controller/change.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Waiting on decisions | 0137 is `Draft` |
-| [0141.S1](0141-runtime-routing/change.md#0141s1-interceptor-contract-and-scope) | Interceptor contract and scope | Waiting on decisions | 0141 is `Draft` |
-| [0142.S1](0142-security-oversight/change.md#0142s1-security-roles) | Security roles | Waiting on decisions | a part waits on 0127.S8, 0127.S9 |
-| [0142.S4](0142-security-oversight/change.md#0142s4-mirror-to-the-tenant-chain) | Mirror to the tenant chain | Waiting on decisions | a part waits on 0136.S5 |
-| [0142.S8](0142-security-oversight/change.md#0142s8-certificate-windows-and-the-remedy) | Certificate windows and the remedy | Waiting on decisions | 0142 is `Draft` |
-| [0144.S1](0144-session-derive/change.md#0144s1-one-route) | One route | Waiting on decisions | 0144 is `Draft` |
-| [0146.S1](0146-session-lifecycle/change.md#0146s1-states-and-their-rules) | States and their rules | Waiting on decisions | 0146 is `Draft` |
-| [0147.S1](0147-tenant-derived-runtimes/change.md#0147s1-shared-record-boundary) | Shared-record boundary | Waiting on decisions | 0147 is `Draft` |
-| [0147.S2](0147-tenant-derived-runtimes/change.md#0147s2-pods-for-derived-runtimes) | Pods for derived runtimes | Waiting on decisions | 0147 is `Draft` |
-| [0147.S3](0147-tenant-derived-runtimes/change.md#0147s3-setup-command-identity) | Setup command identity | Waiting on decisions | 0147 is `Draft` |
-| [0147.S6](0147-tenant-derived-runtimes/change.md#0147s6-repository-folders) | Repository folders | Waiting on decisions | 0147 is `Draft` |
-| [0149.S2](0149-tenant-scoping-identity/change.md#0149s2-identity-model-and-platform-boundary) | Identity model and platform boundary | Waiting on decisions | 0149 is `Draft` |
-| [0149.S3](0149-tenant-scoping-identity/change.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | a part waits on 0127.S10 |
-| [0149.S4](0149-tenant-scoping-identity/change.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft` |
-| [0150.S1](0150-tenant-security-settings/change.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
-| [0118.S2](0118-agent-pod-layout/change.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
-| [0118.S3](0118-agent-pod-layout/change.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
-| [0118.S4](0118-agent-pod-layout/change.md#0118s4-layout-and-volumes) | Layout and volumes | Blocked | 0118.S1 |
-| [0118.S5](0118-agent-pod-layout/change.md#0118s5-runtime-facing-environment-and-contract) | Runtime-facing environment and contract | Blocked | 0118.S4 |
-| [0118.S6](0118-agent-pod-layout/change.md#0118s6-project-quotas) | Project quotas | Blocked | 0118.S4, 0136.S3 |
-| [0119.S3](0119-agent-runtimes-only/change.md#0119s3-frame-contract) | Frame contract | Blocked | 0119.S2, 0135.S5, 0139.S1 |
-| [0119.S4](0119-agent-runtimes-only/change.md#0119s4-removal-of-the-type-and-executionmode-fields) | Removal of the type and executionMode fields | Blocked | 0119.S1, 0119.S2 |
-| [0120.S2](0120-anthropic-messages-api/change.md#0120s2-messages-adapter-endpoint-and-request-mapping) | Messages adapter endpoint and request mapping | Blocked | 0120.S1 |
-| [0120.S3](0120-anthropic-messages-api/change.md#0120s3-continuity) | Continuity | Blocked | 0120.S2 |
-| [0121.S1](0121-billing-resource-attribution/change.md#0121s1-resource-classes-in-configuration) | Resource classes in configuration | Blocked | 0145.S1, 0118.S4 |
-| [0121.S2](0121-billing-resource-attribution/change.md#0121s2-pod-usage-events) | Pod usage events | Blocked | 0121.S1 |
-| [0121.S3](0121-billing-resource-attribution/change.md#0121s3-pool-idle-usage) | Pool idle usage | Blocked | 0121.S2, 0147.S5, 0140.S1 |
-| [0121.S4](0121-billing-resource-attribution/change.md#0121s4-artifact-storage-usage) | Artifact storage usage | Blocked | 0121.S2, 0131.S4 |
-| [0121.S5](0121-billing-resource-attribution/change.md#0121s5-storage-reconciliation) | Storage reconciliation | Blocked | 0121.S4 |
-| [0121.S6](0121-billing-resource-attribution/change.md#0121s6-escrow-storage-usage) | Escrow storage usage | Blocked | 0121.S4 |
-| [0121.S7](0121-billing-resource-attribution/change.md#0121s7-dedicated-node-capacity) | Dedicated node capacity | Blocked | 0121.S2, 0121.S3, 0136.S3, 0136.S4 |
-| [0122.S1](0122-client-tools/change.md#0122s1-runtime-contract-and-gateway-core) | Runtime contract and gateway core | Blocked | 0120.S1 |
-| [0122.S2](0122-client-tools/change.md#0122s2-messages-api-mapping) | Messages API mapping | Blocked | 0122.S1, 0120.S2, 0120.S3 |
-| [0123.S2](0123-connector-authorization-and-external-memory/change.md#0123s2-memory-removal-and-external-pattern-documentation) | Memory removal and external pattern documentation | Blocked | 0124.S1 |
-| [0124.S1](0124-connector-removal/change.md#0124s1-connector-removal) | Connector removal | Blocked | 0123.S1 |
-| [0124.S2](0124-connector-removal/change.md#0124s2-identity-assertion) | Identity assertion | Blocked | 0127.S2, 0127.S4, 0127.S10, 0151.S3 |
-| [0124.S3](0124-connector-removal/change.md#0124s3-egress-halt-at-suspension) | Egress halt at suspension | Blocked | 0146.S1, 0146.S2, 0127.S2, 0127.S3 |
-| [0124.S4](0124-connector-removal/change.md#0124s4-documentation-of-external-services) | Documentation of external services | Blocked | 0124.S1, 0124.S2 |
-| [0125.S2](0125-decision-records/change.md#0125s2-deletions-renames-comments-tests-registers-and-documentation) | Deletions, renames, comments, tests, registers, and documentation | Blocked | 0125.S1 |
-| [0126.S1](0126-delegation-availability/change.md#0126s1-delegation-availability) | Delegation availability | Blocked | 0149.S3 |
-| [0127.S10](0127-egress-and-git/change.md#0127s10-evidence-ingest) | Evidence ingest | Blocked | 0127.S11 |
-| [0127.S12](0127-egress-and-git/change.md#0127s12-exfiltration-controls) | Exfiltration controls | Blocked | 0127.S2, 0127.S3, 0127.S4 |
-| [0127.S2](0127-egress-and-git/change.md#0127s2-pod-network-agent-and-proxied-egress) | Pod network agent and proxied egress | Blocked | 0127.S1, 0127.S9, 0127.S10, 0127.S11, 0119.S2 |
-| [0127.S3](0127-egress-and-git/change.md#0127s3-pod-git-path) | Pod git path | Blocked | 0127.S1, 0127.S2, 0127.S9 |
-| [0127.S4](0127-egress-and-git/change.md#0127s4-credential-delivery) | Credential delivery | Blocked | 0127.S2, 0127.S3, 0127.S9 |
-| [0127.S5](0127-egress-and-git/change.md#0127s5-git-mirror-and-warm-fill) | Git mirror and warm fill | Blocked | 0127.S2, 0127.S3, 0127.S9 |
-| [0127.S6](0127-egress-and-git/change.md#0127s6-per-tenant-routing-and-replacement) | Per-tenant routing and replacement | Blocked | 0127.S2, 0127.S9 |
-| [0127.S7](0127-egress-and-git/change.md#0127s7-level-1-replacement) | Level 1 replacement | Blocked | 0127.S2, 0127.S3, 0127.S5 |
-| [0127.S8](0127-egress-and-git/change.md#0127s8-tenant-visibility) | Tenant visibility | Blocked | 0127.S4, 0127.S6, 0127.S10 |
-| [0128.S2](0128-forensics-evidence-preservation/change.md#0128s2-quarantine) | Quarantine | Blocked | 0128.S1, 0127.S2, 0127.S7, 0131.S9, 0145.S1, 0145.S3, 0153.S1 |
-| [0128.S3](0128-forensics-evidence-preservation/change.md#0128s3-mirror-store-hold) | Mirror store hold | Blocked | 0128.S1, 0128.S4, 0127.S5 |
-| [0128.S4](0128-forensics-evidence-preservation/change.md#0128s4-security-holds-and-the-retention-class) | Security holds and the retention class | Blocked | 0128.S1, 0127.S10 |
-| [0128.S5](0128-forensics-evidence-preservation/change.md#0128s5-reconciler) | Reconciler | Blocked | 0127.S2, 0127.S3, 0127.S5, 0127.S10, 0128.S2 |
-| [0128.S6](0128-forensics-evidence-preservation/change.md#0128s6-capture-runbook-and-abuse-workflow) | Capture runbook and abuse workflow | Blocked | 0128.S1, 0128.S2, 0128.S3, 0128.S4, 0128.S5, 0127.S8 |
-| [0128.S7](0128-forensics-evidence-preservation/change.md#0128s7-tool-activity) | Tool activity | Blocked | 0127.S9, 0127.S10 |
-| [0128.S8](0128-forensics-evidence-preservation/change.md#0128s8-process-and-file-activity) | Process and file activity | Blocked | 0128.S7, 0127.S11, 0136.S3, 0136.S2 |
-| [0129.S1](0129-github-credential-addon/change.md#0129s1-the-github-and-github-enterprise-kinds) | The github and github-enterprise kinds | Blocked | 0152.S1, 0152.S2, 0151.S7 |
-| [0129.S2](0129-github-credential-addon/change.md#0129s2-pull-request-authoring-on-github) | Pull request authoring on GitHub | Blocked | 0129.S1, 0152.S3, 0151.S2 |
-| [0129.S3](0129-github-credential-addon/change.md#0129s3-the-github-deny-preset) | The github-deny preset | Blocked | 0151.S4, 0152.S3 |
-| [0130.S1](0130-gitlab-credential-addon/change.md#0130s1-the-gitlab-kind) | The gitlab kind | Blocked | 0152.S1, 0152.S2, 0151.S7 |
-| [0130.S2](0130-gitlab-credential-addon/change.md#0130s2-user-authored-merge-requests) | User-authored merge requests | Blocked | 0130.S1, 0152.S3 |
-| [0130.S3](0130-gitlab-credential-addon/change.md#0130s3-the-gitlab-deny-preset) | The gitlab-deny preset | Blocked | 0151.S4, 0152.S3 |
-| [0131.S8](0131-incremental-checkpoint/change.md#0131s8-checkpoint-policy-interval-and-change-tracker) | Checkpoint policy, interval, and change tracker | Blocked | 0131.S1 |
-| [0133.S2](0133-llm-upstreams-and-cost-budgets/change.md#0133s2-upstreams-and-removal) | Upstreams and removal | Blocked | 0133.S1, 0127.S2 |
-| [0133.S3](0133-llm-upstreams-and-cost-budgets/change.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Blocked | 0133.S2 |
-| [0134.S2](0134-mcp-protocol-upgrade/change.md#0134s2-elicitation-tasks-and-playground) | Elicitation, Tasks, and playground | Blocked | 0134.S1 |
-| [0134.S3](0134-mcp-protocol-upgrade/change.md#0134s3-bridge) | Bridge | Blocked | 0134.S1 |
-| [0134.S4](0134-mcp-protocol-upgrade/change.md#0134s4-management-server) | Management server | Blocked | 0134.S1 |
-| [0135.S2](0135-message-delivery/change.md#0135s2-provider-surfaces-and-client-tools) | Provider surfaces and client tools | Blocked | 0135.S1, 0120.S1, 0122.S1 |
-| [0135.S3](0135-message-delivery/change.md#0135s3-reference-runtimes) | Reference runtimes | Blocked | 0135.S1, 0135.S4 |
-| [0135.S4](0135-message-delivery/change.md#0135s4-runtime-reports-during-a-turn) | Runtime reports during a turn | Blocked | 0135.S1, 0131.S1, 0131.S2, 0131.S3, 0131.S4, 0131.S5, 0131.S6, 0131.S7 |
-| [0135.S5](0135-message-delivery/change.md#0135s5-parents-and-children-and-the-names) | Parents and children and the names | Blocked | 0135.S1, 0135.S4, 0126.S1, 0146.S1 |
-| [0136.S3](0136-placement/change.md#0136s3-classes-presets-rendering-and-enforcement) | Classes, presets, rendering, and enforcement | Blocked | 0136.S2 |
-| [0136.S4](0136-placement/change.md#0136s4-node-tenancy-and-single-tenant-pools) | Node tenancy and single-tenant pools | Blocked | 0136.S3, 0147.S5, 0150.S2 |
-| [0136.S5](0136-placement/change.md#0136s5-offerings-and-the-pool-placement-block) | Offerings and the pool placement block | Blocked | 0136.S4, 0141.S1, 0147.S9 |
-| [0136.S6](0136-placement/change.md#0136s6-placement-requirements-and-region-placement) | Placement requirements and region placement | Blocked | 0136.S5, 0141.S1, 0149.S1, 0142.S2 |
-| [0137.S1](0137-pod-lifecycle-controller/change.md#0137s1-specification-changes) | Specification changes | Blocked | 0119.S2, 0118.S3, 0145.S1, 0121.S1 |
-| [0137.S2](0137-pod-lifecycle-controller/change.md#0137s2-kinds-fields-labels-and-identifiers) | Kinds, fields, labels, and identifiers | Blocked | 0137.S1, 0118.S3, 0145.S1, 0140.S1 |
-| [0137.S3](0137-pod-lifecycle-controller/change.md#0137s3-go-type-renames) | Go type renames | Blocked | 0137.S1 |
-| [0138.S1](0138-rest-only-client-api/change.md#0138s1-rest-additions) | REST additions | Blocked | 0135.S5, 0146.S1, 0122.S1, 0120.S1 |
-| [0138.S2](0138-rest-only-client-api/change.md#0138s2-authorization-of-adapter-requests) | Authorization of adapter requests | Blocked | 0149.S2, 0149.S7, 0138.S1 |
-| [0138.S3](0138-rest-only-client-api/change.md#0138s3-webhook-subscriptions) | Webhook subscriptions | Blocked | 0138.S1, 0138.S2 |
-| [0138.S4](0138-rest-only-client-api/change.md#0138s4-lennys-clients-on-rest) | Lenny's clients on REST | Blocked | 0138.S1 |
-| [0138.S5](0138-rest-only-client-api/change.md#0138s5-conformance-kit-chart-and-adapter-repositories) | Conformance kit, chart, and adapter repositories | Blocked | 0138.S1, 0138.S2, 0138.S3 |
-| [0138.S6](0138-rest-only-client-api/change.md#0138s6-removal-of-the-surfaces-that-leave-lenny) | Removal of the surfaces that leave Lenny | Blocked | 0138.S4, 0138.S5 |
-| [0139.S1](0139-runtime-protocol/change.md#0139s1-handshake-capabilities-and-versioning) | Handshake, capabilities, and versioning | Blocked | 0135.S5, 0146.S1, 0145.S1, 0145.S3 |
-| [0139.S2](0139-runtime-protocol/change.md#0139s2-tool-calls-on-frames-and-the-reference-bridge) | Tool calls on frames and the reference bridge | Blocked | 0139.S1, 0145.S1, 0126.S1, 0127.S3 |
-| [0139.S3](0139-runtime-protocol/change.md#0139s3-sdks-executor-and-reference-runtimes) | SDKs, executor, and reference runtimes | Blocked | 0139.S1, 0139.S2 |
-| [0140.S1](0140-runtime-revisions/change.md#0140s1-runtime-revisions) | Runtime revisions | Blocked | 0141.S2, 0139.S1 |
-| [0141.S2](0141-runtime-routing/change.md#0141s2-runtime-routes-and-removal) | Runtime routes and removal | Blocked | 0141.S1 |
-| [0142.S2](0142-security-oversight/change.md#0142s2-tenant-security-record-and-posture) | Tenant security record and posture | Blocked | 0142.S1, 0127.S2, 0127.S4, 0127.S9; a part waits on 0136.S5, 0136.S6, 0151.S1, 0151.S2, 0151.S4, 0151.S5, 0152.S2, 0152.S3 |
-| [0142.S3](0142-security-oversight/change.md#0142s3-per-tenant-siem-destination) | Per-tenant SIEM destination | Blocked | 0142.S1, 0142.S2; a part waits on 0127.S8, 0127.S10, 0127.S11 |
-| [0142.S5](0142-security-oversight/change.md#0142s5-operator-access-approval) | Operator access approval | Blocked | 0142.S1, 0142.S2, 0142.S4, 0142.S6 |
-| [0142.S6](0142-security-oversight/change.md#0142s6-tool-use-approvals) | Tool-use approvals | Blocked | 0142.S1, 0142.S2 |
-| [0142.S7](0142-security-oversight/change.md#0142s7-repository-write-approvals) | Repository write approvals | Blocked | 0142.S6, 0127.S2, 0127.S3 |
-| [0142.S9](0142-security-oversight/change.md#0142s9-lenny-ops-rights) | lenny-ops rights | Blocked | 0142.S8 |
-| [0143.S1](0143-service-account-credentials/change.md#0143s1-subject-namespaces-and-principal-owned-credentials) | Subject namespaces and principal-owned credentials | Blocked | 0151.S1, 0151.S3, 0127.S9, 0149.S6 |
-| [0143.S2](0143-service-account-credentials/change.md#0143s2-client-credentials-source) | Client credentials source | Blocked | 0143.S1, 0127.S2 |
-| [0143.S3](0143-service-account-credentials/change.md#0143s3-issuer-exchange-source) | Issuer exchange source | Blocked | 0143.S2, 0127.S4, 0142.S2 |
-| [0143.S4](0143-service-account-credentials/change.md#0143s4-delivery-for-the-new-sources) | Delivery for the new sources | Blocked | 0143.S2, 0143.S3, 0151.S5, 0127.S4 |
-| [0145.S1](0145-session-isolation/change.md#0145s1-slot-containers) | Slot containers | Blocked | 0118.S1 |
-| [0145.S2](0145-session-isolation/change.md#0145s2-supervisor-file-descriptor-broker) | Supervisor file-descriptor broker | Blocked | 0145.S1 |
-| [0145.S3](0145-session-isolation/change.md#0145s3-asynchronous-worker-and-the-ch-supervise-protocol) | Asynchronous worker and the CH-SUPERVISE protocol | Blocked | 0145.S1 |
-| [0145.S4](0145-session-isolation/change.md#0145s4-resource-mapping-and-detection) | Resource mapping and detection | Blocked | 0145.S1, 0121.S1 |
-| [0145.S5](0145-session-isolation/change.md#0145s5-user-namespaces-on-runc-pools) | User namespaces on runc pools | Blocked | 0145.S1, 0136.S3 |
-| [0145.S6](0145-session-isolation/change.md#0145s6-recycling-after-the-release) | Recycling after the release | Blocked | 0145.S1, 0145.S3 |
-| [0146.S2](0146-session-lifecycle/change.md#0146s2-child-events) | Child events | Blocked | 0146.S1, 0135.S5 |
-| [0147.S10](0147-tenant-derived-runtimes/change.md#0147s10-base-lifecycle) | Base lifecycle | Blocked | 0147.S4, 0147.S5 |
-| [0147.S11](0147-tenant-derived-runtimes/change.md#0147s11-oversight-and-records) | Oversight and records | Blocked | 0147.S4 |
-| [0147.S12](0147-tenant-derived-runtimes/change.md#0147s12-interactions) | Interactions | Blocked | 0147.S4, 0149.S1, 0149.S3, 0141.S1 |
-| [0147.S4](0147-tenant-derived-runtimes/change.md#0147s4-tenant-runtime-records) | Tenant runtime records | Blocked | 0147.S1, 0127.S9, 0149.S3; a part waits on 0147.S3, 0119.S4 |
-| [0147.S5](0147-tenant-derived-runtimes/change.md#0147s5-owned-pools) | Owned pools | Blocked | 0147.S2, 0147.S4, 0127.S9 |
-| [0147.S7](0147-tenant-derived-runtimes/change.md#0147s7-default-git-clones) | Default git clones | Blocked | 0147.S3, 0147.S4, 0147.S5, 0127.S3, 0144.S1 |
-| [0147.S8](0147-tenant-derived-runtimes/change.md#0147s8-shared-assets-and-warm-stores) | Shared assets and warm stores | Blocked | 0147.S7, 0118.S4, 0153.S9 |
-| [0147.S9](0147-tenant-derived-runtimes/change.md#0147s9-capacity-reservation) | Capacity reservation | Blocked | 0147.S5 |
-| [0148.S1](0148-tenant-outbound-connector/change.md#0148s1-gateway-agent-and-identity) | Gateway, agent, and identity | Blocked | 0127.S2, 0127.S6, 0127.S8, 0127.S9, 0127.S10, 0127.S11 |
-| [0148.S2](0148-tenant-outbound-connector/change.md#0148s2-hosts-and-policy) | Hosts and policy | Blocked | 0148.S1, 0127.S4, 0127.S6, 0127.S8, 0127.S9 |
-| [0148.S3](0148-tenant-outbound-connector/change.md#0148s3-operations) | Operations | Blocked | 0148.S1, 0148.S2, 0127.S8 |
-| [0148.S4](0148-tenant-outbound-connector/change.md#0148s4-exclusive-gateway-groups) | Exclusive gateway groups | Blocked | 0148.S1, 0148.S2, 0148.S3 |
-| [0149.S1](0149-tenant-scoping-identity/change.md#0149s1-environment-scoping) | Environment scoping | Blocked | 0127.S1, 0127.S2, 0127.S3, 0127.S4, 0127.S9, 0149.S3; a part waits on 0127.S5, 0127.S6, 0127.S8, 0127.S10 |
-| [0149.S5](0149-tenant-scoping-identity/change.md#0149s5-delegated-environment-administration) | Delegated environment administration | Blocked | 0149.S1 |
-| [0149.S6](0149-tenant-scoping-identity/change.md#0149s6-identity-sources-and-the-verifier-registry) | Identity sources and the verifier registry | Blocked | 0149.S2, 0149.S4 |
-| [0149.S7](0149-tenant-scoping-identity/change.md#0149s7-login-routing) | Login routing | Blocked | 0149.S2, 0149.S6 |
-| [0149.S8](0149-tenant-scoping-identity/change.md#0149s8-scim-server) | SCIM server | Blocked | 0149.S4, 0149.S6 |
-| [0149.S9](0149-tenant-scoping-identity/change.md#0149s9-directory-groups) | Directory groups | Blocked | 0149.S3, 0149.S8 |
-| [0150.S2](0150-tenant-security-settings/change.md#0150s2-settings-model-routes-and-tenant-keys) | Settings model, routes, and tenant keys | Blocked | 0150.S1, 0142.S2, 0142.S4 |
-| [0150.S3](0150-tenant-security-settings/change.md#0150s3-placement-settings-as-operator-requirements) | Placement settings as operator requirements | Blocked | 0150.S2, 0136.S4, 0136.S6 |
-| [0151.S1](0151-user-credential-delivery/change.md#0151s1-credential-types-and-the-registered-source) | Credential types and the registered source | Blocked | 0127.S9 |
-| [0151.S2](0151-user-credential-delivery/change.md#0151s2-the-oauth2link-source-and-account-linking) | The oauth2Link source and account linking | Blocked | 0123.S1, 0151.S1, 0127.S1, 0127.S2, 0127.S9, 0149.S6, 0148.S1, 0148.S2 |
-| [0151.S3](0151-user-credential-delivery/change.md#0151s3-the-usercredential-binding) | The userCredential binding | Blocked | 0151.S1, 0127.S4, 0127.S2, 0149.S4 |
-| [0151.S4](0151-user-credential-delivery/change.md#0151s4-request-rules-and-presets) | Request rules and presets | Blocked | 0151.S3, 0127.S4 |
-| [0151.S5](0151-user-credential-delivery/change.md#0151s5-file-delivery) | File delivery | Blocked | 0151.S3, 0127.S4, 0127.S9 |
-| [0151.S6](0151-user-credential-delivery/change.md#0151s6-leak-scanning) | Leak scanning | Blocked | 0151.S5 |
-| [0151.S7](0151-user-credential-delivery/change.md#0151s7-add-ons) | Add-ons | Blocked | 0151.S2, 0151.S3, 0151.S4 |
-| [0151.S8](0151-user-credential-delivery/change.md#0151s8-link-prompts) | Link prompts | Blocked | 0151.S2, 0151.S3, 0138.S1, 0135.S5, 0124.S1 |
-| [0152.S1](0152-user-git-identity/change.md#0152s1-vcs-link-kinds) | VCS link kinds | Blocked | 0151.S2, 0151.S7, 0127.S1, 0127.S2, 0127.S9 |
-| [0152.S2](0152-user-git-identity/change.md#0152s2-repository-authorization) | Repository authorization | Blocked | 0152.S1, 0151.S3, 0151.S7, 0127.S1, 0127.S2, 0127.S3, 0127.S5, 0149.S4, 0141.S1, 0151.S2 |
-| [0152.S3](0152-user-git-identity/change.md#0152s3-pull-request-authoring) | Pull request authoring | Blocked | 0152.S2, 0151.S2, 0151.S3, 0151.S4, 0151.S7, 0127.S3 |
-| [0152.S4](0152-user-git-identity/change.md#0152s4-independent-approval-check) | Independent approval check | Blocked | 0151.S2, 0127.S3, 0127.S10 |
-| [0153.S1](0153-workspace-materialization/change.md#0153s1-asynchronous-worker-and-setup) | Asynchronous worker and setup | Blocked | 0145.S1, 0145.S3 |
-| [0153.S2](0153-workspace-materialization/change.md#0153s2-lenny-materialize-for-files-and-uploads) | lenny-materialize for files and uploads | Blocked | 0153.S1, 0145.S2, 0118.S4 |
-| [0153.S3](0153-workspace-materialization/change.md#0153s3-archive-extraction-in-the-helper) | Archive extraction in the helper | Blocked | 0153.S2 |
-| [0153.S4](0153-workspace-materialization/change.md#0153s4-git-in-the-helper) | Git in the helper | Blocked | 0153.S2, 0127.S3, 0147.S8, 0131.S1 |
-| [0153.S5](0153-workspace-materialization/change.md#0153s5-mid-session-overlay) | Mid-session overlay | Blocked | 0153.S2, 0131.S1, 0135.S5 |
-| [0153.S6](0153-workspace-materialization/change.md#0153s6-resume-derive-and-snapshotless-rebuild) | Resume, derive, and snapshotless rebuild | Blocked | 0153.S2, 0153.S4, 0131.S5, 0144.S1 |
-| [0153.S7](0153-workspace-materialization/change.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
-| [0153.S8](0153-workspace-materialization/change.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0147.S8, 0140.S1 |
-| [0153.S9](0153-workspace-materialization/change.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
+| [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Waiting on decisions | 0118 is `Draft` |
+| [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
+| [0119.S2](0119-agent-runtimes-only/steps.md#0119s2-removal-of-service-mode) | Removal of service mode | Waiting on decisions | 0119 is `Draft` |
+| [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
+| [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
+| [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Waiting on decisions | 0125 is `Draft` |
+| [0127.S1](0127-egress-and-git/steps.md#0127s1-git-prerequisites) | Git prerequisites | Waiting on decisions | 0127 is `Draft` |
+| [0127.S11](0127-egress-and-git/steps.md#0127s11-egress-pki) | Egress PKI | Waiting on decisions | 0127 is `Draft` |
+| [0127.S9](0127-egress-and-git/steps.md#0127s9-egress-policy-objects) | Egress policy objects | Waiting on decisions | 0127 is `Draft` |
+| [0128.S1](0128-forensics-evidence-preservation/steps.md#0128s1-cases-and-custody) | Cases and custody | Waiting on decisions | 0128 is `Draft` |
+| [0131.S1](0131-incremental-checkpoint/steps.md#0131s1-capture-in-passes) | Capture in passes | Waiting on decisions | 0131 is `Draft` |
+| [0131.S2](0131-incremental-checkpoint/steps.md#0131s2-storage-format) | Storage format | Waiting on decisions | 0131 is `Draft` |
+| [0131.S3](0131-incremental-checkpoint/steps.md#0131s3-checkpoint-stream) | Checkpoint stream | Waiting on decisions | 0131 is `Draft` |
+| [0131.S4](0131-incremental-checkpoint/steps.md#0131s4-catalog-reference-closure-and-quota) | Catalog, reference closure, and quota | Waiting on decisions | 0131 is `Draft` |
+| [0131.S5](0131-incremental-checkpoint/steps.md#0131s5-restore-derive-download-and-seal) | Restore, derive, download, and seal | Waiting on decisions | 0131 is `Draft` |
+| [0131.S6](0131-incremental-checkpoint/steps.md#0131s6-retention-garbage-collection-erasure-and-legal-hold) | Retention, garbage collection, erasure, and legal hold | Waiting on decisions | 0131 is `Draft` |
+| [0131.S7](0131-incremental-checkpoint/steps.md#0131s7-size-limits-and-drain-budgets) | Size limits and drain budgets | Waiting on decisions | 0131 is `Draft` |
+| [0131.S9](0131-incremental-checkpoint/steps.md#0131s9-removal-of-the-embedded-sigstop-checkpoint-path) | Removal of the embedded SIGSTOP checkpoint path | Waiting on decisions | 0131 is `Draft` |
+| [0132.S1](0132-llm-response-cache-removal/steps.md#0132s1-removal-of-the-llm-response-cache) | Removal of the LLM response cache | Waiting on decisions | 0132 is `Draft` |
+| [0133.S1](0133-llm-upstreams-and-cost-budgets/steps.md#0133s1-metering-corrections) | Metering corrections | Waiting on decisions | 0133 is `Draft` |
+| [0134.S1](0134-mcp-protocol-upgrade/steps.md#0134s1-versions-and-conformance) | Versions and conformance | Waiting on decisions | 0134 is `Draft` |
+| [0135.S1](0135-message-delivery/steps.md#0135s1-delivery-core) | Delivery core | Waiting on decisions | 0135 is `Draft` |
+| [0136.S1](0136-placement/steps.md#0136s1-removal-of-allowcrosstenantreuse) | Removal of allowCrossTenantReuse | Waiting on decisions | 0136 is `Draft` |
+| [0136.S2](0136-placement/steps.md#0136s2-components-priority-classes-and-namespaces) | Components, priority classes, and namespaces | Waiting on decisions | 0136 is `Draft` |
+| [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Waiting on decisions | 0137 is `Draft` |
+| [0141.S1](0141-runtime-routing/steps.md#0141s1-interceptor-contract-and-scope) | Interceptor contract and scope | Waiting on decisions | 0141 is `Draft` |
+| [0142.S1](0142-security-oversight/steps.md#0142s1-security-roles) | Security roles | Waiting on decisions | a part waits on 0127.S8, 0127.S9 |
+| [0142.S4](0142-security-oversight/steps.md#0142s4-mirror-to-the-tenant-chain) | Mirror to the tenant chain | Waiting on decisions | a part waits on 0136.S5 |
+| [0142.S8](0142-security-oversight/steps.md#0142s8-certificate-windows-and-the-remedy) | Certificate windows and the remedy | Waiting on decisions | 0142 is `Draft` |
+| [0144.S1](0144-session-derive/steps.md#0144s1-one-route) | One route | Waiting on decisions | 0144 is `Draft` |
+| [0146.S1](0146-session-lifecycle/steps.md#0146s1-states-and-their-rules) | States and their rules | Waiting on decisions | 0146 is `Draft` |
+| [0147.S1](0147-tenant-derived-runtimes/steps.md#0147s1-shared-record-boundary) | Shared-record boundary | Waiting on decisions | 0147 is `Draft` |
+| [0147.S2](0147-tenant-derived-runtimes/steps.md#0147s2-pods-for-derived-runtimes) | Pods for derived runtimes | Waiting on decisions | 0147 is `Draft` |
+| [0147.S3](0147-tenant-derived-runtimes/steps.md#0147s3-setup-command-identity) | Setup command identity | Waiting on decisions | 0147 is `Draft` |
+| [0147.S6](0147-tenant-derived-runtimes/steps.md#0147s6-repository-folders) | Repository folders | Waiting on decisions | 0147 is `Draft` |
+| [0149.S2](0149-tenant-scoping-identity/steps.md#0149s2-identity-model-and-platform-boundary) | Identity model and platform boundary | Waiting on decisions | 0149 is `Draft` |
+| [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | a part waits on 0127.S10 |
+| [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft` |
+| [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
+| [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
+| [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
+| [0118.S4](0118-agent-pod-layout/steps.md#0118s4-layout-and-volumes) | Layout and volumes | Blocked | 0118.S1 |
+| [0118.S5](0118-agent-pod-layout/steps.md#0118s5-runtime-facing-environment-and-contract) | Runtime-facing environment and contract | Blocked | 0118.S4 |
+| [0118.S6](0118-agent-pod-layout/steps.md#0118s6-project-quotas) | Project quotas | Blocked | 0118.S4, 0136.S3 |
+| [0119.S3](0119-agent-runtimes-only/steps.md#0119s3-frame-contract) | Frame contract | Blocked | 0119.S2, 0135.S5, 0139.S1 |
+| [0119.S4](0119-agent-runtimes-only/steps.md#0119s4-removal-of-the-type-and-executionmode-fields) | Removal of the type and executionMode fields | Blocked | 0119.S1, 0119.S2 |
+| [0120.S2](0120-anthropic-messages-api/steps.md#0120s2-messages-adapter-endpoint-and-request-mapping) | Messages adapter endpoint and request mapping | Blocked | 0120.S1 |
+| [0120.S3](0120-anthropic-messages-api/steps.md#0120s3-continuity) | Continuity | Blocked | 0120.S2 |
+| [0121.S1](0121-billing-resource-attribution/steps.md#0121s1-resource-classes-in-configuration) | Resource classes in configuration | Blocked | 0145.S1, 0118.S4 |
+| [0121.S2](0121-billing-resource-attribution/steps.md#0121s2-pod-usage-events) | Pod usage events | Blocked | 0121.S1 |
+| [0121.S3](0121-billing-resource-attribution/steps.md#0121s3-pool-idle-usage) | Pool idle usage | Blocked | 0121.S2, 0147.S5, 0140.S1 |
+| [0121.S4](0121-billing-resource-attribution/steps.md#0121s4-artifact-storage-usage) | Artifact storage usage | Blocked | 0121.S2, 0131.S4 |
+| [0121.S5](0121-billing-resource-attribution/steps.md#0121s5-storage-reconciliation) | Storage reconciliation | Blocked | 0121.S4 |
+| [0121.S6](0121-billing-resource-attribution/steps.md#0121s6-escrow-storage-usage) | Escrow storage usage | Blocked | 0121.S4 |
+| [0121.S7](0121-billing-resource-attribution/steps.md#0121s7-dedicated-node-capacity) | Dedicated node capacity | Blocked | 0121.S2, 0121.S3, 0136.S3, 0136.S4 |
+| [0122.S1](0122-client-tools/steps.md#0122s1-runtime-contract-and-gateway-core) | Runtime contract and gateway core | Blocked | 0120.S1 |
+| [0122.S2](0122-client-tools/steps.md#0122s2-messages-api-mapping) | Messages API mapping | Blocked | 0122.S1, 0120.S2, 0120.S3 |
+| [0123.S2](0123-connector-authorization-and-external-memory/steps.md#0123s2-memory-removal-and-external-pattern-documentation) | Memory removal and external pattern documentation | Blocked | 0124.S1 |
+| [0124.S1](0124-connector-removal/steps.md#0124s1-connector-removal) | Connector removal | Blocked | 0123.S1 |
+| [0124.S2](0124-connector-removal/steps.md#0124s2-identity-assertion) | Identity assertion | Blocked | 0127.S2, 0127.S4, 0127.S10, 0151.S3 |
+| [0124.S3](0124-connector-removal/steps.md#0124s3-egress-halt-at-suspension) | Egress halt at suspension | Blocked | 0146.S1, 0146.S2, 0127.S2, 0127.S3 |
+| [0124.S4](0124-connector-removal/steps.md#0124s4-documentation-of-external-services) | Documentation of external services | Blocked | 0124.S1, 0124.S2 |
+| [0125.S2](0125-decision-records/steps.md#0125s2-deletions-renames-comments-tests-registers-and-documentation) | Deletions, renames, comments, tests, registers, and documentation | Blocked | 0125.S1 |
+| [0126.S1](0126-delegation-availability/steps.md#0126s1-delegation-availability) | Delegation availability | Blocked | 0149.S3 |
+| [0127.S10](0127-egress-and-git/steps.md#0127s10-evidence-ingest) | Evidence ingest | Blocked | 0127.S11 |
+| [0127.S12](0127-egress-and-git/steps.md#0127s12-exfiltration-controls) | Exfiltration controls | Blocked | 0127.S2, 0127.S3, 0127.S4 |
+| [0127.S2](0127-egress-and-git/steps.md#0127s2-pod-network-agent-and-proxied-egress) | Pod network agent and proxied egress | Blocked | 0127.S1, 0127.S9, 0127.S10, 0127.S11, 0119.S2 |
+| [0127.S3](0127-egress-and-git/steps.md#0127s3-pod-git-path) | Pod git path | Blocked | 0127.S1, 0127.S2, 0127.S9 |
+| [0127.S4](0127-egress-and-git/steps.md#0127s4-credential-delivery) | Credential delivery | Blocked | 0127.S2, 0127.S3, 0127.S9 |
+| [0127.S5](0127-egress-and-git/steps.md#0127s5-git-mirror-and-warm-fill) | Git mirror and warm fill | Blocked | 0127.S2, 0127.S3, 0127.S9 |
+| [0127.S6](0127-egress-and-git/steps.md#0127s6-per-tenant-routing-and-replacement) | Per-tenant routing and replacement | Blocked | 0127.S2, 0127.S9 |
+| [0127.S7](0127-egress-and-git/steps.md#0127s7-level-1-replacement) | Level 1 replacement | Blocked | 0127.S2, 0127.S3, 0127.S5 |
+| [0127.S8](0127-egress-and-git/steps.md#0127s8-tenant-visibility) | Tenant visibility | Blocked | 0127.S4, 0127.S6, 0127.S10 |
+| [0128.S2](0128-forensics-evidence-preservation/steps.md#0128s2-quarantine) | Quarantine | Blocked | 0128.S1, 0127.S2, 0127.S7, 0131.S9, 0145.S1, 0145.S3, 0153.S1 |
+| [0128.S3](0128-forensics-evidence-preservation/steps.md#0128s3-mirror-store-hold) | Mirror store hold | Blocked | 0128.S1, 0128.S4, 0127.S5 |
+| [0128.S4](0128-forensics-evidence-preservation/steps.md#0128s4-security-holds-and-the-retention-class) | Security holds and the retention class | Blocked | 0128.S1, 0127.S10 |
+| [0128.S5](0128-forensics-evidence-preservation/steps.md#0128s5-reconciler) | Reconciler | Blocked | 0127.S2, 0127.S3, 0127.S5, 0127.S10, 0128.S2 |
+| [0128.S6](0128-forensics-evidence-preservation/steps.md#0128s6-capture-runbook-and-abuse-workflow) | Capture runbook and abuse workflow | Blocked | 0128.S1, 0128.S2, 0128.S3, 0128.S4, 0128.S5, 0127.S8 |
+| [0128.S7](0128-forensics-evidence-preservation/steps.md#0128s7-tool-activity) | Tool activity | Blocked | 0127.S9, 0127.S10 |
+| [0128.S8](0128-forensics-evidence-preservation/steps.md#0128s8-process-and-file-activity) | Process and file activity | Blocked | 0128.S7, 0127.S11, 0136.S3, 0136.S2 |
+| [0129.S1](0129-github-credential-addon/steps.md#0129s1-the-github-and-github-enterprise-kinds) | The github and github-enterprise kinds | Blocked | 0152.S1, 0152.S2, 0151.S7 |
+| [0129.S2](0129-github-credential-addon/steps.md#0129s2-pull-request-authoring-on-github) | Pull request authoring on GitHub | Blocked | 0129.S1, 0152.S3, 0151.S2 |
+| [0129.S3](0129-github-credential-addon/steps.md#0129s3-the-github-deny-preset) | The github-deny preset | Blocked | 0151.S4, 0152.S3 |
+| [0130.S1](0130-gitlab-credential-addon/steps.md#0130s1-the-gitlab-kind) | The gitlab kind | Blocked | 0152.S1, 0152.S2, 0151.S7 |
+| [0130.S2](0130-gitlab-credential-addon/steps.md#0130s2-user-authored-merge-requests) | User-authored merge requests | Blocked | 0130.S1, 0152.S3 |
+| [0130.S3](0130-gitlab-credential-addon/steps.md#0130s3-the-gitlab-deny-preset) | The gitlab-deny preset | Blocked | 0151.S4, 0152.S3 |
+| [0131.S8](0131-incremental-checkpoint/steps.md#0131s8-checkpoint-policy-interval-and-change-tracker) | Checkpoint policy, interval, and change tracker | Blocked | 0131.S1 |
+| [0133.S2](0133-llm-upstreams-and-cost-budgets/steps.md#0133s2-upstreams-and-removal) | Upstreams and removal | Blocked | 0133.S1, 0127.S2 |
+| [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Blocked | 0133.S2 |
+| [0134.S2](0134-mcp-protocol-upgrade/steps.md#0134s2-elicitation-tasks-and-playground) | Elicitation, Tasks, and playground | Blocked | 0134.S1 |
+| [0134.S3](0134-mcp-protocol-upgrade/steps.md#0134s3-bridge) | Bridge | Blocked | 0134.S1 |
+| [0134.S4](0134-mcp-protocol-upgrade/steps.md#0134s4-management-server) | Management server | Blocked | 0134.S1 |
+| [0135.S2](0135-message-delivery/steps.md#0135s2-provider-surfaces-and-client-tools) | Provider surfaces and client tools | Blocked | 0135.S1, 0120.S1, 0122.S1 |
+| [0135.S3](0135-message-delivery/steps.md#0135s3-reference-runtimes) | Reference runtimes | Blocked | 0135.S1, 0135.S4 |
+| [0135.S4](0135-message-delivery/steps.md#0135s4-runtime-reports-during-a-turn) | Runtime reports during a turn | Blocked | 0135.S1, 0131.S1, 0131.S2, 0131.S3, 0131.S4, 0131.S5, 0131.S6, 0131.S7 |
+| [0135.S5](0135-message-delivery/steps.md#0135s5-parents-and-children-and-the-names) | Parents and children and the names | Blocked | 0135.S1, 0135.S4, 0126.S1, 0146.S1 |
+| [0136.S3](0136-placement/steps.md#0136s3-classes-presets-rendering-and-enforcement) | Classes, presets, rendering, and enforcement | Blocked | 0136.S2 |
+| [0136.S4](0136-placement/steps.md#0136s4-node-tenancy-and-single-tenant-pools) | Node tenancy and single-tenant pools | Blocked | 0136.S3, 0147.S5, 0150.S2 |
+| [0136.S5](0136-placement/steps.md#0136s5-offerings-and-the-pool-placement-block) | Offerings and the pool placement block | Blocked | 0136.S4, 0141.S1, 0147.S9 |
+| [0136.S6](0136-placement/steps.md#0136s6-placement-requirements-and-region-placement) | Placement requirements and region placement | Blocked | 0136.S5, 0141.S1, 0149.S1, 0142.S2 |
+| [0137.S1](0137-pod-lifecycle-controller/steps.md#0137s1-specification-changes) | Specification changes | Blocked | 0119.S2, 0118.S3, 0145.S1, 0121.S1 |
+| [0137.S2](0137-pod-lifecycle-controller/steps.md#0137s2-kinds-fields-labels-and-identifiers) | Kinds, fields, labels, and identifiers | Blocked | 0137.S1, 0118.S3, 0145.S1, 0140.S1 |
+| [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Blocked | 0137.S1 |
+| [0138.S1](0138-rest-only-client-api/steps.md#0138s1-rest-additions) | REST additions | Blocked | 0135.S5, 0146.S1, 0122.S1, 0120.S1 |
+| [0138.S2](0138-rest-only-client-api/steps.md#0138s2-authorization-of-adapter-requests) | Authorization of adapter requests | Blocked | 0149.S2, 0149.S7, 0138.S1 |
+| [0138.S3](0138-rest-only-client-api/steps.md#0138s3-webhook-subscriptions) | Webhook subscriptions | Blocked | 0138.S1, 0138.S2 |
+| [0138.S4](0138-rest-only-client-api/steps.md#0138s4-lennys-clients-on-rest) | Lenny's clients on REST | Blocked | 0138.S1 |
+| [0138.S5](0138-rest-only-client-api/steps.md#0138s5-conformance-kit-chart-and-adapter-repositories) | Conformance kit, chart, and adapter repositories | Blocked | 0138.S1, 0138.S2, 0138.S3 |
+| [0138.S6](0138-rest-only-client-api/steps.md#0138s6-removal-of-the-surfaces-that-leave-lenny) | Removal of the surfaces that leave Lenny | Blocked | 0138.S4, 0138.S5 |
+| [0139.S1](0139-runtime-protocol/steps.md#0139s1-handshake-capabilities-and-versioning) | Handshake, capabilities, and versioning | Blocked | 0135.S5, 0146.S1, 0145.S1, 0145.S3 |
+| [0139.S2](0139-runtime-protocol/steps.md#0139s2-tool-calls-on-frames-and-the-reference-bridge) | Tool calls on frames and the reference bridge | Blocked | 0139.S1, 0145.S1, 0126.S1, 0127.S3 |
+| [0139.S3](0139-runtime-protocol/steps.md#0139s3-sdks-executor-and-reference-runtimes) | SDKs, executor, and reference runtimes | Blocked | 0139.S1, 0139.S2 |
+| [0140.S1](0140-runtime-revisions/steps.md#0140s1-runtime-revisions) | Runtime revisions | Blocked | 0141.S2, 0139.S1 |
+| [0141.S2](0141-runtime-routing/steps.md#0141s2-runtime-routes-and-removal) | Runtime routes and removal | Blocked | 0141.S1 |
+| [0142.S2](0142-security-oversight/steps.md#0142s2-tenant-security-record-and-posture) | Tenant security record and posture | Blocked | 0142.S1, 0127.S2, 0127.S4, 0127.S9; a part waits on 0136.S5, 0136.S6, 0151.S1, 0151.S2, 0151.S4, 0151.S5, 0152.S2, 0152.S3 |
+| [0142.S3](0142-security-oversight/steps.md#0142s3-per-tenant-siem-destination) | Per-tenant SIEM destination | Blocked | 0142.S1, 0142.S2; a part waits on 0127.S8, 0127.S10, 0127.S11 |
+| [0142.S5](0142-security-oversight/steps.md#0142s5-operator-access-approval) | Operator access approval | Blocked | 0142.S1, 0142.S2, 0142.S4, 0142.S6 |
+| [0142.S6](0142-security-oversight/steps.md#0142s6-tool-use-approvals) | Tool-use approvals | Blocked | 0142.S1, 0142.S2 |
+| [0142.S7](0142-security-oversight/steps.md#0142s7-repository-write-approvals) | Repository write approvals | Blocked | 0142.S6, 0127.S2, 0127.S3 |
+| [0142.S9](0142-security-oversight/steps.md#0142s9-lenny-ops-rights) | lenny-ops rights | Blocked | 0142.S8 |
+| [0143.S1](0143-service-account-credentials/steps.md#0143s1-subject-namespaces-and-principal-owned-credentials) | Subject namespaces and principal-owned credentials | Blocked | 0151.S1, 0151.S3, 0127.S9, 0149.S6 |
+| [0143.S2](0143-service-account-credentials/steps.md#0143s2-client-credentials-source) | Client credentials source | Blocked | 0143.S1, 0127.S2 |
+| [0143.S3](0143-service-account-credentials/steps.md#0143s3-issuer-exchange-source) | Issuer exchange source | Blocked | 0143.S2, 0127.S4, 0142.S2 |
+| [0143.S4](0143-service-account-credentials/steps.md#0143s4-delivery-for-the-new-sources) | Delivery for the new sources | Blocked | 0143.S2, 0143.S3, 0151.S5, 0127.S4 |
+| [0145.S1](0145-session-isolation/steps.md#0145s1-slot-containers) | Slot containers | Blocked | 0118.S1 |
+| [0145.S2](0145-session-isolation/steps.md#0145s2-supervisor-file-descriptor-broker) | Supervisor file-descriptor broker | Blocked | 0145.S1 |
+| [0145.S3](0145-session-isolation/steps.md#0145s3-asynchronous-worker-and-the-ch-supervise-protocol) | Asynchronous worker and the CH-SUPERVISE protocol | Blocked | 0145.S1 |
+| [0145.S4](0145-session-isolation/steps.md#0145s4-resource-mapping-and-detection) | Resource mapping and detection | Blocked | 0145.S1, 0121.S1 |
+| [0145.S5](0145-session-isolation/steps.md#0145s5-user-namespaces-on-runc-pools) | User namespaces on runc pools | Blocked | 0145.S1, 0136.S3 |
+| [0145.S6](0145-session-isolation/steps.md#0145s6-recycling-after-the-release) | Recycling after the release | Blocked | 0145.S1, 0145.S3 |
+| [0146.S2](0146-session-lifecycle/steps.md#0146s2-child-events) | Child events | Blocked | 0146.S1, 0135.S5 |
+| [0147.S10](0147-tenant-derived-runtimes/steps.md#0147s10-base-lifecycle) | Base lifecycle | Blocked | 0147.S4, 0147.S5 |
+| [0147.S11](0147-tenant-derived-runtimes/steps.md#0147s11-oversight-and-records) | Oversight and records | Blocked | 0147.S4 |
+| [0147.S12](0147-tenant-derived-runtimes/steps.md#0147s12-interactions) | Interactions | Blocked | 0147.S4, 0149.S1, 0149.S3, 0141.S1 |
+| [0147.S4](0147-tenant-derived-runtimes/steps.md#0147s4-tenant-runtime-records) | Tenant runtime records | Blocked | 0147.S1, 0127.S9, 0149.S3; a part waits on 0147.S3, 0119.S4 |
+| [0147.S5](0147-tenant-derived-runtimes/steps.md#0147s5-owned-pools) | Owned pools | Blocked | 0147.S2, 0147.S4, 0127.S9 |
+| [0147.S7](0147-tenant-derived-runtimes/steps.md#0147s7-default-git-clones) | Default git clones | Blocked | 0147.S3, 0147.S4, 0147.S5, 0127.S3, 0144.S1 |
+| [0147.S8](0147-tenant-derived-runtimes/steps.md#0147s8-shared-assets-and-warm-stores) | Shared assets and warm stores | Blocked | 0147.S7, 0118.S4, 0153.S9 |
+| [0147.S9](0147-tenant-derived-runtimes/steps.md#0147s9-capacity-reservation) | Capacity reservation | Blocked | 0147.S5 |
+| [0148.S1](0148-tenant-outbound-connector/steps.md#0148s1-gateway-agent-and-identity) | Gateway, agent, and identity | Blocked | 0127.S2, 0127.S6, 0127.S8, 0127.S9, 0127.S10, 0127.S11 |
+| [0148.S2](0148-tenant-outbound-connector/steps.md#0148s2-hosts-and-policy) | Hosts and policy | Blocked | 0148.S1, 0127.S4, 0127.S6, 0127.S8, 0127.S9 |
+| [0148.S3](0148-tenant-outbound-connector/steps.md#0148s3-operations) | Operations | Blocked | 0148.S1, 0148.S2, 0127.S8 |
+| [0148.S4](0148-tenant-outbound-connector/steps.md#0148s4-exclusive-gateway-groups) | Exclusive gateway groups | Blocked | 0148.S1, 0148.S2, 0148.S3 |
+| [0149.S1](0149-tenant-scoping-identity/steps.md#0149s1-environment-scoping) | Environment scoping | Blocked | 0127.S1, 0127.S2, 0127.S3, 0127.S4, 0127.S9, 0149.S3; a part waits on 0127.S5, 0127.S6, 0127.S8, 0127.S10 |
+| [0149.S5](0149-tenant-scoping-identity/steps.md#0149s5-delegated-environment-administration) | Delegated environment administration | Blocked | 0149.S1 |
+| [0149.S6](0149-tenant-scoping-identity/steps.md#0149s6-identity-sources-and-the-verifier-registry) | Identity sources and the verifier registry | Blocked | 0149.S2, 0149.S4 |
+| [0149.S7](0149-tenant-scoping-identity/steps.md#0149s7-login-routing) | Login routing | Blocked | 0149.S2, 0149.S6 |
+| [0149.S8](0149-tenant-scoping-identity/steps.md#0149s8-scim-server) | SCIM server | Blocked | 0149.S4, 0149.S6 |
+| [0149.S9](0149-tenant-scoping-identity/steps.md#0149s9-directory-groups) | Directory groups | Blocked | 0149.S3, 0149.S8 |
+| [0150.S2](0150-tenant-security-settings/steps.md#0150s2-settings-model-routes-and-tenant-keys) | Settings model, routes, and tenant keys | Blocked | 0150.S1, 0142.S2, 0142.S4 |
+| [0150.S3](0150-tenant-security-settings/steps.md#0150s3-placement-settings-as-operator-requirements) | Placement settings as operator requirements | Blocked | 0150.S2, 0136.S4, 0136.S6 |
+| [0151.S1](0151-user-credential-delivery/steps.md#0151s1-credential-types-and-the-registered-source) | Credential types and the registered source | Blocked | 0127.S9 |
+| [0151.S2](0151-user-credential-delivery/steps.md#0151s2-the-oauth2link-source-and-account-linking) | The oauth2Link source and account linking | Blocked | 0123.S1, 0151.S1, 0127.S1, 0127.S2, 0127.S9, 0149.S6, 0148.S1, 0148.S2 |
+| [0151.S3](0151-user-credential-delivery/steps.md#0151s3-the-usercredential-binding) | The userCredential binding | Blocked | 0151.S1, 0127.S4, 0127.S2, 0149.S4 |
+| [0151.S4](0151-user-credential-delivery/steps.md#0151s4-request-rules-and-presets) | Request rules and presets | Blocked | 0151.S3, 0127.S4 |
+| [0151.S5](0151-user-credential-delivery/steps.md#0151s5-file-delivery) | File delivery | Blocked | 0151.S3, 0127.S4, 0127.S9 |
+| [0151.S6](0151-user-credential-delivery/steps.md#0151s6-leak-scanning) | Leak scanning | Blocked | 0151.S5 |
+| [0151.S7](0151-user-credential-delivery/steps.md#0151s7-add-ons) | Add-ons | Blocked | 0151.S2, 0151.S3, 0151.S4 |
+| [0151.S8](0151-user-credential-delivery/steps.md#0151s8-link-prompts) | Link prompts | Blocked | 0151.S2, 0151.S3, 0138.S1, 0135.S5, 0124.S1 |
+| [0152.S1](0152-user-git-identity/steps.md#0152s1-vcs-link-kinds) | VCS link kinds | Blocked | 0151.S2, 0151.S7, 0127.S1, 0127.S2, 0127.S9 |
+| [0152.S2](0152-user-git-identity/steps.md#0152s2-repository-authorization) | Repository authorization | Blocked | 0152.S1, 0151.S3, 0151.S7, 0127.S1, 0127.S2, 0127.S3, 0127.S5, 0149.S4, 0141.S1, 0151.S2 |
+| [0152.S3](0152-user-git-identity/steps.md#0152s3-pull-request-authoring) | Pull request authoring | Blocked | 0152.S2, 0151.S2, 0151.S3, 0151.S4, 0151.S7, 0127.S3 |
+| [0152.S4](0152-user-git-identity/steps.md#0152s4-independent-approval-check) | Independent approval check | Blocked | 0151.S2, 0127.S3, 0127.S10 |
+| [0153.S1](0153-workspace-materialization/steps.md#0153s1-asynchronous-worker-and-setup) | Asynchronous worker and setup | Blocked | 0145.S1, 0145.S3 |
+| [0153.S2](0153-workspace-materialization/steps.md#0153s2-lenny-materialize-for-files-and-uploads) | lenny-materialize for files and uploads | Blocked | 0153.S1, 0145.S2, 0118.S4 |
+| [0153.S3](0153-workspace-materialization/steps.md#0153s3-archive-extraction-in-the-helper) | Archive extraction in the helper | Blocked | 0153.S2 |
+| [0153.S4](0153-workspace-materialization/steps.md#0153s4-git-in-the-helper) | Git in the helper | Blocked | 0153.S2, 0127.S3, 0147.S8, 0131.S1 |
+| [0153.S5](0153-workspace-materialization/steps.md#0153s5-mid-session-overlay) | Mid-session overlay | Blocked | 0153.S2, 0131.S1, 0135.S5 |
+| [0153.S6](0153-workspace-materialization/steps.md#0153s6-resume-derive-and-snapshotless-rebuild) | Resume, derive, and snapshotless rebuild | Blocked | 0153.S2, 0153.S4, 0131.S5, 0144.S1 |
+| [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
+| [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0147.S8, 0140.S1 |
+| [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 
 ## Changes
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0113](0113-records-and-workflow/change.md) | Records and workflow | `In progress` | 4 of 4 | 0 |
+| [0113](0113-records-and-workflow/change.md) | Records and workflow | `In progress` | 5 of 5 | 0 |
 | [0114](0114-helpers/change.md) | Helpers | `Draft` | 0 of 0 | 0 |
 | [0115](0115-spec-structure/change.md) | Specification structure | `Draft` | 0 of 0 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |

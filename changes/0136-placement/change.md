@@ -1,15 +1,13 @@
 # Placement
 
-Status: `Draft`, revision 13, 2026-11-16, with no independent review yet. Nothing here is built or staged. Revision 13 applies the kind and field names of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which the owner accepted on 2026-11-16 as its O3, and changes no rule. Revision 12 updates the pointer in "Sources" to revision 2 of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md), which proposes Lenny's own names for the pod lifecycle kinds and adds no pod-level scheduling condition, and changes no rule. Revision 11 points the part of the research report under `evidence/placement-design/` that covers `kubernetes-sigs/agent-sandbox` to [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md), which owns Lenny's relation to that project, and changes no rule. Revision 10 records the owner's answer of 2026-11-15 on residency across regions (D24): one Lenny deployment per residency region, with a cluster stretched across regions treated as compute locality only, which PM-7 **Residency across regions.** states. Revision 9 applies the owner's answer of 2026-11-15, "3: ok" (D23): `lenny-quota-agent-node-label` admits the quota agent's status annotation `lenny.dev/quota-agent-status` beside its label and nothing else, and the continuous check in `lenny-ops` exports the annotation's figures and raises `QuotaAgentUnavailable`. Revision 8 records the owner's confirmation ("2. ok") of the admission rule of D22 together with the quota agent's `seccomp-install` init container, and changes no rule. It records the owner's placement decisions of 2026-11-12 and resolves the gaps that a placement inventory of the same day found. Revision 7 records the owner's confirmation on 2026-11-14 of `lenny-quota-agent`'s placement and rights ("Ok on the rest"), and applies the owner's answer "add the two hardenning steps to lenny-quota-agent": `POD_NAMED_AGENT_ONLY` refuses a quota agent pod whose agent container lacks the `Localhost` seccomp profile `lenny/quota-agent.json`, or whose init container mounts a host path other than the kubelet's `seccomp/lenny` directory (D22). Revision 6 places `lenny-quota-agent`, the node agent of the owner's adoption of automatic project quotas on 2026-11-14 ([`0118-agent-pod-layout`, "PL-10"](../0118-agent-pod-layout/change.md#pl-10-project-quotas)), as a named node agent in `lenny-node-agents` on every agent class, admits its pod template there, limits its node writes to its own node's label with an admission policy, and has the continuous check report each pool's quota coverage (D21). Revision 5 applies the owner's answers of 2026-11-13 to the consolidated list of open decisions: removing an environment's `placementRequirements` is a relaxation under the rules of the tenant security settings, with a justification and the weakening delay (D18), and a tenant's `security-admin` setting `allowReusedPod` and the chart value names `kata.emptyDirMode` and `kata.volumeGid` are confirmed as written (D19, D20). Revision 4 gives each placement code one HTTP status: a derived-runtime write answers `403` for `PLACEMENT_OFFERING_NOT_GRANTED` and `REGION_CONSTRAINT_VIOLATED`, as the post-chain point does. Revision 3 applies the cross-design review of 2026-11-13: the removal of the non-agent runtimes ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md)), the billing of dedicated capacity as `node.dedicated_usage`, the Pod Security levels of the named node agents' namespaces, the `fsGroup` rule for Kata block-plain pools, the name `lenny-proxied-dns`, the development relaxation of required anti-affinity, and a "Documentation" section. Revision 2 applies the owner's answers of the same day to O1 to O8 and the consistency pass of 2026-11-12: the per-tenant node tenancy moves into the tenant security settings of [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md), and the `allowReusedPod` requirement joins the placement requirements. It reads against every design under `designs/` as implemented, as the owner asked (decision D2 of [`0145-session-isolation`](../0145-session-isolation/change.md#decisions)), in particular [`0145-session-isolation`](../0145-session-isolation/change.md), [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) revision 16, [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 93, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md), [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md), [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 78, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 22, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) revision 22, and [`0142-security-oversight`](../0142-security-oversight/change.md), [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) revision 10, and [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label PM-n, requirements carry the label PMR-n, and open decisions carry the label O-n. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 13, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
 | Tag | Meaning |
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree, the specification, or a design on 2026-11-12. |
-| **[measured]** | Measured in the spikes of 2026-11-11 or 2026-11-12, which [`0145-session-isolation`, "Validation record"](../0145-session-isolation/change.md#validation-record) and [`0127-egress-and-git`, "Validation record"](../0127-egress-and-git/change.md#validation-record) record. |
+| **[measured]** | Measured in the spikes of 2026-11-11 or 2026-11-12, which [`0145-session-isolation`, "Validation record"](../0145-session-isolation/steps.md#validation-record) and [`0127-egress-and-git`, "Validation record"](../0127-egress-and-git/steps.md#validation-record) record. |
 | **[external]** | Stated by an upstream or vendor source that another design read and lists under its "Sources". |
 | **[design]** | What this design requires. Nothing implements it. |
 | **[inference]** | Reasoned from the sources above and not checked. |
@@ -26,7 +24,7 @@ Lenny decides where its pods run through rules scattered across the specificatio
 - A pool's region is a label that routing compares with a tenant's `dataResidencyRegion` for delegation only ([§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces), **Data residency**). No post-chain check compares them, and no pod builder turns the region into a node constraint **[source]**.
 - Several system components have no stated namespace, replica count, disruption budget, spread, or priority, and no Lenny pod carries a `PriorityClass` **[source]**.
 
-The owner decided on 2026-11-12 that placement gets one design, that system pods never share nodes with agent pods except in the single-node local stack, that each pool gets a platform-admin `nodePlacement`, that runc pools require user namespaces, and that placement constraints are configurable ("Decisions"). The owner asked to "make placement rules configurable".
+The owner decided on 2026-11-12 that placement gets one design, that system pods never share nodes with agent pods except in the single-node local stack, that each pool gets a platform-admin `nodePlacement`, that runc pools require user namespaces, and that placement constraints are configurable ("Decisions" in `decisions.md`). The owner asked to "make placement rules configurable".
 
 ## Scope
 
@@ -73,6 +71,7 @@ The owner decided on 2026-11-12 that placement gets one design, that system pods
 | Named node agent | A Lenny workload that runs on agent nodes by design, with tolerations the admission webhook allows by name: `lenny-activity-collector`, `lenny-quota-agent`, and forensics capture Jobs ("PM-5"). |
 | Node check | The placement checks over nodes and pods that preflight runs at install and upgrade and `lenny-ops` runs continuously ("PM-6"). |
 | Separation matrix | The table that states, per preset, which members and tenants can share a node ("PM-1"). |
+| Labels | Parts of the design carry the label PM-n, requirements carry the label PMR-n, and open decisions carry the label O-n. |
 
 ### Terms from other designs and the platform
 
@@ -110,8 +109,8 @@ The owner decided on 2026-11-12 that placement gets one design, that system pods
 | SI-1, SI-11, SIR-17, and SI O8 | [`0145-session-isolation`](../0145-session-isolation/change.md) | SI-1 is the slot layout and stated the 1.27 Kubernetes floor. SI-11 is the hardening with user namespaces. SIR-17 stated that no requirement depends on user namespaces, and O8 made them a pool opt-in; the owner's decision of 2026-11-12 turned O8 into a requirement on runc pools. This design states that requirement for the `standard` class as a default the operator may turn off (O6). |
 | TSS-1, TSS-2, TSS-6, and TSS O7 | [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#tss-6-placement-settings) | The tenant security settings, the built-in templates `standard`, `confidential`, and `regulated`, and the placement settings that enter a session's effective requirements with `source: operator`. TSS O7 makes `placement.nodeTenancy: dedicated` mean this design's dedicated tenancy. |
 | PL-1 and PLR-10 | [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-1-pod-blueprint) | The pod blueprint and its pod-wide settings, including the rule that a pod sets no `fsGroup` outside Kata block-plain pools. |
-| EG-2, EG-9, EG-11, and egress groups | [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) and ["Defaults, replacement, and augmentation"](../0127-egress-and-git/change.md#defaults-replacement-and-augmentation) | EG-2 is the pod network agent and the `proxied` profile. EG-9 is the egress policy objects. EG-11 is the egress PKI. An egress group is an additional `lenny-egress` Deployment whose traffic leaves from a dedicated address. |
-| OC-1 | [`0148-tenant-outbound-connector`, "Proposals"](../0148-tenant-outbound-connector/change.md#steps) | The outbound gateway, its namespace, and its deployment rules. |
+| EG-2, EG-9, EG-11, and egress groups | [`0127-egress-and-git`, "Steps"](../0127-egress-and-git/steps.md#steps) and ["Defaults, replacement, and augmentation"](../0127-egress-and-git/change.md#defaults-replacement-and-augmentation) | EG-2 is the pod network agent and the `proxied` profile. EG-9 is the egress policy objects. EG-11 is the egress PKI. An egress group is an additional `lenny-egress` Deployment whose traffic leaves from a dedicated address. |
+| OC-1 | [`0148-tenant-outbound-connector`, "Proposals"](../0148-tenant-outbound-connector/steps.md#steps) | The outbound gateway, its namespace, and its deployment rules. |
 | FE-1, FE-5, and FE-6 | [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md#fe-1-quarantine) | Quarantine, the capture runbook with its node-side capture Jobs in `lenny-forensics`, and agent activity streams with the `lenny-activity-collector` DaemonSet. |
 | DR-5 and DR-10 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools) | Owned pools with their template copy, and capacity reservation with `reservedPlacement` and the `lenny-reserved` `PriorityClass`. |
 | RT-2, RT-4, and RT-5 | [`0141-runtime-routing`](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) | The interceptor contract and its post-chain point, runtime routes, and in-cluster interceptors in `gateway.interceptorNamespaces`. |
@@ -146,113 +145,6 @@ Control is split. The operator owns the classes and their nodes, the relaxations
                           a dedicated tenant's nodes sit inside an agent class and add
                           lenny.dev/tenant=<id> as a label and a NoSchedule taint
 ```
-
-## Decisions
-
-The owner's decisions of 2026-11-12, worded as the decision brief records them.
-
-| # | Decision | Applied in |
-| :-- | :-- | :-- |
-| D1 | **Dedicated design.** Placement gets its own design, `changes/0136-placement/change.md`; all other designs and the spec point to it. The owner asked to "make placement rules configurable". | This document, "Instructions for reviewers of other designs" |
-| D2 | **No system pods on agent nodes.** System pods must not share nodes with runtimes (agent pods), except in `lenny up` (single-node). | PM-1, PM-5, PM-6 |
-| D3 | **Per-pool node placement.** Pools get a per-pool `nodePlacement` (node selector plus tolerations), set by the platform admin only. | PM-3 |
-| D4 | **runc.** runc pools require user namespaces (`hostUsers: false`). runc is not dev/test-only; the profile choice is the operator's. | PM-1, PM-5, PM-6 |
-| D5 | **Constraints are overridable.** The coordinator proposed operator-defined node classes as groups of members plus presets; the owner asked for "better alternatives" to per-pair relaxation and was given this model. It is recorded as the recommended form, for owner confirmation (O1). Classes are groups of members, with one member per class by default. Mixing needs `acknowledgeMixedClass: true` and produces a preflight warning, a standing alert in production mode, an audit record, and `sessionIsolationLevel` reporting the class co-members. The presets are `strict` (default), `compact`, and `single-node` (lenny up only). runc requires user namespaces, with `preferred` as the acknowledged relaxation. Per-pair `allowSharing` lists, per-pool relaxation, and presets alone were rejected. D13 later replaced the `preferred` relaxation with an explicit `disabled` setting. | PM-1, "Alternatives rejected" |
-| D6 | **Cross-tenant node sharing: approved as proposed.** Node tenancy is `shared` (default) or `dedicated`, with a per-class default and a per-tenant `dedicated` set by the operator. Dedicated nodes carry the label `lenny.dev/tenant=<id>` and a matching taint; the tenant's pods select and tolerate them, and nobody else's pods can land there. Warm pods are created before their tenant is known, so a dedicated tenant may only use single-tenant pools; admission refuses a dedicated tenant on a shared pool. No soft anti-affinity across tenants, because it scales badly and guarantees nothing. Dedicated capacity must be charged to the tenant, which is an open item for the billing design. | PM-2, "Instructions for reviewers of other designs" |
-| D7 | **Placement offerings: approved, with operator control via the API.** An offering is a named option (for example `shared`, `dedicated`, `fast-nvme`) backed by a `nodePlacement` and a node-tenancy mode. The operator can create, update, or delete offerings, grant or revoke an offering per tenant, and mark offerings `default`; default offerings are available to all tenants without a grant. Excluding a specific tenant from a default offering is an open question (O2). Every pool references one offering. Routing adds a check next to `pool_tenant_access`: the pool's offering must be granted to the session's tenant, explicitly or as a default. An owned pool may pick only among its tenant's granted offerings. | PM-3 |
-| D8 | **Placement requirements are filters only (confirmed by the owner).** Settings on the tenant or environment: `requireNodeSeparation`, `nodeTenancy: dedicated`, `allowSharedPod: false`, the region, plus the existing per-session `minIsolationProfile`. They never create nodes and never change pods or pools. They narrow pool selection at the post-chain point; with no match, the session is refused with an error naming the unmet requirement, never downgraded and never provisioned. Tenants never write node selectors or tolerations. `sessionIsolationLevel` reports node tenancy, class co-members, and shared pod. | PM-4 |
-| D9 | **Operator and tenant split.** The operator owns classes and their nodes, relaxations, node tenancy, offerings and grants, `nodePlacement`, regions mapped to nodes, runtime isolation floors and pool grants, and priority classes, replicas, and PDBs. The tenant can only narrow, through requirements and the choice of offering on owned pools. | High-level design, PM-3, PM-4 |
-| D10 | **T4 (coordinator's instruction of 2026-11-12).** The owner plans to retire T4 as a concept, with each control it bundles becoming its own setting under a pending `0150-tenant-security-settings`. This design does not tie placement to T4: it removes the T4 node label and taint and the `lenny-t4-node-isolation` webhook, and it expresses dedicated nodes only as the generic `nodeTenancy: dedicated`. | PM-2, PM-4, "Specification changes" |
-| D11 | **Open decisions O1, O2, O4, O5, and O7 (2026-11-12).** Option (a) for each. On O5 the owner asked what a preset is and then took "presets as defined". | PM-1, PM-3, PM-4 |
-| D12 | **O3 (2026-11-12).** "Drop `lenny-agents-kata`, and reproduce the per-class aggregate quota with a per-class PriorityClass and a ResourceQuota scoped by PriorityClass." The owner's condition was that node classes give the same result; the coordinator's answer was that the separation result is the same except for the per-profile aggregate quota, which the per-class priority class reproduces. | PM-8, PM-9 |
-| D13 | **O6 (2026-11-12).** "User namespaces on by default for the standard class. The operator may disable them, which logs a loud warning and renders without them. There is no `preferred` mode. The adapter checks uid_map before READY." | PM-1, PM-5, PM-6 |
-| D14 | **O8 (2026-11-12).** The `regulated` template of the tenant security settings sets dedicated node tenancy. | PM-2, [`0150-tenant-security-settings`, "TSS-2"](../0150-tenant-security-settings/change.md#tss-2-templates) |
-| D15 | **Consistency pass (2026-11-12).** The per-tenant `nodeTenancy` lives in `securitySettings.placement.nodeTenancy` of the tenant security settings, and `allowReusedPod: false` joins the placement requirements, as that design asks. | PM-2, PM-4 |
-| D16 | **Agent runtimes only (2026-11-13).** "Remove non-agent runtimes altogether, in a new design: `type: mcp` and service mode (`executionMode: service`)", which [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) records with the removal of service-mode tenant-affinity routing. Every pool runs session-mode agent pods, so no requirement or report carries a service-mode case. | PM-4, "Current state", "Removals" |
-| D17 | **Billing of dedicated capacity (2026-11-13).** The owner settled the billing design's O1, in the words "BR O1: node.dedicated_usage": a periodic `node.dedicated_usage` event reports each tenant's dedicated node capacity, which closes D6's open item. | PM-2, "Billing" |
-| D18 | **Relaxing an environment's requirements (2026-11-13).** The owner answered "5 ok" to the consolidated list of open decisions: removing an environment's `placementRequirements` is a relaxation under the rules of the tenant security settings, with a justification and the weakening delay. This replaces revision 3's rule that an environment's removal applies at once and takes no delay. | PM-4 |
-| D19 | **`allowReusedPod` set by the tenant's security admin (2026-11-13).** The owner answered "15 ok": a tenant's `security-admin` may set `allowReusedPod: false` as a tenant requirement in the tenant security record, as revision 3 states. | PM-4 |
-| D20 | **Chart value names (2026-11-13).** The owner answered "18–21 ok", confirming as written the defaults and names of the consolidated list, among them `kata.emptyDirMode` and `kata.volumeGid`, which PM-6's `fsGroup` row reads. | PM-6 |
-| D21 | **Project quotas (2026-11-14).** The owner answered "Adopt the automatic project-quota mode": a node agent that holds `CAP_SYS_ADMIN` and a `hostPath` of the kubelet's directory, and that runs without `privileged: true`, detects project quotas on each node, labels the node, and gives slot volumes a quota slightly below their `sizeLimit`. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-10-project-quotas) owns the mechanism as its D25. This design places the agent, `lenny-quota-agent`, as a named node agent in `lenny-node-agents` on every node of every agent class, admits it, and limits its node writes. Those placement choices were the orchestrator's, and the owner confirmed them, with the agent's rights, on 2026-11-14 ("Ok on the rest"). | PM-5, PM-6, PM-8, PM-9 |
-| D22 | **Quota agent hardening (2026-11-14).** The owner answered "add the two hardenning steps to lenny-quota-agent": a custom `Localhost` seccomp profile shipped with the chart, and a Landlock self-restriction at start-up. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-10-project-quotas) owns both as its D28. This design's admission refuses a quota agent pod without the profile; the orchestrator chose that rule, and the owner confirmed it with the profile's installation by the `seccomp-install` init container on 2026-11-14 ("2. ok"). | PM-6, PM-9 |
-| D23 | **Quota agent status (2026-11-15).** The owner answered "3: ok": `lenny-quota-agent` serves no port and writes its figures as the annotation `lenny.dev/quota-agent-status` on its own node, which the admission policy allows beside the `lenny.dev/project-quota` label and nothing else, and `lenny-ops` exports them as metrics and raises `QuotaAgentUnavailable`. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-10-project-quotas) owns the agent's side as its D29. This design's `lenny-quota-agent-node-label` admits the annotation, with a value of at most 1 KiB, and its continuous check reads it. | PM-6 |
-| D24 | **Residency across regions (2026-11-15).** The owner asked how region placement works and whether a Kubernetes cluster can span regions, and answered "ok, add to the placement design" to the research summary and the recommendation that residency needs one Lenny deployment per region. PM-7 **Residency across regions.** states the finding, the deployment model, and what a stretched cluster does and does not give. | PM-7 |
-
-The related decisions of the same day that this design builds on: runc pools require `hostUsers: false` so each pod gets its own host UID range ([`0145-session-isolation`](../0145-session-isolation/change.md), cross-pod kernel UID sharing, option a); runc is described factually and `allowStandardIsolation` stays; the pod layout moved to [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md); Kata block-plain pools may set an `fsGroup` with a dedicated GID; and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) replaces `workspaceTier` with explicit tenant settings, including the tenant's node tenancy.
-
-## Open decisions
-
-The owner settled every open decision on 2026-11-12 (D11 to D14). Each entry keeps its options and reasoning as a record and states the option taken.
-
-**O1. Confirmation of classes and presets as the override form.**
-
-- (a) Node classes as groups of members, filled by a preset or written as `custom`, with `acknowledgeMixedClass` on any class with more than one member.
-- (b) Fixed classes with per-pair `allowSharing` lists.
-- (c) Per-pool relaxation flags.
-- (d) Presets alone.
-
-**Recommendation: (a).** Under (b) a second list has to stay consistent with the classes, and two statements of one fact drift. Under (c) one pool's flag weakens every pool scheduled on the same nodes, which that pool's owner did not choose. Under (d) an operator whose node pools do not match a preset has no way to say so.
-
-**Settled (2026-11-12): (a)** (D11).
-
-**O2. Excluding a tenant from a default offering.**
-
-- (a) No exclusion. An operator who must keep one tenant off an offering makes it non-default and grants it to the other tenants.
-- (b) Per-tenant exclusion rows on a default offering, with `POST /v1/admin/placement-offerings/{name}/tenant-exclusions` and its list and delete routes.
-- (c) A tenant-record field listing the default offerings the tenant may not use.
-
-**Recommendation: (a)** for the first version. One rule, explicit grants plus defaults, decides availability. The case that motivates exclusion most, a dedicated tenant that must not land on shared nodes, is covered by that tenant's implied `nodeTenancy: dedicated` requirement ("PM-4"). (b) can be added later without changing the stored grant rows.
-
-**Settled (2026-11-12): (a)** (D11).
-
-**O3. Dropping `lenny-agents-kata`.**
-
-- (a) Drop it. Every agent pod runs in one agent namespace, and node classes do the separation the namespace was meant to give.
-- (b) Keep it, and add a pool-to-namespace mapping so microvm pools render into it.
-
-**Recommendation: (a).** The tree already runs one agent namespace: the PoolScalingController takes a single `--agent-namespace`, and no pool-to-namespace mapping exists ([DR-10](../0147-tenant-derived-runtimes/change.md#dr-10-capacity-reservation), "Who can turn it on") **[source]**. A namespace boundary separates API objects, quotas, and network policies, and a node class separates kernels and hardware. Kata pods already run under the same network policies as the other agent pods. (b) would add the mapping, a second quota, and a second set of policies with no separation that classes do not give.
-
-**Settled (2026-11-12): (a)** (D12). The quota the second namespace gave is kept per node class: each agent class gets its own `PriorityClass`, and an optional `ResourceQuota` in `lenny-agents` scoped to that `PriorityClass` caps the class's aggregate requests ("PM-8"). The admission webhook refuses an agent pod whose priority class is not its class's ("PM-6"), so a pod cannot leave its class's quota.
-
-**O4. Per-class tenancy defaults.**
-
-- (a) Every agent class defaults to `shared`. The operator sets `dedicated` per class or per tenant, and the standard class reports its shared tenancy in preflight and in `sessionIsolationLevel`.
-- (b) The `standard` class defaults to `dedicated`, so every runc pool is single-tenant unless the operator sets `shared`.
-
-**Recommendation: (a).** runc pods on one node share a kernel across the tenants scheduled there unless the operator dedicates nodes per tenant, and user namespaces bound what an escape lands as without closing kernel exploits. Under (b) every runc pool becomes single-tenant by default, which removes shared warm pools for that profile and turns a profile choice into a capacity plan. (a) keeps the profile choice the operator's (D4) and makes the fact visible: preflight in production mode warns when a `standard` pool with shared tenancy is granted to more than one tenant, and a tenant that cares sets `nodeTenancy: dedicated` as a requirement.
-
-**Settled (2026-11-12): (a)** (D11).
-
-**O5. Whether `compact` exists as a preset.**
-
-- (a) Keep `compact`: all agent members in one class, the system class apart.
-- (b) Drop it, and have an operator who wants it write the classes under `custom`.
-
-**Recommendation: (a).** Two node pools, one for the platform and one for agents, is the arrangement most small clusters start from. The preset still requires `acknowledgeMixedClass: true`, so it relaxes nothing silently.
-
-**Settled (2026-11-12): (a)**, presets as defined (D11).
-
-**O6. Meaning of `userNamespaces: preferred` on the standard class.**
-
-- (a) The controller renders `hostUsers: false` on a standard-class pod when the latest node check found every node of the class meeting the user namespace prerequisites, and leaves `hostUsers` unset otherwise. The choice is made when the pod is created and recorded on its `AgentPod`, and `sessionIsolationLevel.userNamespaces` reports it.
-- (b) The controller always renders `hostUsers: false`, and `preferred` only lowers the node check's failures to warnings.
-
-**Recommendation: (a).** Under (b) a pod on a node without the prerequisites fails to start, or on a cluster where the feature is off, the API server drops the field with no error and the pod runs in the node's user namespace: [`0127-egress-and-git`](../0127-egress-and-git/change.md#git-mirror-lenny-git-mirror) measured that on Kubernetes 1.31.4 **[measured]**. (a) is deterministic per pod and reports what each session got.
-
-**Settled (2026-11-12): neither option (D13).** The owner's model replaces both. User namespaces are on by default for the standard class (`userNamespaces: enabled`), and every standard-member pod renders `hostUsers: false`. The operator may set `userNamespaces: disabled`, which renders pods without `hostUsers` and logs a loud warning: a preflight warning, a warning in the controller and gateway logs at start and on each configuration change, the standing alert `PlacementUserNamespacesDisabled` in production mode, the relaxation in `platform.placement_config_changed`, and `sessionIsolationLevel.userNamespaces: false` on every affected session. There is no `preferred` mode and no per-pod choice. The adapter's `uid_map` check before READY stays, so an enabled class cannot degrade silently on a cluster whose API server drops `hostUsers` ("PM-6").
-
-**O7. Where a tenant's own requirements are stored.**
-
-- (a) In the tenant security record of [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture), as a `placement` section, so that a weakening takes the record's delay and its audit.
-- (b) In a new field of the tenant record, written by `tenant-admin`, with no delay.
-
-**Recommendation: (a).** SO-2 states that one record per tenant holds every customer-set security constraint. A requirement is such a constraint, and its removal by a stolen `tenant-admin` credential is the case the weakening delay exists for.
-
-**Settled (2026-11-12): (a)** (D11).
-
-**O8. T4 placement.** This decision moved to [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md), which decides whether its templates require `nodeTenancy: dedicated` for the tenants that today set `workspaceTier: T4`. This design offers the setting and its enforcement ("PM-2" and "PM-4") and keeps no T4-specific rule.
-
-**Settled (2026-11-12) (D14).** The `regulated` template sets `placement.nodeTenancy: dedicated`, and `standard` and `confidential` set `shared` ("TSS-2").
 
 ## Requirements
 
@@ -351,9 +243,11 @@ What these properties do not cover:
 | 11 | `reservedPlacement` refuses Kata and T4 placement and allows a runc template to place reserved pods on another profile's nodes. | The reserved overlay is bounded by the class (PM-3). |
 | 12 | Renames of the shared-pod settings and billing against `netagent`. | Noted only. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) records the renames, and the billing design owns billing. |
 
-## PM-1 Node classes and presets
+## Detailed design
 
-### Configuration
+### PM-1 Node classes and presets
+
+#### Configuration
 
 Classes and presets are Helm values under `placement`, because they describe nodes the operator provisions, which is the bootstrap plane of [§15.1](../../spec/15_external-api-surface.md#151-rest-api) **[design]**:
 
@@ -392,7 +286,7 @@ placement:
 ```
 
 - **Members.** Each of `system`, `standard`, `sandboxed`, and `microvm` belongs to exactly one class. A member with no class is refused when a pool uses it, and a profile no pool uses may stay unassigned only under `custom`.
-- **Node selector.** The labels a node of the class carries. Every agent pod of the class requires them through node affinity, and every system pod selects the system class's labels. A class may name existing node-pool labels and taints, such as a managed gVisor node pool's own label and taint, so an operator maps classes onto node pools it already has. Which provider labels are stable for this is under "Validation owed".
+- **Node selector.** The labels a node of the class carries. Every agent pod of the class requires them through node affinity, and every system pod selects the system class's labels. A class may name existing node-pool labels and taints, such as a managed gVisor node pool's own label and taint, so an operator maps classes onto node pools it already has. Which provider labels are stable for this is under "Validation owed" in `steps.md`.
 - **Taint.** The taint that keeps other pods off the class's nodes. Every agent class must carry one, because the taint is what keeps system pods and third-party pods without a matching toleration away. The system class carries none by default, so cluster add-ons that tolerate no Lenny taint, such as an ingress controller, can share system nodes. An operator may set one.
 - **Tenancy.** The class's default node tenancy ("PM-2"). The system class is always `shared`.
 - **User namespaces.** On the class that contains the `standard` member only. `enabled`, the default, renders `hostUsers: false` on every standard-member pod, and the node check fails on a node without the prerequisites. `disabled` renders standard-member pods without `hostUsers` and logs a loud warning (O6). There is no other value.
@@ -411,7 +305,7 @@ Hard rules that no acknowledgment relaxes **[design]**:
 - Every agent class has a taint, except under `single-node`.
 - No two classes share a node selector, so no node can match two classes.
 
-### Mixing and its visibility
+#### Mixing and its visibility
 
 Putting several members in one class lets their pods share nodes. Under a mixed class with `standard` and `sandboxed`, a kernel exploit from a runc pod reaches the gVisor sandboxes on the same node. The class's `acknowledgeMixedClass: true` records that the operator accepts it, and the platform reports it in four places **[design]**:
 
@@ -420,7 +314,7 @@ Putting several members in one class lets their pods share nodes. Under a mixed 
 - **Audit.** The chart renders the resolved classes into the ConfigMap `lenny-placement-config`. The gateway reads it at start and on change, and writes `platform.placement_config_changed` with the classes, members, tenancy defaults, and user namespace settings, and the same event with `relaxations` listed while any relaxation is active. A mixed class and disabled user namespaces are relaxations. This follows the pattern of the elicitation integrity floor in [§17.2](../../spec/17_deployment-topology.md#172-namespace-layout).
 - **Session.** `sessionIsolationLevel.nodeClassMembers` lists the members of the session pod's class ("PM-4").
 
-### User namespaces on the standard class
+#### User namespaces on the standard class
 
 runc shares the host kernel and gives no protection against kernel exploits. Its blast radius is bounded by the node class, which keeps other members off its nodes, and by user namespaces, which land an escape as an unmapped, unprivileged host UID. The choice of profile stays the operator's, and `allowStandardIsolation` stays as its explicit opt-in (D4).
 
@@ -439,11 +333,11 @@ The deployment-wide Kubernetes floor of [§17.6](../../spec/17_deployment-topolo
 
 **No silent degradation.** On a cluster where the feature is off, the API server drops `hostUsers` with no error, and the pod runs in the node's user namespace: [`0127-egress-and-git`](../0127-egress-and-git/change.md#git-mirror-lenny-git-mirror) measured that on Kubernetes 1.31.4 **[measured]**. The adapter therefore reads `/proc/self/uid_map` on every pod rendered with `hostUsers: false` and refuses to report READY when UID 0 maps to node UID 0 ("PM-6"), so an enabled class never runs without its user namespaces.
 
-### The single-node preset
+#### The single-node preset
 
-`lenny up` and dev mode run every pod on one node. The development profile of the Embedded Mode chart sets `placement.preset: single-node`. The preset renders no class selector and no class taint. The user namespace setting applies as on any preset: with `enabled`, standard-member pods render `hostUsers: false`, and a missing prerequisite is a preflight warning that names `userNamespaces: disabled` as the setting for a node that cannot meet it. The embedded k3s pin moves from `v1.31.4` to a 1.33 or later release, because on 1.31.4 the API server drops `hostUsers` with no error **[measured]**. Whether rootless k3s offers user namespaces to pods is under "Validation owed".
+`lenny up` and dev mode run every pod on one node. The development profile of the Embedded Mode chart sets `placement.preset: single-node`. The preset renders no class selector and no class taint. The user namespace setting applies as on any preset: with `enabled`, standard-member pods render `hostUsers: false`, and a missing prerequisite is a preflight warning that names `userNamespaces: disabled` as the setting for a node that cannot meet it. The embedded k3s pin moves from `v1.31.4` to a 1.33 or later release, because on 1.31.4 the API server drops `hostUsers` with no error **[measured]**. Whether rootless k3s offers user namespaces to pods is under "Validation owed" in `steps.md`.
 
-### Separation matrix
+#### Separation matrix
 
 | Pair on one node | `strict` | `compact` | `single-node` |
 | :-- | :-- | :-- | :-- |
@@ -458,9 +352,9 @@ The deployment-wide Kubernetes floor of [§17.6](../../spec/17_deployment-topolo
 
 Under `custom`, each pair follows from the class memberships the operator wrote, and every mixed pair is acknowledged on its class.
 
-## PM-2 Node tenancy
+### PM-2 Node tenancy
 
-### Shared and dedicated
+#### Shared and dedicated
 
 A pod set's node tenancy is `dedicated` when its pool's class default is `dedicated` or the pool's offering is `dedicated`, and `shared` otherwise **[design]**. The operator sets tenancy in two places:
 
@@ -471,7 +365,7 @@ A dedicated pod renders a required node affinity on `lenny.dev/tenant In [<tenan
 
 No soft anti-affinity between tenants is rendered (D6). A preferred anti-affinity term per tenant pair grows with the number of tenants and does not prevent co-location when the scheduler finds no other node.
 
-### Single-tenant pools
+#### Single-tenant pools
 
 Warm pods are created before a session claims them, and on a shared platform pool their tenant is unknown until the claim. A node chosen at creation cannot be one tenant's dedicated node if the tenant is not yet known. Dedicated tenancy therefore requires that the pool fixes its tenant before pods exist **[design]**:
 
@@ -480,7 +374,7 @@ Warm pods are created before a session claims them, and on a shared platform poo
 
 A pinned pod of a shared pool does not qualify. It was placed before its pin, on a node any tenant could use.
 
-### Admission and grant rules
+#### Admission and grant rules
 
 | Write | Rule | Refusal |
 | :-- | :-- | :-- |
@@ -490,13 +384,13 @@ A pinned pod of a shared pool does not qualify. It was placed before its pin, on
 | `PUT /v1/admin/tenants/{id}/security-settings` or `POST /v1/admin/tenants/{id}/security-settings/apply-template` setting `placement.nodeTenancy: dedicated` | Refused while the tenant holds access to a pool with shared tenancy, or when the tenant identifier is not a valid label value. The `details.conflicts` entries name those pools, and `?dryRun=true` lists them without writing. A `POST /v1/admin/tenants` that applies such a template to a new tenant holds no pool access yet and passes. | `422 CONFIGURATION_CONFLICT` |
 | Session creation | A session whose effective requirements include `nodeTenancy: dedicated` runs only on a pod set with dedicated tenancy ("PM-4"). | `422 PLACEMENT_REQUIREMENT_UNMET` |
 
-### Billing
+#### Billing
 
 Dedicated nodes cost the operator capacity whether or not the tenant's pods fill them, and D6 charges that capacity to the tenant. [`0121-billing-resource-attribution`, "Dedicated node capacity (BR-7)"](../0121-billing-resource-attribution/change.md#dedicated-node-capacity-br-7) carries it as the periodic event `node.dedicated_usage`, settled by the owner on 2026-11-13 as that design's decision 17 (D17): per tenant, node class, and usage window, the node minutes and the allocatable CPU, memory, and ephemeral storage of the Ready nodes that carry `lenny.dev/tenant=<tenantId>` and an agent class's label, sampled by the WarmPoolController. A node with a tenant label and no agent class label is reported by the continuous check ("PM-6") rather than billed. The pods on those nodes are still billed through the session and idle events, and the operator's billing system decides which figure to price.
 
-## PM-3 Placement offerings and per-pool `nodePlacement`
+### PM-3 Placement offerings and per-pool `nodePlacement`
 
-### The resource
+#### The resource
 
 An offering is a platform-global admin resource, stored in Postgres like runtimes and pools **[design]**:
 
@@ -515,7 +409,7 @@ nodePlacement:
 
 The chart's bootstrap seed creates one offering, `shared`, with every agent class in `classes`, `tenancy: shared`, `default: true`, and an empty `nodePlacement`. A pool created with no offering references the offering that the Helm value `placement.defaultPoolOffering` names, `shared` by default.
 
-### Admin API
+#### Admin API
 
 The endpoints follow the conventions of [§15.1](../../spec/15_external-api-surface.md#151-rest-api): `{name}` as the path identifier, `If-Match` on updates, and tenant-access sub-resources shaped as those of runtimes and pools **[design]**.
 
@@ -533,7 +427,7 @@ The endpoints follow the conventions of [§15.1](../../spec/15_external-api-surf
 
 Each write emits an admin audit event (`placement.offering_created`, `placement.offering_updated`, `placement.offering_deleted`, `placement.offering_granted`, and `placement.offering_revoked`), and [SO-4a](../0142-security-oversight/change.md#so-4a-mirror-to-the-tenant-chain) mirrors a grant or revocation to the tenant's chain because it is a platform admin's write that changes what the tenant may use. A `default: true` flag set or cleared is an update, and its audit event lists `default` among the changed fields. Excluding one tenant from a default offering is O2.
 
-### Pools reference one offering
+#### Pools reference one offering
 
 A pool gains a `placement` block, written by `platform-admin` on platform pools and copied from the template on owned pools **[design]**:
 
@@ -550,19 +444,19 @@ placement:
 
 The pool's class follows from its `isolationProfile`: the class whose members include that profile. Pool admission refuses a pool whose class is not in its offering's `classes` with `422 INVALID_POOL_CONFIGURATION` and `details.rule: offering_class_mismatch`.
 
-### Routing check
+#### Routing check
 
 At the post-chain point, next to the pool access check of [DR-5](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools), the gateway checks that the final pool's offering is a default offering or is granted to the session's tenant. A failure refuses with `403 PLACEMENT_OFFERING_NOT_GRANTED` and `details.pool` and `details.offering`, and names the last modifier in `details.interceptor_ref` when the chain changed the pool. The check runs on every creation kind **[design]**. A grant of pool access to a tenant that may not use the pool's offering succeeds with a `Warning` header naming the offering, so the operator sees the gap before a session meets it.
 
-### Owned pools choose among granted offerings
+#### Owned pools choose among granted offerings
 
 An owned pool's offering is a new row in the template copy table of [DR-5](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools): the template supplies the default, and the tenant may choose any offering its tenant may use whose `classes` include the template's class, through `PUT /v1/admin/derived-runtimes/{name}`. A choice outside that set answers `403 PLACEMENT_OFFERING_NOT_GRANTED`, the same status the code answers at the post-chain point, so each code has one HTTP status **[design]**. The tenant writes the offering's name only, never a selector or a toleration.
 
-### Reserved overlay
+#### Reserved overlay
 
 `reservedPlacement` of DR-10 becomes `placement.reservedOverlay`: a `nodePlacement` applied to the pool's reserved pods alone, written on the template by `platform-admin`, copied to owned pools, and never written by a tenant. It is validated as an offering's `nodePlacement` is, so it cannot leave the pool's class or name another tenant's nodes. On a pool with dedicated tenancy, the reserved pods also carry the tenant affinity and toleration ("PM-5"), so they stay on the tenant's own nodes. This replaces DR-10's specific refusals of the T4 selector and the Kata toleration, covers what the T4 refusal protected ([`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md), inventory row I25), and closes the case in which a runc template placed reserved pods on gVisor nodes **[design]**.
 
-### Validation
+#### Validation
 
 The gateway validates every offering, every pool's `placement` block, and every reserved overlay, and `lenny-pool-config-validator` repeats the checks on the rendered `PodSet`, from the same class configuration that the chart passes it **[design]**. A `nodePlacement`:
 
@@ -572,9 +466,9 @@ The gateway validates every offering, every pool's `placement` block, and every 
 
 The platform renders the class selector and toleration and the tenant selector and toleration itself ("PM-5"), so no written `nodePlacement` ever needs them.
 
-## PM-4 Placement requirements
+### PM-4 Placement requirements
 
-### The settings
+#### The settings
 
 | Setting | Meaning | Who sets it |
 | :-- | :-- | :-- |
@@ -587,7 +481,7 @@ The platform renders the class selector and toleration and the tenant selector a
 
 A tenant's own requirements live in the tenant security record of SO-2 as a `placement` section (O7), written by the tenant's security team, and an environment's live in a new `placementRequirements` field of the environment record **[design]**. A tenant's `security-admin` may set every requirement of the table that names the tenant, `allowReusedPod: false` included. The operator's settings live in the tenant security settings, which the operator writes and the tenant's roles only read ([`0150-tenant-security-settings`, "TSS-6"](../0150-tenant-security-settings/change.md#tss-6-placement-settings)). `dataResidencyRegion` stays where it is. An environment's requirements add to its tenant's and cannot remove one. Under SO-2, adding a requirement applies at once and removing one is a weakening that takes the record's delay, and the tenant security settings apply the same rule to the operator's relaxations. An environment's `placementRequirements` are environment data that a `tenant-admin` writes through `PUT /v1/admin/environments/{name}`. Adding a requirement there applies at once. Removing one, or moving one to a weaker value, is a relaxation under the rules of the tenant security settings (D18) **[design]**: the write needs a non-empty `justification` in its body, or it is refused with `400 SECURITY_SETTING_JUSTIFICATION_REQUIRED` whose `details.relaxed` names the relaxed requirements; the relaxation is recorded in the tenant's audit chain; and it takes effect after the tenant security record's `weakeningDelaySeconds`, held as a pending version of the environment's `placementRequirements` that the pending-version applier activates at its `effectiveAt` ([`0150-tenant-security-settings`, "TSS-1"](../0150-tenant-security-settings/change.md#order-and-validation)). The tenant's `security-admin` or a `platform-admin` can cancel the pending relaxation through `POST /v1/admin/environments/{name}/placement-requirements/pending/{version}/cancel`. A write that adds some requirements and removes others applies the additions at once and holds the removals. The audit events are `environment.placement_relaxation_requested` (critical), `environment.placement_relaxed` (critical), and `environment.placement_relaxation_cancelled` (warning), each naming the environment and the requirements. A stolen `tenant-admin` credential therefore cannot remove an environment requirement before the tenant's security team can see and cancel the change. A requirement that must hold for every environment of the tenant belongs in the tenant security record.
 
-### Effective requirements
+#### Effective requirements
 
 A session's effective requirements are the union of **[design]**:
 
@@ -599,7 +493,7 @@ A session's effective requirements are the union of **[design]**:
 
 A derived session is a new root, so its requirements are its own tenant's and environment's, and SD-1's target checks already compare isolation with the source.
 
-### Where they apply
+#### Where they apply
 
 Requirements narrow pool selection. When the gateway resolves the final pool after the `PreRoute` chain, it considers only pools that meet every effective requirement. At the post-chain point it checks the final pool again, together with the pod set of the chosen revision, because a pod set's offering is fixed at the pool and the check reads both. A pool the request or an interceptor named explicitly is checked and never replaced by another pool **[design]**. The order with the existing checks is:
 
@@ -608,7 +502,7 @@ Requirements narrow pool selection. When the gateway resolves the final pool aft
 3. The post-chain checks of [RT-2](../0141-runtime-routing/change.md#post-chain-point) run on the final row, including this design's row.
 4. The claim takes a pod from the chosen pod set, whose placement all its pods share.
 
-### Errors
+#### Errors
 
 | Code | Category | HTTP | When |
 | :-- | :-- | :-- | :-- |
@@ -619,7 +513,7 @@ Requirements narrow pool selection. When the gateway resolves the final pool aft
 
 A refusal never falls back to another runtime, never downgrades the session, and provisions nothing. A session that meets no pool stays refused until the operator creates a pool that meets it.
 
-### What `sessionIsolationLevel` reports
+#### What `sessionIsolationLevel` reports
 
 The object of [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow) gains these fields, populated from the pool and pod set at creation and unchanged for the session's life **[design]**:
 
@@ -629,14 +523,14 @@ The object of [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow) gains t
 | `nodeClassMembers` | `array` of `string` | The members of that class. More than one entry means the class is mixed. |
 | `nodeTenancy` | `string` | `shared` or `dedicated`. |
 | `sharedPod` | `boolean` | `true` when the pod can serve other sessions at the same time: `maxConcurrentSessionsPerPod` above 1. |
-| `perSlotScopes` | `boolean` | `true` when `netagent` applies each session's own egress scope, environment, and credentials to its slot, which holds on a one-session pod and on a pod with several slots whose pool's runtime class answers slot attribution. `false` on a pod with several slots whose pool's status records slot attribution as unavailable, where `netagent` keeps the union over the pod's sessions ([`0127-egress-and-git`, decision 60](../0127-egress-and-git/change.md#decisions), settled 2026-11-13). The egress design owns the field, and this table lists it beside `sharedPod` so that one table states what the object reports about the pod. |
+| `perSlotScopes` | `boolean` | `true` when `netagent` applies each session's own egress scope, environment, and credentials to its slot, which holds on a one-session pod and on a pod with several slots whose pool's runtime class answers slot attribution. `false` on a pod with several slots whose pool's status records slot attribution as unavailable, where `netagent` keeps the union over the pod's sessions ([`0127-egress-and-git`, decision 60](../0127-egress-and-git/decisions.md#decisions), settled 2026-11-13). The egress design owns the field, and this table lists it beside `sharedPod` so that one table states what the object reports about the pod. |
 | `userNamespaces` | `boolean` | `true` when the pod runs with `hostUsers: false`. |
 | `placementOffering` | `string` | The pool's offering. |
 | `region` | `string` | The pool's region, absent when the pool has none. |
 
-## PM-5 Rendering
+### PM-5 Rendering
 
-### Agent pods
+#### Agent pods
 
 The PoolScalingController writes the pool's resolved placement into each `PodSet.spec`, and the WarmPoolController copies it into each pod at creation, under the CRD field ownership of [§4.6.3](../../spec/04_system-components.md#463-crd-field-ownership-and-write-boundaries), as it does for topology spread today. For each pod set **[design]**:
 
@@ -650,7 +544,7 @@ The PoolScalingController writes the pool's resolved placement into each `PodSet
 
 When the chart creates `RuntimeClass` objects (`runtimeClasses.create: true`), it renders each class's node selector and taint toleration into the `scheduling` field of the `RuntimeClass` of each member, including `gvisor-monitored`. This is control 1 of today's §17.2 Kata rule, restated for every class. When the operator manages the objects, preflight checks that their `scheduling` fields do not contradict the class.
 
-### System components
+#### System components
 
 Helm renders the system class's node selector into every Lenny system workload, the system class's toleration when the class has a taint, the component's priority class ("PM-8"), and any `placement.componentPlacement.<component>` overlay, which is validated to stay within the system class **[design]**. The workloads are:
 
@@ -665,7 +559,7 @@ Helm renders the system class's node selector into every Lenny system workload, 
 
 An egress group that leaves the cluster from a dedicated node pool uses `componentPlacement` to select that node pool within the system class, as [`0127-egress-and-git`](../0127-egress-and-git/change.md#defaults-replacement-and-augmentation) allows.
 
-### Named node agents
+#### Named node agents
 
 These Lenny workloads run on agent nodes by design. The admission webhook allows their tolerations by namespace and component label, and nothing else **[design]**:
 
@@ -675,19 +569,19 @@ These Lenny workloads run on agent nodes by design. The admission webhook allows
 | `lenny-quota-agent` ([PL-10](../0118-agent-pod-layout/change.md#pl-10-project-quotas)) | DaemonSet in `lenny-node-agents`, rendered while `quotaAgent.mode` is `auto` | Every node of every agent class | Each agent class's taint and `lenny.dev/tenant` with `operator: Exists`, so it also runs on dedicated nodes |
 | Forensics capture Job (FE-5) | Job in `lenny-forensics` | The target pod's node, by `nodeName` | The taints of that node |
 
-The collector's namespace is new ("PM-9"). The collector mounts a Unix socket from the node, and a `hostPath` volume is outside the Restricted and Baseline Pod Security levels, so its namespace enforces `privileged` and `lenny-pod-security` narrows it to the pod templates of its named node agents, and `lenny-forensics` takes the same form for the capture Job, as [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) states. "Validation owed" lists the check. `lenny-quota-agent` mounts the kubelet's `pods` directory read-write and holds `CAP_SYS_ADMIN` as UID 0, both outside the Baseline level, so it needs the same namespace; it is not privileged, and [PL-10](../0118-agent-pod-layout/change.md#pl-10-project-quotas) states its container, its rights, its seccomp profile and Landlock restriction, and why its mount reaches every pod's volumes on its node. Its init container `seccomp-install` writes the agent's seccomp profile through a `hostPath` of the kubelet's `seccomp/lenny` directory. Its tolerations put it on dedicated nodes of every tenant, as the collector's put the collector on dedicated gVisor nodes, because a dedicated node's slot volumes need their quotas too.
+The collector's namespace is new ("PM-9"). The collector mounts a Unix socket from the node, and a `hostPath` volume is outside the Restricted and Baseline Pod Security levels, so its namespace enforces `privileged` and `lenny-pod-security` narrows it to the pod templates of its named node agents, and `lenny-forensics` takes the same form for the capture Job, as [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) states. "Validation owed" in `steps.md` lists the check. `lenny-quota-agent` mounts the kubelet's `pods` directory read-write and holds `CAP_SYS_ADMIN` as UID 0, both outside the Baseline level, so it needs the same namespace; it is not privileged, and [PL-10](../0118-agent-pod-layout/change.md#pl-10-project-quotas) states its container, its rights, its seccomp profile and Landlock restriction, and why its mount reaches every pod's volumes on its node. Its init container `seccomp-install` writes the agent's seccomp profile through a `hostPath` of the kubelet's `seccomp/lenny` directory. Its tolerations put it on dedicated nodes of every tenant, as the collector's put the collector on dedicated gVisor nodes, because a dedicated node's slot volumes need their quotas too.
 
-### Third-party DaemonSets
+#### Third-party DaemonSets
 
 CNI, CSI, kube-proxy, logging, and monitoring agents usually tolerate every taint and run on every node. They are the operator's, and Lenny neither renders nor refuses them. The operator documentation lists them as the workloads that share agent nodes outside Lenny's control, recommends that each run with the least privilege its function allows, and states that the node check reports, at `info`, every pod on an agent node that is neither a Lenny agent pod nor a named node agent nor owned by a DaemonSet **[design]**.
 
-### Deployer interceptors
+#### Deployer interceptors
 
 In-cluster interceptors of [RT-5](../0141-runtime-routing/change.md#rt-5-in-cluster-interceptors) run in `gateway.interceptorNamespaces` and are deployer workloads. The class taints keep them off agent nodes unless they tolerate a class taint. The operator documentation recommends the system class or a node pool of their own.
 
-## PM-6 Enforcement
+### PM-6 Enforcement
 
-### Admission
+#### Admission
 
 `lenny-pod-security` gains the placement rules, and `lenny-t4-node-isolation` is removed, because its check was a node label and taint rule that the class and tenancy rules replace **[design]**. The webhook's scope widens from agent namespaces to every namespace the chart renders Lenny workloads into (`lenny-system`, `lenny-outbound`, `lenny-mirror` when used, `lenny-forensics`, and `lenny-node-agents`), on Pod `CREATE`. Each refusal carries a rejection label under §17.2's **Rejection labels.** rule:
 
@@ -709,7 +603,7 @@ The gateway refuses an offering, a pool `placement` block, or a reserved overlay
 
 The adapter checks the pod's own user namespace at start (O6): on a pod rendered with `hostUsers: false`, it reads `/proc/self/uid_map` before it reports READY and refuses to report READY when UID 0 maps to node UID 0, with the failure reason `user_namespace_missing` that [`0145-session-isolation`](../0145-session-isolation/change.md) names, so a cluster that dropped the field fails the pod visibly. The pod never enters the warm pool, and its failure follows "What happens to a pod or pool that fails". The git mirror already performs this check for itself ([`0127-egress-and-git`](../0127-egress-and-git/change.md#git-mirror-lenny-git-mirror)).
 
-### Preflight
+#### Preflight
 
 `lenny-preflight` gains these checks, which `lenny-ctl preflight` also runs **[design]**:
 
@@ -730,7 +624,7 @@ The adapter checks the pod's own user namespace at start (O6): on a pod rendered
 
 The T4 node isolation webhook check is removed with the webhook.
 
-### Continuous check in `lenny-ops`
+#### Continuous check in `lenny-ops`
 
 `lenny-ops` runs the node checks above every `ops.placement.checkIntervalSeconds` (default 300) and adds checks over running pods **[design]**:
 
@@ -752,14 +646,14 @@ The same pass computes each pool's `diskQuota` from the `lenny.dev/project-quota
 | `PlacementDedicatedNodesMissing` | Critical | A dedicated tenant's pool has no Ready node labelled for the tenant in its class. |
 | `QuotaAgentUnavailable` | Warning | While `quotaAgent.mode` is `auto`, a Ready node of an agent class has no `lenny.dev/quota-agent-status` annotation, or one whose `writtenAt` is older than three times `quotaAgent.recheckSeconds` ([PL-10](../0118-agent-pod-layout/change.md#pl-10-project-quotas), D23). |
 
-### What happens to a pod or pool that fails
+#### What happens to a pod or pool that fails
 
 - **A refused pod.** The WarmPoolController records the refusal on the `PodSet` as the condition `PlacementRefused` with the rejection label, increments `lenny_warmpool_warmup_failure_total{error_type="placement_refused"}`, and retries with its existing backoff, so a refusal cannot loop tightly. The pool reports `PoolWarmingUp` and its warm-up alert fires as for any pool that cannot warm.
 - **An unschedulable pod.** A pod whose class, offering, region, or tenant has no free node stays `Pending`. The template gets `PlacementUnschedulable` with the scheduler's reason, and `PlacementClassNodesMissing` or `PlacementDedicatedNodesMissing` fires when no node matches at all.
 - **A pod on a drifted node.** Running sessions continue. The WarmPoolController stamps the drain request on idle pods whose node no longer matches their placement, and the next pods schedule on matching nodes. A quarantined pod is never drained, under FE-1's retirement rules.
 - **A refused write.** A pool, offering, grant, or tenant write that breaks a rule is refused with the code its section names, and nothing is stored.
 
-## PM-7 Region placement
+### PM-7 Region placement
 
 **Post-chain residency check.** When a session's `dataResidencyRegion` is set, the post-chain point refuses a final pool whose `placement.region` is not equal to it with `403 REGION_CONSTRAINT_VIOLATED`, `details.requiredRegion`, `details.resolvedRegion`, and `details.interceptor_ref` when the chain changed the pool. A pool with no region fails the check. The check runs for `create`, `delegate`, and `derive`, whichever interceptor chose the pool, and emits `DataResidencyViolationAttempt` as [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) states for delegation today. The requirement filter of "PM-4" already removes pools of other regions before the post-chain point, so this check catches a pool the request or an interceptor named explicitly. `REGION_UNAVAILABLE` at create, when no pool exists in the region, is unchanged **[design]**.
 
@@ -776,9 +670,9 @@ The same pass computes each pool's `diskQuota` from the `lenny.dev/project-quota
 
 Lenny therefore states residency per deployment. A deployment serves one residency region: its Kubernetes control plane, Postgres, Redis, object storage, gateway, Token Service, `lenny-egress`, and agent nodes all run in that region, and its pools set `placement.region` to it. A tenant with a `dataResidencyRegion` is served by the deployment of that region, and the post-chain check and the node selector above confirm that each pool it uses belongs there. A cluster whose workers span regions gives compute locality, the workspace bytes on nodes of the pool's region, and does not support a residency claim, because the session's control-plane records and Lenny's stores stay in the control plane's region. Routing tenants across regional deployments, one entry point in front of several deployments, is outside this design.
 
-## PM-8 System components
+### PM-8 System components
 
-### Priority classes
+#### Priority classes
 
 Placement renders the priority classes below, each cluster-scoped and named from Helm values so that two releases in one cluster can use distinct names **[design]**:
 
@@ -793,7 +687,7 @@ Outside `single-node`, system and agent pods never share a node, so the system p
 
 **Per-class quota.** An agent priority class exists per node class so that a quota can bound one class's pods inside the single agent namespace (O3). When `placement.classes.<class>.quota` is set, the chart renders a `ResourceQuota` in `lenny-agents` with those hard limits and a `scopeSelector` on `PriorityClass In [lenny-agent-<class>]`, so the class's aggregate requests stay within it, as a separate namespace's quota did for Kata pods. A pod over the quota is refused at creation, and the WarmPoolController's warm-up backoff applies. Reserved pods carry `lenny-reserved` and are bounded by DR-10's reserved quota, which selects that class the same way. `lenny-pod-security` refuses an agent pod whose priority class does not match its class ("PM-6"), so a pod cannot move to another class's quota.
 
-### Component table
+#### Component table
 
 | Component | Namespace | Kind | Replicas (default) | PDB | Anti-affinity | Spread | Priority |
 | :-- | :-- | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -821,11 +715,11 @@ Outside `single-node`, system and agent pods never share a node, so the system p
 
 Required anti-affinity is enforced by the scheduler in both directions: a pod cannot schedule onto a node whose existing pods' required terms exclude it. The chart renders each required pair on both components, so the rule holds when either side is disabled and when an operator reads one component's manifest alone. Under `global.devMode`, every required anti-affinity term of this table renders as preferred, so a single-node cluster schedules **[design]**. This design owns the relaxation for every component, the git mirror and the outbound gateway included, which [`0127-egress-and-git`](../0127-egress-and-git/change.md) and [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md) stated for their own components before this table took their anti-affinity over. Outside `global.devMode` no required term is relaxed.
 
-### `lenny-ops` replicas and PDB
+#### `lenny-ops` replicas and PDB
 
 `lenny-ops` defaults to 1 replica, with leader election for its singleton work, and an operator may scale it for read traffic as §25.4 states. Its PDB, `minAvailable: 1`, is rendered only when `ops.replicas` is 2 or more. A PDB with `minAvailable: 1` over one replica refuses every voluntary eviction, so `kubectl drain` of that node waits until the PDB is removed. §25.4's statement that such a PDB is "effectively a no-op" and that "the kubelet evicts the pod gracefully" during a drain does not hold for the eviction API, which honours the budget **[inference]**. §17.1, §25.4, and §25.16 change to this one statement ("Specification changes").
 
-## PM-9 Namespaces
+### PM-9 Namespaces
 
 | Namespace | Holds | Pod Security label | Owner |
 | :-- | :-- | :-- | :-- |
@@ -842,7 +736,7 @@ Required anti-affinity is enforced by the scheduler in both directions: a pod ca
 - **`lenny-agents-kata` is dropped** (O3, settled). `agentNamespaces` defaults to `[lenny-agents]`, and every rule that lists agent namespaces, including the default-deny policies of [§13.2](../../spec/13_security-model.md#132-network-isolation), reads one entry. Quotas apply per node class through the class's agent priority class ("PM-8"), per pool through `maxWarm`, and to reserved pods through DR-10's split quota.
 - **`PriorityClass` scope.** A `PriorityClass` is a cluster-scoped object. DR-10's statement that the chart renders `lenny-reserved` "in the `--agent-namespace` alone" becomes: the chart renders the cluster-scoped class `lenny-reserved`, and the reserved quota in the agent namespace selects it through the `PriorityClass` quota scope, as each class quota selects its agent priority class.
 
-## Removals
+### Removals
 
 **`recycle.allowCrossTenantReuse`.** The tenant pin applies on every pool, so a pool that sets the field still never serves a second tenant, which §5.2 itself states **[source]**. There are no deployments to keep compatible, so the field goes with no alias **[design]**. The specification text that goes, in [§5.2](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) unless noted:
 
@@ -933,7 +827,7 @@ The operator guide's placement chapter owns what this design adds, and `namespac
 | Topic | What the chapter states |
 | :-- | :-- |
 | Classes and presets | The `placement` values with their defaults (`preset: strict`, `classLabelKey: lenny.dev/node-class`, `regionLabel: topology.kubernetes.io/region`, each class's `nodeSelector`, `taint`, `tenancy: shared`, `userNamespaces: enabled`, and `quota: null`), the three presets with their memberships, `acknowledgeMixedClass`, the hard rules, the separation matrix, and how to map a class onto a provider's existing node pool labels and taints. |
-| Node requirements | Per class: the labels and taints each node carries; on the class that holds `standard`, Kubernetes 1.33 or later on the API server and nodes, containerd 2.0 or later or CRI-O 1.25 or later, runc 1.2 or later, a kernel with idmapped tmpfs (6.3 or later), and `user.max_user_namespaces` above 0 on Bottlerocket; Kata nodes with hardware virtualization; and the node configuration the checkpoint design asks for on each class ([IC decision D13](../0131-incremental-checkpoint/change.md#decisions)): the gVisor annotation pass-through, `emptydir_mode = "block-plain"` with the dedicated volume GID on Kata, and the inotify limits on runc nodes. |
+| Node requirements | Per class: the labels and taints each node carries; on the class that holds `standard`, Kubernetes 1.33 or later on the API server and nodes, containerd 2.0 or later or CRI-O 1.25 or later, runc 1.2 or later, a kernel with idmapped tmpfs (6.3 or later), and `user.max_user_namespaces` above 0 on Bottlerocket; Kata nodes with hardware virtualization; and the node configuration the checkpoint design asks for on each class ([IC decision D13](../0131-incremental-checkpoint/decisions.md#decisions)): the gVisor annotation pass-through, `emptydir_mode = "block-plain"` with the dedicated volume GID on Kata, and the inotify limits on runc nodes. |
 | User namespaces | That runc shares the host kernel and gives no protection against kernel exploits, that node classes and user namespaces bound its blast radius, that the profile choice is the operator's through `allowStandardIsolation`, what `userNamespaces: disabled` changes, and every place it is reported. |
 | Tenancy and offerings | Shared and dedicated tenancy, single-tenant pools and `placement.tenantId`, the per-tenant setting in the tenant security settings, offerings with `placement.defaultPoolOffering` (`shared`), grants, the reserved overlay, the `nodePlacement` validation rules, and that dedicated capacity is billed as `node.dedicated_usage`. |
 | Requirements | Each requirement, who may set it, that a tenant's own removal takes the security record's delay and that an environment's removal is a relaxation that needs a `justification` and takes the same delay, with its cancel route, its audit events, and `SECURITY_SETTING_JUSTIFICATION_REQUIRED`, the order of checks at the post-chain point, and the `sessionIsolationLevel` fields. |
@@ -953,21 +847,10 @@ The operator guide's placement chapter owns what this design adds, and `namespac
 | 3 | Post-chain codes for every creation kind: `PLACEMENT_REQUIREMENT_UNMET` with each requirement and source, `PLACEMENT_OFFERING_NOT_GRANTED`, and `REGION_CONSTRAINT_VIOLATED` with `details.interceptor_ref` when a `PreRoute` interceptor moved the session. |
 | 4 | Session creation, delegation, and derive on the compose stack with requirements from tenant, environment, operator, and parent, and the `sessionIsolationLevel` fields. |
 | 5 | A multi-node Kind cluster with labelled and tainted nodes per class and a dedicated tenant's nodes: pods land on their class, a node with a tenant label and no class label raises `PlacementNodeClassConflict`, a Kata block-plain pod with the dedicated GID is admitted, admission refuses each rule with its rejection label, a removed node label triggers the alert and the drain of idle pods, user namespaces on a 1.33 or later Kind node with the `uid_map` check, the adapter refusing READY when the API server drops `hostUsers`, a class quota refusing a pod over its limit, and the `single-node` preset on one node. |
-| 6 | EKS, GKE, and AKS with real node pools, as "Validation owed" lists. |
+| 6 | EKS, GKE, and AKS with real node pools, as "Validation owed" in `steps.md` lists. |
 | 8 | Node loss in a dedicated class, label drift during a session, and a webhook outage with fail-closed refusal. |
 | 9 | A pod spec that tolerates every taint, another class's taint, or another tenant's taint, or names another class's priority class; an agent pod with `fsGroup` outside a Kata block-plain pool or with another GID; a pod template in `lenny-node-agents` other than the collector's and the quota agent's, a quota agent pod with another capability, `privileged: true`, another host path, or an agent container without the `Localhost` profile `lenny/quota-agent.json`, and a quota agent write to another node, to another label, to an annotation other than `lenny.dev/quota-agent-status`, to that annotation with a value over 1 KiB, or to a taint; a non-Job pod in `lenny-forensics`; a system pod with an agent toleration; an offering, overlay, or `componentPlacement` that names a class or tenant key; a tenant write that tries to set a selector; and a forged `lenny.dev/node-class` label. |
 | 11 | The operator guide's separation matrix and preset table match the chart's generated classes. |
-
-## Validation owed
-
-- Real node pools on EKS, GKE, and AKS under `strict` and `compact`, with classes mapped onto provider labels and taints, including GKE Sandbox's own gVisor node pool label and taint and AKS's Kata node pool, and which provider labels are stable enough to name in a class.
-- Taints and node selectors with each `RuntimeClass`: `RuntimeClass` `scheduling` merged with the pod's own affinity and tolerations, for gVisor, `gvisor-monitored`, and Kata on each provider.
-- User namespace prerequisites per node image: EKS AL2023 and Bottlerocket, GKE Container-Optimized OS and Ubuntu, and AKS Azure Linux and Ubuntu, with every volume type a Lenny pod mounts, and `hostUsers: false` on k3s 1.33 or later in rootless and rootful mode for `lenny up`.
-- DaemonSet tolerations of common CNI, CSI, kube-proxy, and logging agents (aws-node, ebs-csi, Calico, Cilium, and Fluent Bit), and what each can reach on an agent node.
-- Cluster autoscaler and Karpenter scale-up for a pending pod that needs a class taint and a tenant taint at once.
-- The Pod Security level that `lenny-activity-collector`'s node socket needs in `lenny-node-agents`, and `lenny-quota-agent`'s `CAP_SYS_ADMIN` and read-write mount there, with its `Localhost` seccomp profile and the `hostPath` of `seccomp-install`.
-- The `authentication.kubernetes.io/node-name` claim of a pod-bound ServiceAccount token, which `lenny-quota-agent-node-label` reads, on each supported Kubernetes version and on EKS, GKE, and AKS.
-- The node check's cost on a cluster with thousands of nodes and pods.
 
 ## Instructions for reviewers of other designs
 
@@ -985,58 +868,6 @@ The operator guide's placement chapter owns what this design adds, and `namespac
 - [`0142-security-oversight`](../0142-security-oversight/change.md): under O7, the SO-2 record gains a `placement` section with `requireNodeSeparation`, `nodeTenancy`, `allowSharedPod`, and `allowReusedPod`, whose removal is a weakening. Posture's `pools` section gains `nodeClass`, `nodeClassMembers`, `nodeTenancy`, `sharedPod`, `userNamespaces`, `placementOffering`, and `region`. SO-3's `lenny-siem-forwarder` runs in `lenny-system` ("PM-8"). SO-4a mirrors offering grants and revocations.
 - [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) (applied in its revision 13): BR-7 carries dedicated capacity as `node.dedicated_usage` (D17), and a node with a tenant label outside every agent class is reported by "PM-6" rather than billed.
 - [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md): under D18 a relaxation of an environment's `placementRequirements` follows TSSR-4 with the tenant security record's weakening delay, and reuses `SECURITY_SETTING_JUSTIFICATION_REQUIRED`. Name environment placement requirements among the relaxations that rule governs. Earlier, this design applied its instructions to this design: `securitySettings.placement.nodeTenancy` replaces the tenant-record `nodeTenancy`, with PM-2's admission and grant rules on the settings write and the template apply; `placement.minIsolationProfile` is the tenant floor; `placement.allowSharedPod` and `placement.allowReusedPod` are operator sources of their requirements; and the reserved overlay keeps a dedicated pool's reserved pods on the tenant's nodes (I25). The tenant column for `nodeTenancy` that TSS-9 declines to add is no longer proposed here.
-
-## Steps
-
-### 0136.S1 Removal of allowCrossTenantReuse
-- status: Planned
-- aliases: [PM-A]
-- lanes: [specification, code, documentation]
-
-Removal of `allowCrossTenantReuse`.
-
-### 0136.S2 Components, priority classes, and namespaces
-- status: Planned
-- aliases: [PM-B, PM-8, PM-9]
-- lanes: [specification, code, documentation]
-
-The component table, the priority class scheme with one agent priority class per class and the class quotas, the `lenny-ops` settlement, and the namespaces with O3.
-
-### 0136.S3 Classes, presets, rendering, and enforcement
-- status: Planned
-- aliases: [PM-C, PM-1, PM-5, PM-6]
-- lanes: [specification, code, documentation]
-- depends-on: [0136.S2]
-
-Classes, presets, rendering of agent and system pods, user namespaces on the standard class, named node agents, admission, preflight, the continuous check, and removal of the T4 placement mechanism. It depends on 0136.S2 for the priority classes, and on SI's userns decision.
-
-### 0136.S4 Node tenancy and single-tenant pools
-- status: Planned
-- aliases: [PM-D, PM-2]
-- lanes: [specification, code, documentation]
-- depends-on: [0136.S3, 0147.S5, 0150.S2]
-
-Node tenancy and single-tenant pools. It depends on DR-5 (0147.S5) for owned pools and the `lenny.dev/served` reader, and on TSS-B (0150.S2), which stores `securitySettings.placement.nodeTenancy`.
-
-### 0136.S5 Offerings and the pool placement block
-- status: Planned
-- aliases: [PM-E, PM-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0136.S4, 0141.S1, 0147.S9]
-
-Offerings, the admin API, the pool `placement` block, the routing check, owned-pool choice, and the reserved overlay. It depends on RT-2's post-chain point, which 0141.S1 lands, and on DR-10 (0147.S9).
-
-### 0136.S6 Placement requirements and region placement
-- status: Planned
-- aliases: [PM-F, PM-4, PM-7]
-- lanes: [specification, code, documentation]
-- depends-on: [0136.S5, 0141.S1, 0149.S1, 0142.S2]
-
-Placement requirements with `allowReusedPod`, `sessionIsolationLevel` fields, and region placement. It depends on RT-2 (0141.S1), on TS-1 (0149.S1), and on SO-2 (0142.S2) under O7. 0150.S3 (TSS-C) lands the operator's placement settings as sources once 0136.S4 and 0136.S6 are in.
-
-### Notes on the steps
-
-0136.S1 and 0136.S2 can land first and in either order. 0136.S3 to 0136.S6 land in order.
 
 ## Sources
 

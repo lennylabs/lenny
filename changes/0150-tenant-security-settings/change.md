@@ -1,8 +1,6 @@
 # Tenant security settings
 
-Status: `Draft`, revision 10, 2026-11-16. Revision 10 applies the kind and field names of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which the owner accepted on 2026-11-16 as its O3, and changes no rule. Revision 9 records the owner's confirmation on 2026-11-14, in the words "Ok on the rest" and under decision 44 of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#decisions), of an uploaded artifact's single stored copy as packs of the tenant-owned assets set, of its deletion with the derived runtime, with the tenant, and after 7 days unreferenced, and of the per-tenant upload limit, and changes no rule. Revision 8 records the owner's confirmation on 2026-11-14, under decision 43 of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#decisions), that the set fed by a `gitRepository` asset a `platform-admin` writes on a tenant-derived runtime is the tenant's, under the tenant key, and changes no rule. Revision 7 follows `0147-tenant-derived-runtimes` revision 73: an uploaded artifact asset is stored only as packs of the runtime's tenant-owned assets set under the tenant key, and it is deleted with its derived runtime and, when no version of the runtime references it, after 7 days ("TSS-8"). Revision 6 applies the owner's settled answer to question 17 of 2026-11-14, decision 42 of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#decisions): a tenant-derived runtime's own shared assets are Confidential tenant data, stored under the tenant key, deleted with the tenant, and held under legal hold ("TSS-8"), and a tenant-owned platform chunk set comes from those assets and from the runtime's `gitRepository` assets ("Platform chunk sets"). Revision 5 applies the owner's answers of 2026-11-13 to the consolidated list of open decisions: the relaxation rule of this design governs the removal of an environment's `placementRequirements` (D9), a tenant's `security-admin` setting `allowReusedPod` is confirmed (D10), and a write that names a removed field is refused by name (D11). Revision 4 applies the cross-design review of 2026-11-13: the forensics design's decision 28 (its O1, "keep") on evidence keys wrapped by the tenant key, the removal of the non-agent runtimes of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), and a "Documentation" section. Revision 3 adds `storage.platformChunkReuse`, which decision D1 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#decisions) asks for (D8). Nothing here is built or staged, and no independent review has read it. Revision 2 records the owner's answers of 2026-11-12 to O1 to O13, the rename of the top data class from Restricted to Secret, and a statement of how each class's rules are enforced. It is written from the owner's direction of 2026-11-12 to retire `workspaceTier: T4` as a concept, and from an inventory of every rule in `spec/` and `designs/` that a data-classification tier, `workspaceTier`, or T4 governs. It reads every design under `designs/` as implemented, in particular [`0136-placement`](../0136-placement/change.md) revision 13, which owns node classes, node tenancy, placement offerings, and placement requirements, and [`0142-security-oversight`](../0142-security-oversight/change.md) revision 59, whose tenant security record holds the constraints a tenant's own security team sets. This design sets tenant-level values that the operator chooses and does not redefine either design's mechanisms. "Decisions" lists what the owner has settled, and "Open decisions" keeps each question with its options, its recommendation, and the owner's answer. The design stages no specification edit. The changes go through `change-proposal` after review. Parts carry the label TSS-n, requirements TSSR-n, security properties TSSP-n, and inventory rows In. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 10, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -10,7 +8,7 @@ Each factual claim carries one of these tags where the source matters:
 | :-- | :-- |
 | **[source]** | Read in the Lenny specification, a design, or the tree on 2026-11-12. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[inference]** | Reasoned from the sources and not run. "Validation owed" lists each one that matters. |
+| **[inference]** | Reasoned from the sources and not run. "Validation owed" in `steps.md` lists each one that matters. |
 
 ## Problem
 
@@ -82,6 +80,7 @@ The owner's direction of 2026-11-12 retires T4 as a concept. Each control become
 | Data class | One of the classes of [§12.9](../../spec/12_storage-architecture.md#129-data-classification): Public, Internal, Confidential, and Secret, formerly the tiers T1 to T4, whose labels the specification gives as Public, Internal, Confidential, and Restricted. A data class is a property of a kind of data the platform handles and is never a tenant choice. Each class is a table of requirements, and "TSS-8" states how each requirement is enforced. |
 | Erasure deadline | The time within which a user-level erasure job finishes ([§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces), **Erasure SLA enforcement.**). |
 | Tenant deletion deadline | The time within which the tenant deletion lifecycle reaches `deleted` from the start of Phase 1 ([§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces), **Tenant deletion SLA.**). |
+| Labels | Parts of the design carry the label TSS-n, requirements carry the label TSSR-n, security properties carry the label TSSP-n, and rows of the inventory carry the label In, such as I23. |
 
 ### Terms from other designs and the platform
 
@@ -156,147 +155,6 @@ The data classes stay as internal rules for kinds of data, named Public, Interna
  (TSS-4)        controller    (TSS-5)     source "operator" | "tenant"
                 (TSS-5)
 ```
-
-## Decisions
-
-| # | Question | Owner's answer | Applied in |
-| :-- | :-- | :-- | :-- |
-| D1 | What replaces `workspaceTier: T4` (2026-11-12). | T4 is retired as a concept. Each control it bundles becomes its own explicit setting, set by the operator through the admin API on the tenant, or on another object where the control belongs there, with the reason stated. | TSS-1, TSS-9 |
-| D2 | How operators get a correct bundle (2026-11-12). | Lenny ships configuration templates, named bundles of settings for levels of tenant security, such as `standard`, `confidential`, and `regulated`. | TSS-2 |
-| D3 | Placement ownership (2026-11-12). | Node tenancy, minimum isolation, and pod sharing and recycling reference the placement design, which owns node classes, node tenancy, placement offerings, and placement requirements as filters. This design sets the tenant-level values. | TSS-6 |
-| D4 | Migration (2026-11-12). | There are no deployments, so the change is a straight replacement with no compatibility path. `workspaceTier` and every T4 rule leave the specification, with successor pointers where content moves. | TSS-9 |
-| D5 | The name of the top data class (2026-11-12, N1). | "Rename the top data class from 'Restricted' to 'Secret' (Public, Internal, Confidential, Secret)." | TSS-8, "Specification changes" |
-| D6 | `complianceProfile` (2026-11-12, O9). | Option (b), as a follow-up design: "`complianceProfile` becomes deployment-level Helm settings plus per-tenant settings, with soc2, fedramp, and hipaa as templates and the ratchet replaced by the weakening delay. That design is written later." This design leaves `complianceProfile` unchanged and points to `compliance-profile-design.md` (pending). | O9, TSS-1 |
-| D7 | The other open decisions (2026-11-12). | O1 (a), O2 (a) ("keep the taxonomy", after the owner asked for examples), O3 (a), O4 (a), O5 (b) ("ok", as recommended), O6 (a), O7 (a), O8 (a), O10 (a), O11 (a), O12 (a), and O13 (a). | "Open decisions" |
-| D8 | Platform chunk sets (2026-11-13), from decision D1 of `0131-incremental-checkpoint`. | A tenant setting turns them off, `false` in `regulated` and `true` in `standard` and `confidential` ("2. ok"), and a tenant with its own key may reference operator-source chunks stored under the deployment key ("1. ok"). | TSS-1, TSS-2, TSS-4, TSS-7 |
-| D9 | Relaxing an environment's placement requirements (2026-11-13). | "5 ok": removing an environment's `placementRequirements`, or moving one to a weaker value, is a relaxation under this design's rules, with a `justification` and the weakening delay, as [PM-4](../0136-placement/change.md#pm-4-placement-requirements) states under its D18. | TSS-6, TSS-3 error table |
-| D10 | `allowReusedPod` set by the tenant's security admin (2026-11-13). | "15 ok": a tenant's `security-admin` sets `allowReusedPod: false` as the tenant's own requirement in the tenant security record, beside the operator's `placement.allowReusedPod` of this design. | TSS-6 |
-| D11 | One rule for removed fields (2026-11-13). | "6 ok": a write that names a removed field is refused with `400 VALIDATION_ERROR` naming the field, as D6 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) records. | TSS-3, TSS-9 |
-
-## Open decisions
-
-The owner answered every open decision on 2026-11-12 (D6 and D7). Each entry keeps its options and its recommendation as a record and states the answer.
-
-**O1. How a template reaches a tenant.**
-
-- (a) Copy on apply. Applying writes the template version's values into the tenant and records the name and version. A later template version changes nothing until an operator applies it.
-- (b) Reference with overrides. The tenant names a template and stores only overrides, and a new template version propagates to every tenant that names it.
-
-**Recommendation: (a).** Under (b), a template edit can weaken every tenant that names it with no per-tenant action, no justification, and no per-tenant audit record. Under (a), each tenant's values change only through a recorded action on that tenant. The read route reports `newerVersionAvailable` and `differsFromTemplate` ("TSS-3"), so an operator finds tenants to re-apply, and the tenant list filters on them.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O2. The data-class taxonomy.**
-
-- (a) Keep §12.9's classes as an internal taxonomy of kinds of data, named rather than labelled T1 to T4, with no tenant input.
-- (b) Remove the taxonomy and state each rule on the data it governs.
-
-**Recommendation: (a).** The classes carry rules that are not tenant choices: credentials and OAuth tokens are always in the top class and envelope-encrypted, user identifiers are Confidential, and audit events of the two upper classes are written synchronously ([§12.3](../../spec/12_storage-architecture.md#123-postgres-ha-requirements)). The labels in §12.9 are Public, Internal, Confidential, and Restricted **[source]**. Names avoid confusion with the retired setting. "TSS-8" lists where the taxonomy stays in force.
-
-**Settled (2026-11-12): (a)** (D7). The owner asked for examples and then answered "keep the taxonomy". The owner's N1 of the same day names the top class Secret (D5), so the classes are Public, Internal, Confidential, and Secret.
-
-**O3. Who sets the settings.**
-
-- (a) Only `platform-admin` writes them. `tenant-admin`, `security-auditor`, and `security-admin` read them. The tenant's security team narrows placement further through requirements in the tenant security record, which are filters only.
-- (b) The tenant's `security-admin` may also tighten a setting, and only `platform-admin` may relax one.
-
-**Recommendation: (a).** Tightening `encryption.tenantKey` needs a key the operator provisions (O8), and dedicated node tenancy needs single-tenant pools and nodes the operator provides ([PM-2](../0136-placement/change.md#pm-2-node-tenancy)). A tenant that wants a stricter placement than its settings states it as a requirement, which the placement design already admits from a tenant.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O4. What replaces `workspaceTier` on the Runtime.**
-
-- (a) Nothing new. The runtime keeps its `isolationProfile`, which [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) makes a live floor. Every data-sensitivity control is a tenant setting.
-- (b) A runtime setting that requires dedicated nodes or a per-tenant key for every tenant that uses the runtime.
-
-**Recommendation: (a).** A runtime image is shared by many tenants, and the sensitivity of the data belongs to the tenant whose data it is. A runtime that needs stronger isolation for its own reasons, such as running untrusted code, states it in `isolationProfile`. Under (b), the same tenant would get different key and deadline behaviour depending on the runtime, which is today's defect ("Problem").
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O5. How a setting is relaxed.**
-
-- (a) A relaxation needs a non-empty `justification`, applies at once, emits a critical audit event, and is mirrored to the tenant's chain under SO-4a.
-- (b) As (a), and the relaxation takes effect after the tenant security record's `weakeningDelaySeconds`, through the same pending-version applier. A `platform-admin` or the tenant's `security-admin` can cancel it while it is pending.
-- (c) A one-way ratchet like `complianceProfile`, with a separate attested route for relaxation.
-
-**Recommendation: (b).** SO-2 already applies one weakening rule, with its delay, to every security constraint on a tenant, including a `platform-admin`'s writes to the record, so that the rest of the tenant's security team can stop a weakening from a stolen credential before it has an effect **[source]**. The operator's settings protect the same tenant's data, and a stolen `platform-admin` token is the case the delay addresses. (b) reuses the applier and the version table, so it adds no new mechanism. The cost is that an urgent relaxation waits the delay, at least `security.config.minWeakeningDelaySeconds` (3600 seconds by default); "TSS-7" states the effect on a key outage. (c) adds a route per setting family and protects against nothing (b) misses.
-
-**Settled (2026-11-12): (b)** (D7). The owner answered "ok" to the recommendation.
-
-**O6. Environment-level overrides.**
-
-- (a) Remove the environment-level override. Environments inherit the tenant's settings, and a stricter placement for one environment is a requirement on that environment ([PM-4](../0136-placement/change.md#pm-4-placement-requirements)).
-- (b) Keep an environment-level copy of each setting that may only tighten the tenant's value.
-
-**Recommendation: (a).** Today only `workspaceTier` has a stricter-only environment override **[source]**. Under (b), every setting reader resolves two levels, and the key, deadline, and retention controls are per tenant in practice: there is one tenant key, one erasure job per user, and one deletion lifecycle.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O7. What `placement.nodeTenancy: dedicated` means.**
-
-- (a) Nodes that carry pods of this tenant alone, as [PM-2](../0136-placement/change.md#pm-2-node-tenancy) defines dedicated tenancy.
-- (b) Nodes shared by every tenant whose setting is `dedicated`, as T4 nodes are shared by every T4 tenant today ([`0127-egress-and-git`](../0127-egress-and-git/change.md) states that "T4 nodes host several T4 tenants") **[source]**.
-
-**Recommendation: (a).** §6.4 justifies dedicated nodes by the per-tenant key isolation that node disk encryption lacks **[source]**, and (b) leaves every tenant with the setting exposed to each other on one node. The placement design's mechanism is (a), so the setting reuses it unchanged.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O8. Who creates the tenant key.**
-
-- (a) The operator provisions the key before the setting is switched on, and the write probes it, as §12.5 requires today **[source]**.
-- (b) The platform creates the key through the provider's API when the setting is switched on, as the tree's `tenantkms.Lifecycle.EnsureForTenant` does **[source]**.
-
-**Recommendation: (a).** Under (b), the gateway needs rights to create and schedule deletion of KMS keys, which widens what a compromised gateway can do. The probe turns a missing key into an admin-time refusal that names the alias to create. The tree's provisioning path leaves with this design.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O9. `complianceProfile`.**
-
-`complianceProfile` is a second bundle on the tenant: it turns on a SIEM requirement, pgaudit, a grant-check interval, retention floors, and a cross-user cache prohibition, with a one-way ratchet and an attested decommission route **[source]**.
-
-- (a) Keep it as it is in this design. Templates do not set it, because a template cannot choose between SOC 2, FedRAMP, and HIPAA for an operator. A later design decides whether to split it.
-- (b) Split it in this design into explicit settings, with the framework names becoming templates.
-
-**Recommendation: (a).** Most of its controls are deployment-level gates (SIEM, pgaudit, and retention floors checked at gateway start) rather than per-tenant behaviour, and splitting them changes [§11.7](../../spec/11_policy-and-controls.md#117-audit-logging) and [§16.4](../../spec/16_observability.md#164-logging) broadly. The owner's direction applies to it in spirit, so the overlap is recorded here for a decision.
-
-**Settled (2026-11-12): (b), as a follow-up design** (D6). After asking for elaboration, the owner chose to split `complianceProfile`: it becomes deployment-level Helm settings plus per-tenant settings, with `soc2`, `fedramp`, and `hipaa` as templates, and the weakening delay replaces the one-way ratchet and its attested decommission route. A later design, `compliance-profile-design.md` (pending), states it. Until that design lands, this design leaves `complianceProfile`, its ratchet, its decommission route, and [§11.7](../../spec/11_policy-and-controls.md#117-audit-logging) unchanged, no setting depends on it, and no template sets it.
-
-**O10. Operator-defined templates.**
-
-- (a) Built-in templates plus operator-defined templates in Helm values under `tenantSecurity.templates`, each with an explicit version. A changed definition under an existing version stops the gateway at start.
-- (b) Built-in templates only.
-- (c) Templates created through the admin API.
-
-**Recommendation: (a).** Templates are deployment configuration, which the bootstrap plane holds in Helm values ([§15.1](../../spec/15_external-api-surface.md#151-rest-api), **Bootstrap plane — Helm only:**). An operator whose policy differs from the built-ins writes it once. (c) adds a mutable resource whose edits need the same versioning the Helm path gets from the stored version table ("TSS-2").
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O11. Data written before the tenant key is switched on.**
-
-- (a) No re-encryption. Objects written under the deployment key keep it until retention removes them. The read route counts them, and tenant deletion still deletes them in Phase 4.
-- (b) A background job that rewrites every existing object under the tenant key.
-
-**Recommendation: (a).** Retention bounds the exposure to the tenant's retention window, 7 days by default for session artifacts, and a job that rewrites every object costs a full read and write of the tenant's data. An operator who needs full coverage at once applies the setting before the tenant's first session. Legal-hold objects never expire, so the count can stay above zero, and "Limits" states it.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O12. The isolation value of the `regulated` template.**
-
-- (a) `sandboxed` (gVisor), the platform default.
-- (b) `microvm` (Kata).
-
-**Recommendation: (a).** §5.3 names gVisor the default for all workloads, and Kata needs nodes with hardware virtualization that many clusters lack **[source]**. Under (b), applying `regulated` refuses every session on those clusters. An operator who wants Kata sets `placement.minIsolationProfile: microvm` on the tenant after applying.
-
-**Settled (2026-11-12): (a)** (D7).
-
-**O13. Where the operator's settings live.**
-
-- (a) A separate operator-owned `securitySettings` on the tenant, beside the tenant security record of SO-2. Both feed the effective placement requirements, with `details.source` `operator` or `tenant`.
-- (b) An operator-owned section inside the tenant security record.
-
-**Recommendation: (a).** SO-2 states that the record holds every constraint the tenant's security team sets, and its `security-admin` writes it **[source]**. The operator's settings are chosen by the operator and need operator resources, so a `security-admin` must not be able to edit them, and under (b) the record would need a second writer rule per section. (a) still reuses SO-2's version table layout, applier, and weakening delay under O5 (b), and the security posture reports both side by side.
-
-**Settled (2026-11-12): (a)** (D7).
 
 ## Requirements
 
@@ -447,9 +305,11 @@ Every new setting lives on `Tenant.securitySettings`, its writer is `platform-ad
 | I55 | Activity streams are T3 by default and T4 when `workspaceTier` is T4. | FE, redaction | Class. They are Confidential on every tenant, and I12 decides the wrapping key. |
 | I56 | A derived session's transcript read follows §12.9 classification. | [`0144-session-derive`](../0144-session-derive/change.md) | Class |
 
-## TSS-1 Settings model
+## Detailed design
 
-### Schema
+### TSS-1 Settings model
+
+#### Schema
 
 The tenant record carries `securitySettings`, with every member present after creation **[design]**:
 
@@ -483,7 +343,7 @@ Each stored version is a row in `tenant_security_settings_versions`, with the sa
 
 Each session records `securitySettingsVersion` at placement, so the read route counts sessions placed under an earlier version **[design]**.
 
-### Order and validation
+#### Order and validation
 
 | Setting | Weaker to stronger | Validation at write |
 | :-- | :-- | :-- |
@@ -501,16 +361,16 @@ The bounds on the deadlines come from today's values: 72 hours is the T3 deadlin
 
 A write that tightens some settings and relaxes others applies its tightenings at once and holds its relaxations as a pending version, as SO-2's mixed write does **[design]**.
 
-### Combination with other tenant fields
+#### Combination with other tenant fields
 
 - `dataResidencyRegion` stays a separate tenant and environment field. With `encryption.tenantKey: required`, the tenant key lives at the region's `storage.regions.<region>.kmsEndpoint`, and a missing endpoint refuses the write with the existing `KMS_REGION_UNRESOLVABLE` ([§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces), **KMS key residency.**) **[source]**.
 - `complianceProfile` stays a separate field, unchanged until the follow-up design of O9 (b) replaces it. No setting depends on it, and no template sets it.
 - `billingErasurePolicy` stays a separate field. The erasure deadline applies to the job whether billing events are pseudonymized or exempt.
 - The tenant security record of SO-2 stays the tenant's own. The placement requirements it holds and the placement settings here both enter the effective requirements of PM-4, and each can only narrow placement (O13).
 
-## TSS-2 Templates
+### TSS-2 Templates
 
-### Built-in templates
+#### Built-in templates
 
 | Setting | `standard`@1 | `confidential`@1 | `regulated`@1 |
 | :-- | :-- | :-- | :-- |
@@ -526,7 +386,7 @@ A write that tightens some settings and relaxes others applies its tightenings a
 
 `standard` equals today's T3 tenant and every default. `regulated` carries every control T4 carried and adds per-tenant node dedication (O7), one session per pod, and a fresh pod for every session, which §6.4 lists among T4's defences without requiring them **[design]**. `confidential` adds the tenant key and the platform's default isolation profile, so that tenant deletion destroys the tenant's stored data cryptographically, without the cost of dedicated nodes. The placement design's O8 left to this design whether a template requires `nodeTenancy: dedicated`; `regulated` does.
 
-### Versions
+#### Versions
 
 A template version is immutable **[design]**. A Lenny release that changes a built-in template's values ships it under the next version and keeps every earlier version, so a tenant's recorded version can always be shown. An operator-defined template lives in Helm values under O10 (a):
 
@@ -544,13 +404,13 @@ tenantSecurity:
 
 At start the gateway writes every template version it carries to the `security_templates` table, keyed on name and version with a digest of the values. A stored name and version whose digest differs stops the gateway with `CONFIG_INVALID: security template <name>@<version> changed without a new version` **[design]**. An operator-defined template may not reuse a built-in name. Removing an operator-defined template from Helm values leaves its stored versions readable and makes it unavailable to apply.
 
-### Apply
+#### Apply
 
 Applying a template version writes every setting from the version's values as one settings write, so its tightenings apply at once and its relaxations wait the delay under O5 (b) **[design]**. When any setting moves to a weaker value, the request needs a `justification`. `securityTemplate` records the template version once every part of the write is active. The `tenant.security_template_applied` audit event records the tenant, the template name and version, the previous and new value of every setting that changed, which changes are pending with their `effectiveAt`, the caller, and the justification. Creating a tenant applies the template the request names, or `tenantSecurity.defaultTemplate` when it names none, with no delay, because a new tenant has nothing to relax.
 
 A later `PUT` of individual settings keeps `securityTemplate` and makes the read route list the settings that differ from that version. Re-applying a newer version is an operator action on each tenant.
 
-## TSS-3 Admin API
+### TSS-3 Admin API
 
 The routes follow §15.1's conventions: `If-Match` on every write, `dryRun` on every write, the error taxonomy, and an MCP tool per route on `/mcp/management` ([§15.1](../../spec/15_external-api-surface.md#151-rest-api), **Admin API design constraints:** and **Admin API MCP extension contract.**) **[design]**. Every write is mirrored to the tenant's chain under SO-4a.
 
@@ -621,7 +481,7 @@ Each carries the tenant, the previous and new version, the previous and new valu
 
 `lenny-ctl` gains `lenny-ctl tenant security get|set|apply-template|cancel-pending|probe-key` and `lenny-ctl security-templates list|get` under [§24.10](../../spec/24_lenny-ctl-command-reference.md#2410-tenant-management) **[design]**.
 
-## TSS-4 Tenant key
+### TSS-4 Tenant key
 
 The §12.5 lifecycle keeps its mechanisms and changes its key from `workspaceTier` to `encryption.tenantKey` and the tenant key state **[design]**.
 
@@ -660,7 +520,7 @@ The probe never changes a setting, as today.
 
 **Other users of the key.** The forensics design wraps each session and pod-incarnation evidence data key with the tenant key while the state is `active`, and with the regional evidence key otherwise, and a data key wrapped by the tenant key stays so wrapped when the state becomes `retained` ([`0128-forensics-evidence-preservation`, "Keys"](../0128-forensics-evidence-preservation/change.md#keys), decision 28, settled 2026-11-13 in the owner's words "FE O1: keep"). `lenny-evidence` holds encrypt and decrypt rights on the tenant keys of its region, to wrap and unwrap those data keys, and `lenny-evidence-reconcile` holds decrypt rights, to read evidence it compares. Both rights cover tenants whose state is `active` or `retained`, and Phase 4a's deletion of the key makes every evidence record wrapped under it unreadable. Credential envelope encryption follows the Secret class rules on every tenant and does not read the setting **[design]**.
 
-## TSS-5 Deadlines and retention
+### TSS-5 Deadlines and retention
 
 **Erasure.** An erasure job records `deadline = start + erasure.userDeadlineHours` from the tenant's active settings at start (TSSR-11). `ErasureJobOverdue` fires when a job passes its recorded deadline. `lenny_erasure_job_duration_seconds` keeps its buckets, and the job's `deadline` is in the receipt **[design]**. §12.8's rule that "T3 data" has 72 hours and "T4 data" has 1 hour becomes one deadline per job. The Secret class row of §12.9 keeps its handling, "immediate, with cryptographic erasure where supported", as an ordering rule: the job removes Secret records first, inside the job's deadline **[design]**.
 
@@ -670,7 +530,7 @@ The probe never changes a setting, as today.
 
 **Retention.** The retention window stamped at creation and at the terminal transition is `retention.sessionArtifactHours` when set, and the deployment default of §7.1 otherwise. `POST /v1/sessions/{id}/extend-retention` keeps working, and the gateway never shortens a deadline it set later, as §7.1 states **[source]**. The tree's tier-keyed retention, which applied the T4 lease default of 24 hours to workspace artifacts, leaves **[design]**.
 
-## TSS-6 Placement settings
+### TSS-6 Placement settings
 
 The placement settings are operator-set values that enter every session's effective requirements under [PM-4](../0136-placement/change.md#pm-4-placement-requirements), with `details.source: operator`, at creation, resume, delegation, and derive (TSSR-12) **[design]**:
 
@@ -685,7 +545,7 @@ Each requirement narrows pool selection. When no pool remains, the session is re
 
 The settings sit on the tenant rather than on the pool or the runtime: a pool and a runtime serve many tenants, the data being protected is the tenant's, and the operator's agreement that requires a control is with the tenant. The pool states what it offers, and the tenant states what it needs (D3).
 
-## TSS-7 Changing a setting on a live tenant
+### TSS-7 Changing a setting on a live tenant
 
 A tightening becomes active in the write's transaction, and a relaxation at its `effectiveAt`. Every reader reads the tenant's active settings at the time it acts **[design]**. Nothing is drained by a change. An operator who needs every running session under the new values suspends the tenant, which drains its sessions ([§15.1](../../spec/15_external-api-surface.md#151-rest-api), `POST /v1/admin/tenants/{id}/suspend`), and resumes it.
 
@@ -707,7 +567,7 @@ A relaxation of `tenantKey` during a key outage does not restore writes before `
 
 The read route's `sessionsUnderEarlierVersion` counts the tenant's non-terminal sessions whose recorded version is below the active one, so an operator sees how much work still runs under earlier values **[design]**.
 
-## TSS-8 Data classes
+### TSS-8 Data classes
 
 The classes of [§12.9](../../spec/12_storage-architecture.md#129-data-classification) stay, named rather than numbered, and the top class takes the name Secret (D5) **[design]**:
 
@@ -728,7 +588,7 @@ The taxonomy stays in force in these places (inventory rows I35 to I56):
 - §4.4.5, §4.9, §14, §15.1 (`platform.bootstrap_applied`), and §12.8 (pseudonymized billing events): the class each names.
 - The designs that classify their own records: user credential delivery, tenant scoping and identity, security oversight, LLM response cache removal, tenant outbound connectors, forensics evidence preservation, and session derive.
 
-### How a class's requirements are enforced
+#### How a class's requirements are enforced
 
 A class is a table of requirements: one column of §12.9's **Controls driven by classification tier:**, which a data type's class selects. Labelling a kind of data with a class therefore commits each of its stores and paths to that column. Each requirement below states where it is enforced, or that it is retired for workspace data, which no mechanism enforces it on.
 
@@ -736,7 +596,7 @@ A class is a table of requirements: one column of §12.9's **Controls driven by 
 | :-- | :-- |
 | Audit logging writes | At runtime, on the audit write path of [§12.3](../../spec/12_storage-architecture.md#123-postgres-ha-requirements): events about Confidential and Secret data are written synchronously, and Internal events may be batched by opt-in. A SIEM does not relax this **[source]**. |
 | Retention default | At runtime, by the retention defaults applied to each kind of data: 90 days for Internal data, the deployment default of [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow) for Confidential session artifacts (7 days, or the tenant's `retention.sessionArtifactHours` under "TSS-5"), and 24 hours for Secret credential leases ([§4.9](../../spec/04_system-components.md#49-credential-leasing-service)) **[source]**. Legal holds override every default. |
-| Store write check | §12.9 **Enforcement.** states that every store method receives the class of what it writes and refuses a write it cannot protect **[source]**. The tree implements this only for the tenant-key case: the in-memory and local-filesystem artifact stores refuse a write for a tenant whose key is required, because they cannot apply envelope encryption, and the envelope-capable backends refuse when the tenant key is unusable (`checkTierStoreMismatch` and `ErrClassificationControlViolation` in `pkg/blobstore`) **[source]**. No other store receives a class at write time **[source]**. Under this design the artifact store keys the check on the tenant key state `active` and refuses with `CLASSIFICATION_CONTROL_VIOLATION` and `class_store_mismatch` (I39). Whether other stores take the check is under "Validation owed". |
+| Store write check | §12.9 **Enforcement.** states that every store method receives the class of what it writes and refuses a write it cannot protect **[source]**. The tree implements this only for the tenant-key case: the in-memory and local-filesystem artifact stores refuse a write for a tenant whose key is required, because they cannot apply envelope encryption, and the envelope-capable backends refuse when the tenant key is unusable (`checkTierStoreMismatch` and `ErrClassificationControlViolation` in `pkg/blobstore`) **[source]**. No other store receives a class at write time **[source]**. Under this design the artifact store keys the check on the tenant key state `active` and refuses with `CLASSIFICATION_CONTROL_VIOLATION` and `class_store_mismatch` (I39). Whether other stores take the check is under "Validation owed" in `steps.md`. |
 | Encryption at rest for Secret data | Credentials, tokens, and leases are envelope-encrypted by the Token Service ([§4.3](../../spec/04_system-components.md#43-token-service)) and the credential stores of §4.9 on every tenant, whatever its settings, which §12.9 states satisfies the class's encryption row **[source]**. |
 | Access control and audit logging rows, for workspace data | Retired for workspace data. No mechanism reads a class to decide who may open a session's workspace files, snapshots, or transcripts, or to audit each read of them, and the T4 column's access row would deny users their own workspaces (I31) **[source]**. These rows stop applying to workspace data, and workspace data keeps the Confidential column's other rows. For other kinds of data, the access row is the role check of the API that serves the data **[inference]**. |
 | Erasure, residency, and the other rows | Erasure follows "TSS-5", with Secret records removed first. Residency follows `dataResidencyRegion` on every tenant (I34, below). Storage-layer encryption of Internal data is checked by preflight as §12.9 states **[source]**. |
@@ -745,7 +605,7 @@ A class is a table of requirements: one column of §12.9's **Controls driven by 
 
 **Residency.** The cross-region transfer prohibition §12.9 adds for T4 (I34) becomes part of `dataResidencyRegion` for every tenant: a resource of a tenant with a region whose own region differs from the tenant's is refused with `REGION_CONSTRAINT_VIOLATED` **[design]**. §12.8 already states that sessions inherit the environment's region and environments the tenant's, so the check enforces the stated inheritance on every region-bearing resource **[inference]**. The tree's dedicated code `CodeRegionCrossTransferProhibited` leaves.
 
-## TSS-9 Removal of `workspaceTier`
+### TSS-9 Removal of `workspaceTier`
 
 There are no deployments, so the removal has no compatibility path (D4) **[design]**:
 
@@ -773,7 +633,7 @@ When `acme` leaves, Phase 1 records a 4-hour deadline, and Phase 4a disables `te
 - Objects written before the tenant key was switched on stay under the deployment key until retention removes them (O11 (a)). Objects under legal hold never expire, so the count can stay above zero for the tenant's life.
 - A tightened setting does not move running sessions. Full coverage needs a tenant suspension, which ends the sessions.
 - A relaxation waits the tenant's weakening delay, including during an incident (O5 (b)).
-- The deadlines' lower bounds are today's T4 values. The platform has no measurement that its erasure job meets 1 hour at scale ("Validation owed").
+- The deadlines' lower bounds are today's T4 values. The platform has no measurement that its erasure job meets 1 hour at scale ("Validation owed" in `steps.md`).
 - `placement.nodeTenancy: dedicated` costs idle nodes and a single-tenant pool per tenant, which the placement design sizes and bills.
 - A template cannot set `dataResidencyRegion` or `complianceProfile`, because each needs an operator's choice of region or framework, and it cannot create the single-tenant pools that dedicated tenancy needs. The follow-up design of O9 makes the frameworks templates of their own.
 - The store write check of a class covers only the artifact store's tenant-key case ("TSS-8").
@@ -878,15 +738,6 @@ The new operator page on templates owns the settings model, and `operator-guide/
 | 9 | No tenant role can write settings or apply a template, and each reads only its own tenant. A tenant's placement requirement cannot widen its settings. No write falls back to the deployment key while `active`. |
 | 11 | Every new alert resolves to a runbook. The template documentation matches the built-in values. |
 
-## Validation owed
-
-- The erasure job meeting a 1-hour deadline, and the tenant deletion meeting 4 hours, on a tenant with production data volumes. Today's T4 values are claims with no measurement found in the tree.
-- The `encryption_key_scope` count and the move from `retained` to `none` at scale, against the `artifact_store` table's indexes.
-- The per-provider binding of the tenant key when switched on for a tenant with existing objects, on MinIO, S3, GCS, and Azure, including a GCS tenant moving to a per-tenant bucket.
-- That every region-bearing resource the residency webhook sees carries the tenant's region today, so the universal check of I34 refuses nothing that §12.8 allows **[inference]**.
-- That one SO-2 applier can activate pending versions of two record types without reordering a tenant's writes.
-- Which stores other than the artifact store hold Secret or Confidential data that §12.9's store write check should refuse, such as Redis for credential leases and the memory store's pluggable backends, and whether each can receive the class at write time ("TSS-8").
-
 ## Instructions for reviewers of other designs
 
 - [`0136-placement`](../0136-placement/change.md) (applied in its revision 2): replace the operator's tenant-record `nodeTenancy` of PM-2 with `Tenant.securitySettings.placement.nodeTenancy`, written through `PUT /v1/admin/tenants/{id}/security-settings` and a template apply, and apply PM-2's admission and grant rules to those writes (I21). In PM-4, take `placement.minIsolationProfile` as the tenant floor, `placement.allowSharedPod: false` as an operator source of `allowSharedPod: false`, and add `allowReusedPod: false` as a requirement with its pool test ("TSS-6"). The source `operator` covers these settings. O8 resolves: `regulated` sets `nodeTenancy: dedicated`, and `confidential` does not. I25 asks that the reserved overlay rule cover what DR-10's T4 refusal covered.
@@ -903,33 +754,6 @@ The new operator page on templates owns the settings model, and `operator-guide/
 - [`0145-session-isolation`](../0145-session-isolation/change.md), [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), and [`0153-workspace-materialization`](../0153-workspace-materialization/change.md): "Restricted" in these designs names the Pod Security Standards profile, and the data class is now Secret, so the word needs no qualifier. `placement.allowSharedPod` and `placement.allowReusedPod` decide whether a tenant's sessions reach a pod with several slots or a reused pod at all.
 - Every design that names a data class: the top class is Secret (D5). Records of past reviews keep the words they were written with.
 - `compliance-profile-design.md` (pending): split `complianceProfile` into deployment-level Helm settings and per-tenant settings, with `soc2`, `fedramp`, and `hipaa` as templates and the weakening delay in place of the ratchet and its decommission route, reusing this design's template versioning, apply, and relaxation rule (O9 (b)).
-
-## Steps
-
-### 0150.S1 Data class renames
-- status: Planned
-- aliases: [TSS-A, TSS-8]
-- lanes: [specification, code, documentation]
-
-The class renames of "TSS-8" across the specification, with Secret for the top class, the enforcement statement per control row, and the universal region match (I34).
-
-### 0150.S2 Settings model, routes, and tenant keys
-- status: Planned
-- aliases: [TSS-B, TSS-1, TSS-2, TSS-3, TSS-4, TSS-5, TSS-7, TSS-9 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0150.S1, 0142.S2, 0142.S4]
-
-The settings model, §12.10, versions and the relaxation rule, the admin routes, templates, the tenant key states and renames, the deadlines, retention, and the removal of the tenant and environment `workspaceTier`. It depends on SO-2's proposal (0142.S2) for the applier and the weakening delay, and on SO-4a's mirror (0142.S4).
-
-0150.S2 can land before the placement design, because the placement settings it stores take effect only when 0150.S3 lands. Until then the T4 webhook keeps reading the Runtime's field, so 0150.S2 must not remove that field.
-
-### 0150.S3 Placement settings as operator requirements
-- status: Planned
-- aliases: [TSS-C, TSS-6, TSS-9 (part)]
-- lanes: [specification, code, documentation]
-- depends-on: [0150.S2, 0136.S4, 0136.S6]
-
-The placement settings as operator requirements, the removal of §6.4 and §5.2's T4 rules, and the removal of `workspaceTier` from the Runtime and `PodSet`. It lands after the placement design's steps for PM-2 (0136.S4) and PM-4 (0136.S6), together with the placement design's removal of the T4 webhook.
 
 ## Sources
 

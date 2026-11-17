@@ -1,8 +1,6 @@
 # Delegation availability
 
-Status: `Draft`, revision 12, 2026-11-15, after one adversarial review. Revision 12 applies the owner's decision of 2026-11-15, "Yes, let's drop connectors.", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2 designs: the session's `toolServers` lists `platform` alone, `capabilities.deferredToolDiscovery` and CA-8's late tools are withdrawn, `DelegationPolicy` loses its `connector` target type, and `start_child_session` names its runtime in `target` and returns no `origin`. No decision of this design is open: the owner settled O1, O3, O4, O5, and O7 on 2026-11-10, reopened O4 on 2026-11-11 through the runtime protocol design's decision D4, and settled it again on 2026-11-12, and revision 5 applies the owner's decisions B3, B7, B8, B9, and B10 of [`0135-message-delivery`](../0135-message-delivery/change.md#decisions) revision 9 as E1 to E4, and revision 6 applies the adversarial review of that revision and the owner's decisions of 2026-11-11 as E5 and E6. Revision 7 applies the label and term fixes of the adversarial review that read revision 6 on 2026-11-11, and revision 8 those of the re-review that read revision 7 the same day. Revision 9 removes the pre-launched runtime processes under the owner's decision of 2026-11-12. Revision 10, dated 2026-11-13, applies [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 4, under which tools travel as frames and the owner reopened O4 (RP D4, 2026-11-11) and settled its answer (RP O6 (e) and O8 (b), 2026-11-12), and [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 1, under which `type: mcp` runtimes are removed (AR D1, 2026-11-13). Revision 11, dated 2026-11-14, applies the instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) to "DA-3", "DA-4", and "DA-7": the call from a client at the gateway `/mcp` endpoint and the gateway's client catalogue leave, and `ask_question` is omitted for a session created with `inputPolicy: decline`. Nothing here is built or staged. It reads against every design under `designs/` as implemented, in particular [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 77, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0144-session-derive`](../0144-session-derive/change.md) revision 22, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) revision 6. "Decisions" lists what is settled. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label DA-n, and requirements carry the label DAR-n. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 12, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -80,9 +78,10 @@ The owner's request names pools. The owner decided on 2026-11-09 that the pool l
 | Inapplicable tool | A platform tool whose call the session's current settings guarantee to be refused or to have no effect, such as `ask_question` on a session created with `inputPolicy: decline`. "DA-4" lists each one, and the platform tool list leaves it out so that its description costs the agent no context (O7). |
 | Stale list | A platform tool list that a runtime keeps from a list made before a setting changed. The runtime holds it until it lists again, which the `availability_changed` notice prompts ("DA-5"). |
 | `capabilities.childSessions` | The Runtime capability of "MD-22" of [`0135-message-delivery`](../0135-message-delivery/change.md#md-22-parents-and-children), stating that the runtime shows its model the sender of each child event, so the model can tell its children apart. It is `true` or unset, versioned and gateway-read. A revision that does not declare it cannot delegate (E1). |
-| Tool names | This design uses the names of "MD-23" of [`0135-message-delivery`](../0135-message-delivery/change.md#md-23-tool-and-frame-names): `start_child_session` for the specification's `lenny/delegate_task`, `message_child_session` for the agent-facing `lenny/send_message`, `await_child_sessions` for `lenny/await_children`, `close_child_session` for `lenny/cancel_child`, `list_child_sessions` for `lenny/get_task_tree`, and `ask_question` for `lenny/request_elicitation`, with `discover_agents` unchanged and `import_child_session_file` new. "Problem", "Current state", "Decisions", and the records keep the specification's names (E2, E5). |
+| Tool names | This design uses the names of "MD-23" of [`0135-message-delivery`](../0135-message-delivery/change.md#md-23-tool-and-frame-names): `start_child_session` for the specification's `lenny/delegate_task`, `message_child_session` for the agent-facing `lenny/send_message`, `await_child_sessions` for `lenny/await_children`, `close_child_session` for `lenny/cancel_child`, `list_child_sessions` for `lenny/get_task_tree`, and `ask_question` for `lenny/request_elicitation`, with `discover_agents` unchanged and `import_child_session_file` new. "Problem", "Current state", "Decisions" in `decisions.md`, and the records keep the specification's names (E2, E5). |
 | `disabledBy` | The field of the `DELEGATION_DISABLED` refusal that names the level that made delegation unavailable ("DA-3"). |
 | Widening and narrowing | A write that makes delegation available where it was unavailable widens availability, and a write that does the reverse narrows it. Each writes its own audit event ("DA-1"). |
+| Labels | Parts of the design carry the label DA-n, and requirements carry the label DAR-n. |
 
 ### Terms from other designs and the platform
 
@@ -174,53 +173,6 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 "Limits" states what the change costs: a runtime keeps a stale list until its next turn, or longer if it ignores the notice, a list change costs the runtime a provider prompt-cache write, a platform Helm change reaches running processes only after a gateway restart, and a pod that can reach the gateway's public API with a client credential can still create a root session.
 
-## Decisions
-
-Settled by an earlier owner decision or by a project rule:
-
-| ID | Decision |
-| :-- | :-- |
-| S1 | A client disables delegation for one session and its tree with `delegationLease.maxDepth: 0` at creation. The owner settled it on 2026-11-03 as decision 26 of [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#client-delegation-limits-decision-26), in the words "yes, add it with maxDepth: 0". O5 settles what decision 26 and D3 left open. |
-| S2 | The refusal is the enforcement. Leaving an unavailable tool out of the platform tool list keeps its description out of the agent's context on every model call and keeps the agent from choosing a tool that will be refused. TS-3 states the first half in its words "Hiding is a convenience, and the refusal is the control", which this design keeps as the history of the rule. The owner stated the stronger reason on 2026-11-10: "It's more than a convenience. Tools cost context tokens and can confuse the agent." This design applies the rule at every level and to the inapplicable tools of "DA-4". |
-| S3 | `allowDelegation` on the Runtime is a live field under [RV-1](../0140-runtime-revisions/change.md#rv-1-revisions). The ground is who writes it. A `platform-admin` writes it on a platform runtime and a `tenant-admin` on a tenant-derived runtime, as the authority over where and for whom the runtime runs, and the gateway enforces it, which is RV-1's definition of a live field. The image the runtime author builds does not carry the value, so a change to it describes no change to the binary and needs no revision. A binary that relies on delegation keeps delegating only while its admin leaves delegation enabled, and meets the refusal of "DA-3" otherwise. |
-| S4 | No compatibility mode. Nothing is deployed, so the new fields carry no migration path, and the meaning of an explicit `maxChildrenTotal: 0` changes in place (DA-6). |
-
-Settled by the owner on 2026-11-09:
-
-| ID | Decision |
-| :-- | :-- |
-| D1 | A tenant can narrow one platform runtime for its own sessions through a narrow-only per-tenant entry, the tenant runtime entry with `allowDelegation: false` ("DA-1"). |
-| D2 | The pool level is dropped. A derived runtime can set `allowDelegation: false`, which covers a pool of workers beside a pool of orchestrators of the same base runtime. In the owner's words: "I agree with you. As long as it can be disabled in derived runtimes, we're good." Revision 2 recorded this as O2. |
-| D3 | A session cannot disable its delegation mid-session. The session level is set at creation only ("Session level" under DA-2). |
-| D4 | The per-hop switch is `lease_slice.maxChildrenTotal: 0`, and `approvalMode` stops being an argument of `lenny/delegate_task` ("DA-6"). Revision 2 recorded the per-hop question as O6 and recommended `approvalMode: deny`. |
-| D5 | The tenant hard switch is the SO-2 guardrail `"delegation": "forbid"`, set by a `security-admin`. A `tenant-admin` writes only `delegation.allowByDefault`, and the tenant record's `delegation.forbid` and `forbidSetBy` of revision 2 are dropped. Revision 2 recorded the question as O8. |
-
-Settled by the owner on 2026-11-10. These decisions were open in revision 3 and keep their IDs, which the rest of this document cites:
-
-| ID | Question | Owner's answer and what it settles |
-| :-- | :-- | :-- |
-| O1 | How the levels combine. (A) Restrict-only at every level, so any `false` wins and a platform "default" of off can never be turned on below it. (B) Defaults resolved by specificity, a runtime overriding the tenant default and the tenant default overriding the platform default, with forbids that nothing below lifts, and restrict-only between a runtime, its base, and a tenant runtime entry. (C) As (B) without forbids. | "ok" to (B). The more specific level wins among the defaults, and the platform forbid in Helm and the tenant forbid, which is the delegation guardrail (D5), override every other level, as the resolution table of "DA-2" states. The tenant runtime entry (D1) is the tenant's narrowing of a single runtime. The owner asked for a platform and a tenant *default*, which a more specific level must be able to override, and (A) gives none. Without a forbid, a tenant that wants no delegation cannot stop a platform runtime that sets `allowDelegation: true`, so (C) leaves the tenant without a hard switch. (B) follows the layering §8.6 uses for lease extension: defaults by specificity, capped by ceilings. |
-| O3 | The platform default. | "ok" to `gateway.delegation.allowByDefault: true`. §8.1 describes delegation as a platform primitive that every agent runtime can use, a deployment that sets nothing behaves as today, and the depth, fan-out, budget, and tree-size limits of §8.3 still bound every tree. A deployer who wants delegation off by default sets the value to `false`. |
-| O4 | How a change reaches a running session. Revision 3 offered (A) live reads in both directions with a notification to the runtime, (B) a snapshot at creation, and (C) live for a change that disables and a snapshot for one that enables, and recommended (A). | "ok" to option (D), a new option. The owner asked for "whichever means the smallest blast radius from an implementation point of view". The comparison rests on the tree: the adapter caches nothing today, and each `tools/list` is forwarded live to the gateway; `ListPlatformTools` returns one catalog for every session; and no list-change notification exists in the tree ("Current state"). Under (D) the `lenny/delegate_task` handler reads the current settings at each call, and `ListPlatformTools` filters the list per session from the current settings at each list. The design keeps no adapter cache, no notification RPC, no fan-out, no `listChanged` declaration, and no `subscriptions/listen`. A session that listed before a change keeps its list until its runtime lists again, and the refusal covers a stale entry. Most harnesses list once per connection. The notification machinery can be added later without changing (D) ("DA-5"). The session's own choice (S1) stays stored, because it is the client's and nothing lifts it. "Alternatives rejected" records revision 3's (A), (B), and (C). **Reopened and settled again.** The owner reopened O4 on 2026-11-11 in [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#decisions) decision D4, answering "yes" to reopening it so that a runtime learns of changes to what its session may use, and settled the mechanism on 2026-11-12 with "go with your recommendations" (RP O6 (e) and O8 (b)). The reads of (D) stay. The notice is added as "DA-5" foresaw: the coordinating replica recomputes `delegation` and `questions` when it opens or records a turn and sends `availability_changed` when either differs from what it last sent, with no fan-out from any write path and no copy of the list in the adapter ("RP-4"). |
-| O5 | How derive and resume treat the session level. D3 settles that a session cannot change it mid-session. | "ok". A derive request accepts `delegationLease.maxDepth`, which can only lower the value TS-3 carries over from the source. A resume keeps the stored value ("Session level" under DA-2). |
-| O7 | Whether any other platform tool needs a per-runtime switch. | "ok", with an extension. No new per-runtime switch is added: "DA-7" finds an existing control for each tool, some tools leave the surface under other designs, and a deployer who wants a tool held for approval uses an SO-5 rule. The extension: the per-session list filter of "DA-4" also leaves out the inapplicable tools, those whose call the session's existing settings guarantee to fail or to have no effect, so their descriptions cost no context. The refusals remain the enforcement. The extension adds one runtime declaration, `capabilities.harnessApprovalRequests`, which "MD-19" of [`0135-message-delivery`](../0135-message-delivery/change.md#md-19-harness-approvals) states. |
-
-Settled by the owner on 2026-11-10 in [`0135-message-delivery`](../0135-message-delivery/change.md#decisions) revision 9, which this design applies:
-
-| ID | Decision |
-| :-- | :-- |
-| E1 | A runtime revision that does not declare `capabilities.childSessions: true` may not delegate, and its refusal names `disabledBy: capability`. The owner wrote: "the runtime should handle it. Runtimes that can't shouldn't advertise the capability to handle children" (message delivery B3). |
-| E2 | The platform tools carry no `lenny/` prefix and take the names of "MD-23". The owner wrote: "go with your recommendations except I prefer await_children and discover_agents" (message delivery B10). |
-| E3 | Harness approvals travel on the `request` frame with `kind: "approval"` and its `reply`, which message delivery B-O6 made of revision 9's `approval_request` and `approval_decision` frames, so `lenny/request_approval`, `capabilities.harnessApprovalRequests`, and their list rule of revision 4 are withdrawn (message delivery B7 and B8). |
-| E4 | Sessions message each other only along the tree: `message_child_session` sends to a direct child, and the `siblings` scope leaves, so a session that may not delegate and has no child has no recipient, and its list omits `message_child_session` (message delivery B9). A session that may delegate keeps it, because a runtime lists its tools once per connection, before it starts children. `lenny/request_input` leaves, and `set_tracing_context` stays as a frame only (message delivery B5 and B8). Revision 5 omitted the tool for every session with no child, which contradicted the "DA-4" table, and revision 6 corrects it (review finding M1). |
-
-Settled by the owner on 2026-11-11 in [`0135-message-delivery`](../0135-message-delivery/change.md#decisions) revision 10 and [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 1, which this design applies:
-
-| ID | Decision |
-| :-- | :-- |
-| E5 | Every agent-facing tool that acts on a child names the session: `start_child_session`, `message_child_session`, `await_child_sessions`, `close_child_session`, and `list_child_sessions`, and `import_child_session_file` is added. The owner asked whether "the MCP tools should refer to sessions (like `suspend_child_session`)" and answered "P6: ok" (message delivery B11 and B14). |
-| E6 | `detach` is retired from the cascade, which becomes `onParentEnd` with `close_all` and `let_finish`: "I don't think `detach` should be an option" (lifecycle design L6 and L10). A session whose children outlive it under `let_finish` keeps no delegation tool, because it is terminal. |
-
 ## Requirements
 
 | ID | Requirement |
@@ -275,7 +227,9 @@ Settled by the owner on 2026-11-11 in [`0135-message-delivery`](../0135-message-
 - "MD-8" of [`0135-message-delivery`](../0135-message-delivery/change.md#md-8-provider-surfaces) states that elicitation stays refused on the provider surfaces whatever caused the turn **[design]**, and revision 9 of that design removes `lenny/request_input`, which extends AM-6 of the Messages API design to every provider surface.
 - [§7.2](../../spec/07_session-lifecycle.md#72-interactive-session-model) "Messaging scope" defines the `messagingScope` values `direct`, whose targets are the direct parent and direct children, and `siblings`, which adds the children of the same parent. Each value allows the direct parent and the direct children, so no value allows no recipient.
 
-## DA-1 Levels
+## Detailed design
+
+### DA-1 Levels
 
 | Level | Fields | Written by | Values |
 | :-- | :-- | :-- | :-- |
@@ -300,7 +254,7 @@ Settled by the owner on 2026-11-11 in [`0135-message-delivery`](../0135-message-
 
 **Switches for an incident.** `gateway.delegation.forbid` takes effect only when the gateway restarts with the new value, so it is a deployment posture and not a switch for an incident. During an incident an operator uses a live level: a `platform-admin` sets `allowDelegation: false` on the runtime involved, which reaches every tenant's sessions of that runtime at their next call, and a tenant's `security-admin` sets the delegation guardrail, which applies in the write's transaction. A `tenant-admin` can also set the tenant default to `false` or write a tenant runtime entry. Each change is enforced at the next call of every running session it reaches, reaches the session's runtime as `availability_changed` at the session's next turn, and reaches its list when the runtime lists again ("DA-5").
 
-## DA-2 Resolution
+### DA-2 Resolution
 
 **Runtime capability (E1).** Before the levels below, a session whose runtime revision does not declare `capabilities.childSessions: true` may not delegate, and the refusal names `disabledBy: capability`. The capability states what the binary can do, so no level lifts it, and it is versioned with the revision.
 
@@ -345,7 +299,7 @@ The rule and "DA-6" therefore give one refusal for a child that a parent created
 - **Derive (O5).** TS-3 stores the source's `maxDepth` minus the source's depth, with a floor of 0. This design adds `delegationLease.maxDepth` to the derive request, which can only lower that value, so a client can derive a session that cannot delegate. The derived session resolves availability from its own runtime, which [`0144-session-derive`](../0144-session-derive/change.md#sd-1-one-route) lets differ from the source's.
 - **Resume and recovery (O5).** A resume keeps the row, so it keeps the stored value, and the levels are read live after it. Tree recovery brings a node back on its stored lease (§8.10), and the node's next call reads the levels live.
 
-## DA-3 Refusal
+### DA-3 Refusal
 
 The gateway refuses `start_child_session` with `403 DELEGATION_DISABLED`, which TS-3 introduces with category `POLICY` and `retryable: false`. This design adds `details.disabledBy`, one of `capability`, `platform`, `securityGuardrail`, `tenantRuntime`, `runtime`, `tenantDefault`, `platformDefault`, and `session`, and `details.effectiveSettings` with the values each level held, as §8.2's cycle refusal reports `blockedBy` and `effectiveSettings`. A `capability` value names the runtime revision that does not declare `capabilities.childSessions` (E1, review finding M2). A `runtime` value names the runtime and states whether the `false` came from its base, a `tenantRuntime` value names the runtime the entry names, and a `securityGuardrail` value names the active security record version.
 
@@ -358,7 +312,7 @@ The check runs at each of these points, as TS-3 places its own:
 
 The gateway counts refusals in `lenny_delegation_disabled_refusals_total{disabled_by}`. A runtime that calls `start_child_session` from a stale list appears there, which tells an operator that the runtime has not listed since the change. Each refusal also writes the delegation rejection audit that §8.2 states for a refused delegation, with `DELEGATION_DISABLED` and `disabledBy`.
 
-## DA-4 Tool list
+### DA-4 Tool list
 
 `Bridge.ListPlatformTools` uses the session ID it already receives. At each list it reads the session's row and the current settings, and after TS-3's allow-list to §9.1's table it removes the inapplicable tools by this table (DAR-4, DAR-10). The third column states the answer a call receives when the runtime calls the tool anyway, for example from a stale list. That answer is the enforcement, and the list keeps the tool's description out of the agent's context (S2).
 
@@ -373,7 +327,7 @@ The gateway counts refusals in `lenny_delegation_disabled_refusals_total{disable
 
 **`message_child_session`.** Revision 4 gave `lenny/send_message` no rule, because each `messagingScope` value allowed the direct parent and the direct children. Under message delivery B9 a session sends only to its direct children with `message_child_session`, and to its client with `send_update`. A session that may not delegate and has no child therefore has no recipient, and its list omits the tool. A session that may delegate lists it, because its runtime lists once per connection and starts its children afterwards (E4, review finding M1).
 
-**`start_child_session` arguments and result.** `start_child_session` names the child's runtime in `target`, as §8.2 and the runtime author guide state (O13 of [`0124-connector-removal`](../0124-connector-removal/change.md#owner-decisions)). Its result carries no `origin` member. Lenny keeps no external-agent concept, so no target, discovery entry, or child listing marks a runtime as one that talks to an external agent, and a runtime that talks to one does so itself through egress (CR-3).
+**`start_child_session` arguments and result.** `start_child_session` names the child's runtime in `target`, as §8.2 and the runtime author guide state (O13 of [`0124-connector-removal`](../0124-connector-removal/decisions.md#owner-decisions)). Its result carries no `origin` member. Lenny keeps no external-agent concept, so no target, discovery entry, or child listing marks a runtime as one that talks to an external agent, and a runtime that talks to one does so itself through egress (CR-3).
 
 **What changes the list.** The list of a running session changes when "may delegate" changes or when its pool's `elicitationDepthPolicy` or allow list changes. The session's depth, its `inputPolicy`, and its runtime revision's `capabilities.childSessions` are fixed for the session. "Has a child" becomes true only through a delegation, which requires "may delegate", and stays true, so a session that loses delegation keeps the tools that manage the children it has (DAR-6). The list keeps a fixed tool order, as `2026-07-28` recommends.
 
@@ -383,7 +337,7 @@ Lenny keeps no client-facing tool catalogue. Revision 10 kept one catalogue at t
 
 **Runtimes whose harness is an MCP client.** A runtime whose harness is an MCP client connected to several servers, such as Claude Code with the bridge's platform server and servers of its own, among them an operator's MCP services that it reaches through egress (CR-3), sees a change to the platform list when it lists that server again, which the bridge prompts with `notifications/tools/list_changed` on an `availability_changed` that names `platform`, and a client that prefixes tool names by server, as Claude Code did in the CA-9 spike, keeps the prefix on the platform tools. The virtual child interface of §8.2 step 8 exists only for children, so a session that cannot delegate gets none, and a session that loses delegation keeps the interfaces of its existing children.
 
-## DA-5 Running sessions
+### DA-5 Running sessions
 
 The owner chose option (D) on 2026-11-10 (O4), reopened O4 on 2026-11-11 (RP D4), and settled the notice on 2026-11-12 (RP O6 (e) and O8 (b)) **[design]**.
 
@@ -391,7 +345,7 @@ The owner chose option (D) on 2026-11-10 (O4), reopened O4 on 2026-11-11 (RP D4)
 
 **Notice (replaces revision 9's "No notification").** The session's availability carries `delegation`, whether the session may start a child now, and `questions`, whether it may ask a question. The gateway computes `delegation` with the resolution and room rule of "DA-2" and `questions` with the `ask_question` rule of "DA-4", and writes both on every `session_start`. The coordinating replica recomputes them when it opens a turn with a message and when it records a turn the runtime opened, and calls `UpdateAvailability` with `changedServers: ["platform"]` when either differs from what it last sent; the adapter writes `availability_changed` to the slot's runtime connection and tool connections ahead of the turn's first message ("RP-4"). The notice carries no tool list. The reference bridge answers it with `notifications/tools/list_changed` for the platform server, or the `2026-07-28` equivalent on `subscriptions/listen`, and a harness that honours it lists again, which reaches `ListPlatformTools` ("RP-5"). No admin write path and no SO-2 applier enumerates running sessions, so the notice adds no fan-out. A change to a pool's `elicitationDepthPolicy` or allow list reaches `questions` the same way.
 
-**Stale lists.** A session that listed before a change keeps its list until its runtime lists again. The notice shortens that window to the session's next turn for a runtime that honours it. A runtime that ignores the notice, or a harness that ignores `notifications/tools/list_changed`, keeps its list as before, and a stale list that still offers `start_child_session` after delegation became unavailable leads to the refusal of "DA-3", which is the enforcement (S2). A change during a turn reaches the runtime at the next turn, so a call within the same turn meets the refusal. No runtime process outlives its session ([`0145-session-isolation`](../0145-session-isolation/change.md#decisions) decision D4), so no list carries into another session.
+**Stale lists.** A session that listed before a change keeps its list until its runtime lists again. The notice shortens that window to the session's next turn for a runtime that honours it. A runtime that ignores the notice, or a harness that ignores `notifications/tools/list_changed`, keeps its list as before, and a stale list that still offers `start_child_session` after delegation became unavailable leads to the refusal of "DA-3", which is the enforcement (S2). A change during a turn reaches the runtime at the next turn, so a call within the same turn meets the refusal. No runtime process outlives its session ([`0145-session-isolation`](../0145-session-isolation/decisions.md#decisions) decision D4), so no list carries into another session.
 
 **Cache hints.** Under `2026-07-28` every `tools/list` result carries `ttlMs` and `cacheScope` **[external]**. The reference bridge answers the platform server's list with `ttlMs: 0` and `cacheScope: "private"` ("RP-5"), so a harness that honours the hints treats the list as stale at once and never shares it across sessions. Each list the harness makes reaches the gateway.
 
@@ -399,7 +353,7 @@ The owner chose option (D) on 2026-11-10 (O4), reopened O4 on 2026-11-11 (RP D4)
 
 **MCP versions.** The reference bridge serves `2025-11-25` and `2026-07-28` (MP-5). Each bridge serves one slot, whose runtime process serves one session, so the list varies only over time as settings and children change, which `2026-07-28` permits **[external]**.
 
-## DA-6 Per-hop narrowing
+### DA-6 Per-hop narrowing
 
 **The switch (D4) [design].** A parent that passes `lease_slice.maxChildrenTotal: 0` on `start_child_session` creates the child with no room. The child's stored lease records `maxChildrenTotal` as an explicit 0, the child cannot delegate, its list omits the delegation tools, and its refusal names `disabledBy: session` under the rule of DA-2. A grandchild cannot exist, so no inheritance rule is needed below it. The field already means "Max children the child may spawn" in §8.2, so 0 reads as its plain meaning.
 
@@ -409,7 +363,7 @@ The owner chose option (D) on 2026-11-10 (O4), reopened O4 on 2026-11-11 (RP D4)
 
 **Removal of the argument.** `start_child_session` stops accepting `approvalMode`. `ErrDelegationDenied` and the `DELEGATION_DENIED` code go from `validateDelegation`, the handler of `mcptools_register.go`, `errorclassify`, and `delegate_approvalmode_test.go`, because no caller refuses itself any longer. `schemas/lenny-adapter.proto` drops `ERROR_CODE_DELEGATION_DENIED = 20` and declares `reserved 20;` and `reserved "ERROR_CODE_DELEGATION_DENIED";` in the `ErrorCode` enum, so neither the number nor the name is reused, and the generated code is regenerated. No specification section changes for the code, because none names it. §8.4's `approvalMode` stays a lease field set at policy registration, so the lease example of §8.3 is unchanged. The removal closes the self-refusal half of F-8.4.4. The other half, that no path stores `deny` on a lease, stays with F-8.4.4.
 
-## DA-7 Other platform tools
+### DA-7 Other platform tools
 
 The owner asked whether other platform tools need a per-runtime or per-pool switch, and answered "ok" to adding none (O7). This table reviews each tool on the allow-list TS-3 sets, which is §9.1's table plus `lenny/vcs_token`, with the changes [`0135-message-delivery`](../0135-message-delivery/change.md#md-23-tool-and-frame-names) makes to it. The fourth column names the list rule of "DA-4" that reads the tool's existing control.
 
@@ -423,7 +377,7 @@ The owner asked whether other platform tools need a per-runtime or per-pool swit
 | `list_child_sessions` | Returns the session's descendants and their states. | `treeVisibility` on the lease (§8.3). | When the session may not delegate and has no child. | No |
 | `lenny/set_tracing_context` | Registers tracing identifiers that the gateway attaches to children's leases. | Message delivery decision B8 removes the tool. The `set_tracing_context` JSONL frame keeps the function. | Not applicable. | No, it leaves |
 | `lenny/memory_write` and `lenny/memory_query` | Built-in memory. | CA-10 removes the tools and the feature. | Not applicable. | No, they leave |
-| `lenny/vcs_token` | The pod's git credential helper fetches a token. | The VCS pool's host patterns and user authorization. [`0127-egress-and-git`](../0127-egress-and-git/change.md#steps) EG-3 removes the tool. | Not applicable. | No, it leaves |
+| `lenny/vcs_token` | The pod's git credential helper fetches a token. | The VCS pool's host patterns and user authorization. [`0127-egress-and-git`](../0127-egress-and-git/steps.md#steps) EG-3 removes the tool. | Not applicable. | No, it leaves |
 | `import_child_session_file` | Copies a child's output file into the session's workspace. | `fileImportLimits` on the lease and the content scan of §8.7 ([`0135-message-delivery`](../0135-message-delivery/change.md#md-26-files-from-a-child), "MD-26"). | When the session may not delegate and has no child. | No |
 | `start_child_session`, `discover_agents`, `await_child_sessions`, and `close_child_session` | Delegation and its dependent tools. | This design. | Under the rules of "DA-4". | Covered by DA-1 to DA-4 |
 
@@ -434,7 +388,7 @@ A deployer who needs a human to approve a particular tool call has SO-5's approv
 ## Limits
 
 - **A runtime keeps a stale list until its next turn, or until it lists again.** The `availability_changed` notice reaches the runtime at the session's next turn ("RP-4"), so a change during a turn is not announced until the turn ends. A runtime that ignores the notice keeps its list until it lists again. A runtime that listed before delegation became unavailable is still offered `start_child_session` in that window, and its call is refused, which the refusal counter of "DA-3" shows. A runtime that listed before delegation became available is not offered the tool until it lists again.
-- **No process carries a list into a new session.** Under [`0145-session-isolation`](../0145-session-isolation/change.md#decisions) decision D4, a runtime process serves at most one session over its life, and since the owner removed pre-launched runtimes on 2026-11-12, every runtime process launches at bind, after its session's workspace is built. A list a runtime holds was therefore made for its own session.
+- **No process carries a list into a new session.** Under [`0145-session-isolation`](../0145-session-isolation/decisions.md#decisions) decision D4, a runtime process serves at most one session over its life, and since the owner removed pre-launched runtimes on 2026-11-12, every runtime process launches at bind, after its session's workspace is built. A list a runtime holds was therefore made for its own session.
 - **A list change costs a prompt-cache write.** A runtime that lists again sends its model a changed set of tool definitions. Providers cache a prompt prefix in the order tools, system, and messages, and a change to the tools invalidates the cached prefix after it **[external]**, so the runtime's next model call after a change pays the provider's cache-write price for its whole prompt. A change at a tenant or runtime level reaches every running session of that tenant or runtime, so it costs one such write per session that lists again. The fixed tool order of "DA-4" keeps a list that did not change from costing one.
 - **The model may not be told of the change.** A runtime that ignores the notice gives its model no sign of the change. A model that planned to delegate learns of the change from the refusal text.
 - **A Helm forbid is not a switch for an incident.** `gateway.delegation.forbid` and `gateway.delegation.allowByDefault` take effect when the gateway restarts with them, so a process meets them at its next call after the restart, receives them in its availability at its next turn, and sees them in its list when it lists again. "Switches for an incident" under DA-1 names the live levels.
@@ -526,16 +480,6 @@ Each page states behaviour without specification section numbers. The operator p
 
 Every test carries the `// spec:` annotation, and tests at tier 2 and above carry `// diagnosis:`, as `test-coverage.md` requires.
 
-## Validation owed
-
-| Item | Why it matters | Status |
-| :-- | :-- | :-- |
-| Whether Claude Code and Codex list the platform server again on `notifications/tools/list_changed`, including for a tool removed that way | It sizes the stale-list window for a runtime that relays the notice through the bridge. The CA-9 spike saw Claude Code list again for an added tool only. | Open |
-| How long a runtime process outlives a session on a pod | It sized the window in which a new session held the previous session's list. | Closed by session isolation decision D4: no runtime process outlives its session. |
-| That a per-session `tools/list` behind one pod-wide socket conforms to `2026-07-28`'s "MUST NOT vary per-connection" | Revision 9 argued that the list varied by the calling session. | Closed by the runtime protocol design: each bridge serves one slot's session, so no socket is shared across sessions. |
-| Whether the tenant default is changed through `PUT /v1/admin/tenants/{id}` alone, or a sub-resource fits, as `elicitation-content-integrity` does | "DA-1" proposes a sub-resource. | Open, for the proposal |
-| Whether the per-tenant runtime record can hold `allowDelegation` beside its capability axes, or a sibling record keyed the same way fits better | "DA-1" places D1's entry on the existing record. The record's store and RV-1's narrowing rules are written for capability axes. | Open, for the proposal |
-
 ## Defects found while verifying
 
 Revision 2 files these in `BUILD-GAPS.md`, at the owner's request of 2026-11-09, under the ID in the "BUILD-GAPS" column:
@@ -561,22 +505,6 @@ Revision 2 files these in `BUILD-GAPS.md`, at the owner's request of 2026-11-09,
 - [`0146-session-lifecycle`](../0146-session-lifecycle/change.md): no change. Its `onParentEnd` replaces `cascadeOnFailure`, and a terminal session lists no tool.
 - [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture): its reviewer adds `"delegation": "forbid"` to the SO-2 record, lists its removal among the weakenings of "Tightening and weakening" and its setting among the tightenings, and states that the gateway's delegation gate and the platform tool list read the active version at each call and each list. Its reviewer also states that an SO-5 approval hold on `start_child_session` runs after this design's refusal, and that a `tenant-admin` cannot write the guardrail.
 - [`0141-runtime-routing`](../0141-runtime-routing/change.md#post-chain-point): no change. Its reviewer confirms that the post-chain point needs no availability check, because a child's availability reads the final row at the child's own calls and depends on no pool.
-
-## Steps
-
-### 0126.S1 Delegation availability
-- status: Planned
-- aliases: [DA-A, DA-1, DA-2, DA-3, DA-4, DA-5, DA-6, DA-7]
-- lanes: [specification, code, documentation]
-- depends-on: [0149.S3]
-
-The step extends the calling-session parent, the allow-list, `DELEGATION_DISABLED`, and the stored `maxDepth` that 0149.S3 (TS-3) adds. It carries the specification edits; the levels, the resolver, and the refusal; the per-session list and its rules; the `delegation` and `questions` values for the availability of "RP-4"; the derived runtime rule and the tenant runtime entry; the derive narrowing; the explicit-zero per-hop switch and the extension rule; and the removal of the `approvalMode` argument and `DELEGATION_DENIED` with the proto reservation. Three parts land with or after the steps that add what they read: the guardrail row of the resolution with 0142.S2 (the SO-2 proposal) of [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture), which adds the record; the provider-surface rules for `lenny/request_input` and `ask_question` with 0135.S2 (MD-B) of [`0135-message-delivery`](../0135-message-delivery/change.md#steps), which lands "MD-8"; and the `capabilities.childSessions` condition and the tool names with 0135.S5 (MD-E) of the same design, which lands "MD-22" and "MD-23".
-
-### Notes on the steps
-
-Revision 3's DA-B, the notification work, is withdrawn under O4. The notice, the bridge's cache hints, and its `-32602` mapping land with the runtime protocol design's RP-B (0139.S2), which depends on 0126.S1.
-
-The defect that `start_child_session` does not apply `DelegationPolicy` rules (F-8.3.14) is independent of 0126.S1 and DA-B and takes its own proposal.
 
 ## Sources
 

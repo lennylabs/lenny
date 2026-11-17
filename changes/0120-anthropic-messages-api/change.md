@@ -1,8 +1,6 @@
 # Anthropic Messages API compatibility
 
-Status: `Draft`, revision 12, 2026-11-15, after one adversarial review. Revision 12 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors.") under [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2: the `lenny` object loses `deferConnectors`, the link refusal carries `details.userLinks` alone, and runtime tools and approvals name platform tools alone. Revision 11 aligns "Warm and cold" with the conditional send, R16 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) revision 3, under its O12: a follow-up to a `dormant` session continues warm. The owner settled O11 and O12 on 2026-11-13, and no decision is open. The owner chose on 2026-11-13 to move every client protocol adapter, this one included, out of Lenny into a separate first-party repository with an optional Helm subchart in front of the REST API (decision O13); [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) governs what leaves. Revision 10 applies two of that design's decisions, which the owner settled on 2026-11-14. Under O8, in the owner's words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", the banner below and a mark under each part state which sections still govern Lenny and which move to the Anthropic adapter project, and nothing is deleted or moved. Under the simplified O3, which the owner answered "yes", the held-session concept leaves: the adapter creates ordinary sessions, may shorten their idle timeout, and routes follow-ups by conversation fingerprint ("Session lifetime"). Nothing here is built or staged. It reads against [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 77, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) revision 21, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). "Decisions" lists what the project rules and the owner settle and what remains open. The design stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label AM-n, requirements carry the label AMR-n, and the proposals that land them carry AM-A to AM-C under "Proposal split and order". "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 12, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the Anthropic Messages protocol mapping moves to the Anthropic adapter's repository, `lenny-adapter-anthropic-messages`. Only the sections marked as Lenny's still govern Lenny. The sections marked as moving belong to the Anthropic adapter project: they stay in this file unchanged until that repository takes them, govern the adapter rather than Lenny, and stage no edit to Lenny's specification. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved.
 >
@@ -96,6 +94,7 @@ Verifying the existing translators against the tree found defects that this surf
 | Client tool | A tool that the request's `tools` array declares and that the client executes, under [`0122-client-tools`](../0122-client-tools/change.md). |
 | Runtime tool | A tool the runtime calls inside its turn through the gateway: a platform tool, which the runtime reaches through `tool_call` frames ([`0139-runtime-protocol`, "RP-3"](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)). The adapter-local tools are retired under that design's decision D5 of 2026-11-12, and connector tools left with connectors under CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md). A tool of an operator service is the harness's own, reached through egress (CR-3 of that design). |
 | Anthropic error envelope | `{"type":"error","error":{"type":...,"message":...,"details":{...}},"request_id":...}` with the HTTP status Anthropic pairs with each error type **[external]**. |
+| Labels | Parts of the design carry the label AM-n, and requirements carry the label AMR-n. The proposals AM-A, AM-B, and AM-C that the banner names are the aliases of the steps in `steps.md`. |
 
 ### Terms from other designs and the platform
 
@@ -195,58 +194,6 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 "Limits" states what the design costs: a conversation whose history the client edits always runs cold, runtimes without conversation input see history as text, client tools need runtime changes, streams deliver whole parts, a non-streaming request cannot outlast the client's and intermediaries' timeouts, and summed usage can trigger a client's compaction early.
 
-## Decisions
-
-Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), the decisions that govern "AM-1" to "AM-3" and "AM-5" to "AM-10" move to the Anthropic adapter project with those sections. D2 and O3 still govern Lenny as they apply to "AM-4".
-
-Settled by project rules:
-
-| ID | Decision | Basis |
-| :-- | :-- | :-- |
-| D1 | The adapter is a built-in adapter in the `ExternalAdapterRegistry`, beside MCP and the OpenAI translators, and creates sessions through the shared create-and-start service. | §15 "Three tiers of pluggability" and the single-shot compute model. One creation path keeps admission and the post-chain point uniform. |
-| D2 | The design adds no compatibility mode, legacy flag, or migration path for Lenny's own surfaces. The OpenAI translators change their history delivery in place (O3). | The project rule against compatibility shims before a first deployment (`feedback_no_backward_compat`). |
-| D3 | A request field or content block that Lenny cannot honor is refused with `400 invalid_request_error` naming it, unless it is a hint with no effect on output semantics, such as `cache_control`. The existing translators' practice of decoding a request and dropping unknown fields is not copied. | Fail closed on behaviour a client relies on. A silently ignored `tools` array would return prose to a client that expects `tool_use`. |
-| D4 | Every claim about the Messages API in this design comes from the pages under "Sources", read on 2026-11-09. | `feedback_verify_external_standard_versions`. |
-
-Settled by the owner on 2026-11-09. The M labels are the adversarial review's findings that the owner answered together with an open decision:
-
-| ID | Decision |
-| :-- | :-- |
-| O1 | The client presents a Lenny bearer in `Authorization: Bearer` or in `x-api-key`. The auth middleware normalizes `x-api-key` into the request's credential and strips the header. A value that starts with `sk-ant-` receives a specific `401 authentication_error` that never echoes the value. Conflicting values in the two headers receive `401 authentication_error` ("AM-2"). |
-| O2 and M1 | Conversation state is kept by warm continuation on a keyed digest, with a cold fallback. The digest is HMAC-SHA256 and includes `metadata.user_id`. The canonical form follows RFC 8785. Consecutive messages of one role, and adjacent text blocks, are merged before hashing. `lenny.labels` is excluded from the digest. A retry reattaches to its running turn through an in-flight join. The beta `thread` parameter stays refused, and once it is stable a thread identifier maps to a session as `previous_response_id` does ("AM-5"). |
-| O3 | Cold turns deliver the conversation as structured input to runtimes that declare it, and as a transcript to others, and the OpenAI translators move onto the same input. The `conversation` member carries ordered entries with the new input marked, so a trailing system message has a place. The beta per-message fields are refused ("AM-3" and "AM-4"). |
-| O4, M3, and M6 | No open turns: revision 2's AM-D is removed, and a turn ends inside its request. A long turn uses streaming. Client tools come from [`0122-client-tools`](../0122-client-tools/change.md), which replaces revision 2's AM-7 bridge. `lenny/request_input` and elicitation toward the client are refused at once on this surface, and the adapter declares `SupportsElicitation: false` ("AM-6" and "AM-7"). |
-| O5 and M4 | The runtime declares which parameters it honours. A non-default `stop_sequences` or `thinking.display` for a runtime that does not declare it is refused. `effort` and `thinking` pass as hints. `max_tokens` is per message: it caps the turn's visible output, only for a runtime that declares it, and never maps to the session's budget ("AM-3"). |
-| O6 | `GET /v1/models` chooses its format by `anthropic-version` or by `?adapter=anthropic-messages`, sends `Vary: anthropic-version`, dispatches `GET /v1/models/{id}` the same way, and reports a capability it cannot vouch for as false or null ("AM-9"). |
-| O7 and M5 | The adapter accepts `2026-10-21` and `2023-06-01`, and refuses an unknown newer version with an error that lists the supported ones ("AM-2"). |
-| O8 | Removed with open turns. Revision 2's `pause_turn` wait limit and `anthropicMessages.maxResponseWaitSeconds` go. |
-| O10 | The `lenny` object is create-only. Its `labels` are excluded from the digest, and a warm turn ignores the object ("AM-3"). |
-| M2 | A held session follows the Open Responses hold rule of §15 "Open Responses conversation sessions", and the adapter adds no timer of its own ("AM-5"). Superseded on 2026-11-14 by the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which the owner answered "yes": no session is held, and "Session lifetime" states the rule. |
-| M7 | `anthropic-beta` is accepted and ignored. Field-level refusals enforce behaviour ("AM-2"). |
-| MD O3 | Decided on [`0135-message-delivery`](../0135-message-delivery/change.md), and binding here. A message from another session to a held session is delivered on arrival. Client tools are offered only in turns a client request caused, and a turn that no client request caused never appears in a Messages response, whose content is the output of the client's own turn. The conversation digest is unaffected ("AM-5", "Messages from other sessions"). |
-| M8 | This design asks [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) for a `jwt-bearer` grant on `/v1/oauth/token`, so the SDKs' workload identity federation can obtain a Lenny bearer ("Instructions for reviewers of other designs"). |
-
-Settled by the owner on 2026-11-10:
-
-| ID | Decision |
-| :-- | :-- |
-| O9 | A model name that is no runtime, such as an Anthropic model ID, reaches a runtime through a runtime route whose requested name is that alias. [RT-4](../0141-runtime-routing/change.md#rt-4-runtime-routes) accepts such a route, and `GET /v1/models` lists the caller's aliases. A separate alias table would duplicate routes. The owner's words were "go with the recommendation" ("AM-3" and "AM-9"). |
-
-Settled by the owner on 2026-11-13. The upstreams design's reviewer instruction asked this design to make the choices of O11 and O12. The owner answered the consolidated list of open decisions with "18–21 ok" on 2026-11-13, which takes the recommendation of each, and the body states the settled rules. O13 records the owner's choice of the same day on the client protocol adapters:
-
-| ID | Decision |
-| :-- | :-- |
-| O11 | Settled (2026-11-13): (a). A turn that ends with `BUDGET_EXHAUSTED` answers `429 rate_limit_error`, with `details.limitType` naming the budget's scope and `x-should-retry: false` ("AM-8"). |
-| O12 | Settled (2026-11-13): (a). `usage.input_tokens` reports the sum of the `input` class over every model call of the turn ("AM-6"). |
-| O13 | The owner chose option (b) of the consolidated list on 2026-11-13, in the words "ok, go with (b)", and confirmed that the OpenAI and Anthropic adapters leave too and that the Lenny project maintains each adapter in a separate repository with an optional Helm subchart. Every client protocol adapter (MCP, A2A, OpenAI Chat Completions, Open Responses, and Anthropic Messages) moves out of Lenny into a separate first-party repository in front of the REST API. `0138-rest-only-client-api`, which is being written, carries the change and governs what leaves. This design does not apply the removal, and D1's placement of the adapter in the `ExternalAdapterRegistry` stands until that design lands. |
-
-The options and reasoning of O11 and O12, kept as a record:
-
-| ID | Question | Options | Recommendation |
-| :-- | :-- | :-- | :-- |
-| O11 | How the adapter answers a turn that ends with `BUDGET_EXHAUSTED` under [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) ("AM-8"). | (a) `429 rate_limit_error`, with `details.limitType` naming the budget's scope and `x-should-retry: false`. (b) `402 billing_error`, with the same details and header. | (a). A Lenny budget is a spending limit that lifts when its window resets or an admin raises it, which a client reads as a limit condition, and `x-should-retry: false` stops the SDKs' retry. `billing_error` describes the state of an Anthropic account, which a Lenny budget is not. |
-| O12 | What `usage.input_tokens` reports for a turn with several model calls ("AM-6"). | (a) The sum of the `input` class over every model call of the turn. (b) The `input` class of the turn's last model call. | (a). The sum is the turn's cost and matches the usage the other surfaces report. Its effect on a client that compacts its history by `input_tokens` is under "Limits". |
-
 ## Requirements
 
 Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), AMR-1 to AMR-8 and AMR-10 to AMR-13 move to the Anthropic adapter project, and AMR-9 is Lenny's.
@@ -315,7 +262,9 @@ Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md
 
 **Other endpoints [external].** `POST /v1/messages/count_tokens` returns `{input_tokens}`. `GET /v1/models` takes `after_id`, `before_id`, `limit`, and `lifecycle[]`, and returns `{data, first_id, has_more, last_id}` with `ModelInfo` objects (`type: "model"`, `id`, `display_name`, `created_at`, `capabilities`, `lifecycle`, `line`, `max_input_tokens`, `max_tokens`, `deprecated_at`, and `retires_at`). `capabilities` is nullable, every capability entry carries a boolean `supported`, and `line`, `max_input_tokens`, and `max_tokens` are nullable. Message Batches live under `/v1/messages/batches`, and the Files API under `/v1/files`.
 
-## AM-1 Endpoint and registration
+## Detailed design
+
+### AM-1 Endpoint and registration
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
@@ -333,7 +282,7 @@ The path does not collide with the REST API: §15.1's message route is `POST /v1
 
 The request body cap is `anthropicMessages.maxRequestBytes`, default 32 MiB, operator-tunable **[design]**. The OpenAI translators' 1 MiB cap would refuse a single base64 screenshot. A larger body answers `413 request_too_large`.
 
-## AM-2 Authentication and headers
+### AM-2 Authentication and headers
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
@@ -353,15 +302,15 @@ A Lenny bearer expires within `auth.capabilityTokenTtlSeconds` or the cap a `POS
 
 **Response headers [design].** Every response carries `request-id: req_<opaque>`, a fresh identifier that the request record of "AM-5" links to the session and turn. A response for a turn carries `lenny-session-id`, `lenny-runtime`, and `lenny-runtime-revision`, so a client or an operator can reach the session through REST, for example to approve a held tool call. `lenny-dropped-parameters` lists the hints a runtime without conversation input did not receive (O5).
 
-## AM-3 Request mapping
+### AM-3 Request mapping
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
-### Model
+#### Model
 
 `model` names a runtime or an alias **[design, O9]**. A value of the form `environments/{name}/{model}` scopes the session to environment `{name}`, as `splitEnvModel` does for the OpenAI translators (§10.6). The bare name is the requested runtime for the `PreRoute` chain, so a runtime route can send the session elsewhere and a revision is chosen on the final runtime (RT-2, RV-2). An alias is a route whose requested name is no runtime, so a client that keeps `model: "claude-sonnet-5-5"` from its Anthropic configuration reaches the runtimes the route's targets name, and the response's `model` stays the requested name (AMR-10). A name whose final runtime after the chain is no runtime in the caller's view answers `404 not_found_error`, the status Anthropic uses for an unknown model. A missing `model` answers `400 invalid_request_error`, and the adapter has no default runtime: the OpenAI translators' `DefaultRuntime` of `echo` would send a client's mistake to the echo runtime.
 
-### Parameters
+#### Parameters
 
 A runtime declares the enforced parameters it honours in `capabilities.conversationParameters`, a list drawn from `maxTokens`, `stopSequences`, and `thinkingDisplay` **[design, O5]**. The flag is a versioned field under RV-1, read from the chosen revision. The gateway enforces none of them itself: a runtime that declares one applies it to what the turn returns.
 
@@ -370,7 +319,7 @@ A runtime declares the enforced parameters it honours in `capabilities.conversat
 - **`thinking.display`.** Reaches a runtime that declares `thinkingDisplay` as `parameters.thinking.display`. A value other than the default for any other runtime answers `400 invalid_request_error` naming the field.
 - **Hints.** `thinking.type`, `output_config.effort`, and, under `2023-06-01`, `temperature`, `top_p`, and `top_k` pass as hints in `parameters` to every runtime that declares conversation input. A runtime uses them for its model calls or ignores them.
 
-### Request fields
+#### Request fields
 
 | Field | Disposition |
 | :-- | :-- |
@@ -398,7 +347,7 @@ A runtime declares the enforced parameters it honours in `capabilities.conversat
 | Beta per-message fields (`clear_at`, `output_config` on a message, and the `tool_addition` and `tool_removal` blocks) | `400 invalid_request_error` naming the field and the message index. |
 | Any other field | `400 invalid_request_error` naming the field. |
 
-### Content blocks
+#### Content blocks
 
 Each block maps to a `MessagePart` of the §28.5.3 registry **[design]**. Text parts carry their text inline. A `ref` to a URL is never fetched by the gateway, so the gateway makes no outbound request on a client's behalf, and the runtime fetches it, when it does, under its own egress policy.
 
@@ -419,11 +368,11 @@ Each block maps to a `MessagePart` of the §28.5.3 registry **[design]**. Text p
 
 Large inline parts follow the §28.5.3 rule that stages a large blob to the artifact store and sets a `lenny-blob://` `ref`, so the transcript stays bounded.
 
-## AM-4 Conversation input
+### AM-4 Conversation input
 
 > **Lenny's.** This section still governs Lenny under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), and that design's R15 carries the `conversation` member on REST sends. Its subsection **OpenAI translators** moves to the OpenAI adapters' projects, which move their translators onto conversation input themselves.
 
-### Envelope member
+#### Envelope member
 
 The `MessageEnvelope` of §15.4.1 gains an optional, gateway-written `conversation` member **[design, O3]**:
 
@@ -461,11 +410,11 @@ A runtime treats every entry of `conversation` as client input. An entry with `r
 
 Other sources of a `message` envelope, such as REST delivery and MCP `lenny/send_message`, never set `conversation`.
 
-### Capability
+#### Capability
 
 A runtime declares `capabilities.conversationInput: true` to receive the member, and `capabilities.conversationParameters` to receive enforced parameters **[design]**. Both are versioned fields under RV-1, so the chosen revision decides. A per-tenant capability override can only clear `conversationInput` and narrow `conversationParameters`, as RV-1 lets an override narrow `capabilities.interaction`.
 
-### Transcript rendering
+#### Transcript rendering
 
 For a revision that does not declare `conversationInput`, the gateway removes `conversation` and prepends text parts to `input` **[design, O3]**:
 
@@ -475,17 +424,17 @@ For a revision that does not declare `conversationInput`, the gateway removes `c
 
 The parts carry the annotation `lenny.conversationRendering: transcript`. `parameters` is dropped, `lenny-dropped-parameters` lists the hints it held, and the enforced-parameter rules of "AM-3" apply because such a revision declares none. A request with client tools on such a revision is refused before any pod is claimed ("AM-7").
 
-### OpenAI translators
+#### OpenAI translators
 
 > **Moves to the OpenAI adapter projects.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), the OpenAI translators leave Lenny, and their adapters move onto conversation input themselves.
 
 The same member and rendering replace one-turn-per-message delivery in `OpenAIChatHandler` and in `OpenResponsesHandler`'s cold path (O3). `PodExecutor.Send` and `SubprocessExecutor.Send` write one envelope per turn, carrying the turn's new user content in `input` and the conversation in `conversation.entries`. A Chat Completions request whose final message is not a `user` message, or a `system` message after a `user` message, answers `400 invalid_request_error`, because the turn has no new user input to deliver.
 
-## AM-5 Continuity
+### AM-5 Continuity
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
-### Conversation digest
+#### Conversation digest
 
 The canonical form of a conversation prefix is the JSON Canonicalization Scheme of RFC 8785 applied to an object with these members **[design, O2 and M1]**:
 
@@ -498,23 +447,23 @@ Normalization, in this order, turns a string `content` into a one-element array 
 
 The digest is HMAC-SHA256 over the canonical form, keyed by `anthropicMessages.digestKey`, a gateway secret held in the platform's key store and shared by every replica. The key means that a reader of the digest table cannot test a guessed conversation against a stored digest. Rotating the key makes every stored digest miss, so every conversation's next request runs cold once. The tenant, owner, and user identifier inside the canonical form keep one user's history from matching another user's session, and `user_id` keeps two end users of one application principal apart.
 
-### Storage
+#### Storage
 
 A table `conversation_turns` holds one row per completed turn **[design]**: `tenant_id`, `owner_subject`, `digest`, `session_id`, `ordinal`, and `created_at`, with a unique index on `(tenant_id, owner_subject, digest)` and a foreign key to the session that deletes the rows with it. The session row's `Responses` records of §15 "Open Responses conversation sessions" carry the ordinal, the end sequence, the recovery generation, and the completion flag for each turn, as they do for Open Responses. The §12.8 erasure of a session deletes its rows, and §12.8 names the table (AMR-8).
 
 When a turn completes, the gateway writes the turn's digest, computed over the request's messages followed by the assistant message the gateway returned, in the same write that completes the response record. A unique-index conflict means another session produced an identical conversation for the same owner. The newer row replaces the older, so a continuation reaches the most recent session.
 
-### Request records
+#### Request records
 
 A table `messages_requests` holds one row per request that reaches a turn **[design]**: the `request-id` the response carries, `tenant_id`, `owner_subject`, `session_id`, the turn `ordinal`, the request digest over the whole normalized `messages` array, the state (`running`, `completed`, or `failed`), and `created_at`, with a foreign key to the session that deletes the rows with it. The adapter writes the row when it reserves the turn, and completes it in the write that completes the response record. An operator or a client support flow finds the session and turn behind a `request-id` from it, and the §12.8 erasure of a session deletes it (AMR-8).
 
-### In-flight join
+#### In-flight join
 
 Before any warm or cold dispatch, the gateway looks up the request digest under the request's tenant and owner among request records in state `running` **[design, M1]**. A match is a retry of a request whose turn is still running, as an SDK sends after a dropped connection or a timeout, and the request joins that turn: a non-streaming request waits for the turn's response record and returns it, and a streaming request sends `message_start` and then the parts of the turn from the response record and the session's `output` events, as "AM-6" streams them. The join starts no turn, reserves no ordinal, and writes no digest. A request whose digest matches a request record in state `completed` is not a retry of a running turn and takes the warm or cold path.
 
 A turn that has reached the runtime completes when the client's connection drops, and writes its response record and its request record, so a joining retry receives its result. The turn's completion therefore cannot depend on the HTTP request's context, which the translators use today ("Current state"). Revision 2 needed a runner detached from the request for open turns, which ran past their HTTP response by design. With open turns removed, a turn outlives its request only when the connection drops, and the response record carries it, so no runner of that kind is needed.
 
-### Warm and cold
+#### Warm and cold
 
 For a request whose `messages` contain an `assistant` message, the gateway computes the digest of `messages[0..k]`, where `k` is the index of the last `assistant` message, and looks it up under the request's tenant and owner **[design]**. The request is served as a warm turn on session `S` with ordinal `n` only when all of these hold, which are the conditions of the conditional send, R16 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-2-rest-additions) revision 3, over this design's records:
 
@@ -528,7 +477,7 @@ Before a warm dispatch, the gateway reserves ordinal `n+1` on `S` with one condi
 
 A warm turn's `input` is the final user message's content, and its `conversation.entries` hold the new input, including any `system` message after the last `assistant` message.
 
-### Session lifetime
+#### Session lifetime
 
 <a id="holding-a-session"></a>
 
@@ -539,7 +488,7 @@ The adapter creates ordinary sessions, and Lenny keeps no held-session state and
 - **`one_shot` runtimes.** A runtime whose revision declares `capabilities.interaction: one_shot` ends its own session: its end-of-turn frame completes the session, under **Completion (B5, M9).** of [`0135-message-delivery`, "MD-22"](../0135-message-delivery/change.md#md-22-parents-and-children). The adapter closes nothing.
 - **Follow-ups.** The adapter routes a follow-up request by its conversation fingerprint, the digest of "Conversation digest" carried as the client reference of that design's R17, to the session that served the conversation's previous request. A follow-up to a `dormant` session resumes it ([`0146-session-lifecycle`, "SL-5"](../0146-session-lifecycle/change.md#sl-5-messages-to-a-waiting-or-paused-session)). "Warm and cold" above states the conditions of that design's R16, under which such a follow-up continues warm when no restore to a checkpoint older than the conversation's last turn has happened (its O12), and "RO-10" of that design states the adapter's rules over REST.
 
-### Messages from other sessions
+#### Messages from other sessions
 
 A session the adapter created can receive a message from another session between client requests **[design, MD O3]**. The main case is asynchronous delegation: the runtime delegates a child, replies to its client, and the child later finishes or sends the parent a message after that reply. The same session can also be used through REST with the `lenny-session-id` the response headers carry, and a sibling can send it a message under the `siblings` messaging scope. Under MD O3, such a message is delivered on arrival under the ordinary intent rules of [`0135-message-delivery`](../0135-message-delivery/change.md), and this adapter adds no hold of its own. Two rules keep the turn it causes away from the Messages client:
 
@@ -550,11 +499,11 @@ The conversation digest is unaffected, because it covers only what the client se
 
 A request that passes the warm conditions while such a turn runs is written into it on a runtime that declares the `steer` delivery intent, and waits for that turn's end-of-turn `message` on any other runtime, during which a streaming request receives `ping` events. A request written into such a turn carries its own `conversation.clientTools`, so the turn may end with calls to them, which the response returns as `tool_use` blocks. The response carries the turn's output from the point the runtime consumed the request's message, as MD-8 states, and `usage` counts the model calls that start after that point. Tool-use approvals in such a turn resolve through the approvals API with the `lenny-session-id` the response headers carry. `lenny/request_input` and elicitation stay refused as "AM-6" states, whatever caused the turn.
 
-## AM-6 Responses and streaming
+### AM-6 Responses and streaming
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
-### Output mapping
+#### Output mapping
 
 | Output part | Content block |
 | :-- | :-- |
@@ -571,7 +520,7 @@ A `ref` is dereferenced inside the gateway and never returned, as §15.1 require
 
 **`usage` [design].** The counts come from the session's LLM usage records of the turn, which the LLM proxy writes for every call through it in the token classes of [`0133-llm-upstreams-and-cost-budgets`, "LU-3"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-3-the-metering-proxy): `input_tokens` sums the `input` class, `cache_read_input_tokens` sums `cacheRead`, `cache_creation_input_tokens` sums every `cacheWrite` lifetime, and `output_tokens` sums `output`. Each sums every model call of the turn. A call the runtime sends outside the proxy has no usage record and is not counted. `service_tier` is `standard`. The upstreams design asked this design to choose between the sum over the turn's calls and the last call's input for `input_tokens`. The owner settled O12 on the sum on 2026-11-13, because it is the turn's cost and it matches the other surfaces' usage reports. "Limits" states the effect of the sum on a client that compacts its history by `input_tokens`.
 
-### Streaming
+#### Streaming
 
 With `stream: true`, the response is `text/event-stream` with named events whose `data.type` equals the event name **[design]**:
 
@@ -584,18 +533,18 @@ Parts reach the adapter by either of these paths. Parts a runtime streams on `me
 
 The OpenAI translators' practice of splitting finished text on whitespace is not copied. A runtime that streams no `message_part` frames delivers all its blocks at the end of the turn, and the pings keep the connection open until then.
 
-### Long turns
+#### Long turns
 
 Every turn ends inside the HTTP request that started it **[design, O4]**. A non-streaming request waits for the turn to end, and the client's timeouts and any intermediary's idle timeout bound it. A client that runs long turns streams, as Anthropic recommends for requests over 10 minutes **[external]**: the pings keep the connection busy, and a client that wants the final message alone uses its SDK's helper that consumes the stream.
 
-### `lenny/request_input` and elicitation
+#### `lenny/request_input` and elicitation
 
 The adapter declares `SupportsElicitation: false` **[design, O4]**. A session that the adapter creates refuses both paths at once:
 
 - A `lenny/request_input` call fails at once with the tool-call error `REQUEST_INPUT_UNAVAILABLE`, `details.surface: "anthropic-messages"`, so the runtime continues its turn without the answer. The call never blocks, and `maxRequestInputWaitSeconds` never runs.
 - An elicitation that the session raises toward its client is answered with `decline` at once, and the adapter creates its sessions with `elicitationDepthPolicy: block_all` for delegated children, as §21.1 plans for the A2A adapter.
 
-## AM-7 Client tools
+### AM-7 Client tools
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
@@ -620,7 +569,7 @@ Client tools on this surface use the mechanism of [`0122-client-tools`](../0122-
 
 **Delegation.** Client tools are not delegated to children (T7).
 
-## AM-8 Errors
+### AM-8 Errors
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
@@ -672,7 +621,7 @@ A failure before dispatch with `Retry-After`, such as `SESSION_CREATION_FAILED`,
 
 The auth middleware answers an unauthenticated request on the adapter's routes in this envelope rather than Lenny's REST envelope, by reading the protocol the route's adapter declares.
 
-## AM-9 Models and refused endpoints
+### AM-9 Models and refused endpoints
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
@@ -684,7 +633,7 @@ The auth middleware answers an unauthenticated request on the adapter's routes i
 
 **Refused endpoints [design].** `POST /v1/messages/count_tokens`, every path under `/v1/messages/batches`, and every path under `/v1/files` answer `404 not_found_error` in the Anthropic envelope with a message naming the endpoint as not served by Lenny. `/v1/files` is mounted only for requests carrying `anthropic-version`, so no REST route is shadowed.
 
-## AM-10 Tenancy, billing, routing, and other designs
+### AM-10 Tenancy, billing, routing, and other designs
 
 > **Moves to the Anthropic adapter project.** Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), this section governs the Anthropic adapter and no longer governs Lenny. It stays here unchanged until the adapter's repository takes it, and it stages no edit to Lenny's specification.
 
@@ -799,17 +748,6 @@ These are defects in the current tree. Revision 2 files each in `BUILD-GAPS.md`,
 | 10 | Conformance cases for `conversationInput` and `conversationParameters`: entry roles and marks, instructions, hints, and the enforced parameters a runtime declares. |
 | 11 | The new API page and tutorial against the gateway. |
 
-## Validation owed
-
-- Which header each current Anthropic SDK sends when configured with an API key, and whether the SDKs send `anthropic-version` on the models routes. "Sources" records the documentation only.
-- Whether the SDKs' typed parsers accept an `error.details` whose `error_code` is not one of Anthropic's values, and an empty `signature` value. The Python SDK's union is discriminated by `error_code`.
-- Whether the TypeScript and Go SDKs honour `x-should-retry` as the Python SDK does.
-- What a runtime does with a turn when the gateway's wait is cancelled, so the proposal can make a turn's completion independent of the HTTP request's context.
-- Whether common agent clients read `usage.input_tokens` to decide when to compact.
-- The label key rules of §14 for `anthropic-user-id`.
-- Whether the session event bus delivers `output` events to an adapter on the replica serving the request during a forwarded warm turn or a join.
-- Whether `runtimecapoverride` can clear a capability flag that a revision declares, as AM-4 requires.
-
 ## Instructions for reviewers of other designs
 
 - [`0141-runtime-routing`](../0141-runtime-routing/change.md): revision 12 states O9 in RT-4: a route's requested name may name no runtime, and the models list shows the caller's aliases. Its reviewer confirms that the OpenAI translators resolve an alias as this adapter does. The `PreRoute` payload's input for a create from this adapter is the final user content, with the earlier entries in a separate member that an interceptor cannot change.
@@ -822,42 +760,6 @@ These are defects in the current tree. Revision 2 files each in `BUILD-GAPS.md`,
 - [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md): no change. The adapter's sessions and their pod windows are ordinary sessions.
 - [`0142-security-oversight`](../0142-security-oversight/change.md): SO-5a's approvers act on sessions this adapter creates through the session ID in the response headers.
 - [`0135-message-delivery`](../0135-message-delivery/change.md): no change. This design states that design's O3 under "AM-5", "Messages from other sessions", and AM-7, and relies on its MD-4 attribution and its MD-8 response cut.
-
-## Steps
-
-Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), AM-A is Lenny's apart from the OpenAI translators' move, and AM-B and AM-C move to the Anthropic adapter project.
-
-### 0120.S1 Conversation input
-- status: Planned
-- aliases: [AM-A, AM-4]
-- lanes: [specification, code, documentation]
-- closes: [F-15.1.80, F-15.1.81, F-15.1.82, F-15.1.83]
-
-Conversation input (AM-4) for the runtime contract, with ordered entries and the new-input mark, and the OpenAI translators moved onto it, closing DF-1 and DF-2.
-
-AM-A also closes DF-3, by refusing the fields the OpenAI translators cannot honor under D3, and DF-4, by refusing a request with no `model`. Revision 2's AM-E, client tools, is replaced by [`0122-client-tools`](../0122-client-tools/change.md), which lands after AM-A and alongside AM-A's fix of F-15.1.82 (T8).
-
-### 0120.S2 Messages adapter endpoint and request mapping
-- status: Planned
-- aliases: [AM-B, AM-1, AM-2, AM-3, AM-6, AM-8, AM-9]
-- lanes: [specification, code, documentation]
-- depends-on: [0120.S1]
-
-The adapter's endpoint, authentication, headers, request mapping, errors, models routes, and refused endpoints (AM-1, AM-2, AM-3, AM-8, and AM-9), with cold single-shot turns, incremental streaming, and the immediate refusal of `lenny/request_input` and elicitation (AM-6).
-
-The Messages mapping of "AM-7" lands with 0122.S2 (CT-B) of [`0122-client-tools`](../0122-client-tools/change.md) once this step has landed.
-
-### 0120.S3 Continuity
-- status: Planned
-- aliases: [AM-C, AM-5]
-- lanes: [specification, code, documentation]
-- depends-on: [0120.S2]
-
-Continuity (AM-5): keyed digests, warm turns, the session lifetime of "Session lifetime", forwarding with the credential and `anthropic-version`, the in-flight join, request records, and erasure.
-
-### Notes on the steps
-
-Revision 2's AM-D, open turns, is removed (O4).
 
 ## Sources
 

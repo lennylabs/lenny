@@ -1,6 +1,6 @@
 # Records and workflow
 
-Status: `In progress`, revision 3, 2026-11-16. Every step has landed; the status becomes `Implemented` when the owner merges the branch. Programs: [v1](../programs/v1.md), milestone M0.
+Status: `In progress`, revision 4, 2026-11-16. Programs: [v1](../programs/v1.md), milestone M0.
 
 ## Problem
 
@@ -30,34 +30,10 @@ This change creates the records and moves the designs into them. It changes no s
 
 | Term | Meaning |
 | :-- | :-- |
-| Change | A folder under `changes/` holding one planned or in-progress change: `change.md`, `review-history.md`, `digests/` once a step has landed, and `evidence/` when a spike or test run backs it. The changes README defines it. |
+| Change | A folder under `changes/` holding one planned or in-progress change: `change.md` for the design, `decisions.md`, `steps.md`, `review-history.md`, `digests/` once a step has landed, and `evidence/` when a spike or test run backs it. The changes README defines it. |
 | Program | A plan over several changes, under `changes/programs/`, with milestones and their exit criteria. |
 | Design | One of the 36 documents under `designs/` before this change. Each becomes a change. |
 | Step | The unit of a change that is built, reviewed, and merged on one branch, with its own status and dependencies. The changes README defines the step entry. |
-
-## Decisions
-
-Settled by the owner on 2026-11-16 during the specification structure spike:
-
-1. One folder per change under `changes/`, beside `spec/`, with `change.md` in the template of the designs, `digest.md` and `review-history.md` as separate files, and `evidence/` as a subfolder.
-2. Status is one of `Draft`, `Decided`, `Spec landed`, `Implemented`, and `Cancelled` (decision 12 replaced `Spec landed`). A change moves to `changes/archive/` after `Implemented` or `Cancelled`, and archived is not a status.
-3. `changes/` is outside the domain of the tier-0 gates, as `proposals/` is.
-4. The records, the helpers, and the specification structure are three changes: this one, 0114, and 0115.
-5. The open proposals are left for now. This change moves only `designs/`.
-6. M0 to M2 of the v1 program are fixed now. The area milestones are ordered once 0115 lands.
-
-Settled by the owner on 2026-11-16 in answer to this change's open decisions:
-
-7. **Numbering.** 0114 and 0115 as decided, 0116 for coverage derived from annotations, 0117 for the gateway package layout, and the designs from 0118 to 0153 in alphabetical order of their file names.
-8. **Status of the moved designs.** Every moved design keeps the status `Draft`, because the owner runs a final cross-review of them before any is `Decided`. The status line keeps the design's revision and its date.
-9. **Reading a program's changes.** The owner's working rule of treating designs as implemented applies to this refactor and is not a general rule. It becomes reading guidance on the v1 program ("Reading the program" in [`v1.md`](../programs/v1.md)), and `AGENTS.md` points to it. The changes README lets any program state such guidance.
-10. **Prose that names `designs/`.** Each path is rewritten to its new location, and each sentence that names the folder as a concept names changes instead. Each moved change records the edit in its review history.
-
-Settled by the owner on 2026-11-16, after the move showed that each moved design plans several proposals:
-
-11. **A design stays one change, and its proposals become steps.** Each step lands on its own branch with its own status, dependencies, and aliases for the old proposal labels. A step gets its own change folder only when it needs decisions or evidence of its own.
-12. **Statuses.** A step is `Planned`, `Building`, `Landed`, or `Cancelled`. A change is `Draft`, `Decided`, `In progress`, `Implemented`, or `Cancelled`, and `In progress` replaces `Spec landed`, because in the v1 program a change's specification edits land through the area migrations rather than all at once. Each step has its own digest under `digests/`.
-13. **Converting the moved designs.** All 36 are converted now (0113.S4), before the owner's cross-review, so the review and the program see the steps. `BOARD.md` is generated from the steps.
 
 ## Current state
 
@@ -86,32 +62,3 @@ Settled by the owner on 2026-11-16, after the move showed that each moved design
 - Tier 0 passes. `TestResidualGateCertifiesTheTree` stops reporting the design evidence once `changes/` is excluded.
 - A link check over `changes/` finds no broken relative link or anchor.
 - A count check confirms each design produced exactly one change folder, and that its review history and evidence moved with it.
-
-## Steps
-
-### 0113.S1 Create the records
-- status: Landed
-- lanes: [non-specification]
-
-Write `changes/README.md`, `issues/README.md`, `changes/BOARD.md`, and `changes/programs/v1.md`, and the skeletons of 0114 and 0115.
-
-### 0113.S2 Move the designs
-- status: Landed
-- lanes: [non-specification]
-- depends-on: [0113.S1]
-
-A script moves each design and its evidence, splits out the review history, renames "Proposal split and order" to Steps, sets the status line, rewrites links and path mentions, and moves the spike's evidence into 0115. The script lives in this change's `evidence/` and is not committed elsewhere.
-
-### 0113.S3 Exclude `changes/` from the gates, and update the agent instructions
-- status: Landed
-- lanes: [non-specification]
-- depends-on: [0113.S2]
-
-Update `scope.go`, the residual registers, `AGENTS.md`, and the contribution page, and run tier 0 and the link check.
-
-### 0113.S4 Convert the moved designs' proposals into steps, and generate the board
-- status: Landed
-- lanes: [non-specification]
-- depends-on: [0113.S3]
-
-Rewrite the Steps section of each change from 0118 to 0153 into step entries: one step per proposal, numbered in the design's order, with its old labels as aliases, its dependencies within and across changes, and the findings it closes. A change whose units are mechanism sections (such as GH-1 to GH-3) gains a Steps section that links each step to its section. The design text outside the Steps section and the dependency prose it absorbs is unchanged. A script in this change's `evidence/` checks every step entry (format, identifiers that resolve, no dependency cycle) and generates `BOARD.md`. A reviewer per change compares the old and new Steps sections and confirms that no step, edge, closed finding, or reason was lost.

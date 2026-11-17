@@ -1,21 +1,19 @@
 # GitHub credential add-on
 
-Status: `Draft`, revision 7, 2026-11-13. Nothing in this document is built or staged. Revision 7 applies the cross-design review of 2026-11-13: it restates the clone and the pod terms for the materialization helper, per-slot `netagent` scopes, and the renamed pool field, and adds "Documentation" under the owner's extension of decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#decisions) to every design, and changes no rule of this add-on. It reads against [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 45, and [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92. The owner has settled [decisions](#decisions) 1 (per-session child tokens), 5 (the child's permissions), and 8 (the preset body). Decision 7 (a per-person limit on child mints) is open, and decisions 2, 3, 4, and 6 carry a recommendation for owner review. The live GitHub spikes S1, S2, S3, S5, S6, S15, and S16 ran on `github.com` on 2026-11-06, and GitHub Enterprise Server (GHES) is untested. Every other measurement ran against a recording stub, and **the stub proves forwarding only**. Statements about GitHub and GHES come from the pages under "Sources". Proposals carry the label GH-n. "Review history" and "Capture history" at the end record how the design reached this form.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 7, 2026-11-13. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters. They are the tags [`0152-user-git-identity`](../0152-user-git-identity/change.md) defines, stated here for this document's evidence.
 
 | Tag | Meaning |
 | :-- | :-- |
-| **[measured]** | A hands-on result: a live spike on `github.com` listed under "Validation owed", a stub run from the spike of 2026-11-03 onward, or a validation round of [`0127-egress-and-git`](../0127-egress-and-git/change.md). A stub result shows what `netagent` forwarded and nothing about what a host would do with it. |
+| **[measured]** | A hands-on result: a live spike on `github.com` listed under "Validation owed" in `steps.md`, a stub run from the spike of 2026-11-03 onward, or a validation round of [`0127-egress-and-git`](../0127-egress-and-git/change.md). A stub result shows what `netagent` forwarded and nothing about what a host would do with it. |
 | **[captured]** | Seen at the stub or at the prototype `netagent` in the capture of 2026-11-03, which "Capture history" records. It shows what the client sent and what the filter did, and nothing about what a provider would do. |
 | **[documented]** | Stated on a GitHub page under "Sources". The page was read and its behaviour was not tested. |
 | **[source]** | Read in source code or published data that "Sources" lists: `gh` client source at cli/cli tag v2.103.3, `gh`'s release history, or the history of GitHub's public GraphQL schema. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[stub cannot show]** | A question a stub run cannot answer, because the answer depends on GitHub's own implementation. Each one has a spike under "Validation owed". |
+| **[stub cannot show]** | A question a stub run cannot answer, because the answer depends on GitHub's own implementation. Each one has a spike under "Validation owed" in `steps.md`. |
 
-**Evidence sources.** A *stub* is a test HTTP server running stock git that stands in for GitHub and records what reaches it. It shows what `netagent` forwards and nothing about what GitHub would do with it. A *spike* is a hands-on test, against a stub or a live host, and the labels S-n and V-n name the spikes and validation items under "Validation owed". *The capture* is the recording of `gh` traffic through a prototype `netagent` to a stub on 2026-11-03, which "Capture history" records. *Attack rows* are crafted requests, each trying to carry a refused operation past the rules, that a spike sends through `netagent` to the stub, and the attack table is their set. The capture's attack table had 522 rows per flavour under the allowlist, and the deny-mode run under S19 has 1,230 rows per host type. The bypass table lists routes around the rules, such as HTTP/2, HTTP/1.1 framing, absolute-form requests, and opaque tunnels, and "Capture history" records it under the allowlist. *Client images* are the Alpine and Debian images the `gh` client ran in. *Predicted rows* are rows whose outcome was written down before the run, so a match confirms the prediction. *The allowlist*, also called the filter, is the provider filter of [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 3, which forwarded only listed `gh` operations, headers, and input keys. The request rules of [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) replaced it. *The earlier smaller preset* is the `github-deny` body before decision 8 extended it.
+**Evidence sources.** A *stub* is a test HTTP server running stock git that stands in for GitHub and records what reaches it. It shows what `netagent` forwards and nothing about what GitHub would do with it. A *spike* is a hands-on test, against a stub or a live host, and the labels S-n and V-n name the spikes and validation items under "Validation owed" in `steps.md`. *The capture* is the recording of `gh` traffic through a prototype `netagent` to a stub on 2026-11-03, which "Capture history" records. *Attack rows* are crafted requests, each trying to carry a refused operation past the rules, that a spike sends through `netagent` to the stub, and the attack table is their set. The capture's attack table had 522 rows per flavour under the allowlist, and the deny-mode run under S19 has 1,230 rows per host type. The bypass table lists routes around the rules, such as HTTP/2, HTTP/1.1 framing, absolute-form requests, and opaque tunnels, and "Capture history" records it under the allowlist. *Client images* are the Alpine and Debian images the `gh` client ran in. *Predicted rows* are rows whose outcome was written down before the run, so a match confirms the prediction. *The allowlist*, also called the filter, is the provider filter of [`0152-user-git-identity`](../0152-user-git-identity/change.md) revision 3, which forwarded only listed `gh` operations, headers, and input keys. The request rules of [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) replaced it. *The earlier smaller preset* is the `github-deny` body before decision 8 extended it.
 
 ## Scope
 
@@ -37,6 +35,7 @@ Examples name the people of [`0152-user-git-identity`, "Personas and requirement
 | Flavour | The API flavour of a GitHub host: `github` for `github.com` and `ghe.com`, and `github-enterprise` for GHES. It selects the request layout under "Request layout" and the paths `github-deny` matches. The evidence counts `ghe.com` as its own host type, so "3 host types" means GHES, `github.com`, and `ghe.com`. |
 | `github-scoped` | The narrowing template this add-on ships, which mints the session's children. "The `github-scoped` template" under GH-2 states it. |
 | `github-deny` | The preset this add-on ships, which refuses review, merge, content and ref, deployment, policy, and credential operations by name. GH-3 states it. |
+| GH-n | This add-on's parts, GH-1 to GH-3, which "Scope" lists and "Detailed design" states. Each part lands in the step of `steps.md` that names its label as an alias. |
 
 ### GitHub terms
 
@@ -115,7 +114,7 @@ Proposals, properties, and requirements in other designs carry a label whose pre
 | UR-5, UR-6, and UR-7 | [`0152-user-git-identity`, "Personas and requirements"](../0152-user-git-identity/change.md#personas-and-requirements) | Requirements of the VCS layer: UR-5 any `gh` command works within the token, UR-6 no agent approves or merges through an operation the preset names, and UR-7 automated sessions keep working under a service identity. |
 | SP11 | [`0142-security-oversight`, "Security properties"](../0142-security-oversight/change.md#security-properties) | A repository marked for approval receives no write token until its approval exists. |
 | C6, C9, and C10 | [`0148-tenant-outbound-connector`, "Security properties"](../0148-tenant-outbound-connector/change.md#security-properties) | Outbound connector properties: C6 keeps traffic TLS end to end, C9 treats content from a customer network as hostile, and C10 fails closed when a connector fails. |
-| D1 | [`0151-user-credential-delivery`, "Decisions"](../0151-user-credential-delivery/change.md#decisions) | The owner decision, recorded as that design's decision 1, that replaced the allowlist with generic bindings and request rules held as data. |
+| D1 | [`0151-user-credential-delivery`, "Decisions"](../0151-user-credential-delivery/decisions.md#decisions) | The owner decision, recorded as that design's decision 1, that replaced the allowlist with generic bindings and request rules held as data. |
 
 ## High-level design
 
@@ -141,9 +140,11 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 Two limits frame the result. `github-deny` is a deny list, so a GitHub operation that can approve or merge and that the preset does not yet name passes until the preset is updated. A compromised `netagent` holds the session's children and can approve and merge with them, as "Residual risks" states.
 
-## GH-1: The `github` and `github-enterprise` kinds
+## Detailed design
 
-### Kind block and endpoints
+### GH-1: The `github` and `github-enterprise` kinds
+
+#### Kind block and endpoints
 
 ```yaml
 linkProviders:
@@ -177,7 +178,7 @@ The block holds `host` alone, and it is in the token trust record. The kind deri
 
 On GitHub, a VCS pool's provider credential is the tenant's GitHub App, which mints installation tokens. A link provider's App need not be the App in the VCS pool, because the check needs only the user's access. A tenant that wants repository authorization ([UG-2](../0152-user-git-identity/change.md#ug-2-repository-authorization)) alone should register a separate App with `metadata: read` and no other permission, installed on the same organizations, which leaves the stored parent token with no write power at all. Pull request authoring ([UG-3](../0152-user-git-identity/change.md#ug-3-pull-request-authoring)) needs an App with `pull_requests: write` and `contents: read`. GitHub limits a user token to the App's permissions and to accounts where the App is installed **[documented]**, so a repository the linking App cannot see answers as `refused`. The App's user token expiry must stay on. A token response with no `expires_in` or `refresh_token` is refused at link with `LINK_TOKEN_NON_EXPIRING`, because GitHub lets an App opt out **[documented]**.
 
-### The repository check on GitHub
+#### The repository check on GitHub
 
 | Host | Read | Write | Tag |
 | :-- | :-- | :-- | :-- |
@@ -185,11 +186,11 @@ On GitHub, a VCS pool's provider credential is the tenant's GitHub App, which mi
 
 The kind adds one classification to the list in [`0152-user-git-identity`, "The check"](../0152-user-git-identity/change.md#the-check):
 
-- A 403 with GitHub's `X-GitHub-SSO` header is `refused` with the reason `sso_required`, which the error shows so Alice can start a SAML session and retry (spike S4 under "Validation owed").
+- A 403 with GitHub's `X-GitHub-SSO` header is `refused` with the reason `sso_required`, which the error shows so Alice can start a SAML session and retry (spike S4 under "Validation owed" in `steps.md`).
 
-## GH-2: Pull request authoring on GitHub
+### GH-2: Pull request authoring on GitHub
 
-### The `github-scoped` template
+#### The `github-scoped` template
 
 ```yaml
 narrowing:
@@ -211,21 +212,21 @@ narrowing:
 
 - The template rests on documented endpoints **[documented]**, and S1, S2, S5, and S15 measured it live.
 - The template sets `followsEntryState: true`, so the add-on's template variables `{{targetId}}` and `{{sessionRepositoryIds}}` carry the session's writable repositories whose entry `state` is `granted` on each mint.
-- `permissions` is the one field a tenant overrides, and it is exempt from the token trust record, because it limits what a child can do at the host within what the App holds. A widening is audited and reported in posture, and the owner settled it under [decision 5](#decisions), which states what then relies on the deny preset alone.
+- `permissions` is the one field a tenant overrides, and it is exempt from the token trust record, because it limits what a child can do at the host within what the App holds. A widening is audited and reported in posture, and the owner settled it under [decision 5](decisions.md#decisions), which states what then relies on the deny preset alone.
 
-### Child token and the session's repositories
+#### Child token and the session's repositories
 
 The Token Service holds the parent and mints one child for each session's use, through the `github-scoped` template above. These steps are that template's run on this provider.
 
 1. `netagent` asks the pod credential API for the binding, on its first request to that host.
 2. The Token Service verifies the pod and session, rejects a refused pod model (one that [`0152-user-git-identity`, "Pod models"](../0152-user-git-identity/change.md#pod-models) refuses because it could carry one user's state into another session) or an impersonated session, runs the check for each repository, and asks the egress decision API.
-3. It selects the session's writable entries whose `state` is `granted`. Per [`0142-security-oversight` decision 25](../0142-security-oversight/change.md#decisions), an entry in state `pendingApproval` is absent, so [SP11](../0142-security-oversight/change.md#security-properties) holds, and a repository the session declared read-only is absent too, because one token has one permission set. **An empty set mints no child:** `netagent` answers the request with 403, a decision identifier, and the reason `no_granted_repositories`.
+3. It selects the session's writable entries whose `state` is `granted`. Per [`0142-security-oversight` decision 25](../0142-security-oversight/decisions.md#decisions), an entry in state `pendingApproval` is absent, so [SP11](../0142-security-oversight/change.md#security-properties) holds, and a repository the session declared read-only is absent too, because one token has one permission set. **An empty set mints no child:** `netagent` answers the request with 403, a decision identifier, and the reason `no_granted_repositories`.
 4. It calls `POST /applications/{client_id}/token/scoped` through the mint path with Basic authentication using the client ID and secret, `access_token`, `target_id`, `repository_ids`, and `permissions` **[documented]**.
 5. It answers with the secret, `expiresAt` from the response's `expires_at`, `cacheUntil`, the authoritative `hosts` and `attach`, the resolved request rules, and `handling` naming the rule evaluator's minimum version and `reauth-on-401`.
 
 A token has one `target`, so a session whose writable entries in state `granted` span two owners is refused on the second owner's binding with `USER_TOKEN_MULTI_OWNER`. `gh pr create --head alice:feature` still works when that head already exists, because it sends `headRefName: "alice:feature"` to `createPullRequest` on the base **[captured]**, and the child needs only the base. A branch pushed to a `fork` remote produced a head of `alice:<branch>` under git paths T and P **[measured]**. `gh` offers an automatic fork at an interactive prompt alone, and a non-interactive run stops with "you must first push the current branch to a remote, or use the --head flag" **[source]**, and whether a child permits a fork is not established (S15).
 
-### Child tokens per session
+#### Child tokens per session
 
 The owner settled decision 1 after S2: each session gets its own children, and Lenny sets no limit of its own on how many a person holds. S2 found no per-user limit on this endpoint: 50 children of one parent in one hour all stayed valid, with no revocation and no browser prompt **[measured]**. GitHub's "ten tokens per user, application, and scope" rule does not apply to these tokens.
 
@@ -233,17 +234,17 @@ The owner settled decision 1 after S2: each session gets its own children, and L
 - **No fallback to the App.** On a VCS pool with `pushIdentity: user`, a write from a session whose `caller_type` is `human` that holds no git child is refused with 403 and a decision identifier, and never takes an App write token. That covers a delegated child session whose lease does not name the user binding, which keeps its parent's writable set under the egress design and has no user token under [UCP-8](../0151-user-credential-delivery/change.md#security-properties), and a session whose link cannot mint. A delegated child session whose lease names the binding mints its own child tokens, under [`0152-user-git-identity`, "The attach rule"](../0152-user-git-identity/change.md#the-attach-rule). A listed service session has no user and keeps the App write token, as that document's ["Service identities"](../0152-user-git-identity/change.md#service-identities) states, so automated sessions keep pushing ([UR-7](../0152-user-git-identity/change.md#personas-and-requirements)).
 - **What the user sees from the split.** Under the default `github-scoped` permissions, every API request that needs `contents: write` is refused by the host, even though the same session can push the same change through git. That covers merging, which is the purpose, and also `gh release create` and release uploads, file writes through `gh api` contents routes, `createCommitOnBranch` (which some tools use to make commits through the API instead of git), and branch creation or deletion through the refs API, including `gh pr merge --delete-branch` and a head branch a tool creates through the API. `gh pr update-branch` is refused by the preset already. A push that adds or changes a file under `.github/workflows/` is refused by GitHub because neither child holds `workflows: write`, and whether a branch that merges in someone else's workflow change is refused too is owed under S3c. A human session whose git child cannot be minted, such as a delegated child session whose lease omits the user binding, can call the API yet cannot push. Each refusal carries GitHub's message or Lenny's decision identifier, and a tenant that needs one of these operations widens the template under decision 5, at the cost that decision names. **[design]**, on **[documented]** permissions
 - **Cache.** Keyed on tenant, session, `link_ref`, the link's `generation` (which each refresh increments), sorted repository identifiers, permissions, and target, so no two sessions share a child. Stored as [§4.3](../../spec/04_system-components.md#43-token-service) caches access tokens, encrypted in Redis, so replicas share it, and sealed with the full key and the token trust record's digest as additional data, so a replica copying an entry to another key produces a value that fails to open. A session whose granted set changes mints a new child for the new set and revokes the old one.
-- **Limits.** Lenny has no per-person or per-link budget, which decision 7 reopens because GitHub's limit of 2,000 per App is shared by all of a tenant's users. When GitHub refuses a mint, the refusal is the result: a rate-limit answer surfaces as a retryable `USER_TOKEN_RATE_LIMITED`, and any other refusal as a 503 with a decision identifier and GitHub's status. The Token Service counts token requests per App, refreshes included, against GitHub's 2,000 per hour and alerts near it, beside the egress design's counter of installation token mints per App. The counter is per App, and each tenant registers its own App ([`0151-user-credential-delivery` decision 39](../0151-user-credential-delivery/change.md#decisions)), so it is a per-tenant figure. A tenant that starts more than about 1,000 pull request (PR) authoring sessions an hour that each push reaches it, and so can one person whose injected agent fans out through delegation, which stops every other user's mints for the rest of the hour. S2 did not test what GitHub does there.
+- **Limits.** Lenny has no per-person or per-link budget, which decision 7 reopens because GitHub's limit of 2,000 per App is shared by all of a tenant's users. When GitHub refuses a mint, the refusal is the result: a rate-limit answer surfaces as a retryable `USER_TOKEN_RATE_LIMITED`, and any other refusal as a 503 with a decision identifier and GitHub's status. The Token Service counts token requests per App, refreshes included, against GitHub's 2,000 per hour and alerts near it, beside the egress design's counter of installation token mints per App. The counter is per App, and each tenant registers its own App ([`0151-user-credential-delivery` decision 39](../0151-user-credential-delivery/decisions.md#decisions)), so it is a per-tenant figure. A tenant that starts more than about 1,000 pull request (PR) authoring sessions an hour that each push reaches it, and so can one person whose injected agent fans out through delegation, which stops every other user's mints for the rest of the hour. S2 did not test what GitHub does there.
 - **Revocation.** Session end revokes the session's children at the provider, which S5 showed leaves the parent and other children valid **[measured]**. `DELETE /applications/{client_id}/token` takes the child itself, so a failed revocation is retried from a durable record in the Token Service's store that holds the child sealed as a link's tokens are (data class Secret under [§12.9](../../spec/12_storage-architecture.md#129-data-classification), the class [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) names, with envelope encryption), deleted once the revocation succeeds or the child's 8 hours have passed (S1). Each failure is logged.
 - **On 401.** A child revoked outside Lenny, by the person, an organization owner, or GitHub, appears as a 401, which `reauth-on-401` covers once with a new mint, then surfaces as a 503 with a decision identifier and an alert.
 
-### Pushes as the user
+#### Pushes as the user
 
 `require_last_push_approval` means "the most recent push must be approved by someone other than the person who pushed it" **[documented]**. If pushes come from the App, GitHub sees the App as the pusher. The failure is this: Alice's agent pushes to Bob's pull request, and Alice approves it, with her approval counting because she is not the pusher and not the author. She has approved work she caused. The same applies to Bob approving Alice's pull request after his own agent pushes to it.
 
 S3 measured the rule live **[measured]**. A push with an installation token leaves the person who requested it unseen as pusher, so she can approve afterwards and GitHub reports the pull request mergeable. A push with her user token, or with a scoped child of it, makes GitHub treat her as the pusher, and her approval no longer satisfies the rule. A scoped child can push.
 
-**The design, which the owner settled under [`0152-user-git-identity` decision 10](../0152-user-git-identity/change.md#decisions):**
+**The design, which the owner settled under [`0152-user-git-identity` decision 10](../0152-user-git-identity/decisions.md#decisions):**
 
 1. **A session pushes as its user by default.** On a VCS pool with `prAuthoring: user`, the pool's `pushIdentity` setting defaults to `user`, and pushes use the session's git child from "Child tokens per session". GitHub then enforces `require_last_push_approval` natively: if Alice's agent pushes to Bob's pull request, Alice's approval does not count while that push is the most recent. A later push by anyone else restores her approval's effect, because GitHub's rule reads the latest push alone.
 2. **Lenny sets no branch rules**, as [`0152-user-git-identity`, "Push identity"](../0152-user-git-identity/change.md#push-identity), states, so the repository's own branch protection and rulesets apply to the agent as they apply to her.
@@ -252,9 +253,9 @@ S3 measured the rule live **[measured]**. A push with an installation token leav
 
 Two-person review on pushed work rests on the repository requiring approval of the most recent push, and holds only while the agent's push is the latest. A tenant that needs every pusher excluded runs UG-4, which is available on any VCS pool. Lenny cannot set that rule, and a read of branch protection needs repository administration. The setup flow states the dependency, and posture reports it where the App can read the rule.
 
-## GH-3: The `github-deny` preset
+### GH-3: The `github-deny` preset
 
-### Request layout
+#### Request layout
 
 The first column names a VCS pool's `provider` field and host. The egress design defines `provider` as "The provider, such as `github`, whose capability level decides what Lenny mints and allows", and a pool on any GitHub host has `provider: github`. The flavour derives from the host, and the link provider's kind follows the same split: `kind: github` for `github.com` and `ghe.com`, and `kind: github-enterprise` for GHES.
 
@@ -266,7 +267,7 @@ The first column names a VCS pool's `provider` field and host. The egress design
 
 This covers GHES with no stored input, because every `provider: github` host outside `github.com` and `*.ghe.com` is GHES. The `vcs.github.write` lease scope of [§14](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema), which a workspace plan's `gitClone` source names when the session will push back to the remote, still covers it, and §14 is unchanged. When a binding names `github-deny` explicitly, the preset uses the `github` flavour's paths on `api.github.com` and `api.<name>.ghe.com`, and the `github-enterprise` flavour's paths on any other host.
 
-### Preset body
+#### Preset body
 
 ```yaml
 - name: github-deny
@@ -311,7 +312,7 @@ The 6 are `gh issue develop`, `gh repo sync`, `gh repo deploy-key add`, `gh repo
 
 **What the owner accepted.** Under `requestRules.default: allow`, the request rules' default, a new GitHub mutation that can approve or merge passes until the preset is updated. GitHub's schema went from 122 mutations (2021-01) to 278 (now), and in one reading about one a year needs only `pull_requests: write` and carries merge or review power **[source]**. The input-key and target checks are gone, as "What went away" below states, so `updatePullRequest` with `baseRefName` or `state` passes. **Operations that exist today are in the preset's scope and are not part of this acceptance**, which the owner settled with the extended preset under decision 8.
 
-### Commands against the host
+#### Commands against the host
 
 **Passing the rules is not the same as working.** The host then refuses what the token does not permit, and this table separates the two.
 
@@ -344,14 +345,14 @@ The same `pr edit` rows exited 1 on the stub limit in that run. The allowlist th
 
 **Widening `permissions`.** A tenant that wants `gh issue` or `gh run` widens the template. **Once `contents: write` is granted, the host no longer refuses merges, `PUT contents`, `createCommitOnBranch`, or ref writes, and the deny preset alone stands between an agent and those operations.** The same holds for `actions: write`, and any new operation in those families passes until the preset names it. The owner settled decision 5 with this stated.
 
-**What went away.** Owner decision D1, recorded as [`0151-user-credential-delivery` decision 1](../0151-user-credential-delivery/change.md#decisions), accepted these:
+**What went away.** Owner decision D1, recorded as [`0151-user-credential-delivery` decision 1](../0151-user-credential-delivery/decisions.md#decisions), accepted these:
 
 - A new GitHub mutation that can approve or merge passes until the preset is updated.
 - The input-key check is gone, so `updatePullRequest` with `baseRefName` or `state` passes. `gh pr edit --base` works, and it can move an approved pull request onto another branch. Whether GitHub keeps approvals across a base change is S16.
 - The target check is gone. A REST path naming a repository outside the session is forwarded, and under `github-scoped` the host answers 404 (S15). A link provider of a VCS kind whose `delivery` ceiling is `inject` or `file` must name a template.
 - `pr edit`'s partial writes no longer arise from the rules, since its mutations all pass.
 
-### Comment-triggered actions on GitHub
+#### Comment-triggered actions on GitHub
 
 **GitHub and GHES.** The host has no native comment commands. Repositories run bots that do: Prow's `/lgtm` and `/approve`, merge bots such as Mergify and Bors, Atlantis's `atlantis apply`, and `issue_comment` workflows that gate on `author_association`. (Dependabot retired its merge commands in January 2026 **[documented]**.) A single injected agent commenting `/approve` on Bob's pull request produces an approval under Alice's name wherever such a bot trusts her. Lenny cannot detect these bots, and no regular expression covers their grammars.
 
@@ -359,7 +360,7 @@ Text is not the only trigger. Kodiak merges a pull request carrying its automerg
 
 [`0152-user-git-identity`, "Comment-triggered actions"](../0152-user-git-identity/change.md#comment-triggered-actions), states the tenant's rules and the bot's own check of `performed_via_github_app`, the field in which GitHub names the App through which an action was performed.
 
-## Configuration by scope
+### Configuration by scope
 
 | Setting | Scope | Who sets it | Default |
 | :-- | :-- | :-- | :-- |
@@ -421,35 +422,9 @@ Tenant `acme` runs `ghes.acme.internal` behind connector `acme-dc1`. The link pr
 
 - `POST /repos/a/b/pulls/1/r%65views`, `.../reviews.json`, `POST /graphq%6C`, and `POST /graphql/x` on a host under `github-deny`: refused **[measured]**, and the stub proves forwarding only. `.../reviews.x` and `POST /repos/a/b/graphql`: refused **[measured]**.
 
-## Steps
-
-### 0129.S1 The github and github-enterprise kinds
-- status: Planned
-- aliases: [GH-1]
-- lanes: [specification, code, documentation]
-- depends-on: [0152.S1, 0152.S2, 0151.S7]
-
-The design is in [GH-1](#gh-1-the-github-and-github-enterprise-kinds), which covers the kinds and the repository check. The dependencies cover the VCS kind rules, the release check, and the kind registry.
-
-### 0129.S2 Pull request authoring on GitHub
-- status: Planned
-- aliases: [GH-2]
-- lanes: [specification, code, documentation]
-- depends-on: [0129.S1, 0152.S3, 0151.S2]
-
-The design is in [GH-2](#gh-2-pull-request-authoring-on-github). The dependencies cover the template, the attach rule, and the child tokens. The spikes S1, S2, S3, S3c, and S15 under ["Validation owed"](#validation-owed) must pass before the step starts.
-
-### 0129.S3 The github-deny preset
-- status: Planned
-- aliases: [GH-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0151.S4, 0152.S3]
-
-The design is in [GH-3](#gh-3-the-github-deny-preset). The dependencies cover the rule evaluator, the preset format, and the default preset on a VCS pool's API host.
-
 ## Documentation
 
-The tenant admin and runtime author pages of [`0152-user-git-identity`, "Documentation"](../0152-user-git-identity/change.md#documentation) carry a GitHub section, and the operator guide carries the Helm value. Together they state every item of this add-on that a reader meets, as decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#decisions) requires of every design:
+The tenant admin and runtime author pages of [`0152-user-git-identity`, "Documentation"](../0152-user-git-identity/change.md#documentation) carry a GitHub section, and the operator guide carries the Helm value. Together they state every item of this add-on that a reader meets, as decision D13 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md#decisions) requires of every design:
 
 - **Settings and defaults.** `github.host` on a `github` or `github-enterprise` link provider (no default; a write must set it), `narrowing.permissions` on `github-scoped` (`pull_requests: write` and `contents: read`), what widening it to `contents: write` or `actions: write` gives up, and `appTokenRequestsAlertPerHour` (1,600, against GitHub's 2,000 per App).
 - **Provider requirements.** The GitHub App each tenant registers, with the permissions the kinds need, the email addresses permission that `identityBinding: verifiedEmail` needs, and the user access tokens it must issue; `require_last_push_approval` on the repositories where two-person review matters; and that GHES is untested.
@@ -485,48 +460,12 @@ Against a test GitHub organization and GHES: a link, a child token, `gh pr creat
 
 - Every example under "A prompt-injected agent", and the 522-row attack table and the bypass table re-derived for deny mode (522 rows per flavour under the allowlist, as "Capture history" records, where the deny-mode run under S19 has 1,230 rows per host type), against shipped `netagent` builds.
 
-## Validation owed
-
-Live spikes S1, S2, S3, S5, S6, S15, and S16 ran on 2026-11-06 against a test organization, under `evidence/user-git-identity-design/spike-ghlive/`. The capture answered what a client sends and what the allowlist did with it, on plain remotes. S1, S2, S3, S3c, and S15 must resolve before GH-2 starts.
-
-| Spike | Question | Decides | State |
-| :-- | :-- | :-- | :-- |
-| S1 | Does a child survive a refresh of its parent, and what sets `expires_at`? | `reauth-on-401` and `cacheUntil` caps | **Done, live** **[measured]**: a child survives its parent's refresh, the old parent answers 401 after a refresh, and a child's `expires_at` is 8 hours from its own creation (`evidence/user-git-identity-design/spike-ghlive/`). |
-| S2 | Does the ten-token and ten-per-hour rule apply to GitHub App user tokens and to the scoped endpoint, and what happens past it with no browser? Does the scoped endpoint count toward the 2,000 per hour? | [Decision 1](#decisions): per-session children with no Lenny limit | **Done, live** **[measured]**: no per-user cap on children. 50 children of one parent in one hour stayed valid, with no revocation and no re-authorization prompt, and the endpoint counts against the `core` rate limit. The 2,000-per-hour App limit was not reached. |
-| S3 | With `require_last_push_approval`, what does GitHub treat as the pusher, across a push from an App token, a user token, and a scoped child, each with author and approver combinations? Can a pull request's author approve when the App pushed? Can a scoped user token push? | [`0152-user-git-identity` decision 10](../0152-user-git-identity/change.md#decisions): the VCS pool's `pushIdentity: user` by default, with no branch namespace | **Done, live** **[measured]**: an installation-token push leaves the approver unseen as pusher (`CLEAN` after the pusher-requester approves), while a push by the person's user token or by its scoped child makes GitHub treat that person as the pusher (`BLOCKED`). A scoped child can push. `require_extra_approval_for_unattributed_changes` did not change the App case. |
-| S3c | Does a child with `contents: write` alone push, and does GitHub count the user as pusher when the committer is the commit identity the VCS pool sets for agent commits rather than the user? Does GHES behave as `github.com` does for S3? Does a git child's push fail as soon as its user loses access? Is a push refused when the branch merges in a workflow file change someone else made? | The git child of [`0152-user-git-identity` decision 10](../0152-user-git-identity/change.md#decisions) and its commit identity | Open, live. Needs a new device-flow authorization on the test organization, and GHES for the last question. |
-| S4 | SAML-enforced organizations: does a user token need an active SAML session, does a child inherit that, and what does expiry of that session look like to the check? GitHub says to "start an active SAML session" before reauthorizing **[documented]**. | The `sso_required` handling | Open, live |
-| S5 | Does deleting a child leave its parent and siblings valid? | Child revocation | **Done, live** **[measured]**: revoking one child leaves the parent and siblings valid. |
-| S6 | What do `permissions` fields report for an App user token with a restricted App? Do org base permissions and teams appear? Which App permission reads `GET /user/emails`, and can one verified email sit on two accounts? | The check, and `verifiedEmail` | **Done, live** **[measured]**: the repository `permissions` object reports the user's role, including a base permission, for a metadata-only child too, so it does not reflect narrowing. The collaborator permission endpoint answers for a metadata-only child. `GET /user/emails` answers for every child, whatever its permissions, on an App holding the email addresses permission. The two-account email question was not tested. |
-| S8 | What does `gh` send? | Preset tests | **Done for `gh` 2.103.3 on GHES and github.com** **[captured]**, and for `ghe.com`, 7 versions, and both clients **[measured]**. The history of 68 releases is **[source]**, names only. Owed: `__type` answers per GHES version, since the stub selects `gh`'s newest code paths. |
-| S14 | The oldest GHES release with the scoped endpoint and each endpoint this design uses. | The support statement | Open, live |
-| S15 | With a provider-issued token against a scratch repository: does a child approve, and does `pull_requests: write` alone merge, through REST and GraphQL? Does the child's repository limit bind node-ID mutations? Does GitHub honour batches, GET queries, form bodies, or method overrides? What is the true PR body limit? Which fields fail under a narrow child on `gh pr view`? What does the host do with an empty repository list, which this design never sends? Do bots see `performed_via_github_app`? Does an App token's or child's push trigger `pull_request` workflows, with which secrets? | Whether request rules have a second layer at the host, and the CI residual | **Done in part, live** **[measured]**: a `pull_requests: write` child approves and cannot merge through REST or GraphQL; the repository limit binds node-ID mutations; batches, form bodies, and method overrides are refused or ignored, and `GET /graphql` returns the schema; a 4 MiB body was accepted; `performed_via_github_app` names the App; an empty repository list is refused. `gh pr view` and workflow triggering were not run. |
-| S16 | Does GitHub keep approvals when a pull request's base changes? | How serious `baseRefName` passing is, and whether a tenant should add a pattern for it | **Done, live** **[measured]**: an approval survives a base change to an unprotected branch, and a change back to a branch whose rules require review dismisses it. |
-| S19 | The attack table and bypass analysis under `requestRules.default: allow`, spellings, literals, REST twins, `gh` and `glab` under the presets, and override headers | [UR-5](../0152-user-git-identity/change.md#personas-and-requirements)'s "any command" within the token, [UR-6](../0152-user-git-identity/change.md#personas-and-requirements), and whether deny mode needs more refusals | **Closed on the stub [measured].** Under the final preset, 1,230 rows on each host type: 1,069 refused, 160 reached with no denied action, 0 denied actions with the credential, and 1 with no credential through an opaque tunnel. 3,033 of 3,045 predicted rows matched, and the 12 were harness errors. **The stub proves forwarding only.** Host decoding has evidence for GitLab's framework alone: Grape routed `appr%6Fve`, a trailing slash, `//`, and `approve.json` to the handler and answered 404 for `merge.foo`, and a generic Rails router routed a trailing slash, `//`, `.json`, and `merge.foo`. GitHub's stack is unknown. Owed: every provider's behaviour. |
-| V1 | The attack table under deny mode, with alternative path spellings, inline GraphQL literals, REST routes that do what a refused mutation does, and method override headers | The claims under [UC-4](../0151-user-credential-delivery/change.md#uc-4-request-rules-and-presets) | **Closed on the stub [measured]** for this table, as "Evidence for `github-deny`" lists: 3,033 of 3,045 predicted rows, and 1,230 attack rows on each host type with 0 denied actions with the credential. A later run matched 403 of 403 rows on the stem's direction, the carried names, the routing list, and the GitLab token tails, with the attack and command numbers unchanged. **Owed:** how GitHub, GHES, and GitLab decode each spelling, and the refusal of a suffixed listed GraphQL path on any method. |
-| V2 | `gh` and `glab` under the presets | "`gh` works" | **Closed on the stub [measured].** The commands table, 7 versions with 0 other refusals, and `gh release upload` on GHES and the `--env` commands passing. `glab` passed `mr create`, `view`, `list`, `note`, `update`, and `close`, and `issue create`, with `%2F` paths. **Owed:** `gh release upload` on a GHES host, amd64, macOS, Windows, the .NET SDK image, and a `glab` branch with `%2F`. |
-| V6 | S1, S2, S5, and S15 on a live GitHub host, for `github-scoped` and `github-deny` | The template, the child count, and whether the host's limit binds | **Done, live** **[measured]** on `github.com`, 2026-11-06: a child survives its parent's refresh and lasts 8 hours, no per-user limit on children appeared at 50 in an hour, revoking one child leaves the rest valid, a `pull_requests: write` child approves and cannot merge, and the repository limit binds node-ID mutations. The repository `permissions` field reports the user's role rather than the child's, and `GET /user/emails` answers for every child. GHES is owed. |
-| V7 | A bot's view of `performed_via_github_app` | The recommendation for bot owners | Partly **[measured]**: over REST the field names the App on a child's write. A bot's view through a webhook has not run. |
-
 ## Residual risks
 
 - **Compromised `netagent` on GitHub and GHES.** It holds a child with `pull_requests: write`, and GitHub has no narrower permission. It can approve other users' pull requests on the session's repositories until the child expires or is revoked. On a VCS pool with `pushIdentity: user`, it also holds the session's git child with `contents: write`, which it can send to the API to merge an approved pull request as the user. It also holds App tokens, including write. Request rules are enforced in `netagent`, so they provide nothing here. Compromise of `netagent` remains the boundary where two-person review ends, for those repositories.
 - **`permissions` widened.** When a tenant widens the narrowing template's `permissions` with `contents: write` or `actions: write`, merges, content writes, and ref writes rest on the preset alone.
-- **The user's email addresses.** `GET /user/emails` answers for every child, whatever its permissions **[measured]** (S6) on an App holding the email addresses permission, which a link provider with `identityBinding: verifiedEmail` needs, so an agent can read its user's addresses, private ones included, through the API child. [Decision 6](#decisions) asks whether the preset refuses it.
+- **The user's email addresses.** `GET /user/emails` answers for every child, whatever its permissions **[measured]** (S6) on an App holding the email addresses permission, which a link provider with `identityBinding: verifiedEmail` needs, so an agent can read its user's addresses, private ones included, through the API child. [Decision 6](decisions.md#decisions) asks whether the preset refuses it.
 - **Targets and inputs.** Without input-key and target checks, `updatePullRequest` with `baseRefName` or `state`, and any allowed mutation on someone else's pull request, pass where the token permits. Under a binding with `delivery: inject`, the child, when a template exists, limits this to the session's repositories.
-
-## Decisions
-
-| # | Decision | Recommendation | Cost of the recommendation | Alternative |
-| :-- | :-- | :-- | :-- | :-- |
-| 1 | Scoped tokens (formerly [`0152-user-git-identity` decision 7](../0152-user-git-identity/change.md#decisions)) | **Settled**, in the owner's word "ok", after S2 found no per-user limit: leave limits to GitHub. The owner had asked to leave it to GitHub "unless GH's limit is global for all users combined, in which case I agree we need a limit", which decision 7 takes up. Each session mints its own children, an API child and, on a VCS pool with `pushIdentity: user`, a git child, and revokes them at session end (S5). Lenny sets no per-person or per-link budget, a GitHub refusal is the result, and the per-App counter and alert near 2,000 per hour stay. | Each session costs one or two token requests against the App's 2,000 per hour, and a large tenant can reach that limit, whose behaviour S2 did not test. GHES is untested. | A child shared across a user's sessions with the same repositories under an 8-per-hour budget, which guarded against a ten-token rule that S2 showed does not apply. Or a user-wide child, which fails finding 1 of ["Verification of the review findings"](../0152-user-git-identity/review-history.md#verification-of-the-review-findings) under "Review history" in `0152-user-git-identity`. |
-| 2 | Sessions across owners (formerly [`0152-user-git-identity` decision 23](../0152-user-git-identity/change.md#decisions)) | Refuse the second owner on the binding | A session cannot author pull requests in two organizations. | One child per target, with `netagent` selecting by request path, which adds path parsing to the attach step. |
-| 3 | Read-only repositories on the child (formerly [`0152-user-git-identity` decision 24](../0152-user-git-identity/change.md#decisions)) | Absent, per [`0142-security-oversight` decision 25](../0142-security-oversight/change.md#decisions)'s reasoning | `gh pr view` on a read-only declared repository gets 404 from GitHub. | A second read-only child selected by path, at the cost that decision names. |
-| 4 | Review comments (formerly [`0152-user-git-identity` decision 34](../0152-user-git-identity/change.md#decisions)) | `gh pr review --comment` stays refused by default, because the preset names `addPullRequestReview` | An agent loses inline review comments, and `gh pr comment` is the substitute. A tenant can change that by dropping the name and accepting approval with it, since rules no longer read the event. | Have the preset read `event: COMMENT`, which needs an input check of the kind D1 removed. |
-| 5 | The child's permissions (formerly [`0152-user-git-identity` decision 42](../0152-user-git-identity/change.md#decisions)) | **Settled by the owner.** `permissions` is template data a tenant can widen, defaulting to `pull_requests: write` and `contents: read` | At the default, `gh issue`, `gh run`, and more are refused by the host, so "all `gh` commands", the owner's condition, holds only within the token. Once widened to `contents: write`, merges and content writes rest on the deny preset alone, with no host check behind it. | Fix the default wider, which makes `gh` work out of the box and removes the host's limit by default. Or fix permissions as the VCS layer's revision 3 did, which keeps the limit and fails the condition. |
-| 6 | The user's email addresses (formerly [`0152-user-git-identity` decision 46](../0152-user-git-identity/change.md#decisions)) | Add `GET /user/emails` and `GET /user/public_emails` to `github-deny`, which a tenant can drop. Found by S6 in the VCS layer's revision 25, on an App holding the email addresses permission: a child does not narrow that account permission. | A tool or script that reads the user's addresses through the API fails inside a session. | Leave it, which lets an agent read its user's private addresses. Or drop the App's email permission, which also breaks link providers with `identityBinding: verifiedEmail`, since that reads `GET /user/emails` with the parent. |
-| 7 | A per-person limit on child mints (formerly [`0152-user-git-identity` decision 48](../0152-user-git-identity/change.md#decisions)) | Open, found in the review of the VCS layer's revision 25. GitHub's 2,000 per hour applies per App, so it is shared by every user of the tenant. When settling decision 1 the owner said limits should be left to GitHub "unless GH's limit is global for all users combined, in which case I agree we need a limit", and this limit is. A per-person hourly limit on mints, set by Helm and narrowed per tenant, keeps one user's runaway delegation from stopping everyone else's. | A person past the limit gets a retryable `USER_TOKEN_RATE_LIMITED`. The limit must sit well above normal use, since each session takes one or two mints. | No limit, which lets one injected session exhaust the tenant's App for an hour. |
-| 8 | Preset body (formerly [`0151-user-credential-delivery` decision 24](../0151-user-credential-delivery/change.md#decisions)) | **Settled by the owner.** The extended preset, with both root forms and the `/repositories/{id}` alias. It refused 94 of 120 listed routes and mutations, by name search and manual reading **[measured]**. | It refuses `gh issue develop`, `gh repo sync`, `gh repo deploy-key add` and `delete`, `gh ssh-key add` and `delete`, `gh gpg-key add`, `gh api` contents writes, and `gh api` branch protection writes **[measured]**. | The earlier smaller preset (11 REST rules and 18 mutations), under which 94 of the 120 reach the stub, including `merge-async` and every protection write. |
 
 ## Sources
 
@@ -536,98 +475,3 @@ Read on 2026-11-02 and 2026-11-03. These pages were read and their behaviour was
 - Capture: `evidence/user-git-identity-design/spike-gh/RESULTS.md`, with `raw/`, of `gh` 2.103.3 (cli/cli tag v2.103.3) and `glab` 1.127.0, gqlparser 2.5.33, graphql-go, graphql-js 17.0.2, graphql-ruby 2.6.14, and `graphql-c_parser` 1.1.4. The folder's `README.md` lists what was left out, which includes binaries, downloads, keys, and bulk logs. Citations in this document such as `raw/gitopt/t11/` are relative to `spike-gh/`, and `t4/table.txt` is at `raw/gitopt/t4/table.txt`.
 - `gh` release history: `evidence/user-git-identity-design/gh-history/out/`, read from cli/cli source across 68 releases and from GitHub's public schema. The schema counts under "Capture history", "Why the allowlist was replaced", are in `gh-history/out/schema-history.txt`, from `gh-history/scripts/schema2.py`, which reads octokit/graphql-schema history and `docs.github.com/public/fpt/schema.docs.graphql` as fetched on 2026-11-03. Those sources are not copied here. The "about one a year" figure is a reading of that list by name and is not a measurement.
 - Client source for revision 1: [cli/cli](https://github.com/cli/cli) at `c4513d446bf98cfcbe72ed83f17cd3220174d88f`, in `api/queries_pr.go`, `api/queries_pr_review.go`, `api/queries_user.go`, `pkg/cmd/pr/create/create.go`, `pkg/cmd/pr/merge/http.go`, `pkg/cmd/api/http.go`, `internal/featuredetection/feature_detection.go`, and `internal/ghinstance/host.go`. [gitlab-org/cli](https://gitlab.com/gitlab-org/cli) on `main`, in `internal/commands/mr/create/mr_create.go` and `internal/commands/mr/approve/mr_approve.go`.
-
-## Capture history
-
-This section holds the results of the capture of 2026-11-03 against revision 3's allowlist, and that allowlist's measured behaviour. The measurements stand, and the design text above cites them. Revision 4 replaced the allowlist with request rules and presets, so nothing in this section is a requirement.
-
-### Capture results
-
-**This section is history.** It records what was measured against revision 3's allowlist, and the measurements stand. Revision 4 replaced that allowlist with the preset model. Where a row below names the filter, it describes that filter. Deny mode's bypass analysis ran later on the stub, under S19 **[measured]**.
-
-A capture ran on 2026-11-03: `gh` 2.103.3 and `glab` 1.127.0, against a recording stub on a Docker `--internal` network, through a Go `netagent` prototype with `filter.go` and gqlparser 2.5.33, on a laptop under other load. Results and raw output are under `evidence/user-git-identity-design/spike-gh/`, in `RESULTS.md` and `raw/`. The github.com flavour used `api.github.com` as a network alias for the stub.
-
-#### What moved from design to measured
-
-| Revision 1 claim | Revision 2 status |
-| :-- | :-- |
-| `gh` sends `pr create`, `pr review`, and `pr merge` over GraphQL | **[captured]**. A REST allowlist does not cover `gh`. |
-| `gh pr create` works through the filter with a placeholder | **[captured]**, **with plain remotes only**. 10 of 10 variants per flavour, with the stub receiving the same requests with and without the filter, carrying the injected token and no placeholder. |
-| The filter refuses review, merge, aliasing, batches, fragments, encodings, and path tricks | **[captured]**. 522 attack rows per flavour under the final policy: 52 allowed controls reached the stub, 467 refused rows sent nothing to the stub, and 3 opaque-route rows carried no credential. 24 of 25 attack commands run with the `gh` binary exited non-zero with the refusal, and the 25th is the allowed control. |
-| HTTP/2, HTTP/1.1 framing, absolute-form, and another bound host do not bypass the filter | **[captured]**, by the rows above. |
-| A filter check is cheap on `gh` traffic | **[captured]**. 11 µs on `pr create` and 88 µs on the largest document. `gh pr create` wall time differed inside its run-to-run spread. |
-| `glab` uses REST for its merge request commands, with its token in `Private-Token` | **[captured]** for `mr create`, `mr view`, `mr list`, `mr approve`, and `mr merge`. Other `glab` commands were not captured. |
-
-#### Corrections to revision 1
-
-- **Flavours differ.** `gh` selects login-based mutations on github.com and node-ID ones on GHES **[source]**, and an allowlist from one capture breaks `--reviewer` and `--assignee` on the other **[captured]**.
-- **Rule 6 of revision 1 would have broken `gh`.** `gh pr create --project` sends aliased root fields with `$input_000` variables (`add_000: addProjectV2ItemById(input: $input_000)`) **[captured]**. Several root fields, each checked, are admitted.
-- **`gh pr create --project` uses `addProjectV2ItemById`**, where revision 1 named another field.
-- **Revision 1's bounds were wrong.** Its 256 KiB document bound admitted a document that measured 40 MB, and streaming REST bodies cannot carry the body-key check `merge_when_pipeline_succeeds` needs. See "Bounds and cost".
-- **The first filter had a bypass, and a second stays open in the prototype.** See `0151-user-credential-delivery`, "Canonical forwarding".
-
-#### Why the allowlist was replaced
-
-The owner's conditions for keeping a GitHub-specific injection were that it survive `gh` updates and work for all `gh` commands. Both were measured false for the allowlist.
-
-- **All commands.** 25 of 42 `gh` cases exited 0 under the prototype's policy and 17 failed, including `pr comment`, `pr edit`, `pr ready`, and `pr close` by policy **[captured]**.
-- **Headers.** On a Debian image `gh` sent `Time-Zone`, and the forwarded-header allowlist refused every GraphQL request with 403 **[captured]**. The earlier capture ran on Alpine only.
-- **Updates.** Of 68 `gh` releases since 2024-10-01, 4 changed the mutation set. v2.73.0 added `replaceActorsForAssignable` and `deleteIssueComment`, v2.83.0 added `revertPullRequest`, v2.87.0 added `requestReviewsByLogin`, and v2.94.0 added the discussions and sub-issue set. 16 of the 66 mutations in `gh` 2.103.3 were on the old table and 50 were off **[source]**. Those are names only and a lower bound on drift, read from source and not run.
-- **The server side.** GitHub's schema went from 122 mutations (2021-01) to 278 (now), and in one reading about one a year needs only `pull_requests: write` and carries merge or review power **[source]**. That reading is what the owner accepted as the deny preset's cost.
-
-#### What the capture did not test
-
-It used plain git remotes. Under the prior `insteadOf` config, `gh` and `glab` stopped earlier, which was reproduced afterwards (see `0152-user-git-identity`, "Git remotes and client tools"). It also ran no `git push`.
-
-#### What the capture cannot show
-
-These stay **[stub cannot show]** and are spike S15 unless noted:
-
-- Whether `pull_requests: write` permits approval on a provider-issued token. The permission table says yes **[documented]**, which is why the preset names approval.
-- Whether merging fails without `contents: write`. The table says it needs that permission for REST **[documented]**. The GraphQL mutations' checks are unknown.
-- Whether a child's repository limit binds node-ID mutations, since `createPullRequest` takes an opaque `repositoryId` and others take node IDs. The filter checks operations and leaves targets to the host.
-- Whether GitHub honours batches, GET queries, form bodies, or method overrides, and which GraphQL parser it runs.
-- What GitLab does with `/merge` in a description for a given token, and how it routes an encoded project path (S17).
-- `gh`'s behaviour against an older GHES, since the stub answers `__type` as if every field exists, which selects `gh`'s newest code paths.
-- Whether any field fails under a narrow child on `gh pr view`, because the stub answers everything.
-
-### The revision 3 filter
-
-This is superseded and kept because it records what was measured. Nothing below is a requirement.
-
-**Bypass analysis under the allowlist.** These results are **[captured]** against the allowlist with the printer on. **The deny-mode run is under "Validation owed" as S19 [measured].**
-
-| Route | Result under the allowlist | Why |
-| :-- | :-- | :-- |
-| HTTP/2 | Filtered | `gh` and `glab` both speak it. Each stream is one request. Six attack rows ended in protocol errors from the server library, with nothing at the stub. |
-| HTTP/1.1 framing and pipelining | Filtered | `netagent` writes its own upstream request, so conflicting framing cannot reach the host. |
-| Absolute-form | Filtered | One authority is derived, and it enters the same stage. A differing `Host` is refused. |
-| Another bound host, and reuse after an allowed request | Refused | A filtered connection refuses any other authority, and each request is checked. |
-| Opaque tunnel | No credential | 2 rows reached the stub with no credential, and 1 did not connect. |
-| GET, form, `application/graphql`, gzip, zstd, and deflate | Refused | The endpoint admits one form. |
-
-Three routes do not depend on the rules: `uploads.github.com` or `github.com` carry no token because neither is bound, another binding on the host is refused, and `netagent` offers `h2` and `http/1.1` alone in ALPN with the proxy carrying CONNECT only. Reflection of a token is scrubbed under the egress design's stated limit, and a compromised `netagent` applies no rules.
-
-**Operations `gh` 2.103.3 sends [captured].** These are facts about the client, and they feed the preset's tests.
-
-| Field | `gh` operation and command | `gh` uses it on |
-| :-- | :-- | :-- |
-| `createPullRequest` | `PullRequestCreate`, `pr create` | Both |
-| `updatePullRequest` | `PullRequestCreateMetadata`, `PullRequestUpdate`, `pr create` and `pr edit` | Both |
-| `requestReviews` | `PullRequestCreateRequestReviews`, `--reviewer` | GHES |
-| `requestReviewsByLogin` | `RequestReviewsByLogin`, `--reviewer` and `pr edit` | github.com |
-| `replaceActorsForAssignable` | `ReplaceActorsForAssignable`, `--assignee` and `pr edit` | github.com |
-| `addProjectV2ItemById` | `UpdateProjectV2Items`, `--project` and `pr edit` | Both |
-| `addLabelsToLabelable` | `LabelAdd`, `pr edit` | Both |
-| `markPullRequestReadyForReview` | `pr ready` | Both |
-| `closePullRequest` | `pr close` | Both |
-| `addComment` | `CommentCreate`, `pr comment` | Both |
-| `addPullRequestReview` | `PullRequestReviewAdd`, `pr review` with all three events, the same document | Both |
-| `mergePullRequest` | `PullRequestMerge`, `pr merge` | Both |
-| `enablePullRequestAutoMerge`, `disablePullRequestAutoMerge` | `pr merge --auto`, merge queue, and `--disable-auto` | Both |
-
-Inline `input` literals through `gh api`, and `$input_000` variables, both appeared **[captured]**. No `gh` document held more than one operation **[captured]**. REST routes `gh` used: `GET /` and `/user`, `GET /meta` on GHES, `GET /repos/{o}/{r}/pulls/{n}` with a diff `Accept`, `GET /repos/{o}/{r}/readme`, `POST` and `DELETE .../pulls/{n}/requested_reviewers` on GHES, and `DELETE /repos/{o}/{r}/git/refs/heads%2F...` **[captured]**.
-
-**`glab` 1.127.0 [captured].** REST alone for `mr create`, `mr view`, `mr list`, `mr approve`, and `mr merge`. `Private-Token` carries the token, on all 234 requests. A body with `title`, `description`, `source_branch`, `target_branch`, `labels`, `assignee_ids`, `reviewer_ids`, `target_project_id`, and `milestone_id`. `acme%2Fwidgets%2Fmerge_requests%2F7%2Fapprove` and `acme%2F..%2Fwidgets` reached the stub on the first pass, and `merge_when_pipeline_succeeds` passed a policy with no body-key list.
-
-**The allowlist's position.** Revision 3 listed 12 mutation rows with input keys, per-flavour notes, a required `repositoryAutomation` statement, and `gitlabTextGuard`. Its reasoning on `pr review --comment` stays: the preset refuses `addPullRequestReview` for every event, and a tenant can change that with its own rules.

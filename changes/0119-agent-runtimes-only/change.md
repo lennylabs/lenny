@@ -1,8 +1,6 @@
 # Agent runtimes only
 
-Status: `Draft`, revision 8, 2026-11-16. Revision 8 applies the kind and field names of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which the owner accepted on 2026-11-16 as its O3, and changes no rule. Revision 7 follows [`0124-connector-removal`](../0124-connector-removal/change.md) revision 3: the replacement columns of the removal tables no longer keep capability inference, connector tool filtering, the connector client, or connectors as alternatives. Revision 6 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors.") under [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2: the alternatives of "AR-6" and the statements on tools, MCP, and the link check no longer name connectors. Revision 5 applies the remaining instruction of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) on the "Implicit session" term. Nothing here is built or staged, and no independent review has read it. It is written from the owner's direction of 2026-11-13 to remove the non-agent runtimes. Revision 2 records the owner's settlement of open decisions O1 to O8 on 2026-11-13 ("O5 (b), yes to all the others") and of `session_start`'s `sessionId` ("ok, let's keep it"), and corrects revision 1's reading of the leniency rules for an unknown member. Revision 3 records the owner's answer of 2026-11-13 that O3's refusal is the one rule for removed fields in every design (D6), which settles the LLM response cache removal design's O3 and which the LLM upstreams design's LU-4 applies to the fields it removes. Revision 4 restates the "Held session" term as "Provider-adapter session" under the simplified O3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which the owner answered "yes" on 2026-11-14, and changes no rule of this design. The design reads against every design under `designs/` as implemented, in particular [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) revision 16, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 13, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 24, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0145-session-isolation`](../0145-session-isolation/change.md), [`0136-placement`](../0136-placement/change.md), [`0127-egress-and-git`](../0127-egress-and-git/change.md), [`0144-session-derive`](../0144-session-derive/change.md), and [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md), with [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md) revision 12 and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). Its label prefix is AR.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 8, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -10,8 +8,8 @@ Each factual claim carries one of these tags where the source matters:
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree, the specification, the documentation, or a design under `designs/` on 2026-11-13. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[inference]** | Reasoned from the sources and not run. "Validation owed" lists each one that matters. |
-| **[unverified]** | A claim the pages and code read do not state. "Validation owed" lists each one. |
+| **[inference]** | Reasoned from the sources and not run. "Validation owed" in `steps.md` lists each one that matters. |
+| **[unverified]** | A claim the pages and code read do not state. "Validation owed" in `steps.md` lists each one. |
 
 ## Problem
 
@@ -26,7 +24,7 @@ The specification defines a runtime by its type and, for an agent runtime, by it
 The changes of the v1 program have rebuilt the session-mode agent pod: one slot container per slot under its own UID, a runtime supervisor that launches a fresh runtime process per session at bind, a file-descriptor broker, a fixed runtime-visible layout, a handshake on every runtime connection, and per-slot egress scopes. The `type: mcp` and service-mode cases do not fit that model, and before the cross-design review of 2026-11-13 applied this design, every design that touches the pod, the protocol, egress, or admission carried a separate rule for them **[source]**:
 
 - The pod layout renders a service-mode pod with no `/workspace` or `/session` and a launch at pod start, and a `type: mcp` pod as a pod with one slot whose adapter speaks MCP to the runtime ([PL-1](../0118-agent-pod-layout/change.md#pl-1-pod-blueprint)).
-- The runtime protocol keeps `sessionId` multiplexing and refuses tool calls on a service-mode pod, because one process serves several requests there ([RP-3](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)). The message delivery design keeps `startId` open as decision C1 because service mode might need it ([`0135-message-delivery`, "Decisions"](../0135-message-delivery/change.md#decisions)).
+- The runtime protocol keeps `sessionId` multiplexing and refuses tool calls on a service-mode pod, because one process serves several requests there ([RP-3](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)). The message delivery design keeps `startId` open as decision C1 because service mode might need it ([`0135-message-delivery`, "Decisions"](../0135-message-delivery/decisions.md#decisions)).
 - The egress design plans a whole proposal, its proposal 0, for a durable service-mode tenant pin, a service-mode listener in the adapter, and new network policy rows, to close two High findings: F-5.2.65, in which service-mode tenant pins have no arbiter across gateway replicas, and F-5.2.66, in which the service-mode request path is not wired at all ([`0127-egress-and-git`, "Relationship to proposal 0111 and open findings"](../0127-egress-and-git/change.md#relationship-to-proposal-0111-and-open-findings)). It also leaves the trust anchor unconstrained on service-mode and `type: mcp` pods.
 - Tenant scoping evaluates a service-mode pod with no environment and refuses sessions whose environment has anything of its own ([`0149-tenant-scoping-identity`, "Effective policy"](../0149-tenant-scoping-identity/change.md#effective-policy)). The user git identity and user credential delivery designs refuse service-mode pods.
 - Session derive and tenant-derived runtimes refuse a target without a runtime supervisor (SD-P4 and the export refusal of DR-8), a case that now reduces to a `type: mcp` target or a stale runtime row.
@@ -81,6 +79,7 @@ Several names look related and stay: `caller_type: service` on tokens, the gatew
 | Implicit session | The session record the gateway creates per connection to a `type: mcp` runtime's dedicated endpoint, for audit and billing. It leaves with the endpoint. The built-in client adapters' implicit sessions leave too, under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md): the provider adapters move out of Lenny and create ordinary sessions through the REST API. |
 | Tenant-affinity routing | The service-mode routing of [§5.2](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes): the gateway maps a tenant to a set of pinned pod IPs and routes each message to one of them. |
 | Service-mode tenant pin | The durable record that the egress design's proposal 0 adds, which ties a service-mode pod to one tenant and arbitrates between gateway replicas. |
+| Labels | Parts of the design carry the label AR-n, requirements carry the label ARR-n, and the former open decisions carry the label O-n. |
 
 ### Terms from other designs and the platform
 
@@ -110,16 +109,16 @@ Several names look related and stay: `caller_type: service` on tokens, the gatew
 | MD-4, MD-24, MD C1 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-24-runtime-frames-and-leniency) | Turn accounting and the `consumed` frame; runtime frames and the leniency rules; whether `startId` stays, which this design's D2 settles. |
 | SD-1, SD-P4 | [`0144-session-derive`](../0144-session-derive/change.md#sd-1-one-route) | The derive route and its checks; the refusal of a derive onto a target without a supervisor, answered with `target_unsupervised`, which O8 removes. |
 | DR-4, DR-6, DR-8, DF-16, DR decision 10 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) | Tenant runtime records and the runtime-row mirror, whose "Registered rows" paragraph owns the `registered` check of O8; base changes; interactions, whose export refusal on an unsupervised target this design removed; the finding that refusal closed, which stays closed by DR-3; service-mode bases refused, a decision this design makes moot. |
-| EG proposal 0, EG decisions 54, 60, and 62 | [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) and ["Decisions"](../0127-egress-and-git/change.md#decisions) | The service-mode tenant pin; the trust anchor on every session-mode pod with service mode and `type: mcp` as exceptions; per-slot scopes, which the owner settled as (a) on 2026-11-13; and the withdrawal of proposal 0 with a name-constrained anchor on every agent pod, which the egress design records under this design. |
-| TS decision 15 | [`0149-tenant-scoping-identity`, "Decisions"](../0149-tenant-scoping-identity/change.md#decisions) | Concurrent and service-mode pods evaluate with no environment. |
+| EG proposal 0, EG decisions 54, 60, and 62 | [`0127-egress-and-git`, "Steps"](../0127-egress-and-git/steps.md#steps) and ["Decisions"](../0127-egress-and-git/decisions.md#decisions) | The service-mode tenant pin; the trust anchor on every session-mode pod with service mode and `type: mcp` as exceptions; per-slot scopes, which the owner settled as (a) on 2026-11-13; and the withdrawal of proposal 0 with a name-constrained anchor on every agent pod, which the egress design records under this design. |
+| TS decision 15 | [`0149-tenant-scoping-identity`, "Decisions"](../0149-tenant-scoping-identity/decisions.md#decisions) | Concurrent and service-mode pods evaluate with no environment. |
 | PM-4 | [`0136-placement`, "PM-4"](../0136-placement/change.md#pm-4-placement-requirements) | Placement requirements, `sharedPod`, `allowSharedPod`, and `allowReusedPod`. |
 | SL-6 | [`0146-session-lifecycle`, "SL-6"](../0146-session-lifecycle/change.md#sl-6-idle-pods-and-dormancy) | Idle pods and dormancy, with the sessions that cannot become dormant. |
 | UGI decision 14 | [`0152-user-git-identity`, "Pod models"](../0152-user-git-identity/change.md#pod-models) | The refused pod models. |
-| UCD decision 16 | [`0151-user-credential-delivery`, "Decisions"](../0151-user-credential-delivery/change.md#decisions) | `lockEgressToHosts` and the pods on which it is refused. |
+| UCD decision 16 | [`0151-user-credential-delivery`, "Decisions"](../0151-user-credential-delivery/decisions.md#decisions) | `lockEgressToHosts` and the pods on which it is refused. |
 | DA-1, DA-4 | [`0126-delegation-availability`](../0126-delegation-availability/change.md#da-1-levels) | `allowDelegation` and its refusal on `type: mcp`; the tool list. |
 | MP-6, MP O3 | [`0134-mcp-protocol-upgrade`, "MP-6"](../0134-mcp-protocol-upgrade/change.md#mp-6-outbound-clients) | The outbound MCP clients and the versions they accept. |
 | LU-4 | [`0133-llm-upstreams-and-cost-budgets`, "LU-4"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-4-removal) | The removal of LLM credential leases and direct delivery mode, with the pool and runtime fields that leave with them. |
-| RC-2, RC O3 | [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md#decisions) | The code removal of the LLM response cache; how a pool write that still names `cachePolicy` or `cacheScope` is answered, which D6 settles. |
+| RC-2, RC O3 | [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/decisions.md#decisions) | The code removal of the LLM response cache; how a pool write that still names `cachePolicy` or `cacheScope` is answered, which D6 settles. |
 | RV field classes | [`0140-runtime-revisions`, "Field classes"](../0140-runtime-revisions/change.md#field-classes) | `type` and `executionMode` as fixed fields, and `restartable`. |
 | CR-1, CR-3 | [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) | The removal of connectors, with §9.3 as a successor pointer; and the guidance by which a runtime reaches operator services through egress. |
 
@@ -136,103 +135,6 @@ Routing has one path: create, claim, and bind. Tenant-affinity routing, the `/v1
 Every refusal that existed for these modes leaves: the service-mode tool refusal, SD-P4's `target_unsupervised`, DR-8's export refusal on an unsupervised target, the `type: mcp` delegation refusal `target_not_an_agent`, the `allowDelegation`, `integrationLevel`, and `agentInterface` refusals on `type: mcp`, the service-mode refusals of the user git identity and user credential designs, and the service-mode clauses of tenant scoping, placement, and tenant security settings. One general check replaces SD-P4's fail-closed property: at the post-chain point of every create, derive, and delegated child, the final runtime's row must be `registered`, and the tenant-derived runtimes design owns the check (O8).
 
 A user who hosted an MCP server as a runtime runs it as an operator service that agent runtimes reach through egress, or has an agent runtime launch it. A user who ran a stateless agent as a service runs it in session mode, where a pool with several slots per pod gives density, or runs it outside Lenny as an operator service when it needs no agent session ("AR-6").
-
-## Decisions
-
-| # | Question | Owner's answer | Recorded as | Applied in |
-| :-- | :-- | :-- | :-- | :-- |
-| D1 | Whether non-agent runtimes stay. | "Remove non-agent runtimes altogether, in a new design: `type: mcp` and service mode (`executionMode: service`)." After this change Lenny runs only `type: agent` runtimes in session mode. The owner asked this design to decide whether `type` and `executionMode` go entirely. | Decision file, "Owner decisions (2026-11-13)"; the owner's direction of 2026-11-13 | AR-1, AR-2, O1, O2 |
-| D2 | What leaves with service mode. | "With service mode gone, `startId` goes (the owner's point), along with any remaining sessionId-on-frames multiplexing, service-mode tenant-affinity routing, `maxConcurrentRequestsPerPod`, the service-mode tool refusal, and the service-mode rows everywhere." | Decision file, "Owner decisions (2026-11-13)" | AR-2, AR-3 |
-| D3 | The `type: mcp` supervisor questions. | The removal "makes the type: mcp supervisor questions moot." | Decision file, "Owner decisions (2026-11-13)" | AR-1, AR-5 |
-| D4 | Open decisions O1 to O8 of revision 1 (2026-11-13). | "O5 (b), yes to all the others." O1 (a), O2 (a), O3 (b), O4 (a), O5 (b), O6 (a), O7 (a), and O8 (b). | Decision file, "AR decisions settled, 2026-11-13" | O1 to O8 below, AR-3, AR-4, AR-5 |
-| D5 | Why `session_start` keeps `sessionId` under O5 (b) (2026-11-13). | The owner asked why the member stays on `session_start`. The answer given: it is the only carrier of the session's identifier to the runtime, it stays the same across restarts of the runtime process, the runtime uses it to correlate its logs with the platform's for support, to build idempotency keys for actions outside the session, and to detect that its session was derived. The owner answered "ok, let's keep it". The adapter never acts on the member. | Decision file, "AR decisions settled, 2026-11-13" | AR-3, ARR-6 |
-| D6 | Whether O3's refusal is the rule for removed fields in every design (2026-11-13). | "ok", in the owner's answers to the consolidated list of open decisions of 2026-11-13: one rule for removed fields everywhere. A write that names a removed field is refused with `400 VALIDATION_ERROR` naming the field. The answer settles O3 of [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md#decisions), and LU-4 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) applies it to `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, and the other fields it removes. | Decision file, "Owner answers to the consolidated list, 2026-11-13", item 6 | AR-4 |
-
-D2 settles open decision C1 of the message delivery design as its option (c), removal of `startId`.
-
-The owner settled open decisions O1 to O8 of revision 1 on 2026-11-13 with "O5 (b), yes to all the others" (D4). Each entry below keeps its options and reasoning as the record of the choice, and states the option taken.
-
-**O1. Whether the `type` field stays.**
-
-- (a) Remove `type` from the `Runtime` resource, the CRD, the admin API, the runtime row and its CHECK constraint, `GET /v1/runtimes`, `list_runtimes`, the runtime scaffolder, and the documentation. Every runtime is an agent runtime.
-- (b) Keep `type` as an optional field whose only value is `agent`, defaulted when absent.
-- (c) Keep `type` as an open enum reserved for a later runtime kind.
-
-**Recommendation: (a).** A field with one legal value tells a reader nothing and costs a CHECK constraint, an enum, a validator, and a documentation entry. Under (b) every example and every reader still carries the word. (c) reserves a value space for a feature nobody has designed, and a later kind would need its own design and its own field name anyway. Lenny has no deployments, so no stored resource carries the field.
-
-**Settled 2026-11-13: (a)** (D4).
-
-**O2. Whether `executionMode` stays.**
-
-- (a) Remove `executionMode` from the `Runtime` resource, `PodSet`, `AgentPod`, the `PodRecord` and `PodSpec` interfaces of [§12.6 Interface Design](../../spec/12_storage-architecture.md#126-interface-design), the runtime, session, pod-registry, and agent-pod-state rows, `sessionIsolationLevel`, the derive's equality check, and the `INCOMPATIBLE_RUNTIME` error.
-- (b) Keep it with the single value `session`.
-- (c) Keep it as an enum reserved for a later mode.
-
-**Recommendation: (a)**, for the reasons of O1. [`ROADMAP.md`](../../ROADMAP.md) lists an "External-parent session mode" as `executionMode: external` on `POST /v1/sessions` **[source]**. That is a session request field rather than the runtime field, and a design for it chooses its own name, so (a) does not block it.
-
-**Settled 2026-11-13: (a)** (D4). The derive's mode check and `INCOMPATIBLE_RUNTIME` leave with the field.
-
-**O3. How a write that names a removed field is answered.** The admin API decodes JSON without refusing unknown members **[source]**, so a field that only disappears from the schema is ignored, and a `type: mcp` registration would register the MCP server image as an agent runtime. It would then fail at its first bind, when the runtime does not answer the handshake of [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake) **[inference]**.
-
-- (a) The removed fields disappear from the schemas and are ignored as any unknown member is.
-- (b) The removed fields disappear from the schemas and the documentation, and the admin API, the bootstrap seed, and `lenny-ctl runtime validate` refuse a write that names one with `400 VALIDATION_ERROR`, whose message names the field and states that Lenny runs agent runtimes in session mode. The CRDs drop the fields from their structural schemas, so the API server's field validation reports them as unknown **[inference]**.
-- (c) Keep the fields with one legal value and refuse any other value.
-
-**Recommendation: (b).** It turns a late, confusing bind failure into an immediate error that names the cause, and it costs one list of three names in one validator. It adds no alias and no second code path, so it is a refusal rather than a compatibility mode.
-
-**Settled 2026-11-13: (b)** (D4). A write that names a removed field is refused with `400 VALIDATION_ERROR` naming the field.
-
-**O4. Whether `sessionIsolationLevel` keeps `executionMode` and `conversationContinuity`.** After the removal `executionMode` is always `session` and `conversationContinuity` is always `"platform"`.
-
-- (a) Remove both fields from `sessionIsolationLevel`, the client SDK types, and the OpenAPI document. The hold rule of the Open Responses and Messages adapters reduces to its capability condition: the runtime declares `multi_turn` with injection.
-- (b) Keep both with their constant values.
-
-**Recommendation: (a).** Lenny has no deployed clients, and a constant field invites a client to branch on it.
-
-**Settled 2026-11-13: (a)** (D4).
-
-**O5. Whether a session-scoped frame may still carry `sessionId`.** RPR-18 takes a frame's session from its connection, and a frame that names another session is refused (SIR-3) **[source]**. RP-3 keeps the member optional "so that one schema serves every mode" **[source]**.
-
-- (a) Keep `sessionId` optional on session-scoped frames, accepted when it names the slot's session and refused otherwise, with the reason restated: it lets a runtime log under the identifier and catches a runtime that confuses sessions.
-- (b) Remove the member from every frame other than `session_start`. A runtime that still writes it on another frame is unaffected: the adapter treats it as an unknown member of a known frame, which the leniency rules of "MD-24" ignore silently. Only an unknown frame type produces a `runtime_warning`.
-
-**Recommendation of revision 1: (a).** Revision 1 argued that the runtime SDKs and the frame examples of the message delivery design already send `sessionId`, so (b) would turn every such frame into a warning, and that (a) keeps the slot check that session isolation states for its own reasons. The first half rested on a misreading of "MD-24": an unknown member is ignored with no report, and only an unknown frame type is reported **[source]**. Under (b) a runtime that still sends the member therefore sees no change, and the slot check has nothing left to check, because the adapter takes every frame's session from its connection's slot and reads no session from the frame. The multiplexing rules leave under both options.
-
-**Settled 2026-11-13: (b)** (D4). No frame carries `sessionId` except `session_start`, which keeps it as data the runtime reads (D5): the runtime correlates its logs with the platform's for support, keeps one identity across restarts of its process, builds idempotency keys for actions it takes outside the session, and detects that its session was derived. The adapter never acts on it. Session isolation's refusal of a frame that names another session (SIR-3) leaves with the member, because no frame names a session any more.
-
-**O6. Whether a `type: mcp` use case needs a replacement now.**
-
-- (a) No replacement. The documentation states the alternatives of "AR-6".
-- (b) Record Lenny-hosted MCP servers as a candidate in [§21 Planned / Post-V1](../../spec/21_planned-post-v1.md).
-- (c) Build a hosted-connector feature now, in which Lenny runs a connector's MCP server in a pod it manages.
-
-**Recommendation: (a).** No user, test outside the reference binary, or reference runtime depends on the mode, and the endpoint has never served a call in production **[source]**. Connectors already cover MCP servers that run elsewhere, and an agent runtime can launch an MCP server inside its own slot. A later design can propose (c) from a stated need.
-
-**Settled 2026-11-13: (a)** (D4).
-
-The recommendation above names connectors as they stood on 2026-11-13. [`0124-connector-removal`](../0124-connector-removal/change.md) removed them on 2026-11-15, so an MCP server that runs elsewhere is an operator service that a runtime reaches through egress (CR-3), and option (c) has no connector feature to extend.
-
-**O7. Headings that name the removed concepts.** [§5.2 Pool Configuration and Execution Modes](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) has about 168 inbound links, and [§4.7.9 Startup Sequence for `type: agent` Runtimes](../../spec/04_system-components.md#479-startup-sequence-for-type-agent-runtimes) has 19 **[source]**.
-
-- (a) Rename §5.2 to "5.2 Pool Configuration" and §4.7.9 to "4.7.9 Runtime Startup Sequence", and move both anchors through the anchor-redirect map. §5.2's "Execution Modes" and "Execution Mode Scaling Implications" subsections become "Session policy" material and "Scaling Implications".
-- (b) Keep both headings.
-
-**Recommendation: (a).** A heading that names a removed concept misleads every reader who follows a link to it, and the anchor-redirect map exists to move anchors without breaking inbound links.
-
-**Settled 2026-11-13: (a)** (D4). §5.2 becomes "5.2 Pool Configuration" and §4.7.9 becomes "4.7.9 Runtime Startup Sequence", each through the anchor-redirect map.
-
-**O8. Where the fail-closed check on a stale runtime row lives.** SD-P4 now refuses only a target whose runtime row is not `registered`, because DR-4's mirror leaves a row stale when it refuses a `Runtime` resource (the "Supervisors" subsection of [`0144-session-derive`](../0144-session-derive/change.md) before its revision 18, now ["Final runtime row"](../0144-session-derive/change.md#final-runtime-row)) **[source]**. That concern is not specific to supervisors or to derive. Whether a create or a delegated child onto a row that is not `registered` is refused today is not established **[unverified]**.
-
-- (a) Remove SD-P4 and `target_unsupervised` and leave stale rows to whatever the general target resolution does.
-- (b) Remove SD-P4 and `target_unsupervised`, and require at the post-chain point, for every create, derive, and delegated child, that the final runtime row is `registered`, answered as an unknown runtime. DR-4 owns the rule.
-
-**Recommendation: (b).** It keeps the fail-closed property SD-P4 provided and applies it to every path that can land on a stale row.
-
-**Settled 2026-11-13: (b)** (D4). SD-P4 and `target_unsupervised` leave, and [`0147-tenant-derived-runtimes`, "DR-4"](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) owns the check at the post-chain point that the final runtime row of every create, derive, and delegated child is `registered`, answered as an unknown runtime. DR-4's "Registered rows" paragraph states the details: the answer is `RESOURCE_NOT_FOUND`, or the surface's own not-found answer, which is `TARGET_NOT_IN_SCOPE` for a delegated child; a platform-derived runtime also needs its base's row to be `registered`; the admin API writes `true` on a row it registers with no `Runtime` resource; and a resume, which reads the session's stored runtime, is not refused.
-
-## Open decisions
-
-No decision remains open. "Decisions" records O1 to O8, which the owner settled on 2026-11-13 (D4), with their options, their reasoning, and the option taken.
 
 ## Requirements
 
@@ -369,7 +271,9 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 - [`BUILD-PLAN.md`](../../BUILD-PLAN.md) and [`README.md`](../../README.md): the `type: mcp` and service-mode lines leave. `ROADMAP.md` keeps its entry (O2).
 - `tests/`: `tier4_integration/mcp_runtime_lifecycle_test.go`, `tier3_contract/mcp_runtimes/endpoint_test.go`, `tier5_e2e_kind/execution_modes_test.go` (whose tests exercise `sessionPolicy` presets and move), `tier2_component/migrations/prod_columns_test.go`, `tier3_contract/adapter_jsonl/session_scoped_frame_address_test.go`, `tier7a_load_local/session_frame_pairing_race_test.go`, `tier11_docs/slot_definition_glossary_reconciliation_test.go` and `session_suspension_reader_doc_reconciliation_test.go`, the `tier9_security` tenant isolation and pool admission tests, the migration test of `0167`, and the registers `tests/spec-map.json`, `tests/change-graph.json`, and `tests/registers/*.yaml`.
 
-## AR-1 The runtime type
+## Detailed design
+
+### AR-1 The runtime type
 
 **What leaves.** The `type` field and its values (O1). With it:
 
@@ -387,7 +291,7 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 
 **Errors.** `target_not_an_agent` leaves the delegation error set. The `INVALID_RUNTIME` messages that name `type: mcp` leave, and `INVALID_RUNTIME` stays for its other causes.
 
-## AR-2 Service mode
+### AR-2 Service mode
 
 **What leaves.** `executionMode` (O2) and its `service` value, with:
 
@@ -405,9 +309,9 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 
 **What stays.** Pods with several slots, `maxConcurrentSessionsPerPod`, `acknowledgeSharedPod`, recycling, tenant pinning of session-mode pods and its label webhook, and the claim queue. The gateway subsystems' `maxConcurrent` settings are unrelated and stay.
 
-## AR-3 Runtime protocol frames
+### AR-3 Runtime protocol frames
 
-**`startId` leaves (D2).** Under [SI D4](../0145-session-isolation/change.md#decisions) a runtime process receives one `session_start` in its life, so `startId` tells apart nothing on a session-mode pod, and service mode was the one case that might have needed it **[source]**. The adapter writes `session_start` without `startId`, the runtime answers `session_started` without it, and §28.5.3's rule that the adapter drops a `session_started` whose `startId` is not that of the open sequence becomes a rule that the adapter accepts the first `session_started` after the `session_start` it wrote and drops any later one with a `runtime_warning`. A runtime that still sends `startId` is handled under the leniency rules of "MD-24": the member is an unknown member of a known frame and is ignored with no report **[design]**. `schemas/lenny-adapter-jsonl.schema.json` stops requiring it, and its examples drop it.
+**`startId` leaves (D2).** Under [SI D4](../0145-session-isolation/decisions.md#decisions) a runtime process receives one `session_start` in its life, so `startId` tells apart nothing on a session-mode pod, and service mode was the one case that might have needed it **[source]**. The adapter writes `session_start` without `startId`, the runtime answers `session_started` without it, and §28.5.3's rule that the adapter drops a `session_started` whose `startId` is not that of the open sequence becomes a rule that the adapter accepts the first `session_started` after the `session_start` it wrote and drops any later one with a `runtime_warning`. A runtime that still sends `startId` is handled under the leniency rules of "MD-24": the member is an unknown member of a known frame and is ignored with no report **[design]**. `schemas/lenny-adapter-jsonl.schema.json` stops requiring it, and its examples drop it.
 
 **No multiplexing remains.** The "Remaining multi-session rules" of RP-3 lose both of their entries, so the section leaves. The runtime SDKs' tables that route frames by `sessionId` and answer duplicate starts leave, because a process serves one session.
 
@@ -415,9 +319,9 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 
 **Tools on every pod.** RPR-8 becomes "Platform tool calls reach the gateway from every runtime process", and RP-4's `toolServers` lists `platform` for every session, which is its only value since CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) removed connector tool servers.
 
-## AR-4 Admission of removed fields
+### AR-4 Admission of removed fields
 
-**Refusal (O3).** The admin API's runtime and pool writes, the bootstrap seed, and `lenny-ctl runtime validate` refuse a document that names `type`, `executionMode`, or `maxConcurrentRequestsPerPod` with `400 VALIDATION_ERROR`, whose `details.field` names the member and whose message reads, for example, "`type` was removed: Lenny runs agent runtimes in session mode only" **[design]**. The refusal holds whatever value the member carries, `agent` and `session` included, so a document is either current or refused. The CRDs drop the fields from their structural schemas; whether `kubectl apply` refuses an unknown field under its default field validation is owed ("Validation owed").
+**Refusal (O3).** The admin API's runtime and pool writes, the bootstrap seed, and `lenny-ctl runtime validate` refuse a document that names `type`, `executionMode`, or `maxConcurrentRequestsPerPod` with `400 VALIDATION_ERROR`, whose `details.field` names the member and whose message reads, for example, "`type` was removed: Lenny runs agent runtimes in session mode only" **[design]**. The refusal holds whatever value the member carries, `agent` and `session` included, so a document is either current or refused. The CRDs drop the fields from their structural schemas; whether `kubectl apply` refuses an unknown field under its default field validation is owed ("Validation owed" in `steps.md`).
 
 **Stored data.** Lenny has no deployments, so no stored resource or row carries a `type: mcp` runtime or a service-mode pool **[source]**. A new migration drops `runtime_definitions.type` with its CHECK constraint, `runtime_definitions.execution_mode` with its CHECK constraint, `pools.max_concurrent`, `sessions.execution_mode`, and the pod-registry and agent-pod-state `execution_mode` columns. Applied migrations are not edited, because the migration tests read the chain as written **[inference]**. The backup export stops writing the columns.
 
@@ -425,7 +329,7 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 
 **One rule in every design (D6).** The owner made O3's refusal the rule for every field a design removes. A write that names a removed field is refused with `400 VALIDATION_ERROR`, whose `details.field` names the member, whatever its value. The LLM response cache removal design applies it to `cachePolicy` and `cacheScope` (its O3), and the LLM upstreams design's LU-4 applies it to `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, and the other fields it removes. Each design lists its own removed fields, and the admin validator holds one list of removed field names, so each refusal is one entry in the same check **[design]**.
 
-## AR-5 What simplifies in the other designs
+### AR-5 What simplifies in the other designs
 
 - **One pod layout.** Every pod is the session-mode pod of PL-1: the adapter, `netagent`, and one slot container per slot with the supervisor and the runtime. PL D6 is moot, because every runtime container is a slot container. PLR-2's `command` on every runtime holds without its `type: mcp` clause.
 - **Every runtime has a supervisor, a workspace, and slots.** SD-P4's supervisor refusal and DR-8's export refusal have no target left, so both leave, and `target_unsupervised` leaves the derive refusal reasons. The stale-row concern they carried moves to a general check (O8). DR's grant condition that the base is `type: agent` and `executionMode: session`, and DR decision 10 on service-mode bases, leave.
@@ -440,7 +344,7 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 - **One scaling formula and one `safety_factor` per tier.**
 - **`restartable` leaves.** `Spec.Restartable()` returns true for a runtime with `command`, `executionMode: session`, and no `preConnect` **[source]**. PLR-2 requires `command` on every runtime, PL-8 removes `preConnect`, and this design removes `executionMode`, so the flag is always true, and its reader, `recycle.runtimeProcess: restart`, left with SI D4 **[source]**. The flag, its mirror into the runtime registry, and `runtime_restartable.go` leave.
 
-## AR-6 What users of the removed modes do instead
+### AR-6 What users of the removed modes do instead
 
 - **An MCP server reachable over the network.** Run it as an operator service. The harness of an agent runtime reaches it as an MCP client through the pod's egress, the runtime's own configuration names its URL, and a credential binding on its host attaches the credential ([`0124-connector-removal`, "CR-3 External services"](../0124-connector-removal/change.md#cr-3-external-services)). Lenny keeps no record of the service, and the service owns its tool rules, approvals, and per-call audit. [§9.3](../../spec/09_mcp-integration.md#93-connector-definition-and-oauthoidc) is a successor pointer to that design's CR-1, and the catalog sentence of [§26.1](../../spec/26_reference-runtime-catalog.md#261-catalog-overview) states this path ("Specification changes").
 - **An MCP server on a customer's private network.** An agent runtime reaches it over the pod's egress through the tenant outbound connector, on an outbound connector route ([`0148-tenant-outbound-connector`, "Scope"](../0148-tenant-outbound-connector/change.md#scope); [`0124-connector-removal`, "CR-3 External services"](../0124-connector-removal/change.md#cr-3-external-services)).
@@ -458,13 +362,6 @@ Shared machinery that stays: `pkg/gateway/storage/slotcounter`, `pkg/gateway/run
 - **Keep `type: mcp` and remove service mode alone.** `type: mcp` keeps the second pod rendering, the adapter's MCP client, the dedicated endpoint, the `ToolAnnotations` path at registration, the discovery fields, the delegation refusal, and the idle and safety-factor exceptions, for a mode whose endpoint has never served a call in production **[source]**.
 - **Keep service mode as session mode with zero-cost binds.** It would need the claimless routing and the tenant pin that the egress design's proposal 0 builds, which is what this design removes.
 - **Keep the fields with one value.** O1 (b) and O2 (b).
-
-## Validation owed
-
-- Whether `kubectl apply` of a `Runtime` or `PodSet` that names a removed field fails under the default server-side field validation, or only warns and prunes (O3).
-- Whether session creation and delegation refuse a runtime row that is not `registered` today. O8's check applies either way, and the answer sizes the change in the tree.
-- Whether any caller outside the tree reads `/v1/stateless/{pool}` or `/mcp/runtimes/{name}`; the tree has none apart from the packages listed **[source]**.
-- Whether `docs/assets/diagrams/recycle-lifecycle.svg` shows service mode.
 
 ## Specification changes
 
@@ -547,7 +444,7 @@ The tests that leave are listed under "Tree" and "Root records and tests". The `
 
 ## Instructions for reviewers of other designs
 
-- [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md): remove the service-mode pod and `type: mcp` pod paragraphs of PL-1 and the sentence "Every runtime container runs the supervisor (D6)", which becomes "every slot container". Mark D6 moot under this design's D3. Drop "type: mcp included" from PLR-2, the service-mode clause from PLR-19, `maxConcurrentRequestsPerPod` from PLR-17, PL-9's table, PL "Scope", the "Shared pod" term, and the high-level design's rename paragraph. Drop the "Runtime supervisor" term's service-mode and `type: mcp` clauses, the service-mode and `type: mcp` sentences of "Validation owed", "Tests" row 1, the §4.7.10, §5.1, and §5.2 rows of "Specification changes", and the `podspec` row of "Non-specification changes". Drop the instruction to RP about `command` on a `type: mcp` runtime. PL-E no longer renames `maxConcurrent`.
+- [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md): remove the service-mode pod and `type: mcp` pod paragraphs of PL-1 and the sentence "Every runtime container runs the supervisor (D6)", which becomes "every slot container". Mark D6 moot under this design's D3. Drop "type: mcp included" from PLR-2, the service-mode clause from PLR-19, `maxConcurrentRequestsPerPod` from PLR-17, PL-9's table, PL "Scope", the "Shared pod" term, and the high-level design's rename paragraph. Drop the "Runtime supervisor" term's service-mode and `type: mcp` clauses, the service-mode and `type: mcp` sentences of "Validation owed" in `steps.md`, "Tests" row 1, the §4.7.10, §5.1, and §5.2 rows of "Specification changes", and the `podspec` row of "Non-specification changes". Drop the instruction to RP about `command` on a `type: mcp` runtime. PL-E no longer renames `maxConcurrent`.
 - [`0139-runtime-protocol`](../0139-runtime-protocol/change.md): remove the `type: mcp` bullet of "Scope", the "Service mode" term, the service-mode clause of O10's resolution and of RPR-8, the "Service mode keeps one runtime container" bullet, RP-3's service-mode bullet and its "Remaining multi-session rules" subsection, the service-mode clause of RP-4's `toolServers`, RP-6's service-mode clauses, `runtimeMcpServers` from **Manifest `version: 2`.**, the "Limits" bullet, the service-mode parts of the §5.2 row, the `pkg/adapter` row, test 9, and RP-B. Under O5 (b), remove `sessionId` from every frame other than `session_start`: RP-3's **The session of a frame (RPR-18).** loses the bullet that accepts a matching member and refuses another, RPR-18 loses "a frame that names another session is refused", the tier 1 and tier 9 tests that refuse a frame naming another session check instead that such a frame acts for the slot's session, and the JSONL schema row drops the optional member. State `session_start`'s `sessionId` as data the runtime reads and the adapter never acts on (D5). Drop the request to the message delivery design about `startId`, which D2 settles.
 - [`0145-session-isolation`](../0145-session-isolation/change.md): remove the service-mode and `type: mcp` bullet of "Scope", the "Service mode and `type: mcp`" bullet of "Limits", and the service-mode clause of the UGI decision 14 label row. Under O5 (b) no frame other than `session_start` carries `sessionId`, so SIR-3's refusal of a frame naming another session, the matching cell of SI-2's check table, the worked example's refused frame, and the tier 1 test leave: the adapter takes every frame's session from the slot and ignores the member silently.
 - [`0136-placement`](../0136-placement/change.md): remove service-mode tenant affinity from the "Rules this design takes over or points to" row, "Service-mode pools fail it" from `allowSharedPod` and `allowReusedPod`, the service-mode clause of `sharedPod`, and the service-mode mention under "Removals".
@@ -566,54 +463,13 @@ The tests that leave are listed under "Tree" and "Root records and tests". The `
 - [`0122-client-tools`](../0122-client-tools/change.md) and [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md): restate the "Held session" term, CT-5's and "Holding a session"'s hold rule, and the worked examples without `conversationContinuity` (O4).
 - [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md): remove the "Service-mode pod" term, the service-mode router from "Enforcement points", the service-mode sentence of "Sessions on the pod", service mode from the pod-incarnation keys of "Keys" and from "Residual risks", and the service-mode case of the tier 4 sessions test.
 - [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md): remove the bullet on pods other than session-mode agent pods under "Reading the slot's files".
-- [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md#decisions): record O3 as settled under this design's D6. A pool write that names `cachePolicy` or `cacheScope` is refused with `400 VALIDATION_ERROR` naming the field, in place of "RC-2"'s silent acceptance, and the validation item on unknown pool fields closes.
+- [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/decisions.md#decisions): record O3 as settled under this design's D6. A pool write that names `cachePolicy` or `cacheScope` is refused with `400 VALIDATION_ERROR` naming the field, in place of "RC-2"'s silent acceptance, and the validation item on unknown pool fields closes.
 - [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): LU-4 refuses a write that names `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, or any other field it removes with `400 VALIDATION_ERROR` naming the field (D6).
 - [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md): remove the `/mcp/runtimes/{name}` passthrough from "Scope", the "`type: mcp` runtime" term, and the adapter's client to a `type: mcp` runtime from the high-level design, O3, "Current state", and MP-6, which then govern the connector client alone. CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) has since removed the connector client.
 - [`0146-session-lifecycle`](../0146-session-lifecycle/change.md): remove "Sessions that cannot become dormant." from SL-6.
 - [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md): remove EG-0 from the egress proposal labels row, and restate the platform-scoped justification for `REG-SITEATTACH` without the service-mode pin record as its precedent.
 - [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md): remove "Service-mode pools fail it" from TSS-6's `allowReusedPod` row.
 - Every design that writes `type: agent` only to contrast with `type: mcp` (about 41 lines, most in the egress, pod layout, and tenant-derived runtimes designs) writes "agent runtime" or "runtime" under O1 (a). Revision notes and review records keep their wording, because they record what was true when written.
-
-## Steps
-
-### 0119.S1 Removal of type: mcp
-- status: Planned
-- aliases: [AR-A, AR-1]
-- lanes: [specification, code, documentation]
-
-Removal of `type: mcp`: the endpoint and its implicit sessions, discovery fields, the adapter's MCP client, `mcpRuntimeFilters`, `runtimeMcpServers`, the type-specific refusals, the idle exemption, the `safety_factor` row, the reference runtime, phase 12b, and their documentation and tests ("AR-1").
-
-### 0119.S2 Removal of service mode
-- status: Planned
-- aliases: [AR-B, AR-2]
-- lanes: [specification, code, documentation]
-- closes: [F-5.2.65, F-5.2.66]
-
-Removal of service mode: the claimless path, tenant-affinity routing and its packages, `/v1/stateless/{pool}`, `maxConcurrent`, the scaling formula and metrics, the `sessionIsolationLevel` fields (O4), the derive equality and `INCOMPATIBLE_RUNTIME`, the service-mode pod, the tool refusal, and the service-mode clauses of the specification and documentation ("AR-2"). It withdraws egress proposal 0, which the egress design scheduled to run first, and replaces it.
-
-It lands before 0118.S3 (PL-E), so PL-E renames no service-mode field.
-
-### 0119.S3 Frame contract
-- status: Planned
-- aliases: [AR-C, AR-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0119.S2, 0135.S5, 0139.S1]
-
-The frame contract: `startId` removal across the specification, the JSONL schema, the adapter, the SDKs, the compliance tool, and the reference runtimes, with the `sessionId` rule of O5 ("AR-3").
-
-It lands after 0135.S5 (MD-E) and 0139.S1 (RP-A) so that the frame tables change once.
-
-### 0119.S4 Removal of the type and executionMode fields
-- status: Planned
-- aliases: [AR-D, AR-4]
-- lanes: [specification, code, documentation]
-- depends-on: [0119.S1, 0119.S2]
-
-The fields themselves: `type` and `executionMode` leave every resource, row, and interface, the refusal of "AR-4", the migration, the `restartable` removal, the `registered` check of O8, and the heading renames of O7.
-
-### Notes on the steps
-
-0119.S1 and 0119.S2 go first because they delete code that the pod layout, runtime protocol, and egress proposals would otherwise rewrite.
 
 ## Sources
 

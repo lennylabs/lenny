@@ -1,8 +1,6 @@
 # LLM response cache removal
 
-Status: `Draft`, revision 7, 2026-11-13, after one adversarial review. Nothing here is built or staged. No decision is open: the owner settled O3 on 2026-11-13. It reads against [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) revision 21, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, and [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) revision 8. It stages no specification edit. The changes go through `change-proposal` after review. Proposals carry the label RC-n, and requirements carry the label RCR-n. "Review history" at the end records the revisions.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 7, 2026-11-13. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -75,6 +73,7 @@ Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache
 | Erasure step | One store's deletion in §12.8's `DeleteByUser` dependency-ordered deletion sequence, or one store in the tenant deletion order of Phase 4. Code cites a user erasure step by number, as `§12.8 step 6`. |
 | Authoritative usage | The token counts the LLM proxy extracts from the provider's response. §11.2 makes them the quota and budget record for proxy-mode sessions and ignores the pod's own reports. |
 | Anchor-move map | `tests/spec-anchor-moves.json`, the register of `kind: spec-anchor-moves` that the `specshift` anchor pass reads. Each entry names a retired anchor and the heading that succeeds it, and the pass rewrites every link into the retired anchor. `tests/registers/README.md` describes it, and **N3** of [§28.1 Naming law](../../spec/28_communication-channels.md#281-naming-law) states that an anchor that has to change moves through the anchor-redirect map so that a redirect exists for every inbound link **[source]**. |
+| RC-n and RCR-n | The parts of this design under "Detailed design" carry RC-n, and its requirements under "Requirements" carry RCR-n. Step 0132.S1 of `steps.md` lands RC-1 to RC-4, and step 0133.S1 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/steps.md#steps) lands the statement of RC-5, as `steps.md` records. |
 
 ### Terms from other designs and the platform
 
@@ -88,7 +87,7 @@ Provider-side prompt caching is a separate mechanism. Anthropic and OpenAI cache
 | Label | Meaning |
 | :-- | :-- |
 | [CA-10](../0123-connector-authorization-and-external-memory/change.md#ca-10-removing-built-in-memory) | Removal of the built-in memory store of §9.4, in the connector authorization design. It owns `memorystore`, which defines the embedder the semantic cache imports, and it edits Phase 17b and §12.8 as this design does. |
-| CA-G | The proposal of the connector authorization design that lands CA-10 ([proposal split](../0123-connector-authorization-and-external-memory/change.md#steps)). |
+| CA-G | The proposal of the connector authorization design that lands CA-10 ([proposal split](../0123-connector-authorization-and-external-memory/steps.md#steps)). |
 | LLM upstream | The record that [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) adds in place of LLM credential pools: an endpoint, a credential source, a channel, a contract, a model allowlist, and a rate card. Provider cache isolation follows the provider account or workspace behind an upstream's credential. That design also defines the posture report of tenants that share an upstream, the warning when a shared upstream is granted to a `hipaa` or `fedramp` tenant, and the identity attributes the proxy forwards to an upstream. |
 | Identity attributes | The attributes of a request, such as its tenant, user, and session, that the LLM proxy forwards to the upstream under [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which specifies them. An operator-run LLM gateway behind Lenny can use them to choose a provider workspace or key per user. |
 | RC-B and O2 | Labels that revision 2 of this design gave to the metering correction and its open decision. Revision 3 moves both to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), as the owner decided on 2026-11-09. RC-B also lands the §4.9 passthrough statement of "RC-5". |
@@ -106,28 +105,6 @@ The parts:
 - **Data and configuration (RC-3).** A new migration drops the two pool columns, and the chart and documentation lose their cache references.
 - **Records (RC-4).** Open audit findings that exist only for the cache are resolved as obsolete, and findings that name it in passing are corrected.
 - **Provider prompt caching passthrough (RC-5).** The content of the §4.9 statement of the passthrough, its isolation, the provider retention facts, and the residual risk, under D2. RC-B in the LLM upstreams and cost budgets design lands it.
-
-## Decisions
-
-Settled by the owner on 2026-11-09:
-
-| ID | Decision |
-| :-- | :-- |
-| D1 | Lenny's own LLM response cache is removed. In the owner's words: "Remove caching LLM response currently provided by Lenny." |
-| D2 | Provider prompt caching passes through. The owner answered "ok" to the recommendation of revision 2's O1, which the adversarial review labelled C1, and the rule reads: Lenny never strips or rewrites `cache_control`. Provider cache isolation follows the LLM upstream's provider account or workspace, and [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) defines upstreams, the posture report of tenants that share an upstream, and the warning when a shared upstream is granted to a `hipaa` or `fedramp` tenant. A regulated tenant gets its own upstream. Strict isolation between users within a tenant is not a Lenny feature: the proxy forwards identity attributes, such as tenant, user, and session, to the upstream, so an operator-run LLM gateway behind Lenny can choose a provider workspace or key per user, and the upstreams design specifies the attributes. The residual risk within a shared upstream stays documented: `cache_read_input_tokens` and latency let users detect each other's prompt prefixes ("RC-5"). The rejected options were stripping `cache_control` in the translators and a pool setting that allows or strips it. Stripping raises cost and latency for every runtime that uses the cache, and it would be incomplete, because OpenAI and Azure OpenAI cache automatically with no request field **[external]**. |
-
-Moved:
-
-| ID | Question | Options | Recommendation |
-| :-- | :-- | :-- | :-- |
-| O1 | Settled as D2. | | Revision 2 recorded the passthrough as open decision O1. |
-| O2 | Moved. | | Revision 3 moves O2, the treatment of the provider's cached-token counts in Lenny's authoritative usage, to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), as the owner decided on 2026-11-09. Revision 2 recommended counting the sum of the uncached, cache-read, and cache-write tokens and rejected weighting by price; the owner's settlement of budgets in estimated cost by a per-upstream rate card changes that ground, and the moved decision is answered there. |
-
-Settled by the owner on 2026-11-13, in the answers to the consolidated list of open decisions: "ok" to one rule for removed fields everywhere, recorded as D6 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions). A write that names a removed field is refused with `400 VALIDATION_ERROR` naming the field, so O3 takes option (b). The pool validator and the bootstrap seed refuse a pool write that names `cachePolicy` or `cacheScope` ("RC-2"). The options and reasoning, kept as a record:
-
-| ID | Question | Options | Recommendation |
-| :-- | :-- | :-- | :-- |
-| O3 | How a pool write that still names `cachePolicy` or `cacheScope` is answered. The designs answer a removed field in different ways: this design lets the admin API ignore it as any unknown member, and decision O3 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), settled on 2026-11-13, refuses a write that names a removed runtime field with `400 VALIDATION_ERROR` naming the field. | (a) Ignore the fields, as today. (b) Refuse a write that names either field with `400 VALIDATION_ERROR` whose `details.field` names it, in the admin API and the bootstrap seed. | (b), so one rule covers every field a design removes. It turns a silent no-op into an immediate error that names the field, at the cost of two names in the pool validator, and it adds no alias or second code path. **Settled (2026-11-13): (b).** |
 
 ## Requirements
 
@@ -227,11 +204,13 @@ All of the following was read on 2026-11-09 **[source]**:
 | T-12.1.5, T-12.1.6, T-12.1.7, T-12.7.2 | Open | Name `SemanticCache` in passing beside `MemoryStore` or other stores. |
 | `BUILD-PROGRESS.md` and `BUILD-PLAN.md` | Records | Phase 17b rows mention semantic caching. |
 
-## RC-1 Specification removal
+## Detailed design
+
+### RC-1 Specification removal
 
 The specification loses every statement in the table under "Specification" **[design]**. §4.9's "Semantic Caching" subsection is deleted, with its entry in the section's opening list. §12.2 loses the `SemanticCache` row and its name in the Redis prefix rule, §12.1 names `MemoryStore` alone as the pluggable example, and §12.4 loses the key row and item (d) of `TestRedisTenantKeyIsolation`, whose later item takes its letter.
 
-**Erasure.** §12.8's erasure scope table loses the `SemanticCache` row, and the tenant deletion order of Phase 4 runs `LeaseStore` and then the Redis caches. The `DeleteByUser` sequence loses step 2, and steps 3 onward move up by one. The renumbering changes the target of every `§12.8 step N` citation for N of 3 and above in the specification, the code, and the tests, so the proposal sweeps them in the same change. The alternative of keeping an empty step 2 leaves a placeholder in a normative list, and "Alternatives rejected" records it. CA-G removes the `MemoryStore` step from the same sequence, and the proposal that lands second rebases its renumbering on the first ("Proposal split and order").
+**Erasure.** §12.8's erasure scope table loses the `SemanticCache` row, and the tenant deletion order of Phase 4 runs `LeaseStore` and then the Redis caches. The `DeleteByUser` sequence loses step 2, and steps 3 onward move up by one. The renumbering changes the target of every `§12.8 step N` citation for N of 3 and above in the specification, the code, and the tests, so the proposal sweeps them in the same change. The alternative of keeping an empty step 2 leaves a placeholder in a normative list, and "Alternatives rejected" records it. CA-G removes the `MemoryStore` step from the same sequence, and the proposal that lands second rebases its renumbering on the first ("Steps" in `steps.md`).
 
 **Compliance.** §11.7 item 1 lists the controls that remain: the SIEM requirement, `audit.grantCheckInterval`, and `audit.pgaudit.enabled`. §15.1 loses `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED`.
 
@@ -239,7 +218,7 @@ The specification loses every statement in the table under "Specification" **[de
 
 **Anchor redirects.** The proposal adds two entries to the anchor-move map **[design]**. The first maps `1839-phase-17b--memory-semantic-caching-eval-hooks` to the retitled §18.39 heading in `spec/18_build-sequence.md`. The second maps `1336-phase-17b--memory-semantic-caching-eval-hooks` to the retitled §13.36 heading in `TESTING.md`. The proposal runs the `specshift` anchor pass, which rewrites the link in `spec/README.md` and the two links in §18.2 and §18.39, and it leaves the map as `tests/registers/README.md` states for a completed pass. CA-G retitles the same two headings when it removes memory, so the proposal that lands second maps the anchor the first one left.
 
-## RC-2 Code removal
+### RC-2 Code removal
 
 The following are deleted **[design]**:
 
@@ -255,24 +234,24 @@ The following are deleted **[design]**:
 
 The admin API decodes pool payloads without refusing unknown fields **[source]**, so a field that only disappears from the schema would be accepted and ignored. Under O3 the pool validator in `externalapi/admin` and the bootstrap upsert refuse a pool write that names `cachePolicy` or `cacheScope`, whatever value it carries, with `400 VALIDATION_ERROR` whose `details.field` names the member and whose message states that Lenny no longer caches LLM responses **[design]**. The two names stay in the validator's list of removed fields and nowhere else.
 
-## RC-3 Data and configuration
+### RC-3 Data and configuration
 
 - A new migration drops `credential_pools.cache_scope` and `credential_pools.cache_policy`. Migrations 0070 and 0078 stay as history, as the precedent of migration 0180 does for `slot_id` **[source]**. Nothing migrates, because there are no deployments. `prod_columns_test.go` records the drop as it does for 0180 **[design]**.
 - The chart drops "semantic cache" from the `cachePubSubUrl` comment and `cacheScope` from the bootstrap example, and `tests/bootstrap_test.yaml` stops asserting it **[design]**.
 - `README.md`, `docs/index.md`, `docs/about/comparisons.md`, `docs/about/status.md`, `docs/getting-started/architecture.md`, `docs/reference/error-catalog.md`, `docs/testing/forward-compatibility.md`, `pkg/gateway/ARCHITECTURE.md`, and `TESTING.md` §12.2.1, §13.36, and §23.2 drop the cache **[design]**. The README and index sentence keeps credential routing. The changelog states the removal, with the semantic cache, `cachePolicy`, `cacheScope`, the `--llm-semantic-cache` flag, and `COMPLIANCE_CROSS_USER_CACHE_PROHIBITED` named as removed. This design adds no setting, default, or limit. Its one failure mode is the refusal of O3: `docs/reference/error-catalog.md` and the credential pool page of the admin API reference state that a pool write that names `cachePolicy` or `cacheScope` is refused with `400 VALIDATION_ERROR` naming the field. The runtime-facing rules it states in "RC-5", the `cache_control` passthrough, the provider's refusal of a top-level `cache_control` passed back unchanged, cache isolation by the upstream's provider account, the residual signal within a shared upstream, and provider retention, are documented through the documentation list of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which owns RC-B.
 
-## RC-4 Records
+### RC-4 Records
 
 - F-12.8.53 is narrowed to the billing buffer, with a note that the cache half went with RC-A **[design]**.
 - T-4.9.15, T-12.1.1, and T-12.2.5 are resolved as obsolete with a pointer to RC-A, and T-12.1.5, T-12.1.6, T-12.1.7, and T-12.7.2 drop the cache from their text **[design]**.
 - The closed findings and `scripts/refactor/manifest` stay as written.
 - F-11.2.38 records the cached-token undercount of "Provider prompt caching today", owned by RC-B in [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) **[design]**.
 
-## RC-5 Provider prompt caching passthrough
+### RC-5 Provider prompt caching passthrough
 
 This section states what the §4.9 statement of the passthrough says under D2 **[design]**. RC-B lands it, and RC-B belongs to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) since revision 3, because that design rewrites the §4.9 LLM proxy around the LLM upstream record and the statement names the upstream.
 
-**Passthrough.** §4.9's "Native translator" states that the proxy forwards an Anthropic Messages request body, including `cache_control` at the top level and on content blocks, unchanged apart from the provider rehosting the translator already performs, and that a provider's prompt cache is the provider's own mechanism. It states that the proxy does not rewrite a top-level `cache_control`, so a runtime that sends one to a provider or model that refuses it receives the provider's refusal (RCR-5). Bedrock refuses it for a model outside its automatic-caching list, and Anthropic's guide states a 400 for it on the legacy Bedrock integration **[external]**. Google Cloud's Claude page documents only the block placement, and "Validation owed" asks whether Google-managed Vertex accepts the top-level field.
+**Passthrough.** §4.9's "Native translator" states that the proxy forwards an Anthropic Messages request body, including `cache_control` at the top level and on content blocks, unchanged apart from the provider rehosting the translator already performs, and that a provider's prompt cache is the provider's own mechanism. It states that the proxy does not rewrite a top-level `cache_control`, so a runtime that sends one to a provider or model that refuses it receives the provider's refusal (RCR-5). Bedrock refuses it for a model outside its automatic-caching list, and Anthropic's guide states a 400 for it on the legacy Bedrock integration **[external]**. Google Cloud's Claude page documents only the block placement, and "Validation owed" in `steps.md` asks whether Google-managed Vertex accepts the top-level field.
 
 **Isolation.** It states the isolation each provider documents **[external]**:
 
@@ -289,7 +268,7 @@ Cache isolation therefore follows the provider account, workspace, or project be
 
 **Metering (moved).** Revision 2 stated the metering correction here under O2. It moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) with RC-B.
 
-## What replaces the cache's guarantees
+### What replaces the cache's guarantees
 
 | Guarantee or effect | After removal |
 | :-- | :-- |
@@ -300,7 +279,7 @@ Cache isolation therefore follows the provider account, workspace, or project be
 | No usage on a hit | Every request is metered from the provider's response (RCR-3). |
 | SLOs, metrics, and alerts | None existed, so none change. |
 
-## Security effects
+### Security effects
 
 - LLM requests and responses are no longer stored in gateway memory or, under the unwired Redis store, in Redis. §12.9 loses the "Semantic cache entries" row of the Confidential class, and §12.8's residency list loses an entry **[design]**.
 - The false-match defect goes, so no session receives a response written for a different request, and no user in a `cacheScope: tenant` pool receives another user's response **[design]**.
@@ -309,7 +288,7 @@ Cache isolation therefore follows the provider account, workspace, or project be
 - No unredacted pre-`PostLLMResponse` content is held between requests.
 - Under the current usage count, provider caching lets a runtime keep most of its input outside quotas and budgets. Removing the semantic cache does not change that **[source]**, and [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) corrects it.
 
-## Billing effects
+### Billing effects
 
 - A request that a hit would have answered now reaches the provider and is billed by the provider and metered by Lenny. With the cache off by default, and absent from the chart, an installation that never set `LENNY_LLM_SEMANTIC_CACHE` sees no change **[source]**.
 - `tokens_input` stays an uncached-tail count until RC-B lands in [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which states the corrected billing fields.
@@ -380,37 +359,13 @@ The following edits locate their targets by heading:
 
 Every test carries the `// spec:` annotation, and tests at tier 2 and above carry `// diagnosis:`, as `test-coverage.md` requires.
 
-## Validation owed
-
-| Item | Why it matters | Status |
-| :-- | :-- | :-- |
-| The metering items of revision 2: the usage field names on Bedrock InvokeModel and on Vertex, the streaming events that carry the cache counts, and whether OpenAI's totals include cached tokens | They moved with O2 and RC-B. | Moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md). |
-| Confirm whether Claude models on Google Cloud (Google managed) accept a top-level `cache_control` on `rawPredict` | RC-5 documents which providers refuse the top-level field. Google Cloud's prompt-caching page for Claude documents only the block placement. | Open, for RC-B. |
-| Reconcile Anthropic's statement of organization-level cache isolation on Google Cloud (Google managed) with Google Cloud's statement that a cache is unique to its project | RC-5's isolation statement names both. | Open, for RC-B. |
-| Count the `§12.8 step N` citations and confirm none cites step 2 for anything other than the cache | The renumbering sweep depends on it. Two code sites cite step 2, both for the cache **[source]**. | Open, for the proposal. |
-| Confirm no deployer-facing document outside `docs/` describes `cachePolicy` | RCR-2. | Open. |
-| Confirm whether the admin API should refuse unknown pool fields | "RC-2" refused the two removed fields by name. | Settled by O3 on 2026-11-13: the two removed fields are refused by name, and other unknown members keep the API's general handling. |
-
 ## Instructions for reviewers of other designs
 
 - [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md): "Out of scope" says CA-10 moves the embedder code into `semanticcache` if the cache outlives memory. Under this design the cache goes, so the embedder stays with the memory store and goes with it. CA-G and RC-A both edit Phase 17b and renumber the §12.8 `DeleteByUser` steps, and the second to land rebases on the first. Its Terms row "Semantic cache" becomes historical once RC-A lands.
 - [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md): it leaves token metering to §11.2. The billing fields revision 2 proposed moved with O2 and RC-B to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md).
-- [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): it takes over RC-B and O2. RC-B lands the §4.9 passthrough statement whose content "RC-5" states under this design's D2, including RCR-5 and its tier 1 test, the corrected retention facts, the isolation between users through forwarded identity attributes, and the residual risk within a shared upstream. It also carries the open validation items on Google Cloud of "Validation owed". RC-A removes `cachePolicy` and `cacheScope` from credential pools, whose LLM use that design removes, so the proposal that lands second rebases on the first.
+- [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): it takes over RC-B and O2. RC-B lands the §4.9 passthrough statement whose content "RC-5" states under this design's D2, including RCR-5 and its tier 1 test, the corrected retention facts, the isolation between users through forwarded identity attributes, and the residual risk within a shared upstream. It also carries the open validation items on Google Cloud of "Validation owed" in `steps.md`. RC-A removes `cachePolicy` and `cacheScope` from credential pools, whose LLM use that design removes, so the proposal that lands second rebases on the first.
 - [`0142-security-oversight`](../0142-security-oversight/change.md): the regulated-tenant controls lose the cross-user cache refusal. No other control depends on it.
 - Any design that cites `§12.8 step N` for N of 3 and above cites the number RC-A gives the step, or better, the step's store name.
-
-## Steps
-
-### 0132.S1 Removal of the LLM response cache
-- status: Planned
-- aliases: [RC-A, RC-1, RC-2, RC-3, RC-4]
-- lanes: [specification, code, documentation]
-
-The removal: RC-1 to RC-4. It rebases on CA-G (0123.S2) if CA-G lands first. 0132.S1 can land first because it removes behaviour and adds none.
-
-### Notes on the steps
-
-RC-B moved to [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), where 0133.S1 (LU-A) absorbs it: the §4.9 passthrough statement under this change's D2 ("RC-5"), the usage count, the billing fields, and the closure of F-11.2.38. It follows that change's own order, and the owner's settlement D2 for the passthrough statement. It is independent of 0132.S1. RC-B fixes a metering gap that exists with or without the semantic cache.
 
 ## Sources
 

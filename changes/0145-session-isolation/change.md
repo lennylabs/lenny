@@ -1,18 +1,16 @@
 # Session isolation
 
-Status: `Draft`, revision 20, 2026-11-16. Revision 20 narrows the specification's rule for a release with no published binding, so that D36 takes effect (owner, 2026-11-16, "A. ok"). Nothing here is built or staged. Revision 19 applies the owner's answers of 2026-11-16 to four findings of the specification migration spike (D36 to D39): a pod with one slot follows the pool's disposition after a failure before `session_start`, a handshake refusal that is not retryable retires the pod with the reason `runtime_refused` in place of the "Runtime not live" condition, the `leaked` slot merges into the dead slot, which the pod state mirror records in `agent_pod_state.dead_slots` so that rehydration restores it, and `recycle.scrubProfile` keeps `standard` and `vm-restart`. Revision 18 applies the kind and field names of [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/change.md) revision 3, which the owner accepted on 2026-11-16 as its O3: the slot count is recorded in `AgentPod.spec.slotCount`. It changes no rule. Revision 17 records the owner's answer on Kata's virtual machine monitors and other VM backends (D35): the measurements name QEMU as the VMM they used, the documentation lists Cloud Hypervisor and Dragonball as VMM options with QEMU required for GPU passthrough and confidential computing, and a spike of AWS Nitro Sandboxes and Edera as `microvm` backends is owed. Revision 16 records the owner's statement of 2026-11-15 on isolation profiles (D34): Lenny supports runc, gVisor, and Kata, the operator chooses, and the documentation states each profile's advantages and costs without calling any of them development-only or a minimum for production. Revision 15 applies the owner's decision of 2026-11-15, "Yes, let's drop connectors.", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2 designs: the platform tool server is the one tool server a slot reaches, and a slot reaches an operator's services through egress. Revision 14 records the owner's confirmation on 2026-11-14, in the words "Ok on the rest", of the store GID as the primary group of both `adapter` and `lenny-store-fill`, with the pod under `supplementalGroupsPolicy: Strict` (D33), and changes no rule. An independent review read revision 1 on 2026-11-11, and revision 2 applied its fixes and the owner's decisions D4 to D7. Revision 3 applied the owner's decisions D8 and D9 of 2026-11-12. Revision 5 applies the owner's decisions of 2026-11-13: a second Sweep at slot release (O12), the disk watch's measurement under PL's O8 (O13), per-slot `netagent` scopes (egress decision 60), the `lenny-store-fill` container (egress decision 61), and the removal of `type: mcp` runtimes and service mode with `sessionId` left on `session_start` alone ([`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), AR). Revision 6 applies the fix pass that followed that review: the webhook admits `netagent` alone as the writer of each slot's credentials volume, the union-scope fallback is stated per pool, the store fill's group and umask are stated, a FIFO under gVisor's default mount is a metadata-only entry, and direct LLM delivery mode leaves. Revision 7 applies the final round of that review: the adapter treats the broker's replies as untrusted from the first run of a setup command of a slot's first bound session, or from its launch when it has no setup command (SIR-22), as the checkpoint design's S6 states, and each session's binding list sits on its slot's own credentials volume under the egress design's revision 77. Revision 8 applies the fix pass after the read-only checks of that review: the broker's trust point moves to the first helper run of a slot's first bound session, a `cleanup` run without a cancel pipe is killed by `freeze` or `end`, every per-session `netagent` value sits on the slot's credentials volume, the release and the descriptor layout follow the materialization design, and the store deletion follows no symbolic link. Revision 9 applies the last round of that review: the broker's trust point is the first run of the supervisor's worker for a slot's first bound session, as the checkpoint design's S6 states. Revision 10 applies the owner's answers of 2026-11-13 to the consolidated list of open decisions: a dedicated store GID for the store fill with a hostile-repository stress test owed (D28), user git identity, user credential bindings, and `lockEgressToHosts` on attributed pools with a spike owed on which runtime classes attribute (D29), the platform marker for the adapter's and `netagent`'s own connections (D30), and the disk watch's residual risk and trip as PL settles them (D31). Revision 11 follows PL's revision 8: the store GID is the primary group of both the adapter and `lenny-store-fill`, and the disk watch's threshold is a chart value. Revision 12 follows the owner's settled answer to question 17 of 2026-11-14, decision 42 of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#decisions): a warm store comes only from a `gitRepository` entry of a runtime's `sharedAssets`, a warm checkout only from such an entry marked `prestage: true`, and cache-only entries no longer exist, so the withheld-store rule of O10 names a store whose repository the session's plan does not name. Revision 13 applies the AWS spike of 2026-11-14 and the owner's adoption of automatic project quotas the same day (D32): `netagent`'s slot attribution answers on every measured runtime, through `sock_diag` on runc and `/proc/net/tcp` on gVisor and Kata, and project quotas bound the slot volumes of runc pods with user namespaces, gVisor's `/tmp`, and Kata virtio-fs, which settles the residual risk of bytes the disk watch cannot list on those runtimes. Revision 4 applied the owner's decisions of 2026-11-12 in the consistency pass across the designs: it cuts this design down to slot isolation mechanics, with the pod blueprint and layout in [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) (PL), workspace materialization in [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) (WM), and node placement in [`0136-placement`](../0136-placement/change.md) (PM); it specifies the asynchronous supervisor worker and the whole `CH-SUPERVISE` protocol; it removes the launch at release; it fixes the Sweep defects that the AWS run of 2026-11-12 found; and it settles the open decisions of revision 3. The design reads against every design under `designs/` as implemented, as the owner asked (D2), in particular PL revision 16, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) (RP) revision 13, [`0124-connector-removal`](../0124-connector-removal/change.md) (CR) revision 8, WM revision 13, PM revision 13, [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) (IC) revision 26, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) (UCD) revision 41, [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) revision 37, and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) (TSS) revision 10, [`0127-egress-and-git`](../0127-egress-and-git/change.md), [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md), [`0146-session-lifecycle`](../0146-session-lifecycle/change.md), [`0152-user-git-identity`](../0152-user-git-identity/change.md), and [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md). Its evidence is a research pass, a local spike and a spike on AWS on 2026-11-11, local spikes on 2026-11-12, two AWS runs on 2026-11-12, and an AWS spike on 2026-11-14. The logs of the runs before 2026-11-14 lived in a session scratchpad that does not persist, so "Validation record" holds every measured result this design relies on; the report, harness, and raw results of the 2026-11-14 spike are kept in [`evidence/agent-pod-layout-design/attribution-and-quota-spike/`](../0118-agent-pod-layout/evidence/attribution-and-quota-spike/RESULTS.md).
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 20, 2026-11-16. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
 | Tag | Meaning |
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree, the specification, or a design under `designs/` between 2026-11-11 and 2026-11-13. |
-| **[measured]** | Measured in the spikes of 2026-11-11 or 2026-11-12, in the AWS runs of 2026-11-12, or in the AWS spike of 2026-11-14. "Validation record" gives the run. |
+| **[measured]** | Measured in the spikes of 2026-11-11 or 2026-11-12, in the AWS runs of 2026-11-12, or in the AWS spike of 2026-11-14. "Validation record" in `steps.md` gives the run. |
 | **[external]** | Read in an upstream or vendor source on 2026-11-11 or 2026-11-12. "Sources" lists it. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[inference]** | Reasoned from the sources and not run. "Validation owed" lists each one that matters. |
+| **[inference]** | Reasoned from the sources and not run. "Validation owed" in `steps.md` lists each one that matters. |
 
 ## Problem
 
@@ -95,7 +93,7 @@ Non-goals:
 | Term | Meaning |
 | :-- | :-- |
 | Runtime supervisor | The platform binary that is the first process of every runtime container. It launches the runtime's `command`, answers the adapter on `CH-SUPERVISE`, runs End, Sweep, setup, and cleanup, and serves the broker ([§4.7.10](../../spec/04_system-components.md#4710-deployment-model), **Runtime supervisor.**). It is a freestanding C program in `supervisor/` of 3,585 lines in the tree **[source]**, and 4,915 lines in the prototype that carries this design's changes **[measured]**. |
-| `CH-MSGSOCK` | The JSON Lines connection between a runtime process and the adapter that carries every session frame ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). Under [RP O3](../0139-runtime-protocol/change.md#open-decisions), settled as (b), a slot's endpoint also takes tool connections from the slot's MCP bridges. |
+| `CH-MSGSOCK` | The JSON Lines connection between a runtime process and the adapter that carries every session frame ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). Under [RP O3](../0139-runtime-protocol/decisions.md#open-decisions), settled as (b), a slot's endpoint also takes tool connections from the slot's MCP bridges. |
 | Tool connection | A `CH-MSGSOCK` connection that a reference MCP bridge opens on its slot's endpoint and that carries tool frames only, declared by `"role": "tools"` in its `hello` ([RP-1](../0139-runtime-protocol/change.md#rp-1-handshake), [RP-5](../0139-runtime-protocol/change.md#rp-5-reference-mcp-bridge)). |
 | `CH-SUPERVISE` | The connection between the runtime supervisor and the adapter, on an abstract socket that the supervisor takes as its `--socket` argument ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod); `pkg/controller/agentpod/podspec/supervisor.go`) **[source]**. |
 | `lenny-cred-readers` | The GID that today's pod sets as `fsGroup` and in `supplementalGroups`, so the adapter and the runtime container share it and the runtime reads its credential file ([§13.1](../../spec/13_security-model.md#131-pod-security)). This design retires it. |
@@ -122,16 +120,18 @@ Non-goals:
 | WM-2, WM-3, WM-7, WM-10, WM-11, WM D9, WM O1 | [`0153-workspace-materialization`](../0153-workspace-materialization/change.md#wm-3-the-protocol) | The helper and its staging; its use of `setup`; ordering; git as the slot UID; the worker's interaction with broker requests and checkpoints; the settlement of O11; and the floor on slot memory. |
 | PM-1, PM-2, PM-4, PM-5, PM O6 | [`0136-placement`](../0136-placement/change.md#pm-1-node-classes-and-presets) | Node classes and user namespaces on the standard class; node tenancy; placement requirements and `sessionIsolationLevel`; rendering; and the user namespace mode the owner settled. |
 | IC-1, IC-3, IC-5, IC-7, IC-8, IC D16, IC D19, IC D20 | [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md#ic-1-capture-in-passes) | Capture through the broker with the parallel stat walk; the export stream; restore and the seal; size limits; the tracker setting; the adoption of `statat`; the parallel stat walk; and staggering checkpoints across a pod's slots. |
-| RP-1, RP-3, RP-5, RP O2, RP O3, RP O7, RP O10, RP D5 | [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#open-decisions) | The handshake; tool calls on frames; the reference MCP bridge; capability checks at bind; tool connections on the slot's endpoint; the merge of `CH-RUNTIMEOPS` into `CH-MSGSOCK`; tools on pods with several slots, retired by this design; and the retirement of the adapter-local tools. |
+| RP-1, RP-3, RP-5, RP O2, RP O3, RP O7, RP O10, RP D5 | [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#open-decisions) | The handshake; tool calls on frames; the reference MCP bridge; capability checks at bind; tool connections on the slot's endpoint; the merge of `CH-RUNTIMEOPS` into `CH-MSGSOCK`; tools on pods with several slots, retired by this design; and the retirement of the adapter-local tools. |
 | TSS-6 | [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md#tss-6-placement-settings) | The tenant settings `placement.allowSharedPod` and `placement.allowReusedPod`. |
 | MD-24 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-24-runtime-frames-and-leniency) | The frame and leniency rules, under which an unknown member of a known frame is ignored with no report. |
-| AR, AR O5 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions) | The removal of `type: mcp` runtimes and service mode, and the owner's choice that no frame other than `session_start` carries `sessionId`. |
-| PL O8 | [`0118-agent-pod-layout`, "Open decisions"](../0118-agent-pod-layout/change.md#open-decisions) | How the per-slot disk watch measures a volume, settled on 2026-11-13. |
-| EG decisions 52, 60, and 61 | [`0127-egress-and-git`](../0127-egress-and-git/change.md#decisions) | Slot attribution in `netagent`; per-slot scopes on pods with several slots; the `lenny-store-fill` container. |
+| AR, AR O5 | [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions) | The removal of `type: mcp` runtimes and service mode, and the owner's choice that no frame other than `session_start` carries `sessionId`. |
+| PL O8 | [`0118-agent-pod-layout`, "Open decisions"](../0118-agent-pod-layout/decisions.md#open-decisions) | How the per-slot disk watch measures a volume, settled on 2026-11-13. |
+| EG decisions 52, 60, and 61 | [`0127-egress-and-git`](../0127-egress-and-git/decisions.md#decisions) | Slot attribution in `netagent`; per-slot scopes on pods with several slots; the `lenny-store-fill` container. |
 | DR-11 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#warm-stores) | Shared assets, warm stores, the warm list, and withheld stores. |
 | SL-3 and L24 | [`0146-session-lifecycle`](../0146-session-lifecycle/change.md#sl-3-suspension-and-the-open-turn) | Suspension, and the release of a pod when a suspension cannot take hold. |
 | BR-2 and billing decision 7 | [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) | Session pod time, and the mapping of a resource class onto containers. |
-| UGI decisions 14 and 52 | [`0152-user-git-identity`](../0152-user-git-identity/change.md#decisions) | Its refusal of pods with several slots, recycled pods, and pods that have served a session, and the ground on which those refusals are kept. |
+| UGI decisions 14 and 52 | [`0152-user-git-identity`](../0152-user-git-identity/decisions.md#decisions) | Its refusal of pods with several slots, recycled pods, and pods that have served a session, and the ground on which those refusals are kept. |
+
+This design names other designs by short names: PL is [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), WM is [`0153-workspace-materialization`](../0153-workspace-materialization/change.md), PM is [`0136-placement`](../0136-placement/change.md), IC is [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md), RP is [`0139-runtime-protocol`](../0139-runtime-protocol/change.md), CR is [`0124-connector-removal`](../0124-connector-removal/change.md), UCD is [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md), UGI is [`0152-user-git-identity`](../0152-user-git-identity/change.md), TSS is [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md), EG is [`0127-egress-and-git`](../0127-egress-and-git/change.md), and AR is [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md).
 
 ## High-level design
 
@@ -170,94 +170,6 @@ What stays shared is the network namespace, the IPC namespace, the adapter and `
    shared: network namespace, IPC namespace, adapter, netagent, node disk, kernel
    runc pods: hostUsers: false, so the pod's UIDs map to a host range of its own
 ```
-
-## Decisions
-
-| # | Question | Owner's answer | Applied in |
-| :-- | :-- | :-- | :-- |
-| D1 | Name and scope of the design. | "Yes to a new design doc, but name it 0145-session-isolation because whatever we do for shared pods should, ideally, be the same in pods with max concurrency = 1 (one single implementation)". Every session-mode pod gets slot containers, including a pod with one slot. | SI-1, SIR-1 |
-| D2 | What the design is written against. | "true but you should assume all designs under ./designs are implemented." | Whole design |
-| D3 | Who reads a slot's files for checkpoint, export, and cleanup. | On the spike's recipe of running them as the slot's UID through the supervisor: "this is a red flag. Today, the adapter performs the checkpoint and moving it out might be a big change with unintended consequences? Also, the supervisor is a very simple process written in C for security reasons. Maybe I'm overreacting". The checkpoint, restore, export, and file cleanup logic stays in the adapter. | SI-5, SI-6 |
-| D4 | What happens at each slot release (2026-11-12). | "go with your recommendations". At every slot release on every pod, the supervisor ends the slot's runtime process with End and sweeps the slot's files. A runtime process serves at most one session over its life, and `keep` reuse goes. D15 later removed the launch at release. | SI-3, SIR-13 |
-| D5 | Socket names and ordering (2026-11-12). | "go with your recommendations". The adapter stays a regular container. Each slot gets its own socket names, and every client and every server checks its peer's UID. | SI-2, SIR-3 to SIR-5 |
-| D6 | Where setup commands run (2026-11-12). | "go with your recommendations". In the slot container as the slot UID, through a `setup` message on `CH-SUPERVISE`. D14 makes the worker asynchronous, and WM extends `setup` with descriptors. | SI-3, SIR-14 |
-| D7 | How the adapter reaches slot files (2026-11-12, superseded by D9). | "go with your recommendations". The mount boundary plus a umask of 0 for the runtime process. D9 replaced the umask and the restore mode rule the same day; the mount boundary stays. | SI-1, SI-5 |
-| D8 | The volume layout (2026-11-12). | Drop subPath entirely. Each slot mounts its whole per-slot volumes. A separate volume that only the adapter mounts holds the checkpoint spool and the export staging. The warm stores are mounted read-only at the same absolute path in every slot. PL now owns the layout. | SI-1, PL-5 |
-| D9 | How the adapter reaches slot files (2026-11-12). | The adapter reaches slot files through a supervisor file-descriptor broker, a new `CH-SUPERVISE` request type `fs`. The owner accepted adding about 470 lines to the C supervisor. All checkpoint logic stays in the adapter. The supervisor only opens, creates, and watches entries, confined by `openat2`, and returns descriptors over `SCM_RIGHTS`. This replaces the umask of D7, revision 2's rule for unreadable files, and the restore mode-widening rule. | SI-5, SI-6, SIR-7, SIR-8, SIR-21, SIR-22 |
-| D10 | A fixed runtime-visible layout (2026-11-12). | A runtime sees the same paths on every pod at every slot count, with no session identifier in any path. The owner replaced the first version of the layout the same day with the one PL states. PL owns it. | SI-1, PL-3 |
-| D11 | The embedded deployment model (2026-11-12). | Removed. Every session-mode `type: agent` pod has the adapter, `netagent`, and one slot container per slot. O6 retires. PL owns the removal. | SI-1, PL-2 |
-| D12 | Where git on a slot repository runs (O11, 2026-11-12). | Every git step on a slot repository runs as the slot UID through the supervisor's worker, and the adapter runs no git on slot repositories. WM records it as its decision D9. | SI-3, SI-8, WM-10 |
-| D13 | Where all workspace materialization runs (2026-11-12). | The owner accepted the materialization study "with its recommendations": every write of a plan source runs in `lenny-materialize` as the slot UID through `setup`. WM owns it. | SI-3, SI-6, WM |
-| D14 | Whether the supervisor's worker is asynchronous (2026-11-12). | Approved, reversing the study's recommendation of a synchronous worker, because the AWS re-validation measured a checkout that blocked the broker for 19 s and a repack that outlived the 120 s broker deadline **[measured]**. The owner required a security review, because the supervisor is a sensitive component. An independent reviewer read the prototype three times, the final review found nothing at Medium or above, and its Low items are fixed. | SI-3, SI-5 |
-| D15 | Pre-launched runtime processes (2026-11-12). | Removed entirely. Every runtime launches at bind, after materialization and setup, and a slot release ends by staging the warm checkouts, with no launch. | SI-3, SIR-13 |
-| D16 | Volume roots on Kata `block-plain` (2026-11-12). | (a): allow `fsGroup`, with a dedicated GID, on Kata `block-plain` pools only. The AWS run of the same day replaced the rule that the emptiness check ignores `lost+found` with the rule that it must be empty. PL records it as its decision D8. | SI-1, SI-3 |
-| D17 | Broker walk speed (2026-11-12). | Option (b): the adapter stats in parallel relative to broker-passed directory descriptors, with a per-directory fallback to the broker's `statat` on `EACCES`, a request deadline of 1 s plus 4 ms per path, and batches of at most 253 paths and 56 KiB. Supervisor broker workers are not adopted. IC records it as its decision D19. | SI-5, SI-6 |
-| D18 | User namespaces on runc pools (2026-11-12). | The owner first chose option (a) of the cross-pod UID question, user namespaces required on runc pools, and then settled PM's O6: user namespaces are on by default; an operator may disable them, which logs a loud warning and renders nothing special; there is no `preferred` mode; and the adapter checks `uid_map` before READY, so that an enabled setting cannot degrade silently where the API server drops `hostUsers`. This replaces O8 and SIR-17's optional user namespaces. | SI-11, SIR-32 |
-| D19 | runc as a profile (2026-11-12). | runc is not described as development or test only. It shares the host kernel and gives no protection against kernel exploits, and its blast radius is bounded by node separation and user namespaces. `allowStandardIsolation` stays as the explicit opt-in, and the profile is the operator's choice. SI owns this text, matched to PM-1. | SI-11 |
-| D20 | Pods with several slots (2026-11-12). | They stay an opt-in for density: `maxConcurrentSessionsPerPod`, default 1, together with the acknowledgment. The option of one session per pod only was not taken. | SI-10 |
-| D21 | Renames (2026-11-12). | `acknowledgeSharedPod` and `maxConcurrentSessionsPerPod`, straight renames with no alias. The acknowledgment's validation error lists what slots still share. PL owns the renames. | SI-10 |
-| D22 | The open decisions of revision 3 (2026-11-12). | "go with your recommendations": O2 (a), O4 (a), O5 (a), O7 (a), O9 (a), and O10 (a). | "Open decisions" |
-| D23 | Whether the Sweep runs again after the cleanup commands (O12, 2026-11-13). | (a): a second Sweep after the second End. | SI-3, SIR-13 |
-| D24 | How the per-slot disk watch measures a volume (O13, 2026-11-13). | Settled through PL's O8, which the owner accepted in its revised form: `statfs` where it reports the volume, which is gVisor's pod-share mount and Kata `block-plain` once measured; a running total kept from the change tracker where the tracker runs, with a periodic recalibration walk; a walk every 10 s only elsewhere; and project quotas later. PL owns the mechanism, and the broker serves `/tmp` as the root `tmp` for it. | SI-5, SI-10 |
-| D25 | Per-slot `netagent` scopes on pods with several slots (egress decision 60, 2026-11-13). | (a): each slot's connections use its own session's scope. On a pool whose runtime class does not answer slot attribution, which the pool's status records, the pod keeps the union scope, and `sessionIsolationLevel.perSlotScopes` reports it as `false` (PM-4). | SI-10 |
-| D26 | Who fills the repository stores (egress decision 61, 2026-11-13). | "if the separate container works from a permissions standpoint, then yes": a separate `lenny-store-fill` container fills the stores and builds the pristine trees under its own UID, with no credentials and only the store volume mounted read-write, as an init container after the `netagent` native sidecar. The adapter keeps read-write access only to delete withheld stores and never parses repository data. PL owns the container. | SI-1, SI-2, SI-7, SI-8 |
-| D27 | Non-agent runtimes and `sessionId` on frames (2026-11-13). | The owner removed `type: mcp` runtimes and service mode, and settled AR's O5 as (b): "O5 (b), yes to all the others." No frame other than `session_start` carries `sessionId`, and `session_start` keeps it as data the adapter never acts on ("ok, let's keep it"). | Scope, SI-2, SIR-3 |
-| D28 | The store volume's group (2026-11-13). | "ok but add an owed item to stress test this thoroughly (with actual tests)". `lenny-store-fill` writes the stores and the pristine trees with a dedicated store GID, in place of the adapter's former GID, as the file group and a umask of `0002`; the adapter deletes withheld stores through it with no-follow deletion; no slot container holds it. Every agent-pod container runs with `allowPrivilegeEscalation: false`, so setuid and setgid bits have no effect, and the fill's mode pass also clears them. PL owns the mechanism as its D17, and the stress test suite is owed there. PL's revision 8 makes the store GID the primary group of both the adapter and `lenny-store-fill`, because Kubernetes has no container-level supplementary groups, and the owner confirmed that refinement on 2026-11-14 (D33). | SI-7, SI-8, SIR-39 |
-| D29 | User credential bindings, `lockEgressToHosts`, and user git identity on pods with several slots (UCD decision 41 and UGI decision 52, 2026-11-13). | "ok", settled together: each is allowed on a pool whose status records per-slot attribution, and refused on a fallback pool and on a recycled or used pod. Asked which runtime classes attribute, the answer was runc by design, Kata likely and unmeasured, and gVisor unknown, and the owner asked "run a spike to test this", which is owed. | SI-10, "Validation owed" |
-| D30 | Connections of the adapter and `netagent` themselves (2026-11-13). | "ok", after the owner asked for detail and was told that slots get no extra access. `netagent` marks a connection whose socket owner is the adapter's or `netagent`'s UID as platform, and allows it only to platform destinations: the gateway, object storage, and the git mirror. A slot cannot obtain the marker, because attribution reads the kernel-reported socket owner and `netagent` strips the header from agent input. The egress design owns the mechanism. | SI-10 |
-| D31 | The disk watch's misses, its trip, and its recalibration (PL's O9 and the owner's answers on the trip and the recalibration, 2026-11-13). | PL's O9 settled as (a): bytes in a directory its owner cannot list are a stated residual risk of shared pods, and a spike on project quotas with automatic detection is owed. The trip stays as written, and a checkpoint walk does not replace the recalibration walk. PL owns all three as its D20 and D21. The owner's follow-up of the same day, "7: yes", makes the 90% threshold the chart value `adapter.diskWatchThresholdPercent`, which PL owns as its D23. | SI-10, "Limits" |
-| D32 | Project quotas and the attribution spike (2026-11-14). | "Adopt the automatic project-quota mode", after the AWS spike of 2026-11-14 that D29 and D31 asked for. PL owns the mechanism as its D25 ([PL-10](../0118-agent-pod-layout/change.md#pl-10-project-quotas)): a node agent assigns each slot volume of runc pods with user namespaces, gVisor's `/tmp`, and Kata virtio-fs a project quota slightly below its `sizeLimit`, and the adapter reads such a volume with `fstatfs` in place of a walk. The same spike measured slot attribution on every runtime, which the egress design records, with its decision 68 on the Kata guest kernel. | SI-10, "Limits", "Validation record", "Validation owed" |
-| D33 | The store GID as a primary group (2026-11-14). | "Ok on the rest": the owner confirmed the store GID as the `runAsGroup` of both `adapter` and `lenny-store-fill`, with the pod under `supplementalGroupsPolicy: Strict`, which PL's revision 8 made after D28. PL owns the mechanism as its D17. | SI-7, SI-8, SIR-39 |
-| D34 | How the specification and the documentation present the isolation profiles (2026-11-15). | "In the docs and maybe the spec, runc is considered an option only for dev and testing. I don't think that is for us to say. Lenny supports it and operators can use it if they want, and our job is to outline the pros and cons of runc, gvisor, and kata." Asked whether to run a separate change now, the owner answered "no need to run it. Just keep track of it in the design docs". D19's factual wording applies to every page and section that recommends or discourages a profile, including the §5.3 **Security note**, and the operator guide gains a comparison of the three profiles that "What the documentation states" lists. | SI-11 |
-| D35 | Kata's VMMs and other VM backends for `microvm` (2026-11-15). | "ok", to the research summary of that day ([`evidence/placement-design/residency-and-sandboxes-research.md`](../0136-placement/evidence/residency-and-sandboxes-research.md)): this design's Kata measurements state that they ran QEMU; the documentation lists Cloud Hypervisor and Dragonball, Kata 4.0's default VMM under runtime-rs, as options with QEMU required for GPU passthrough and confidential computing ([Kata 4.0 release overview](https://katacontainers.io/blog/kata-containers-4-0-0-release-overview/), [Kata hypervisors](https://github.com/kata-containers/kata-containers/blob/main/docs/hypervisors.md)); Firecracker is unsuitable because Kata with Firecracker has no virtio-fs, on which the slot volumes' project quotas rest; and AWS Nitro Sandboxes ([AWS announcement](https://aws.amazon.com/blogs/containers/aws-nitro-sandboxes-hardware-enforced-workload-isolation-on-amazon-eks/)) and Edera ([Edera architecture](https://docs.edera.dev/technical-overview/architecture/overview/)), which give a guest kernel per pod without bare metal or nested virtualization, are candidates for `microvm` backends that need the spike "Validation owed" lists. | SI-11, "Validation record", "Validation owed" |
-| D36 | A pod with one slot after a failed session (2026-11-16). | The owner answered "1. ok 2. ok 3. ok 4. ok 5. ok" to the five recommendations of the specification migration spike, and item 3, the `retireOnRelease` mark, is [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md#decisions) decision 44. Item 1: a failure before `session_start` that is not a cause of a dead slot, a handshake refusal included, runs the slot release, and the pod follows the pool's disposition for a release. A failure or a crash after `session_start` on a pod with one slot ends the occupancy without reuse, as [§4.6.3](../../spec/04_system-components.md#463-crd-field-ownership-and-write-boundaries) and [§6.2](../../spec/06_warm-pod-model.md#62-pod-state-machine) state today. A dead slot retires a pod with one slot. The migration found that [§4.6.3](../../spec/04_system-components.md#463-crd-field-ownership-and-write-boundaries) also ends an occupancy without reuse "when no gateway replica published the session's binding to the pod", which a failure before `session_start` never reaches, so the clause would cancel item 1. The owner's follow-up answer of the same day ("A. ok") narrows the clause to a release that never reached the pod, such as a gateway crash before it published the binding. A failure before `session_start` whose slot release completed and passed its emptiness check follows the pool's disposition. | SI-3, SI-4, SIR-40 |
-| D37 | "Runtime not live" and the handshake refusal that is not retryable (2026-11-16). | Item 2, "ok": the "Runtime not live" retirement condition of §5.2, its reason `runtime_not_live`, and the runtime-readiness statement in `ReportPodScrub` leave, because no runtime process outlives its session (D4, D15). A handshake refusal that [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake) classes as not retryable and that stops the pod's binds becomes a retirement condition with the reason `runtime_refused`: the pod accepts no further binds, and it retires once its occupancy reaches zero. Dead slots and the whole-pod replacement trigger cover a runtime's liveness otherwise. | SI-3, SI-4, SIR-41 |
-| D38 | Leaked and dead slots (2026-11-16). | Item 4, "ok": the `leaked` slot merges into the dead slot, one state that counts in occupancy for the pod's life and toward the whole-pod replacement trigger. The metric `lenny_adapter_leaked_slots` becomes `lenny_adapter_dead_slots`, and the `leaked` sub-state, its row, and its column of the §5.2 scrub model table leave. The pod state mirror gains the column `dead_slots`, the slot indexes of the pod's dead slots, which the gateway writes when it adds a `dead:<n>` member, and rehydration reads it with the session rows and restores the `dead:<n>` members. Today's rehydration loses every `leaked` member in the same way. | SI-4, SIR-15, SIR-42 |
-| D39 | Scrub profiles after the per-slot release (2026-11-16). | Item 5, "ok": `recycle.scrubProfile` keeps `standard` and `vm-restart`, and `in-place` and `acknowledgeMicrovmResidualState` leave. `in-place` existed because `standard` was refused on pools with `allowCrossTenantReuse`, which [`0136-placement`](../0136-placement/change.md#removals) removes, and with the tenant pin on every pool, `in-place` on a microVM pool is `standard` plus an acknowledgment. The documentation states, under `standard` on a microVM pool, the guest-kernel state that persists across the pinned tenant's sessions. `onScrubFailure` and `maxScrubFailures` apply to the pod-wide scrub alone, and a failed slot release always makes the slot dead and never takes the `warn` path. The owner confirmed on the same day ("ok, keep it as written") that a `cleanup` run answered with `cleanup_failed` or `cleanup_timeout` fails the release and makes the slot dead, and that on a pod with several slots the pod drains only through the whole-pod replacement trigger. | SI-3, SI-4, SIR-43 |
-
-## Open decisions
-
-The owner settled every open decision of revision 3 on 2026-11-12, and O12 and O13 on 2026-11-13. The owner's answers of 2026-11-13 to the consolidated list added D28 to D31 to "Decisions", and the owner's answers of 2026-11-14 added D32 and D33. The owner's answers of 2026-11-16 to the specification migration spike added D36 to D39. No decision is open. Each keeps its label for the references other designs make to it.
-
-**O2. What a checkpoint does with a metadata-only entry. Settled 2026-11-12: (a).** The checkpoint records each such entry's type, mode, and times, a restore creates it empty with that mode (a socket is not recreated), and the checkpoint's metadata record lists each path as `metadata_only`, with a session warning event and a metric. The options not taken were failing the checkpoint and having the supervisor change the mode to open the entry.
-
-**O4. Memory across slots. Settled 2026-11-12: (a).** Hard per-slot memory limits that sum, with the platform containers' limits, to the pod's memory, with no overcommit ("SI-9").
-
-**O5. CPU across slots. Settled 2026-11-12: (a).** A pod-level CPU limit equal to the class's limit, per-slot CPU requests, and no per-slot CPU limit, with a fallback where pod-level resources are not enforced ("SI-9").
-
-**O6. The embedded deployment model on pools with several slots. Retired 2026-11-12.** The owner removed the embedded deployment model (D11), so no such pool exists.
-
-**O7. Landlock. Settled 2026-11-12: (a).** Recorded under "SI-11" and deferred.
-
-**O8. Kubernetes user namespaces. Replaced 2026-11-12 by D18.** User namespaces are on by default on runc pools, with an operator's disable that logs a warning, and the adapter checks `uid_map` before READY ("SI-11").
-
-**O9. Per-slot egress attribution in `netagent`. Settled 2026-11-12: (a).** The egress design owns it, together with the fetch grant of [WM-10](../0153-workspace-materialization/change.md#wm-10-git). With a UID per slot, `netagent` can attribute a loopback TCP connection to its slot by looking up the connecting socket's owner through `sock_diag` **[inference]**. Whether gVisor answers `sock_diag` is unverified. **Measured 2026-11-14:** runc answers `sock_diag`, gVisor and Kata refuse it and answer `/proc/net/tcp`, and every answering reader reported each slot's own UID ("Validation record").
-
-**O10. Withheld stores on pods with several slots. Settled 2026-11-12: (a).** A failed read check on a store whose repository the session's plan does not name refuses the session on a shared pod, because the store volume is mounted into every slot and Kubernetes cannot change a running pod's mounts ("SI-8").
-
-**O11. Where git on a slot repository runs. Settled 2026-11-12 by D12.** Every git step runs as the slot UID in the helper ([WM-10](../0153-workspace-materialization/change.md#wm-10-git)). Revision 3's option (a), building in an adapter directory and copying through the broker, is superseded.
-
-**O12. Whether the Sweep runs again after the cleanup commands. Settled 2026-11-13: (a)** (D23).
-
-The release runs End, Sweep, the pool's cleanup commands, and End ("SI-3"). The second End kills what the cleanup commands left running, but nothing removes the files they leave in `/tmp` or `/dev/shm`, which the adapter does not mount and the emptiness check does not cover. Cleanup commands run as the slot UID, so such a file reaches the next session in the slot, which can belong to another user.
-
-- (a) A second Sweep after the second End: End, Sweep, cleanup, End, Sweep. The second Sweep finds only what the cleanup commands left.
-- (b) Keep the order, and state that cleanup commands write nothing outside the brokered volumes, whose emptiness check catches what they leave there.
-- (c) Run the cleanup commands first: End, cleanup, End, Sweep.
-
-**Recommendation: (a).** It costs one walk of nearly empty volumes and keeps the first Sweep ahead of the cleanup commands. (c) would let session-planted files, such as a shell profile under `HOME=/tmp/home`, reach the cleanup commands, which the first Sweep prevents today. (b) leaves the rule to each deployer. "SI-3" states the release with the second Sweep.
-
-**O13. How the per-slot disk watch measures a volume's use. Settled 2026-11-13 through PL's O8** (D24).
-
-The adapter fails a slot's session at `adapter.diskWatchThresholdPercent` of a disk-backed slot volume's `sizeLimit`, 90% by default, before the kubelet evicts the pod ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). On runc, `statfs` on an `emptyDir` reports the whole node filesystem **[measured]**, so the watch cannot use it. PL makes `/tmp` disk-backed and inside the watch, and the adapter does not mount `/tmp`.
-
-- (a) The adapter sums allocated blocks over a parallel stat walk of each brokered volume at a fixed interval, a chart value of 30 s by default, and reuses the sum of a checkpoint walk that ran within the interval. `/tmp` becomes a third broker root, `tmp`, which serves `open` of a directory and `statat` only, for this walk.
-- (b) A supervisor request that walks a volume as the slot UID and answers one integer.
-- (c) The kubelet's per-volume figure, read by a controller from the node's statistics and forwarded to the adapter.
-
-**Recommendation: (a).** It reuses the parallel stat walk and its checks, and it keeps every walk in the adapter (D3). A walk of a Chromium-sized tree costs 0.3 s under runc and up to 7 s on Kata `virtio-fs` at the measured rates **[inference]**, which a 30 s interval bounds. (b) adds a tree walk to the supervisor beyond the Sweep. (c) gives the adapter a figure only as fresh as the kubelet's own measurement, which is the figure the watch has to beat. Under every option a writer faster than the interval reaches the kubelet's limit first, as PL's "Limits" states.
-
-The owner settled the question on PL's O8 instead, in a revised form that keeps (a)'s walk where nothing cheaper works: the adapter reads `statfs` on a broker-passed root descriptor where the runtime reports the volume, keeps a running total from the change tracker's events where the tracker runs, with a periodic recalibration walk, and walks every 10 s only elsewhere ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). The `tmp` root of (a) is adopted ("SI-5").
 
 ## Requirements
 
@@ -345,7 +257,9 @@ The adapter and the runtime share the `lenny-cred-readers` GID through `fsGroup`
 - [`0127-egress-and-git`](../0127-egress-and-git/change.md) adds `netagent` and gives pods with several slots per-pool policy because "Sessions share one process and network namespace" **[source]**.
 - [`0152-user-git-identity`](../0152-user-git-identity/change.md) refuses pods with several slots, recycled pods, and pods that have served a session **[source]**.
 
-## SI-1 Pod layout
+## Detailed design
+
+### SI-1 Pod layout
 
 **The blueprint.** [PL-1](../0118-agent-pod-layout/change.md#pl-1-pod-blueprint) lists the containers of an agent pod with slot count `N`: an init container that stages the platform binaries, `netagent`, the `lenny-store-fill` init container, `adapter`, the slot containers `runtime-0` to `runtime-<N-1>`, each running the supervisor as PID 1 under its slot UID, and `keepalive`. [PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) states the paths a runtime sees, and [PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction) states the volumes. This section states the isolation properties that the layout gives.
 
@@ -373,7 +287,7 @@ PL's PLR-10 carries this exception, and `lenny-pod-security` admits it on Kata `
 
 **Minimum versions.** The deployment-wide Kubernetes floor of [§17.6](../../spec/17_deployment-topology.md#176-packaging-and-installation) stays at 1.27, and a cluster that runs standard-class pools needs 1.33 on the API server and every standard-class node ([PM-1](../0136-placement/change.md#user-namespaces-on-the-standard-class)). The supervisor needs a kernel of 5.9 or later for `close_range`, `openat2`, and `STATX_MNT_ID` ("SI-5"). gVisor `release-20261109.0` is verified, and the earliest gVisor release that serves the protocol is unknown **[measured]**.
 
-## SI-2 Slot identity and socket names
+### SI-2 Slot identity and socket names
 
 **Names.** Each slot `n` gets `@lenny-runtime-<n>` for `CH-MSGSOCK` and `@lenny-supervise-<n>` for `CH-SUPERVISE`. The supervisor already takes its socket name as `--socket`, so slot `n`'s container renders `--socket @lenny-supervise-<n> --adapter-uid <adapter UID>`, and the runtime reads its name from `LENNY_ADAPTER_SOCKET`, as today (`podspec/supervisor.go`, `podspec/msgsock.go`) **[source]**. The adapter binds every slot's names when it starts. `CH-RUNTIMEOPS` and its pod-wide name `@lenny-runtime-ops` leave, because RP O7, settled as (a), carries its frames on the runtime connection.
 
@@ -403,7 +317,7 @@ The spikes measured that a process in slot 1 is seen as slot 1's UID whatever it
 
 **Tools on pods with several slots.** The adapter knows which session every frame acts for, so platform tools are allowed on every pod from proposal SI-A on, and RP O10 is retired. Lenny has no other tool server: a slot reaches an operator's MCP services through `netagent` and egress, attributed to the slot as any other connection (CR-3 of [`0124-connector-removal`](../0124-connector-removal/change.md#cr-3-external-services)).
 
-## SI-3 Runtime processes, slot release, and setup commands
+### SI-3 Runtime processes, slot release, and setup commands
 
 **One session per runtime process, launched at bind (D4, D15).** Each slot container's supervisor launches one runtime process for each session, when the session binds, and never before. A pod reports READY with no runtime process running. At bind, in order:
 
@@ -462,7 +376,7 @@ The Sweep never changes the mode of a volume root, which belongs to `root`, and 
 
 **User git identity (UGI decision 14).** Its refusal of recycled pods rests on the reasons it states **[source]**. One, a `keep` process that carries planted state into the next session, no longer exists under D4. The other, residue from Alice's repositories reaching Bob, rests on the scrub's coverage. Under this design each release ends every process of the slot UID, sweeps every file and IPC object that UID owns in the slot's volumes, removes what remains, and checks that the brokered volumes are empty, and the second Sweep removes what the cleanup commands left (O12), so what can survive is state outside the slot's volumes, `netagent`'s caches, which the egress design keys on binding generation and session and flushes on each binding change **[source]**, and kernel state. The refusal of pods with several slots rests separately on what one pod's slots still share ([SI-10](#si-10-what-stays-shared)): per-slot attribution and per-slot scopes in `netagent` (O9; egress decisions 52 and 60) remove the shared egress identity, while the network and IPC namespaces, the adapter, the kernel, and pod-wide eviction stay shared. The owner settled UGI's decision 52 and UCD's decision 41 together on 2026-11-13 (D29): user git identity, user credential bindings, and `lockEgressToHosts` are allowed on a pool whose status records per-slot attribution, and refused on a fallback pool and on a recycled or used pod.
 
-### The supervisor's worker (D6, D14)
+#### The supervisor's worker (D6, D14)
 
 **Runs.** A `setup` or a `cleanup` request is a run, and at most one run is outstanding in a slot (SIR-23). While a run is outstanding, the supervisor serves `fs`, `ping`, and `end`, and answers `launch`, `sweep`, `setup`, and `cleanup` with `worker_busy`, and the forensic `freeze` too while the run is a `setup`. To freeze a slot that has a `setup` run outstanding, the adapter cancels the run by closing its cancel pipe, waits for `setupdone`, and then sends `freeze` ([`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md)). A `cleanup` run has no cancel pipe and runs under the cleanup deadline: a `freeze` or an `end` that arrives while it is outstanding makes the supervisor kill the cleanup worker's process group, answer the run with `cleaned` carrying `cleanup_failed`, and then act on the `freeze` or the `end`. It serves requests in the order they arrive and writes each reply whole, and it writes a run's reply between two of them **[measured]**. An `end` stops an outstanding run first: the run's reply carries `setup_cancelled` and precedes `ended` when the run's status reached the supervisor, and follows within 5 s otherwise **[measured]**. A `setup` leaves the launch permission as it was, so a fresh slot runs helper runs and setup commands before its first launch; a `cleanup` clears it until the next End **[measured]**.
 
@@ -520,7 +434,7 @@ A setup command therefore takes `nfds` 3, and a helper run takes `nfds` 6. Conte
 
 **Container restart.** The local spike restarted a slot container through container restart rules: 1.5 s, then 14.9 s and 29.0 s under backoff, and the workspace, `/tmp`, `/dev/shm`, and System V segments survived **[measured]**. This design does not restart containers.
 
-## SI-4 Slot liveness and the slot count
+### SI-4 Slot liveness and the slot count
 
 **Per-slot not-live state.** **Liveness.** today holds one not-live state for the pod **[source]**. Under this design the adapter holds one per slot. Each cause **Liveness.** lists that concerns a supervisor or a runtime process sets the not-live state of the slot it concerns, and a cause that concerns the adapter itself sets the pod's state as today.
 
@@ -551,7 +465,7 @@ A deployer who wants an out-of-memory kill to take only the largest process can 
 
 **The slot count (SIR-16).** The controller records the pod's slot count in `AgentPod.spec.slotCount` when it creates the pod, equal to the slot containers it rendered, and never changes it. The reservation script of **Slot assignment atomicity** compares occupancy against that recorded count in place of the pool's current `maxConcurrentSessionsPerPod` **[source]**. A pool whose `maxConcurrentSessionsPerPod` changes gets new pods with the new count, and existing pods keep theirs until they retire.
 
-## SI-5 The supervisor file-descriptor broker
+### SI-5 The supervisor file-descriptor broker
 
 **Why a broker (D9).** The slot UID owns a session's files, and the adapter runs under another UID with no capability. Pod Security Standards Restricted allows adding only `NET_BIND_SERVICE`, Baseline's added capabilities include `DAC_OVERRIDE` and `FOWNER` but not `DAC_READ_SEARCH`, capabilities added to a non-root container are not effective, and user namespaces relax only `runAsNonRoot` and `runAsUser` **[measured]** **[external]**. The process that can open every file the session can open is a process running as the slot UID, and the supervisor already is one. The broker lets the adapter use that process's access without moving any checkpoint logic into it: the supervisor opens, creates, stats, and watches entries, and returns descriptors and integers.
 
@@ -617,7 +531,7 @@ The AWS run measured 0 missed changes and 0 identity differences against the slo
 
 **Descriptors the kernel refuses (SIR-29).** `sendmsg` with descriptors fails with `ETOOMANYREFS` when the sending UID already holds more descriptors in flight than its `RLIMIT_NOFILE`, and the count is per UID across the kernel. When the kernel refuses a reply's descriptors, or another failure prevents the first byte from carrying them, nothing was sent, so the supervisor sends the reply again without descriptors, with that errno for each path that had one, and keeps serving. It first removes every entry a refused `mkfile` created, so a retry does not meet `EEXIST`. The spike measured both halves: during the refusal the reply carried errno 109 and no descriptor and a ping still answered in 0.1 ms, and a retry afterwards succeeded with the refused entry gone **[measured]**. "SI-11" states the cross-pod case and its fix.
 
-### Rules for the whole `CH-SUPERVISE` connection
+#### Rules for the whole `CH-SUPERVISE` connection
 
 - **Refusals (SIR-24).** `malformed_request`, `gen_mismatch`, and `worker_busy` are refusals. A refusal keeps the request's own reply type, such as `{"type":"cleaned",…,"error":"worker_busy"}`, means the supervisor did not execute the request, and never carries `exit` or `signal`. A request whose type, `gen`, and `id` the supervisor can read but whose members are not valid gets `malformed_request`. A line the supervisor cannot attribute to any request makes it exit, which is a link failure **[measured]**.
 - **Descriptors (SIR-25).** The supervisor reads with `recvmsg` and `MSG_CMSG_CLOEXEC`. On a stream socket one read can return earlier lines together with the bytes that carry descriptors, and the kernel ends that read after them, so the supervisor binds each batch of descriptors to the line that contains the last byte of the read that delivered it. It accepts descriptors only with a `setup` line, and exactly `nfds` of them; descriptors with any other line, a count that differs, more than 253, or `MSG_CTRUNC` are closed and answered with `malformed_request` **[measured]**. The adapter sends descriptors only with a `setup`, on the line's first byte, in a `sendmsg` that carries exactly that line or its start.
@@ -627,7 +541,7 @@ The AWS run measured 0 missed changes and 0 identity differences against the slo
 
 **The supervisor's size.** The tree's supervisor has 3,585 lines **[source]**. The broker prototype added about 470 lines, and the materialization prototype added 179 lines over it. The asynchronous worker adds 376 lines of code net, not counting blank and comment lines, over the prototype that merges both, for 4,915 lines in all **[measured]**. The owner accepted the broker's cost (D9) and approved the asynchronous worker after its security review (D14).
 
-## SI-6 Checkpoint, restore, export, and cleanup
+### SI-6 Checkpoint, restore, export, and cleanup
 
 IC owns each of these. This section states what isolation requires of them.
 
@@ -649,7 +563,7 @@ IC owns each of these. This section states what isolation requires of them.
 
 **Cleanup.** "SI-3" states the release.
 
-## SI-7 Credentials, manifests, and other shared files
+### SI-7 Credentials, manifests, and other shared files
 
 **Credentials.** Where a session has a credential file, the adapter writes it into the slot's run volume, which only the adapter and that slot mount, with mode `0444` set explicitly. The mount boundary protects the file, and the broker is not involved, because the slot only reads it and the adapter owns it. `lenny-cred-readers`, the pod-level `fsGroup`, and the `POD_SPEC_CRED_FSGROUP_MISSING` rejection leave, and §13.1's statement that "any slot's agent code can read every other slot's credential file" stops being true. [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) removes direct LLM delivery mode, the file's LLM use, so the file exists only if a VCS path still uses it, which that design leaves to validation. PL names the path.
 
@@ -661,9 +575,9 @@ IC owns each of these. This section states what isolation requires of them.
 
 **Modes of the pod-wide volumes.** Without `fsGroup`, a reader in a slot container reads through the other class of each file's mode. [PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction) states the owner and modes of every volume, and the egress design states `netagent`'s.
 
-## SI-8 Shared repository stores
+### SI-8 Shared repository stores
 
-**Stores.** The `lenny-store-fill` init container fills the repository stores and their pristine trees on the pod-wide store volume before any regular container starts, under a UID of its own, with no credential, through `netagent`, which attributes its UID as the platform fill (D26). It writes with a dedicated store GID as the group, which is the primary group of both `lenny-store-fill` and the adapter, and a umask of `0002`, so directories come out `0775` and object files `0444`, and after each fill an explicit mode pass over the store and its pristine tree sets directories to `0775`, regular files to `0444`, and executable files to `0555` and clears every setuid and setgid bit, so nothing in the volume grants write to the other class (D28; [PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout); [WM-15](../0153-workspace-materialization/change.md#wm-15-warm-up-checkout-and-reflink-rebuild)). Every agent-pod container runs with `allowPrivilegeEscalation: false`, so a set-ID bit has no effect in any case **[source]**. Every slot reads the stores through the other class. No slot container holds the store GID. Sharing the adapter's primary group with the fill exposes nothing else of the adapter's, because the fill mounts no adapter volume other than the store volume, its other mounts are `lenny-bin` and `/run/netagent` read-only, and it is an init container that has exited before the adapter starts ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)). The adapter mounts the volume read-write only to delete a withheld store and its pristine tree, which it does through the group class, and it reads no repository data, the pristine trees included. The deletion follows no symbolic link: the adapter opens each directory with `openat2` and `RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH | RESOLVE_NO_XDEV` relative to a directory descriptor beneath the volume root, and removes each entry with `unlinkat` relative to its parent's descriptor, so a link in a store cannot point the deletion outside it. On a Kata `block-plain` pod, whose volume root carries the setgid bit and the dedicated volume GID, `lenny-store-fill` regroups each store's directory to the store GID and clears its setgid bit before it writes into it, so the deletion works the same way (PL-3). PL's "Validation owed" carries the hostile-repository stress test suite of D28. Every slot container mounts it read-only at `/lenny/git-stores`, the same path in every slot ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)), so the absolute path a slot repository's `objects/info/alternates` names resolves in every slot **[measured]**. Writes fail with `EROFS` **[measured]**. Every git step on a slot repository runs as the slot UID in the helper ([WM-10](../0153-workspace-materialization/change.md#wm-10-git)), so only slot containers resolve the path.
+**Stores.** The `lenny-store-fill` init container fills the repository stores and their pristine trees on the pod-wide store volume before any regular container starts, under a UID of its own, with no credential, through `netagent`, which attributes its UID as the platform fill (D26). It writes with a dedicated store GID as the group, which is the primary group of both `lenny-store-fill` and the adapter, and a umask of `0002`, so directories come out `0775` and object files `0444`, and after each fill an explicit mode pass over the store and its pristine tree sets directories to `0775`, regular files to `0444`, and executable files to `0555` and clears every setuid and setgid bit, so nothing in the volume grants write to the other class (D28; [PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout); [WM-15](../0153-workspace-materialization/change.md#wm-15-warm-up-checkout-and-reflink-rebuild)). Every agent-pod container runs with `allowPrivilegeEscalation: false`, so a set-ID bit has no effect in any case **[source]**. Every slot reads the stores through the other class. No slot container holds the store GID. Sharing the adapter's primary group with the fill exposes nothing else of the adapter's, because the fill mounts no adapter volume other than the store volume, its other mounts are `lenny-bin` and `/run/netagent` read-only, and it is an init container that has exited before the adapter starts ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)). The adapter mounts the volume read-write only to delete a withheld store and its pristine tree, which it does through the group class, and it reads no repository data, the pristine trees included. The deletion follows no symbolic link: the adapter opens each directory with `openat2` and `RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH | RESOLVE_NO_XDEV` relative to a directory descriptor beneath the volume root, and removes each entry with `unlinkat` relative to its parent's descriptor, so a link in a store cannot point the deletion outside it. On a Kata `block-plain` pod, whose volume root carries the setgid bit and the dedicated volume GID, `lenny-store-fill` regroups each store's directory to the store GID and clears its setgid bit before it writes into it, so the deletion works the same way (PL-3). PL's "Validation owed" in `steps.md` carries the hostile-repository stress test suite of D28. Every slot container mounts it read-only at `/lenny/git-stores`, the same path in every slot ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)), so the absolute path a slot repository's `objects/info/alternates` names resolves in every slot **[measured]**. Writes fail with `EROFS` **[measured]**. Every git step on a slot repository runs as the slot UID in the helper ([WM-10](../0153-workspace-materialization/change.md#wm-10-git)), so only slot containers resolve the path.
 
 **How a session uses a store.** The slot repository borrows objects through alternates, which is what `git clone --shared` sets up. The local spike of 2026-11-11 measured, on a 301 MiB pack with a 9.9 MB working tree of 2,001 files:
 
@@ -684,7 +598,7 @@ All rows are **[measured]**. WM owns the warm checkouts that move this work from
 
 **Withheld stores (O10).** A failed read check on a store whose repository the session's plan does not name refuses the session on a shared pod, as today. A staged warm checkout from a store withheld for the session is removed before the session starts ([`0153-workspace-materialization`](../0153-workspace-materialization/change.md)).
 
-## SI-9 CPU and memory
+### SI-9 CPU and memory
 
 **What the local spike measured** on Kubernetes 1.35.0 with cgroup v2 **[measured]**:
 
@@ -700,13 +614,13 @@ All rows are **[measured]**. WM owns the warm checkouts that move this work from
 - the pod's `spec.resources` takes the class's CPU limit, so CPU bursts across slots;
 - `adapter` and `netagent` take their chart values;
 - each slot container takes a CPU request of the remaining CPU divided by the slot count, with no CPU limit;
-- each slot container takes a memory request and limit of the remaining memory divided by the slot count, which must be at least the platform's floor on slot memory ([WM O1](../0153-workspace-materialization/change.md#open-decisions)).
+- each slot container takes a memory request and limit of the remaining memory divided by the slot count, which must be at least the platform's floor on slot memory ([WM O1](../0153-workspace-materialization/decisions.md#open-decisions)).
 
 A container that sets a limit and no request gets a request equal to its limit, and the API refused a pod where that made the requests exceed the pod's until every request was set **[measured]**, so the renderer sets every request.
 
 **Memory-backed volumes.** A slot's `/dev/shm` counts against its own memory limit, at the pool's per-slot size ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). `/session` and `/tmp` are disk-backed under PL, so revision 3's session-file cap in the adapter's memory leaves.
 
-**Contention between slots.** Concurrent checkpoints and restores of several slots slow each other: the AWS re-validation measured two concurrent LLVM restores at 241 to 283 s against 47 to 132 s alone **[measured]**. IC staggers checkpoints so that at most one slot of a pod checkpoints at a time ([IC decision D20](../0131-incremental-checkpoint/change.md#decisions)).
+**Contention between slots.** Concurrent checkpoints and restores of several slots slow each other: the AWS re-validation measured two concurrent LLVM restores at 241 to 283 s against 47 to 132 s alone **[measured]**. IC staggers checkpoints so that at most one slot of a pod checkpoints at a time ([IC decision D20](../0131-incremental-checkpoint/decisions.md#decisions)).
 
 **Detection.** The API server drops a field whose feature gate is off without an error **[external]**, so reading the pod back proves only the API server's gate. The design detects enforcement where it takes effect **[design]**:
 
@@ -714,7 +628,7 @@ A container that sets a limit and no request gets a request equal to its limit, 
 - At start-up the adapter reads its own cgroup's `cpu.max`. Under enforced pod-level resources a container without its own limit carries the pod's limit, as the spike measured **[measured]**, and otherwise it reads `max`.
 - The adapter reports the result on `CH-ADAPTEREVENTS`. When pod-level resources are not enforced, the controller records that on the pool and renders later pods with each slot's CPU limit equal to its request.
 
-## SI-10 What stays shared
+### SI-10 What stays shared
 
 The local spike measured what separate containers do not isolate **[measured]**:
 
@@ -722,7 +636,7 @@ The local spike measured what separate containers do not isolate **[measured]**:
 - **IPC.** The IPC namespace is per pod, so System V objects and POSIX message queues are shared: a slot listed another slot's System V segments. A `0600` object stayed private. PL gives each slot its own `/dev/shm`, so POSIX shared memory objects are private to the slot ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). The Sweep removes a slot's objects at each release.
 - **Disk.** Every `emptyDir` lives on the node's disk, and the kubelet evicts the whole pod when one `emptyDir` exceeds its size limit **[measured]** **[external]**. The adapter's per-slot disk watch fails the offending slot's session first, measuring each volume as PL's O8 settles ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction); D24). Where the node's filesystem has project quotas, a quota slightly below `sizeLimit` bounds each slot volume of runc pods with user namespaces and Kata virtio-fs pods, and `/tmp` under gVisor, so a slot's write past it fails with `ENOSPC` or `EDQUOT` and evicts nothing, and the watch reads the volume with one `fstatfs` call that counts every byte **[measured]** ([PL-10](../0118-agent-pod-layout/change.md#pl-10-project-quotas); D32). On runc without user namespaces a slot can take its own files out of a project, so no quota is trusted there **[measured]**.
 - **Kernel.** Under gVisor and Kata every container of the pod shares the pod's sandbox kernel. Under runc every container shares the node's kernel with every pod on the node, which PM's node classes and node tenancy bound ("SI-11").
-- **The adapter and `netagent`.** One adapter and one `netagent` serve every slot. `netagent` attributes each connection to its slot (O9; egress decision 52) and scopes it to that slot's session: its readable and writable sets, its environment, its host lists, and its credential bindings (D25; egress decision 60). On each CONNECT it opens for an attributed connection, `netagent` names the session in the header `x-lenny-session`, which it strips from agent input, and the decision service accepts the header only for a session the pod's binding lists and keys its cached decisions on that session, so one slot's allow never serves another slot. Whether attribution answers is a property of the pool's runtime class: `netagent` reports at start whether its readers answered, and the controller records the result in the pool's status. On a pool whose runtime class does not answer, the pod falls back to the union of its sessions' readable and writable sets, applies no per-session credential binding, evaluates its sessions with no environment, and refuses `egress.allowedHosts` and `egressLockHosts`, and `sessionIsolationLevel.perSlotScopes` reports the fallback as `false` ([PM-4](../0136-placement/change.md#what-sessionisolationlevel-reports)). A `netagent` whose reader stops answering on a running pod refuses the connection rather than falling back ([`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants)). User credential bindings, `lockEgressToHosts`, and user git identity are allowed on a pool whose status records per-slot attribution and refused on a fallback pool and on a recycled or used pod (D29). The spike D29 asked for measured on 2026-11-14 that runc pools attribute through `sock_diag` and gVisor and Kata pools through `/proc/net/tcp`, so no measured runtime class is a fallback pool, and `netagent` accepts an answer only for an established socket of a UID it was configured with ("Validation record"). A slot under gVisor or Kata can create a nested user namespace, which runc's RuntimeDefault seccomp profile refuses, and both readers still report the slot's UID **[measured]**; an isolation argument that assumes a slot cannot create a user namespace holds on runc alone. `netagent` marks a connection whose socket owner is the adapter's or `netagent`'s own UID as platform and allows it only to platform destinations, the gateway, object storage, and the git mirror; a slot cannot obtain the marker, because the attribution reads the kernel-reported socket owner and `netagent` strips the header from agent input (D30).
+- **The adapter and `netagent`.** One adapter and one `netagent` serve every slot. `netagent` attributes each connection to its slot (O9; egress decision 52) and scopes it to that slot's session: its readable and writable sets, its environment, its host lists, and its credential bindings (D25; egress decision 60). On each CONNECT it opens for an attributed connection, `netagent` names the session in the header `x-lenny-session`, which it strips from agent input, and the decision service accepts the header only for a session the pod's binding lists and keys its cached decisions on that session, so one slot's allow never serves another slot. Whether attribution answers is a property of the pool's runtime class: `netagent` reports at start whether its readers answered, and the controller records the result in the pool's status. On a pool whose runtime class does not answer, the pod falls back to the union of its sessions' readable and writable sets, applies no per-session credential binding, evaluates its sessions with no environment, and refuses `egress.allowedHosts` and `egressLockHosts`, and `sessionIsolationLevel.perSlotScopes` reports the fallback as `false` ([PM-4](../0136-placement/change.md#what-sessionisolationlevel-reports)). A `netagent` whose reader stops answering on a running pod refuses the connection rather than falling back ([`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants)). User credential bindings, `lockEgressToHosts`, and user git identity are allowed on a pool whose status records per-slot attribution and refused on a fallback pool and on a recycled or used pod (D29). The spike D29 asked for measured on 2026-11-14 that runc pools attribute through `sock_diag` and gVisor and Kata pools through `/proc/net/tcp`, so no measured runtime class is a fallback pool, and `netagent` accepts an answer only for an established socket of a UID it was configured with ("Validation record" in `steps.md`). A slot under gVisor or Kata can create a nested user namespace, which runc's RuntimeDefault seccomp profile refuses, and both readers still report the slot's UID **[measured]**; an isolation argument that assumes a slot cannot create a user namespace holds on runc alone. `netagent` marks a connection whose socket owner is the adapter's or `netagent`'s own UID as platform and allows it only to platform destinations, the gateway, object storage, and the git mirror; a slot cannot obtain the marker, because the attribution reads the kernel-reported socket owner and `netagent` strips the header from agent input (D30).
 - **Failure and resources.** An eviction or a node failure ends every slot's session, and slots contend for CPU, memory bandwidth, disk, and network.
 
 **The acknowledgment that remains (D20, D21).** A pool runs with `maxConcurrentSessionsPerPod` above 1 only with `acknowledgeSharedPod: true` in its `sessionPolicy`, which the deployer sets on the pool and never per session. A pool whose value is 1 needs no acknowledgment. Its use for `recycle.runtimeProcess: keep` leaves together with `keep` (D4). The validation error states what slots still share **[design]**:
@@ -731,7 +645,7 @@ The local spike measured what separate containers do not isolate **[measured]**:
 
 **What a client sees.** The session's `sessionIsolationLevel` reports `sharedPod`, `userNamespaces`, and `perSlotScopes` as [PM-4](../0136-placement/change.md#what-sessionisolationlevel-reports) defines them, and its `residualStateWarning` text names the same shared properties as the validation error. A tenant that sets `placement.allowSharedPod: false` keeps its sessions off shared pods, and `placement.allowReusedPod: false` off pods that have served a session ([TSS-6](../0150-tenant-security-settings/change.md#tss-6-placement-settings)).
 
-## SI-11 User namespaces and Landlock
+### SI-11 User namespaces and Landlock
 
 **User namespaces on runc pools (D18, SIR-32).** Every runc pod runs with `hostUsers: false` by default, so the kubelet gives each pod a host UID range of its own, and every UID in the pod, the slot UIDs included, maps to an unprivileged host UID in that range. Slots inside a pod keep distinct UIDs inside the pod's range. An operator may disable user namespaces on the standard class, which renders the pods without them and logs a loud warning, as [PM-1](../0136-placement/change.md#user-namespaces-on-the-standard-class) states with its preflight warning, alert, audit record, and `sessionIsolationLevel.userNamespaces`. There is no intermediate mode. gVisor refuses `hostUsers: false` with "RuntimeClass handler "runsc" does not support user namespaces" **[measured]** and does not need it, because the sentry accounts per sandbox. Kata does not need it, because each pod has its own guest kernel, and its support is unverified. PM states the node prerequisites: Kubernetes 1.33 or later, containerd 2.0 or later with runc 1.2 or later, a kernel with idmapped mounts for every volume type the pod mounts, and on Bottlerocket a raised `user.max_user_namespaces`.
 
@@ -747,7 +661,7 @@ The local spike measured what separate containers do not isolate **[measured]**:
 
 **Landlock (O7).** Landlock restricts a process's file access, and from ABI 6 its connections to abstract sockets and its signals, with no privilege beyond `no_new_privs`, which Lenny sets **[external]**. The spikes measured ABI 6 on kernel 6.12, ABI 7 on kernel 6.18 on EKS AL2023 and Bottlerocket, ABI 2 on kernel 6.1, which has file rules and no socket or signal scoping, and `ENOSYS` under gVisor **[measured]**. A ruleset confined a slot to its workspace and refused `connect` to the adapter's socket with `EPERM` **[measured]**, so scoping would also change how a runtime connects. The design defers it.
 
-## SI-12 Cost
+### SI-12 Cost
 
 | Item | Today | Under this design |
 | :-- | :-- | :-- |
@@ -815,207 +729,6 @@ A pool `team-agents` runs Claude Code with `maxConcurrentSessionsPerPod: 2` and 
 - **A native-sidecar adapter.** Per-slot names, two-way checks, and SIR-5 close squatting with the adapter as a regular container (D5).
 - **Container restart as cleanup.** It is slow under backoff and leaves files and IPC objects **[measured]**.
 - **bubblewrap or nsjail inside the slot.** Both need to create user namespaces, which the RuntimeDefault seccomp profile refuses without `CAP_SYS_ADMIN` **[measured]**.
-
-## Validation record
-
-[`0153-workspace-materialization`](../0153-workspace-materialization/change.md) records the materialization spike, and [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) records the AWS re-validation of the checkpoint through the broker and the full tables of the parallel stat walk. This record holds the results this design relies on.
-
-**Local spike, 2026-11-11.** A kind v0.31.0 cluster with Kubernetes v1.35.0, containerd 2.2.0, runc 1.2.9, and kernel 6.12.76-linuxkit on Docker Desktop for arm64 with cgroup v2. The kind configuration enabled `PodLevelResources`, `UserNamespacesSupport`, `ContainerRestartRules`, `ImageVolume`, `InPlacePodLevelResourcesVerticalScaling`, and `RestartAllContainersOnContainerExits`; the alpha gates also needed `NodeDeclaredFeatures`, without which the kubelet panicked. The test namespace enforced `pod-security.kubernetes.io/enforce=restricted`, and a negative control that added `NET_RAW` was rejected. No pod with this design's full layout was run: the spike tested each mechanism in pods built for that test.
-
-| Experiment | Result |
-| :-- | :-- |
-| Identity | An adapter at UID 10000 on `@lenny` saw slots at 10001, 10002, and 10003 by `SO_PEERCRED`, each with its own UID and GID. Slot 1 with slot 2's environment values was still seen as 10001. `setpriv --reuid=10002` failed with `EPERM`. Slot 1 had `CapEff` and `CapBnd` 0, `NoNewPrivs` 1, and `Seccomp` 2. The peer process ID was 0. |
-| Visibility | Slot 1 saw only its own processes, and `kill -0` over PIDs 1 to 300 reached only its own namespace. A `0600` `/dev/shm` file of slot 2 was unreadable. Writing slot 2's `0666` file was refused by `fs.protected_regular=2`. Slot 1 reached slot 2's `127.0.0.1:8002`, read its `0666` `/dev/shm` file, listed its System V segments, listed its abstract names in `/proc/net/unix`, connected to `@slot2-mux` (seen as UID 10001), and could bind unclaimed abstract names. |
-| Ownership, `fsGroup` | With `fsGroup=20000`, slot 1 read slot 2's umask-022 file and appended to its umask-007 file. |
-| Ownership, groups | No container-level `supplementalGroups` exists. Pod-level groups `[10001,10002]` reached every container, and slot 1 read slot 2's `0660` object. Under `Merge`, the adapter image's `/etc/group` gave it 10001 to 10003, and an untrusted slot image gave itself 10000 and 10002. `Strict` removed image-declared groups. |
-| Ownership, setgid and ACLs | A setgid `2770` directory with umask 007 let the adapter read and write through the group, and `mkstemp` files locked it out. Per-pair volumes with default ACLs for both UIDs let each side read and write the other's files and overrode umask 077. `chmod 600` and `mkstemp` set the mask to `---`, and a slot's `setfacl -b` and `chmod 700` locked the adapter out. |
-| Shared repository | A generated repository of 200 commits, a 301 MiB pack, and a 2,001-file working tree of 9.9 MB was copied by an init container into a shared `emptyDir` mounted read-only. "SI-8" gives the timings. Overlay mounts failed with "must be superuser", `unshare -Ur` failed with `EPERM`, and `/dev/fuse` was absent. An image volume was admitted under Pod Security Standards Restricted. |
-| CPU and memory | "SI-9" gives the results. |
-| Cleanup | Escaped processes (a `setsid` double fork, a `nohup` loop that ignores SIGTERM, a respawner, and 30 children) survived a process-group kill. Writing `cgroup.kill` failed because cgroup2 is mounted read-only. `kill(-1, SIGKILL)` as the slot UID from a Go helper killed them all in one pass and left PID 1, its own child, and slot 2. Busybox `kill -9 -1` killed the calling shell. Restarts under container restart rules took 1.5 s, 14.9 s, and 29.0 s, and files and IPC objects survived them. |
-| gVisor | runsc `release-20261109.0` for arm64 with the systrap platform. Identity held, the peer process ID was 0, and spoofing failed. Process isolation, open localhost TCP and abstract sockets, and a private `0600` file matched runc. `fs.protected_regular` was not enforced, and `ipcs` showed no segments even in the creating container. Landlock returned `ENOSYS`. |
-| User namespaces | kind's `/kind` directory (`drw-r--r--`) broke its container hook inside a user namespace until it was set to `755`. Through kind's kubelet, in-pod UIDs were 10000 to 10003, `uid_map` was `0 3145662464 65536`, `SO_PEERCRED` reported in-pod UIDs, spoofing failed, Pod Security Standards Restricted admission passed, and `unshare -Ur` returned `EPERM`. |
-| Landlock | securityfs was not mounted. The probe returned ABI 6 in a runc pod under Pod Security Standards Restricted and with `hostUsers: false`. A ruleset allowed the workspace, denied `/dev/shm` writes, `/var` reads, and cgroup reads, and refused `connect(@lenny)` with `EPERM`. TCP was not restricted. |
-
-**AWS spike, 2026-11-11.** us-west-2, arm64 instances, EKS AMIs dated 2026-11-07, estimated spend USD 0.04, with every resource deleted and the deletion verified. No kubelet ran on these instances: the checks read the node images and ran runc and Kata directly.
-
-| | EKS AL2023, 1.37 | EKS AL2023, 1.32 | Bottlerocket, aws-k8s-1.37 (1.69.0) |
-| :-- | :-- | :-- | :-- |
-| Kernel | 6.18.56 | 6.1.189 | 6.18.56 |
-| Landlock in the LSM list, and ABI | Yes, ABI 7 | Yes, ABI 2 | Yes, ABI 7 |
-| `user.max_user_namespaces` | 7312 | 7034 | 0 |
-| Unprivileged user namespace | Works | Works | Fails with `ENOSPC` |
-| SELinux | Permissive | Permissive | Enforcing |
-| containerd and runc | 2.3.7 and 1.4.3 | 2.3.7 and 1.4.3 | 2.3.7 and 1.3.6 |
-| runc idmap support | Yes | Yes | Yes |
-| cgroup | v2 | v2 | v2 |
-| Idmapped mount on XFS | Works | Works | Works after the limit is raised |
-| Idmapped mount on tmpfs | Works | Fails with `EINVAL` | Works after the limit is raised |
-
-- **User namespaces with runc on AL2023 1.37.** Container A created a user namespace mapping 0 to host 200000 and a network namespace and listened as UID 1001. Container B joined both as UID 1002. Each read the other's UID by `SO_PEERCRED`, and A appeared as UID 201001 on the host. Container C, in its own user namespace with A's network namespace, and A each saw the other as UID 65534.
-- **Kata on c6g.metal**, with Kata 4.3.1, QEMU, virtiofsd, crictl 1.37, and CNI plugins 1.10.0, run through crictl with no kubelet. The pod sandbox started in 3 seconds with guest kernel 6.18.56 and Landlock ABI 7. Containers at UIDs 1001 and 1002 read each other's UID by `SO_PEERCRED`. The peer process IDs were 6 and 2, which suggests a shared process view; crictl's container configuration defaults to the pod's process namespace where the kubelet requests a per-container one, so the shared view is likely an artifact of the test **[inference]**.
-
-**Spikes of 2026-11-12.** Spikes 1 to 3 ran locally on a kind cluster or under Docker with runc 1.2.9 and gVisor runsc `release-20261109.0` with the systrap platform, kernel 6.12 for arm64 on linuxkit, and an XFS loop file system with `reflink=1`. They used revision 3's layout, under its paths.
-
-### Spike 1: compatibility with the incremental checkpoint design
-
-Every mechanism of the incremental checkpoint design worked through the per-slot layout under runc and gVisor: the identity comparison, the rule for files written during capture, `FICLONE` into the spool, export clones, the change tracker on runc, confined reads, restore with revision 2's mode rule, and cleanup **[measured]**. A change set was captured in 8.7 ms with 1.6 MiB of new disk on XFS through `FICLONE`, against about 60 ms and 101.6 MiB through the copy fallback **[measured]**. Every planted symbolic link was refused, where a naive open would have read the other slot's secret and the adapter's environment **[measured]**. The verdict was "compatible with the changes listed". Its findings:
-
-- Under gVisor, the IC-8 pod-share annotation on a volume a slot mounts through subPath gives the adapter and the slot disjoint views, so the adapter would checkpoint none of the slot's files and report no error. D8 is the fix.
-- The kubelet created subPath directories as `root` with mode `0777`, so the slot could rename its session directory. D8 makes this moot.
-- Slot roots should be opened with `RESOLVE_BENEATH | RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS`, everything below them with `RESOLVE_BENEATH | RESOLVE_NO_XDEV`, and final components with `O_NOFOLLOW`.
-- Warm stores must be at the same absolute path wherever git resolves alternates.
-- Restore as the adapter with widened modes left the slot with `EPERM` on `chmod` and on `utimensat` with explicit times. D9 retires that rule.
-- The Sweep must not depend on changing the mode of a volume root, and must clean `/tmp`; the adapter must check that the tree is empty before reusing a slot, and fail the slot otherwise.
-- `mkstemp` files are `0600` and unreadable to the adapter under any non-privileged scheme. D9 addresses this.
-- An `EACCES` from `inotify_add_watch` should count as one unreadable path rather than degrade the whole tracker. D9's supervisor-held tracker supersedes this.
-- The spool cap must be accounted per file by logical size or allocated blocks, never by `statfs`, because the kubelet counts reflink clones at full size against `emptyDir.sizeLimit`.
-- Index identity is per mount view: under gVisor the device differs between containers, which costs a full re-read and causes no error.
-- After `git clone --shared` from a warm store, the index must be refreshed more than 1 s after checkout, or 2,342 duplicate loose objects, about 28 MB, are written into the slot.
-
-### Spike 2: the layout without subPath
-
-The setup was kind v1.35.0 with the worker's `/var/lib/kubelet/pods` on an 8 GiB XFS loop file system with `reflink=1`, a namespace enforcing Pod Security Standards Restricted, no `fsGroup`, and `supplementalGroupsPolicy: Strict`. Slots mounted their whole volume, the adapter mounted both slot volumes and an adapter-only spool volume, and the warm stores were read-only at one path everywhere, filled by an init container. The pods were `nr` (runc), `ng` (gVisor with no annotation), `nh` (gVisor with the IC-8 pod-share annotations on both slot volumes and the spool), and `oh` (the subPath layout with pod-share, as a negative control).
-
-The verdict was that the layout loses no file data on runc or on gVisor, with or without the pod-share annotation: every byte of every file the adapter could read came back, and the adapter saw every slot file operation at once **[measured]**. The losses that remained came from the adapter's file access under revision 2: unreadable `0600` files and `0700` directory contents (including a `0644` file replaced by an atomic save through Python's `tempfile`, which leaves it `0600`), hard-link identity (a link count of 2 became 1), the owner UID, and the widened modes **[measured]**. D9 addresses each.
-
-| Check | runc | gVisor | gVisor pod-share |
-| :-- | :-- | :-- | :-- |
-| `FICLONE` from a slot volume to the spool volume (two bind mounts of one XFS) | Works in 36 to 98 µs for 200 MiB | `EOPNOTSUPP` | `EOPNOTSUPP` |
-| `FICLONERANGE` | Works in 37 µs | `EOPNOTSUPP` | `EOPNOTSUPP` |
-| `copy_file_range` | Works in 34 µs with extents shared | A real copy, 41 ms per 200 MiB | A real copy, 48 ms per 200 MiB |
-| Read and write fallback | 127 ms, 200 MiB of new disk | 105 ms | 111 ms |
-| Sharing after the clone | `FIEMAP` shows 209,715,200 of 209,715,200 bytes shared, with no change in `df` | `FIEMAP` returns `ENOTTY`, and `df` grows 200 MiB per copy | `ENOTTY`, and the volume's `statfs` grows 200 MiB per copy |
-| Copy-on-write after the clone | An 8 MiB overwrite of the original leaves the copy's hash unchanged, with 8 MiB of new disk | The copy is unchanged | The copy is unchanged |
-| Create, append, rename-over, unlink, `mkdir`, `rmdir`, hard link, and symbolic link | All visible to the adapter | All visible | All visible |
-| Round trip of a 22-entry tree | 17 captured, with content and modification time identical | Same | Same |
-| Start-up canary written by the supervisor | Seen by the adapter | Seen | Seen; not seen in the subPath layout `oh` |
-| Change tracker over 200 files with renames and the other operations | 207 dirty paths | 0 events | 207 |
-| A write through a hard link in another directory | Only the written name reported | Not applicable | Only the written name reported |
-| A spool limited to 300Mi with three `FICLONE` copies of 200 MiB | The kubelet counted 600 MiB and evicted the pod ("Usage of EmptyDir volume "spool" exceeds the limit "300Mi""), with almost no new disk | Not run | Not run |
-| Volume root | `root:root` with mode `0777` | `0777` | `1777` (sticky) |
-| A slot renames or removes its own volume root | `EACCES`, and `EBUSY` on the mount point | Same | Same |
-| A slot renames or deletes an adapter-owned top-level entry | Allowed | Allowed | `EPERM` |
-| The adapter deletes a slot-owned top-level entry | Allowed | Allowed | `EPERM` |
-| Release: the slot's removal, then the adapter's | The volume is empty | Empty | The slot got `EPERM` on the adapter's entries, the adapter's removal took them, and the volume is empty |
-| A session directory replaced by a relative symbolic link | `RESOLVE_NO_SYMLINKS` refused it with `ELOOP`; `RESOLVE_BENEATH` alone followed it into the slot's own files | Same | Same |
-| A session directory replaced by an absolute symbolic link to the other slot's volume | `EXDEV` | `EXDEV` | `EXDEV` |
-| Warm stores read-only at the same path | `EROFS` on both sides; `git fsck` on the slot's `--shared` clone returns 0 | Same | Same |
-
-All rows are **[measured]**. Under gVisor without the annotation the device differed between views (52 and 111). With pod-share both containers shared one sentry mount (device 51), and `statfs` was per volume. On runc `statfs` reports the whole node file system **[measured]**.
-
-### Spike 3: the file-descriptor broker
-
-The setup was kind v1.35.0, containerd 2.2.0, runc 1.2.9, runsc `release-20261109.0` with systrap, kernel 6.12.76-linuxkit for arm64, XFS loop volumes with `reflink=1` for runc, and `emptyDir` volumes with no reflink for gVisor. The broker was prototyped in a copy of `supervisor/` and built freestanding with `-Werror`, adding about 470 lines (13% of 3,585) and growing `.text` from 17,864 to 21,264 bytes **[measured]**. The candidates compared:
-
-| | Supervisor broker (C) | Per-slot broker container (Go) | Capabilities | Copy-out by the supervisor | Rewriting modes |
-| :-- | :-- | :-- | :-- | :-- | :-- |
-| `0600`, `0400`, `mkstemp`, and atomic-save files; `0700` and `0500` directories | Read on runc and gVisor | Read | Read, and also `0000` and `0300` | Read | Partly |
-| `0000` files and `0300` directories | Metadata only | Metadata only | Full | Metadata only | Not run |
-| Restore of owner, mode, and nanosecond times | Exact (0 differences in 23 entries) | Exact | Exact only with `CHOWN`, `FOWNER`, and `DAC_OVERRIDE` | Not run | Not run |
-| `FICLONE` from a slot file to the adapter's spool | Works on runc (12 of 12; a 64 MiB clone used no spool bytes) | Works | Works | In C | Not run |
-| Change tracker on gVisor's default mount | Works (211 dirty paths) | Fails (1) | Fails, as today | Not run | Not run |
-| Pod Security Standard | Restricted | Restricted | Restricted rejects it; Baseline only with `hostUsers: false`, and `DAC_READ_SEARCH` needs Privileged | Restricted | Not run |
-| gVisor | Yes | Yes | No (it rejects `hostUsers: false`) | Yes | Not run |
-| Added C | About 470 lines | None | None | Over 600 estimated, plus the index logic | Not run |
-| Per-slot cost | None | About 10 MB resident on runc; about 25 MB in the sandbox and 38 MB on the node on gVisor | None | None | Not run |
-| One code path | Yes | Yes | Yes | No | No |
-
-The supervisor broker, measured on runc, gVisor's default mount, and gVisor's pod-share mount:
-
-- **Reads.** `getdents` on passed descriptors of `0700` and `0500` directories worked, and so did reads of `0600`, `0400`, and `mkstemp` files. The adapter's own mount returned `EACCES` for each.
-- **Identity.** `fstat` on a passed descriptor matched `lstat` on device, inode, size, mode, and change and modification times to the nanosecond, and the recheck of a file written during capture worked. The descriptor's mount ID was the slot's mount (374), where the adapter's own mount has 322, and under gVisor's default mount the device differed as well (`0:96` against `0:55`).
-- **Change tracker.** With the supervisor's `inotify` descriptor and broker-added watches, runc gave 212 dirty paths with the barrier seen in 0.3 to 0.7 ms, and gVisor's default mount gave 211. The Go broker container got 1 there.
-- **Restore.** Owner, mode (`0000`, `0400`, `0500`, and `0300` included), nanosecond modification time, hard links, sparse extents, FIFOs, and symbolic links came back exactly, and the slot could change the mode and times of the results. Today's restore path got 22 of 23 entries wrong.
-- **Extended attributes.** `fgetxattr` and `fsetxattr` on passed descriptors of `0600` files returned `EACCES`.
-
-Performance over 10,000 files of 4 KiB, in µs per file, broker against direct:
-
-| | runc | gVisor default | gVisor pod-share |
-| :-- | :-- | :-- | :-- |
-| Walk, open, and read, batch of 253 | 4.9 against 3.8 | 25.4 against 23.2 | 16.1 against 15.0 |
-| Same, batch of 1 | 39.0 | 80.1 | 73.2 |
-| Stat-only walk through `open` | 2.1 against 0.5 | 15.5 against 5.1 | 10.3 against 2.2 |
-| Restore | 9.2 against 5.2 | 43.7 against 23.4 | 24.6 against 11.4 |
-
-The capability option's measurements are under "Alternatives rejected". Kata was reasoned and not run in this spike, and the AWS runs below measured it.
-
-All results in this subsection are **[measured]** unless tagged otherwise.
-
-### Asynchronous supervisor worker, 2026-11-12
-
-The prototype is the supervisor that merges the broker and the materialization changes, with the asynchronous worker added. Its net change over that merged base is 376 lines of code, not counting blank and comment lines, and it has 4,915 lines in all **[measured]**. An independent reviewer read it three times. The final review found nothing at Medium or above, and its Low items are fixed. The spike ran on kind v1.35.0 with runc and with gVisor `release-20261109.0` on systrap, kernel 6.12 for arm64. Each result below held on both runtimes unless the row names one, and all are **[measured]**.
-
-| Check | Result |
-| :-- | :-- |
-| Broker during a run | A walk of 100,100 entries in 502 requests took about 200 ms while a setup ran, against 216 ms idle (runc). |
-| Throughput | 1,000 setups with no failure: 0.2 ms at the median and 0.4 ms at the 99th percentile on runc, and 0.7 and 2.5 ms on gVisor. |
-| Busy | A second `setup` and a `cleanup` during a run got `worker_busy` in 0.4 ms, and the refused setup's descriptors were closed at once. `sweep` and `launch` during a run got `worker_busy`. |
-| Cancel | `setup_cancelled` 1.1 ms after the adapter closed the cancel pipe. A byte written to the pipe cancelled nothing. |
-| Deadline | `setup_timeout` at 2,012 ms for a 2,000 ms deadline, with no process of the program's group left. |
-| Process groups | A setup command's background job died when the command exited. Processes that called `setsid` survived until End, which removed them. |
-| End during a run | The run's `setup_cancelled` reply preceded `ended`. |
-| Ordering | 200,000 `fs` replies came back in order with one `setupdone` among them, up to 64 in flight, with no wrong descriptor count. |
-| Launch permission | A fresh slot ran a setup and then a launch. After a `cleanup`, `launch` got `launch_not_permitted` until an `end`. The release order `end`, `sweep`, `cleanup`, `end`, `launch` succeeded. |
-| Malformed requests | A relative `argv[0]` with a slash, an `nfds` that differed from the descriptors attached, and an unknown member got `malformed_request`, with their descriptors closed. |
-| Working directory | `..` and `/etc` failed with `reason` `cwd` and errno 18 (`EXDEV`), a link with errno 40 (`ELOOP`), and a missing directory with errno 2. |
-| Modes | `mkdir` with `4755` or `2755` got errno 22 (`EINVAL`), and `1777` succeeded. |
-| `RLIMIT_FSIZE` | A program that wrote past `fsizeBytes` ended by signal 25 with `setup_failed`. |
-| Privileges | The setup program ran with `no_new_privs` and a core limit of 0. An exec-only program stayed non-dumpable, so `pidfd_getfd` from a same-UID process returned `EPERM` and reading its descriptors `EACCES`. A readable program was dumpable. |
-| Send stall | With the adapter's reader stopped, the supervisor closed the connection 10.04 s later. `SO_SNDTIMEO` of 1 s gave up after 1.02 s on runc and did not fire within 5 s on gVisor. |
-| Stuck cleanup | A cleanup that ignored its 1 s deadline ended with `cleanup_failed` at 6.0 s, and a ping during it answered in 0.3 ms. |
-| Tree | A setup program wrote a tree of 100,000 files in 572 to 607 ms. |
-| Descriptors in flight | On runc, a pod on the same node at the slot UID that held 1,048,685 descriptors in flight against an `RLIMIT_NOFILE` of 1,048,576 made the victim's reply carry errno 109 (`ETOOMANYREFS`) with no descriptor for about 20 s, and the victim recovered when the attacker released them. Inside the slot, the same attack left pings answered in 0.1 ms, and a `mkfile` retried after the refusal succeeded with the refused entry gone. On gVisor the attacker held 53,886,976 descriptors in flight with no limit, and the victim was unaffected. |
-| PID 1 signals | On gVisor, SIGSTOP from a slot process held the supervisor: a ping answered after 2.7 s, when the test resumed it. SIGKILL killed it, and the connection closed. On runc a ping answered in 0.1 ms after the same SIGSTOP. |
-
-### AWS run: Kata `block-plain` with `fsGroup` and the parallel stat walk, 2026-11-12
-
-us-west-2, two `m8i.2xlarge` x86_64 nodes with nested virtualization, Amazon Linux 2023 with kernel 6.12.115, a 200 GB gp3 data volume of XFS with `reflink=1` at 3,000 IOPS, containerd 2.4.2, runc 1.5.3, gVisor `release-20261109.0`, Kata 4.3.1 with QEMU, and single-node k3s v1.37.2. Spend USD 1.77, with every resource deleted and the deletion verified by ID. The pods used revision 3's layout with the dedicated volume GID 29000 on Kata `block-plain`. All results are **[measured]** unless tagged.
-
-- **Volume roots.** Under Kata `block-plain` with `fsGroup`, disk roots came up `root:29000 2775`, `lost+found` `2770`, and memory-backed roots `3777`. Every process in every container carried GID 29000. Without `fsGroup` an earlier run saw the disk roots as `root:root 0755`.
-- **Separation.** Each slot mounted only its own volumes, and the walk from each slot found no entry of the other slot outside the shared `/dev/shm`. Through GID 29000 a slot reached another slot's object only after the owner assigned it to the GID with `chown` or `IPC_SET`. Each slot read the `0640` and `0660` files of the pod-wide read-only volumes. The adapter read and wrote group-accessible slot files through its own mount.
-- **Broker.** The adapter reached every file of both slots through the broker with 0 missed changes and 0 identity differences against the slot's view, over 600 entries per slot that included modes `0000`, `0300`, `0400`, and `0500`, a FIFO, links, and a sparse file.
-- **Release.** With two Sweep patches, coverage of the slot's workspace volume and `0700` on owned directories before descent, every ordinary and hostile release left every volume empty, and the next session started clean. A hostile slot removed `lost+found`, replaced it with its own directory holding a file, wrote a `0500` directory into the real `lost+found`, and left `0000` directories; the Sweep removed every slot-owned entry. Without the patches, the release failed with `sweep_failed` on a `0500` directory under runc. An LLVM session of 208,088 entries failed with `sweep_bound` and left 8,096 entries after 23.9 s.
-- **Restore.** Broker restores at the gp3 baseline with one VM on the node took 76.4 s for LLVM, against 79.4 s through the adapter's own mount, and 77.5 s for Chromium, with 0 bad chunks. The only fidelity loss was the setgid bit on 4 directories. The host kept at least 19 GiB available.
-- **Parallel stat walk.** At 16 threads it cost 1.02 to 1.24 times the direct walk on Chromium and LLVM, with 0 missed changes and 0 identity differences on every runtime. Chromium paused 1.29 s on runc, 1.51 s on Kata `block-plain`, 2.55 s on gVisor pod-share, 6.33 s on gVisor's default mount, and 9.44 s on Kata `virtio-fs`. Its fallback fired only on `EACCES`, for `0700` and `0750` directories, and on Kata `block-plain` only for `0700`, because the volume GID made `0750` searchable. Fallback batches from 16 threads produced worst requests of 146 to 370 ms on Kata `virtio-fs`.
-- **Tracker queues.** The `inotify` queue overflowed at 16,384 events under runc and both Kata handlers, and never overflowed under gVisor, which drained 600,000 events after a 20 s stall.
-
-
-### AWS spike: slot attribution and project quotas, 2026-11-14
-
-us-west-2, one `m8i.2xlarge` x86_64 node with nested virtualization, Amazon Linux 2023 with kernel 6.12.115, a 60 GB gp3 data volume of XFS with `reflink=1` mounted `prjquota` under `/var/lib/kubelet`, containerd 2.4.2, runc 1.5.3, gVisor `release-20261109.0` with a second handler under host networking, Kata 4.3.1 with QEMU and guest kernel 6.18.56 under both volume modes, and single-node k3s v1.37.2. Spend USD 0.27, with every resource deleted and the deletion verified by ID. The report, the harness, the node scripts, and the raw results are in [`evidence/agent-pod-layout-design/attribution-and-quota-spike/`](../0118-agent-pod-layout/evidence/attribution-and-quota-spike/RESULTS.md). All results are **[measured]** unless tagged.
-
-- **Attribution readers.** A listener in a `netagent` container resolved each loopback connection's owner through `sock_diag` and through `/proc/net/tcp` and `/proc/net/tcp6`. runc, with and without user namespaces, answered both. gVisor refused `sock_diag` with `EPROTONOSUPPORT` and answered both files, except under host networking, where `/proc/net/tcp6` does not exist. Kata refused every `sock_diag` request with `ENOENT`, because its guest kernel is built without `CONFIG_INET_DIAG`, and answered both files.
-- **UIDs.** Every reader that answered gave each connection its own slot's UID, adapter 10000 and slots 20000 to 20002, with no mismatch over 1,002 concurrent IPv4 connections and 1,000 IPv6 connections. Under user namespaces both readers reported the UIDs inside the pod.
-- **Latency.** With 1,002 connections open, one targeted `sock_diag` lookup took 7 µs at the median, and one read of `/proc/net/tcp` 2.1 to 6.5 ms. Under a burst of 1,002 accepts with one read each, `/proc/net/tcp` put the median accept 84 to 204 ms late on runc, 27 to 78 ms on gVisor, and 2 to 3 ms on Kata, with 99th percentiles up to about 0.6 s.
-- **Spoofing.** A socket kept its creator's UID when one slot passed it to another over an abstract Unix socket, before or after `connect`, and a forked child kept the slot's UID. `unshare -U` failed with `EPERM` under runc's RuntimeDefault seccomp profile, and succeeded under gVisor and Kata, where both readers still reported the slot's UID.
-- **Closed connections.** A client that closed with FIN before the lookup left a socket in `FIN_WAIT2` that both readers on runc and `/proc/net/tcp` on Kata reported with UID 0. After an RST the socket was not found.
-- **Project quotas.** A node agent set a project ID with the inherit flag and a hard limit on each `emptyDir` directory, and `statfs` from the unprivileged slot then reported the limit and the usage on runc with and without user namespaces, gVisor's default mount, Kata virtio-fs, and ext4, bytes under a mode-`000` directory included. A write at the limit failed at `write()` with `ENOSPC` on XFS and `EDQUOT` on ext4, the files kept their bytes, and the pod was not evicted. A container with only `CAP_SYS_ADMIN` under RuntimeDefault read and set project limits.
-- **Escape.** Without user namespaces, a runc slot changed its own directory's project ID and cleared its inherit flag with `FS_IOC_FSSETXATTR`, and its later bytes did not count. Under user namespaces the calls failed with `EINVAL`, and under gVisor and Kata virtio-fs with `ENOTTY`.
-- **The kubelet's projects.** With `LocalStorageCapacityIsolationFSQuotaMonitoring` on, the kubelet assigned project IDs from 1048577 upward to user-namespace pods only, with an effectively unlimited limit. A Lenny limit on the kubelet's project held for the 30 s watched, and moving a volume to another project made the kubelet report 0 bytes for it.
-- **gVisor pod-share and Kata block-plain.** Under the pod-share annotation the volume is one `.gvisor.filestore.*` file, and the sentry's `statfs` reported an 8 EiB size and the usage, bytes under a mode-`000` directory included. Under Kata block-plain each volume's `disk.img` is sized to the node filesystem, the guest's `statfs` tracked the volume's usage exactly and reported the node filesystem's size, the kubelet's count of the image ran about 53 MiB above the guest's figure, and a quota on `disk.img` stopped the VM at the limit.
-
-## Validation owed
-
-- A pod with PL's full layout, the broker, the asynchronous worker, and a real IC adapter, end to end under runc, gVisor, and Kata.
-- User namespaces through a kubelet on EKS, GKE, and AKS with every volume type the pod mounts; the cross-pod in-flight attack repeated under user namespaces; and the broker, idmapped `emptyDir` volumes, and the per-slot UIDs under them. The `uid_map` check on a cluster that drops `hostUsers`.
-- Kata with user namespaces, whose support is unverified.
-- Kata under Cloud Hypervisor and under Dragonball, the default VMM of Kata 4.0's runtime-rs, with the checks this design's Kata runs made under QEMU: `/proc/net/tcp` slot attribution, project quotas on virtio-fs, `statfs` on `block-plain`, `SO_PEERCRED` across the slot boundary, and the release's emptiness check (D35).
-- AWS Nitro Sandboxes on EKS (Kubernetes 1.36 or later) and Edera as backends of the `microvm` profile, with the same checks, startup time, and per-pod memory overhead, before the documentation names either as supported (D35).
-- A release at the scaled Sweep bound with LLVM- and Chromium-sized sessions on each runtime, within the Sweep's time backstop.
-- The fallback cap of 2 outstanding requests on Kata `virtio-fs` with a `0700` flat directory of 1,000,000 entries, against the worst request of other broker users.
-- The disk watch as PL's O8 settles it, which PL's "Validation owed" lists, and the `tmp` root's refusal of every operation other than `open` of a directory and `statat`.
-- The bytes the disk watch's walk misses in a directory whose mode denies its owner read, against the kubelet's count, on runc without user namespaces and on nodes without project quotas. `statfs` on gVisor's pod-share mount, on Kata `block-plain`, and on a project-bound volume counts them **[measured]**. What project quotas still owe, on managed node images and with reflink clones, is in PL's "Validation owed" (D32).
-- The second Sweep's cost on a released slot, and a cleanup command's file in `/tmp` and `/dev/shm` gone after it.
-- `lenny-store-fill` under user namespaces and on Kata `block-plain`: its UID inside the pod's range, its access to the store volume's root, and the adapter's deletion of a withheld store it filled. The hostile-repository stress test suite of D28, run as tests on runc, gVisor, and Kata, which PL's "Validation owed" lists.
-- `fsGroup` together with `supplementalGroupsPolicy: Strict` and `hostUsers: false`; two slots under `fsGroup` checkpointing or restoring at once; and a Kata VM's memory with two slots of LLVM or Chromium size.
-- The asynchronous worker on Kata, on x86_64, and the earliest gVisor release that serves the protocol.
-- Managed node file systems: the reflink, `FICLONE` across mounts, and the broker's behaviour on the file systems that back `/var/lib/kubelet` on EKS, GKE, and AKS.
-- Real harnesses: their resident memory per slot and the file patterns they create.
-- Bottlerocket with SELinux enforcing, for slot containers and the broker.
-- Landlock's abstract-socket scoping on managed images, beyond the ABI number.
-- O4 (a) and O5 (a) together, and the adapter's `cpu.max` detection.
-- The kubelet's `singleProcessOOMKill` and its effect on a slot container's supervisor.
-- `netagent`'s slot attribution in the production component (O9, D29): the readers that the AWS spike of 2026-11-14 measured with a test listener ("Validation record"), now with the state and UID rule, the batched read of `/proc/net/tcp`, and the start-up check under a burst on gVisor and Kata; the managed runtimes of EKS, GKE Sandbox, and AKS; and the per-slot scopes of egress decision 60 and the platform marker of D30, which the egress design carries.
 
 ## Specification changes
 
@@ -1133,58 +846,6 @@ The owner asked on 2026-11-13 that every design's documentation list every setti
 - [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md): the retirement table names `runtime_refused` in place of `runtime_not_live` (D37). Applied in its revision 37.
 - [`0136-placement`](../0136-placement/change.md): "Removals" removes the clause of the scrub profile paragraph that refuses `standard` on a pool with `allowCrossTenantReuse`, and D39 removes `in-place` and `acknowledgeMicrovmResidualState` from the same paragraph. The two edits land together.
 - [`0135-message-delivery`](../0135-message-delivery/change.md): MD-24's rule for frames without `sessionId` reduces to one session per slot, across the runtime connection and the tool connections. Under AR's O5 (b) no frame other than `session_start` carries `sessionId`, so the leniency rules lose their example of a frame that names a session the connection does not serve (D27).
-
-## Steps
-
-### 0145.S1 Slot containers
-- status: Planned
-- aliases: [SI-A, SI-1, SI-2, SI-4, SI-7]
-- lanes: [specification, code, documentation]
-- depends-on: [0118.S1]
-
-Slot containers, per-slot names for runtime and tool connections, two-way checks, the listener drain, dead slots and the recorded slot count, per-slot credentials and manifests, the canary, and the webhook rules. PL-B ([0118.S4](../0118-agent-pod-layout/change.md#steps)) lands in the same release, because PL-B renders the per-slot volumes.
-
-RP's tool connections follow this step. They land in RP-B ([0139.S2](../0139-runtime-protocol/change.md#steps)).
-
-### 0145.S2 Supervisor file-descriptor broker
-- status: Planned
-- aliases: [SI-B, SI-5, SI-6]
-- lanes: [specification, code, documentation]
-- depends-on: [0145.S1]
-
-The supervisor broker with `statat`, the parallel stat walk's broker rules, and the adapter's checkpoint, restore, export, and tracker through it, with the `metadata_only` record. IC's matching changes land in the same release.
-
-### 0145.S3 Asynchronous worker and the CH-SUPERVISE protocol
-- status: Planned
-- aliases: [SI-C, SI-3]
-- lanes: [specification, code, documentation]
-- depends-on: [0145.S1]
-
-The asynchronous worker and the whole `CH-SUPERVISE` protocol, the release with the Sweep fixes and the emptiness check, the launch at bind, and the retirement of `keep`. WM's helper lands in the same release.
-
-### 0145.S4 Resource mapping and detection
-- status: Planned
-- aliases: [SI-D, SI-9]
-- lanes: [specification, code, documentation]
-- depends-on: [0145.S1, 0121.S1]
-
-The resource mapping and detection of "SI-9". It needs the billing design's container mapping, which BR-1 lands.
-
-### 0145.S5 User namespaces on runc pools
-- status: Planned
-- aliases: [SI-E, SI-11]
-- lanes: [specification, code, documentation]
-- depends-on: [0145.S1, 0136.S3]
-
-User namespaces on runc pools by default, the `uid_map` check, and the Kata `block-plain` volume GID. It needs PM's rendering of `hostUsers`, which PM-C lands.
-
-### 0145.S6 Recycling after the release
-- status: Planned
-- aliases: [SI-F]
-- lanes: [specification, code, documentation]
-- depends-on: [0145.S1, 0145.S3]
-
-Recycling after the release: the one-slot disposition, the **Runtime refused** retirement in place of "Runtime not live", dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration, and the scrub profiles `standard` and `vm-restart` (D36 to D39). PM-A's removal of `allowCrossTenantReuse` lands in the same release.
 
 ## Sources
 

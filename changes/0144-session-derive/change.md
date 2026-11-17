@@ -1,8 +1,6 @@
 # Session derive
 
-Status: `Draft`, revision 22, 2026-11-15. Revision 22, the final consistency pass of the connector removal, restates the §15.1 item of "Specification sections affected", which still copied an omitted `deferConnectors` from the source and attributed `LINKS_REQUIRED` to CA-4. Revision 21 applies the owner's decision of 2026-11-15, "Yes, let's drop connectors.", which [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2 designs: the derive request loses `deferConnectors`, and a derive meets the account link check alone, with `403 LINKS_REQUIRED` and `details.userLinks`. Revision 20 applies the instructions of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md): "Reading client messages" and F-15.1.77 name the REST send path alone, and the playground caps follow that design's "RO-7". Nothing here is built or staged, and no test or spike was run for it. Statements about the tree were checked by reading the code and the specification. It reads against [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 77, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0127-egress-and-git`](../0127-egress-and-git/change.md) revision 92, [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) revision 24, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md), [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) revision 15, [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) revision 11, [`0136-placement`](../0136-placement/change.md) revision 11, [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) revision 9, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) revision 6. Revision 18 applies the owner's decisions of 2026-11-13 in the cross-design review that "Review history" records, among them decisions O2 and O8 of the agent-runtimes-only design. The owner has settled the decisions under "Decisions". This document replaces `session-replay-design.md`, whose last revision is at commit `3517d6fe7` with its review history. Proposals carry the label SD-n. "Review history" at the end records how the design reached this form.
-
-Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+Status: `Draft`, revision 22, 2026-11-15. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -13,13 +11,7 @@ Programs: [v1](../programs/v1.md). The owner's final cross-review of the moved d
 - **`replayMode: workspace_derive` duplicates derive.** §15.1 states that this replay mode equals a derive onto another runtime, with no prompts delivered. Derive already takes an optional `runtimeRef` in the code, which the specification does not state (F-15.1.76).
 - **Neither route has a defined way to start from the beginning**, which is what a regression test needs.
 
-Identifiers of the form F-n.n.n, such as F-15.1.77, are findings filed in `BUILD-GAPS.md` at the repository root.
-
-## Owner's choice
-
-On 2026-11-04 the owner wrote: "I would change derive + replay so that everything is a derive with two options: derive at start of session or derive at now/the latest checkpoint. A new API can return the user messages from the source session and the client can choose to replay them (how it's up to the client)."
-
-The owner also settled these: "ideally we pick up the exact state in which the source session was"; a start from the beginning is "exactly where the source started with"; setup commands run again on a derive from the latest state; and writes "should be on". The owner first moved `evalRef` to derive and later retired it, under decision D11 of [`0141-runtime-routing`](../0141-runtime-routing/change.md#decisions). On A/B testing, the owner wrote: "I wonder if the best practical solution is to allow the client who is replaying to specify commands that will run on top of (and after) what is in the source plan. That way the client can create a new branch and execute the tests there".
+Identifiers of the form F-n.n.n, such as F-15.1.77, are findings filed in `BUILD-GAPS.md` at the repository root. The statements in this design about the tree were checked by reading the code and the specification.
 
 ## Scope
 
@@ -49,6 +41,7 @@ Comparing two runs stays out of scope, and a derive records no evaluation identi
 | Lineage | `derivedFromSessionId` on the derived session's row, which names its source session. |
 | `derivedFrom` | A field this design adds to the derived session's row, holding the mode, `latest` or `start`, that created it. It is unrelated to `derivedFromSessionId`, which names the source. "What it refuses" reads it for `start_was_snapshot`. |
 | `snapshotIsOwn` | A field this design adds to the session row, which the checkpointer sets once the session's own checkpoint has written its snapshot. Until then a derived session's snapshot is the one its derive copied, so a resume repeats the first bind, and a later derive of it passes on what its parent had. |
+| Labels | Parts of the design carry the label SD-n. |
 
 ### Terms from other designs and the platform
 
@@ -113,15 +106,15 @@ Proposals in other designs carry a label whose prefix names the design. This doc
 | Labels | Design | What they name |
 | :-- | :-- | :-- |
 | RO-7 | [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | [RO-7](../0138-rest-only-client-api/change.md#ro-7-lennys-own-clients) Lenny's own clients on REST: the client SDKs, `lenny session`, and the web playground, whose bearer is a client API bearer. |
-| DR-4, DR-6, DR-9, DR-11, and DR-12 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#steps) | Proposals of the derived-runtimes design: [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) tenant runtime records, the tenant view, and the post-chain check that the final runtime row is `registered`; [DR-6](../0147-tenant-derived-runtimes/change.md#dr-6-base-changes) base changes, including retirement; [DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) default git clones; [DR-11](../0147-tenant-derived-runtimes/change.md#warm-stores) shared assets and warm stores; and [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory) repository folders, which adds a plan's `workingDirectory` and a setup command's `cwd`. |
+| DR-4, DR-6, DR-9, DR-11, and DR-12 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/steps.md#steps) | Proposals of the derived-runtimes design: [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) tenant runtime records, the tenant view, and the post-chain check that the final runtime row is `registered`; [DR-6](../0147-tenant-derived-runtimes/change.md#dr-6-base-changes) base changes, including retirement; [DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) default git clones; [DR-11](../0147-tenant-derived-runtimes/change.md#warm-stores) shared assets and warm stores; and [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory) repository folders, which adds a plan's `workingDirectory` and a setup command's `cwd`. |
 | SO-2 | [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) | The tenant security record, which holds a tenant's guardrails and delays any change that weakens one. |
-| EG-3 | [`0127-egress-and-git`, "Proposal split"](../0127-egress-and-git/change.md#steps) | The egress design's pod git path. |
-| RT-2, RT-3, RT-4, and D11 | [`0141-runtime-routing`](../0141-runtime-routing/change.md) | Proposals and a decision of the runtime routing design: [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) the `PreRoute` payload, the single chain, and the post-chain point; [RT-3](../0141-runtime-routing/change.md#rt-3-routing-labels) routing labels; [RT-4](../0141-runtime-routing/change.md#rt-4-runtime-routes) runtime routes; and [D11](../0141-runtime-routing/change.md#decisions), the decision that retires `evalRef` and runs a derive through the `PreRoute` chain with `kind: derive`, with its own checks after the chain. |
+| EG-3 | [`0127-egress-and-git`, "Steps"](../0127-egress-and-git/steps.md#steps) | The egress design's pod git path. |
+| RT-2, RT-3, RT-4, and D11 | [`0141-runtime-routing`](../0141-runtime-routing/change.md) | Proposals and a decision of the runtime routing design: [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) the `PreRoute` payload, the single chain, and the post-chain point; [RT-3](../0141-runtime-routing/change.md#rt-3-routing-labels) routing labels; [RT-4](../0141-runtime-routing/change.md#rt-4-runtime-routes) runtime routes; and [D11](../0141-runtime-routing/decisions.md#decisions), the decision that retires `evalRef` and runs a derive through the `PreRoute` chain with `kind: derive`, with its own checks after the chain. |
 | RV-2, RV-6, and RV-7 | [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) | Proposals of the runtime revisions design: [RV-2](../0140-runtime-revisions/change.md#rv-2-selection) revision selection after the `PreRoute` chain, [RV-6](../0140-runtime-revisions/change.md#rv-6-sessions-over-time) the revision rules for resume, delegation, and derive, and [RV-7](../0140-runtime-revisions/change.md#rv-7-session-options) session options and their validation against the chosen revision's schema. |
 | UC-2 | [`0151-user-credential-delivery`, "UC-2: The `oauth2Link` source and account linking"](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) | Account links and the account link check at session creation, including derive, step 1 of its "Flow". |
 | CR-1 and D7 | [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) | The removal of connectors, with CA-4's connector link check, `deferConnectors`, and `details.connectors`, and the rule that a write naming a removed field is refused with `400 VALIDATION_ERROR` naming the field. |
 | IC-5 and IC-8 | [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) | Proposals of the incremental checkpoint design: [IC-5](../0131-incremental-checkpoint/change.md#ic-5-restore-derive-download-and-seal) restore and derive by pack reference, and [IC-8](../0131-incremental-checkpoint/change.md#ic-8-checkpoint-policy-interval-and-change-tracker) the checkpoint policy, including `checkpointPolicy: none`. |
-| SI-1, SI-3, SI-5, and SI D6 | [`0145-session-isolation`](../0145-session-isolation/change.md) | Proposals and a decision of the session isolation design: [SI-1](../0145-session-isolation/change.md#si-1-pod-layout) slot containers and slot UIDs, [SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) slot release and setup commands, [SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker) the file-descriptor broker, and [D6](../0145-session-isolation/change.md#decisions), which runs setup commands in the slot container as the slot UID. |
+| SI-1, SI-3, SI-5, and SI D6 | [`0145-session-isolation`](../0145-session-isolation/change.md) | Proposals and a decision of the session isolation design: [SI-1](../0145-session-isolation/change.md#si-1-pod-layout) slot containers and slot UIDs, [SI-3](../0145-session-isolation/change.md#si-3-runtime-processes-slot-release-and-setup-commands) slot release and setup commands, [SI-5](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker) the file-descriptor broker, and [D6](../0145-session-isolation/decisions.md#decisions), which runs setup commands in the slot container as the slot UID. |
 | PL-1, PL-2, and PL-3 | [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md) | The pod blueprint, the removal of the embedded deployment model, and the runtime-visible layout with `/workspace` and `/session`. |
 | WM-13 | [`0153-workspace-materialization`, "WM-13 Resume and derive"](../0153-workspace-materialization/change.md#wm-13-resume-and-derive) | Which helper run each resume and derive path takes. |
 | PM-3, PM-4, and PM-7 | [`0136-placement`](../0136-placement/change.md) | Placement offerings and their grants, placement requirements, and region placement with its residency check. |
@@ -174,7 +167,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 - SD-P1. The new session takes the source's owner, as [§10.2](../../spec/10_gateway-internals.md#102-authentication) **Session ownership.** states, and its credentials, meaning the credential bindings it receives and its effective LLM upstream list, which the post-chain point fixes for every session under [`0133-llm-upstreams-and-cost-budgets`, "LU-2 Assignment and resolution"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-2-assignment-and-resolution), are evaluated afresh rather than inherited. It takes the source's plan and `env`, its `runtimeOptions` unless the request replaces them, and what [`0149-tenant-scoping-identity`, "TS-3: Session environment context and cross-environment sharing"](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) states a derive takes: its environment, `egressLockHosts`, `crossed_from_environment`, and its delegation limit.
 - SD-P2. Every check runs against the plan on the new session's user and environment, and on the final runtime, its chosen revision, and the final pool that the post-chain point sees.
 - SD-P3. A plan carrying content from a tenant-derived runtime is refused after any later content stop on that runtime's grant entry or its tenant's security record, through any chain of derives, whether or not the content is still on the runtime.
-- SD-P4 is withdrawn. It refused a derive onto a target with no runtime supervisor, because on such a pod a file the source's agent kept, such as a `requirements.txt`, would reach an operator's setup command, such as `pip install -r requirements.txt`, at the adapter's UID with the pod's service account token. Every runtime's pods now run the supervisor in every slot container, and setup commands and the materialization helper run as the slot UID through it ([SI D6](../0145-session-isolation/change.md#decisions), [WM-1](../0153-workspace-materialization/change.md#wm-1-what-moves-and-what-stays)), so a kept file reaches only the identity the session's own agent already holds. The case SD-P4 still covered, a runtime row left stale when [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records)'s mirror refuses a `Runtime` resource, is the post-chain check of DR-4 that the final runtime row is `registered`, which applies to every create, derive, and delegated child (decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), settled by the owner on 2026-11-13, and decision 8 below).
+- SD-P4 is withdrawn. It refused a derive onto a target with no runtime supervisor, because on such a pod a file the source's agent kept, such as a `requirements.txt`, would reach an operator's setup command, such as `pip install -r requirements.txt`, at the adapter's UID with the pod's service account token. Every runtime's pods now run the supervisor in every slot container, and setup commands and the materialization helper run as the slot UID through it ([SI D6](../0145-session-isolation/decisions.md#decisions), [WM-1](../0153-workspace-materialization/change.md#wm-1-what-moves-and-what-stays)), so a kept file reaches only the identity the session's own agent already holds. The case SD-P4 still covered, a runtime row left stale when [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records)'s mirror refuses a `Runtime` resource, is the post-chain check of DR-4 that the final runtime row is `registered`, which applies to every create, derive, and delegated child (decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions), settled by the owner on 2026-11-13, and decision 8 below).
 
 ## Current state
 
@@ -192,9 +185,11 @@ This section records what the tree does today. Function and file names are the c
 - `resumeOnPod` takes the checkpoint branch whenever `WorkspaceSnapshot.Ref` is set, so a derived session resumed before its first checkpoint restores the copy with no first bind (F-7.3.36). It takes the rebuild path, which reads the plan, when no snapshot is set.
 - F-14.1.37 means no `gitClone` works in a deployed image today, because the deployed gateway image has no `git` binary.
 
-## SD-1: One route
+## Detailed design
 
-### Request
+### SD-1: One route
+
+#### Request
 
 ```json
 {
@@ -210,13 +205,13 @@ This section records what the tree does today. Function and file names are the c
 }
 ```
 
-`allowStale: true` admits a live source, and the derive then uses the source's most recent successful checkpoint, which can lag the live workspace by up to the checkpoint interval. `ticketId` is an optional free-text justification that the gateway copies into the `derive.isolation_downgrade` audit event. `allowIsolationDowngrade` needs the `platform-admin` role, and no component checks the ticket. A request that names `deferConnectors`, which left with connectors, is refused with `400 VALIDATION_ERROR` naming the field, under D7 of [`0124-connector-removal`](../0124-connector-removal/change.md#owner-decisions).
+`allowStale: true` admits a live source, and the derive then uses the source's most recent successful checkpoint, which can lag the live workspace by up to the checkpoint interval. `ticketId` is an optional free-text justification that the gateway copies into the `derive.isolation_downgrade` audit event. `allowIsolationDowngrade` needs the `platform-admin` role, and no component checks the ticket. A request that names `deferConnectors`, which left with connectors, is refused with `400 VALIDATION_ERROR` naming the field, under D7 of [`0124-connector-removal`](../0124-connector-removal/decisions.md#owner-decisions).
 
 `runtimeOptions` sets the derived session's options. When the request omits the field, the derived session copies the source session's stored options. When the request carries an object, it replaces the source's options. When the request carries `null`, the derived session has no options, and the gateway validates that absence as it validates any absence, as an empty object, so a schema's `required` refuses it. The size cap and the JSON parse run at request validation, and the schema validation runs at the post-chain point against the chosen revision, as **Options.** under "Checks" states. A client whose suspended session cannot resume because the new revision's schema refuses its stored options recovers through a derive `from: latest` that replaces them ([`0140-runtime-revisions`, "RV-6 Sessions over time"](../0140-runtime-revisions/change.md#rv-6-sessions-over-time)).
 
-`from` defaults to `latest`. `runtimeRef` defaults to the source's runtime. The isolation monotonicity rule stays as §15.1 states it, applied to the final pool after the `PreRoute` chain. A derive compares no execution modes, because no runtime carries one, and `INCOMPATIBLE_RUNTIME` leaves the error catalog (decision O2 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), settled by the owner on 2026-11-13). "Routing and revision" under "Checks" states how the chain and revision selection treat a derive. A `from: start` of a source in any state needs `session.Validate`'s rule for the derive endpoint changed, because it refuses `created`, `finalizing`, and `ready` today, ahead of knowing the mode. The replay route, its `replayMode` field, and the `prompt_history` mode are removed. The platform has no deployments, so nothing needs a compatibility path.
+`from` defaults to `latest`. `runtimeRef` defaults to the source's runtime. The isolation monotonicity rule stays as §15.1 states it, applied to the final pool after the `PreRoute` chain. A derive compares no execution modes, because no runtime carries one, and `INCOMPATIBLE_RUNTIME` leaves the error catalog (decision O2 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions), settled by the owner on 2026-11-13). "Routing and revision" under "Checks" states how the chain and revision selection treat a derive. A `from: start` of a source in any state needs `session.Validate`'s rule for the derive endpoint changed, because it refuses `created`, `finalizing`, and `ready` today, ahead of knowing the mode. The replay route, its `replayMode` field, and the `prompt_history` mode are removed. The platform has no deployments, so nothing needs a compatibility path.
 
-### What each mode starts from
+#### What each mode starts from
 
 At create, the gateway copies the source's stored plan to the new row, with `env`, and with `runtimeOptions` as "Request" states, so the plan binds at create and composition never runs. Every bind stores a plan, the canonical empty plan where nothing was composed, so an absent plan means the session never bound, in any state. That is new on the paths that store nothing today: `composeRuntimeDefaults` on a create-and-start (`POST /v1/sessions/start`, which creates and starts a session in one call), and `composeChildWorkspaceDefaults` for a delegated child whose runtime has no defaults, which leaves the child's plan unchanged. Composition is skipped outright when the row's `derivedFrom` field is set.
 
@@ -235,15 +230,15 @@ A derived session inherits no inbox entry of its source, so a message held for t
 
 A chain needs little handling. Each derive copies its source's plan, apart from additional commands, so a session with no checkpoint of its own, whose `snapshotIsOwn` is false, passes on what its parent had. A `from: start` of a session that itself came from `from: latest` is refused, because that session's start was a snapshot its own checkpoints have since replaced.
 
-### Additional setup commands
+#### Additional setup commands
 
 `additionalSetupCommands` appends client commands to the new row's plan, after the source's. They have the origin `derive`, they count toward `maxCommands`, and they pass the target's `setupCommandPolicy`, and the `shell` setting of the target's `setupCommandPolicy` applies to them as to every command of the run. The plan copy of a later derive omits them, so a chain does not accumulate commands, a `from: latest` of the run does not repeat `checkout -b` on a tree that already has the branch, and a `from: start` of the run starts where the first session started. A resume or a rebuild of the same session reads them as any plan command. The usual use is to give a run its own branch before the client sends anything. They reach nothing a client's plan could not state.
 
 A command can set `cwd`, under the checks of [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory). A command that sets none runs in the plan's working directory, as a client's command does, and the gateway writes that folder on the command as its `cwd` when it appends the command to the plan.
 
-A command sets where the session starts, and it bounds nothing. An agent told to push `fix-login` can still push that branch from `ab/run-17`, within what the session's writable entries allow. A hard limit is `allowedRefPatterns` on the entry, and decision 3 under "Decisions" records that option. Every entry a restore or the helper creates is owned by the slot UID, the UID the runtime and the setup commands run as ([WM-13](../0153-workspace-materialization/change.md#wm-13-resume-and-derive)), so git in the session does not refuse a repository as owned by another user.
+A command sets where the session starts, and it bounds nothing. An agent told to push `fix-login` can still push that branch from `ab/run-17`, within what the session's writable entries allow. A hard limit is `allowedRefPatterns` on the entry, and decision 3 under "Decisions" in `decisions.md` records that option. Every entry a restore or the helper creates is owned by the slot UID, the UID the runtime and the setup commands run as ([WM-13](../0153-workspace-materialization/change.md#wm-13-resume-and-derive)), so git in the session does not refuse a repository as owned by another user.
 
-### Writes
+#### Writes
 
 Writes stay on. The plan's `writableRepositories` and write scopes, which are `gitClone` sources whose `auth.leaseScope` is `vcs.<provider>.write`, copy to the new row, and each is read again at bind against the VCS pool's repository allowlist, the VCS pool's `allowWrite`, and, on a VCS pool with `userAuthorization: required`, the check of the user's own access. An entry that no longer passes reads as read-only rather than refusing the derive, because the derive request named no repository. An entry that a default clone added also follows the read-only rule under [`0147-tenant-derived-runtimes`, "Write scope"](../0147-tenant-derived-runtimes/change.md#write-scope), which covers a target that reuses pods and a VCS pool that has since set `prAuthoring: user`.
 
@@ -251,7 +246,7 @@ The derive response lists each entry that reads as read-only, in one of two fiel
 
 A client that re-sends a session's messages can therefore repeat its pushes and pull requests on the repository itself. That is the owner's stated choice, and `additionalSetupCommands` is how a run avoids a shared branch. Tool calls to other systems repeat in the same way.
 
-### Reading client messages
+#### Reading client messages
 
 `GET /v1/sessions/{id}/messages?from=client` returns the session's client messages in order, under the route's existing access rule. A filter on the existing route avoids a new one.
 
@@ -265,7 +260,7 @@ The read returns text, because `projectMessage` sends text alone. The transcript
 
 This closes F-15.1.77 by removing §15.1's statement. A client that re-sends messages is an ordinary client, so delivery, duplicates, and interrupts behave as they do for any session.
 
-### What it refuses
+#### What it refuses
 
 The gateway answers `422 DERIVE_SOURCE_UNAVAILABLE` with `details.reason`, before any claim, apart from `no_snapshot`, which keeps today's `400 VALIDATION_ERROR` under §7.1. The reasons that read the target runtime or pool are decided at the post-chain point, and when the `PreRoute` chain changed the runtime or pool, the refusal names the last modifier in `details.interceptor_ref`:
 
@@ -283,7 +278,7 @@ No reason reads the target's execution mode or its runtime supervisor. A final r
 
 A commit the host no longer serves is not known before the fetch, because a pinned commit skips `ls-refs`, git's request that lists a repository's refs. It fails at materialization with `SESSION_CREATION_FAILED`, after the claim, under `from: start`, and under `from: latest` when `restore-complete` needs to fetch it.
 
-### Checks
+#### Checks
 
 The plan passed its checks when the source bound it, and those checks can have changed. At the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), after the `PreRoute` chain and revision selection and before the claim, the gateway runs the checks a client's plan gets, on the final runtime and pool and the chosen revision. No single function does that today: `resolveSubmittedPlan` takes raw JSON, `Parse` refuses `resolvedCommitSha`, `validatePlanUploadRefs` needs a session, and `enforceSetupCommandPolicy` and the default-clone run of [DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) are separate steps. SD-1 extracts one function over a parsed plan, which every bind path calls. It covers the auth bindings, under which each `gitClone` source with an `auth` block maps its host to exactly one of the tenant's VCS pools whose provider matches its `leaseScope`, the named credential bindings, `egress.allowedHosts`, and `gitClone` sources under the environment, the rule for pods with no per-session policy, the check of the user's link on a VCS pool with `userAuthorization: required`, and `verbatimClientFiles`.
 
@@ -296,7 +291,7 @@ The plan passed its checks when the source bound it, and those checks can have c
 
 This closes F-15.1.78.
 
-**Routing and revision.** A derive runs the single `PreRoute` chain of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) with `kind: derive`, as decision [D11](../0141-runtime-routing/change.md#decisions) of the routing design settles, and the route interceptor treats it as any creation. The payload starts as follows:
+**Routing and revision.** A derive runs the single `PreRoute` chain of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) with `kind: derive`, as decision [D11](../0141-runtime-routing/decisions.md#decisions) of the routing design settles, and the route interceptor treats it as any creation. The payload starts as follows:
 
 - `requested_runtime` is `runtimeRef`, or the source session's resolved runtime when the request omits it. A derive that omits `runtimeRef` therefore asks for the runtime its source ran, and a route keyed on the runtime the source first asked for does not move it.
 - `requested_pool` is the pool that **Pool and profile.** above passes.
@@ -319,7 +314,7 @@ An interceptor's `MODIFY` may change the runtime, the pool, and the routing labe
 
 **Warm stores on the target.** A target's pods can hold warm stores for repositories the plan does not name, from a tenant-derived runtime's `gitRepository` asset whose repository the stored plan omits, under [`0147-tenant-derived-runtimes`, "Warm stores"](../0147-tenant-derived-runtimes/change.md#warm-stores), and the agent can read them. Ahead of `reserveDerivedSession` and any copy, the gateway runs the read checks on each tenant entry of the target pool's warm list for the chosen revision that the plan does not name, because the warm list is kept per pool and revision ([RV-3](../0140-runtime-revisions/change.md#rv-3-pods)), as that design's ["Binding"](../0147-tenant-derived-runtimes/change.md#binding) states for a derive. `coveredStores` includes each entry whose checks pass. The new session's plan does not name such an entry's repository, so a failed check withholds its store through `withheldStores` and the derive proceeds, and `GET /v1/sessions/{id}` lists the entry in `withheldWarmEntries` without its URL, as **Withheld stores.** in that section states.
 
-### Stops
+#### Stops
 
 A stored plan can hold content a tenant has since stopped, and a grant flag set false or a forbid is "the stop after a compromise". A derive is a new session, so it is refused. Reading the source's runtime alone would not hold, because a derive onto a platform runtime before a forbid leaves a row whose runtime is that platform runtime. A plan therefore carries `planOriginRuntimes`, the tenant-derived runtimes whose defaults it holds. A derive copies its source's set at create, and it adds nothing, because it composes nothing. A session that composes adds its runtime at bind, in the update that binds the plan, and a delegated child copies its parent's at bind, because a child's exports came from that parent.
 
@@ -329,13 +324,27 @@ The content stop check is one function, which `handleDerive` calls at create and
 
 A platform-owned source runtime has no such rule, because starting the session of a platform runtime that [DR-6](../0147-tenant-derived-runtimes/change.md#dr-6-base-changes) has retired on a successor runtime is a regression test.
 
-### Final runtime row
+#### Final runtime row
 
-A derive meets no supervisor check and no execution-mode check. Every runtime is an agent runtime, and every runtime's pods follow the blueprint of [PL-1](../0118-agent-pod-layout/change.md#pl-1-pod-blueprint), whose slot containers each run the runtime supervisor, so setup commands and the materialization helper run as the slot UID through it on every target ([SI D6](../0145-session-isolation/change.md#decisions)). A file the source's agent left in the tree therefore reaches only the identity the session's own agent already holds, on the source's runtime and on any other. Setup at the slot UID also closes the exposure that F-7.5.17 records for setup at the adapter's UID. Decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), settled by the owner on 2026-11-13, withdrew SD-P4 and its refusal reason `target_unsupervised` on that ground.
+A derive meets no supervisor check and no execution-mode check. Every runtime is an agent runtime, and every runtime's pods follow the blueprint of [PL-1](../0118-agent-pod-layout/change.md#pl-1-pod-blueprint), whose slot containers each run the runtime supervisor, so setup commands and the materialization helper run as the slot UID through it on every target ([SI D6](../0145-session-isolation/decisions.md#decisions)). A file the source's agent left in the tree therefore reaches only the identity the session's own agent already holds, on the source's runtime and on any other. Setup at the slot UID also closes the exposure that F-7.5.17 records for setup at the adapter's UID. Decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions), settled by the owner on 2026-11-13, withdrew SD-P4 and its refusal reason `target_unsupervised` on that ground.
 
 One concern of SD-P4 stays, as a check that every creation kind meets. [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records)'s mirror, which copies the `Runtime` resource's fields into the runtime row, leaves the row stale when it refuses a resource, so a target whose row is not `registered` could run on fields its resource no longer holds. At the post-chain point, after the `PreRoute` chain and revision selection, the gateway requires the final runtime's row to be `registered`, for every create, derive, and delegated child, and for a platform-derived runtime also the base's row, and refuses one that is not as an unknown runtime: `404 RESOURCE_NOT_FOUND` on a create or a derive, and `TARGET_NOT_IN_SCOPE` for a delegated child. DR-4 owns the check under **Registered rows**, and the post-chain table of [`0141-runtime-routing`, "Post-chain point"](../0141-runtime-routing/change.md#post-chain-point) lists it. A derive meets it on the final runtime, whether `runtimeRef` named that runtime or a route or an interceptor moved the derive there, and the refusal names the last modifier when the chain changed the runtime.
 
 A derive that stays on the source's runtime and lands on a different revision gets no special treatment from this check. It is still treated as a runtime change for the `operator` setup command exemption under **Setup commands.**, as decision 1 records.
+
+### Stored formats and wire contracts this forces
+
+| Carrier | Change |
+| :-- | :-- |
+| `POST /v1/sessions/{id}/derive` | `from`, `runtimeRef`, `additionalSetupCommands`, and `runtimeOptions`. A request that names `deferConnectors` is refused with `400 VALIDATION_ERROR`. The response gains `readOnlyRepositories`, which names each read-only entry the client's plan stated, and `readOnlyDefaultClones`, which lists each read-only entry a default clone added by its `path` and a reason, as [DR-9](../0147-tenant-derived-runtimes/change.md#write-scope) defines it. |
+| `POST /v1/sessions/{id}/replay` | Removed |
+| `GET /v1/sessions/{id}/messages` | `from=client` |
+| OpenAPI | `pkg/gateway/externalapi/openapi/openapi.json` for each of these |
+| Setup command | `origin`, gateway-written and refused from a client, in the stored plan, `schemas/workspaceplan-v1.json`, `lenny-adapter.proto`, and the mapping in `podsession/workspaceplan.go`. A derive copies each command's `cwd`, which [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory) has the gateway write at composition, and the gateway writes a `cwd` on each `additionalSetupCommands` entry that sets none |
+| Session row | `derivedFrom` (`latest` or `start`), `derivedFromSessionId`, `snapshotIsOwn`, written by the checkpointer once the session's own checkpoint has written its snapshot, and `planOriginRuntimes` with each entry's two stored values |
+| `session_messages` | A sender on each row, `client` for a client, and a delivery state |
+| `content_stop_epochs` | One row per tenant for its security record and one per grant entry's base |
+| Upload store | A copy of an upload under the new session, with a new `uploadRef` |
 
 ## What an exact start does not cover
 
@@ -365,7 +374,7 @@ A derive that stays on the source's runtime and lands on a different revision ge
 
 | Finding | Severity | Defect |
 | :-- | :-- | :-- |
-| F-15.1.76 | Medium | `DeriveRequest.RuntimeRef` is in no specification section. The finding's `executionMode` half leaves with the field under decision O2 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions), and no supervisor check is owed under its decision O8. |
+| F-15.1.76 | Medium | `DeriveRequest.RuntimeRef` is in no specification section. The finding's `executionMode` half leaves with the field under decision O2 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions), and no supervisor check is owed under its decision O8. |
 | F-15.1.77 | High | Replay delivers no prompts. The finding also states that the MCP send paths record none; those paths leave Lenny under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), so the REST send path is the one this design records on. |
 | F-15.1.78 | Medium | `handleReplay` and `handleDerive` skip the admission checks a create runs. |
 | F-7.3.36 | Medium | Already filed. A derived session resumed before its first checkpoint restores the copy with no first bind. |
@@ -378,34 +387,6 @@ A derive that stays on the source's runtime and lands on a different revision ge
 - §4.5 **Workspace lineage:**, §10.2, §11, §13, §18, and §23: the mentions of replay.
 - §14 and §14.1 **Plan binding.**: a derive binds at create from the stored plan, step 1 of **Runtime workspace defaults.** does not run for it, a setup command carries `origin`, and a derive copies each setup command's `cwd`.
 - §15.4, [**`MessageEnvelope` — Unified Message Format**](../../spec/15_external-api-surface.md#messageenvelope--unified-message-format): the sender and the delivery state on a `session_messages` row.
-
-## Stored formats and wire contracts this forces
-
-| Carrier | Change |
-| :-- | :-- |
-| `POST /v1/sessions/{id}/derive` | `from`, `runtimeRef`, `additionalSetupCommands`, and `runtimeOptions`. A request that names `deferConnectors` is refused with `400 VALIDATION_ERROR`. The response gains `readOnlyRepositories`, which names each read-only entry the client's plan stated, and `readOnlyDefaultClones`, which lists each read-only entry a default clone added by its `path` and a reason, as [DR-9](../0147-tenant-derived-runtimes/change.md#write-scope) defines it. |
-| `POST /v1/sessions/{id}/replay` | Removed |
-| `GET /v1/sessions/{id}/messages` | `from=client` |
-| OpenAPI | `pkg/gateway/externalapi/openapi/openapi.json` for each of these |
-| Setup command | `origin`, gateway-written and refused from a client, in the stored plan, `schemas/workspaceplan-v1.json`, `lenny-adapter.proto`, and the mapping in `podsession/workspaceplan.go`. A derive copies each command's `cwd`, which [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory) has the gateway write at composition, and the gateway writes a `cwd` on each `additionalSetupCommands` entry that sets none |
-| Session row | `derivedFrom` (`latest` or `start`), `derivedFromSessionId`, `snapshotIsOwn`, written by the checkpointer once the session's own checkpoint has written its snapshot, and `planOriginRuntimes` with each entry's two stored values |
-| `session_messages` | A sender on each row, `client` for a client, and a delivery state |
-| `content_stop_epochs` | One row per tenant for its security record and one per grant entry's base |
-| Upload store | A copy of an upload under the new session, with a new `uploadRef` |
-
-## Steps
-
-### 0144.S1 One route
-- status: Planned
-- aliases: [SD-1]
-- lanes: [specification, code, documentation]
-- closes: [F-15.1.76, F-15.1.77, F-15.1.78, F-7.3.36]
-
-Everything above.
-
-A plan with no clone depends on no other step. A plan with a clone needs the [egress design](../0127-egress-and-git/change.md)'s pod-side clone, as any `gitClone` does. The withdrawal of SD-P4 rests on setup at the slot UID ([SI D6](../0145-session-isolation/change.md#decisions)), on the materialization helper ([`0153-workspace-materialization`](../0153-workspace-materialization/change.md#steps)), and on proposal AR-D of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#steps), which removes `executionMode` and lands the `registered` check of DR-4 at the post-chain point. The placement checks arrive with [`0136-placement`](../0136-placement/change.md#steps). "Warm stores on the target", `coveredStores`, and `withheldStores` arrive with [DR-11](../0147-tenant-derived-runtimes/change.md#warm-stores), and "Stops" with [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records), [DR-6](../0147-tenant-derived-runtimes/change.md#dr-6-base-changes), and [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture). SD-1 also extracts the plan check function that [DR-9](../0147-tenant-derived-runtimes/change.md#dr-9-default-git-clones) calls. The `PreRoute` payload with `kind: derive` comes from the first proposal of [`0141-runtime-routing`](../0141-runtime-routing/change.md#steps): if SD-1 lands first, that proposal adds `kind: derive` to the derive path, and otherwise SD-1 adopts the payload it landed. Revision selection arrives with [`0140-runtime-revisions`](../0140-runtime-revisions/change.md#steps), the account link check with [UC-2](../0151-user-credential-delivery/change.md#flow), the refusal of `deferConnectors` with proposal CR-A of [`0124-connector-removal`](../0124-connector-removal/change.md#steps), and the pack reference and `checkpointing_disabled` with [IC-5](../0131-incremental-checkpoint/change.md#ic-5-restore-derive-download-and-seal) and [IC-8](../0131-incremental-checkpoint/change.md#ic-8-checkpoint-policy-interval-and-change-tracker).
-
-It can land before those designs, and each adds its rule to the checks when it lands.
 
 ## Documentation
 
@@ -464,18 +445,3 @@ Each page below states every setting, default, limit, failure mode, and runtime-
 ### Tier 11: documentation
 
 - Documented examples of the request pass the schema.
-
-## Decisions
-
-The owner settled decisions 1 to 5 as recommended on 2026-11-04, in the words "go with your recommendations", settled decisions 6 and 7 as recommended on 2026-11-08, in the same words, and settled decision 8 on 2026-11-13 through the agent-runtimes-only design. The owner also settled one route with two modes, the exact start, the client sending messages, writes on, and setup commands running again on `from: latest`. The owner also moved `evalRef` to derive, which decision D11 of [`0141-runtime-routing`](../0141-runtime-routing/change.md#decisions) later retired together with the rewrite refusal, and settled these earlier: an expired upload refuses, a source that started from a snapshot refuses `from: start`, and a content stop refuses earlier plans permanently.
-
-| # | Decision | Recommendation | Cost of the recommendation | Alternative |
-| :-- | :-- | :-- | :-- | :-- |
-| 1 | Exempting setup commands | **Settled.** The owner accepted this narrower rule after a review, in the words "keep the narrowed rule". An `origin` on each stored command. An `operator` command stays exempt on the same runtime when the derive's chosen revision equals the source's recorded revision, and on another runtime or revision whose operator-written defaults hold that text. On 2026-11-09 the owner settled, in the word "ok", that a derive on the same runtime that lands on a different revision is treated as a runtime change for this exemption and for SD-P4. SD-P4 is withdrawn under decision 8, so the rule now governs this exemption alone | An upgrade that changed an operator command depends on the new version's policy to run the old one, and a derive is refused otherwise | Exempt under `from: start` as the owner first accepted, which a client can use to run its own content past a target's policy |
-| 2 | `additionalSetupCommands` | **Settled.** The request field the owner proposed, under the target's policy | A base whose allowlist omits `git` refuses it, and a command is a convention with no enforcement | Nothing added, which leaves a run on the source's branch |
-| 3 | A hard limit on a run's pushes | **Settled.** None in the first version | An agent can still push outside the run's branch within the entry's patterns | A request field narrowing `allowedRefPatterns` on each writable entry, which `netagent` enforces. It is additive |
-| 4 | Files on a derive | **Settled.** None. A client uses an additional command | A client that added files at finalize today needs a command to fetch them, under the target's policy and egress | Let a client add sources at finalize, which keeps the upload rules and the `path` rules, the workspace-relative `path` of each source and §14's **Path collision rule**, under which a later source wins a shared path, and makes the plan no longer the source's |
-| 5 | The client messages read | **Settled.** `?from=client` on the existing messages route | The route's response keeps its other fields | A new route, as the owner first described, which is more explicit and adds a route |
-| 6 | A setup command's folder on a derive | **Settled.** The gateway writes each command's folder on the stored command as an explicit `cwd` when the plan is composed, under [DR-12](../0147-tenant-derived-runtimes/change.md#dr-12-repository-folders-and-the-working-directory), and a derive copies it, so a relabel does not move a command. `origin` decides only which policy checks a command. An `additionalSetupCommands` entry with no `cwd` runs in the plan's working directory | Every stored command carries a `cwd`, and a target's own `workingDirectory` moves no copied command | Derive the folder from `origin` at each run, under which a relabel to `client` moves an operator's command to the plan's working directory, and "its own runtime" has no single reading on a derive |
-| 7 | Which response field lists a read-only default clone on a derive | **Settled.** The derive response carries `readOnlyDefaultClones` for an entry a default clone added, with its `path` and a reason and without the repository's name, and `readOnlyRepositories` for every other entry | A client reads two fields to learn which writes a derive lost | List every entry in `readOnlyRepositories`, which names a repository the client never named |
-| 8 | The derive's mode check and its supervisor refusal | **Settled** by the owner on 2026-11-13, in the words "O5 (b), yes to all the others", which settle decisions O2 and O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#decisions). Under O2 a derive compares no execution modes and `INCOMPATIBLE_RUNTIME` leaves. Under O8 SD-P4 and `target_unsupervised` leave, and the post-chain check of [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) that the final runtime row is `registered` covers every create, derive, and delegated child ("Final runtime row") | A stale row answers as an unknown runtime rather than with a derive-specific reason | O8 (a): remove SD-P4 and leave stale rows to the general target resolution, which does not establish that a row that is not `registered` is refused |
