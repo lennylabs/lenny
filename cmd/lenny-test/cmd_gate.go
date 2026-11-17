@@ -10,7 +10,9 @@ package main
 // image from tests/gate/Dockerfile when that image is absent, then runs
 // itself inside a container of it with the worktree mounted at the same
 // path. Inside the container (or on any host, with --here) it runs the
-// gate's tiers and writes the verdict.
+// gate's tiers and writes the verdict. The container is the canonical
+// environment, so a --here run anywhere else, and a run on a tree with
+// uncommitted changes, ends no better than UNVERIFIED.
 //
 // The gate implements the testing model rather than a specification
 // behavior, so nothing here carries a spec annotation; the merge policy
@@ -39,6 +41,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
+	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 )
 
 const (
@@ -60,6 +63,24 @@ const (
 	// gateEnvImage carries the image reference into the container so
 	// the verdict names the environment it ran in.
 	gateEnvImage = "LENNY_GATE_IMAGE"
+	// gateEnvImageID carries the ID of the image the container runs.
+	gateEnvImageID = "LENNY_GATE_IMAGE_ID"
+	// gateImageMarker is the file the gate image writes its own tag to
+	// at build time (the LENNY_GATE_TAG build argument). A --here run
+	// whose environment lacks it, or whose marker names another tag, is
+	// not in the gate image.
+	gateImageMarker = "/etc/lenny-gate/image"
+	// gateTmpDir is the fixture root inside the worktree, relative to
+	// the repository root. The worktree is mounted at its host path, so
+	// a test that bind-mounts a temporary directory into a testcontainer
+	// names a path the host daemon can resolve. The leading dot keeps
+	// the directory out of `./...` package patterns, and git ignores
+	// tests/results/, so the directory never makes the tree dirty.
+	gateTmpDir = gateResultsDir + "/.gate-tmp"
+	// gateGoTmpDir is where go build keeps its work directories inside
+	// the container. It stays off the bind mount, where compiling is
+	// slower, and off /tmp (testtmp.UnderTmp).
+	gateGoTmpDir = "/var/tmp/lenny-go"
 	// gateContainerSocket is where the container sees the Docker socket.
 	gateContainerSocket = "/var/run/docker.sock"
 	// gateNotRunPrefix opens the reason of a tier the gate selected but
@@ -103,6 +124,9 @@ type gateOptions struct {
 	base        string
 	rdepsDepth  int
 	environment string
+	// environmentErr says why the environment is not the gate image, or
+	// is nil when it is.
+	environmentErr error
 }
 
 // gateRecord is the gate's own section of the verdict.
@@ -119,30 +143,81 @@ type gateRecord struct {
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
+	// Unverified lists why the verdict cannot stand for the commit even
+	// when every tier passed: uncommitted changes in the tree, or a run
+	// outside the gate image. Any entry keeps the verdict from PASS.
+	Unverified []string `json:"unverified,omitempty"`
 }
 
 // runGate handles `lenny-test gate`.
 func runGate(args []string) int {
 	fs := flag.NewFlagSet("gate", flag.ExitOnError)
 	base := fs.String("base", "main", "the ref the branch merges into; the changed tiers are selected from the diff against its merge base")
-	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way)")
+	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way); outside the gate image the verdict is at best UNVERIFIED")
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module importers of a changed package join the unit tier (-1: the full transitive closure)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if err := gateRejectPositional(fs.Args()); err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		fs.Usage()
+		return 2
+	}
 	root := repoRoot()
 	if *here {
-		env := os.Getenv(gateEnvImage)
-		if env == "" {
-			env = "host " + runtime.GOOS + "/" + runtime.GOARCH
-		}
-		v := defaultGateRunner(root).run(gateOptions{root: root, base: *base, rdepsDepth: *rdeps, environment: env})
+		env, envErr := gateEnvironment(root, gateImageMarker, os.Getenv)
+		v := defaultGateRunner(root).run(gateOptions{root: root, base: *base, rdepsDepth: *rdeps, environment: env, environmentErr: envErr})
 		return finishGate(root, v)
 	}
 	passArgs := []string{"--base", *base, "--rdeps-depth", strconv.Itoa(*rdeps)}
 	return runGateInContainer(root, passArgs, *rebuild, !*noSocket)
+}
+
+// gateRejectPositional refuses positional arguments. The gate takes
+// flags only. Change 0116 adds the choice of gate (merge, area, or
+// release) as a flag; until then a word such as `merge` is refused
+// rather than ignored.
+func gateRejectPositional(args []string) error {
+	if len(args) == 0 {
+		return nil
+	}
+	return fmt.Errorf("unexpected argument %q: the gate takes flags only", args[0])
+}
+
+// gateEnvironment names the environment a --here run is in, and reports
+// why it is not the gate image, or nil when it is. The gate image is the
+// one tests/gate/Dockerfile at this commit defines: the container
+// carries its tag in LENNY_GATE_IMAGE, the tag matches the Dockerfile in
+// the tree, and the image's marker file names the same tag. The check
+// catches a run outside the container. It does not authenticate the
+// environment, because any process can set the variable and write the
+// file.
+func gateEnvironment(root, marker string, getenv func(string) string) (string, error) {
+	image := getenv(gateEnvImage)
+	if image == "" {
+		return "host " + runtime.GOOS + "/" + runtime.GOARCH, fmt.Errorf("%s is not set, so the gate ran outside the gate image; the merge gate's environment is the gate container, which `lenny-test gate` without --here runs", gateEnvImage)
+	}
+	env := image
+	if id := getenv(gateEnvImageID); id != "" {
+		env += "@" + id
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(root, gateDockerfile))
+	if err != nil {
+		return env, fmt.Errorf("read %s to check the gate image: %w", gateDockerfile, err)
+	}
+	if want := gateImageTag(dockerfile); image != want {
+		return env, fmt.Errorf("%s=%s is not the image %s defines at this commit (%s)", gateEnvImage, image, gateDockerfile, want)
+	}
+	got, err := os.ReadFile(marker)
+	if err != nil {
+		return env, fmt.Errorf("the environment is not the gate image %s: read %s: %w", image, marker, err)
+	}
+	if name := strings.TrimSpace(string(got)); name != image {
+		return env, fmt.Errorf("the environment is not the gate image %s: %s names %q", image, marker, name)
+	}
+	return env, nil
 }
 
 // runGateInContainer builds the gate image when needed and runs the gate
@@ -158,14 +233,21 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 		return 2
 	}
 	image := gateImageTag(dockerfile)
-	if rebuild || !dockerImageExists(image) {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: building %s from %s\n", image, gateDockerfile)
-		if err := runStreaming("docker", gateDockerBuildArgs(root, image)...); err != nil {
-			fmt.Fprintf(os.Stderr, "lenny-test gate: build the gate image: %v\n", err)
-			return 2
-		}
+	store, err := defaultGateImageStore()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		return 2
 	}
-	h := gateHost{root: root, image: image, passArgs: passArgs}
+	id, err := ensureGateImage(root, image, rebuild, store)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		return 2
+	}
+	if err := os.MkdirAll(filepath.Join(root, gateTmpDir), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: create %s: %v\n", gateTmpDir, err)
+		return 2
+	}
+	h := gateHost{root: root, image: image, imageID: id, passArgs: passArgs}
 	if common, err := gitCommonDir(root); err == nil {
 		h.gitCommonDir = common
 	} else {
@@ -186,6 +268,82 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 	return 0
 }
 
+// ensureGateImage returns the ID of the gate image to run. It builds the
+// image first when gateImageNeedsBuild says so, and records the ID of an
+// image it builds in store.
+func ensureGateImage(root, image string, rebuild bool, store gateImageStore) (string, error) {
+	id := dockerImageID(image)
+	build, why := gateImageNeedsBuild(rebuild, id, store.load(image))
+	if !build {
+		return id, nil
+	}
+	fmt.Fprintf(os.Stderr, "lenny-test gate: building %s from %s (%s)\n", image, gateDockerfile, why)
+	if err := runStreaming("docker", gateDockerBuildArgs(root, image)...); err != nil {
+		return "", fmt.Errorf("build the gate image: %w", err)
+	}
+	if id = dockerImageID(image); id == "" {
+		return "", fmt.Errorf("the build left no image tagged %s", image)
+	}
+	if err := store.save(image, id); err != nil {
+		return "", fmt.Errorf("record the gate image ID: %w", err)
+	}
+	return id, nil
+}
+
+// gateImageNeedsBuild reports whether the gate builds its image before
+// running, and why. The gate reuses an image only when its tag names the
+// image ID the gate recorded when it built that tag, so an image that
+// another build or a pull put under the tag never runs as the gate image.
+func gateImageNeedsBuild(rebuild bool, currentID, recordedID string) (bool, string) {
+	switch {
+	case rebuild:
+		return true, "--rebuild"
+	case currentID == "":
+		return true, "no image has the tag"
+	case recordedID == "":
+		return true, "no image ID is recorded for the tag"
+	case currentID != recordedID:
+		return true, fmt.Sprintf("the tag names %s rather than the image the gate built, %s", currentID, recordedID)
+	}
+	return false, ""
+}
+
+// gateImageStore records, per image tag, the ID of the image the gate
+// built under it. It lives in the user's cache directory, so every
+// worktree on the machine shares it.
+type gateImageStore struct{ dir string }
+
+// defaultGateImageStore returns the store under the user cache directory.
+func defaultGateImageStore() (gateImageStore, error) {
+	d, err := os.UserCacheDir()
+	if err != nil {
+		return gateImageStore{}, fmt.Errorf("locate the cache directory for the gate image record: %w", err)
+	}
+	return gateImageStore{dir: filepath.Join(d, "lenny-test", "gate-images")}, nil
+}
+
+// path returns the record file of tag.
+func (s gateImageStore) path(tag string) string {
+	return filepath.Join(s.dir, strings.ReplaceAll(tag, ":", "_"))
+}
+
+// load returns the recorded image ID of tag, or "" when there is none.
+func (s gateImageStore) load(tag string) string {
+	b, err := os.ReadFile(s.path(tag))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// save records id as the image the gate built under tag.
+func (s gateImageStore) save(tag, id string) error {
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return err
+	}
+	return writeFileAtomic(s.path(tag), []byte(id+"\n"), 0o644)
+}
+
 // gateImageTag derives the image reference from the Dockerfile content.
 func gateImageTag(dockerfile []byte) string {
 	sum := sha256.Sum256(dockerfile)
@@ -194,10 +352,11 @@ func gateImageTag(dockerfile []byte) string {
 
 // gateDockerBuildArgs is the argv of `docker build` for the gate image.
 // The build context is the image's own directory, so a build never sends
-// the repository to the daemon.
+// the repository to the daemon. The LENNY_GATE_TAG build argument writes
+// the tag into the image's marker file, which gateEnvironment reads.
 func gateDockerBuildArgs(root, image string) []string {
 	dir := filepath.Join(root, filepath.Dir(gateDockerfile))
-	return []string{"build", "-t", image, "-f", filepath.Join(root, gateDockerfile), dir}
+	return []string{"build", "-t", image, "--build-arg", "LENNY_GATE_TAG=" + image, "-f", filepath.Join(root, gateDockerfile), dir}
 }
 
 // gateHost holds what the host half of the gate passes to docker run.
@@ -205,6 +364,7 @@ type gateHost struct {
 	root         string
 	gitCommonDir string // "" when it lies inside root or is unknown
 	image        string
+	imageID      string // "" runs the image by its tag
 	dockerSocket string // "" when the container gets no Docker socket
 	passArgs     []string
 }
@@ -215,12 +375,17 @@ type gateHost struct {
 // tree, in git's worktree metadata, and in tool output mean the same
 // thing inside and outside the container. A linked worktree keeps its
 // git metadata in the main checkout's git directory, which is mounted
-// read-only at its host path for the same reason. The module and build
-// caches live in named volumes, so only the first run downloads and
-// compiles from cold. The container builds lenny-test from the mounted
-// tree and runs `lenny-test gate --here`, so the gate always runs the
-// harness of the commit under test.
+// read-only at its host path for the same reason. TMPDIR points at
+// gateTmpDir inside the worktree, so a temporary directory that a test
+// bind-mounts into a testcontainer is a path the host daemon resolves.
+// The module and build caches live in named volumes, so only the first
+// run downloads and compiles from cold. The container runs the image by
+// the ID the gate recorded, checks the module cache against go.sum with
+// `go mod verify`, builds lenny-test from the mounted tree, and runs
+// `lenny-test gate --here`, so the gate always runs the harness of the
+// commit under test.
 func gateDockerRunArgs(h gateHost) []string {
+	tmp := filepath.Join(h.root, gateTmpDir)
 	args := []string{
 		"run", "--rm", "--init",
 		"-v", h.root + ":" + h.root,
@@ -234,7 +399,13 @@ func gateDockerRunArgs(h gateHost) []string {
 		"-v", gateModVolume+":/go/pkg/mod",
 		"-v", gateBuildVolume+":/root/.cache/go-build",
 		"-e", gateEnvImage+"="+h.image,
+		"-e", "TMPDIR="+tmp,
+		"-e", testtmp.EnvRoot+"="+tmp,
+		"-e", "GOTMPDIR="+gateGoTmpDir,
 	)
+	if h.imageID != "" {
+		args = append(args, "-e", gateEnvImageID+"="+h.imageID)
+	}
 	if h.dockerSocket != "" {
 		// Testcontainers started from inside the container publish
 		// their ports on the Docker host, which the container reaches
@@ -246,8 +417,20 @@ func gateDockerRunArgs(h gateHost) []string {
 			"-e", "TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal",
 		)
 	}
-	script := `go build -o /usr/local/bin/lenny-test ./cmd/lenny-test && exec lenny-test gate --here "$@"`
-	args = append(args, h.image, "sh", "-c", script, "lenny-test-gate")
+	// The script empties the fixture root first, because a killed
+	// earlier run leaves its fixtures behind, and verifies the module
+	// cache before it compiles the harness from it.
+	script := `set -e
+find "$TMPDIR" -mindepth 1 -delete
+mkdir -p "$GOTMPDIR"
+go mod verify
+go build -o /usr/local/bin/lenny-test ./cmd/lenny-test
+exec lenny-test gate --here "$@"`
+	ref := h.image
+	if h.imageID != "" {
+		ref = h.imageID
+	}
+	args = append(args, ref, "sh", "-c", script, "lenny-test-gate")
 	return append(args, h.passArgs...)
 }
 
@@ -294,9 +477,14 @@ func gitCommonDir(root string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// dockerImageExists reports whether the local daemon holds image.
-func dockerImageExists(image string) bool {
-	return exec.Command("docker", "image", "inspect", image).Run() == nil
+// dockerImageID returns the ID of the image the local daemon holds under
+// image, or "" when it holds none.
+func dockerImageID(image string) string {
+	out, err := exec.Command("docker", "image", "inspect", "--format", "{{.Id}}", image).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // runStreaming runs a command with the caller's standard streams.
@@ -385,7 +573,26 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 
 	g.record(v, tierDocs, g.docs)
+	withholdGatePass(v, dirty, o.environmentErr)
 	return v
+}
+
+// withholdGatePass records why the verdict cannot stand for the commit
+// and keeps it from PASS. On a dirty tree the tiers ran on files the
+// commit does not hold, and outside the gate image they ran in an
+// environment other than the canonical one. A FAIL or INCONCLUSIVE
+// verdict stays as it is, because it already blocks the merge and
+// outranks UNVERIFIED (verdictRank).
+func withholdGatePass(v *verdict, dirty bool, envErr error) {
+	if dirty {
+		v.Gate.Unverified = append(v.Gate.Unverified, "the worktree has uncommitted changes, so the tiers did not run on the commit; commit or remove them and run the gate again")
+	}
+	if envErr != nil {
+		v.Gate.Unverified = append(v.Gate.Unverified, envErr.Error())
+	}
+	if len(v.Gate.Unverified) > 0 {
+		v.promoteVerdict(verdictstatus.VerdictUnverified)
+	}
 }
 
 // runPlannedTier runs one tier of the changed plan, or records it as not
@@ -567,15 +774,20 @@ func writeGateVerdict(root string, v *verdict) (string, error) {
 		}
 		matchOwner(p, root)
 	}
-	if err := appendHistory(filepath.Join(dir, verdictHistoryFile), v); err != nil {
+	hist := filepath.Join(dir, verdictHistoryFile)
+	if err := appendHistory(hist, v); err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: append history: %v\n", err)
+	} else {
+		matchOwner(hist, root)
 	}
 	return filepath.ToSlash(filepath.Join(gateResultsDir, name)), nil
 }
 
 // matchOwner gives p the owner of root when the gate runs as root, so a
 // verdict the container writes into a Linux host's worktree belongs to
-// the worktree's owner. It is best-effort.
+// the worktree's owner. It is best-effort. It changes a symbolic link
+// at p rather than the link's target, so a link planted in the results
+// directory cannot hand another file to the worktree's owner.
 func matchOwner(p, root string) {
 	if os.Geteuid() != 0 {
 		return
@@ -585,7 +797,7 @@ func matchOwner(p, root string) {
 		return
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		_ = os.Chown(p, int(st.Uid), int(st.Gid))
+		_ = os.Lchown(p, int(st.Uid), int(st.Gid))
 	}
 }
 
@@ -599,6 +811,9 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 		fmt.Fprintf(w, "  environment: %s\n", v.Gate.Environment)
 		if v.Gate.Dirty {
 			fmt.Fprintln(w, "  tree:        dirty; this verdict is not a verdict for the commit")
+		}
+		for _, why := range v.Gate.Unverified {
+			fmt.Fprintf(w, "  unverified:  %s\n", why)
 		}
 	}
 	for _, name := range allTiers() {

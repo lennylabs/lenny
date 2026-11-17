@@ -47,7 +47,7 @@ lenny-test --spec 4.6.1,12.3 --dry-run
 
 # The merge gate, in the gate container (TESTING.md "Merge gate")
 lenny-test gate
-lenny-test gate --here      # in this environment instead of the container
+lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED outside the gate image
 
 # Actually run (Phase 0: static + unit only)
 lenny-test --tier static

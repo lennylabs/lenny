@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
@@ -472,7 +473,10 @@ func (v *verdict) write(path string) error {
 // the root-cause heuristics (run_id, started_at, finished_at,
 // verdict, trigger.mode, per-tier status). The file is open-append;
 // concurrent writers race only on the os.Write boundary, which is
-// atomic for sub-PIPE_BUF writes on POSIX.
+// atomic for sub-PIPE_BUF writes on POSIX. The open does not follow a
+// symbolic link at path: the gate writes the file as root inside its
+// container, and a link planted in the results directory would
+// otherwise direct that write at any file the container can reach.
 func appendHistory(path string, v *verdict) error {
 	tierStatus := map[string]string{}
 	for name, t := range v.Tiers {
@@ -492,7 +496,7 @@ func appendHistory(path string, v *verdict) error {
 		return err
 	}
 	line = append(line, '\n')
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY|syscall.O_NOFOLLOW, 0o644)
 	if err != nil {
 		return err
 	}
