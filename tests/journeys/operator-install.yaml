@@ -21,7 +21,7 @@ goal: |
   session. Tell me when Lenny is running and the pool has warm pods.
 steps:
   - Check the prerequisites the installation guide lists against the environment described below.
-  - Write a Helm values file that points Lenny at the existing Postgres, Redis, and MinIO, and that uses the images already loaded on the nodes.
+  - Prepare the Helm values that point Lenny at the existing Postgres, Redis, and MinIO and use the images already loaded on the nodes, and pass them to Helm on its command line or its standard input.
   - Install the chart into the lenny-system namespace with helm install.
   - Configure a pool for the echo runtime, through the chart's bootstrap values or the admin API, and register the runtime if the guide asks for it.
   - Verify that the control plane is running and that the pool reports warm pods.
