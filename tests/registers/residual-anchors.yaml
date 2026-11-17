@@ -16,4 +16,10 @@
 kind: residual-register
 version: 1
 class: anchors
-entries: []
+entries:
+  - member: |-
+      spec/interfaces/channels/index.md: §28.4
+    class: anchors
+    disposition: excluded
+    reason: |-
+      the link label of the placeholder page's source list, which names section 28.4 by its current number and heading; the anchor-move map retires the anchor 284-claim-register for the heading's new text, and the section keeps its number

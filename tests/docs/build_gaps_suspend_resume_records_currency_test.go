@@ -3,23 +3,9 @@
 // Tier-11 consistency checks between the records of the session suspend and
 // resume work and the tree they describe.
 //
-// The build loops read the claim register, BUILD-GAPS.md, and the remediation
-// plan as statements about the current tree. These checks hold those
-// statements to the code:
+// The build loops read BUILD-GAPS.md and the remediation plan as statements
+// about the current tree. These checks hold those statements to the code:
 //
-//   - The WIRED claim rows for the resume driver, coordination-lease
-//     adoption, the suspension release, idle suspension, the adapter session
-//     seal, the heartbeat session fields, the backlog resume, the erasure of
-//     the session message queues, the generation-scoped lease return, the
-//     suspended-session lifetime, the concurrent-session count, and active
-//     session age name symbols their files still declare.
-//   - The "Session inbox redelivery" row is WIRED and names the §29.3
-//     Forwarding rule 6 DLQ hold (`forwardMessageBatch` and
-//     `HoldUndeliveredForward`).
-//   - The inter-replica rows carry the forward, the replica address, the
-//     forward listener, and the binding-release fan-out at the status the
-//     specification's landing gives them, and the generated rows they
-//     replace are retired.
 //   - The findings the work closed stay closed only while the code that
 //     closed them is in the tree, and every test file their resolutions cite
 //     exists.
@@ -33,7 +19,7 @@
 //
 // spec: 7.3 (Retry and Resume), 7.2 (Interactive Session Model), 29.3
 // (Interactive message send), 10.1.1 (Stateless Replicas and Per-Session
-// Coordination), 28.4 (Claim register)
+// Coordination)
 
 package docs_test
 
@@ -45,184 +31,6 @@ import (
 	"strings"
 	"testing"
 )
-
-// suspendResumeClaim is a claim row the suspend and resume work added and the
-// §28 heading it anchors to.
-type suspendResumeClaim struct {
-	claim  string
-	anchor string
-}
-
-// suspendResumeClaims are the WIRED claim rows of the suspend and resume work.
-var suspendResumeClaims = []suspendResumeClaim{
-	{"Resume driver restores a resume_pending session onto a replacement pod and re-attaches CH-ATTACH", "#2851-gateway-to-pod"},
-	{"Coordination lease adoption in the recovering and pod-holding states, with no lease and a released mirror for a podless suspended session", "#register-entry-register"},
-	{"Suspension release checkpoints a held-pod suspended session at maxSuspendedPodHoldSeconds and releases its pod", "#2851-gateway-to-pod"},
-	{"Idle suspension seals, checkpoints, and suspends an idle running session and releases its pod or slot", "#2851-gateway-to-pod"},
-	{"Adapter session seal keyed on the session's last activity", "#2851-gateway-to-pod"},
-	{"SealSession unary RPC on the CH-ATTACH service", "#2851-gateway-to-pod"},
-	{"UnsealSession unary RPC on the CH-ATTACH service", "#2851-gateway-to-pod"},
-	{"heartbeat frame names its session in sessionId", "#2853-intra-pod"},
-	{"heartbeat_ack sessionId and busy fields, with the heartbeat busy compliance check", "#2853-intra-pod"},
-	{"Backlog resume of a suspended session that holds messages", "#2851-gateway-to-pod"},
-	{"User erasure deletes each session's message queues", "#2857-gateway-to-store"},
-	{"Pod release returns only the credential leases at or below the binding's coordination generation", "#2851-gateway-to-pod"},
-	{"Suspended-session lifetime expiry", "#2857-gateway-to-store"},
-	{"Concurrent-session count excludes suspended sessions, and a resume of a suspended session passes the admission check", "#2857-gateway-to-store"},
-	{"Session age measured as active time", "#2857-gateway-to-store"},
-}
-
-// diagnosis: a claim-register row of the suspend and resume work is missing,
-// is not WIRED at its §28 heading, or names a symbol its file no longer
-// declares. Correct the row in scripts/seed-claim-register.py and regenerate
-// tests/claim-map.json; do not hand-edit the register.
-func TestSuspendResumeClaimRowsNameDeclaredSymbols_spec_7_3(t *testing.T) {
-	root := repoRoot(t)
-	rows := claimRows(t, root)
-	for _, c := range suspendResumeClaims {
-		t.Run(c.claim, func(t *testing.T) {
-			row, ok := rows[c.claim]
-			if !ok {
-				t.Fatalf("tests/claim-map.json has no row %q", c.claim)
-			}
-			if row["status"] != "WIRED" || row["spec_anchor"] != c.anchor {
-				t.Errorf("row %q: status %q anchor %q, want WIRED at %s", c.claim, row["status"], row["spec_anchor"], c.anchor)
-			}
-			if strings.TrimSpace(row["note"]) == "" {
-				t.Errorf("row %q carries no note stating what the surface does", c.claim)
-			}
-			assertSurfaceDeclared(t, root, c.claim, row["surface"])
-		})
-	}
-}
-
-// assertSurfaceDeclared fails the test when surface names no `file.go`
-// `Symbol` pair, or names a file or symbol the tree does not declare.
-func assertSurfaceDeclared(t *testing.T, root, claim, surface string) {
-	t.Helper()
-	pairs := surfaceSymbols(surface)
-	if len(pairs) == 0 {
-		t.Fatalf("row %q: surface %q names no `file.go` `Symbol` pair", claim, surface)
-	}
-	for _, p := range pairs {
-		path := filepath.Join(root, filepath.FromSlash(p[0]))
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("row %q names %s, which does not exist", claim, p[0])
-			continue
-		}
-		if !declaresSymbol(parseGoFile(t, path), p[1]) {
-			t.Errorf("row %q names %s in %s, which the file does not declare", claim, p[1], p[0])
-		}
-	}
-}
-
-// diagnosis: the "Session inbox redelivery" claim row no longer records the
-// off-holder hold. A message a non-coordinating replica receives is not
-// buffered in that replica's in-process inbox: §29.3 Forwarding rule 6 holds a
-// message whose forward is not delivered in the session DLQ, which the
-// coordinating replica drains, and the REST and MCP message sites enqueue that
-// hold. The row is WIRED and names the declared hold. Correct the
-// SURFACE_OVERRIDES entry in scripts/seed-claim-register.py and regenerate.
-//
-// spec: 29.3 (Interactive message send), 7.2 (Interactive Session Model)
-func TestSessionInboxRedeliveryRowNamesTheForwardHold_spec_29_3(t *testing.T) {
-	root := repoRoot(t)
-	row, ok := claimRows(t, root)["Session inbox redelivery"]
-	if !ok {
-		t.Fatal("tests/claim-map.json has no row \"Session inbox redelivery\"")
-	}
-	if row["status"] != "WIRED" || row["deferral_id"] != "" {
-		t.Errorf("status %q deferral %q, want WIRED with no deferral", row["status"], row["deferral_id"])
-	}
-	for _, stale := range []string{"no dequeue path", "durableInbox: false", "in-process inbox", "no off-holder path"} {
-		if strings.Contains(row["surface"], stale) {
-			t.Errorf("surface %q still names %q, which the DLQ hold replaced", row["surface"], stale)
-		}
-	}
-	for _, want := range []string{"forwardMessageBatch", "HoldUndeliveredForward"} {
-		if !strings.Contains(row["surface"], want) {
-			t.Errorf("surface %q does not name %s", row["surface"], want)
-		}
-	}
-	for _, want := range []string{"DLQ", "Forwarding rule 6", "recovering-row TTL"} {
-		if !strings.Contains(row["note"], want) {
-			t.Errorf("note %q does not name %q", row["note"], want)
-		}
-	}
-	assertSurfaceDeclared(t, root, "Session inbox redelivery", row["surface"])
-}
-
-// interReplicaClaim is a claim-register row the inter-replica forward and the
-// binding-release fan-out carry, with the status, heading, and step it holds
-// while the specification is ahead of the tree.
-type interReplicaClaim struct {
-	claim    string
-	status   string
-	anchor   string
-	deferral string
-}
-
-// interReplicaClaims are the rows that restate the inter-replica mechanisms
-// under the names §28.5.4, §28.5.7, §10.1.1, and §10.3 give them.
-var interReplicaClaims = []interReplicaClaim{
-	{"Off-holder request forward on CH-HOLDERFORWARD", "WIRED", "#2854-inter-replica", ""},
-	{"Replica address in the REG-COORDLEASE holder value", "WIRED", "#2854-inter-replica", ""},
-	{"Inter-replica forward listener with gateway peer validation (NET-072)", "WIRED", "#2854-inter-replica", ""},
-	{"Session inbox redelivery", "WIRED", "#2854-inter-replica", ""},
-	{"Input-wait resolution across replicas", "ABSENT", "#2854-inter-replica", "R20"},
-	{"Tool-approval resolution across replicas", "WIRED", "#2854-inter-replica", ""},
-	{"CH-BINDRELEASE binding-release fan-out", "WIRED", "#2857-gateway-to-store", ""},
-}
-
-// retiredInterReplicaClaims are the generated rows the restated rows above
-// replace. Each one names a mechanism the specification no longer states in
-// those words: a forward with no carrier, a coordinator_address field, and a
-// gateway-to-gateway link entry.
-var retiredInterReplicaClaims = []string{
-	"Cross-replica message forward",
-	"`coordinator_address` population",
-	"Gateway-to-gateway transport",
-}
-
-// diagnosis: the claim register no longer carries the inter-replica rows at the
-// status, heading, and step the specification's landing gives them, still
-// carries a generated row the restated rows replace, or a WIRED
-// CH-BINDRELEASE or off-holder forward row names a symbol the tree no longer
-// declares. Correct
-// RETIRED, SURFACE_OVERRIDES, or EXPLICIT in scripts/seed-claim-register.py and
-// regenerate tests/claim-map.json; do not hand-edit the register.
-//
-// spec: 28.5.4 (Inter-replica), 28.5.7 (Gateway-to-store), 29.3 (Interactive
-// message send), 10.1.1 (Stateless Replicas and Per-Session Coordination),
-// 10.3 (mTLS PKI), 12.8 (Compliance Interfaces)
-func TestInterReplicaClaimRowsCarryTheForwardAndBindingRelease_spec_28_5_4(t *testing.T) {
-	root := repoRoot(t)
-	rows := claimRows(t, root)
-	for _, c := range interReplicaClaims {
-		t.Run(c.claim, func(t *testing.T) {
-			row, ok := rows[c.claim]
-			if !ok {
-				t.Fatalf("tests/claim-map.json has no row %q", c.claim)
-			}
-			if row["status"] != c.status || row["spec_anchor"] != c.anchor || row["deferral_id"] != c.deferral {
-				t.Errorf("row %q: status %q anchor %q deferral %q, want %s at %s deferred to %q",
-					c.claim, row["status"], row["spec_anchor"], row["deferral_id"], c.status, c.anchor, c.deferral)
-			}
-		})
-	}
-	for _, claim := range retiredInterReplicaClaims {
-		if _, ok := rows[claim]; ok {
-			t.Errorf("tests/claim-map.json still carries the retired row %q", claim)
-		}
-	}
-	fanOut := rows["CH-BINDRELEASE binding-release fan-out"]
-	if !strings.Contains(fanOut["surface"], "cmd/lenny-gateway/adminrouter.go") {
-		t.Errorf("CH-BINDRELEASE surface %q does not name the propagator construction in cmd/lenny-gateway/adminrouter.go", fanOut["surface"])
-	}
-	assertSurfaceDeclared(t, root, "CH-BINDRELEASE binding-release fan-out", fanOut["surface"])
-	forward := rows["Off-holder request forward on CH-HOLDERFORWARD"]
-	assertSurfaceDeclared(t, root, "Off-holder request forward on CH-HOLDERFORWARD", forward["surface"])
-}
 
 // closedSuspendResumeFinding is a finding the suspend and resume work closed
 // and a declaration whose presence keeps it closed.

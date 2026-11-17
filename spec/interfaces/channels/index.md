@@ -37,7 +37,7 @@ Numbered sections:
 - [§28.2 Taxonomy and axes](../../28_communication-channels.md#282-taxonomy-and-axes)
 - [§28.3 Registers](../../28_communication-channels.md#283-registers)
 - [§28.3 Registers › Link register](../../28_communication-channels.md#link-register), in part
-- [§28.4 Claim register](../../28_communication-channels.md#284-claim-register), in part
+- [§28.4 Implementation status](../../28_communication-channels.md#284-implementation-status), in part
 - [§28.5 Contract cards](../../28_communication-channels.md#285-contract-cards)
 - [§28.6 Exclusivity and concurrency model](../../28_communication-channels.md#286-exclusivity-and-concurrency-model)
 - [§28.7 Wire-contract artifact register](../../28_communication-channels.md#287-wire-contract-artifact-register), in part

@@ -20,8 +20,7 @@
 //
 // The project has no harness that runs these cases against a third-party
 // adapter: cmd/lenny-compliance drives a runtime binary over JSONL and has no
-// adapter under test. tests/claim-map.json records that absence as an ABSENT
-// row.
+// adapter under test. Issue CHGWPOD-I20 records that absence.
 
 package conformance_test
 

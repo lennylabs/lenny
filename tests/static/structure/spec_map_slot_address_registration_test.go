@@ -122,9 +122,9 @@ var documentConsistencyGates = map[string]string{
 	"tests/docs/build_gaps_release_ownership_records_currency_test.go": "BUILD-GAPS.md and " +
 		"gateway-runtime-comms-remediation.md, whose release-ownership closures, departure records, " +
 		"filings, and plan item cite the code and test files that back them",
-	"tests/docs/build_gaps_data_lifecycle_records_currency_test.go": "BUILD-GAPS.md, " +
-		"gateway-runtime-comms-remediation.md, and tests/claim-map.json, whose data-lifecycle closures, " +
-		"annotations, filings, plan item, and terminal-tail claim row cite the code and test files that back them",
+	"tests/docs/build_gaps_data_lifecycle_records_currency_test.go": "BUILD-GAPS.md " +
+		"and gateway-runtime-comms-remediation.md, whose data-lifecycle closures, " +
+		"annotations, filings, and plan item cite the code and test files that back them",
 	"tests/docs/tenant_deletion_credentials_doc_currency_test.go": "docs/operator-guide/multi-tenancy.md, " +
 		"docs/operator-guide/security.md, and docs/api/admin.md, whose tenant-deletion credential-revocation row, " +
 		"TENANT_NOT_FOUND row, and tenant create and delete entries name the refusals the tree returns",
@@ -356,9 +356,6 @@ var slotAddressCaseFiles = []string{
 	"tests/static/lint/adapter_proto_message_scope_test.go",
 	"tests/static/internal/adapterproto/adapterproto.go",
 	"tests/static/structure/change_graph_slotreaper_selection_test.go",
-	"tests/static/structure/claim_register_generator_test.go",
-	"tests/static/structure/claim_register_proto_agreement_test.go",
-	"tests/static/structure/claim_register_test.go",
 	"tests/static/structure/spec_map_exception_blocker_retention_test.go",
 	"tests/static/structure/spec_map_slot_address_registration_test.go",
 	"tests/conformance/concurrent_slot_conformance_test.go",

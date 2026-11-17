@@ -11,8 +11,8 @@ import (
 )
 
 // The adapter proto's text parse, shared by the static-tier gates that read it.
-// Two gates read the same file for different questions: one joins the claim
-// register to the fields the proto declares, and one holds the addressing
+// Two gates read the same file for different questions: one holds the
+// generation fence on the gateway-to-pod requests, and one holds the addressing
 // convention §4.1 derives a request message's scope from. They share one parse
 // so a change to the proto's spelling moves both gates together.
 
@@ -32,6 +32,9 @@ var (
 	// protoRPC matches one method declaration and captures its request type,
 	// with or without the client-streaming marker.
 	protoRPC = regexp.MustCompile(`^\s*rpc \w+\s*\(\s*(?:stream\s+)?([\w.]+)\s*\)`)
+	// protoNamedRPC matches one method declaration and captures the method
+	// name and its request type.
+	protoNamedRPC = regexp.MustCompile(`^\s*rpc (\w+)\s*\(\s*(?:stream\s+)?([\w.]+)\s*\)`)
 )
 
 // FieldDecl is one field declaration as the proto text states it. Type is
@@ -114,6 +117,33 @@ func ServiceRequests(body string) map[string]bool {
 		}
 	}
 	return requests
+}
+
+// ServiceMethods returns the methods one service declares, keyed by method
+// name, with the request type of each. A service the proto does not declare
+// returns an empty map.
+func ServiceMethods(body, service string) map[string]string {
+	methods := map[string]string{}
+	inside := false
+	depth := 0
+	for _, line := range strings.Split(body, "\n") {
+		if !inside {
+			if m := protoServiceOpen.FindStringSubmatch(line); m != nil && m[1] == service {
+				if depth = braceDelta(line); depth > 0 {
+					inside = true
+				}
+			}
+			continue
+		}
+		depth += braceDelta(line)
+		if m := protoNamedRPC.FindStringSubmatch(line); m != nil {
+			methods[m[1]] = m[2]
+		}
+		if depth <= 0 {
+			break
+		}
+	}
+	return methods
 }
 
 // braceDelta is how far one line moves the brace depth.

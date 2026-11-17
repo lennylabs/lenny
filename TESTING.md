@@ -937,7 +937,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
     - `go test ./tests/static/build/...` — build and generated-artifact drift: the license header on every source file, the CRD and JSON Schema inventories, the migration numbering, the supervisor binary, the workflow tool staging, the change records, and the generated-code no-drift checks for `pkg/proto/` and the API code.
     - `go test ./tests/static/chart/...` — the Helm chart render and the deployment boundary: flags the chart renders parse against their binaries, the profiles, RBAC, the adapter inputs, and the chart's agreement with the specification's ops RBAC block and OpenSLO fragment.
     - `go test ./tests/static/lint/...` — code-invariant lints over Go source and test-hygiene lints: the coordinator-hold allowlist, Redis cluster safety, the erasure writers, the production-mode carrier, dead code, retired symbols, proto addressing, ephemeral ports, temp roots, and provider coverage.
-    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the claim register, the skip-reason classifier, the gates of the specification tree, and the self-tests of the spec map and the change graph.
+    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the skip-reason classifier, the gates of the specification tree, and the self-tests of the spec map and the change graph.
 
     The no-drift test in the build package reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
 22. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
@@ -968,7 +968,6 @@ The structure package carries the gates of the channel-naming and line-citation 
 | `TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister` | The degradation matrix matches the channel register | No. Kept. |
 | `TestResidualGateCertifiesTheTree` | Every member of a migration class is classified | No. Kept until the migration registers retire. |
 | `TestEveryMigrationGateIsRegisteredAtTierZero` | Every migration gate is still hard-gated | No. Kept while the gates it lists remain. |
-| `TestClaimRegisterSaysWhatTheSpecificationRequires`, `TestClaimRegisterIsReproducibleFromItsGenerator`, and `TestClaimRegisterAgreesWithTheAdapterProto` | The claim register's form, its generator, and its agreement with the adapter proto | No. Kept. |
 | `TestComplianceFullChecksNamedForTheirChannel` | The compliance checks carry their channel's identifier | No. Kept. |
 
 **Wall-clock target.** Under 30 seconds on a laptop for each check other than the structure package, which has the budget above.

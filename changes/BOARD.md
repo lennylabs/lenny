@@ -9,9 +9,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 2 |
-| Ready | 4 |
+| Ready | 3 |
 | Waiting on decisions | 40 |
 | Blocked | 148 |
+| Landed | 1 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -24,12 +25,12 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Building |  |
 | [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Ready |  |
-| [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Ready |  |
 | [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Ready |  |
 | [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Blocked | 0116.S1 |
 | [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Blocked | 0116.S1 |
 | [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3 |
 | [0116.S6](0116-coverage-and-selection/steps.md#0116s6-retire-the-maps-their-registers-and-their-self-tests) | Retire the maps, their registers, and their self-tests | Blocked | 0116.S2, 0116.S3 |
+| [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Landed |  |
 
 ### M2: Gateway package layout and the journey pilot
 
@@ -239,7 +240,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Decided` | 0 of 7 | 0 |
+| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `In progress` | 1 of 7 | 0 |
 | [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `Decided` | 0 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
@@ -256,7 +257,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 0 |
 | [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 0 |
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 1 |
-| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 3 |
+| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 4 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 4 | 0 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 0 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 6 | 17 |
