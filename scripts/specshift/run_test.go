@@ -5899,6 +5899,12 @@ func TestMarkdownAnchorIdentifiersAreOneSharedExclusion(t *testing.T) {
 			endBefore: ")",
 		},
 		{
+			name:      "the explicit HTML anchor of the specification tree is excluded whole",
+			fixture:   "html-anchor.md",
+			open:      "<a",
+			endBefore: "Term",
+		},
+		{
 			name:    "a link carrying no fragment is excluded nowhere",
 			fixture: "link-without-fragment.md",
 		},
@@ -10441,5 +10447,36 @@ func TestAnAnchorIdentifierMatchClaimsNoSiteForARegisterEntry(t *testing.T) {
 	}
 	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
 		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestGeneratedRuleSelectsTheSpecificationRegistry pins that the registry
+// of the specification tree is a producer output. It is JSON with no
+// comment and no generation field, so only the producer list can select
+// it, and a pass that rewrote a copy of an anchor in it would leave it
+// stale against the pages. The pages themselves stay authored. The case
+// covers tooling for the specification's own structure, so it carries no
+// specification annotation.
+func TestGeneratedRuleSelectsTheSpecificationRegistry(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for rel, content := range map[string]string{
+		"spec/registry.json":  "{\n  \"version\": 1\n}\n",
+		"spec/conventions.md": "---\ncode: CONV\ntype: conventions\nsummary: s\n---\n# Conventions\n",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := scope.DirReader(dir)
+	if got, err := scope.Generated("spec/registry.json", read); err != nil || got != scope.ProducerOutput {
+		t.Errorf("Generated(spec/registry.json) = %q, %v; want %q", got, err, scope.ProducerOutput)
+	}
+	if got, err := scope.Generated("spec/conventions.md", read); err != nil || got != scope.NotGenerated {
+		t.Errorf("Generated(spec/conventions.md) = %q, %v; want an authored page", got, err)
 	}
 }

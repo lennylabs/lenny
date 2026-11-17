@@ -78,6 +78,9 @@ func (p *Page) Dir() string {
 	return dir
 }
 
+// BodyLine returns the file line of the body's first line.
+func (p *Page) BodyLine() int { return p.bodyLine }
+
 // IsPlaceholder reports whether the page is a placeholder.
 func (p *Page) IsPlaceholder() bool { return p.Front.Status == "placeholder" }
 

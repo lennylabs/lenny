@@ -74,6 +74,15 @@
 //	specshift since [-root <path>] <YYYY-MM-DD | commit>
 //
 // The survey package documents what each one reports.
+//
+// The pages subcommand runs the gates that read the text of the
+// specification tree's pages, and the gate that holds the contribution
+// blocks against the rendered chart:
+//
+//	specshift pages [-root <path>] check
+//	specshift pages [-root <path>] contributions -manifests <rendered.yaml>
+//
+// The pagegate package documents each gate.
 package main
 
 import (
@@ -92,6 +101,7 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
+	"github.com/lennylabs/lenny/scripts/specshift/pagegate"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -212,11 +222,11 @@ func passNames() string {
 }
 
 // run parses the command line and executes one pass, prints one pass's
-// write domain, or hands a ref, defs, digest, where, or since command to
-// its package. Those subcommands are dispatched before the flags are
-// parsed, because they are driven by the generated registry and the
-// definition blocks rather than by a register, and take arguments of
-// their own.
+// write domain, or hands a ref, defs, pages, digest, where, or since
+// command to its package. Those subcommands are dispatched before the flags
+// are parsed, because they are driven by the generated registry and the
+// definition blocks rather than by a register, and take arguments of their
+// own.
 func run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) > 0 && args[0] == "ref" {
 		return ref.Main(ctx, args[1:], out)
@@ -226,6 +236,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if len(args) > 0 && slices.Contains(survey.Commands, args[0]) {
 		return survey.Run(ctx, args[0], args[1:], out)
+	}
+	if len(args) > 0 && args[0] == pagegate.Command {
+		return pagegate.Run(ctx, args[1:], out)
 	}
 	return runWith(ctx, builtPasses, args, out)
 }

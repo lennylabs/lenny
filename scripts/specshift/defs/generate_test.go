@@ -367,3 +367,38 @@ func TestSchemasDocumentIsCurrent(t *testing.T) {
 		}
 	}
 }
+
+// The code registry lists every page of the tree from its front matter,
+// including a catalog page whose front matter generation writes, with the
+// pages at the root of the tree first.
+func TestGenerateWritesTheCodeRegistryFromFrontMatter(t *testing.T) {
+	t.Parallel()
+	root := writeTree(t, map[string]string{
+		"spec/README.md":            "---\ncode: README\ntype: conventions\nsummary: The root map.\n---\n# Root\n",
+		ConventionsPath:             "---\ncode: CONV\ntype: conventions\nsummary: How pages are written.\n---\n# Conventions\n\n<!-- generated:definition-kinds -->\n<!-- /generated:definition-kinds -->\n\n## Code registry\n\n<!-- generated:code-registry -->\nA stale row.\n<!-- /generated:code-registry -->\n",
+		"spec/caps/index.md":        "---\ncode: CAPIDX\ntype: index\nsummary: Lists the capabilities.\n---\n",
+		"spec/caps/a-capability.md": "---\ncode: ACAP\ntype: capability\nsummary: |\n  A capability whose summary\n  spans lines.\n---\n# A capability\n",
+	})
+	conv := generateFixture(t, root)[ConventionsPath]
+	if strings.Contains(conv, "A stale row.") {
+		t.Errorf("the code registry kept the text it replaces:\n%s", conv)
+	}
+	wantOrder := []string{
+		"| `README` | conventions | [`README.md`](README.md) | The root map. |",
+		"| `CONV` | conventions | [`conventions.md`](conventions.md) | How pages are written. |",
+		"| `ACAP` | capability | [`caps/a-capability.md`](caps/a-capability.md) | A capability whose summary spans lines. |",
+		"| `CAPIDX` | index | [`caps/index.md`](caps/index.md) | Lists the capabilities. |",
+		"| `CATIDX` | index | [`catalogs/index.md`](catalogs/index.md) |",
+	}
+	last := -1
+	for _, row := range wantOrder {
+		i := strings.Index(conv, row)
+		if i < 0 {
+			t.Fatalf("the code registry lacks the row %q:\n%s", row, conv)
+		}
+		if i < last {
+			t.Errorf("the row %q is out of order", row)
+		}
+		last = i
+	}
+}

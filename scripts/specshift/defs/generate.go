@@ -24,7 +24,7 @@ func Generate(t *Tree) (map[string]string, []Problem) {
 	}
 	out := map[string]string{}
 	pages := generateCatalogs(t, out)
-	generateSections(t, out)
+	generateSections(t, pages, out)
 	problems := generateIndexes(pages, out)
 	sortProblems(problems)
 	if len(problems) > 0 {
@@ -76,8 +76,9 @@ func frontFor(t *Tree, p string, c catalog, pageType string) string {
 
 // generateSections fills the generated sections of every page that
 // carries marker comments, other than the generated catalogs and the
-// folder index section, which generateIndexes fills.
-func generateSections(t *Tree, out map[string]string) {
+// folder index section, which generateIndexes fills. pages are the tree's
+// pages with the catalogs as generated, which the code registry lists.
+func generateSections(t *Tree, pages []*Page, out map[string]string) {
 	codes := t.Codes()
 	for _, p := range t.Pages {
 		if strings.HasPrefix(p.Path, CatalogDir+"/") {
@@ -94,7 +95,12 @@ func generateSections(t *Tree, out map[string]string) {
 			continue
 		}
 		l := linker{fromDir: path.Dir(p.Path), codes: codes}
-		body := replaceRegions(p.Body, fill, func(name string) string { return sectionContent(t, p, name, l) })
+		body := replaceRegions(p.Body, fill, func(name string) string {
+			if name == RegionCodeRegistry {
+				return codeRegistry(pages, path.Dir(p.Path))
+			}
+			return sectionContent(t, p, name, l)
+		})
 		out[p.Path] = p.FrontText + body
 	}
 }
@@ -134,6 +140,28 @@ func sectionContent(t *Tree, p *Page, name string, l linker) string {
 	}
 	if len(tb.rows) == 0 {
 		return "No definition block names this page yet.\n"
+	}
+	return tb.render()
+}
+
+// codeRegistry renders the code registry: one row per page with its code,
+// type, path relative to the specification directory, and summary, read
+// from the pages' front matter. The pages at the root of the tree come
+// first, then every other page by path. fromDir is the folder of the page
+// that carries the table, which its links are relative to.
+func codeRegistry(pages []*Page, fromDir string) string {
+	sorted := append([]*Page(nil), pages...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		ri, rj := sorted[i].Dir() == "", sorted[j].Dir() == ""
+		if ri != rj {
+			return ri
+		}
+		return sorted[i].Path < sorted[j].Path
+	})
+	tb := table{header: []string{"Code", "Type", "Path", "Summary"}}
+	for _, p := range sorted {
+		rel := strings.TrimPrefix(p.Path, SpecDir+"/")
+		tb.add(code(p.Front.Code), p.Front.Type, "["+code(rel)+"]("+relLink(fromDir, p.Path)+")", p.Front.Summary)
 	}
 	return tb.render()
 }

@@ -3,14 +3,13 @@
 // Package defs reads the definition blocks of the specification tree and
 // generates the files derived from them.
 //
-// A definition block is a fenced block whose info string is lenny-def and
-// whose body is a YAML mapping. Its kind field selects one of the schemas in
-// schema.go, and each block defines one enumerable fact, such as a setting, a
-// metric, or an error code, on the page that owns it. The block's anchor is
-// <kind>-<slug>, where the slug is the block's name lower-cased with each run
-// of other characters replaced by a hyphen; an operation is anchored by its
-// identifier, <CODE>-<operation name>, lower-cased the same way. The anchor
-// stands on its own line, as <a id="..."></a>, directly above the block.
+// A definition block is a fenced lenny-def block that holds one YAML
+// mapping. Its kind field selects one of the schemas in schema.go, and each
+// block defines one enumerable fact, such as a setting, a metric, or an
+// error code, on the page that owns it. AnchorFor computes the anchor a
+// block carries on the line above it, and Slug the part of it derived from
+// the block's name; the conventions page states the rule, which its
+// definition-kinds section renders from SchemaReference.
 //
 // The pages of the specification tree are the Markdown files under spec/
 // whose YAML front matter carries a code. The numbered files carry no front

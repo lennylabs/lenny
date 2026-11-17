@@ -178,6 +178,7 @@ func Build(ctx context.Context, t *Tree, committed *Registry) (*Registry, []Find
 	for _, d := range docs {
 		b.addPage(d)
 	}
+	b.reportCodeGrammar()
 	b.reportDuplicateCodes()
 	b.reportDuplicateAnchors()
 	b.reportSuffixCodes()
@@ -342,6 +343,23 @@ func (b *builder) reportBareRequirements(d pageDoc) {
 // claim records one registration of an anchor.
 func (b *builder) claim(anchor, file string, line int) {
 	b.anchors[anchor] = append(b.anchors[anchor], Finding{File: file, Line: line})
+}
+
+// CodeExpr is the grammar of a page code: two to nine upper-case letters,
+// with no digit and no hyphen, as the conventions page states under
+// "Identifiers".
+var CodeExpr = regexp.MustCompile(`^[A-Z]{2,9}$`)
+
+// reportCodeGrammar reports a code or an alias that breaks the grammar,
+// because an identifier built on it would not parse as <CODE>-<suffix>.
+func (b *builder) reportCodeGrammar() {
+	for _, p := range b.reg.Pages {
+		for _, c := range append([]string{p.Code}, p.Aliases...) {
+			if !CodeExpr.MatchString(c) {
+				b.findings = append(b.findings, Finding{File: p.Path, Line: b.codeLine[p.Path], Message: fmt.Sprintf("code %s is not two to nine upper-case letters", c)})
+			}
+		}
+	}
 }
 
 // reportDuplicateCodes reports a code that two pages declare, and an

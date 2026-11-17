@@ -19,12 +19,24 @@ const (
 	RegionNetworkRules    = "network-rules"
 	RegionIndex           = "index"
 	RegionDefinitionKinds = "definition-kinds"
+	RegionCodeRegistry    = "code-registry"
 )
+
+// ConventionsPath is the repo-relative path of the conventions page, which
+// carries the code registry and the definition-kinds reference as
+// generated sections.
+const ConventionsPath = SpecDir + "/conventions.md"
+
+// conventionsRegions are the generated sections the conventions page
+// carries, so the code registry and the list of definition-block kinds
+// it states are always the ones the front matter and the schemas give.
+var conventionsRegions = []string{RegionCodeRegistry, RegionDefinitionKinds}
 
 // regionNames are the region names a marker may carry.
 var regionNames = []string{
 	RegionSettingsRead, RegionMetricsEmitted, RegionEventsEmitted,
 	RegionRBACGrants, RegionNetworkRules, RegionIndex, RegionDefinitionKinds,
+	RegionCodeRegistry,
 }
 
 var (
@@ -149,10 +161,11 @@ func unitRegions(t *Tree) map[string]map[string]bool {
 	return out
 }
 
-// checkRegions reports malformed markers on every page, and a page that
-// a block names (by read-by, emitter, or unit) but that lacks the section
-// the block fills. A placeholder page is exempt from the second rule,
-// because its content has not been written yet.
+// checkRegions reports malformed markers on every page, a conventions page
+// that lacks the code registry or the definition-kinds section, and a page
+// that a block names (by read-by, emitter, or unit) but that lacks the
+// section the block fills. A placeholder page is exempt from the last
+// rule, because its content has not been written yet.
 func checkRegions(t *Tree) []Problem {
 	var problems []Problem
 	needed := unitRegions(t)
@@ -165,6 +178,15 @@ func checkRegions(t *Tree) []Problem {
 		have := map[string]bool{}
 		for _, r := range regions {
 			have[r.name] = true
+		}
+		if p.Path == ConventionsPath {
+			for _, name := range conventionsRegions {
+				if !have[name] {
+					problems = append(problems, Problem{Path: p.Path, Line: 0, Message: fmt.Sprintf(
+						"the conventions page needs the generated section <!-- generated:%s --> ... <!-- /generated:%s -->", name, name,
+					)})
+				}
+			}
 		}
 		for _, name := range regionNames {
 			if needed[p.Front.Code][name] && !have[name] {

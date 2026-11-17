@@ -423,3 +423,26 @@ func joinProblems(problems []Problem) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+func TestCheckRequiresTheConventionsPageToCarryTheCodeRegistryAndTheKinds(t *testing.T) {
+	t.Parallel()
+	files := baseFiles(placeholder("CAP"))
+	files[ConventionsPath] = "---\ncode: CONV\ntype: conventions\nsummary: s\n---\n# Conventions\n\n<!-- generated:definition-kinds -->\n<!-- /generated:definition-kinds -->\n"
+	problems := Check(loadTree(t, files))
+	assertProblem(t, problems, ConventionsPath, 0, "needs the generated section <!-- generated:code-registry -->")
+	for _, p := range problems {
+		if strings.Contains(p.Message, "generated:definition-kinds") {
+			t.Errorf("the definition-kinds section was reported although the page carries it: %s", p)
+		}
+	}
+
+	files[ConventionsPath] = "---\ncode: CONV\ntype: conventions\nsummary: s\n---\n# Conventions\n"
+	problems = Check(loadTree(t, files))
+	assertProblem(t, problems, ConventionsPath, 0, "generated:code-registry")
+	assertProblem(t, problems, ConventionsPath, 0, "generated:definition-kinds")
+
+	files[ConventionsPath] = "---\ncode: CONV\ntype: conventions\nsummary: s\n---\n# Conventions\n\n<!-- generated:definition-kinds -->\n<!-- /generated:definition-kinds -->\n\n<!-- generated:code-registry -->\n<!-- /generated:code-registry -->\n"
+	if problems := Check(loadTree(t, files)); len(problems) > 0 {
+		t.Errorf("a conventions page with both sections was refused:\n%s", joinProblems(problems))
+	}
+}
