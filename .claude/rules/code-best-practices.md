@@ -64,7 +64,7 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 
 - Use idiomatic Go names; avoid stutter (`session.Session`, not `session.SessionStruct`). Document every exported identifier.
 - Comments generously explain why, not what. Delete commented-out code. Include contextual information that may be helpful to future AI agents reviewing or modifying the code.
-- Cite the spec on spec-derived logic with `// spec: §X.Y`. Do not include line numbers since they can shift frequently (`spec-citations.md`). A reviewer should be able to trace a behavior to its spec section.
+- Cite the spec on the code that makes a decision the spec states, with a `// spec:` annotation in the doc comment of that function or type. `spec-annotations.md` states the format, which code cites, and where an annotation never goes.
 
 ## Configuration and compatibility
 
@@ -80,7 +80,7 @@ Tier 0 runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `gosimple`,
 
 1. Read the target package first; match its idioms, error style, and structure.
 2. Before adding a package or helper, search for an existing one to extend.
-3. Keep functions small and dependencies injected; add the `// spec:` citation on spec-derived logic.
+3. Keep functions small and dependencies injected; add the `// spec:` citation on the deciding code, as `spec-annotations.md` states.
 4. Run `gofumpt`, `goimports`, and tier 0; resolve every linter finding rather than suppressing it.
 5. Keep the diff scoped to the change; revert incidental reformatting.
 

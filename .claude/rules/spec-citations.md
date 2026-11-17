@@ -1,6 +1,6 @@
 # Specification citations
 
-Project-wide rules for citing the technical specification under `spec/`. They apply to every carrier that points a reader at a specification section: specification prose, documentation, schemas, Go comments and `// spec:` annotations, test names and comments, and the root-level records inside the domain below. They complement `code-best-practices.md`, which states the `// spec:` annotation format, and `doc-content.md`, which keeps section numbers out of published documentation.
+Project-wide rules for citing the technical specification under `spec/`. They apply to every carrier that points a reader at a specification section: specification prose, documentation, schemas, Go comments and `// spec:` annotations, test names and comments, and the root-level records inside the domain below. They complement `spec-annotations.md`, which states the `// spec:` annotation format and where an annotation goes, and `doc-content.md`, which keeps section numbers out of published documentation.
 
 ## Top-level principle
 
@@ -8,7 +8,8 @@ A specification citation names a heading, never a line. Every edit to the specif
 
 ## The rule
 
-- Cite a section by its number and heading, or by its anchor, such as `§N.M` or `[Section N.M](NN_file-name.md#nm-heading-slug)`. A citation that needs more precision than a section names the bold paragraph label or quotes the sentence it means.
+- Cite a section by its number and heading, or by its anchor, such as `§N.M` or `[Section N.M](NN_file-name.md#nm-heading-slug)`. A citation that needs more precision than a section names the bold paragraph label, or, outside code and tests, quotes the sentence it means.
+- A citation in code or tests, whether a `// spec:` annotation or a comment, names an identifier (a requirement, an operation, a definition block's anchor, or a page code) once the page it cites exists, as `spec-annotations.md` states. A `§N.M` citation remains valid for an area that has not migrated, and it resolves through the successor stubs once the area has. Code and tests never quote specification text.
 - Do not write a specification line number in any spelling, such as `spec/NN_file-name.md:LINE`, `spec/NN:LINE`, or "line LINE of §N.M". The prohibition is on the line number rather than on one form of words, so a spelling the gates do not yet recognize is a gap in the gates rather than a permitted citation.
 - A section that gives up content keeps a permanent successor pointer naming the heading that now owns the content and the identifiers that moved.
 
@@ -31,12 +32,15 @@ The specification's naming law states N8 without this domain. The domain above i
 
 The citation resolver and the line-citation ratchet under `scripts/specshift/gate` hold this rule. The ratchet counts the line citations each file still carries against `tests/registers/line-citations.yaml` and fails when a file's count rises. A new line citation is a defect to fix rather than an entry to add to the register.
 
+The annotation lint and the section-citation ratchet in `scripts/specshift/annotation` hold the part of the rule that governs code and tests, as `spec-annotations.md` states.
+
 ## How to apply when editing
 
 1. When citing the specification, name the section number and heading, or link the anchor.
-2. When the section is long, name the bold paragraph label or quote the sentence rather than giving a line.
-3. In a proposal, a line citation is allowed as evidence, and every staged edit locates its target by heading and quoted text.
-4. When moving content out of a section, leave a successor pointer naming the heading that now owns it.
+2. When the section is long, name the bold paragraph label, or, outside code and tests, quote the sentence rather than giving a line.
+3. In code and tests, cite the identifier once the page exists, and `§N.M (heading)` until then.
+4. In a proposal, a line citation is allowed as evidence, and every staged edit locates its target by heading and quoted text.
+5. When moving content out of a section, leave a successor pointer naming the heading that now owns it.
 
 ## Maintenance
 
