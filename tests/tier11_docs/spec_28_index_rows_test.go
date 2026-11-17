@@ -1153,6 +1153,22 @@ var stagedLineSupersessions = []stagedLineSupersession{
 			"([§10.1.1](10_gateway-internals.md#1011-stateless-replicas-and-per-session-coordination) **Fallback:**) |",
 	},
 	{
+		// N3's list of records outside the prohibition's domain loses the
+		// build plan and the build progress record, which change 0115
+		// retires in favour of the v1 program and the board. The queue
+		// record stays.
+		proposal:   "changes/0115-spec-structure (0115.S9)",
+		linePrefix: "`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, the build and queue records",
+		from:       "the build and queue records",
+		to:         "the queue record",
+	},
+	{
+		proposal:   "changes/0115-spec-structure (0115.S9)",
+		linePrefix: "`BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`,",
+		from:       "`BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and ",
+		to:         "",
+	},
+	{
 		// The REG-COORDLEASE semantics cell points at §10.1.1 **Replica
 		// address:**, which states the holder value the forward reads.
 		proposal:   "0101_new_gateway-replicas-have-no-way-to-ask-the-replica",

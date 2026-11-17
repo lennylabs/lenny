@@ -265,6 +265,33 @@ func TestNumberedFilesStayOutOfScopeUntilTheyAreStubs(t *testing.T) {
 	}
 }
 
+// TestStyleLeavesTheHeadingsOfANumberedStubAlone pins that a successor
+// stub's heading, which keeps the wording section citations reach it by,
+// is not held to the style rule, while the stub's own text still is.
+func TestStyleLeavesTheHeadingsOfANumberedStubAlone(t *testing.T) {
+	t.Parallel()
+	lead := "\n\n" + ref.StubMarker + "\n\nThe content of this section has moved to these pages and identifiers:\n\n"
+	stub := "## 14. Comprehensive Security Hardening" + lead + "- [Pool](x/page.md): the pool.\n\n" +
+		"#### 2026 Open-Source Entrants Matrix" + lead + "- [Pool](x/page.md): a robust pool.\n"
+	pages := loadPages(t, map[string]string{
+		"spec/14_hardening.md": stub,
+		"spec/x/page.md":       page("POOL", "capability", "", "# Pool\n"),
+	})
+	var numbered *Page
+	for _, p := range pages {
+		if p.Path == "spec/14_hardening.md" {
+			numbered = p
+		}
+	}
+	if numbered == nil {
+		t.Fatalf("the stubbed numbered file is not among the pages: %v", pages)
+	}
+	problems := checkStyle(numbered)
+	if len(problems) != 1 || !strings.Contains(problems[0].Message, `"robust"`) {
+		t.Errorf("checkStyle = %s, want only the banned word of the stub's own text", joinProblems(problems))
+	}
+}
+
 // contribTree is a fixture tree with the unit pages GW and WPC.
 func contribTree(t *testing.T, blocks string) *defs.Tree {
 	t.Helper()

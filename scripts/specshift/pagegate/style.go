@@ -52,10 +52,17 @@ var stylePatterns = []stylePattern{
 var countHeading = regexp.MustCompile(`(?i)(?:^|\s)(\d+|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|twenty)\s+\p{L}`)
 
 // checkStyle reports each line of a page's prose that matches a style
-// pattern, and each heading that names a count.
+// pattern, and each heading that names a count. The headings of a
+// numbered file are left out: a successor stub keeps its section's
+// heading as it was, because section citations reach the section through
+// that heading's anchor, so the gate cannot ask for the heading to be
+// reworded.
 func checkStyle(p *Page) []Problem {
 	var out []Problem
 	for _, l := range proseLines(p) {
+		if p.Type == typeNumbered && headingLine.MatchString(l.Text) {
+			continue
+		}
 		for _, sp := range stylePatterns {
 			if m := sp.expr.FindStringSubmatch(l.Text); m != nil {
 				out = append(out, Problem{Path: p.Path, Line: l.Number, Message: fmt.Sprintf(
