@@ -226,6 +226,10 @@ func TestTierUnitWithSinceAndAllRunsEveryPackage(t *testing.T) {
 func TestTierComposesWithPkgAndMaxTier(t *testing.T) {
 	useChangedPlan(t, changedFixturePlan(), nil)
 
+	if _, err := (selector{changed: true, since: "--output=x"}).resolve(); err == nil {
+		t.Errorf("a --since value that git reads as an option must be refused")
+	}
+
 	r := mustResolve(t, selector{tier: tierUnit, pkgs: []string{"./cmd/lenny-test/..."}})
 	if len(r.tiers) != 1 || r.tiers[0].name != tierUnit {
 		t.Fatalf("--tier unit --pkg = %v", planNames(r.tiers))

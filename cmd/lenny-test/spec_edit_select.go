@@ -42,23 +42,47 @@ type diffSides struct {
 // resolveDiffSides reads the revisions behind a `--since` value: a plain
 // ref compares its merge base with HEAD, `A..B` compares A with B, and
 // `A...B` compares their merge base with B. An empty ref compares HEAD with
-// the working tree, as `--changed` does.
+// the working tree, as `--changed` does. Every named revision is resolved
+// to a commit hash first, so a value that git would read as an option, such
+// as one that begins with `-`, fails rather than reaching a later git
+// command as a flag.
 func resolveDiffSides(ctx context.Context, root, since string) (diffSides, error) {
+	var a, b string
+	threeDot := false
 	switch {
 	case since == "":
 		return diffSides{base: "HEAD"}, nil
 	case strings.Contains(since, "..."):
-		a, b, _ := strings.Cut(since, "...")
-		b = orHEAD(b)
-		mb, err := gitOutput(ctx, root, "merge-base", orHEAD(a), b)
-		return diffSides{base: mb, head: b}, err
+		a, b, _ = strings.Cut(since, "...")
+		threeDot = true
 	case strings.Contains(since, ".."):
-		a, b, _ := strings.Cut(since, "..")
-		return diffSides{base: orHEAD(a), head: orHEAD(b)}, nil
+		a, b, _ = strings.Cut(since, "..")
 	default:
-		mb, err := gitOutput(ctx, root, "merge-base", since, "HEAD")
-		return diffSides{base: mb, head: "HEAD"}, err
+		a, b, threeDot = since, "HEAD", true
 	}
+	base, err := commitOf(ctx, root, orHEAD(a))
+	if err != nil {
+		return diffSides{}, err
+	}
+	head, err := commitOf(ctx, root, orHEAD(b))
+	if err != nil {
+		return diffSides{}, err
+	}
+	if threeDot {
+		if base, err = gitOutput(ctx, root, "merge-base", base, head); err != nil {
+			return diffSides{}, err
+		}
+	}
+	return diffSides{base: base, head: head}, nil
+}
+
+// commitOf resolves a revision to its commit hash, refusing a revision that
+// begins with `-`.
+func commitOf(ctx context.Context, root, rev string) (string, error) {
+	if strings.HasPrefix(rev, "-") {
+		return "", fmt.Errorf("revision %q begins with '-'", rev)
+	}
+	return gitOutput(ctx, root, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
 }
 
 func orHEAD(rev string) string {

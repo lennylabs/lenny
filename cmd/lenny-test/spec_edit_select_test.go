@@ -228,8 +228,13 @@ func TestSelectSpecEditsReadsTheDiffOfATree(t *testing.T) {
 	if e := selectSpecEdits(ctx, root, "HEAD~1", []string{"pkg/pool/claim.go"}); len(e.tests) != 0 || len(e.notes) != 0 {
 		t.Errorf("a diff without specification edits selected %+v", e)
 	}
-	if e := selectSpecEdits(ctx, root, "no-such-ref", paths); len(e.notes) == 0 {
-		t.Errorf("an unreadable ref must leave a note; got %+v", e)
+	for _, bad := range []string{"no-such-ref", "--output=x", "HEAD~1..--output=x"} {
+		if e := selectSpecEdits(ctx, root, bad, paths); len(e.notes) == 0 || len(e.tests) != 0 {
+			t.Errorf("--since %q must select nothing by name and leave a note; got %+v", bad, e)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "x")); err == nil {
+		t.Errorf("a revision read as a git option wrote a file")
 	}
 
 	// A page of the new tree: an edit inside POOL-R5 selects its citing
