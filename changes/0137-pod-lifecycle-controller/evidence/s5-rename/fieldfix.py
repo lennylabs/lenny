@@ -5,11 +5,11 @@ goident.go renames identifiers that carry a retired kind name. A field
 whose name does not, such as AgentPodSpec.PoolRef (now PodSetRef), cannot
 be renamed by name, because other structs carry fields of the same name.
 This script reads the type checker's errors (from the go/packages loader
-in typecheck/), keeps those that name the old field on the renamed
+in typecheck.go), keeps those that name the old field on the renamed
 struct, and rewrites the field identifier at the reported line and
 column. Run it until it reports no edits:
 
-    (cd changes/0137-pod-lifecycle-controller/evidence/s5-rename/typecheck && go run . "$OLDPWD" ./...) > /tmp/errs.txt
+    # build and run typecheck.go as its header states, writing /tmp/errs.txt
     python3 changes/0137-pod-lifecycle-controller/evidence/s5-rename/fieldfix.py /tmp/errs.txt
 """
 import re

@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 
+//go:build ignore
+
 // Command typecheck loads every package of the module at the directory
 // given first, with its tests, and prints each type error once.
 // fieldfix.py reads its output to rename the struct fields of 0137.S5 at
-// the sites the type checker reports. It is its own module so the Lenny
-// module takes no dependency on golang.org/x/tools.
+// the sites the type checker reports. It runs in a module of its own so the
+// Lenny module takes no dependency on golang.org/x/tools:
 //
-// Usage: go run . <repository root> ./...
+//	mkdir /tmp/tc && cp typecheck.go /tmp/tc/main.go && cd /tmp/tc
+//	go mod init tc && go get golang.org/x/tools@v0.45.0 && go mod tidy
+//	go run . <repository root> ./... > /tmp/errs.txt
 package main
 
 import (
