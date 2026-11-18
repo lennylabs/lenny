@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/lennylabs/lenny/scripts/specshift/annotation"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // testEvent matches the `go test -json` event schema. Each line of
@@ -130,10 +133,10 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 		}
 		return result.Failures[i].Test < result.Failures[j].Test
 	})
-	// Best-effort spec-section enrichment: for each failure with a
-	// known package + test name, scan the matching _test.go file for
-	// `// spec: 11.7` annotations above the function. Errors are
-	// silently swallowed; spec section attribution is incremental.
+	// Best-effort enrichment: for each failure with a known package and
+	// test name, the annotation index of the package's test files names
+	// what the test's doc comment cites. A package that cannot be read
+	// yields nothing, because attribution is incremental.
 	for i := range result.Failures {
 		f := &result.Failures[i]
 		f.SpecSections = lookupSpecSections(f.Package, f.Test)
@@ -141,106 +144,63 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 	return result
 }
 
-// specSectionRe extracts a numeric reference like "8.2" or "11.7.3"
-// from a `// spec: <ref> (<note>)` annotation. Multiple references
-// per annotation are comma-separated and listed in spec-map.json.
-var (
-	specSectionRe   = regexp.MustCompile(`(?m)^\s*//\s*spec:\s*(.*)$`)
-	sectionNumberRe = regexp.MustCompile(`\b\d+(?:\.\d+)*\b`)
-)
-
-// lookupSpecSections returns the list of spec sections attributed
-// to a failing test by scanning *_test.go files in the test's
-// package directory for `// spec:` annotations above the function.
-// Returns nil when the package directory is unresolvable, the file
-// list is empty, or no annotations are present.
+// lookupSpecSections returns what a failing test's annotation cites:
+// its identifiers, then its section numbers as `§N.M`, in the order the
+// annotation states each kind. It reads the annotation index of the test
+// files in the test's package directory (change 0116, CS-1), and a
+// subtest reads its top-level test. It returns nil when the package
+// directory cannot be read or the test carries no annotation.
 func lookupSpecSections(pkg, test string) []string {
 	if pkg == "" || test == "" {
 		return nil
 	}
-	dir := packageDir(pkg)
-	if dir == "" {
-		return nil
-	}
-	entries, err := os.ReadDir(dir)
+	return specCitationsIn(repoRoot(), packageRelDir(pkg), test)
+}
+
+// specCitationsIn is lookupSpecSections over a repository root and a
+// repo-relative package directory.
+func specCitationsIn(root, dir, test string) []string {
+	entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
 	if err != nil {
 		return nil
 	}
+	var files []string
 	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil {
-			continue
-		}
-		if sections := scanFileForSpecSections(string(body), test); len(sections) > 0 {
-			return sections
+		p := path.Join(dir, e.Name())
+		if !e.IsDir() && strings.HasSuffix(e.Name(), "_test.go") && scope.Readable(p) {
+			files = append(files, p)
 		}
 	}
-	return nil
+	idx, err := annotation.IndexFiles(files, scope.DirReader(root), nil)
+	if err != nil {
+		return nil
+	}
+	name, _, _ := strings.Cut(test, "/")
+	t, ok := idx.Test(dir, name)
+	if !ok || !t.Annotated() {
+		return nil
+	}
+	out := append([]string{}, t.Identifiers...)
+	for _, s := range t.Sections {
+		out = append(out, "§"+s)
+	}
+	return out
 }
 
-// packageDir resolves a Go import path to a filesystem directory
-// under the project root. Handles bare relative imports (./pkg/x)
-// as well as fully qualified ones (github.com/lennylabs/lenny/pkg/x).
-func packageDir(pkg string) string {
-	root := repoRoot()
+// packageRelDir resolves a Go import path to a directory relative to the
+// repository root. It handles bare relative imports (./pkg/x) as well as
+// fully qualified ones (github.com/lennylabs/lenny/pkg/x).
+func packageRelDir(pkg string) string {
 	const prefix = "github.com/lennylabs/lenny/"
 	switch {
 	case strings.HasPrefix(pkg, prefix):
-		return filepath.Join(root, strings.TrimPrefix(pkg, prefix))
+		return strings.TrimPrefix(pkg, prefix)
 	case strings.HasPrefix(pkg, "./"):
-		return filepath.Join(root, strings.TrimPrefix(pkg, "./"))
+		return path.Clean(strings.TrimPrefix(pkg, "./"))
 	default:
 		// Best-effort: many failures report the bare package path.
-		return filepath.Join(root, pkg)
+		return path.Clean(pkg)
 	}
-}
-
-// scanFileForSpecSections finds `func <test>(` in body and walks
-// upward through the contiguous comment block immediately above it,
-// collecting every `// spec:` annotation. The walk stops at the
-// first non-comment, non-blank line so annotations belonging to a
-// previous function or package-level declaration do not bleed in.
-// Returns the collected section IDs in document order.
-func scanFileForSpecSections(body, test string) []string {
-	lines := strings.Split(body, "\n")
-	funcSig := "func " + test + "("
-	for idx, line := range lines {
-		if !strings.Contains(line, funcSig) {
-			continue
-		}
-		// Collect the contiguous comment-or-blank block above idx.
-		first := idx - 1
-		for first >= 0 {
-			t := strings.TrimSpace(lines[first])
-			if strings.HasPrefix(t, "//") || t == "" {
-				first--
-				continue
-			}
-			break
-		}
-		first++
-		var sections []string
-		seen := map[string]bool{}
-		for i := first; i < idx; i++ {
-			m := specSectionRe.FindStringSubmatch(lines[i])
-			if m == nil {
-				continue
-			}
-			for _, s := range sectionNumberRe.FindAllString(m[1], -1) {
-				if seen[s] {
-					continue
-				}
-				seen[s] = true
-				sections = append(sections, s)
-			}
-		}
-		return sections
-	}
-	return nil
 }
 
 // failureEntryFromAccumulator builds a §7 failureEntry from the

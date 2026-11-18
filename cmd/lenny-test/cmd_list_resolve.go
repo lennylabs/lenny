@@ -3,8 +3,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,27 +121,32 @@ func testsForTier(tier string) []string {
 	return nil
 }
 
-// testsForSpec resolves spec sections to test paths via spec-map.json.
+// testsForSpec resolves identifiers, page codes, and numbered sections
+// to the tests that verify them, through the annotation index (see
+// specModel.testsFor). A query the tree does not know resolves to
+// nothing, and the model's load error is reported on stderr.
 func testsForSpec(specs string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), specMapFile))
+	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "list --spec: %v\n", err)
 		return nil
 	}
-	var doc struct {
-		Sections map[string]struct {
-			Tests []string `json:"tests"`
-		} `json:"sections"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
+	return testsForSpecIn(m, splitNonEmpty(specs), os.Stderr)
+}
+
+// testsForSpecIn is testsForSpec over a loaded model. Each query the
+// model does not know is reported on w.
+func testsForSpecIn(m *specModel, queries []string, w io.Writer) []string {
 	out := []string{}
-	for _, id := range splitNonEmpty(specs) {
-		sec, ok := doc.Sections[id]
+	for _, q := range queries {
+		tests, ok := m.testsFor(q)
 		if !ok {
+			fmt.Fprintf(w, "list --spec: %s is not a registered identifier, page code, or numbered section\n", q)
 			continue
 		}
-		out = append(out, sec.Tests...)
+		for _, t := range tests {
+			out = append(out, t.String())
+		}
 	}
 	return out
 }

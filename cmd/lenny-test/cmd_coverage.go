@@ -18,16 +18,25 @@ import (
 //
 // Usage:
 //
-//	lenny-test coverage --spec      # spec-section coverage
+//	lenny-test coverage --spec [<identifier | code | §N.M>...] [--area <area>]
 //	lenny-test coverage --go        # Go package coverage (reads cover.out)
+//	lenny-test coverage --diff <ref>
+//
+// The queries of --spec may sit before, between, or after the flags.
 func runCoverage(args []string) int {
 	fs := flag.NewFlagSet("coverage", flag.ExitOnError)
-	wantSpec := fs.Bool("spec", false, "report spec-section coverage from spec-map.json")
+	wantSpec := fs.Bool("spec", false, "report the coverage view from the // spec: annotations, the identifier registry, the successor stubs, and the issues")
+	area := fs.String("area", "", "with --spec, the pages of one area, named by its folder or by the code of one of its pages")
 	wantGo := fs.Bool("go", false, "report Go coverage from tests/results/cover.out")
 	wantDiff := fs.String("diff", "", "report coverage on lines changed since this git ref (e.g. main, HEAD~5)")
 	threshold := fs.Float64("threshold", 0.0, "fail when coverage is below this fraction (0..1)")
 	jsonOut := fs.Bool("json", false, "machine-readable output")
-	if err := fs.Parse(args); err != nil {
+	queries, err := parseInterspersed(fs, args)
+	if err != nil {
+		return 2
+	}
+	if len(queries) > 0 && !*wantSpec {
+		fmt.Fprintf(os.Stderr, "coverage: %s: only --spec takes arguments\n", strings.Join(queries, " "))
 		return 2
 	}
 	if !*wantSpec && !*wantGo && *wantDiff == "" {
@@ -38,12 +47,30 @@ func runCoverage(args []string) int {
 		return reportDiffCoverage(*wantDiff, *threshold, *jsonOut)
 	}
 	if *wantSpec {
-		return reportSpecCoverage(*threshold, *jsonOut)
+		return reportSpecCoverage(specCoverageOptions{queries: queries, area: *area, threshold: *threshold, jsonOut: *jsonOut})
 	}
 	if *wantGo {
 		return reportGoCoverage(*threshold, *jsonOut)
 	}
 	return 0
+}
+
+// parseInterspersed parses a flag set over arguments whose positional
+// values may sit between the flags, and returns the positional values in
+// order.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		args = fs.Args()
+		if len(args) == 0 {
+			return positional, nil
+		}
+		positional = append(positional, args[0])
+		args = args[1:]
+	}
 }
 
 // reportDiffCoverage measures coverage on the lines changed between
@@ -274,108 +301,6 @@ func stripModulePrefix(p string) string {
 	return strings.TrimPrefix(p, "github.com/lennylabs/lenny/")
 }
 
-// reportSpecCoverage walks tests/spec-map.json and reports how many
-// leaf sections have at least one test attached.
-//
-// A leaf section is one whose key contains a dot (e.g. "4.6.1"). The
-// non-leaf parents ("4", "4.6") are reported for context but don't
-// count toward the threshold.
-func reportSpecCoverage(threshold float64, jsonOut bool) int {
-	root := repoRoot()
-	specMapPath := filepath.Join(root, specMapFile)
-	body, err := os.ReadFile(specMapPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "coverage --spec: %v\n", err)
-		return 1
-	}
-	var doc struct {
-		Sections map[string]struct {
-			Title             string   `json:"title"`
-			SpecFile          string   `json:"spec_file"`
-			Tests             []string `json:"tests"`
-			Packages          []string `json:"packages"`
-			BlockedUntilPhase string   `json:"blocked_until_phase"`
-			Notes             string   `json:"notes"`
-		} `json:"sections"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		fmt.Fprintf(os.Stderr, "coverage --spec: parse: %v\n", err)
-		return 1
-	}
-
-	totalLeaves := 0
-	withTests := 0
-	uncovered := []specRow{}
-
-	for id, sec := range doc.Sections {
-		// Non-leaves are the top-level chapters (single token).
-		if !strings.Contains(id, ".") {
-			continue
-		}
-		// Skip sections explicitly marked as non-normative.
-		if strings.Contains(strings.ToLower(sec.Notes), "non-normative") {
-			continue
-		}
-		totalLeaves++
-		if len(sec.Tests) > 0 {
-			withTests++
-			continue
-		}
-		uncovered = append(uncovered, specRow{
-			ID:    id,
-			Title: sec.Title,
-			Phase: sec.BlockedUntilPhase,
-		})
-	}
-	rate := 0.0
-	if totalLeaves > 0 {
-		rate = float64(withTests) / float64(totalLeaves)
-	}
-
-	sort.Slice(uncovered, func(i, j int) bool { return uncovered[i].ID < uncovered[j].ID })
-
-	if jsonOut {
-		out, _ := json.MarshalIndent(map[string]any{
-			"leaf_sections": totalLeaves,
-			"with_tests":    withTests,
-			"coverage_rate": rate,
-			"threshold":     threshold,
-			"uncovered":     uncovered,
-		}, "", "  ")
-		fmt.Println(string(out))
-	} else {
-		fmt.Printf("spec coverage: %d / %d leaf sections have at least one test (%.1f%%)\n",
-			withTests, totalLeaves, rate*100)
-		if threshold > 0 {
-			fmt.Printf("threshold: %.1f%%\n", threshold*100)
-		}
-		if len(uncovered) > 0 {
-			fmt.Printf("\nUncovered (top 20):\n")
-			max := len(uncovered)
-			if max > 20 {
-				max = 20
-			}
-			for _, u := range uncovered[:max] {
-				phase := ""
-				if u.Phase != "" {
-					phase = fmt.Sprintf("  [phase=%s]", u.Phase)
-				}
-				fmt.Printf("  §%-8s %s%s\n", u.ID, u.Title, phase)
-			}
-			if len(uncovered) > 20 {
-				fmt.Printf("  ... (%d more)\n", len(uncovered)-20)
-			}
-		}
-	}
-
-	if threshold > 0 && rate < threshold {
-		fmt.Fprintf(os.Stderr, "\ncoverage --spec: rate %.1f%% below threshold %.1f%%\n",
-			rate*100, threshold*100)
-		return 1
-	}
-	return 0
-}
-
 // reportGoCoverage parses tests/results/cover.out (or the path
 // supplied via LENNY_COVER_PROFILE) and reports per-package
 // coverage.
@@ -434,12 +359,6 @@ func reportGoCoverage(threshold float64, jsonOut bool) int {
 		return 1
 	}
 	return 0
-}
-
-type specRow struct {
-	ID    string `json:"id"`
-	Title string `json:"title"`
-	Phase string `json:"phase,omitempty"`
 }
 
 type pkgCovRow struct {

@@ -74,39 +74,56 @@ func readChangeGraphGlobs() (map[string]map[string][]string, error) {
 	return doc.Globs, nil
 }
 
-// resolveSpecsPlan resolves a list of spec section ids through
-// spec-map.json. Each id contributes the tier of every test it
-// references (tier inferred from the test path).
-func resolveSpecsPlan(specs []string) []tierPlan {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), specMapFile))
+// resolveSpecsPlan resolves identifiers, page codes, and numbered
+// sections to the tests whose annotations cite them (see
+// specModel.testsFor), and plans the tiers of those tests. The second
+// return value carries a note for each query the tree does not know.
+func resolveSpecsPlan(specs []string) ([]tierPlan, []string) {
+	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
-		return nil
+		return []tierPlan{{name: tierUnit, notes: "no test resolved; running unit for safety"}},
+			[]string{fmt.Sprintf("the specification model is unavailable (%v)", err)}
 	}
-	var doc struct {
-		Sections map[string]struct {
-			Tests []string `json:"tests"`
-		} `json:"sections"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
-	tiers := map[string]bool{}
-	for _, id := range specs {
-		sec, ok := doc.Sections[id]
+	return specsPlanIn(m, specs)
+}
+
+// specsPlanIn is resolveSpecsPlan over a loaded model. Each tier a
+// resolved test sits in runs, and lists the test functions; the unit
+// tier is scoped to the packages of its tests. When no test resolves,
+// the unit tier runs whole, so the selection still gives feedback.
+func specsPlanIn(m *specModel, specs []string) ([]tierPlan, []string) {
+	var notes []string
+	byTier := map[string][]string{}
+	unitPkgs := map[string]bool{}
+	for _, q := range specs {
+		tests, ok := m.testsFor(q)
 		if !ok {
+			notes = append(notes, fmt.Sprintf("--spec %s is not a registered identifier, page code, or numbered section", q))
 			continue
 		}
-		for _, t := range sec.Tests {
-			if tier := inferTierFromPath(t); tier != "" {
-				tiers[tier] = true
+		for _, t := range tests {
+			tier := testTier(t)
+			byTier[tier] = append(byTier[tier], t.String())
+			if tier == tierUnit {
+				unitPkgs["./"+t.Dir] = true
 			}
 		}
 	}
-	if len(tiers) == 0 {
-		// Default to unit when the spec hits the package layer only.
-		return []tierPlan{{name: "unit", notes: "no test paths resolved; running unit for safety"}}
+	if len(byTier) == 0 {
+		return []tierPlan{{name: tierUnit, notes: "no test resolved; running unit for safety"}}, notes
 	}
-	return planFromTierSet(tiers)
+	tiers := map[string]bool{}
+	for t := range byTier {
+		tiers[t] = true
+	}
+	plan := planFromTierSet(tiers)
+	for i := range plan {
+		plan[i].tests = byTier[plan[i].name]
+		if plan[i].name == tierUnit {
+			plan[i].pkgs = collapsePatterns(unitPkgs)
+		}
+	}
+	return plan, notes
 }
 
 // resolvePkgsPlan resolves package globs through the change graph.
@@ -275,11 +292,13 @@ func planFromTierSet(tiers map[string]bool) []tierPlan {
 // selector asked to run.
 func mergeDiscoveryPlans(plans [][]tierPlan, all bool) []tierPlan {
 	tiers := map[string]bool{}
+	tests := map[string][]string{}
 	unitPatterns := map[string]bool{}
 	unitScoped := !all
 	for _, plan := range plans {
 		for _, t := range plan {
 			tiers[t.name] = true
+			tests[t.name] = append(tests[t.name], t.tests...)
 			if t.name != tierUnit {
 				continue
 			}
@@ -293,6 +312,7 @@ func mergeDiscoveryPlans(plans [][]tierPlan, all bool) []tierPlan {
 	}
 	merged := planFromTierSet(tiers)
 	for i := range merged {
+		merged[i].tests = tests[merged[i].name]
 		if merged[i].name == tierUnit && unitScoped {
 			merged[i].pkgs = collapsePatterns(unitPatterns)
 		}

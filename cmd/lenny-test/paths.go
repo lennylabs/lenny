@@ -31,10 +31,6 @@ const (
 	// LENNY_COVER_PROFILE is unset.
 	coverProfileFile = resultsDir + "/cover.out"
 
-	// specMapFile maps every spec section to its tests, packages,
-	// and other traceability artifacts.
-	specMapFile = "tests/spec-map.json"
-
 	// specMapExceptionsFile records sections that intentionally
 	// have no tests (non-normative, post-v1, etc.).
 	specMapExceptionsFile = "tests/spec-map-exceptions.yaml"
