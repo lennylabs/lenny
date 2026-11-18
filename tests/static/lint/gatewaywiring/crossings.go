@@ -13,14 +13,17 @@ import (
 )
 
 // Crossing is one value of a part passed where another part expects an
-// interface or a function.
+// interface or a function, or one value of a confined package handed to a
+// part GW-R2 does not allow that package.
 type Crossing struct {
 	// To is the repository-relative package that declares the target: the
 	// interface or function type, or, for an unnamed type, the struct or
-	// function whose field or parameter it is.
+	// function whose field, parameter, or result it is. For a confined
+	// value it is the package of the struct or function that receives it.
 	To string
-	// Interface names the target in To: a type name, Struct.Field, or
-	// Func(n) for the n-th parameter of a function or method.
+	// Interface names the target in To: a type name, Struct.Field,
+	// Func(n) for the n-th parameter of a function or method, or Func.n for
+	// its n-th result.
 	Interface string
 	// From is the repository-relative package of the value.
 	From string
@@ -47,11 +50,32 @@ type PartOf func(rel string) (part string, kind gatewaylayout.Kind)
 // Crossings returns every crossing the program makes, sorted by key. A
 // crossing is a value whose package belongs to one gateway part, passed to
 // a target whose package belongs to another, unless the target's package
-// is the seam interface.
+// is the seam interface; or a value whose named type a confined package
+// declares, handed to a part GW-R2 does not allow that package.
+//
+// The check reads call arguments, keyed and positional struct literal
+// fields, map, slice, and array literal elements, assignments to fields,
+// variable declarations with a type, return statements against the
+// enclosing function's results, and channel sends.
 func Crossings(p *Program, partOf PartOf) []Crossing {
 	w := &walker{p: p, partOf: partOf, seen: map[string]bool{}}
 	for _, f := range p.Files {
-		ast.Inspect(f, w.visit)
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Body == nil {
+					continue
+				}
+				fn, _ := p.Info.Defs[d.Name].(*types.Func)
+				var sig *types.Signature
+				if fn != nil {
+					sig, _ = fn.Type().(*types.Signature)
+				}
+				w.body(d.Body, sig, fn)
+			default:
+				ast.Inspect(decl, w.visit)
+			}
+		}
 	}
 	sort.Slice(w.out, func(i, j int) bool { return w.out[i].Key() < w.out[j].Key() })
 	return w.out
@@ -64,6 +88,23 @@ type walker struct {
 	out    []Crossing
 }
 
+// body walks a function body, checking its return statements against the
+// function's results and walking each nested function literal with its own
+// results.
+func (w *walker) body(b *ast.BlockStmt, sig *types.Signature, fn *types.Func) {
+	ast.Inspect(b, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			litSig, _ := w.p.Info.TypeOf(n).(*types.Signature)
+			w.body(n.Body, litSig, nil)
+			return false
+		case *ast.ReturnStmt:
+			w.ret(n, sig, fn)
+		}
+		return w.visit(n)
+	})
+}
+
 func (w *walker) visit(n ast.Node) bool {
 	switch n := n.(type) {
 	case *ast.CallExpr:
@@ -72,6 +113,10 @@ func (w *walker) visit(n ast.Node) bool {
 		w.literal(n)
 	case *ast.AssignStmt:
 		w.assign(n)
+	case *ast.ValueSpec:
+		w.valueSpec(n)
+	case *ast.SendStmt:
+		w.send(n)
 	}
 	return true
 }
@@ -117,42 +162,68 @@ func (w *walker) callee(fun ast.Expr) (*types.Package, string) {
 	if !ok {
 		return nil, ""
 	}
+	return fn.Pkg(), funcName(fn)
+}
+
+func funcName(fn *types.Func) string {
 	name := fn.Name()
 	if recv := fn.Type().(*types.Signature).Recv(); recv != nil {
 		if named := namedOf(recv.Type()); named != nil {
 			name = named.Obj().Name() + "." + name
 		}
 	}
-	return fn.Pkg(), name
+	return name
 }
 
-// literal checks each keyed field of a struct literal.
+// literal checks each field of a struct literal, keyed or positional, and
+// each element of a map, slice, or array literal.
 func (w *walker) literal(lit *ast.CompositeLit) {
 	t := w.p.Info.TypeOf(lit)
 	if t == nil {
 		return
 	}
-	if _, ok := t.Underlying().(*types.Struct); !ok {
-		return
-	}
-	structName := ""
+	typeName := ""
+	var typePkg *types.Package
 	if named := namedOf(t); named != nil {
-		structName = named.Obj().Name()
+		typeName, typePkg = named.Obj().Name(), named.Obj().Pkg()
 	}
+	switch u := t.Underlying().(type) {
+	case *types.Struct:
+		for i, elt := range lit.Elts {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				key, ok := kv.Key.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				if field, ok := w.p.Info.Uses[key].(*types.Var); ok {
+					w.check(field.Type(), field.Pkg(), typeName+"."+field.Name(), kv.Value)
+				}
+				continue
+			}
+			if i < u.NumFields() {
+				field := u.Field(i)
+				w.check(field.Type(), field.Pkg(), typeName+"."+field.Name(), elt)
+			}
+		}
+	case *types.Map:
+		for _, elt := range lit.Elts {
+			if kv, ok := elt.(*ast.KeyValueExpr); ok {
+				w.check(u.Elem(), typePkg, typeName+"[]", kv.Value)
+			}
+		}
+	case *types.Slice:
+		w.elements(lit, u.Elem(), typePkg, typeName)
+	case *types.Array:
+		w.elements(lit, u.Elem(), typePkg, typeName)
+	}
+}
+
+func (w *walker) elements(lit *ast.CompositeLit, elem types.Type, pkg *types.Package, name string) {
 	for _, elt := range lit.Elts {
-		kv, ok := elt.(*ast.KeyValueExpr)
-		if !ok {
-			continue
+		if kv, ok := elt.(*ast.KeyValueExpr); ok {
+			elt = kv.Value
 		}
-		key, ok := kv.Key.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		field, ok := w.p.Info.Uses[key].(*types.Var)
-		if !ok {
-			continue
-		}
-		w.check(field.Type(), field.Pkg(), structName+"."+field.Name(), kv.Value)
+		w.check(elem, pkg, name+"[]", elt)
 	}
 }
 
@@ -179,9 +250,50 @@ func (w *walker) assign(as *ast.AssignStmt) {
 	}
 }
 
-// check records a crossing when target is an interface or a function type
-// of one part and value belongs to another.
+// valueSpec checks a variable declaration that names its type.
+func (w *walker) valueSpec(vs *ast.ValueSpec) {
+	if vs.Type == nil || len(vs.Values) != len(vs.Names) {
+		return
+	}
+	t := w.p.Info.TypeOf(vs.Type)
+	if t == nil {
+		return
+	}
+	for _, v := range vs.Values {
+		w.check(t, nil, "", v)
+	}
+}
+
+// send checks a channel send against the channel's element type.
+func (w *walker) send(s *ast.SendStmt) {
+	t := w.p.Info.TypeOf(s.Chan)
+	if t == nil {
+		return
+	}
+	if ch, ok := t.Underlying().(*types.Chan); ok {
+		w.check(ch.Elem(), nil, "", s.Value)
+	}
+}
+
+// ret checks each result of a return statement against the enclosing
+// function's result types.
+func (w *walker) ret(r *ast.ReturnStmt, sig *types.Signature, fn *types.Func) {
+	if sig == nil || len(r.Results) != sig.Results().Len() {
+		return
+	}
+	var ownerPkg *types.Package
+	ownerName := "func"
+	if fn != nil {
+		ownerPkg, ownerName = fn.Pkg(), funcName(fn)
+	}
+	for i, res := range r.Results {
+		w.check(sig.Results().At(i).Type(), ownerPkg, fmt.Sprintf("%s.%d", ownerName, i), res)
+	}
+}
+
+// check records a crossing for one value given to one target.
 func (w *walker) check(target types.Type, ownerPkg *types.Package, ownerName string, value ast.Expr) {
+	w.confined(ownerPkg, ownerName, value)
 	switch target.Underlying().(type) {
 	case *types.Interface, *types.Signature:
 	default:
@@ -211,7 +323,37 @@ func (w *walker) check(target types.Type, ownerPkg *types.Package, ownerName str
 	if toPart == fromPart || toKind == gatewaylayout.KindSeamInterface {
 		return
 	}
-	c := Crossing{To: to, Interface: toName, From: from, Type: fromName, Site: w.site(value)}
+	w.record(Crossing{To: to, Interface: toName, From: from, Type: fromName, Site: w.site(value)})
+}
+
+// confined records a value whose named type a confined package declares,
+// handed to a struct field, parameter, or result of a part that GW-R2 does
+// not allow that package.
+func (w *walker) confined(ownerPkg *types.Package, ownerName string, value ast.Expr) {
+	if ownerPkg == nil {
+		return
+	}
+	t := w.p.Info.TypeOf(value)
+	if t == nil {
+		return
+	}
+	named := namedOf(t)
+	if named == nil || named.Obj().Pkg() == nil {
+		return
+	}
+	to, ok1 := w.p.Rel(ownerPkg.Path())
+	from, ok2 := w.p.Rel(named.Obj().Pkg().Path())
+	if !ok1 || !ok2 {
+		return
+	}
+	part, kind := w.partOf(to)
+	if !gatewaylayout.ConfinedImport(kind, part, from) {
+		return
+	}
+	w.record(Crossing{To: to, Interface: ownerName, From: from, Type: named.Obj().Name(), Site: w.site(value)})
+}
+
+func (w *walker) record(c Crossing) {
 	if w.seen[c.Key()] {
 		return
 	}

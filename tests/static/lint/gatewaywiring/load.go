@@ -35,13 +35,14 @@ type listed struct {
 	Export     string
 	GoFiles    []string
 	Module     *struct{ Path string }
+	Error      *struct{ Err string }
 }
 
 // LoadProgram lists the package at pattern in the module rooted at dir with its
 // dependencies' export data, parses its non-test files, and type-checks
 // them. It needs a module whose packages compile.
 func LoadProgram(dir, pattern string) (*Program, error) {
-	out, err := goCommand(dir, "list", "-e", "-export", "-deps", "-json=ImportPath,Dir,Export,GoFiles,Module", pattern)
+	out, err := goCommand(dir, "list", "-e", "-export", "-deps", "-json=ImportPath,Dir,Export,GoFiles,Module,Error", pattern)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +65,12 @@ func LoadProgram(dir, pattern string) (*Program, error) {
 	}
 	if target.Module == nil {
 		return nil, fmt.Errorf("%s is not inside a module", pattern)
+	}
+	if target.Error != nil {
+		return nil, fmt.Errorf("go list reports %s: %s", target.ImportPath, target.Error.Err)
+	}
+	if len(target.GoFiles) == 0 {
+		return nil, fmt.Errorf("go list reports no Go files for %s, so the check would read nothing", target.ImportPath)
 	}
 	fset := token.NewFileSet()
 	prog := &Program{Module: target.Module.Path, Fset: fset}

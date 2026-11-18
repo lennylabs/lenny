@@ -56,3 +56,9 @@ func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 	}
 	return false
 }
+
+// ConfinedImport reports whether a package of the given kind and part may
+// not hold or import the repository-relative package path under GW-R2.
+func ConfinedImport(kind Kind, part, rel string) bool {
+	return confinedImport(kind, part, rel, Confined)
+}

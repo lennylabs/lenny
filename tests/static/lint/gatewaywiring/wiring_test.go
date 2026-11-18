@@ -21,9 +21,26 @@ type Stamper interface{ Stamp(id string) }
 `,
 	"pkg/gateway/platformtools/tools/tools.go": `package tools
 
-import "example.com/fix/pkg/gateway/seam"
+import (
+	"example.com/fix/pkg/gateway/quota/quotastore"
+	"example.com/fix/pkg/gateway/seam"
+)
 
 type Terminal interface{ Begin(id string) }
+
+type (
+	Returned interface{ Begin(id string) }
+	Declared interface{ Begin(id string) }
+	Paired   interface{ Begin(id string) }
+	Mapped   interface{ Begin(id string) }
+	Listed   interface{ Begin(id string) }
+	Sent     interface{ Begin(id string) }
+)
+
+type Pair struct {
+	P    Paired
+	Name string
+}
 
 type Deps struct {
 	T     Terminal
@@ -31,6 +48,7 @@ type Deps struct {
 	F     func(id string)
 	Iface interface{ Begin(id string) }
 	Name  string
+	Quota *quotastore.Store
 }
 
 func New(t Terminal)              {}
@@ -40,6 +58,10 @@ func Stamped(s seam.Stamper)      {}
 type Svc struct{}
 
 func (s *Svc) Set(f func(id string)) {}
+`,
+	"pkg/gateway/quota/quotastore/store.go": `package quotastore
+
+type Store struct{}
 `,
 	"pkg/gateway/core/session/session.go": `package session
 
@@ -57,9 +79,14 @@ const crossingMain = `package main
 import (
 	"example.com/fix/pkg/gateway/core/session"
 	"example.com/fix/pkg/gateway/platformtools/tools"
+	"example.com/fix/pkg/gateway/quota/quotastore"
 )
 
 type adapter struct{}
+
+func returned(srv *session.Server) tools.Returned { return srv }
+
+func notACrossing() (tools.Returned, error) { return adapter{}, nil }
 
 func (adapter) Begin(id string) {}
 
@@ -76,6 +103,16 @@ func main() {
 	tools.New(adapter{})
 	tools.Stamped(srv)
 	_ = string(rune(65))
+	_ = returned(srv)
+	var declared tools.Declared = srv
+	_ = declared
+	_ = tools.Pair{srv, "x"}
+	_ = map[string]tools.Mapped{"a": srv}
+	_ = []tools.Listed{srv}
+	ch := make(chan tools.Sent, 1)
+	ch <- srv
+	_ = tools.Deps{Quota: &quotastore.Store{}}
+	_ = func() tools.Returned { return adapter{} }
 }
 `
 
@@ -100,6 +137,15 @@ func main() {
 
 func loadFixture(t *testing.T, main string) *Program {
 	t.Helper()
+	prog, err := LoadProgram(writeFixture(t, main), "./cmd/lenny-gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prog
+}
+
+func writeFixture(t *testing.T, main string) string {
+	t.Helper()
 	dir := t.TempDir()
 	files := map[string]string{"cmd/lenny-gateway/main.go": main}
 	for k, v := range fixtureLibs {
@@ -114,11 +160,7 @@ func loadFixture(t *testing.T, main string) *Program {
 			t.Fatal(err)
 		}
 	}
-	prog, err := LoadProgram(dir, "./cmd/lenny-gateway")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return prog
+	return dir
 }
 
 func classifier() PartOf {
@@ -130,10 +172,13 @@ func classifier() PartOf {
 // in every form the check reads: a named interface parameter, a variadic
 // parameter, struct literal fields of a named interface, an unnamed
 // interface, and a function type given a method value, a field assignment
-// of a package function, and an unnamed function parameter. The seam
+// of a package function, an unnamed function parameter, a return statement
+// in a function and in a function literal, a typed variable declaration, a
+// positional struct literal, map and slice literal elements, and a channel
+// send; and a value of a confined package handed to the seam. The seam
 // interface, the composition root's own adapter, and a function literal
 // are not crossings.
-// spec: GW-R1
+// spec: GW-R1, GW-R2
 func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 	prog := loadFixture(t, crossingMain)
 	got := Crossings(prog, classifier())
@@ -145,9 +190,16 @@ func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 		}
 	}
 	want := []string{
+		"pkg/gateway/platformtools/tools Declared <- pkg/gateway/core/session Server",
 		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session Hook",
 		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session Server.Begin",
 		"pkg/gateway/platformtools/tools Deps.Iface <- pkg/gateway/core/session Server",
+		"pkg/gateway/platformtools/tools Deps.Quota <- pkg/gateway/quota/quotastore Store",
+		"pkg/gateway/platformtools/tools Listed <- pkg/gateway/core/session Server",
+		"pkg/gateway/platformtools/tools Mapped <- pkg/gateway/core/session Server",
+		"pkg/gateway/platformtools/tools Paired <- pkg/gateway/core/session Server",
+		"pkg/gateway/platformtools/tools Returned <- pkg/gateway/core/session Server",
+		"pkg/gateway/platformtools/tools Sent <- pkg/gateway/core/session Server",
 		"pkg/gateway/platformtools/tools Svc.Set(0) <- pkg/gateway/core/session Server.Begin",
 		"pkg/gateway/platformtools/tools Terminal <- pkg/gateway/core/session Server",
 	}
@@ -246,5 +298,26 @@ func TestRegisterParsingRefusesUnknownKeys(t *testing.T) {
 func TestLoadRefusesAPackageOutsideAModule(t *testing.T) {
 	if _, err := LoadProgram(t.TempDir(), "./..."); err == nil {
 		t.Error("LoadProgram succeeded outside a module")
+	}
+}
+
+// TestLoadProgramFailsOnACompileErrorAndOnNoGoFiles checks that the check
+// refuses to pass when it cannot read the composition root: a compile error
+// in the target, and a target with no Go files.
+// spec: GW-R1
+func TestLoadProgramFailsOnACompileErrorAndOnNoGoFiles(t *testing.T) {
+	broken := writeFixture(t, "package main\n\nfunc main() { undefinedCall() }\n")
+	if _, err := LoadProgram(broken, "./cmd/lenny-gateway"); err == nil {
+		t.Error("a compile error in the target loaded")
+	}
+	empty := writeFixture(t, "package main\n\nfunc main() {}\n")
+	if err := os.Remove(filepath.Join(empty, "cmd", "lenny-gateway", "main.go")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(empty, "cmd", "lenny-gateway", "main_test.go"), []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadProgram(empty, "./cmd/lenny-gateway"); err == nil || !strings.Contains(err.Error(), "no Go files") {
+		t.Errorf("a target with no Go files: %v", err)
 	}
 }
