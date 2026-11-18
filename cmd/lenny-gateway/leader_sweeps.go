@@ -487,10 +487,11 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	// and run every registered gateway-singleton sweep only while this
 	// replica holds the lease (or always, under the AlwaysLeader fallback).
 	// Started after every leaderGate.Add above so the full set is gated.
+	sweeps := leaderGate.Len() + coreLeaderJobs.Len()
 	if coreLeaderJobs.Len() > 0 {
 		leaderGate.Add("core-leader-jobs", coreLeaderJobs.Run)
 	}
-	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", leaderGate.Len()-1+coreLeaderJobs.Len())
+	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", sweeps)
 	go leaderGate.Run(w.watchdogCtx)
 }
 
