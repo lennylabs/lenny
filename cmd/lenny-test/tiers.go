@@ -2,7 +2,41 @@
 
 package main
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
+
+// tierBuildTags returns the build tags of every tier, sorted and without
+// duplicates. The selector loads the import graph with all of them set, so
+// a tagged tier package, and a tagged test file of an untagged package, is
+// in the graph (change 0116, CS-4). No tier's files carry a negated tier
+// tag, so setting every tag at once drops no file a tier compiles.
+func tierBuildTags() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range allTiers() {
+		if tag := tierBuildTag(t); tag != "" && !seen[tag] {
+			seen[tag] = true
+			out = append(out, tag)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// tierExtraTrees returns the package trees outside a tier's directory
+// whose packages carry that tier's tagged tests in-package. The component
+// tier runs the tagged tests of the container helpers and of
+// cmd/lenny-ops, which tests its Redis- and Postgres-backed helpers
+// against real containers. A selected package under one of these trees
+// runs in the tier as well as in the unit tier.
+func tierExtraTrees(tier string) []string {
+	if tier == tierComponent {
+		return []string{"tests/testinfra/containers", "cmd/lenny-ops"}
+	}
+	return nil
+}
 
 // Tier names. These are the canonical string values used in
 // groups.yaml, spec-map.json, change-graph.json, build tags, and

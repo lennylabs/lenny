@@ -1,0 +1,321 @@
+# SPDX-License-Identifier: MIT
+#
+# Inputs no Go package owns, mapped to the tests that read them.
+#
+# `lenny-test run --changed` selects a changed Go file, and a file a Go
+# package embeds or keeps under its directory, through the import graph.
+# This list covers the files a test reads, executes, renders, or deploys by
+# path rather than by import: the tracked files outside every Go package
+# directory, and files inside one, such as the migrations and the schemas,
+# that tests outside the owning package's importers open by path. Each row
+# names path patterns, the targets that read them, and a reason.
+#
+# - `paths`: repo-relative patterns. `*` matches within one path segment,
+#   `**` across segments, and `?` one character of a segment.
+# - `runs`: tier names and Go package directories. A tier name runs the
+#   whole tier, and names a tier every package of which reads the input. A
+#   package directory is treated as changed, so a test package runs, and a
+#   helper package that reads the input for its importers selects every
+#   test that imports it.
+# - `reason`: how the targets read the paths.
+#
+# A changed path that no package owns and no row matches selects the static
+# tier only, and the selection notes name it. `lenny-test validate-maps`
+# fails a row whose pattern matches no tracked file or whose target is
+# neither a tier name nor a Go package directory. TESTING.md, "Selection
+# algorithm", describes the sources of a selection.
+kind: non-go-inputs
+version: 1
+inputs:
+  - paths: ["charts/lenny/**"]
+    runs:
+      - e2e_kind
+      - e2e_cloud
+      - load_kind
+      - load_cloud
+      - chaos
+      - security
+      - integration
+      - docs
+      - tests/testinfra/helm
+      - tests/testinfra/kind
+      - tests/component/pgbouncerchart
+      - tests/component/observability
+      - pkg/chart/values
+      - pkg/ctlcli
+      - pkg/admission/podclaim_guard
+      - cmd/lenny-gateway
+    reason: >-
+      The Kind and cloud tiers, and the chaos, security, and load_kind tiers on
+      the Kind cluster, run on the chart the install scripts deploy. The
+      integration, security, and component packages and the unit packages named
+      here render the chart with Helm or read its values and alert rules, and the
+      documentation tier reads its values and alert rules.
+  - paths: ["charts/lenny/crds/**"]
+    runs:
+      - tests/testinfra/envtest
+      - tests/contract/crd_schema
+      - pkg/embedded/crds
+    reason: >-
+      The envtest helper installs the chart's CRDs into every envtest
+      kube-apiserver, so every test that imports it reads them; the CRD schema
+      contract and the embedded CRD package read the files.
+  - paths: ["Dockerfile", "Dockerfile.supervisor"]
+    runs:
+      - e2e_kind
+      - e2e_cloud
+      - load_kind
+      - load_cloud
+      - chaos
+      - security
+      - tests/testinfra/kind/imagetag
+    reason: >-
+      The Kind install script and the cloud image builds build the platform and
+      supervisor images from these files, and the image-tag helper hashes them.
+  - paths: ["supervisor/**"]
+    runs:
+      - e2e_kind
+      - e2e_cloud
+      - load_kind
+      - load_cloud
+      - chaos
+      - security
+      - tests/testinfra/supervisorbuild
+      - tests/testinfra/kind/imagetag
+      - tests/contract/adapter_supervise
+      - pkg/adapter
+    reason: >-
+      The supervisor image copies these sources; the supervisor build helper and
+      the supervise contract compile them with make; the adapter's bounds test
+      reads supervisor.h.
+  - paths: ["docker-compose.yml", "Makefile"]
+    runs:
+      - tests/contract/compose_mode
+      - tests/testinfra/kind
+    reason: >-
+      The compose-mode contract reads the compose file and the Makefile targets,
+      and the Kind helper's image pins test reads the compose file.
+  - paths: ["compose/**"]
+    runs:
+      - tests/contract/compose_mode
+      - tests/testinfra/compose
+      - tests/testinfra/kind
+    reason: >-
+      The compose helper runs the stack these files define for the tests that
+      import it; the compose-mode contract reads the smoke test and the
+      Prometheus file; the Kind helper's image pins test reads compose/default.yml.
+  - paths: ["compose/redis-cluster/**"]
+    runs:
+      - tests/testinfra/containers
+    reason: The container helper starts a Redis cluster with compose/redis-cluster/start.sh.
+  - paths: ["deploy/**", "scripts/cloud/**"]
+    runs:
+      - e2e_cloud
+      - load_cloud
+      - tests/testinfra/cloud
+    reason: >-
+      The cloud helper runs the cloud scripts, which apply the Terraform under
+      deploy/ and install the chart, for the cloud tiers.
+  - paths: ["docs/**", "spec/**"]
+    runs:
+      - docs
+    reason: >-
+      The documentation tier checks the documentation and the specification as
+      a whole. Test functions that cite an edited section or identifier are
+      selected from the annotations in addition.
+  - paths: ["docs/runbooks/**"]
+    runs:
+      - e2e_kind
+      - tests/component/runbooks
+      - tests/testinfra/chaos
+      - tests/testinfra/kind/imagetag
+      - pkg/alerting/rules
+      - pkg/gateway/operability/health
+    reason: >-
+      The platform image copies the runbooks for the e2e_kind runbook index
+      test; the runbook component test, the chaos helper's runbook map, the alert
+      rules, and the operability health bundle read them.
+  - paths: ["spec/**"]
+    runs:
+      - tests/conformance
+      - pkg/observability/tracing
+      - pkg/gateway/externalapi/openapi
+    reason: >-
+      These packages read specification pages at test time: the intra-pod
+      pointer conformance test, the tracing attribute test, and the OpenAPI
+      completeness test.
+  - paths:
+      - "TESTING.md"
+      - "README.md"
+      - "CONTRIBUTING.md"
+      - "BUILD-GAPS.md"
+      - "TEST-GAPS.md"
+      - "PROPOSAL-QUEUE.md"
+      - "gateway-runtime-comms.md"
+      - "gateway-runtime-comms-remediation.md"
+      - "proposals/**"
+    runs:
+      - docs
+    reason: >-
+      Documentation-tier tests read these root documents and proposals.
+  - paths: ["sdks/client/python/**", "sdks/client/typescript/**", "sdks/runtime/python/**", "sdks/runtime/typescript/**"]
+    runs:
+      - tests/contract/sdks
+    reason: The SDK contract tests run the Python and TypeScript SDK helpers as subprocesses.
+  - paths:
+      - "tests/gate/**"
+      - "tests/non-go-inputs.yaml"
+      - "tests/groups.yaml"
+      - "tests/groups.subsets.yaml"
+      - "tests/flake-budget.yaml"
+      - "tests/change-graph.json"
+      - "tests/change-graph-pending.txt"
+      - "tests/spec-map.json"
+      - "tests/spec-map-exceptions.yaml"
+      - "tests/spec-map-pending.txt"
+    runs:
+      - cmd/lenny-test
+    reason: >-
+      The harness's tests read the committed selection files, maps, and flake
+      budget, and its secret-scan coverage test reads the gate image's Dockerfile.
+  - paths: ["tests/change-graph.json", "tests/spec-map.json"]
+    runs:
+      - scripts/refactor
+      - scripts/specshift/scope
+    reason: The package-move tooling rewrites the maps, and the shared read domain lists them.
+  - paths: ["tests/spec-map.json"]
+    runs:
+      - docs
+      - tests/contract/ocsf_audit
+    reason: A documentation-tier test and the OCSF audit contract read the spec map.
+  - paths: ["tests/flake-budget.yaml"]
+    runs:
+      - integration
+    reason: An integration test reads the quarantine list.
+  - paths: ["tests/spec-anchor-moves.json"]
+    runs:
+      - scripts/specshift/anchor
+      - scripts/specshift/scope
+    reason: The anchor tooling reads and writes the anchor-redirect map.
+  - paths: ["tests/registers/**"]
+    runs:
+      - cmd/lenny-test
+      - scripts/specshift
+      - scripts/specshift/anchor
+      - scripts/specshift/annotation
+      - scripts/specshift/gate
+      - scripts/specshift/identifier
+      - scripts/specshift/name
+      - scripts/specshift/pagegate
+      - scripts/specshift/register
+      - scripts/specshift/scope
+      - docs
+    reason: The harness, the specification tooling, and documentation-tier tests read the registers.
+  - paths: ["cmd/lenny-test/**"]
+    runs:
+      - scripts/specshift
+      - docs
+    reason: >-
+      The tooling's package reachability test reads the harness's non-test
+      sources, and a documentation-tier test reads the static tier's check list.
+  - paths: ["migrations/**"]
+    runs:
+      - chaos
+      - docs
+      - integration
+      - load_local
+      - security
+      - tests/testinfra/containers
+      - tests/testinfra/kind
+      - tests/testinfra/lifecycleharness
+      - tests/component/auditintegrity
+      - tests/component/auditstore
+      - tests/component/evalaggregates
+      - tests/component/gateway_subsystems
+      - tests/component/issuedtokencascade
+      - tests/component/leasedenial
+      - tests/component/leases
+      - tests/component/legalholdescrow
+      - tests/component/legalholdreconciler
+      - tests/component/lifecycle
+      - tests/component/migrations
+      - tests/component/opsaudit
+      - tests/component/opsidem
+      - tests/component/opsrevocation
+      - tests/component/poolresume
+      - tests/component/rls
+      - tests/component/runtimecapoverride
+      - tests/component/stores
+      - tests/component/tenantsalt
+      - tests/component/watchdog
+      - cmd/lenny-gateway
+      - pkg/ctlcli
+      - pkg/gateway/externalapi/admin
+    reason: >-
+      These packages apply or read the migration files by path rather than
+      through the embedding package: the container, Kind, and lifecycle
+      helpers migrate the databases they start, and the tests named here pass
+      the migrations directory to them or read it.
+  - paths: ["schemas/**"]
+    runs:
+      - conformance
+      - docs
+      - tests/contract/adapter_artifact_scope
+      - tests/contract/adapter_bind_attempt
+      - tests/contract/adapter_checkpointbarrier
+      - tests/contract/adapter_chunk_encoding
+      - tests/contract/adapter_events
+      - tests/contract/adapter_extendcredlease
+      - tests/contract/adapter_generation_fence
+      - tests/contract/adapter_jsonl
+      - tests/contract/adapter_observedlevel
+      - tests/contract/adapter_reportusage
+      - tests/contract/adapter_session_address
+      - tests/contract/adapter_workspace_restore
+      - tests/contract/admin_impersonation
+      - tests/contract/checkpoint_stream
+      - tests/contract/gatewaycontrol_scrub
+      - tests/contract/interceptor_proto
+      - tests/contract/lifecycle_tokens
+      - tests/contract/ocsf_audit
+      - tests/contract/rest_pools
+      - tests/contract/rest_sessions
+      - tests/contract/runtimeops_emitted
+      - tests/contract/sdks
+      - tests/contract/workspaceplan
+      - tests/testinfra/fixtures/generators
+      - cmd/lenny-compliance
+      - pkg/adapter
+      - pkg/audit/ocsf
+      - pkg/gateway/externalapi/openapi
+      - pkg/gateway/mcpfabric/mcpschemagen
+      - pkg/workspaceplan
+    reason: >-
+      These packages read the schema, proto, and mapping files by path rather
+      than through the embedding package.
+  - paths: ["tests/testinfra/fixtures/expand_contract_migration/**"]
+    runs:
+      - integration
+    reason: The schema migration journey test reads these migration fixtures by path.
+  - paths: ["tests/journeys/**"]
+    runs:
+      - cmd/lenny-test/journeys
+    reason: The journey runner reads the scenarios and builds the agent image from this directory.
+  - paths: ["tests/testdata/mcp/**"]
+    runs:
+      - e2e_kind
+      - tests/contract/rest_mcp_consistency
+      - tests/testinfra/mcpschema
+    reason: The MCP contract tests, the MCP schema helper, and an e2e_kind test read the MCP fixtures.
+  - paths: ["tests/testdata/migrations/**"]
+    runs:
+      - tests/component/migrations
+      - tests/testinfra/fixtures/seed
+    reason: The migration component test and the seed fixture helper read the migration fixtures.
+  - paths: ["tests/testdata/openai_chat/**", "tests/testdata/openai_responses/**"]
+    runs:
+      - e2e_kind
+      - tests/component/translators
+      - tests/contract/rest_openai_chat
+      - tests/contract/rest_openai_responses
+    reason: The translator component tests, the OpenAI contract tests, and an e2e_kind test read the translator corpora.
