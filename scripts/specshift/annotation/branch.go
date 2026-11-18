@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -24,9 +23,6 @@ type BranchReport struct {
 	// Skipped names each check the run could not apply, with the reason.
 	Skipped []string
 }
-
-// generatedHeader is the Go convention for a generated file's header.
-var generatedHeader = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
 
 // LintBranch lints the Go lines the working tree at root adds or changes
 // relative to its merge base with the integration branch. It returns
@@ -68,7 +64,7 @@ func LintBranch(ctx context.Context, root string) (BranchReport, error) {
 		if err != nil {
 			return rep, fmt.Errorf("read %s: %w", p, err)
 		}
-		if generatedHeader.Match(src) {
+		if IsGenerated(src) {
 			continue
 		}
 		rep.Files++

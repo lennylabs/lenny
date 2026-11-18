@@ -44,3 +44,4 @@
   - Existing test names with section numbers are renamed by each area, and the v1 program's area exit says so (CS-10).
 - 2026-11-17, review of 0116.S5 (general and security). Fixed: CHEGRESS-I2 reopened (the proxy credential is not bound to a pod identity), CHEGRESS-I1, CHGWPOD-I9, CHGWPOD-I12, and CHGWPOD-I15 planned under 0133.S2, closures settled by the tree attributed to 0116.S5, the wording of §28.4 and N4, a reading rule in the program for claim-register edits, and a static check that every gateway-to-pod request carrying `coordination_generation` is read or recorded. The question about the multi-tenant `spiffeBinding` refusal went to 0133 as its open decision 4.
 - 2026-11-17, build. 0116.S5 landed; gate run `1c1b7cd6604178e60db48b3b`. [`digests/0116.S5.md`](digests/0116.S5.md) records the result.
+- 2026-11-17, build. 0116.S1 landed; gate run `2702cc229509ac15b9388b90`. [`digests/0116.S1.md`](digests/0116.S1.md) records the result.

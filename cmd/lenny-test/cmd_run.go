@@ -37,7 +37,7 @@ func runRun(args []string) int {
 	sinceFlag := fs.String("since", "", "diff from the merge base of the given git ref and HEAD (e.g. main, HEAD~5), or an explicit range (A..B, A...B), instead of the working tree")
 	allFlag := fs.Bool("all", false, "with --changed or --pkg, run the unit tier over every package (./...) instead of the packages the selection reaches")
 	rdepsFlag := fs.Int("rdeps-depth", defaultRdepsDepth, "with --changed, how many hops of in-module importers of a touched package join the unit scope (0: touched packages only; -1: full transitive closure)")
-	specFlag := fs.String("spec", "", "comma-separated spec sections")
+	specFlag := fs.String("spec", "", "comma-separated identifiers, page codes, or numbered sections (§N.M); runs the tests whose // spec: annotations cite them")
 	pkgFlag := fs.String("pkg", "", "comma-separated source packages")
 	subsetFlag := fs.String("subset", "", "comma-separated subset names (requires --tier)")
 	dryRunFlag := fs.Bool("dry-run", false, "resolve the selector and print what would run; do not execute")
@@ -188,7 +188,10 @@ func (s selector) resolve() (resolvedSelector, error) {
 			raw = []tierPlan{{name: s.tier, subsets: s.subsets}}
 			break
 		}
-		discovered, discoveryNotes := s.discoveryPlan()
+		discovered, discoveryNotes, err := s.discoveryPlan()
+		if err != nil {
+			return resolvedSelector{}, err
+		}
 		notes = append(notes, discoveryNotes...)
 		var tierNote string
 		raw, tierNote = restrictToTier(discovered, s.tier, s.subsets)
@@ -196,7 +199,11 @@ func (s selector) resolve() (resolvedSelector, error) {
 			notes = append(notes, tierNote)
 		}
 	case s.hasDiscovery():
-		raw, notes = s.discoveryPlan()
+		var err error
+		raw, notes, err = s.discoveryPlan()
+		if err != nil {
+			return resolvedSelector{}, err
+		}
 		if len(raw) == 0 {
 			// No tiers resolved — when --max-tier is set we still
 			// honor it as the explicit plan; otherwise fall back to
@@ -242,8 +249,9 @@ func (s selector) hasDiscovery() bool {
 }
 
 // discoveryPlan unions the discovery selectors. Each contributes tiers
-// and, for the unit tier, a package scope; see mergeDiscoveryPlans.
-func (s selector) discoveryPlan() ([]tierPlan, []string) {
+// and, for the unit tier, a package scope; see mergeDiscoveryPlans. A
+// --spec query the tree does not know is an error.
+func (s selector) discoveryPlan() ([]tierPlan, []string, error) {
 	var plans [][]tierPlan
 	var notes []string
 	if s.changed {
@@ -252,17 +260,26 @@ func (s selector) discoveryPlan() ([]tierPlan, []string) {
 		notes = append(notes, changedNotes...)
 	}
 	if len(s.specs) > 0 {
-		plans = append(plans, resolveSpecsPlan(s.specs))
+		specPlan, specNotes, err := resolveSpecsPlanFn(s.specs)
+		if err != nil {
+			return nil, notes, err
+		}
+		plans = append(plans, specPlan)
+		notes = append(notes, specNotes...)
 	}
 	if len(s.pkgs) > 0 {
 		plans = append(plans, resolvePkgsPlan(s.pkgs))
 	}
-	return mergeDiscoveryPlans(plans, s.all), notes
+	return mergeDiscoveryPlans(plans, s.all), notes, nil
 }
 
 // resolveChangedPlanFn resolves the --changed and --since plan. Tests
 // replace it to resolve a fixed diff without git.
 var resolveChangedPlanFn = resolveChangedPlanFor
+
+// resolveSpecsPlanFn resolves the --spec plan. Tests replace it to
+// resolve over a fixture model rather than the repository's tree.
+var resolveSpecsPlanFn = resolveSpecsPlan
 
 // restrictToTier keeps the one entry of plan named tier, with its tests
 // and unit package scope, and applies the --subset filter. When plan

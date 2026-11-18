@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -119,29 +120,37 @@ func testsForTier(tier string) []string {
 	return nil
 }
 
-// testsForSpec resolves spec sections to test paths via spec-map.json.
-func testsForSpec(specs string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), specMapFile))
+// testsForSpec resolves identifiers, page codes, and numbered sections
+// to the tests the annotation index and the spec map name for them (see
+// specModel.selectFor). A query that neither knows is an error.
+func testsForSpec(specs string) ([]string, error) {
+	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	var doc struct {
-		Sections map[string]struct {
-			Tests []string `json:"tests"`
-		} `json:"sections"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
+	return testsForSpecIn(m, splitNonEmpty(specs))
+}
+
+// testsForSpecIn is testsForSpec over a loaded model: the index's tests
+// as `path::Name`, then the spec map's entries as the map writes them.
+func testsForSpecIn(m *specModel, queries []string) ([]string, error) {
 	out := []string{}
-	for _, id := range splitNonEmpty(specs) {
-		sec, ok := doc.Sections[id]
+	var unknown []string
+	for _, q := range queries {
+		sel, ok := m.selectFor(q)
 		if !ok {
+			unknown = append(unknown, q)
 			continue
 		}
-		out = append(out, sec.Tests...)
+		for _, t := range sel.tests {
+			out = append(out, t.String())
+		}
+		out = append(out, sel.mapped...)
 	}
-	return out
+	if len(unknown) > 0 {
+		return nil, unknownSpecQueries(unknown)
+	}
+	return out, nil
 }
 
 // testsForPkg resolves package globs to test paths via change-graph.json.
