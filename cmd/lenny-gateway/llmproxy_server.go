@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )

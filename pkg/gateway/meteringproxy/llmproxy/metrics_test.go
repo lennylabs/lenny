@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 )
 
 // spec: §16.1 — the proxy handler moves the

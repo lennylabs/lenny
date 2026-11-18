@@ -838,8 +838,8 @@
       "unit": ["pkg/gateway/session/budgetstate/...", "cmd/lenny-gateway/..."],
       "load_local": ["tests/load_local/budget_state_sweep_interleaving_test.go"]
     },
-    "pkg/gateway/session/sessionbudget": {
-      "unit": ["pkg/gateway/session/sessionbudget/..."],
+    "pkg/gateway/meteringproxy/sessionbudget": {
+      "unit": ["pkg/gateway/meteringproxy/sessionbudget/..."],
       "load_local": ["tests/load_local/enforcer_terminate_deny_race_test.go", "tests/load_local/scenarios/raisebudget_enforcer_race/...", "tests/load_local/scenarios/budget_gate_deny_flag_race/..."]
     },
     "pkg/gateway/session/sessionstore": {

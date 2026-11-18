@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 )
 
 // nopBudgetTerminator stands in for the gateway's force-terminate path; the

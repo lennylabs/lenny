@@ -208,47 +208,47 @@ crossings:
     from: pkg/gateway/session/sessionevents
     type: Bus
     step: 0117.S7
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: ActivityStamper
     from: pkg/gateway/session/sessionidle
     type: Stamper
     step: 0117.S3
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: FallbackAuditSink
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: FallbackMetrics
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
     step: 0117.S4
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: FallbackRotator
     from: pkg/gateway/podlifecycle/podsession
     type: Registry
     step: 0117.S3
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: Handler.FallbackAudit
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: Handler.FallbackMetrics
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
     step: 0117.S4
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: Handler.FallbackRotator
     from: pkg/gateway/podlifecycle/podsession
     type: Registry
     step: 0117.S3
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: Handler.Metrics
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
     step: 0117.S4
-  - to: pkg/gateway/llmproxy/llmproxy
+  - to: pkg/gateway/meteringproxy/llmproxy
     interface: UsageRecorder
     from: pkg/gateway/session/sessionidle
     type: Stamper
@@ -425,7 +425,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: Service.SetReclaimer(0)
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
@@ -725,60 +725,60 @@ crossings:
     step: 0117.S8
   - to: pkg/gateway/session/budgetstate
     interface: Config.Forget
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer
     step: 0117.S3
   - to: pkg/gateway/session/budgetstate
     interface: Config.Forget
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer.Forget
     step: 0117.S3
   - to: pkg/gateway/session/budgetstate
     interface: Config.Tracked
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer
     step: 0117.S3
   - to: pkg/gateway/session/budgetstate
     interface: Config.Tracked
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer.TrackedSessions
     step: 0117.S3
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: Enforcer.SetExtendOnExhaustion(0)
     from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     type: Service.ExtendForBudget
     step: 0117.S7
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: ExtendOnExhaustion
     from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     type: Service.ExtendForBudget
     step: 0117.S7
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: New(0)
     from: pkg/gateway/sessionserver
     type: Server.BeginTerminal
     step: 0117.S3
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: New(0)
     from: pkg/gateway/sessionserver
     type: Server.OnSessionTerminal
     step: 0117.S3
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: New(2)
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
     step: 0117.S4
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: New(2)
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics.IncSessionBudgetExceeded
     step: 0117.S4
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: Terminator
     from: pkg/gateway/sessionserver
     type: Server.BeginTerminal
     step: 0117.S3
-  - to: pkg/gateway/session/sessionbudget
+  - to: pkg/gateway/meteringproxy/sessionbudget
     interface: Terminator
     from: pkg/gateway/sessionserver
     type: Server.OnSessionTerminal
@@ -800,12 +800,12 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/sessionserver
     interface: Options.BudgetForget
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer
     step: 0117.S3
   - to: pkg/gateway/sessionserver
     interface: Options.BudgetForget
-    from: pkg/gateway/session/sessionbudget
+    from: pkg/gateway/meteringproxy/sessionbudget
     type: Enforcer.Forget
     step: 0117.S3
   - to: pkg/gateway/sessionserver

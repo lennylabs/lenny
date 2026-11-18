@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 )
 
 // spec: §4.9 — the proxy dispatches each lease to the
