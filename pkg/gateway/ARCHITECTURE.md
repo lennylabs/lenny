@@ -32,12 +32,12 @@ Domain logic and stores do not belong to a gateway part. They live in concern di
 - `pkg/gateway/seam` imports no other package of `pkg/gateway`.
 - No package outside `pkg/gateway` and `cmd/lenny-gateway` imports a package of `pkg/gateway`, except test packages under `tests/`.
 - A package of another replica-level part, or of the web playground, imports no seam package.
-- Only the session core, the metering proxy, and `cmd/lenny-gateway` import the credential and admission packages (the credential store, the credential lease store, the authentication middleware, quota, policy, and the tenant store), and the API front imports the authentication middleware alone among them. `tests/static/lint/gatewaylayout/confined.go` lists them.
+- Only the session core, the metering proxy, and `cmd/lenny-gateway` import the confined packages: the credential packages, the token and key packages, the admission packages (the authentication middleware, quota, policy, and the tenant store), and the authorization predicates. The API front imports those its request pipeline and admin handlers read. `tests/static/lint/gatewaylayout/confined.go` lists them and marks the API front's. The rule governs direct imports.
 - Every package of `pkg/gateway` sits in a directory of the table above.
 
 The replica-level parts other than the API front may import the session core and the seam interface. `cmd/lenny-gateway` imports every part and wires each concrete type into the interfaces of `pkg/gateway/seam`.
 
-The layout gate, `TestGatewayLayoutHoldsTheImportRule` in `tests/static/lint`, holds these rules over the non-test import graph. Its directory table is in `tests/static/lint/gatewaylayout/layout.go`. The wiring check, `TestGatewayWiringCrossesOnlyThroughTheSeam` in the same package, reads `cmd/lenny-gateway` with full type information and refuses a value of one part passed where another part expects an interface or a function not declared in `pkg/gateway/seam`. `tests/registers/gateway-wiring.yaml` lists the crossings each move step routes through the seam interface, and it only shrinks.
+The layout gate, `TestGatewayLayoutHoldsTheImportRule` in `tests/static/lint`, holds these rules over the non-test import graph. Its directory table is in `tests/static/lint/gatewaylayout/layout.go`. The wiring check, `TestGatewayWiringCrossesOnlyThroughTheSeam` in the same package, reads `cmd/lenny-gateway` with full type information and refuses a value of one part passed where another part expects an interface or a function not declared in `pkg/gateway/seam`, where the import rules refuse the receiving part importing the value's package. It counts an adapter type of `cmd/lenny-gateway` as the values its fields hold, and a function literal or a method value as what its body calls and captures. `tests/registers/gateway-wiring.yaml` lists the crossings each move step routes through the seam interface, and it only shrinks.
 
 ## Packages that have not moved yet
 
