@@ -7,7 +7,7 @@
 // and its real in-memory session event bus
 // (pkg/gateway/streamproxy/sessionevents), not just the in-process
 // httptest handler unit tests in
-// pkg/gateway/sessionserver/events_test.go and the load_local-tier throughput
+// pkg/gateway/streamproxy/events_test.go and the load_local-tier throughput
 // scenarios (which measure load, not per-event replay correctness).
 //
 // The test opens the SSE events stream, reads two live frames, drops
@@ -149,7 +149,7 @@ func waitStreamingReconnectFrame(t *testing.T, ch <-chan sseFrame, timeout time.
 // resumeFromSeq that is still retained, followed by live delivery."
 //
 // diagnosis: a failure here means the gateway's SSE reconnect-with-
-// cursor path (pkg/gateway/sessionserver/events.go handleEvents) does
+// cursor path (pkg/gateway/streamproxy/events.go handleEvents) does
 // not resume exactly from a real client's Last-Event-ID after a real
 // mid-stream disconnect: either it re-sends an event already delivered
 // before the drop (a duplicate) or it skips a still-retained seq (a

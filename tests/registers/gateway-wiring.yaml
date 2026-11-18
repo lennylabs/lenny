@@ -203,11 +203,6 @@ crossings:
     from: pkg/gateway/credentials/revocation/propagator
     type: Propagator
     step: 0117.S8
-  - to: pkg/gateway/gatewaycontrol/inputwaitrecovery
-    interface: Writer.Events
-    from: pkg/gateway/streamproxy/sessionevents
-    type: Bus
-    step: 0117.S7
   - to: pkg/gateway/llmproxy/llmproxy
     interface: ActivityStamper
     from: pkg/gateway/session/sessionidle
@@ -438,16 +433,6 @@ crossings:
     from: pkg/gateway/session/recycle
     type: NewSessionCountRetirer
     step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
-    interface: Config.Publish
-    from: pkg/gateway/streamproxy/sessionevents
-    type: Bus
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
-    interface: Config.Publish
-    from: pkg/gateway/streamproxy/sessionevents
-    type: Bus.Publish
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
     interface: New(1)
     from: pkg/gateway/environment/tenantstore
@@ -477,11 +462,6 @@ crossings:
     interface: AttachConfig.Authorize
     from: pkg/gateway/sessionserver
     type: Server.SessionAccessible
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: AttachConfig.Events
-    from: pkg/gateway/streamproxy/sessionevents
-    type: Bus
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
     interface: AttachConfig.TenantFromRequest
@@ -838,8 +818,3 @@ crossings:
     from: pkg/gateway/mcpfabric/delegationtree/treebudget
     type: Reserver
     step: 0117.S7
-  - to: pkg/gateway/storage/dualstore
-    interface: Monitor.Streams
-    from: pkg/gateway/streamproxy/sessionevents
-    type: Bus
-    step: 0117.S6

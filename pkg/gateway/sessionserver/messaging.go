@@ -8,9 +8,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // busEmitter adapts the §15.1 SSE event bus to sessioninbox.Emitter so
@@ -21,7 +21,7 @@ import (
 //
 // spec: §7.2; §15.4 (message_expired).
 type busEmitter struct {
-	bus *sessionevents.Bus
+	bus seam.Events
 	now func() time.Time
 }
 
@@ -29,7 +29,7 @@ type busEmitter struct {
 // returns nil when bus is nil so a gateway without an event bus wires a
 // nil Emitter (event emission is best-effort). The Coordinator tolerates
 // a nil Emitter.
-func NewBusEmitter(bus *sessionevents.Bus, now func() time.Time) sessioninbox.Emitter {
+func NewBusEmitter(bus seam.Events, now func() time.Time) sessioninbox.Emitter {
 	if bus == nil {
 		return nil
 	}
@@ -56,7 +56,7 @@ func (e *busEmitter) publish(tenantID, sessionID, eventType string, payload any)
 	if err != nil {
 		return
 	}
-	e.bus.PublishForTenant(tenantID, sessionID, eventType, string(data), e.now())
+	e.bus.Publish(tenantID, sessionID, eventType, string(data), e.now())
 }
 
 // drainMessagingOnTerminal runs the §7.2 / §7.3 inbox

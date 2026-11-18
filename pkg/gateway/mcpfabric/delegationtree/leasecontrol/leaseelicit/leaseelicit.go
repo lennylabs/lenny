@@ -17,12 +17,13 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // Publisher publishes a §7.2 client event to a session's event
-// stream. *sessionevents.Bus.Publish satisfies it; tests pass a capture.
+// stream. New builds it over Config.Events; tests pass a capture.
 type Publisher func(sessionID, eventType, data string, now time.Time)
 
 // SessionLookup is the narrow slice of sessionstore.Store the
@@ -100,20 +101,30 @@ type Elicitor struct {
 type Config struct {
 	Sessions     SessionLookup
 	Interactions interactionstore.Store
-	Publish      Publisher
-	Clock        func() time.Time
-	IDGen        func() string
-	Timeout      time.Duration
-	Poll         time.Duration
-	Log          *slog.Logger
+	// Events is the session event bus, which the stream proxy serves
+	// through GWSEAM-Publish. Nil publishes no elicitation event.
+	Events  seam.Events
+	Clock   func() time.Time
+	IDGen   func() string
+	Timeout time.Duration
+	Poll    time.Duration
+	Log     *slog.Logger
 }
 
 // New returns an Elicitor over cfg.
 func New(cfg Config) *Elicitor {
+	var publish Publisher
+	if events := cfg.Events; events != nil {
+		// The elicitation event publishes without a tenant scope, as the
+		// requesting session's stream took it before the seam interface.
+		publish = func(sessionID, eventType, data string, now time.Time) {
+			events.Publish("", sessionID, eventType, data, now)
+		}
+	}
 	return &Elicitor{
 		sessions:     cfg.Sessions,
 		interactions: cfg.Interactions,
-		publish:      cfg.Publish,
+		publish:      publish,
 		clock:        cfg.Clock,
 		idgen:        cfg.IDGen,
 		timeout:      cfg.Timeout,

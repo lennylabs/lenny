@@ -83,11 +83,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/tree", readID(s.handleTree))
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
-	mux.HandleFunc("GET /v1/sessions/{id}/events", readID(s.handleEvents))
-	// spec: §15.1 / §24.17 — the `lenny session logs`
-	// target; session logs over the durable event store, content-
-	// negotiated SSE / JSON envelope with the `--since` filter.
-	mux.HandleFunc("GET /v1/sessions/{id}/logs", readID(s.handleLogs))
 	// spec: §15.1 — per-session artifact listing (the §15.2
 	// list_artifacts tool's REST equivalent) and reconciled per-session
 	// token usage (the §15.2 get_token_usage tool's REST equivalent). The
@@ -106,6 +101,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manageID(s.handleElicitationRespond))
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manageID(s.handleElicitationDismiss))
 	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
+	// The routes other parts registered through HandleRoute, such as the
+	// stream proxy's event and log streams, mount on the same mux behind
+	// the access check each names.
+	s.mountPartRoutes(mux)
 	// spec: §10.2 — a tenant-scoped route runs only for a request whose
 	// tenant resolves from its principal (or, under --dev-mode, from the
 	// dev header). F-10.2.21.

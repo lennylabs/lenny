@@ -53,12 +53,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
 	"github.com/lennylabs/lenny/tests/contract/sdks/harness"
 	"github.com/lennylabs/lenny/tests/testinfra/mcpcreate"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
 
 // newMCPGateway brings up the §15.2 gateway MCP server in process. It
@@ -263,6 +265,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	streamwire.Attach(t, srv, streamproxy.Options{Events: bus})
 
 	// disconnector wraps the gateway handler. The first time the SDK
 	// opens the events stream it serves the gateway handler with a
@@ -296,7 +299,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	// connection, the rest after the forced reconnect.
 	const total = 6
 	publish := func(seq int) {
-		bus.Publish(sessionID, "response",
+		bus.Publish("", sessionID, "response",
 			`{"n":`+strconv.Itoa(seq)+`}`, time.Now())
 	}
 

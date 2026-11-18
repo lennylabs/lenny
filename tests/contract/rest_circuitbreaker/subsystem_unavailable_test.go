@@ -30,8 +30,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
 
 // openUploadBreaker returns a §4.1 per-subsystem breaker already in the
@@ -79,6 +81,7 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 			Breaker: openUploadBreaker(t),
 		},
 	})
+	streamwire.Attach(t, srv, streamproxy.Options{Events: bus})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 

@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1599
+      count: 1595
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -428,7 +428,7 @@ packages:
     - package: pkg/gateway/externalapi/admintoken/reclaimer
       count: 14
     - package: pkg/gateway/externalapi/errorclassify
-      count: 82
+      count: 85
     - package: pkg/gateway/externalapi/openapi
       count: 49
     - package: pkg/gateway/externalapi/openapi/internal/genopsschemas
@@ -647,8 +647,6 @@ packages:
       count: 5
     - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
       count: 2
-    - package: pkg/gateway/streamproxy/sessionevents
-      count: 22
     - package: pkg/gateway/session/sessionidle
       count: 19
     - package: pkg/gateway/session/sessioninbox
@@ -668,7 +666,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3098
+      count: 3081
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
@@ -717,6 +715,10 @@ packages:
       count: 125
     - package: pkg/gateway/storage/sqlitestore
       count: 10
+    - package: pkg/gateway/streamproxy
+      count: 16
+    - package: pkg/gateway/streamproxy/sessionevents
+      count: 22
     - package: pkg/gateway/upgrade/runtimeupgrade
       count: 5
     - package: pkg/gateway/upgrade/runtimeupgradeguard

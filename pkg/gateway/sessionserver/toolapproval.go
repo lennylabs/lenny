@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
-	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // approvalPollInterval is the cadence at which AwaitApproval re-reads the
@@ -41,7 +41,7 @@ const approvalPollInterval = 25 * time.Millisecond
 type ToolApprovalGate struct {
 	store        sessionstore.Store
 	interactions interactionstore.Store
-	events       *sessionevents.Bus
+	events       seam.Events
 	waits        *toolapproval.Registry
 	now          func() time.Time
 	// timeout bounds how long a blocked tool call waits for resolution.
@@ -58,7 +58,7 @@ var _ executor.ApprovalGate = (*ToolApprovalGate)(nil)
 // §15.1 resolution endpoints deliver the verdict onto; now stamps the
 // interaction; timeout bounds the block (zero = unbounded). F-7.2.9,
 // F-7.2.18.
-func NewToolApprovalGate(store sessionstore.Store, interactions interactionstore.Store, events *sessionevents.Bus, waits *toolapproval.Registry, now func() time.Time, timeout time.Duration) *ToolApprovalGate {
+func NewToolApprovalGate(store sessionstore.Store, interactions interactionstore.Store, events seam.Events, waits *toolapproval.Registry, now func() time.Time, timeout time.Duration) *ToolApprovalGate {
 	if now == nil {
 		now = time.Now
 	}
@@ -227,5 +227,5 @@ func (g *ToolApprovalGate) publishRequested(tenantID, sessionID string, call exe
 	if err != nil {
 		return
 	}
-	g.events.PublishForTenant(tenantID, sessionID, "tool_use_requested", string(data), g.now().UTC())
+	g.events.Publish(tenantID, sessionID, "tool_use_requested", string(data), g.now().UTC())
 }

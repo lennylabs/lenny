@@ -122,7 +122,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 	data, _ := json.Marshal(struct {
 		Children []reattachedChild `json:"children"`
 	}{Children: children})
-	s.events.PublishForTenant(tenantID, parentID, "children_reattached", string(data), s.clock())
+	s.events.Publish(tenantID, parentID, "children_reattached", string(data), s.clock())
 }
 
 // lookupPendingRequest returns the pending request id for a child

@@ -49,7 +49,6 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	minReplicas := f.minReplicas
 	streamCeiling := f.streamCeiling
 	kmsSignQuotaPerSecond := f.kmsSignQuotaPerSecond
-	sessionEventReplayBufferDepth := f.sessionEventReplayBufferDepth
 	auditSIEMEndpoint := f.auditSIEMEndpoint
 	auditBatchingEnabled := f.auditBatchingEnabled
 	billingCorrectionRateThreshold := f.billingCorrectionRateThreshold
@@ -333,10 +332,6 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 	if *streamCeiling <= 0 {
 		log.Fatalf("lenny-gateway: --stream-ceiling must be > 0 (got %d) (§4.1 / §16.5)", *streamCeiling)
 	}
-	// spec: §10.4 — accepted range 64..4096 events.
-	if *sessionEventReplayBufferDepth < 64 || *sessionEventReplayBufferDepth > 4096 {
-		log.Fatalf("lenny-gateway: --session-event-replay-buffer-depth must be in [64, 4096] (got %d) (§10.4)", *sessionEventReplayBufferDepth)
-	}
 	gwMetrics.SetMinReplicas(*minReplicas)
 	gwMetrics.SetStreamCeiling(*streamCeiling)
 	emitKMSSignQuota(gwMetrics, *kmsSignQuotaPerSecond)
@@ -464,7 +459,7 @@ func (w *gatewayWiring) buildMetricsBackfill() {
 // checkpoint.skipped emitter writes to. *sessionevents.Bus satisfies it; a
 // test passes a capture.
 type checkpointSkippedBus interface {
-	PublishForTenant(tenantID, sessionID, eventType, data string, now time.Time) sessionevents.Event
+	Publish(tenantID, sessionID, eventType, data string, now time.Time) sessionevents.Event
 }
 
 // newCheckpointSkippedEmitter builds the checkpointer's SkippedEventFunc: on
@@ -482,7 +477,7 @@ func newCheckpointSkippedEmitter(bus checkpointSkippedBus) func(context.Context,
 		if err != nil {
 			payload = []byte("{}")
 		}
-		bus.PublishForTenant(tenantID, sessionID, "checkpoint.skipped", string(payload), clockinject.Now())
+		bus.Publish(tenantID, sessionID, "checkpoint.skipped", string(payload), clockinject.Now())
 	}
 }
 

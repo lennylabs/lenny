@@ -122,9 +122,9 @@ func startAttachStream(t *testing.T, serverURL, sessionID string, resumeFromSeq 
 // endpoints correct by design rather than by accident. spec: §15.2. F-15.2.13, F-15.2.14.
 func TestAttachProjectsElicitationCreateAndToolApproval_spec_15_2_1362(t *testing.T) {
 	bus := sessionevents.NewBus(256)
-	bus.PublishForTenant("acme", "sess-1", "elicitation_request",
+	bus.Publish("acme", "sess-1", "elicitation_request",
 		`{"elicitationId":"el-7","message":"Confirm?","schema":{"type":"string"},"originPod":"pod-1","initiatorType":"agent","delegationDepth":1}`, streamTS())
-	bus.PublishForTenant("acme", "sess-1", "tool_use_requested",
+	bus.Publish("acme", "sess-1", "tool_use_requested",
 		`{"tool_call_id":"tc-9","tool":"shell","args":{"cmd":"ls"}}`, streamTS())
 
 	srv := NewServer()
@@ -166,8 +166,8 @@ func TestAttachProjectsElicitationCreateAndToolApproval_spec_15_2_1362(t *testin
 // SSE id: line), then live events tail the stream.
 func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
-	bus.PublishForTenant("acme", "sess-1", "status_change", `{"state":"running"}`, streamTS())
-	bus.PublishForTenant("acme", "sess-1", "response", `{"text":"hi"}`, streamTS())
+	bus.Publish("acme", "sess-1", "status_change", `{"state":"running"}`, streamTS())
+	bus.Publish("acme", "sess-1", "response", `{"text":"hi"}`, streamTS())
 
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{
@@ -200,7 +200,7 @@ func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 	}
 
 	// A live event after subscribe tails the same stream.
-	bus.PublishForTenant("acme", "sess-1", "response", `{"text":"bye"}`, streamTS())
+	bus.Publish("acme", "sess-1", "response", `{"text":"bye"}`, streamTS())
 	f3 := nextFrame(t, frames)
 	if f3.id != "3" {
 		t.Fatalf("live frame id = %q, want 3", f3.id)
@@ -215,7 +215,7 @@ func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 func TestAttachResumeFromSeqReplaysOnlyNewer_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	for i := 0; i < 3; i++ {
-		bus.PublishForTenant("acme", "sess-1", "response", `{}`, streamTS())
+		bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	}
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
@@ -236,7 +236,7 @@ func TestAttachResumeFromSeqReplaysOnlyNewer_spec_15_2(t *testing.T) {
 func TestAttachLastEventIDResume_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	for i := 0; i < 3; i++ {
-		bus.PublishForTenant("acme", "sess-1", "response", `{}`, streamTS())
+		bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	}
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
@@ -268,7 +268,7 @@ func TestAttachLastEventIDResume_spec_15_2(t *testing.T) {
 func TestAttachGapDetected_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(2) // retains the last 2 events
 	for i := 0; i < 4; i++ {
-		bus.PublishForTenant("acme", "sess-1", "response", `{}`, streamTS())
+		bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	}
 	// history now holds seq 3,4; oldest retained = 3.
 	srv := NewServer()
@@ -303,7 +303,7 @@ func TestAttachKeepalive_spec_15_2(t *testing.T) {
 	defer func() { attachKeepAliveInterval = orig }()
 
 	bus := sessionevents.NewBus(256)
-	bus.PublishForTenant("acme", "sess-1", "response", `{}`, streamTS())
+	bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
 	ts := httptest.NewServer(srv.Handler())
@@ -390,7 +390,7 @@ func TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15(t *test
 	// of frames once the subscriber below stalls.
 	payload := `{"type":"text","text":"` + strings.Repeat("A", 3000) + `"}`
 	for i := 0; i < 512; i++ {
-		bus.PublishForTenant("acme", "sess-1", "response", payload, streamTS())
+		bus.Publish("acme", "sess-1", "response", payload, streamTS())
 	}
 
 	srv := NewServer()

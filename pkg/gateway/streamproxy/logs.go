@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package streamproxy
 
 import (
 	"encoding/json"
@@ -9,8 +9,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // handleLogs implements GET /v1/sessions/{id}/logs per §15.1
@@ -30,28 +31,28 @@ import (
 // that /logs returns 404 once no record exists.
 //
 // spec: §15.1; §24.17; §15.1.
-func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
-	if s.events == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "EVENT_STREAM_UNAVAILABLE",
+func (h *Handler) handleLogs(w http.ResponseWriter, r *http.Request) {
+	if h.events == nil {
+		errorclassify.WriteError(w, http.StatusServiceUnavailable, "EVENT_STREAM_UNAVAILABLE",
 			"gateway has no event bus configured", nil)
 		return
 	}
-	tenantID := s.resolveTenant(r)
+	tenantID := h.identity.RequestTenant(r)
 	id := r.PathValue("id")
-	if _, err := s.store.Get(r.Context(), tenantID, id); err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+	if _, err := h.sessions.LookupSession(r.Context(), tenantID, id); err != nil {
+		if errors.Is(err, seam.ErrSessionNotFound) {
+			errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		errorclassify.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 
 	if wantsJSONEvents(r) {
-		s.serveLogsJSON(w, r, tenantID, id)
+		h.serveLogsJSON(w, r, tenantID, id)
 		return
 	}
-	s.streamLogsSSE(w, r, tenantID, id)
+	h.streamLogsSSE(w, r, tenantID, id)
 }
 
 // serveLogsJSON renders the §15.1 canonical envelope
@@ -59,11 +60,11 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 // mirrors serveEventsJSON and adds the §24.17 `?since=<RFC3339>` filter:
 // only entries whose timestamp is at or after `since` appear, applied
 // before pagination so the cursor advances over the filtered view.
-func (s *Server) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID, id string) {
+func (h *Handler) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID, id string) {
 	params, ferr := pagination.ParseRequest(r,
-		[]string{eventSortField}, eventsDefaultSort, s.clock())
+		[]string{eventSortField}, eventsDefaultSort, h.now())
 	if ferr != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
+		errorclassify.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
 		return
 	}
 
@@ -71,7 +72,7 @@ func (s *Server) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID,
 	if v := r.URL.Query().Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			errorclassify.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"since must be an RFC3339 timestamp",
 				map[string]any{"fields": []map[string]any{{"field": "since", "rule": "invalid_timestamp"}}})
 			return
@@ -90,12 +91,12 @@ func (s *Server) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID,
 		}
 	}
 
-	// SubscribeForTenant + Close reads the retained backlog under the
+	// Subscribe + Close reads the retained backlog under the
 	// §7.2 tenant-binding check, the same isolation guard serveEventsJSON
 	// relies on.
-	sub, err := s.events.SubscribeForTenant(tenantID, id, afterSeq, 1)
+	sub, err := h.events.Subscribe(tenantID, id, afterSeq, 1)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 		return
 	}
 	hist := sub.Backlog
@@ -123,7 +124,7 @@ func (s *Server) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID,
 	if envelope.HasMore && len(envelope.Items) > 0 {
 		last := envelope.Items[len(envelope.Items)-1]
 		seqStr := strconv.FormatUint(last.Seq, 10)
-		envelope.Cursor = pagination.MintCursor(params.Sort, seqStr, seqStr, s.clock())
+		envelope.Cursor = pagination.MintCursor(params.Sort, seqStr, seqStr, h.now())
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -138,18 +139,18 @@ func (s *Server) serveLogsJSON(w http.ResponseWriter, r *http.Request, tenantID,
 // is specific to the interactive /events surface and is intentionally
 // absent here: the logs tail is a diagnostic record, not the session's
 // control stream.
-func (s *Server) streamLogsSSE(w http.ResponseWriter, r *http.Request, tenantID, id string) {
+func (h *Handler) streamLogsSSE(w http.ResponseWriter, r *http.Request, tenantID, id string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		errorclassify.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"response writer does not support streaming", nil)
 		return
 	}
 
 	afterSeq := resumeCursor(r)
-	sub, err := s.events.SubscribeForTenant(tenantID, id, afterSeq, 64)
+	sub, err := h.events.Subscribe(tenantID, id, afterSeq, 64)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 		return
 	}
 	defer sub.Close()
@@ -160,8 +161,8 @@ func (s *Server) streamLogsSSE(w http.ResponseWriter, r *http.Request, tenantID,
 	w.WriteHeader(http.StatusOK)
 
 	if afterSeq > 0 {
-		if oldestSeq, ok := s.events.OldestRetainedSeq(id); ok && oldestSeq > afterSeq+1 {
-			writeGapMarkers(w, afterSeq, oldestSeq, s.clock())
+		if oldestSeq, ok := h.events.OldestRetainedSeq(id); ok && oldestSeq > afterSeq+1 {
+			writeGapMarkers(w, afterSeq, oldestSeq, h.now())
 		}
 	}
 	for _, ev := range sub.Backlog {
@@ -174,7 +175,7 @@ func (s *Server) streamLogsSSE(w http.ResponseWriter, r *http.Request, tenantID,
 		select {
 		case <-ctx.Done():
 			return
-		case ev, open := <-sub.Events():
+		case ev, open := <-sub.Events:
 			if !open {
 				return
 			}

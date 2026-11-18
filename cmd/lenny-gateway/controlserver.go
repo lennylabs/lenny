@@ -112,7 +112,7 @@ func (w *gatewayWiring) buildControlServer(
 		leaseElicit = leaseelicit.New(leaseelicit.Config{
 			Sessions:     w.sessions,
 			Interactions: w.interactions,
-			Publish:      func(s, et, d string, n time.Time) { w.eventBus.Publish(s, et, d, n) },
+			Events:       w.eventBus,
 			Clock:        clockinject.Now,
 			IDGen:        func() string { var b [16]byte; _, _ = rand.Read(b[:]); return fmt.Sprintf("lease-elicit-%x", b[:]) },
 		})

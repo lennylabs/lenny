@@ -55,11 +55,12 @@ func main() {
 	// spec: §4.1 gateway subsystem seams — parse the composition-root
 	// inputs once, finalize the §4 / §17.5 KMS provider selection, then
 	// hand off to runGateway, which wires and starts every subsystem.
+	parts := registerPartFlags()
 	f := parseFlags()
 	if err := f.kmsFinalize(); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
-	runGateway(f)
+	runGateway(f, parts)
 }
 
 // runGateway wires and starts every gateway subsystem from the parsed
@@ -83,7 +84,7 @@ func main() {
 // spec: §4.1 — the gateway is one component internally partitioned into
 // subsystem boundaries (Go interfaces within a single binary); this
 // function constructs each in dependency order.
-func runGateway(f *gatewayFlags) {
+func runGateway(f *gatewayFlags, parts *partFlags) {
 	w := &gatewayWiring{f: f}
 
 	// Each step below constructs one subsystem, records its outputs on the
@@ -102,7 +103,7 @@ func runGateway(f *gatewayFlags) {
 	// block so it runs at process shutdown; the §17.4 SQLite flush-loop cancel
 	// stays a synchronous call in runServers (gated on sqliteDB, before
 	// sqliteDB.Close), matching the original timing exactly. F-17.4.2.
-	w.buildStores()
+	w.buildStores(parts.sessionEvents)
 	// §10.3 NET-072 CH-HOLDERFORWARD client and listener TLS, built before
 	// the session server that takes the client.
 	w.buildHolderForwardTransport()

@@ -142,7 +142,7 @@ func (w *gatewayWiring) buildSessionServer(
 	// erased; startBackgroundWorkers runs it under the watchdog context.
 	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
 
-	return sessionserver.New(w.sessions, sessionserver.Options{
+	srv := sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
 		ActivityStamper: activityStamper,
@@ -466,6 +466,8 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
+	attachStreamProxy(srv, w.eventBus)
+	return srv
 }
 
 // sessionAgeCap resolves a row's effective maxSessionAge cap through the

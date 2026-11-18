@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // The §15.2.1 "Per-kind MCP wire projection" requires the
@@ -114,7 +114,7 @@ func hasPrefix(s, prefix string) bool {
 // SessionEventKind enum falls back to the generic
 // notifications/lenny/sessionEvent frame. A marshal failure returns nil
 // and the caller drops the frame. spec: §15.2.
-func projectMCPSessionEvent(ev sessionevents.Event) []byte {
+func projectMCPSessionEvent(ev seam.Event) []byte {
 	data := []byte(ev.Data)
 	switch classifyEventKind(ev.Type, data) {
 	case kindStateChange:
@@ -185,7 +185,7 @@ func lennyStateToMCPTask(state string) (status string, metadata map[string]any) 
 // TerminationReason.Detail under result.metadata.terminationDetail. The
 // state is translated through the §8.8 Lenny-state → MCP-Tasks mapping.
 // spec: §15.2; §8.8.
-func projectStatusUpdate(ev sessionevents.Event, terminal bool) []byte {
+func projectStatusUpdate(ev seam.Event, terminal bool) []byte {
 	state := stateFromPayload([]byte(ev.Data))
 	status, metadata := lennyStateToMCPTask(state)
 	params := map[string]any{
@@ -236,7 +236,7 @@ func terminationDetail(data []byte) string {
 // Per §8.8 agent output is produced while the task is in the working
 // state; the presence of params.content distinguishes a content append
 // from a pure state transition. spec: §15.2; §8.8.
-func projectOutput(ev sessionevents.Event) []byte {
+func projectOutput(ev seam.Event) []byte {
 	params := map[string]any{
 		"taskId":  ev.SessionID,
 		"status":  "working",
@@ -273,7 +273,7 @@ func outputContentBlocks(data []byte) []map[string]any {
 // JSON-RPC id so the reply correlates, the {message, requestedSchema}
 // pair, and the §9.2 provenance metadata the client UI displays.
 // spec: §15.2; §9.2.
-func projectElicitationCreate(ev sessionevents.Event) []byte {
+func projectElicitationCreate(ev seam.Event) []byte {
 	var p struct {
 		ElicitationID   string          `json:"elicitationId"`
 		Message         string          `json:"message"`
@@ -314,7 +314,7 @@ func projectElicitationCreate(ev sessionevents.Event) []byte {
 // a slot on every pod and a session-mode slot's identifier is its
 // session's identifier, so ev.SessionID already names the slot the call
 // belongs to. spec: §15.2; §5.2 (identity invariant); §7.2.
-func projectToolUse(ev sessionevents.Event) []byte {
+func projectToolUse(ev seam.Event) []byte {
 	var p struct {
 		ToolCallID string          `json:"tool_call_id"`
 		Tool       string          `json:"tool"`
@@ -369,7 +369,7 @@ func projectToolUse(ev sessionevents.Event) []byte {
 // error payloads vary by source (error / child_failed / submit_error), so
 // the projection passes the payload through under params unchanged.
 // spec: §15.2.
-func projectError(ev sessionevents.Event) []byte {
+func projectError(ev seam.Event) []byte {
 	params := map[string]any{"sessionId": ev.SessionID}
 	var m map[string]any
 	if len(ev.Data) > 0 && json.Unmarshal([]byte(ev.Data), &m) == nil {
@@ -454,7 +454,7 @@ func marshalServerRequest(id, method string, params any) []byte {
 // projection fallback for bus event types that are not part of the
 // per-kind table (message_delivered, session_expiring_soon,
 // workspace_plan_warning, children_reattached, ...). spec: §15.2.
-func marshalGenericSessionEvent(ev sessionevents.Event) []byte {
+func marshalGenericSessionEvent(ev seam.Event) []byte {
 	data := json.RawMessage(ev.Data)
 	if len(data) == 0 {
 		data = json.RawMessage("{}")

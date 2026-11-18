@@ -18,9 +18,9 @@ import (
 // reaches the bus and this test fails.
 func TestCheckpointSkippedEmitterPublishesOnTheSessionBus(t *testing.T) {
 	bus := sessionevents.NewBus(16)
-	sub, err := bus.SubscribeForTenant("acme", "s1", 0, 8)
+	sub, err := bus.Subscribe("acme", "s1", 0, 8)
 	if err != nil {
-		t.Fatalf("SubscribeForTenant: %v", err)
+		t.Fatalf("Subscribe: %v", err)
 	}
 	defer sub.Close()
 
@@ -28,7 +28,7 @@ func TestCheckpointSkippedEmitterPublishesOnTheSessionBus(t *testing.T) {
 	emit(context.Background(), "acme", "s1", "workspace_size_limit")
 
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "checkpoint.skipped" {
 			t.Errorf("event type = %q, want checkpoint.skipped", ev.Type)
 		}

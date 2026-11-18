@@ -163,7 +163,7 @@ func TestExportHPAGaugesUpdatesAllGauges(t *testing.T) {
 	}
 
 	bus := sessionevents.NewBus(0)
-	sub := bus.Subscribe("s1", 0, 4)
+	sub, _ := bus.Subscribe("", "s1", 0, 4)
 	defer sub.Close()
 
 	m, err := gatewaymetrics.New()

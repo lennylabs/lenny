@@ -59,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -69,7 +70,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -100,7 +100,9 @@ type Server struct {
 	// catalog is not wired (in-memory / dev posture); the artifactRefs
 	// array then materializes empty. spec: §8.8. F-8.8.2.
 	artifacts artifactcatalog.Store
-	events    *sessionevents.Bus
+	// events is the stream proxy's session event bus, reached through
+	// the seam interface's event operations.
+	events seam.Events
 	// activityStamper records §6.2 qualifying agent
 	// activity (agent_output / tool_use events) onto the session's
 	// last_agent_activity_at so the §11.3 idle watchdog does not reap an
@@ -698,6 +700,15 @@ type Server struct {
 	// mid-session uploads off platform-wide regardless of the runtime flag.
 	// spec: §7.4 — F-7.4.6.
 	midSessionUploadEnabled bool
+
+	// partRoutes are the routes other parts registered through HandleRoute,
+	// which Handler mounts behind the access check each names. routesMu
+	// guards them and routesServed, which Handler sets so a route
+	// registered after the server began serving is refused rather than
+	// silently left unmounted.
+	routesMu     sync.Mutex
+	partRoutes   []seam.Route
+	routesServed bool
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -906,11 +917,10 @@ type Options struct {
 	// spec: §8.8. F-8.8.2.
 	Artifacts artifactcatalog.Store
 
-	// Events is the §15.1 session event bus backing the SSE stream.
-	// When nil, `GET /v1/sessions/{id}/events` returns
-	// `503 EVENT_STREAM_UNAVAILABLE` and message injection skips
-	// event publication.
-	Events *sessionevents.Bus
+	// Events is the §15.1 session event bus backing the SSE stream,
+	// which the stream proxy serves through the seam interface. When nil,
+	// the session core publishes no events.
+	Events seam.Events
 
 	// ActivityStamper records §6.2 qualifying agent
 	// activity onto the session's last_agent_activity_at so the §11.3

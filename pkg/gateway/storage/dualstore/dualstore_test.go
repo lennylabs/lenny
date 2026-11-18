@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // fakeGauge records every SetDualStoreUnavailable transition.
@@ -30,8 +32,11 @@ func (g *fakeGauge) last() (bool, bool) {
 	return g.values[len(g.values)-1], true
 }
 
-// fakeBroadcaster records every Broadcast call.
+// fakeBroadcaster records every Broadcast call. The embedded interface is
+// nil: the Monitor calls only GWSEAM-Broadcast, so any other event
+// operation panics.
 type fakeBroadcaster struct {
+	seam.Events
 	mu    sync.Mutex
 	calls []struct{ eventType, data string }
 }

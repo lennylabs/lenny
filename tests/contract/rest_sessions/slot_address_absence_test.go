@@ -115,7 +115,7 @@ func TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	waits := toolapproval.NewRegistry()
 
-	sub, err := bus.SubscribeForTenant("acme", "sess_tool_1", 0, 8)
+	sub, err := bus.Subscribe("acme", "sess_tool_1", 0, 8)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1(t *testing.T) {
 	}()
 
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "tool_use_requested" {
 			t.Fatalf("event type = %q, want tool_use_requested", ev.Type)
 		}

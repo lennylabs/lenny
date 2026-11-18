@@ -25,7 +25,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
 
 // newTestServer returns a running httptest.Server backed by a fresh
@@ -34,6 +36,9 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	// The stream proxy serves the event and log streams, attached as the
+	// gateway attaches it; with no bus they answer EVENT_STREAM_UNAVAILABLE.
+	streamwire.Attach(t, srv, streamproxy.Options{})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts

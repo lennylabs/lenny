@@ -94,7 +94,7 @@ func TestCheckpointResume(t *testing.T) {
 // TESTING.md §13.16 — interactive sessions / streaming.
 // §10.4 / §7.2 stream reconnect — built and covered by:
 //   - pkg/gateway/eventbuffer (SessionEvent ring buffer + buffer_test.go)
-//   - pkg/gateway/sessionserver/events.go (SSE handler with
+//   - pkg/gateway/streamproxy/events.go (SSE handler with
 //     Last-Event-ID resume; events_test.go)
 //   - tier-7 streaming_throughput k6 scenario (baseline)
 //   - cmd/runtimes/streaming-echo (the Full-level reference runtime)
@@ -106,7 +106,7 @@ func TestCheckpointResume(t *testing.T) {
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + contract tests; this scaffold documents the composition.
 func TestStreamingReconnect(t *testing.T) {
 	t.Logf("§10.4 / §7.2: stream reconnect covered by pkg/gateway/eventbuffer buffer_test.go, " +
-		"sessionserver/events_test.go, tier-7 streaming_throughput baseline, and the " +
+		"streamproxy/events_test.go, tier-7 streaming_throughput baseline, and the " +
 		"streaming-echo Full-level reference runtime.")
 }
 

@@ -1,21 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-// Package events is the gateway's session event bus. It backs the
-// §15.1 `GET /v1/sessions/{id}/events` SSE stream: session activity
-// (message delivered, response produced, state transition) is
-// published to the bus and relayed to every subscribed client. Each
-// event carries a monotonic per-session sequence so a reconnecting
-// client can resume with a cursor (the §15.1 streaming-reconnect
-// contract).
-//
-// In single-replica deployments the Bus uses its in-memory state
-// alone. In multi-replica deployments the Bus pairs with the §4.4 / §12.4 (lenny:events: relay row) RedisRelay (see
-// redisrelay.go): every Publish fans out to Redis Streams via `XADD`,
-// and every Subscribe pulls the cross-replica history via `XRANGE` so a
-// client that reconnects to a different replica sees the prior events.
-//
-// spec: §4.4 — durable event cursors / stream offsets across
-// replicas.
 package sessionevents
 
 import (
@@ -23,26 +7,16 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
-// Event is one session event.
-type Event struct {
-	// Seq is the monotonic per-session sequence, starting at 1.
-	Seq uint64 `json:"seq"`
+// Event is one session event, the value the seam interface carries.
+type Event = seam.Event
 
-	// SessionID scopes the event.
-	SessionID string `json:"sessionId"`
-
-	// Type is the event type (e.g., `message_delivered`,
-	// `response`, `state_changed`).
-	Type string `json:"type"`
-
-	// Data is the event payload, an already-marshalled JSON object.
-	Data string `json:"data"`
-
-	// Timestamp is the UTC instant the event was published.
-	Timestamp time.Time `json:"timestamp"`
-}
+// The Bus is the stream proxy's side of the seam interface's event
+// operations, which the session core and the other seams call.
+var _ seam.Events = (*Bus)(nil)
 
 // Bus is the session event bus. The in-memory state (per-session
 // sequence counter, replay history, live subscriber list) is the
@@ -188,20 +162,14 @@ func (b *Bus) WithRedisRelay(relay *RedisRelay) *Bus {
 // subscriber. A slow subscriber whose channel is full is skipped
 // (the event remains in history for a reconnect-with-cursor).
 //
-// PublishForTenant is the tenant-aware variant; Publish preserves the
-// legacy (untenanted) signature for callers in non-tenant-scoped
-// contexts (e.g. internal bus self-tests). New code SHOULD call
-// PublishForTenant so the §7.2 isolation invariant is upheld.
-func (b *Bus) Publish(sessionID, eventType, data string, now time.Time) Event {
-	return b.publish("", sessionID, eventType, data, now)
-}
-
-// PublishForTenant publishes a session event under tenantID. The
-// session's tenant is registered on the first Publish and frozen; a
-// later PublishForTenant with a different tenantID surfaces a noop
-// (the event is dropped). The frozen tenant id is the predicate
-// Subscribe enforces. spec: §7.2 tenant isolation.
-func (b *Bus) PublishForTenant(tenantID, sessionID, eventType, data string, now time.Time) Event {
+// The session's tenant is registered on the first Publish that names
+// one and frozen; a later Publish with a different tenantID is dropped
+// and returns the zero Event. The frozen tenant id is the predicate
+// Subscribe enforces. An empty tenantID publishes without a tenant
+// scope, as a caller outside a tenant-scoped context does.
+//
+// spec: GWSEAM-Publish; §7.2 tenant isolation.
+func (b *Bus) Publish(tenantID, sessionID, eventType, data string, now time.Time) Event {
 	return b.publish(tenantID, sessionID, eventType, data, now)
 }
 
@@ -325,70 +293,26 @@ func (b *Bus) Broadcast(eventType, data string, now time.Time) int {
 	return len(targets)
 }
 
-// Subscription is the caller-facing handle returned by Subscribe.
-type Subscription struct {
-	bus       *Bus
-	sessionID string
-	sub       *subscription
-	// Backlog holds events with Seq > afterSeq that were already in
-	// history at subscribe time; the caller drains it before reading
-	// Events.
-	Backlog []Event
-}
-
-// Events returns the channel of live events. The channel is closed
-// when Close is called.
-func (s *Subscription) Events() <-chan Event { return s.sub.ch }
-
-// Close detaches the subscription from the bus and closes the event
-// channel. Safe to call multiple times.
-func (s *Subscription) Close() {
-	s.bus.mu.Lock()
-	defer s.bus.mu.Unlock()
-	if s.sub.closed {
-		return
-	}
-	s.sub.closed = true
-	close(s.sub.ch)
-	subs := s.bus.subs[s.sessionID]
-	kept := subs[:0]
-	for _, sub := range subs {
-		if sub != s.sub {
-			kept = append(kept, sub)
-		}
-	}
-	s.bus.subs[s.sessionID] = kept
-}
-
-// Subscribe registers a new subscriber for sessionID. Events with
-// Seq > afterSeq already in history are returned in Backlog so a
-// reconnecting client resumes exactly where it left off; live
-// events arrive on Events(). bufferSize bounds the live channel.
+// Subscribe registers a subscriber for sessionID. Events with
+// Seq > afterSeq already in history are returned in the subscription's
+// Backlog so a reconnecting client resumes exactly where it left off;
+// live events arrive on its Events channel, which bufferSize bounds
+// (64 when it is not positive).
 //
-// Subscribe is the untenanted legacy entry point and is kept only for
-// tests; production code MUST call SubscribeForTenant so the §7.2
-// tenant-isolation predicate is enforced at the bus interface.
-func (b *Bus) Subscribe(sessionID string, afterSeq uint64, bufferSize int) *Subscription {
-	sub, _ := b.subscribe("", sessionID, afterSeq, bufferSize)
-	return sub
-}
-
-// SubscribeForTenant registers a tenant-bound subscriber for sessionID.
-// If the session has a frozen tenant (set by the first PublishForTenant)
-// and tenantID does not match it, SubscribeForTenant returns
-// ErrTenantMismatch and creates no subscription. This is the §7.2
-// defense-in-depth: even if a future caller skips the store.Get tenant
-// precheck the bus refuses to deliver foreign-tenant events.
+// If the session has a frozen tenant (set by the first Publish that
+// named one) and a non-empty tenantID does not match it, Subscribe
+// returns ErrTenantMismatch and creates no subscription. This is the
+// §7.2 defense-in-depth: even if a caller skips the store lookup that
+// checks the tenant, the bus refuses to deliver foreign-tenant events.
+// An empty tenantID subscribes without a tenant scope.
 //
 // When the §4.4 / §12.4 (lenny:events: relay row) RedisRelay is wired
 // the Backlog merges the local in-memory history with the Redis stream
 // history so a client reconnecting to this replica also sees events
 // originally published on a sibling replica.
-func (b *Bus) SubscribeForTenant(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*Subscription, error) {
-	return b.subscribe(tenantID, sessionID, afterSeq, bufferSize)
-}
-
-func (b *Bus) subscribe(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*Subscription, error) {
+//
+// spec: GWSEAM-Subscribe
+func (b *Bus) Subscribe(tenantID, sessionID string, afterSeq uint64, bufferSize int) (seam.Subscription, error) {
 	if bufferSize <= 0 {
 		bufferSize = 64
 	}
@@ -396,7 +320,7 @@ func (b *Bus) subscribe(tenantID, sessionID string, afterSeq uint64, bufferSize 
 	if tenantID != "" {
 		if owner, ok := b.tenant[sessionID]; ok && owner != tenantID {
 			b.mu.Unlock()
-			return nil, ErrTenantMismatch
+			return seam.Subscription{}, ErrTenantMismatch
 		}
 	}
 	sub := &subscription{ch: make(chan Event, bufferSize)}
@@ -421,7 +345,31 @@ func (b *Bus) subscribe(tenantID, sessionID string, afterSeq uint64, bufferSize 
 			backlog = mergeByCursor(backlog, remote, afterSeq)
 		}
 	}
-	return &Subscription{bus: b, sessionID: sessionID, sub: sub, Backlog: backlog}, nil
+	return seam.Subscription{
+		Backlog: backlog,
+		Events:  sub.ch,
+		Close:   func() { b.unsubscribe(sessionID, sub) },
+	}, nil
+}
+
+// unsubscribe detaches sub from the bus and closes its event channel. A
+// second call for the same subscription does nothing.
+func (b *Bus) unsubscribe(sessionID string, sub *subscription) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if sub.closed {
+		return
+	}
+	sub.closed = true
+	close(sub.ch)
+	subs := b.subs[sessionID]
+	kept := subs[:0]
+	for _, s := range subs {
+		if s != sub {
+			kept = append(kept, s)
+		}
+	}
+	b.subs[sessionID] = kept
 }
 
 // mergeByCursor combines a local history slice with a remote history
@@ -550,4 +498,17 @@ func (b *Bus) MaxReplayBufferUtilization() float64 {
 		}
 	}
 	return float64(worst) / float64(b.maxHistory)
+}
+
+// StreamStats returns the count of live subscriptions and the highest
+// replay-buffer utilization, the two values ActiveSubscribers and
+// MaxReplayBufferUtilization report, for a caller that reaches the bus
+// through the seam interface.
+//
+// spec: GWSEAM-StreamStats
+func (b *Bus) StreamStats() seam.StreamStats {
+	return seam.StreamStats{
+		ActiveSubscribers:          b.ActiveSubscribers(),
+		MaxReplayBufferUtilization: b.MaxReplayBufferUtilization(),
+	}
 }

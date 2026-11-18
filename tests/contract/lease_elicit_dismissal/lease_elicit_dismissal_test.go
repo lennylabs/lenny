@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -38,6 +39,18 @@ const (
 type capturedEvent struct {
 	eventType string
 	data      string
+}
+
+// capturePublisher records the events the elicitor publishes. The
+// embedded interface is nil: the elicitor calls only GWSEAM-Publish.
+type capturePublisher struct {
+	seam.Events
+	publish func(eventType, data string)
+}
+
+func (c capturePublisher) Publish(_, _, eventType, data string, _ time.Time) seam.Event {
+	c.publish(eventType, data)
+	return seam.Event{}
 }
 
 // TestLeaseElicitRequesterTerminalReason_spec_8_6 pins the dismissal
@@ -68,11 +81,11 @@ func TestLeaseElicitRequesterTerminalReason_spec_8_6(t *testing.T) {
 	el := leaseelicit.New(leaseelicit.Config{
 		Sessions:     sessions,
 		Interactions: interactions,
-		Publish: func(_, eventType, data string, _ time.Time) {
+		Events: capturePublisher{publish: func(eventType, data string) {
 			mu.Lock()
 			events = append(events, capturedEvent{eventType, data})
 			mu.Unlock()
-		},
+		}},
 		Clock:   func() time.Time { return time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC) },
 		IDGen:   func() string { return elicitationID },
 		Timeout: 10 * time.Second,
