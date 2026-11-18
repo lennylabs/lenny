@@ -126,16 +126,21 @@ func newFakeHandler(t *testing.T, core *fakeCore, opts uploadhandler.Options) (*
 // The tests below check the upload handler's own wiring and its mapping of
 // the core's answers; they cite the operations they exercise.
 
-// TestNewRefusesOptionsWithoutSessionsOrIdentity checks that the handler
-// needs the session lookup and the request identity.
+// TestNewRefusesOptionsWithoutARequiredOperation checks that the handler
+// needs the session lookup, the request identity, the upload token
+// verification, and the storage quota, so a wiring that leaves out the token
+// or the quota operation fails to build rather than admitting uploads
+// unchecked.
 //
-// spec: GWSEAM-LookupSession, GWSEAM-RequestTenant
-func TestNewRefusesOptionsWithoutSessionsOrIdentity(t *testing.T) {
+// spec: GWSEAM-LookupSession, GWSEAM-RequestTenant, GWSEAM-VerifyUploadToken, GWSEAM-ReserveStorage
+func TestNewRefusesOptionsWithoutARequiredOperation(t *testing.T) {
 	core := &fakeCore{}
 	for name, opts := range map[string]uploadhandler.Options{
-		"neither":     {},
-		"no identity": {Sessions: core},
-		"no sessions": {Identity: core},
+		"none":        {},
+		"no identity": {Sessions: core, Tokens: core, Quota: core},
+		"no sessions": {Identity: core, Tokens: core, Quota: core},
+		"no tokens":   {Sessions: core, Identity: core, Quota: core},
+		"no quota":    {Sessions: core, Identity: core, Tokens: core},
 	} {
 		if _, err := uploadhandler.New(opts); !errors.Is(err, uploadhandler.ErrIncomplete) {
 			t.Errorf("%s: err = %v, want ErrIncomplete", name, err)
@@ -152,7 +157,7 @@ func TestNewRefusesOptionsWithoutSessionsOrIdentity(t *testing.T) {
 // spec: GWSEAM-RegisterRoutes
 func TestRegisterRoutesDeclaresEachRouteWithItsAccessCheck(t *testing.T) {
 	core := &fakeCore{}
-	h, err := uploadhandler.New(uploadhandler.Options{Sessions: core, Identity: core})
+	h, err := uploadhandler.New(uploadhandler.Options{Sessions: core, Identity: core, Tokens: core, Quota: core})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,6 +347,7 @@ func TestMidSessionUploadMapsTheCoresAnswers(t *testing.T) {
 
 	core := &fakeCore{session: running, forward: seam.ForwardLocal}
 	opts.Sessions, opts.Identity, opts.Forwarding = core, core, core
+	opts.Tokens, opts.Quota = core, core
 	noWrite, err := uploadhandler.New(opts)
 	if err != nil {
 		t.Fatal(err)
@@ -357,7 +363,7 @@ func TestMidSessionUploadMapsTheCoresAnswers(t *testing.T) {
 	if rr := post(bare); rr.Code != http.StatusConflict {
 		t.Errorf("no workspace write operation: %d, want 409", rr.Code)
 	}
-	opts.Sessions, opts.Identity, opts.Forwarding = nil, nil, nil
+	opts.Sessions, opts.Identity, opts.Forwarding, opts.Tokens, opts.Quota = nil, nil, nil, nil, nil
 
 	broken := &fakeCore{session: running, forward: seam.ForwardLocal, writeErr: errors.New("unexpected")}
 	_, mux = newFakeHandler(t, broken, opts)

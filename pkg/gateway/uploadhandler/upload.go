@@ -702,9 +702,6 @@ type quotaReservation struct {
 // store, so infrastructure degradation never bypasses the storage quota.
 // spec: §11.2, §12.4.
 func (h *Handler) reserveStorageQuota(w http.ResponseWriter, r *http.Request, tenantID string) (*quotaReservation, bool) {
-	if h.quota == nil {
-		return nil, true
-	}
 	res, err := h.quota.ReserveStorage(r.Context(), tenantID, r.ContentLength)
 	var exceeded *seam.StorageQuotaError
 	switch {
@@ -799,12 +796,8 @@ func (h *Handler) handleBlob(w http.ResponseWriter, r *http.Request) {
 
 // verifyUploadToken verifies the `X-Lenny-Upload-Token` header against the
 // session id through GWSEAM-VerifyUploadToken. It returns nil on success or
-// one of the seam's upload token errors. With no token verifier wired, as
-// in a test or the minimal gateway, every request passes.
+// one of the seam's upload token errors.
 func (h *Handler) verifyUploadToken(r *http.Request, sessionID string) error {
-	if h.tokens == nil {
-		return nil
-	}
 	return h.tokens.VerifyUploadToken(r.Context(), sessionID, r.Header.Get("X-Lenny-Upload-Token"))
 }
 

@@ -14,8 +14,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
-// ErrIncomplete reports Options that lack Sessions or Identity.
-var ErrIncomplete = errors.New("uploadhandler: options need Sessions and Identity")
+// ErrIncomplete reports Options that lack Sessions, Identity, Tokens, or
+// Quota.
+var ErrIncomplete = errors.New("uploadhandler: options need Sessions, Identity, Tokens, and Quota")
 
 // RuntimeRegistry reads the runtime a session is bound to, so the
 // mid-session upload can check the runtime's capabilities.midSessionUpload
@@ -24,8 +25,10 @@ type RuntimeRegistry interface {
 	Get(ctx context.Context, name string) (runtimestore.Runtime, error)
 }
 
-// Options configures a Handler. Sessions and Identity are required; every
-// other dependency is optional, and a nil one leaves its check out, as the
+// Options configures a Handler. Sessions, Identity, Tokens, and Quota are
+// required, so a composition root that leaves out the token or the quota
+// operation fails to build rather than admitting uploads unchecked. Every
+// other dependency is optional, and a nil one leaves its work out, as the
 // field says.
 type Options struct {
 	// Sessions looks up the session an upload names.
@@ -38,11 +41,12 @@ type Options struct {
 	// Workspaces writes a mid-session upload into the session's workspace.
 	// Nil answers every mid-session upload TARGET_NOT_READY.
 	Workspaces seam.Workspaces
-	// Tokens verifies the upload token of a plain or archive upload. Nil
-	// skips the check, as a test or the minimal gateway does.
+	// Tokens verifies the upload token of a plain or archive upload. The
+	// session core's side admits every token when it has no verifier, as a
+	// test or the minimal gateway does.
 	Tokens seam.UploadTokens
-	// Quota holds an upload against the tenant's storage quota. Nil admits
-	// every upload without a reservation.
+	// Quota holds an upload against the tenant's storage quota. The session
+	// core's side holds no reservation when it has no quota wired.
 	Quota seam.StorageQuota
 	// Audit records the session upload audit event. Nil records none.
 	Audit seam.UploadAudit
@@ -98,10 +102,10 @@ type Handler struct {
 	midSessionUploadEnabled bool
 }
 
-// New returns a Handler, or ErrIncomplete when opts lacks Sessions or
-// Identity.
+// New returns a Handler, or ErrIncomplete when opts lacks Sessions,
+// Identity, Tokens, or Quota.
 func New(opts Options) (*Handler, error) {
-	if opts.Sessions == nil || opts.Identity == nil {
+	if opts.Sessions == nil || opts.Identity == nil || opts.Tokens == nil || opts.Quota == nil {
 		return nil, ErrIncomplete
 	}
 	return &Handler{

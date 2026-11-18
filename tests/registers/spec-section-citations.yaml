@@ -428,7 +428,7 @@ packages:
     - package: pkg/gateway/externalapi/admintoken/reclaimer
       count: 14
     - package: pkg/gateway/externalapi/errorclassify
-      count: 83
+      count: 85
     - package: pkg/gateway/externalapi/openapi
       count: 49
     - package: pkg/gateway/externalapi/openapi/internal/genopsschemas
@@ -668,7 +668,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3029
+      count: 3036
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
@@ -726,7 +726,7 @@ packages:
     - package: pkg/gateway/upgrade/runtimeupgradestore/pgstore
       count: 1
     - package: pkg/gateway/uploadhandler
-      count: 85
+      count: 90
     - package: pkg/idempotency
       count: 7
     - package: pkg/kms
