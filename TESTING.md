@@ -306,7 +306,7 @@ The `// spec:` annotations are the record of what each test verifies and of whic
 
 The tier of a test is the tier whose directory holds its package, from the table in `cmd/lenny-test/tiers.go`. A test outside the tier directories is a unit test.
 
-The index serves `lenny-test coverage --spec`, `lenny-test list --spec`, `lenny-test --spec`, the `spec_sections` of a verdict's failures, and the site lists of `specshift where` and `specshift digest`. The harness indexes the tracked files. `where` and `digest` index the working tree, including untracked files that are not ignored, so they report on work not yet committed.
+The index serves `lenny-test coverage --spec`, `lenny-test list --spec`, `lenny-test --spec`, the `spec_sections` of a verdict's failures, the site lists of `specshift where` and `specshift digest`, and the coverage gate. The harness indexes the tracked files. `where`, `digest`, and the coverage gate index the working tree, including untracked files that are not ignored, so they report on work not yet committed.
 
 ### Coverage view
 
@@ -326,10 +326,10 @@ With no argument the view prints one line per page, identifier, and numbered hea
 
 `TestEveryChangedRequirementHasACitingTest` in the structure package of the static tier holds the test rule of `.claude/rules/spec-annotations.md` on a branch's diff. It compares the requirements of the working tree with those at the branch's merge base with `main` (or `origin/main`), with the specification comparison that `specshift digest` reports. Each requirement the branch adds, or whose text it modifies, passes when one of the following holds, and the gate fails naming the requirement and its page otherwise:
 
-- a top-level test function's doc comment cites the requirement directly, read from the annotation index of the working tree, including untracked files;
-- an open or planned issue record `issues/<CODE>/<file>.md` lists the requirement in its `requirements` front matter. A record with no status is open, and the records under `issues/closed/` are left out.
+- a top-level test function's doc comment cites the requirement directly, read from the annotation index of the working tree, including untracked files. A test in a file the go tool never builds does not count: a file whose `//go:build` line holds for no set of tags with `ignore` unset, a file under a folder whose name opens with `_` or `.`, and a file under a nested module;
+- an open or planned issue record `issues/<CODE>/<file>.md` lists the requirement in its `requirements` front matter, where `<CODE>` is any page code or alias the specification registers. A record with no status is open, and the records under `issues/closed/` are left out.
 
-A requirement that moves to another page with its text unchanged, a retired requirement, an operation, a definition block, and a numbered section are outside the gate. The coverage view reports numbered sections, and each area change adds its requirements in its own diff, so the gate checks the area when it lands. The gate skips with a reason when the branch has no merge base, and it passes with nothing to check while `spec/registry.json` registers no requirement. An issue record whose front matter does not parse, or that is a symbolic link, fails the gate with the record's path.
+A requirement that moves to another page with its text unchanged, a retired requirement, an operation, a definition block, and a numbered section are outside the gate. The coverage view reports numbered sections, and each area change adds its requirements in its own diff, so the gate checks the area when it lands. The gate skips with a reason when the branch has no merge base, and it passes with nothing to check while the specification defines no requirement. An issue record under a folder that is no registered page code, a record whose front matter does not parse, and a record that is a symbolic link cover nothing. The gate logs each with the reason, so such a record fails the requirements it names and leaves the other requirements to their own tests and issues.
 
 ### Spec map
 
