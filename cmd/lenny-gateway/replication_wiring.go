@@ -16,8 +16,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 )
 
@@ -57,7 +57,7 @@ func parseReplicationConfig(raw string) (replication.Config, error) {
 // "the DataResidencyViolationAttempt audit event never fires" gap is
 // closed. F-12.5.20 / F-16.7.2.
 type replicationAuditSink struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 }
 
 // emit implements replication.AuditSink. A nil appender drops the event;

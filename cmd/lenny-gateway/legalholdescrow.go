@@ -10,12 +10,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
@@ -65,7 +65,7 @@ func escrowCipherFactory(provider kms.Provider) legalholdescrow.CipherFactory {
 // path queries, and serves as the ReleaseLedger that emits
 // legal_hold.escrow_released.
 type escrowLedger struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 	records  legalholdescrow.RecordStore
 	clock    func() time.Time
 }
@@ -184,7 +184,7 @@ type tenantEscrowMigrator struct {
 	cipher   legalholdescrow.CipherFactory
 	ledger   legalholdescrow.Ledger
 	metrics  *gatewaymetrics.Metrics
-	appender policy.AuditAppender
+	appender audit.Appender
 	clock    func() time.Time
 }
 
@@ -361,7 +361,7 @@ func (m tenantEscrowMigrator) reportResidencyViolation(ctx context.Context, tena
 // and increments lenny_gdpr_legal_hold_overridden_tenant_total once the
 // Phase 3.5 escrow sub-steps complete.
 type escrowOverrideSink struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 	metrics  *gatewaymetrics.Metrics
 	clock    func() time.Time
 }

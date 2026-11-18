@@ -138,7 +138,7 @@ packages:
     - package: pkg/apis/lenny/v1alpha1
       count: 39
     - package: pkg/audit
-      count: 46
+      count: 47
     - package: pkg/audit/integrity
       count: 45
     - package: pkg/audit/jcs

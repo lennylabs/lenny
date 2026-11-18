@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
 // leaseExtensionAuditAdapter implements leasecontrol.Auditor, turning
@@ -19,7 +19,7 @@ import (
 // the issuing replica, and the client originator. F-8.6.10.
 // spec: §8.6
 type leaseExtensionAuditAdapter struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 }
 
 func (a leaseExtensionAuditAdapter) RecordExtension(ctx context.Context, e leasecontrol.ExtensionAudit) {

@@ -102,7 +102,7 @@ type RevocationStore interface {
 
 // Auditor writes §16.7 audit rows on the Token Service's behalf. The
 // in-memory dev path uses an Auditor backed by audit.ChainSet (via
-// pkg/gateway/policy.ChainSetAppender), so a dev install still emits
+// pkg/gateway/audit.ChainSetAppender), so a dev install still emits
 // `token.exchanged`, `token.revoked`, and `token.exchange_rate_limited`
 // rows even though the rows are lost on restart. The Postgres path
 // reaches the durable chain through IssuedTokenAuditStore so the audit

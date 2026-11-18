@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 )
 
@@ -25,13 +26,13 @@ const (
 // the request path. The hash-chain integrity check (§11.7) surfaces a
 // persistent backend fault.
 type FailOpenObserver struct {
-	appender AuditAppender
+	appender audit.Appender
 	clock    func() time.Time
 }
 
 // NewFailOpenObserver returns an observer backed by appender. clock
 // overrides time.Now; pass nil in production.
-func NewFailOpenObserver(appender AuditAppender, clock func() time.Time) *FailOpenObserver {
+func NewFailOpenObserver(appender audit.Appender, clock func() time.Time) *FailOpenObserver {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}

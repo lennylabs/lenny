@@ -10,7 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 )
 
@@ -22,7 +22,7 @@ import (
 //
 // spec: §12.4; §16.7 (quota_failopen_started).
 type quotaFailOpenAuditEmitter struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 }
 
 func (e quotaFailOpenAuditEmitter) EmitQuotaFailOpenStarted(ctx context.Context, serviceInstanceID string, at time.Time) {
@@ -101,7 +101,7 @@ type failOpenWiring struct {
 		SetQuotaFailopenCumulativeSeconds(float64)
 	}
 	replicas             *failopen.ReplicaCount
-	appender             policy.AuditAppender
+	appender             audit.Appender
 	statePath            string
 	cumulativeMaxSeconds int
 	perReplicaHardCap    int64

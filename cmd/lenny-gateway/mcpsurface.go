@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/elicitation"
@@ -58,7 +59,7 @@ func (w *gatewayWiring) buildMCPSurface(
 	sessionSrv *sessionserver.Server,
 	policyChain *interceptor.Chain,
 	auditSink admin.AuditSink,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	policyAuditSink *policy.AuditSink,
 	maxInputResolver *maxInputSizeResolverHolder,
 	environments environmentstore.Store,

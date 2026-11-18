@@ -628,11 +628,6 @@ crossings:
     from: pkg/gateway/provisioning/vcscred
     type: Resolver
     step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.VCSLeaseAuditor
-    from: pkg/gateway/policy/policy
-    type: AuditAppender
-    step: 0117.S7
   - to: pkg/gateway/playground
     interface: IDTokenValidatorFromVerifier(0)
     from: pkg/auth/jwt
@@ -677,16 +672,6 @@ crossings:
     interface: Metrics.Middleware(0)
     from: pkg/gateway/middleware/auth
     type: Wrap
-    step: 0117.S4
-  - to: pkg/gateway/middleware/circuitbreaker
-    interface: NewAuditReporter(0)
-    from: pkg/gateway/policy/policy
-    type: AuditAppender
-    step: 0117.S8
-  - to: pkg/gateway/drain/drainreadiness
-    interface: ForcedDrainHandler.Appender
-    from: pkg/gateway/policy/policy
-    type: AuditAppender
     step: 0117.S4
   - to: pkg/gateway/runtime/watchdog
     interface: Watchdog.WithTreeArchive(0)

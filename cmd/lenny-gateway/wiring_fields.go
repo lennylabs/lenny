@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
@@ -294,7 +295,7 @@ type gatewayWiringFields struct {
 	// (startBackgroundWorkers) reads to launch the periodic sweepers,
 	// samplers, reconcilers, and propagator subscribers.
 	adminRouter     *admin.Router
-	auditAppender   policy.AuditAppender
+	auditAppender   audit.Appender
 	auditPruner     *auditretention.Pruner
 	billing         billingstore.Store
 	billingEmitter  *billingfanout.Emitter

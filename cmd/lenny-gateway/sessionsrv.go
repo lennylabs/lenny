@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
@@ -70,7 +71,7 @@ func (w *gatewayWiring) buildSessionServer(
 	quotaCheckpointSvc *quotacheckpoint.Service,
 	policyChain *interceptor.Chain,
 	policyAuditSink *policy.AuditSink,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	inputWaits *inputwait.Registry,
 	uploadSubsystem *subsystem.Subsystem,
 	uploadMetrics *sessionserver.PromUploadMetrics,

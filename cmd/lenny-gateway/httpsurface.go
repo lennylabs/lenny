@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
@@ -48,7 +49,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -75,7 +75,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	mcpSrv *mcp.Server,
 	policyChain *interceptor.Chain,
 	auditSink admin.AuditSink,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	opsEmitter events.EventEmitter,
 	environments environmentstore.Store,
 	driftMonitor *driftmonitor.Monitor,

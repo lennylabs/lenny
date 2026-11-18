@@ -3,7 +3,7 @@
 // Package jwtaudit emits the `platform.ca_rotated` audit row for §10.3
 // CA-rotation stage transitions. The package is the bridge between
 // pkg/mtls (which knows when a rotation happened but not how the audit
-// chain is wired) and pkg/gateway/policy.AuditAppender (the per-tenant
+// chain is wired) and pkg/gateway/audit.Appender (the per-tenant
 // chain writer). It also names the platform tenant that platform-wide
 // audit rows are committed under.
 package jwtaudit
@@ -14,7 +14,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/mtls"
 )
 
@@ -86,7 +86,7 @@ type CAPayload struct {
 // the observer returns; a failed append is logged and counted but does
 // not roll back the rotation, which has already committed.
 type CAObserver struct {
-	appender    policy.AuditAppender
+	appender    audit.Appender
 	tenantID    string
 	appendCtx   func() (context.Context, context.CancelFunc)
 	logf        func(format string, v ...any)
@@ -97,7 +97,7 @@ type CAObserver struct {
 // Panics on a nil appender — the construction-time invariant
 // prevents the gateway from wiring the CA rotation audit without a
 // working chain backend.
-func NewCAObserver(appender policy.AuditAppender, opts ...Option) *CAObserver {
+func NewCAObserver(appender audit.Appender, opts ...Option) *CAObserver {
 	if appender == nil {
 		panic("jwtaudit: NewCAObserver: nil AuditAppender")
 	}

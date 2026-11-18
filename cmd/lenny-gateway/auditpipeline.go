@@ -20,7 +20,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -78,7 +77,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 	var (
 		auditSink             admin.AuditSink
 		wireAudit             func(*admin.Router) *admin.Router
-		auditAppender         policy.AuditAppender
+		auditAppender         audit.Appender
 		auditValidator        *auditscope.Validator
 		ocsfTranslationStore  ocsf.TranslationStore
 		siemDeliveryStore     siem.DeliveryStore
@@ -260,7 +259,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		auditSink = admin.NewAuditLogSink(auditValidator, nil)
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
 		// In-memory chain — lost on restart, used by the minimal gateway.
-		auditAppender = policy.NewChainSetAppender(auditChains, nil)
+		auditAppender = audit.NewChainSetAppender(auditChains, nil)
 	}
 
 	// spec: §11.7 item 4 + Wire Format — wire the OCSF translator and

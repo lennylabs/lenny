@@ -9,10 +9,10 @@ import (
 	"log"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -238,7 +238,7 @@ func (e *tenantEraser) DeleteByTenant(ctx context.Context, tenantID string) (map
 // erasure receipt as a gdpr.* audit event (retained under
 // audit.gdprRetentionDays and exempt from later erasure, per §12.8) so the receipt survives the tenant tombstone.
 type auditReceiptSink struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 	clock    func() time.Time
 }
 
@@ -307,7 +307,7 @@ func (e tenantHoldEnumerator) ActiveTenantHolds(ctx context.Context, tenantID st
 //
 // spec: §12.8.
 type tenantDeletionBlockedSink struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 	clock    func() time.Time
 }
 
