@@ -27,7 +27,20 @@ version: 1
 
 cap: 5
 
-quarantined: []
+quarantined:
+  - test: TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3
+    package: tests/integration
+    owner: jafargas
+    reason: >-
+      Passes and fails on one commit of main under host load (6 of 7 on
+      343c04eb7); its expiry subtest sleeps to the session's exp across two
+      replicas, so a slow replica, Redis, or Postgres lands an assertion past
+      its deadline. No defect in the code under test has been observed.
+    quarantined_at: 2026-11-17
+    issue: https://github.com/lennylabs/lenny/blob/main/issues/TOKX/TOKX-I1-impersonation-cross-replica-test-flaky-under-load.md
+    eta: 2026-12-15
+    root_cause: flaky-time
+    notes: Quarantined at the owner's direction on 2026-11-17.
 
 # Schema for entries when populated:
 #
