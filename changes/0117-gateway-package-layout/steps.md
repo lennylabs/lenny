@@ -47,7 +47,7 @@ The import sites in each title are counted over the packages the step moves, as 
 `sessionserver`'s five upload files and their tests to a new package, `pkg/gateway/uploadhandler`, which reaches the core through the session lookup, authorization, and workspace write operations of the seam interface and registers its routes with the API front. The archive extraction in `podsession` stays until 0153.S3 removes it.
 
 ### 0117.S6 Stream proxy split (69 import sites)
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
