@@ -294,7 +294,8 @@ func printJourneysDryRun(selected []*journeys.Scenario, agentCfg journeys.AgentC
 			Settings: settings, SystemPrompt: journeys.SystemPrompt(s), Prompt: "<prompt.md>",
 			Env: map[string]string{"KUBECONFIG": journeys.ContainerKubeconfig},
 		}
-		fmt.Printf("  %s\n\n", shellQuote(agentCfg.CommandLine(run)))
+		fmt.Printf("  %s\n", shellQuote(agentCfg.CommandLine(run)))
+		fmt.Printf("  (the holder and proxy names above are hashed from the placeholder run name; a real run hashes its own run name)\n\n")
 	}
 	return 0
 }

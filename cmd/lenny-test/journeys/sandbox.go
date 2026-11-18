@@ -4,6 +4,8 @@ package journeys
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -32,11 +34,20 @@ type sandboxNames struct {
 	network, proxy, holder, agent string
 }
 
+// namesFor derives the run's Docker object names. The holder resolves the
+// proxy by its container name through Docker's embedded DNS, and a DNS label
+// holds at most 63 characters (RFC 1035, section 2.3.4), so the proxy, the
+// holder, and the network take a short name derived from a hash of the run
+// name rather than the run name itself, which carries the run, journey, and
+// trial and exceeds the limit. The agent container keeps the run name, which
+// nothing resolves; every object also carries the run label for cleanup.
 func namesFor(run AgentRun) sandboxNames {
+	sum := sha256.Sum256([]byte(run.Name))
+	base := "lj-" + hex.EncodeToString(sum[:6])
 	return sandboxNames{
-		network: run.Name + "-net",
-		proxy:   run.Name + "-proxy",
-		holder:  run.Name + "-netns",
+		network: base + "-net",
+		proxy:   base + "-proxy",
+		holder:  base + "-netns",
 		agent:   run.Name,
 	}
 }

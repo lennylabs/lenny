@@ -242,18 +242,19 @@ func TestDockerArgsIsolateTheAgentContainer(t *testing.T) {
 	}
 	line := cfg.CommandLine(run)
 	joined := strings.Join(line, " ")
+	n := namesFor(run)
 	if line[0] != "docker" || line[1] != "run" {
 		t.Fatalf("command line = %v", line)
 	}
 	for _, want := range []string{
 		"--rm", "--init", "--name agent-1", "--label lenny.dev/journeys-run=run1",
-		"--network container:agent-1-netns", "--read-only", "--cap-drop ALL",
+		"--network container:" + n.holder, "--read-only", "--cap-drop ALL",
 		"--security-opt no-new-privileges", "--user 501:20",
 		"type=bind,source=/s/docs,target=/workspace/docs,readonly",
 		"type=bind,source=/s/journey,target=/journey,readonly",
 		"type=bind,source=/s/home,target=/home/agent",
 		"--workdir /workspace", "--env HOME=/home/agent", "--env CLAUDE_CODE_OAUTH_TOKEN",
-		"--env HTTPS_PROXY=http://agent-1-proxy:3128", "--env HTTP_PROXY=http://agent-1-proxy:3128",
+		"--env HTTPS_PROXY=" + n.proxyURL(), "--env HTTP_PROXY=" + n.proxyURL(),
 		"--env NO_PROXY= ", "--env JOURNEY_TIME_LIMIT=1800",
 		"--env KUBECONFIG", "--env LENNY_API_TOKEN",
 		"sha256:abc claude -p p",
