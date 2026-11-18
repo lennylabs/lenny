@@ -14,7 +14,7 @@ Lenny's test surface follows a strict tier model. The static tier runs first; ea
 
 | Tier | What runs | Wall clock |
 |:----:|:----------|:-----------|
-| 0 | go vet, gofumpt, goimports, golangci-lint, schema/query/migration linters, ADR catalog, markdown link check, validate-diagnosis, validate-maps, JSON-schema breaking-change check | < 60s |
+| 0 | go vet, gofumpt, goimports, golangci-lint, schema/query/migration linters, ADR catalog, markdown link check, validate-diagnosis, validate, JSON-schema breaking-change check | < 60s |
 | 1 | `go test ./...` with `-race -count=1`; helm-unittest cases when the chart is present | < 60s |
 | 2 | Component tests against real backing stores (Postgres/Redis/MinIO via testcontainers-go); each suite covers one Lenny subsystem | < 5min |
 | 3 | Contract tests: REST/MCP consistency, OpenAI translator fidelity, adapter JSONL, OAuth token exchange, SDK contract harness | < 4min |
@@ -45,7 +45,7 @@ Lenny's test surface follows a strict tier model. The static tier runs first; ea
 
 ### Run the fast PR feedback loop
 
-`pr-fast` resolves through `--changed` capped at the component tier. The harness inspects `git diff`, maps each changed path through `tests/change-graph.json`, and emits the smallest tier plan that covers the diff.
+`pr-fast` resolves through `--changed` and keeps the static, unit, and component tiers of the selection. The harness reads the paths of the working-tree diff and selects tests from the Go import graph, which names every test package that builds a changed package, directly or through other packages. A specification edit adds the tests whose `// spec:` annotations cite a changed section or identifier, and `tests/non-go-inputs.yaml` adds the tests that read an input outside every Go package, such as the Helm chart or the compose files. The unit, component, and contract tiers run the packages and test functions the selection names, and the static tier runs in full. `lenny-test --changed` without `--tier` or `--gate` runs the static, unit, component, and contract tiers of the selection, which start no compose stack and no cluster, and names the other tiers the selection reaches. `--tier` replaces that set with the tiers it names, such as `--tier static,unit,component,contract,integration`, and `--gate merge` runs every tier of the merge gate that the selection reaches. `--dry-run` prints the selection without running it.
 
 ```bash
 ./bin/lenny-test --group pr-fast

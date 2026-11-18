@@ -2,11 +2,45 @@
 
 package main
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
+
+// tierBuildTags returns the build tags of every tier, sorted and without
+// duplicates. The selector loads the import graph with all of them set, so
+// a tagged tier package, and a tagged test file of an untagged package, is
+// in the graph (change 0116, CS-4). No tier's files carry a negated tier
+// tag, so setting every tag at once drops no file a tier compiles.
+func tierBuildTags() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range allTiers() {
+		if tag := tierBuildTag(t); tag != "" && !seen[tag] {
+			seen[tag] = true
+			out = append(out, tag)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// tierExtraTrees returns the package trees outside a tier's directory
+// whose packages carry that tier's tagged tests in-package. The component
+// tier runs the tagged tests of the container helpers and of
+// cmd/lenny-ops, which tests its Redis- and Postgres-backed helpers
+// against real containers. A selected package under one of these trees
+// runs in the tier as well as in the unit tier.
+func tierExtraTrees(tier string) []string {
+	if tier == tierComponent {
+		return []string{"tests/testinfra/containers", "cmd/lenny-ops"}
+	}
+	return nil
+}
 
 // Tier names. These are the canonical string values used in
-// groups.yaml, spec-map.json, change-graph.json, build tags, and
-// the verdict JSON. Every call site that needs a tier name must
+// groups.yaml, tests/non-go-inputs.yaml, build tags, and the verdict
+// JSON. Every call site that needs a tier name must
 // use one of these constants rather than a bare literal.
 const (
 	tierStatic      = "static"
@@ -27,12 +61,12 @@ const (
 
 // allTiers returns the tier names in execution order. A tier is selected by
 // its name only; the numbers the tiers carried before change 0155 are not
-// accepted. The order is the one --max-tier reads: --max-tier <name> runs
-// every tier from static up to and including <name> in this order, and a
-// lower tier's failure stops the tiers after it. load_local runs before
-// load_kind, and load_cloud sits after every other tier so cloud spend only
-// fires once everything below is green. Change 0116 replaces this ordering
-// with the merge, area, and release gates.
+// accepted. A plan runs its tiers in this order, and a lower tier's
+// failure stops the tiers after it. load_local runs before load_kind, and
+// load_cloud sits after every other tier so cloud spend only fires once
+// everything below is green. Which tiers run is bounded by the merge,
+// area, and release gates (gateTiers) or by --tier, rather than by this
+// order (change 0116, CS-7).
 func allTiers() []string {
 	return []string{
 		tierStatic,
@@ -97,41 +131,26 @@ func tierOfDir(path string) string {
 func tiersForGroup(name string) []tierPlan {
 	switch name {
 	case "pr-fast":
-		// pr-fast is the changed-only fast feedback group per
-		// the test harness documentation. Resolve --changed at the time of the
-		// call so the plan reflects today's diff rather than a
-		// static superset.
-		plan := resolveChangedPlan()
-		// Cap at component — pr-fast never reaches integration.
-		capped := []tierPlan{}
-		for _, p := range plan {
-			capped = append(capped, p)
-			if p.name == "component" {
-				break
-			}
-		}
-		if len(capped) == 0 {
+		// pr-fast is the changed-only fast feedback group: the working
+		// tree's selection within the static, unit, and component tiers
+		// (tests/groups.yaml). Resolve --changed at the time of the call
+		// so the plan reflects today's diff rather than a static superset.
+		plan, _ := keepTiers(resolveChangedPlan(), prFastTiers)
+		if len(plan) == 0 {
 			// No applicable diff; fall back to the static + unit
 			// minimum so a fast feedback run still happens.
-			capped = []tierPlan{
-				{name: "static", notes: "pr-fast: no diff detected"},
-				{name: "unit", notes: "pr-fast: no diff detected"},
+			plan = []tierPlan{
+				{name: tierStatic, notes: "pr-fast: no diff detected"},
+				{name: tierUnit, notes: "pr-fast: no diff detected"},
 			}
 		}
-		return capped
+		return plan
 	case "pr":
-		return []tierPlan{
-			{name: "static"},
-			{name: "unit"},
-			{name: "component"},
-			{name: "contract"},
-			{name: "integration"},
-			{name: "e2e_kind", subsets: []string{"critical-path"}},
-			{name: "security", subsets: []string{"critical"}},
-			{name: "chaos", subsets: []string{"core"}},
-			{name: "conformance", subsets: []string{"bundled-runtimes"}},
-			{name: "docs"},
-		}
+		// pr is the merge gate's tiers, run whole (`gate: merge` in
+		// tests/groups.yaml). `lenny-test gate` runs the merge gate's
+		// selection for a branch.
+		tiers, _ := gateTiers(gateMerge)
+		return wholeTierPlans(tiers, nil)
 	case "nightly":
 		return tiersAll(map[string][]string{
 			"e2e_cloud":   {"critical-path-rotated"},

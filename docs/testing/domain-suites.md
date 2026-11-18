@@ -93,5 +93,4 @@ When you're writing a new test in any of these domains:
 1. Identify the matching TESTING.md §14.N section.
 2. Find the tier — most cross-tier suites have a unit / contract anchor that's the easiest place to start.
 3. Use the helper packages listed above; never bypass `testinfra/fixtures` for tenant or user identifiers.
-4. Add the §17.2 `// spec:` and `// diagnosis:` annotations.
-5. Add the test path to `tests/spec-map.json` under the right section.
+4. Add the §17.2 `// spec:` and `// diagnosis:` annotations. The `// spec:` annotation is how `lenny-test --spec` and the coverage view (`lenny-test coverage --spec`) find the test, so no map needs an entry.

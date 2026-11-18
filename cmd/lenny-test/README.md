@@ -14,13 +14,13 @@ go install ./cmd/lenny-test
 
 This is the skeleton. It implements:
 
-- Flag parsing and selector resolution against `tests/groups.yaml` and `tests/change-graph.json`, and `--spec` resolution through the annotation index.
-- The `list`, `validate-maps`, `validate-diagnosis`, `infra`, and `version` subcommands.
+- Flag parsing and selector resolution against `tests/groups.yaml`, `--changed` and `--pkg` resolution through the Go import graph, the specification edits, and `tests/non-go-inputs.yaml`, and `--spec` resolution through the annotation index.
+- The `list`, `validate`, `validate-diagnosis`, `infra`, and `version` subcommands.
 - A `--dry-run` mode that prints the resolved selector and the tests it would run.
 - The default run command, which dispatches the static tier to `go vet ./...` and the unit tier to `go test ./...` over whatever exists in `pkg/`. Higher tiers are recorded as `skipped` with reason `phase-0-not-implemented`.
 - Verdict writing to `tests/results/latest.json` per TESTING.md §7.
 
-Phase 1+ extends this with real executors for each tier, the cached container daemon, the JUnit and GitHub-annotation emitters, the PR-comment integration, and full change-graph resolution.
+Phase 1+ extends this with real executors for each tier, the cached container daemon, the JUnit and GitHub-annotation emitters, and the PR-comment integration.
 
 ## Quick reference
 
@@ -32,7 +32,7 @@ lenny-test list --groups
 lenny-test list --tiers
 lenny-test list --specs
 lenny-test list --json
-lenny-test validate-maps
+lenny-test validate
 lenny-test validate-diagnosis
 lenny-test infra status
 
@@ -40,8 +40,9 @@ lenny-test infra status
 lenny-test --group pr --dry-run
 lenny-test --tier component --dry-run
 lenny-test --changed --dry-run
-lenny-test --since main --max-tier unit --dry-run   # branch diff from its merge base
+lenny-test --since main --dry-run                   # branch diff from its merge base; static, unit, component, and contract
 lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
+lenny-test --since main --gate merge --dry-run      # the same diff within the merge gate's tiers
 lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotations cite them
 
@@ -85,6 +86,7 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | load_local, load_kind, chaos, load_cloud | 10m | `LENNY_TEST_LONG_TIMEOUT` |
 | security | 60m | `LENNY_TEST_SECURITY_TIMEOUT` |
 | docs | 1m | `LENNY_TEST_DOCS_TIMEOUT` |
+| `go list` of the selection's import graph | 2m | `LENNY_TEST_GO_LIST_TIMEOUT` |
 
 ## Files
 
@@ -93,7 +95,9 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `main.go` | Entry point; dispatches subcommands |
 | `cmd_run.go` | Default run command: parses selectors, resolves into tier plan, executes |
 | `cmd_gate.go` | `gate` subcommand: builds the gate image from `tests/gate/Dockerfile`, runs the merge gate in it, and writes `tests/results/gate-<run>.json` |
-| `cmd_validate.go` | `validate-maps` and `validate-diagnosis` subcommands |
+| `cmd_validate.go` | `validate` and `validate-diagnosis` subcommands |
+| `cmd_validate_annotated.go` | The `validate` check that every test from the component tier on carries a `// spec:` annotation or says it verifies no requirement |
+| `tier_bounds.go` | The tiers of the merge, area, and release gates, `--tier` lists, and the bound of an unbounded discovery selection |
 | `cmd_list.go` | `list` subcommand |
 | `cmd_infra.go` | `infra up/down/status/prune` (Phase 0 stubs) |
 | `tiers.go` | Tier ordering and group-to-tier resolution |
@@ -101,5 +105,8 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `spec_index.go` | The specification model: the annotation index, the identifier registry, the successor stubs of the numbered files, and the issue records, and the resolution of an identifier, a page code, or `§N.M` to its tests |
 | `cmd_coverage_spec.go`, `cmd_coverage_spec_text.go` | `coverage --spec`: the coverage view and its text rendering |
 | `gotest_json.go` | `go test -json` parsing, and the `spec_sections` of each failure from the annotation index |
-| `changed_select.go` | Unit-tier package scope for `--changed`: owning packages, change-graph unit targets, and in-module importers |
+| `changed_select.go` | `--changed` and `--pkg` selection: the import graph loaded with every tier's build tag, the owning packages of a changed path, their dependents, and each selected package's tier |
+| `spec_edit_select.go` | The tests a specification edit selects: the numbered headings a hunk touches, and the changed identifiers of the new tree with the code that cites them |
+| `non_go_inputs.go` | `tests/non-go-inputs.yaml`: the inputs no Go package owns, the tests that read them, and the `validate` check of the file |
+| `scoped_runs.go` | Running a scoped tier plan: whole packages in one `go test` invocation and functions by name in another |
 | `verdict.go` | JSON verdict writer per TESTING.md §7 |

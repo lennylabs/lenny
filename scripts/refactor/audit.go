@@ -14,8 +14,7 @@ import (
 )
 
 // audit runs the post-move pre-move-token audit (proposal §4 C4). It greps
-// tests/spec-map.json, tests/change-graph.json, and every *.go file (test files
-// included) for a surviving pre-move path token in a driver-rewritable
+// every *.go file (test files included) for a surviving pre-move path token in a driver-rewritable
 // boundary-anchored form and returns an error (aborting the move) when one
 // survives, because the driver provably could fix that form and a survivor is a
 // driver bug. It surfaces comment and informational-string occurrences in *.go
@@ -42,17 +41,9 @@ func (d *driver) audit() error {
 	return nil
 }
 
-// collectSurvivors classifies every surviving pre-move token across the JSON
-// maps, the *.go sources, and the non-Go prose files into the abort and warn
-// buckets.
+// collectSurvivors classifies every surviving pre-move token across the
+// *.go sources and the non-Go prose files into the abort and warn buckets.
 func (d *driver) collectSurvivors() (aborts, warns []string, err error) {
-	jsonAborts, jsonWarns, err := d.auditJSONMaps()
-	if err != nil {
-		return nil, nil, err
-	}
-	aborts = append(aborts, jsonAborts...)
-	warns = append(warns, jsonWarns...)
-
 	goAborts, goWarns, err := d.auditGoFiles()
 	if err != nil {
 		return nil, nil, err
@@ -65,35 +56,6 @@ func (d *driver) collectSurvivors() (aborts, warns []string, err error) {
 		return nil, nil, err
 	}
 	warns = append(warns, proseWarns...)
-	return aborts, warns, nil
-}
-
-// auditJSONMaps classifies surviving tokens in the two JSON maps. A
-// driver-rewritable quote/slash-bounded JSON string aborts; an in-manifest old
-// path that survives only inside a larger informational string value (a "notes"
-// sentence, where the token is bounded by a space or by '(', '.', and so on)
-// warns, because the driver's JSONTokens never rewrites that form and aborting
-// on it would make a group move unsatisfiable. The warn path mirrors the *.go
-// and prose surfaces so the §4 C4 audit records the residual stale drift on the
-// JSON surface for the optional manual sweep (proposal 0020 §4 C4).
-func (d *driver) auditJSONMaps() (aborts, warns []string, err error) {
-	for _, rel := range []string{"tests/spec-map.json", "tests/change-graph.json"} {
-		path := filepath.Join(d.root, filepath.FromSlash(rel))
-		content, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return nil, nil, readErr
-		}
-		text := string(content)
-		for _, m := range d.moves {
-			switch rewrite.ClassifyJSON(text, m, d.moves) {
-			case rewrite.Abort:
-				aborts = append(aborts, fmt.Sprintf("%s: %s", rel, rewrite.RepoRel(m.Old)))
-			case rewrite.Warn:
-				warns = append(warns, fmt.Sprintf("%s: %s", rel, rewrite.RepoRel(m.Old)))
-			case rewrite.None:
-			}
-		}
-	}
 	return aborts, warns, nil
 }
 

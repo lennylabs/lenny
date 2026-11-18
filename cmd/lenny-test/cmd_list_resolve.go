@@ -4,7 +4,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -121,8 +120,8 @@ func testsForTier(tier string) []string {
 }
 
 // testsForSpec resolves identifiers, page codes, and numbered sections
-// to the tests the annotation index and the spec map name for them (see
-// specModel.selectFor). A query that neither knows is an error.
+// to the tests the annotation index names for them (see
+// specModel.testsFor). A query the index does not know is an error.
 func testsForSpec(specs string) ([]string, error) {
 	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
@@ -132,20 +131,19 @@ func testsForSpec(specs string) ([]string, error) {
 }
 
 // testsForSpecIn is testsForSpec over a loaded model: the index's tests
-// as `path::Name`, then the spec map's entries as the map writes them.
+// as `path::Name`.
 func testsForSpecIn(m *specModel, queries []string) ([]string, error) {
 	out := []string{}
 	var unknown []string
 	for _, q := range queries {
-		sel, ok := m.selectFor(q)
+		tests, ok := m.testsFor(q)
 		if !ok {
 			unknown = append(unknown, q)
 			continue
 		}
-		for _, t := range sel.tests {
+		for _, t := range tests {
 			out = append(out, t.String())
 		}
-		out = append(out, sel.mapped...)
 	}
 	if len(unknown) > 0 {
 		return nil, unknownSpecQueries(unknown)
@@ -153,89 +151,39 @@ func testsForSpecIn(m *specModel, queries []string) ([]string, error) {
 	return out, nil
 }
 
-// testsForPkg resolves package globs to test paths via change-graph.json.
+// testsForPkg resolves package directories through the import graph, as
+// `run --pkg` does, and lists what the selection runs (see planEntries).
 func testsForPkg(pkgs string) []string {
-	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
-	if err != nil {
-		return nil
-	}
-	var doc struct {
-		Globs map[string]map[string][]string `json:"globs"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
-	out := []string{}
-	for _, pkg := range splitNonEmpty(pkgs) {
-		// Try exact match first, then prefix match.
-		if tiers, ok := doc.Globs[pkg]; ok {
-			out = append(out, flattenTiers(tiers)...)
-			continue
-		}
-		for key, tiers := range doc.Globs {
-			if strings.HasPrefix(key, pkg) || strings.HasPrefix(pkg, key) {
-				out = append(out, flattenTiers(tiers)...)
-			}
-		}
-	}
-	return out
+	plan, _ := resolvePkgsPlan(splitNonEmpty(pkgs), selectOpts{rdepsDepth: defaultRdepsDepth})
+	return planEntries(plan)
 }
 
-// testsForChanged walks `git diff --name-only` and resolves each
-// path through the change graph.
+// testsForChanged resolves the working-tree diff as `run --changed` does
+// and lists what the selection runs (see planEntries).
 func testsForChanged() []string {
-	if _, err := exec.LookPath("git"); err != nil {
-		return nil
-	}
-	// Staged + unstaged + untracked.
-	out := []string{}
-	for _, args := range [][]string{
-		{"diff", "--name-only"},
-		{"diff", "--name-only", "--staged"},
-		{"ls-files", "--others", "--exclude-standard"},
-	} {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = repoRoot()
-		body, err := cmd.Output()
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(body), "\n") {
-			line = strings.TrimSpace(line)
-			if line != "" {
-				out = append(out, line)
-			}
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	// Resolve each changed path through the change graph.
-	body, err := os.ReadFile(filepath.Join(repoRoot(), changeGraphFile))
-	if err != nil {
-		return nil
-	}
-	var doc struct {
-		Globs map[string]map[string][]string `json:"globs"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil
-	}
-	resolved := []string{}
-	for _, path := range out {
-		for key, tiers := range doc.Globs {
-			if strings.HasPrefix(path, key) {
-				resolved = append(resolved, flattenTiers(tiers)...)
-			}
-		}
-	}
-	return resolved
+	return planEntries(resolveChangedPlan())
 }
 
-func flattenTiers(tiers map[string][]string) []string {
+// planEntries lists what a plan runs: a whole tier as its test
+// directories (`./tests/integration/...`), a scoped tier's packages as
+// their `./dir` patterns, and a test function run by name as `dir::Name`.
+// The static tier runs on every invocation and is left out.
+func planEntries(plan []tierPlan) []string {
 	out := []string{}
-	for _, paths := range tiers {
-		out = append(out, paths...)
+	for _, t := range plan {
+		if t.name == tierStatic {
+			continue
+		}
+		if t.pkgs == nil {
+			out = append(out, testsForTier(t.name)...)
+			continue
+		}
+		out = append(out, t.pkgs...)
+		for _, dir := range sortedFuncDirs(t.funcs) {
+			for _, name := range t.funcs[dir] {
+				out = append(out, strings.TrimPrefix(dir, "./")+"::"+name)
+			}
+		}
 	}
 	return out
 }

@@ -31,13 +31,10 @@ const (
 	// LENNY_COVER_PROFILE is unset.
 	coverProfileFile = resultsDir + "/cover.out"
 
-	// specMapExceptionsFile records sections that intentionally
-	// have no tests (non-normative, post-v1, etc.).
-	specMapExceptionsFile = "tests/spec-map-exceptions.yaml"
-
-	// changeGraphFile maps source paths to the tiers that
-	// exercise them; the --changed selector walks this graph.
-	changeGraphFile = "tests/change-graph.json"
+	// nonGoInputsFile maps the inputs no Go package owns, such as the
+	// chart and the compose stack, to the test packages and tiers that
+	// read them (change 0116, CS-6).
+	nonGoInputsFile = "tests/non-go-inputs.yaml"
 
 	// groupsFile defines named test-selection groups (pr-fast,
 	// nightly, phase-N-gate).

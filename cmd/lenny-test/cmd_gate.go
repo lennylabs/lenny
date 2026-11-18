@@ -164,6 +164,9 @@ type gateRecord struct {
 	// unit tier and every test of tiers 2 to 4 rather than the --changed
 	// selection.
 	All bool `json:"all,omitempty"`
+	// RdepsDepth is the dependent depth the selection walked; -1 is the
+	// full closure the merge gate runs.
+	RdepsDepth int `json:"rdeps_depth"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -180,9 +183,14 @@ func runGate(args []string) int {
 	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way); outside the gate image the verdict is at best UNVERIFIED")
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
-	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module importers of a changed package join the unit tier (-1: the full transitive closure)")
+	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
-	if err := fs.Parse(args); err != nil {
+	flagArgs, err := gateCommandArgs(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		return 2
+	}
+	if err := fs.Parse(flagArgs); err != nil {
 		return 2
 	}
 	if err := gateRejectPositional(fs.Args()); err != nil {
@@ -203,15 +211,42 @@ func runGate(args []string) int {
 	return runGateInContainer(root, passArgs, *rebuild, !*noSocket)
 }
 
-// gateRejectPositional refuses positional arguments. The gate takes
-// flags only. Change 0116 adds the choice of gate (merge, area, or
-// release) as a flag; until then a word such as `merge` is refused
-// rather than ignored.
-func gateRejectPositional(args []string) error {
-	if len(args) == 0 {
-		return nil
+// gateCommandArgs splits the arguments of `lenny-test gate [merge]
+// [flags]`: an optional leading gate name, then the flags. The gate
+// command runs the merge gate, which is `run --changed --gate merge` with
+// the merge gate's verdict file (change 0116, CS-7). The area and release
+// gates have no command yet, so their names are refused with the run
+// command that bounds a selection by them.
+func gateCommandArgs(args []string) ([]string, error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return args, nil
 	}
-	return fmt.Errorf("unexpected argument %q: the gate takes flags only", args[0])
+	if err := gateNameSupported(args[0]); err != nil {
+		return nil, err
+	}
+	return args[1:], nil
+}
+
+// gateNameSupported refuses a gate name the gate command does not run.
+func gateNameSupported(name string) error {
+	switch name {
+	case gateMerge:
+		return nil
+	case gateArea, gateRelease:
+		return fmt.Errorf("the %s gate has no gate command yet: run its tiers with `lenny-test run --gate %s`", name, name)
+	}
+	return fmt.Errorf("unexpected argument %q: the gate command runs the merge gate (`lenny-test gate [merge] [flags]`)", name)
+}
+
+// gateRejectPositional refuses positional arguments after the flags,
+// other than the merge gate's name, rather than ignoring them.
+func gateRejectPositional(args []string) error {
+	for _, a := range args {
+		if err := gateNameSupported(a); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // gateEnvironment names the environment a --here run is in, and reports
@@ -666,16 +701,23 @@ func defaultGateRunner(root string) gateRunner {
 	}
 }
 
-// gateChangedPlan resolves the --changed plan against base, capped at
-// the integration tier. With all, it resolves every tier up to the
-// integration tier in full instead: the whole unit tier (./...) and every
-// test of the component, contract, and integration tiers.
+// gateChangedPlan resolves the --changed plan against base within the
+// merge gate's tiers (`run --changed --gate merge`), keeping the tiers the
+// gate takes from the plan (gateChangedTiers): the gate runs the static
+// tier and its general documentation gates itself. With all, it resolves
+// those tiers in full instead: the whole unit tier (./...) and every test
+// of the component, contract, and integration tiers.
 func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, error) {
+	sel := selector{changed: true, since: base, gate: gateMerge, rdepsDepth: rdepsDepth}
 	if all {
-		return selector{maxTier: tierIntegration}.resolve()
+		sel = selector{gate: gateMerge}
 	}
-	sel := selector{changed: true, since: base, maxTier: tierIntegration, rdepsDepth: rdepsDepth}
-	return sel.resolve()
+	r, err := sel.resolve()
+	if err != nil {
+		return r, err
+	}
+	r.tiers, _ = keepTiers(r.tiers, append([]string{tierStatic}, gateChangedTiers...))
+	return r, nil
 }
 
 // run executes the gate and returns its verdict. Every tier runs whatever
@@ -711,6 +753,10 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 
 	g.record(v, tierDocs, g.docs)
+	v.Gate.RdepsDepth = o.rdepsDepth
+	if o.rdepsDepth >= 0 && !o.all {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
+	}
 	withholdGatePass(v, dirty, o.environmentErr)
 	return v
 }
