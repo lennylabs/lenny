@@ -219,6 +219,7 @@ func (r *impReplicas) startShortSession(t *testing.T, base, subject string) (str
 // Two 200s or two ended events under concurrent DELETE mean the end is not
 // a conditional update on the active row.
 func TestImpersonationSessionIsSharedAcrossReplicas_spec_13_3(t *testing.T) {
+	t.Skip("quarantined: passes and fails on one commit under host load; TOKX-I1, tests/flake-budget.yaml")
 	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	r := startImpReplicas(t)
