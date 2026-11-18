@@ -668,11 +668,6 @@ crossings:
     from: pkg/auth/jwt
     type: MultiVerifier
     step: 0117.S4
-  - to: pkg/gateway/replica/gatewaymetrics
-    interface: Metrics.Middleware(0)
-    from: pkg/gateway/middleware/auth
-    type: Wrap
-    step: 0117.S4
   - to: pkg/gateway/runtime/watchdog
     interface: Watchdog.WithTreeArchive(0)
     from: pkg/gateway/mcpfabric/delegationtree/treearchive

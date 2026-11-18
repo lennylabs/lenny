@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 )
 
@@ -24,7 +25,7 @@ func TestMetricsHandlerExposesRegisteredMetrics(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := m.Middleware(inner, func(*http.Request) string { return "/healthz" })
+	h := requestmetrics.Wrap(inner, m, func(*http.Request) string { return "/healthz" })
 	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/healthz", nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
@@ -240,7 +241,7 @@ func TestMiddlewareRecordsRequests(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusCreated)
 	})
-	h := m.Middleware(inner, func(*http.Request) string { return "/v1/sessions" })
+	h := requestmetrics.Wrap(inner, m, func(*http.Request) string { return "/v1/sessions" })
 
 	for i := 0; i < 3; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
@@ -267,7 +268,7 @@ func TestMiddlewareLabelsStatusClass(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	h := m.Middleware(inner, func(*http.Request) string { return "/v1/sessions/{id}" })
+	h := requestmetrics.Wrap(inner, m, func(*http.Request) string { return "/v1/sessions/{id}" })
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/x", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -388,7 +389,7 @@ func TestMiddlewareTracksInflightRequests(t *testing.T) {
 		<-release
 		w.WriteHeader(http.StatusOK)
 	})
-	h := m.Middleware(inner, func(*http.Request) string { return "/v1/test" })
+	h := requestmetrics.Wrap(inner, m, func(*http.Request) string { return "/v1/test" })
 
 	done := make(chan struct{})
 	go func() {

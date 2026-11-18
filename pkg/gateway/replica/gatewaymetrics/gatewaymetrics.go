@@ -3,9 +3,6 @@
 package gatewaymetrics
 
 import (
-	"bufio"
-	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -44,7 +41,7 @@ type Metrics struct {
 	miscMetrics
 
 	// inflight tracks the number of HTTP requests currently being
-	// handled by the §16.1 Middleware-wrapped mux. It is the source of
+	// handled behind the API front's §16.1 request-metrics middleware. It is the source of
 	// the lenny_gateway_request_queue_depth gauge (the §4.1 SCL-026
 	// primary HPA scale-out trigger): incremented on entry and
 	// decremented on exit so the watchdog poller's SetRequestQueueDepth
@@ -2435,108 +2432,27 @@ func (m *Metrics) ObserveRevocationPropagation(outcome string, d time.Duration) 
 	m.revocationPropagation.WithLabelValues(outcome).Observe(d.Seconds())
 }
 
-// Middleware returns an http.Handler that records the §16.1 request
-// metrics for every request to inner. The route label is taken from
-// the supplied routeOf function so high-cardinality path segments
-// (session ids, blob refs) collapse to a stable route template.
-//
-// The middleware also tracks the in-flight request count exposed via
-// InflightRequests so the §16.1 lenny_gateway_request_queue_depth
-// gauge — the §4.1 SCL-026 primary HPA scale-out trigger — reflects
-// the instantaneous concurrent-request count on this replica.
-func (m *Metrics) Middleware(inner http.Handler, routeOf func(*http.Request) string) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		route := routeOf(r)
-		start := time.Now()
-		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		atomic.AddInt64(&m.inflight, 1)
-		defer atomic.AddInt64(&m.inflight, -1)
-		inner.ServeHTTP(rec, r)
-		elapsed := time.Since(start).Seconds()
-
-		m.requestsTotal.WithLabelValues(r.Method, route, statusClass(rec.status)).Inc()
-		m.requestDuration.WithLabelValues(r.Method, route).Observe(elapsed)
-	})
+// ObserveRequest records one finished request on the §16.1 request
+// counter and duration histogram. statusClass is the low-cardinality class
+// of the response status (2xx, 3xx, 4xx, or 5xx), and route is the route
+// template. The API front's request-metrics middleware calls it.
+func (m *Metrics) ObserveRequest(method, route, statusClass string, seconds float64) {
+	m.requestsTotal.WithLabelValues(method, route, statusClass).Inc()
+	m.requestDuration.WithLabelValues(method, route).Observe(seconds)
 }
 
-// InflightRequests returns the number of HTTP requests currently
-// being handled by the metrics Middleware. The watchdog poller in
-// cmd/lenny-gateway/main.go reads this value and pushes it through
-// SetRequestQueueDepth to surface it on the
+// AddInflightRequests moves the count of HTTP requests in flight by delta.
+// The API front's request-metrics middleware raises it before a request
+// runs and lowers it after, and InflightRequests reads it.
+func (m *Metrics) AddInflightRequests(delta int64) {
+	atomic.AddInt64(&m.inflight, delta)
+}
+
+// InflightRequests returns the number of HTTP requests currently being
+// handled behind the API front's request-metrics middleware. The watchdog
+// poller in cmd/lenny-gateway/main.go reads this value and pushes it
+// through SetRequestQueueDepth to surface it on the
 // lenny_gateway_request_queue_depth gauge (§4.1 SCL-026).
 func (m *Metrics) InflightRequests() int {
 	return int(atomic.LoadInt64(&m.inflight))
-}
-
-// statusRecorder captures the response status code so the metrics
-// middleware can label by status class.
-type statusRecorder struct {
-	http.ResponseWriter
-	status      int
-	wroteHeader bool
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	if !s.wroteHeader {
-		s.status = code
-		s.wroteHeader = true
-	}
-	s.ResponseWriter.WriteHeader(code)
-}
-
-func (s *statusRecorder) Write(b []byte) (int, error) {
-	if !s.wroteHeader {
-		s.wroteHeader = true
-	}
-	return s.ResponseWriter.Write(b)
-}
-
-// Flush forwards to the underlying http.Flusher when the embedded
-// ResponseWriter supports streaming. The §15.1 SSE event stream at
-// GET /v1/sessions/{id}/events and the §4.9 LLM-proxy streaming
-// translators rely on http.Flusher to push partial bytes to the
-// client; without this forwarder the metrics middleware hides the
-// Flusher and the SSE handler returns 500
-// ("response writer does not support streaming"). The §16.1
-// request-metrics accounting is unaffected because Write already
-// passes through.
-func (s *statusRecorder) Flush() {
-	if f, ok := s.ResponseWriter.(http.Flusher); ok {
-		if !s.wroteHeader {
-			s.wroteHeader = true
-		}
-		f.Flush()
-	}
-}
-
-// Hijack forwards to the underlying http.Hijacker so a WebSocket upgrade
-// survives the request-metrics wrapper. The §15.2 / §27.5 MCP WebSocket
-// transport at /mcp/v1/ws upgrades through this middleware;
-// nhooyr.io/websocket performs a direct http.Hijacker type assertion on
-// the handed ResponseWriter, so without this forwarder the metrics
-// wrapper hides the Hijacker and the upgrade fails. spec: §27.5 /
-// §27.3.1.
-func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hj, ok := s.ResponseWriter.(http.Hijacker); ok {
-		return hj.Hijack()
-	}
-	return nil, nil, errors.New("gatewaymetrics: underlying ResponseWriter does not support hijacking")
-}
-
-// statusClass collapses an HTTP status to its §16.1.1 low-cardinality
-// class label (2xx, 3xx, 4xx, 5xx) so the metric does not explode
-// into one series per status code.
-func statusClass(code int) string {
-	switch {
-	case code >= 500:
-		return "5xx"
-	case code >= 400:
-		return "4xx"
-	case code >= 300:
-		return "3xx"
-	case code >= 200:
-		return "2xx"
-	default:
-		return strconv.Itoa(code/100) + "xx"
-	}
 }

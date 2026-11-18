@@ -15,6 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
@@ -181,7 +182,7 @@ func TestExportHPAGaugesUpdatesAllGauges(t *testing.T) {
 		<-release
 		w.WriteHeader(http.StatusOK)
 	})
-	h := m.Middleware(inner, func(*http.Request) string { return "/test" })
+	h := requestmetrics.Wrap(inner, m, func(*http.Request) string { return "/test" })
 	go func() {
 		defer close(done)
 		req := httptest.NewRequest(http.MethodGet, "/test", nil)

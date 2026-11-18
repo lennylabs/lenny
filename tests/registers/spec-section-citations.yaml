@@ -255,6 +255,8 @@ packages:
       count: 19
     - package: pkg/experiment
       count: 10
+    - package: pkg/gateway/api/requestmetrics
+      count: 6
     - package: pkg/gateway/audit/auditretention
       count: 12
     - package: pkg/gateway/audit/auditscope
@@ -572,7 +574,7 @@ packages:
     - package: pkg/gateway/replica/gatewayleader
       count: 4
     - package: pkg/gateway/replica/gatewaymetrics
-      count: 238
+      count: 235
     - package: pkg/gateway/replica/pdbwatcher
       count: 7
     - package: pkg/gateway/replica/tlsprobe

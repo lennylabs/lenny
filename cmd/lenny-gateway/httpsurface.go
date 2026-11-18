@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
@@ -926,7 +927,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// surface in the request_total / request_duration histograms with
 	// the resulting 500 status. The route label collapses
 	// high-cardinality path segments to a stable template.
-	handler = gwMetrics.Middleware(handler, routeTemplate)
+	handler = requestmetrics.Wrap(handler, gwMetrics, routeTemplate)
 
 	// spec: §15.5 item 1 + docs/api/index.md — stamp the
 	// `X-Lenny-Deprecated-Version` response header onto every response
