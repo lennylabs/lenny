@@ -668,7 +668,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3036
+      count: 3037
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
