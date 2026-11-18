@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -220,6 +221,86 @@ func TestNonGoInputRowsSelectTiersAndPackages(t *testing.T) {
 	noGraph := planOf(selectChanged([]string{"compose/default.yml"}, nil, fixtureInputs(), specEdits{}, opts))
 	if got := noGraph[tierUnit].pkgs; !reflect.DeepEqual(got, []string{"./pkg/helper"}) {
 		t.Errorf("without a graph a package target runs alone; unit scope = %v", got)
+	}
+}
+
+// TestBaseRowsJoinTheBranchRowsAndDeadTargetsSelectNothing pins that a
+// branch is selected by the union of its rows and the base commit's, so a
+// branch that deletes a row still runs what it named, and that a target
+// the graph no longer holds selects nothing.
+func TestBaseRowsJoinTheBranchRowsAndDeadTargetsSelectNothing(t *testing.T) {
+	branch := &nonGoInputs{Kind: nonGoInputsKind, Version: nonGoInputsVersion}
+	base := fixtureInputs()
+	base.Inputs = append(base.Inputs, nonGoInput{Paths: []string{"compose/**"}, Runs: []string{"pkg/gone"}, Reason: "removed since"})
+	merged := branch.union(base)
+	plan := planOf(selectChanged([]string{"charts/lenny/values.yaml", "compose/default.yml"}, fixtureGraph(), merged, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	if _, ok := plan[tierE2EKind]; !ok {
+		t.Errorf("a row the branch deleted must still select; tiers = %v", tierNamesOf(plan))
+	}
+	if contains(plan[tierUnit].pkgs, "./pkg/gone") {
+		t.Errorf("a target the graph does not hold must select nothing; unit = %v", plan[tierUnit].pkgs)
+	}
+	var none *nonGoInputs
+	if none.union(nil) != nil || none.union(base) != base || base.union(nil) != base {
+		t.Errorf("a union with a nil list must return the other list")
+	}
+}
+
+// TestUnreadableSourcesFailSafeToTheMergeGateTiers pins that a source the
+// selection cannot read widens it: unreadable specification edits and an
+// unreadable diff each run the unit, component, contract, and integration
+// tiers whole.
+func TestUnreadableSourcesFailSafeToTheMergeGateTiers(t *testing.T) {
+	plan := planOf(selectChanged([]string{"spec/05_pools.md"}, fixtureGraph(), fixtureInputs(), specEdits{failed: true}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	for _, tier := range failSafeTiers {
+		if p, ok := plan[tier]; !ok || p.pkgs != nil {
+			t.Errorf("unreadable edits must run %s whole; got %+v", tier, p)
+		}
+	}
+	if _, err := changedPathsFor("no-such-ref-0116"); err == nil {
+		t.Errorf("an unknown ref must fail the diff rather than read as empty")
+	}
+	diffPlan, notes := resolveChangedPlanFor("no-such-ref-0116", selectOpts{rdepsDepth: defaultRdepsDepth})
+	got := map[string]tierPlan{}
+	for _, p := range diffPlan {
+		got[p.name] = p
+	}
+	for _, tier := range failSafeTiers {
+		if p, ok := got[tier]; !ok || p.pkgs != nil {
+			t.Errorf("an unreadable diff must run %s whole; got %+v", tier, p)
+		}
+	}
+	if len(notes) != 1 || !strings.Contains(notes[0], "the diff is unreadable") {
+		t.Errorf("notes = %v", notes)
+	}
+}
+
+// TestNoGoFileNegatesATierTag pins the assumption loadPkgGraph rests on:
+// the graph is loaded with every tier's tag set at once, so a file whose
+// build constraint negates a tier tag would drop out of the graph with the
+// imports it carries.
+func TestNoGoFileNegatesATierTag(t *testing.T) {
+	files, err := trackedFiles(context.Background(), repoRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	negated := regexp.MustCompile(`!\s*(` + strings.Join(tierBuildTags(), "|") + `)\b`)
+	for _, f := range files {
+		if !strings.HasSuffix(f, ".go") || strings.Contains(f, "/testdata/") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(repoRoot(), f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.HasPrefix(line, "package ") {
+				break
+			}
+			if strings.HasPrefix(line, "//go:build") && negated.MatchString(line) {
+				t.Errorf("%s: %q negates a tier tag, so the selector's graph leaves the file out", f, line)
+			}
+		}
 	}
 }
 

@@ -132,14 +132,24 @@ type hunk struct {
 // hunkHeaderExpr reads a hunk header: `@@ -a[,b] +c[,d] @@`.
 var hunkHeaderExpr = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
-// parseHunks reads `git diff -U0` output into the hunks of each file.
+// parseHunks reads `git diff -U0` output into the hunks of each file. The
+// body of each hunk is skipped by its line counts, so a removed or added
+// line whose text opens with `++ ` or `-- ` is never read as a file header.
 func parseHunks(diff string) map[string][]hunk {
 	out := map[string][]hunk{}
 	var file, oldFile string
+	body := 0
 	sc := bufio.NewScanner(strings.NewReader(diff))
 	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for sc.Scan() {
 		l := sc.Text()
+		if body > 0 {
+			if !strings.HasPrefix(l, "\\") {
+				// A "\ No newline at end of file" marker is no body line.
+				body--
+			}
+			continue
+		}
 		switch {
 		case strings.HasPrefix(l, "--- "):
 			oldFile = strings.TrimPrefix(strings.TrimPrefix(l, "--- "), "a/")
@@ -153,10 +163,12 @@ func parseHunks(diff string) map[string][]hunk {
 			if m == nil || file == "" {
 				continue
 			}
-			out[file] = append(out[file], hunk{
+			h := hunk{
 				oldStart: atoi(m[1]), oldCount: countOf(m[2]),
 				newStart: atoi(m[3]), newCount: countOf(m[4]),
-			})
+			}
+			out[file] = append(out[file], h)
+			body = h.oldCount + h.newCount
 		}
 	}
 	return out
@@ -179,7 +191,7 @@ func countOf(s string) int {
 // working tree it adds each untracked file under spec/ as one hunk that
 // adds the whole file.
 func specDiffHunks(ctx context.Context, root string, sides diffSides) (map[string][]hunk, error) {
-	args := []string{"diff", "-U0", "--no-color", "--no-ext-diff", sides.base}
+	args := []string{"diff", "-U0", "--no-color", "--no-ext-diff", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/", sides.base}
 	if sides.head != "" {
 		args = append(args, sides.head)
 	}
@@ -380,7 +392,7 @@ func selectSpecEdits(ctx context.Context, root, since string, paths []string) sp
 		return specEdits{}
 	}
 	fail := func(err error) specEdits {
-		return specEdits{notes: []string{fmt.Sprintf("the specification edits select no tests by name (%v); the documentation tier still runs for them", err)}}
+		return specEdits{failed: true, notes: []string{fmt.Sprintf("the specification edits are unreadable (%v); the unit, component, contract, and integration tiers run whole", err)}}
 	}
 	sides, err := resolveDiffSides(ctx, root, since)
 	if err != nil {
@@ -409,7 +421,8 @@ func selectSpecEdits(ctx context.Context, root, since string, paths []string) sp
 	if len(newTree) > 0 {
 		sc, err := survey.CompareSpecRevisions(ctx, root, sides.base, sides.head)
 		if err != nil {
-			e.notes = append(e.notes, fmt.Sprintf("the edits to the new specification tree select no tests by name (%v)", err))
+			e.failed = true
+			e.notes = append(e.notes, fmt.Sprintf("the edits to the new specification tree are unreadable (%v); the unit, component, contract, and integration tiers run whole", err))
 		} else {
 			ie := pageItemEdits(m, sc, newTree)
 			e.tests = append(e.tests, ie.tests...)

@@ -30,8 +30,9 @@ func funcNames(tests []annotation.TestFunc) []string {
 }
 
 // TestParseHunksReadsEachFileOfAZeroContextDiff pins the reading of
-// `git diff -U0`: counts default to one, a deletion keeps the old path, and
-// a new file's hunks sit under its new path.
+// `git diff -U0`: counts default to one, a deletion keeps the old path, a
+// new file's hunks sit under its new path, and a body line whose text opens
+// like a file header is skipped with the rest of its hunk's body.
 func TestParseHunksReadsEachFileOfAZeroContextDiff(t *testing.T) {
 	diff := strings.Join([]string{
 		"diff --git a/spec/05_pools.md b/spec/05_pools.md",
@@ -40,15 +41,25 @@ func TestParseHunksReadsEachFileOfAZeroContextDiff(t *testing.T) {
 		"@@ -18 +18 @@ heading",
 		"-Text.",
 		"+Text changed.",
+		`\ No newline at end of file`,
 		"@@ -22,2 +21,0 @@",
+		"--- a line whose text opens like a header",
+		"-b",
 		"diff --git a/spec/gone.md b/spec/gone.md",
 		"--- a/spec/gone.md",
 		"+++ /dev/null",
 		"@@ -1,3 +0,0 @@",
+		"-1",
+		"-2",
+		"-3",
 		"diff --git a/spec/new.md b/spec/new.md",
 		"--- /dev/null",
 		"+++ b/spec/new.md",
 		"@@ -0,0 +1,4 @@",
+		"+++ an added line whose text opens like a header",
+		"+2",
+		"+3",
+		"+4",
 		"@@ not a header",
 	}, "\n")
 	got := parseHunks(diff)
@@ -229,8 +240,8 @@ func TestSelectSpecEditsReadsTheDiffOfATree(t *testing.T) {
 		t.Errorf("a diff without specification edits selected %+v", e)
 	}
 	for _, bad := range []string{"no-such-ref", "--output=x", "HEAD~1..--output=x"} {
-		if e := selectSpecEdits(ctx, root, bad, paths); len(e.notes) == 0 || len(e.tests) != 0 {
-			t.Errorf("--since %q must select nothing by name and leave a note; got %+v", bad, e)
+		if e := selectSpecEdits(ctx, root, bad, paths); !e.failed || len(e.notes) == 0 || len(e.tests) != 0 {
+			t.Errorf("--since %q must fail the edits safe with a note; got %+v", bad, e)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(root, "x")); err == nil {

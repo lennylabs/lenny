@@ -170,9 +170,11 @@ type tierPlan struct {
 func (s selector) resolve() (resolvedSelector, error) {
 	tiers := allTiers()
 
-	if strings.HasPrefix(s.since, "-") {
-		// git would read the value as an option of `git diff`.
-		return resolvedSelector{}, fmt.Errorf("--since %q: a revision does not begin with '-'", s.since)
+	for _, rev := range strings.Split(strings.ReplaceAll(s.since, "...", ".."), "..") {
+		if strings.HasPrefix(rev, "-") {
+			// git would read the value as an option.
+			return resolvedSelector{}, fmt.Errorf("--since %q: a revision does not begin with '-'", s.since)
+		}
 	}
 	if s.maxTier != "" && !contains(tiers, s.maxTier) {
 		return resolvedSelector{}, fmt.Errorf("unknown --max-tier %q. Valid tiers: %s", s.maxTier, strings.Join(tiers, ", "))

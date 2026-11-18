@@ -77,6 +77,20 @@ func readNonGoInputs(root string) (*nonGoInputs, error) {
 	return parseNonGoInputs(data)
 }
 
+// union returns a list holding the rows of both lists, either of which
+// may be nil.
+func (n *nonGoInputs) union(other *nonGoInputs) *nonGoInputs {
+	if n == nil {
+		return other
+	}
+	if other == nil {
+		return n
+	}
+	out := *n
+	out.Inputs = append(append([]nonGoInput{}, n.Inputs...), other.Inputs...)
+	return &out
+}
+
 // targetsFor returns the targets of every row with a pattern that matches
 // a changed path, in row order and without duplicates. A nil list matches
 // nothing.

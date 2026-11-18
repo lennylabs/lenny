@@ -23,30 +23,60 @@ func resolveChangedPlan() []tierPlan {
 // included. The second return value carries the operator-facing notes the
 // selection raised.
 func resolveChangedPlanFor(ref string, opts selectOpts) ([]tierPlan, []string) {
-	paths := changedPathsFor(ref)
+	ctx := context.Background()
+	root := repoRoot()
+	paths, err := changedPathsFor(ref)
+	if err != nil {
+		// A diff that cannot be read selects nothing it can name, so the
+		// selection fails safe to every tier the merge gate runs rather
+		// than to the static tier alone.
+		sel := newChangeSelection()
+		sel.addFailSafeTiers()
+		return sel.plan(), []string{fmt.Sprintf("the diff is unreadable (%v); the unit, component, contract, and integration tiers run whole", err)}
+	}
 	if len(paths) == 0 {
 		return nil, nil
 	}
-	ctx := context.Background()
-	root := repoRoot()
 	var notes []string
 	inputs, err := readNonGoInputs(root)
 	if err != nil {
 		notes = append(notes, fmt.Sprintf("the non-Go input list is unavailable (%v); a changed input no Go package owns selects the static tier only", err))
 	}
+	inputs = inputs.union(baseNonGoInputs(ctx, root, ref))
 	g, err := loadPkgGraph(ctx, root)
 	if err != nil {
 		g = nil
-		notes = append(notes, fmt.Sprintf("package graph unavailable (%v); the unit tier runs every package", err))
+		notes = append(notes, fmt.Sprintf("package graph unavailable (%v); the unit, component, contract, and integration tiers run whole", err))
 	}
 	sel := selectChanged(paths, g, inputs, selectSpecEdits(ctx, root, ref, paths), opts)
 	if g == nil {
 		// Without the package graph the selector cannot place a changed
-		// Go file or find its dependents, so it fails safe to the whole
-		// unit tier rather than to what the other sources select.
-		sel.addWhole(tierUnit)
+		// Go file or find its dependents, so it fails safe to every tier
+		// the merge gate runs rather than to what the other sources select.
+		sel.addFailSafeTiers()
 	}
 	return sel.plan(), append(notes, sel.notes(opts)...)
+}
+
+// baseNonGoInputs reads the non-Go input list at the diff's base commit. A
+// branch is selected by the union of its own rows and the base's, so a
+// branch that deletes or narrows a row still runs what the row named
+// before. It returns nil when the base has no list or the base cannot be
+// resolved; the branch's own rows still apply.
+func baseNonGoInputs(ctx context.Context, root, ref string) *nonGoInputs {
+	sides, err := resolveDiffSides(ctx, root, ref)
+	if err != nil {
+		return nil
+	}
+	data := readAt(ctx, root, sides.base, nonGoInputsFile)
+	if data == "" {
+		return nil
+	}
+	n, err := parseNonGoInputs([]byte(data))
+	if err != nil {
+		return nil
+	}
+	return n
 }
 
 // resolveSpecsPlan resolves identifiers, page codes, and numbered
@@ -177,25 +207,33 @@ func diffRange(ref string) string {
 	return ref + "...HEAD"
 }
 
-// changedPathsFor returns the changed paths between `ref` and HEAD
-// (see diffRange). When ref is empty, falls back to the working-tree
-// diff (staged + unstaged + untracked).
-func changedPathsFor(ref string) []string {
+// changedPathsFor returns the changed paths between the revisions a
+// `--since` value names (see resolveDiffSides): a plain ref diffs from its
+// merge base with HEAD, and `A..B` or `A...B` spells the range. When ref
+// is empty, it reads the working-tree diff (staged, unstaged, and
+// untracked). Rename detection is off, so a moved file lists both its old
+// and its new path and the package that lost the file is selected too. A
+// git failure is returned rather than read as an empty diff.
+func changedPathsFor(ref string) ([]string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
-		return nil
+		return nil, err
 	}
 	seen := map[string]bool{}
 	out := []string{}
 	var sets [][]string
 	if ref == "" {
 		sets = [][]string{
-			{"diff", "--name-only"},
-			{"diff", "--name-only", "--staged"},
+			{"diff", "--name-only", "--no-renames"},
+			{"diff", "--name-only", "--no-renames", "--staged"},
 			{"ls-files", "--others", "--exclude-standard"},
 		}
 	} else {
+		sides, err := resolveDiffSides(context.Background(), repoRoot(), ref)
+		if err != nil {
+			return nil, err
+		}
 		sets = [][]string{
-			{"diff", "--name-only", diffRange(ref)},
+			{"diff", "--name-only", "--no-renames", sides.base, sides.head},
 		}
 	}
 	for _, args := range sets {
@@ -203,7 +241,7 @@ func changedPathsFor(ref string) []string {
 		cmd.Dir = repoRoot()
 		body, err := cmd.Output()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
 		}
 		for _, line := range strings.Split(string(body), "\n") {
 			line = strings.TrimSpace(line)
@@ -213,7 +251,7 @@ func changedPathsFor(ref string) []string {
 			}
 		}
 	}
-	return out
+	return out, nil
 }
 
 // inferTierFromPath maps a test path back to a tier name: the tier whose

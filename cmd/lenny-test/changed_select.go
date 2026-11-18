@@ -48,7 +48,10 @@ const moduleImportPath = "github.com/lennylabs/lenny"
 const defaultRdepsDepth = -1
 
 // goListTimeout bounds the `go list` call that loads the package graph.
-const goListTimeout = 2 * time.Minute
+// The default sits well above the load's two seconds on a warm cache, so
+// only a host under heavy load reaches it. Override:
+// LENNY_TEST_GO_LIST_TIMEOUT.
+var goListTimeout = tierTimeout("LENNY_TEST_GO_LIST_TIMEOUT", 2*time.Minute)
 
 // globalChangePaths are repo-relative files whose change can alter the build
 // of every package, so no package-level scope describes their blast radius.
@@ -396,12 +399,25 @@ func (c *changeSelection) addTarget(g *pkgGraph, target string) string {
 	}
 	dir := strings.TrimSuffix(strings.TrimPrefix(target, "./"), "/...")
 	if g != nil {
-		if pkg, ok := g.dirToPkg[dir]; ok {
-			return pkg
-		}
+		// A directory the graph does not hold, such as one a row at the
+		// base commit names and the branch removed, selects nothing.
+		return g.dirToPkg[dir]
 	}
 	c.addPackageDir(dir)
 	return ""
+}
+
+// failSafeTiers are the tiers a selection runs whole when a source it
+// needs cannot be read: the tiers the merge gate runs after the static
+// tier. A source that fails must widen the selection, because a narrower
+// one would let the gate pass on tests it never ran.
+var failSafeTiers = []string{tierUnit, tierComponent, tierContract, tierIntegration}
+
+// addFailSafeTiers selects every fail-safe tier whole.
+func (c *changeSelection) addFailSafeTiers() {
+	for _, t := range failSafeTiers {
+		c.addWhole(t)
+	}
 }
 
 // notes renders the selection's operator-facing warnings.
@@ -434,6 +450,9 @@ type specEdits struct {
 	unitDirs []string
 	// notes are the operator-facing notes the edits raised.
 	notes []string
+	// failed reports that the edits could not be read, so the selection
+	// runs the fail-safe tiers whole.
+	failed bool
 }
 
 // selectChanged resolves changed paths into a per-tier scope. It is pure
@@ -495,6 +514,9 @@ func selectChanged(paths []string, g *pkgGraph, inputs *nonGoInputs, spec specEd
 		if !runsInStaticTier(t.Dir) {
 			sel.addFunc(testTier(t), t.Dir, t.Name)
 		}
+	}
+	if spec.failed {
+		sel.addFailSafeTiers()
 	}
 	if opts.all {
 		sel.addWhole(tierUnit)

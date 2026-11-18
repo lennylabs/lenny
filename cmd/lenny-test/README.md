@@ -85,6 +85,7 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | load_local, load_kind, chaos, load_cloud | 10m | `LENNY_TEST_LONG_TIMEOUT` |
 | security | 60m | `LENNY_TEST_SECURITY_TIMEOUT` |
 | docs | 1m | `LENNY_TEST_DOCS_TIMEOUT` |
+| `go list` of the selection's import graph | 2m | `LENNY_TEST_GO_LIST_TIMEOUT` |
 
 ## Files
 
