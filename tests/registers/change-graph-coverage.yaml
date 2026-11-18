@@ -114,9 +114,9 @@ prefixes:
   - pkg/gateway/coordination/coordination/
   - pkg/gateway/coordination/coordlease/
   - pkg/gateway/coordination/coordlease/pgstore/
-  - pkg/gateway/coordination/gatewayleader/
-  - pkg/gateway/coordination/pdbwatcher/
-  - pkg/gateway/core/semver/
+  - pkg/gateway/replica/gatewayleader/
+  - pkg/gateway/replica/pdbwatcher/
+  - pkg/common/semver/
   - pkg/gateway/credentials/credassign/
   - pkg/gateway/credentials/credcache/
   - pkg/gateway/credentials/credentialpoolstore/
@@ -134,7 +134,7 @@ prefixes:
   - pkg/gateway/credentials/revocation/
   - pkg/gateway/credentials/revocation/propagator/
   - pkg/gateway/credentials/usercreds/
-  - pkg/gateway/deployment/devmode/
+  - pkg/gateway/replica/devmode/
   - pkg/gateway/environment/customrolestore/
   - pkg/gateway/environment/customrolestore/pgstore/
   - pkg/gateway/environment/deploymentconfigstore/
@@ -181,9 +181,9 @@ prefixes:
   - pkg/gateway/mcpfabric/mcpschemagen/
   - pkg/gateway/mcpfabric/mcptools/
   - pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas/
-  - pkg/gateway/metrics/capacityplanning/
-  - pkg/gateway/metrics/extractionthreshold/
-  - pkg/gateway/metrics/gcpause/
+  - pkg/gateway/scaling/capacityplanning/
+  - pkg/gateway/seam/extractionthreshold/
+  - pkg/gateway/scaling/gcpause/
   - pkg/gateway/middleware/correlation/
   - pkg/gateway/middleware/deprecation/
   - pkg/gateway/middleware/environment/
@@ -192,7 +192,7 @@ prefixes:
   - pkg/gateway/pki/carotation/
   - pkg/gateway/pki/carotationstore/
   - pkg/gateway/pki/carotationstore/pgstore/
-  - pkg/gateway/pki/tlsprobe/
+  - pkg/gateway/replica/tlsprobe/
   - pkg/gateway/policy/interceptor/
   - pkg/gateway/policy/interceptor/interceptorstore/
   - pkg/gateway/policy/interceptor/interceptorstore/pgstore/

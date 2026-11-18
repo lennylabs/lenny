@@ -240,10 +240,10 @@ func TestPackagesInTransitAreImportableAndDomainPackagesStayOutside(t *testing.T
 func TestARegisterRowOverridesTheDirectoryOfAMisplacedPackage(t *testing.T) {
 	pkgs := append(
 		base(),
-		pkg("pkg/gateway/core/subsystem"),
-		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/core/subsystem"),
+		pkg("pkg/gateway/seam/subsystem"),
+		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/seam/subsystem"),
 	)
-	reg := Register{Packages: []PackageRow{{Package: "pkg/gateway/core/subsystem", Part: "seam-interface", Step: "0117.S4"}}}
+	reg := Register{Packages: []PackageRow{{Package: "pkg/gateway/seam/subsystem", Part: "seam-interface", Step: "0117.S4"}}}
 	res := check(t, pkgs, reg)
 	if res.Failed() {
 		t.Fatalf("a registered misplaced package failed: unregistered %v, stale %v, malformed %v", res.Unregistered, res.Stale, res.Malformed)
@@ -252,7 +252,7 @@ func TestARegisterRowOverridesTheDirectoryOfAMisplacedPackage(t *testing.T) {
 		t.Fatalf("violations = %v, want the one placement violation", res.Violations)
 	}
 	assertOnly(t, check(t, pkgs, Register{}),
-		Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/core/subsystem"})
+		Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/seam/subsystem"})
 }
 
 // TestMalformedRegisterRowsFail checks the validation of the register.
@@ -400,7 +400,7 @@ func TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows(t *testing.T) {
 	base := Register{Version: 1, Packages: []PackageRow{
 		{Package: "pkg/gateway/llmproxy/llmproxy", Part: "metering-proxy", Step: "0117.S3"},
 		{Package: "pkg/gateway/session/sessionevents", Part: "stream-proxy", Step: "0117.S6"},
-		{Package: "pkg/gateway/core/semver", Part: PartDomain, Step: "0117.S4"},
+		{Package: "pkg/common/semver", Part: PartDomain, Step: "0117.S4"},
 	}, Imports: []ImportRow{
 		{From: "pkg/gateway/mcpfabric/mcp", To: "pkg/gateway/session/sessionevents", Rule: RuleSeamImports, Step: "0117.S6"},
 		{From: "pkg/gateway/sessionserver", To: "pkg/gateway/mcpfabric/mcp", Rule: RuleCoreImports, Step: "0117.S7"},

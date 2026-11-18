@@ -7,11 +7,11 @@ import "testing"
 // spec: 25.2 (Architecture Overview — the split: "Health API ... Where it
 // lives: Gateway", "Capacity Recommendations ... Where it lives: Gateway")
 // and 25.3 (Gateway-Side Ops Endpoints, which the Section 25.2 split assigns
-// pkg/gateway/operability/health and pkg/gateway/operability/recommendations
+// pkg/gateway/opsendpoints/health and pkg/gateway/operability/recommendations
 // to); TESTING.md §5 ("tests/change-graph.json maps source packages,
 // schemas, migrations, and chart templates to the tests that exercise
 // them.").
-// diagnosis: pkg/gateway/operability/health and
+// diagnosis: pkg/gateway/opsendpoints/health and
 //
 //	pkg/gateway/operability/recommendations each own in-package unit
 //	suites (service_test.go, metrics_test.go, pools_test.go,
@@ -30,7 +30,7 @@ func TestChangeGraphGatewayOperabilityPackagesSelectUnitTier(t *testing.T) {
 	t.Parallel()
 
 	for _, pkg := range []string{
-		"pkg/gateway/operability/health",
+		"pkg/gateway/opsendpoints/health",
 		"pkg/gateway/operability/recommendations",
 	} {
 		tiers := resolveChangeGraphTiers(t, pkg+"/change.go")

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 

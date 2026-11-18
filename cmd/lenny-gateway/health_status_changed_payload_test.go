@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 )
 
 // spec: §25.3 (event types) — the event catalog documents the

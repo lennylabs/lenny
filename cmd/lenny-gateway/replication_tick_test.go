@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 )
 
 // TestRunReplicationControllerTickCatchesDrift drives the live §25.11

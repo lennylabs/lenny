@@ -327,11 +327,11 @@ packages:
       count: 6
     - package: pkg/gateway/coordination/coordlease/pgstore
       count: 1
-    - package: pkg/gateway/coordination/gatewayleader
+    - package: pkg/gateway/replica/gatewayleader
       count: 5
-    - package: pkg/gateway/coordination/pdbwatcher
+    - package: pkg/gateway/replica/pdbwatcher
       count: 10
-    - package: pkg/gateway/core/subsystem
+    - package: pkg/gateway/seam/subsystem
       count: 33
     - package: pkg/gateway/credentials/credassign
       count: 81
@@ -373,7 +373,7 @@ packages:
       count: 2
     - package: pkg/gateway/credentials/usercreds
       count: 14
-    - package: pkg/gateway/deployment/devmode
+    - package: pkg/gateway/replica/devmode
       count: 5
     - package: pkg/gateway/environment/customrolestore
       count: 7
@@ -497,15 +497,15 @@ packages:
       count: 678
     - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
       count: 1
-    - package: pkg/gateway/mcpfabric/playground
+    - package: pkg/gateway/playground
       count: 93
-    - package: pkg/gateway/metrics/capacityplanning
+    - package: pkg/gateway/scaling/capacityplanning
       count: 1
-    - package: pkg/gateway/metrics/extractionthreshold
+    - package: pkg/gateway/seam/extractionthreshold
       count: 7
-    - package: pkg/gateway/metrics/gatewaymetrics
+    - package: pkg/gateway/replica/gatewaymetrics
       count: 238
-    - package: pkg/gateway/metrics/gcpause
+    - package: pkg/gateway/scaling/gcpause
       count: 7
     - package: pkg/gateway/middleware/auth
       count: 82
@@ -527,9 +527,9 @@ packages:
       count: 49
     - package: pkg/gateway/middleware/recover
       count: 6
-    - package: pkg/gateway/operability/health
+    - package: pkg/gateway/opsendpoints/health
       count: 46
-    - package: pkg/gateway/operability/health/backends
+    - package: pkg/gateway/opsendpoints/health/backends
       count: 19
     - package: pkg/gateway/operability/recommendations
       count: 18
@@ -539,17 +539,17 @@ packages:
       count: 1
     - package: pkg/gateway/pki/carotationstore/pgstore
       count: 1
-    - package: pkg/gateway/pki/tlsprobe
+    - package: pkg/gateway/replica/tlsprobe
       count: 5
     - package: pkg/gateway/podlifecycle/bindrelease
       count: 6
-    - package: pkg/gateway/podlifecycle/drainreadiness
+    - package: pkg/gateway/drain/drainreadiness
       count: 8
     - package: pkg/gateway/podlifecycle/podclaim
       count: 190
     - package: pkg/gateway/podlifecycle/podsession
       count: 516
-    - package: pkg/gateway/podlifecycle/prestop
+    - package: pkg/gateway/drain/prestop
       count: 49
     - package: pkg/gateway/podlifecycle/slotreaper
       count: 20

@@ -13,11 +13,11 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 )
 
 // spec: §27.5 / §27.3.1 — the MCP WebSocket transport at

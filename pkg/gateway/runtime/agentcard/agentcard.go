@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/semver"
+	"github.com/lennylabs/lenny/pkg/common/semver"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 

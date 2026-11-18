@@ -7,7 +7,7 @@
 // pkg/admission/drain_readiness and pkg/admission/webhook exercise the
 // pure decision logic and the AdmissionReview transport against
 // hand-built Go structs, and the gateway endpoint suite in
-// pkg/gateway/podlifecycle/drainreadiness exercises the MinIO-probe ->
+// pkg/gateway/drain/drainreadiness exercises the MinIO-probe ->
 // 200/503 mapping. None of them drive a real kube-apiserver eviction
 // through a registered, fail-closed webhook.
 //

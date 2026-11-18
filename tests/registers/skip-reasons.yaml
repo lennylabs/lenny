@@ -259,7 +259,7 @@ sites:
       site: 1
       call: Skipf
       reason: 'symlinks unsupported: %v'
-    - path: pkg/gateway/operability/health/runbook_bundle_test.go
+    - path: pkg/gateway/opsendpoints/health/runbook_bundle_test.go
       function: TestIssueRunbooksResolveInOpsIndex_spec_25_7_3238
       site: 1
       call: Skip

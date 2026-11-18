@@ -13,7 +13,7 @@
 // (lenny_upload_queue_depth) and that the per-subsystem circuit-state
 // series is exported.
 //
-// This exercises the real gateway wiring (pkg/gateway/core/subsystem +
+// This exercises the real gateway wiring (pkg/gateway/seam/subsystem +
 // pkg/gateway/sessionserver/upload.go acquireUploadSlot) rather than the
 // in-process worker-pool model in
 // tests/load_local/scenarios/bulkhead_thread_pool_isolation or
@@ -50,7 +50,7 @@ const isolationTenant = "acme"
 // subsystem boundary does not isolate upload saturation from the other
 // subsystems. Either a saturated Upload Handler fails to shed load with
 // 503 SUBSYSTEM_UNAVAILABLE (the acquireUploadSlot gate in
-// pkg/gateway/sessionserver/upload.go over pkg/gateway/core/subsystem's
+// pkg/gateway/sessionserver/upload.go over pkg/gateway/seam/subsystem's
 // Limiter), or upload saturation starves the Stream Proxy / non-upload
 // paths so they hang or 503 too, or the §16.1 per-subsystem metrics do
 // not reflect the in-flight saturation.
@@ -58,7 +58,7 @@ func TestUploadHandlerSaturationDoesNotStarveOtherSubsystems(t *testing.T) {
 	// Pin the §4.1 Upload Handler concurrency limit to 1 so a single
 	// in-flight upload saturates the limiter deterministically. The
 	// gateway reads this from the LENNY_EXTRACTION_THRESHOLD_* env
-	// (pkg/gateway/metrics/extractionthreshold), the same knob the
+	// (pkg/gateway/seam/extractionthreshold), the same knob the
 	// gateway.extractionThresholds.uploadHandler.activeConcurrent Helm
 	// value sets. Set before Start so the spawned subprocess inherits it.
 	t.Setenv("LENNY_EXTRACTION_THRESHOLD_UPLOAD_HANDLER_ACTIVE_CONCURRENT", "1")

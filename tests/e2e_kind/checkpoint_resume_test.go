@@ -23,7 +23,7 @@
 // package — no gateway code path calls the checkpointer with it. The
 // only live checkpoint driver wired into cmd/lenny-gateway is the
 // periodic loop (checkpointSvc.Run, TriggerPeriodic) and the gateway's
-// own preStop CheckpointBarrier fan-out (pkg/gateway/podlifecycle/prestop),
+// own preStop CheckpointBarrier fan-out (pkg/gateway/drain/prestop),
 // which checkpoints active sessions when the GATEWAY pod itself
 // terminates, not when an individual agent pod is evicted. Draining the
 // node under a bound agent pod (as TestNodeDrainDuringActiveSession

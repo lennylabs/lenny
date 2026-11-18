@@ -366,7 +366,7 @@
         "tests/testinfra/jwtsign/...",
         "pkg/tokenservice/...",
         "pkg/gateway/externalapi/admintoken/...",
-        "pkg/gateway/mcpfabric/playground/..."
+        "pkg/gateway/playground/..."
       ],
       "component": ["tests/component/stores/admintoken_rotation_test.go"],
       "contract": ["tests/contract/oauth_token/...", "tests/contract/playground/..."],
@@ -862,8 +862,8 @@
       "contract": ["tests/contract/rest_mcp_consistency/..."],
       "security": ["tests/security/session_creation_impersonation_refusal_test.go"]
     },
-    "pkg/gateway/core/subsystem": {
-      "unit": ["pkg/gateway/core/subsystem/..."],
+    "pkg/gateway/seam/subsystem": {
+      "unit": ["pkg/gateway/seam/subsystem/..."],
       "contract": ["tests/contract/rest_circuitbreaker/..."]
     },
     "cmd/lenny-gateway": {
@@ -873,8 +873,8 @@
       "integration": ["tests/integration/session_lifecycle_test.go", "tests/integration/gateway_tenancy_mode_test.go", "tests/integration/gateway_require_auth_test.go", "tests/integration/oidc_auth_test.go", "tests/integration/holder_forward_startup_test.go", "tests/integration/holder_forward_responses_test.go", "tests/integration/open_responses_held_session_test.go"],
       "security": ["tests/security/tenant_claim_spoofing_test.go", "tests/security/unauthenticated_tenant_access_test.go", "tests/security/holder_forward_material_refusal_test.go"]
     },
-    "pkg/gateway/operability/health": {
-      "unit": ["pkg/gateway/operability/health/..."],
+    "pkg/gateway/opsendpoints/health": {
+      "unit": ["pkg/gateway/opsendpoints/health/..."],
       "contract": ["tests/contract/ops_endpoints/health_auth_test.go"],
       "integration": ["tests/integration/ops_endpoints_test.go"]
     },
@@ -915,8 +915,8 @@
       "unit": ["pkg/gateway/checkpoint/..."],
       "docs": ["tests/docs/checkpoint_pipeline_consistency_test.go"]
     },
-    "pkg/gateway/metrics/gatewaymetrics": {
-      "unit": ["pkg/gateway/metrics/gatewaymetrics/..."],
+    "pkg/gateway/replica/gatewaymetrics": {
+      "unit": ["pkg/gateway/replica/gatewaymetrics/..."],
       "docs": ["tests/docs/checkpoint_pipeline_consistency_test.go"]
     },
     "pkg/observability/correlation": {
@@ -1493,8 +1493,8 @@
       "integration": ["tests/integration/lease_elicit_requester_terminal_test.go"],
       "load_local": ["tests/load_local/lease_elicit_driver_end_interleaving_test.go"]
     },
-    "pkg/gateway/mcpfabric/playground": {
-      "unit": ["pkg/gateway/mcpfabric/playground/..."],
+    "pkg/gateway/playground": {
+      "unit": ["pkg/gateway/playground/..."],
       "contract": ["tests/contract/playground/..."],
       "security": ["tests/security/tenant_deletion_isolation_test.go"]
     },

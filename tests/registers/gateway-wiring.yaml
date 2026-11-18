@@ -28,37 +28,37 @@
 # the register with its copy at the merge base, so it only shrinks.
 version: 1
 crossings:
-  - to: pkg/gateway/coordination/gatewayleader
+  - to: pkg/gateway/replica/gatewayleader
     interface: Gate.Add(1)
     from: pkg/gateway/externalapi/admintoken/reclaimer
     type: Reclaimer
     step: 0117.S8
-  - to: pkg/gateway/coordination/gatewayleader
+  - to: pkg/gateway/replica/gatewayleader
     interface: Gate.Add(1)
     from: pkg/gateway/externalapi/admintoken/reclaimer
     type: Reclaimer.Run
     step: 0117.S8
-  - to: pkg/gateway/coordination/gatewayleader
+  - to: pkg/gateway/replica/gatewayleader
     interface: Gate.Add(1)
     from: pkg/tenantkms
     type: Prober
     step: 0117.S4
-  - to: pkg/gateway/coordination/gatewayleader
+  - to: pkg/gateway/replica/gatewayleader
     interface: Gate.Add(1)
     from: pkg/tenantkms
     type: Prober.Start
     step: 0117.S4
-  - to: pkg/gateway/core/subsystem
+  - to: pkg/gateway/seam/subsystem
     interface: Subsystem.Do(1)
     from: pkg/proto/tokenservice/v1
     type: ProbeSecretAccessResponse
     step: 0117.S4
-  - to: pkg/gateway/core/subsystem
+  - to: pkg/gateway/seam/subsystem
     interface: Subsystem.Do(1)
     from: pkg/proto/tokenservice/v1
     type: TokenServiceClient
     step: 0117.S4
-  - to: pkg/gateway/core/subsystem
+  - to: pkg/gateway/seam/subsystem
     interface: Subsystem.Do(1)
     from: pkg/proto/tokenservice/v1
     type: TokenServiceClient.ProbeSecretAccess
@@ -220,7 +220,7 @@ crossings:
     step: 0117.S8
   - to: pkg/gateway/llmproxy/llmproxy
     interface: FallbackMetrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S4
   - to: pkg/gateway/llmproxy/llmproxy
@@ -235,7 +235,7 @@ crossings:
     step: 0117.S8
   - to: pkg/gateway/llmproxy/llmproxy
     interface: Handler.FallbackMetrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S4
   - to: pkg/gateway/llmproxy/llmproxy
@@ -245,7 +245,7 @@ crossings:
     step: 0117.S3
   - to: pkg/gateway/llmproxy/llmproxy
     interface: Handler.Metrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S4
   - to: pkg/gateway/llmproxy/llmproxy
@@ -285,7 +285,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation
     interface: Options.Metrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation
@@ -305,7 +305,7 @@ crossings:
     step: 0117.S8
   - to: pkg/gateway/mcpfabric/delegationbudget
     interface: Reconciler.Metrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationbudget
@@ -345,7 +345,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/deadlock
     interface: NewManager(1)
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
@@ -360,7 +360,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: MetricEmitter
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
@@ -460,7 +460,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
     interface: Options.Metrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
@@ -495,7 +495,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
     interface: Server.SetWebSocketAuth(1)
-    from: pkg/gateway/mcpfabric/playground
+    from: pkg/gateway/playground
     type: Handler
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
@@ -535,12 +535,12 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.ElicitationLifecycleMetrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.ElicitationMetrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
@@ -560,7 +560,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.ElicitationTamperMetrics
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
@@ -635,7 +635,7 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.TreeCycleObserver
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
@@ -648,47 +648,47 @@ crossings:
     from: pkg/gateway/policy/policy
     type: AuditAppender
     step: 0117.S7
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: IDTokenValidatorFromVerifier(0)
     from: pkg/auth/jwt
     type: Verifier
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.IssuedTokens
     from: pkg/gateway/storage/issuedtokenstore
     type: Store
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.Signer
     from: pkg/auth/jwt
     type: BreakerSigner
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.Tenants
     from: pkg/gateway/environment/tenantstore
     type: Memory
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.Tenants
     from: pkg/gateway/environment/tenantstore/pgstore
     type: Store
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.Verifier
     from: pkg/auth/jwt
     type: ClaimChecker
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.Verifier
     from: pkg/auth/jwt
     type: KeySet
     step: 0117.S4
-  - to: pkg/gateway/mcpfabric/playground
+  - to: pkg/gateway/playground
     interface: Options.Verifier
     from: pkg/auth/jwt
     type: MultiVerifier
     step: 0117.S4
-  - to: pkg/gateway/metrics/gatewaymetrics
+  - to: pkg/gateway/replica/gatewaymetrics
     interface: Metrics.Middleware(0)
     from: pkg/gateway/middleware/auth
     type: Wrap
@@ -698,7 +698,7 @@ crossings:
     from: pkg/gateway/policy/policy
     type: AuditAppender
     step: 0117.S8
-  - to: pkg/gateway/podlifecycle/drainreadiness
+  - to: pkg/gateway/drain/drainreadiness
     interface: ForcedDrainHandler.Appender
     from: pkg/gateway/policy/policy
     type: AuditAppender
@@ -765,12 +765,12 @@ crossings:
     step: 0117.S3
   - to: pkg/gateway/session/sessionbudget
     interface: New(2)
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S4
   - to: pkg/gateway/session/sessionbudget
     interface: New(2)
-    from: pkg/gateway/metrics/gatewaymetrics
+    from: pkg/gateway/replica/gatewaymetrics
     type: Metrics.IncSessionBudgetExceeded
     step: 0117.S4
   - to: pkg/gateway/session/sessionbudget

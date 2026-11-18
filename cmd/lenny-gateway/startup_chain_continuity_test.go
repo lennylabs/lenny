@@ -17,7 +17,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 )
 
 // chainRowsQuerier is a minimal integrity.Querier that serves the two
