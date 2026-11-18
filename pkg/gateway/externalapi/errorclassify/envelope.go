@@ -29,7 +29,7 @@ type envelopeBody struct {
 // MCP tools report the same values for the same code, and an unmapped
 // non-5xx code classifies as permanent and not retryable.
 //
-// spec: §15.2.1 (classification consistency)
+// spec: §15.2.1 (REST/MCP Consistency Contract)
 func WriteError(w http.ResponseWriter, status int, code, message string, details map[string]any) {
 	cat, retryable := ClassifyStatus(code, status)
 	w.Header().Set("Content-Type", "application/json")
