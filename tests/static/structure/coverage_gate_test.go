@@ -39,10 +39,13 @@ func TestEveryChangedRequirementHasACitingTest(t *testing.T) {
 		t.Skipf("not-yet-applicable: %v, as in a shallow clone, so there is no branch diff to read", err)
 	}
 	if err != nil {
-		t.Fatalf("read the branch diff: %v", err)
+		t.Fatalf("run the coverage gate: %v", err)
 	}
 	for _, u := range rep.Unread {
 		t.Logf("annotation index: left out %s", u)
+	}
+	for _, s := range rep.Skipped {
+		t.Logf("issue record not counted: %s", s)
 	}
 	if uncovered := rep.Uncovered(); len(uncovered) > 0 {
 		lines := make([]string, 0, len(uncovered))

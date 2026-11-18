@@ -163,7 +163,8 @@ func TestCoverageCountsAnOpenOrPlannedIssueThatListsTheRequirement(t *testing.T)
 		{"open", "issues/POOL/POOL-I3-drain.md", issue("status: open\n"), true},
 		{"planned", "issues/POOL/POOL-I3-drain.md", issue("status: planned\nchange: 0200.S2\n"), true},
 		{"no status, which is open", "issues/POOL/POOL-I3-drain.md", issue(""), true},
-		{"under another page's code", "issues/CLAIM/CLAIM-I1-drain.md", issue("status: open\n"), true},
+		{"under another page's code", "issues/ADMPOOLS/ADMPOOLS-I1-drain.md", issue("status: open\n"), true},
+		{"under a folder that is no page code", "issues/tmp/waiver.md", issue("status: open\n"), false},
 		{"closed", "issues/POOL/POOL-I3-drain.md", issue("status: closed\nclosed: fixed\n"), false},
 		{"filed under issues/closed", "issues/closed/POOL/POOL-I3-drain.md", issue("status: open\n"), false},
 		{"named in the text only", "issues/POOL/POOL-I3-drain.md", "---\nid: POOL-I3\nstatus: open\nrequirements: [POOL-R1]\n---\n\n# POOL-R3 has no test\n", false},
@@ -186,17 +187,60 @@ func TestCoverageCountsAnOpenOrPlannedIssueThatListsTheRequirement(t *testing.T)
 	}
 }
 
-func TestCoverageRefusesAnIssueRecordWhoseFrontMatterDoesNotParse(t *testing.T) {
+func TestCoverageRefusesAModifiedRequirementWithNoCitingTestOrIssue(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	f.write(map[string]string{"issues/POOL/POOL-I3-drain.md": "---\nid: POOL-I3\nrequirements: [POOL-R3\n---\n\n# Broken\n"})
-	_, err := CheckCoverage(context.Background(), f.root)
-	if err == nil || !strings.Contains(err.Error(), "issues/POOL/POOL-I3-drain.md") {
-		t.Errorf("err %v; want an error that names the malformed record", err)
+	// Remove the one test that cites POOL-R1 and close its open issue.
+	if err := os.Remove(filepath.Join(f.root, "pkg", "pool", "pool_test.go")); err != nil {
+		t.Fatal(err)
+	}
+	f.write(map[string]string{"issues/POOL/POOL-I1-too-few-pods.md": strings.Replace(openIssue, "status: open", "status: closed", 1)})
+	rep := coverageOf(t, f)
+	if got := uncoveredIDs(rep); got != "POOL-R3,POOL-R1" {
+		t.Errorf("uncovered %q; want the added POOL-R3 and the modified POOL-R1", got)
 	}
 }
 
-func TestCoverageRefusesASymlinkedIssueRecord(t *testing.T) {
+func TestCoverageReadsTheIssueStatusAsWritten(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	// The coverage view of lenny-test reads `Open` as neither open nor
+	// planned, and the gate reads the record the same way.
+	f.write(map[string]string{"issues/POOL/POOL-I3-drain.md": "---\nid: POOL-I3\nstatus: Open\nrequirements: [POOL-R3]\n---\n"})
+	if c := requirement(t, coverageOf(t, f), "POOL-R3"); c.Covered() {
+		t.Errorf("an issue with status Open covers POOL-R3: %v", c.Issues)
+	}
+}
+
+// skippedNaming reports whether one of the report's skipped records names
+// a path.
+func skippedNaming(rep CoverageReport, p string) bool {
+	for _, s := range rep.Skipped {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestCoverageSkipsAnIssueRecordWhoseFrontMatterDoesNotParse(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	// The record names POOL-R3 and does not parse: it covers nothing and
+	// is reported, and the open POOL-I1 still covers POOL-R1, so one bad
+	// record does not stop the requirements it does not name.
+	p := "issues/POOL/POOL-I3-drain.md"
+	f.write(map[string]string{p: "---\nid: POOL-I3\nrequirements: [POOL-R3\n---\n\n# Broken\n"})
+	rep := coverageOf(t, f)
+	if got := uncoveredIDs(rep); got != "POOL-R3" {
+		t.Errorf("uncovered %q; want POOL-R3", got)
+	}
+	if !skippedNaming(rep, "parse the front matter of "+p) {
+		t.Errorf("skipped %v; want the malformed record named", rep.Skipped)
+	}
+}
+
+func TestCoverageSkipsASymlinkedIssueRecord(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	outside := filepath.Join(t.TempDir(), "POOL-I3.md")
@@ -206,8 +250,59 @@ func TestCoverageRefusesASymlinkedIssueRecord(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(f.root, "issues", "POOL", "POOL-I3-drain.md")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CheckCoverage(context.Background(), f.root); err == nil || !strings.Contains(err.Error(), "POOL-I3-drain.md") {
-		t.Errorf("err %v; want the symbolic link refused, so a record outside the tree cannot cover a requirement", err)
+	rep := coverageOf(t, f)
+	if got := uncoveredIDs(rep); got != "POOL-R3" {
+		t.Errorf("uncovered %q; want POOL-R3, because a record outside the tree cannot cover a requirement", got)
+	}
+	if !skippedNaming(rep, "issues/POOL/POOL-I3-drain.md") {
+		t.Errorf("skipped %v; want the symbolic link named", rep.Skipped)
+	}
+}
+
+func TestCoverageCountsOnlyTestsTheGoToolBuilds(t *testing.T) {
+	t.Parallel()
+	test := func(constraint string) string {
+		return "// SPDX-License-Identifier: MIT\n\n" + constraint + "package pool\n\nimport \"testing\"\n\n// spec: POOL-R3\nfunc TestPoolDrainsOnDeletion(t *testing.T) {}\n"
+	}
+	cases := []struct {
+		name, path, content string
+		covers              bool
+	}{
+		{"a tier's build tag", "pkg/pool/drain_test.go", test("//go:build component\n\n"), true},
+		{"a negated tag", "pkg/pool/drain_test.go", test("//go:build !windows\n\n"), true},
+		{"the ignore tag", "pkg/pool/drain_test.go", test("//go:build ignore\n\n"), false},
+		{"ignore with another tag", "pkg/pool/drain_test.go", test("//go:build ignore && component\n\n"), false},
+		{"a contradiction", "pkg/pool/drain_test.go", test("//go:build component && !component\n\n"), false},
+		{"a folder that opens with an underscore", "pkg/pool/_old/drain_test.go", test(""), false},
+		{"a folder that opens with a dot", "pkg/pool/.old/drain_test.go", test(""), false},
+		{"a nested module", "tools/lint/drain_test.go", test(""), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			f.write(map[string]string{tc.path: tc.content, "tools/lint/go.mod": "module example.com/lint\n\ngo 1.22\n"})
+			if c := requirement(t, coverageOf(t, f), "POOL-R3"); c.Covered() != tc.covers {
+				t.Errorf("a test under %s: covered %v, want %v (tests %v)", tc.name, c.Covered(), tc.covers, c.Tests)
+			}
+		})
+	}
+}
+
+func TestBuildableReadsTheConstraintBeforeThePackageClause(t *testing.T) {
+	t.Parallel()
+	cases := map[string]bool{
+		"package pool\n": true,
+		"// Copyright.\n\n//go:build ignore\n\npackage pool\n":                                     false,
+		"/* a\nblock */\n//go:build ignore\npackage pool\n":                                        false,
+		"package pool\n\n//go:build ignore\n":                                                      true,
+		"//go:build (\n\npackage pool\n":                                                           true,
+		"//go:build a || b || c || d || e || f || g || h || i || j || k || l || m\npackage pool\n": true,
+	}
+	for src, want := range cases {
+		if got := buildable([]byte(src)); got != want {
+			t.Errorf("buildable(%q) = %v, want %v", src, got, want)
+		}
 	}
 }
 
@@ -271,11 +366,31 @@ func TestTextChangedReadsAddedAndModifiedTextOnly(t *testing.T) {
 		{"added", ItemChange{Change: Added, New: a}, true},
 		{"text modified", ItemChange{Change: Modified, Old: a, New: &Item{ID: "POOL-R1", File: "a.md", Text: "two"}}, true},
 		{"moved with the same text", ItemChange{Change: Modified, Old: a, New: &Item{ID: "POOL-R1", File: "b.md", Text: "one"}}, false},
+		{"moved with its text changed", ItemChange{Change: Modified, Old: a, New: &Item{ID: "POOL-R1", File: "b.md", Text: "two"}}, true},
 		{"retired", ItemChange{Change: Retired, Old: a}, false},
 	}
 	for _, tc := range cases {
 		if got := textChanged(tc.c); got != tc.want {
 			t.Errorf("%s: textChanged %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestIgnoredPathFollowsTheGoToolsFolderRules(t *testing.T) {
+	t.Parallel()
+	modules := []string{"tools/lint"}
+	cases := map[string]bool{
+		"pkg/pool/drain_test.go":       false,
+		"pkg/pool/_old/drain_test.go":  true,
+		"pkg/pool/.old/drain_test.go":  true,
+		"pkg/pool/_drain_test.go":      true,
+		"tools/lint/drain_test.go":     true,
+		"tools/linter/drain_test.go":   false,
+		"tools/lint/sub/drain_test.go": true,
+	}
+	for p, want := range cases {
+		if got := ignoredPath(p, modules); got != want {
+			t.Errorf("ignoredPath(%q) = %v, want %v", p, got, want)
 		}
 	}
 }

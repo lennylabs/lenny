@@ -49,6 +49,12 @@ type CoverageReport struct {
 	// Unread names each Go file the annotation index could not read, with
 	// the reason. A test in such a file cannot satisfy the gate.
 	Unread []string
+	// Skipped names each issue record the gate did not count, with the
+	// reason: a record outside a registered page code's folder, a symbolic
+	// link, or front matter that does not parse. A skipped record covers
+	// nothing, so a malformed record fails closed for the requirements it
+	// names and does not stop a branch whose requirements it does not name.
+	Skipped []string
 }
 
 // Uncovered returns the requirements no test and no issue covers.
@@ -99,10 +105,11 @@ func CheckCoverage(ctx context.Context, root string) (CoverageReport, error) {
 		return rep, err
 	}
 	rep.Unread = unread
-	issues, err := issuesListing(ctx, r)
+	issues, skipped, err := issuesListing(ctx, r, sc.After.Pages)
 	if err != nil {
 		return rep, err
 	}
+	rep.Skipped = skipped
 	for i := range rep.Requirements {
 		key := strings.ToLower(rep.Requirements[i].ID)
 		rep.Requirements[i].Tests = tests[key]
@@ -128,15 +135,20 @@ func textChanged(c ItemChange) bool {
 // the working tree whose doc-comment annotations cite one of the wanted
 // identifiers directly, and the files the index could not read. Only test
 // files that mention an identifier are indexed. An annotation on a helper
-// or on code in a test file is not a test function's and does not count.
+// or on code in a test file is not a test function's and does not count,
+// and neither does a test in a file the go tool never builds.
 func citingTests(ctx context.Context, r repo, wanted []string) (map[string][]string, []string, error) {
 	files, err := goFiles(ctx, r)
 	if err != nil {
 		return nil, nil, err
 	}
+	modules, err := nestedModules(ctx, r)
+	if err != nil {
+		return nil, nil, err
+	}
 	var testFiles []string
 	for _, p := range files {
-		if strings.HasSuffix(p, "_test.go") {
+		if strings.HasSuffix(p, "_test.go") && !ignoredPath(p, modules) {
 			testFiles = append(testFiles, p)
 		}
 	}
@@ -147,7 +159,9 @@ func citingTests(ctx context.Context, r repo, wanted []string) (map[string][]str
 		want[lower] = true
 		needles = append(needles, []byte(lower))
 	}
-	keep := func(_ string, src []byte) bool { return containsAny(bytes.ToLower(src), needles) }
+	keep := func(_ string, src []byte) bool {
+		return containsAny(bytes.ToLower(src), needles) && buildable(src)
+	}
 	idx := annotation.IndexFiles(testFiles, annotation.CheckedReader(r.root), keep)
 	out := map[string][]string{}
 	for _, t := range idx.Tests {
@@ -161,37 +175,39 @@ func citingTests(ctx context.Context, r repo, wanted []string) (map[string][]str
 }
 
 // issuesListing returns, by lower-cased identifier, the open and planned
-// issue records of the working tree whose `requirements` list names it.
-// A record is `issues/<CODE>/<file>.md`; the README, the generated index,
-// and the records under issues/closed/ are left out. A record with no
-// status is open, as issues/README.md files every issue. A record whose
-// front matter does not parse is an error, so a malformed record cannot
-// silently satisfy or fail the gate.
-func issuesListing(ctx context.Context, r repo) (map[string][]string, error) {
+// issue records of the working tree whose `requirements` list names it,
+// and the records it did not count, each with the reason. A record is
+// `issues/<CODE>/<file>.md`, where CODE is a page code or an alias the
+// specification registers; the README, the generated index, and the
+// records under issues/closed/ are left out. A record with no status is
+// open, as the coverage view of lenny-test reads it. A record that is a
+// symbolic link, or whose front matter does not parse, covers nothing and
+// is reported, so it fails closed for the requirements it names. An error
+// is returned only when the records cannot be listed.
+func issuesListing(ctx context.Context, r repo, pages map[string]PageInfo) (map[string][]string, []string, error) {
 	files, err := r.worktreeFiles(ctx, issuesDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	out := map[string][]string{}
+	var skipped []string
 	for _, p := range files {
 		parts := strings.Split(p, "/")
 		if len(parts) != 3 || parts[1] == "closed" || !strings.HasSuffix(parts[2], ".md") {
 			continue
 		}
-		// The checked read refuses a symbolic link and a file whose folder
-		// resolves outside the repository, so a planted link cannot point
-		// the gate at a record outside the tree.
-		b, err := scope.ReadChecked(r.root, p)
+		if _, ok := pages[parts[1]]; !ok {
+			skipped = append(skipped, fmt.Sprintf("%s: %s is not a page code the specification registers", p, parts[1]))
+			continue
+		}
+		f, err := readIssue(r.root, p)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", p, err)
+			skipped = append(skipped, err.Error())
+			continue
 		}
-		var f issueFront
-		if fm, ok := frontMatterText(string(b)); ok {
-			if err := yaml.Unmarshal([]byte(fm), &f); err != nil {
-				return nil, fmt.Errorf("parse the front matter of %s: %w", p, err)
-			}
-		}
-		if status := strings.ToLower(f.Status); status != "" && status != "open" && status != "planned" {
+		// The status is compared as written, as the coverage view of
+		// lenny-test compares it, so both read the same records as open.
+		if f.Status != "" && f.Status != "open" && f.Status != "planned" {
 			continue
 		}
 		for _, id := range f.Requirements {
@@ -202,7 +218,25 @@ func issuesListing(ctx context.Context, r repo) (map[string][]string, error) {
 	for k := range out {
 		sort.Strings(out[k])
 	}
-	return out, nil
+	return out, skipped, nil
+}
+
+// readIssue reads the front matter of one issue record. The checked read
+// refuses a symbolic link and a file whose folder resolves outside the
+// repository, so a planted link cannot point the gate at a record outside
+// the tree. A record with no front matter reads as empty.
+func readIssue(root, p string) (issueFront, error) {
+	var f issueFront
+	b, err := scope.ReadChecked(root, p)
+	if err != nil {
+		return f, fmt.Errorf("read %s: %w", p, err)
+	}
+	if fm, ok := frontMatterText(string(b)); ok {
+		if err := yaml.Unmarshal([]byte(fm), &f); err != nil {
+			return f, fmt.Errorf("parse the front matter of %s: %w", p, err)
+		}
+	}
+	return f, nil
 }
 
 // appendUnique appends a value not already in list.
