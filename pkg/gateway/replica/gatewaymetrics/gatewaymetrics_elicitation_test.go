@@ -495,9 +495,10 @@ func TestCredentialPreclaimMismatchNilSafe(t *testing.T) {
 }
 
 // spec: §16.1, §5.2, and §4.7.1 — the
-// credential, LLM-proxy, slot-failure, and slot-compensation metrics
-// register and emit through the gateway registry.
-func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
+// credential, slot-failure, and slot-compensation metrics register and
+// emit through the gateway registry. The metering proxy's metrics are
+// tested in its own package.
+func TestCredentialAndSlotMetricsEmit(t *testing.T) {
 	m, err := gatewaymetrics.New()
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -506,11 +507,6 @@ func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
 	m.IncCredentialLeaseAssignment("anthropic_direct", "claude-prod", "primary")
 	m.ObserveCredentialLeaseDuration("anthropic_direct", "claude-prod", 42)
 	m.SetCredentialPoolUtilization("claude-prod", 0.5)
-	m.IncLLMProxyConnections()
-	m.DecLLMProxyConnections()
-	m.ObserveLLMTranslation("claude-prod", "anthropic_direct", "anthropic", "request", 0.01)
-	m.ObserveLLMTranslation("claude-prod", "anthropic_direct", "anthropic", "response", 0.02)
-	m.IncLLMTranslationError("claude-prod", "anthropic_direct", "upstream_5xx")
 	m.IncSlotFailure("session_start", "pool-a", "sbx-1")
 	m.IncSlotCompensationSuperseded("superseded", "failure", "pool-a", "sbx-1")
 
@@ -524,11 +520,6 @@ func TestCredentialAndLLMProxyAndSlotMetricsEmit(t *testing.T) {
 		`lenny_credential_lease_assignments_total{pool="claude-prod",provider="anthropic_direct",source="primary"} 2`,
 		`lenny_credential_lease_duration_seconds_count{pool="claude-prod",provider="anthropic_direct"} 1`,
 		`lenny_credential_pool_utilization{pool="claude-prod"} 0.5`,
-		// Registered with a child series at construction, so the net-zero
-		// gauge still appears on /metrics.
-		"lenny_gateway_llm_proxy_active_connections 0",
-		`lenny_gateway_llm_translation_duration_seconds_count{direction="request",pool="claude-prod",provider="anthropic_direct",proxy_dialect="anthropic"} 1`,
-		`lenny_gateway_llm_translation_errors_total{error_type="upstream_5xx",pool="claude-prod",provider="anthropic_direct"} 1`,
 		`lenny_slot_failure_total{error_type="session_start",k8s_pod_name="sbx-1",pool="pool-a"} 1`,
 		`lenny_slot_compensation_superseded_total{error_type="failure",k8s_pod_name="sbx-1",pool="pool-a"} 1`,
 	} {
@@ -544,10 +535,6 @@ func TestNewMetricsEmittersNilSafe(t *testing.T) {
 	m.IncCredentialLeaseAssignment("anthropic_direct", "p", "primary")
 	m.ObserveCredentialLeaseDuration("anthropic_direct", "p", 1)
 	m.SetCredentialPoolUtilization("p", 0.5)
-	m.IncLLMProxyConnections()
-	m.DecLLMProxyConnections()
-	m.ObserveLLMTranslation("p", "anthropic_direct", "anthropic", "request", 0.01)
-	m.IncLLMTranslationError("p", "anthropic_direct", "upstream_5xx")
 	m.IncSlotFailure("session_start", "p", "sbx-1")
 	m.IncSlotCompensationSuperseded("superseded", "failure", "p", "sbx-1")
 	m.ObserveSessionStartupDuration("p", "runc", "standard", 1.0)

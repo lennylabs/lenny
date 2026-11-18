@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
@@ -65,6 +66,14 @@ func (w *gatewayWiring) buildSessionDeps() {
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload metrics: %v", err)
 	}
+	// §16.1: the metering proxy's metrics, registered whether or not the
+	// proxy listener is enabled, as they were while the gateway metrics
+	// held them.
+	meteringMetrics, err := llmproxy.NewPromMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: metering proxy metrics: %v", err)
+	}
+	w.meteringMetrics = meteringMetrics
 	// §7.4 / §13.4 — archive extraction runs inside the
 	// gateway's §4.1 Upload Handler subsystem (never the pod). Share the
 	// same subsystem gate that bounds the upload HTTP path so a hostile
@@ -188,7 +197,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// leasecontrol.Service exists, and that service takes this enforcer as
 	// its episode fan-out SessionReclaimer (proposal 0023 S6).
 	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
-		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
+		func(tenantID, _ string, _, _ int64) { meteringMetrics.IncSessionBudgetExceeded(tenantID) })
 
 	// §8.6 lease-extension budget state, created when the GatewayControl
 	// listener is enabled via --grpc-addr. One store-backed source serves

@@ -25,15 +25,6 @@ type credentialMetrics struct {
 	// each issued credential lease from assignment to release. Labels:
 	// `provider`, `pool`.
 	credentialLeaseDuration *prometheus.HistogramVec
-	// credentialRotation counts §4.9 fault-driven credential rotations
-	// by error type (lenny_credential_rotation_total). Incremented by
-	// the LLM-proxy Fallback Flow when a faulted lease is rotated to the
-	// chain's next pool. spec: §16.1.
-	credentialRotation *prometheus.CounterVec
-	// credentialFallbackExhausted counts §4.9 fallback-chain exhaustions
-	// (lenny_gateway_credential_fallback_exhausted_total), labeled by
-	// pool, provider, and error type. spec: §4.9.
-	credentialFallbackExhausted *prometheus.CounterVec
 	// credentialPoolUtilization is the §16.1 ratio of in-use credentials
 	// to total pool credentials, in [0,1]. Labeled by `pool`; the
 	// CredentialPoolLow alert fires above 0.80.
@@ -43,17 +34,6 @@ type credentialMetrics struct {
 	// (lenny_gateway_credential_leases_swept_total). Unlabeled per
 	// §16.1.1 (no high-cardinality attribute). spec: §4.9.
 	credentialLeasesSwept prometheus.Counter
-	// llmProxyActiveConnections is the §16.1 count of in-flight LLM proxy
-	// requests on a replica. No labels.
-	llmProxyActiveConnections prometheus.Gauge
-	// llmTranslationDuration observes the §16.1 native-translator CPU time
-	// per leg. Labels: `pool`, `provider`, `proxy_dialect`, `direction`
-	// (`request` | `response`).
-	llmTranslationDuration *prometheus.HistogramVec
-	// llmTranslationErrors counts the §16.1 native-translator failures by
-	// category. Labels: `pool`, `provider`, `error_type` (the §4.9
-	// translator taxonomy).
-	llmTranslationErrors *prometheus.CounterVec
 	// slotFailure counts the §5.2 concurrent-workspace slot bind
 	// failures after a slot was reserved. Labels: `error_type` (bind
 	// stage), `pool` (finite, the warm-pool registry), and `k8s_pod_name`
@@ -117,28 +97,6 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// §16.1 — `lenny_credential_rotation_total` counts
-	// fault-driven credential rotations by error type. The §4.9 Fallback
-	// Flow increments it when a faulted lease is rotated to the chain's
-	// next pool.
-	credentialRotation, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_credential_rotation_total",
-		Help: "Credential rotations by error type (§16.1).",
-	}, []string{"error_type"})
-	if err != nil {
-		return m, err
-	}
-	// §4.9 — `lenny_gateway_credential_fallback_exhausted_total`
-	// counts fallback-chain exhaustions, labeled by pool, provider, and
-	// error type. The CredentialFallbackExhausted condition is terminal
-	// for the session.
-	credentialFallbackExhausted, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_gateway_credential_fallback_exhausted_total",
-		Help: "Credential fallback-chain exhaustions by pool, provider, and error type (§4.9).",
-	}, []string{"pool", "provider", "error_type"})
-	if err != nil {
-		return m, err
-	}
 	// §16.1 — `lenny_credential_pool_utilization` is the ratio of
 	// in-use credentials to total pool credentials, in [0,1]. The
 	// CredentialPoolLow alert fires above 0.80.
@@ -156,35 +114,6 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 		Name: "lenny_gateway_credential_leases_swept_total",
 		Help: "Expired credential-lease rows removed by the §4.9 sweep worker.",
 	}, nil)
-	if err != nil {
-		return m, err
-	}
-	// §16.1 — `lenny_gateway_llm_proxy_active_connections` is the
-	// count of in-flight LLM proxy requests on a replica.
-	llmProxyActiveConnections, err := metrics.NewGauge(prometheus.GaugeOpts{
-		Name: "lenny_gateway_llm_proxy_active_connections",
-		Help: "LLM Proxy active connections (§16.1).",
-	}, nil)
-	if err != nil {
-		return m, err
-	}
-	// §16.1 — `lenny_gateway_llm_translation_duration_seconds`
-	// observes the native-translator CPU time per leg (upstream network
-	// time excluded). `direction` is `request` | `response`.
-	llmTranslationDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lenny_gateway_llm_translation_duration_seconds",
-		Help:    "Native LLM translator CPU time per leg (§16.1).",
-		Buckets: prometheus.ExponentialBuckets(0.0005, 2, 12),
-	}, []string{"pool", "provider", "proxy_dialect", "direction"})
-	if err != nil {
-		return m, err
-	}
-	// §16.1 — `lenny_gateway_llm_translation_errors_total`
-	// counts native-translator failures by the §4.9 error taxonomy.
-	llmTranslationErrors, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_gateway_llm_translation_errors_total",
-		Help: "LLM translator failures by error type (§16.1).",
-	}, []string{"pool", "provider", "error_type"})
 	if err != nil {
 		return m, err
 	}
@@ -252,26 +181,17 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 		credentialLeaseAssignments,
 		credentialLeaseDuration,
 		credentialPoolUtilization,
-		llmTranslationDuration,
-		llmTranslationErrors,
 		slotFailure,
 		slotCompensationSuperseded,
 		slotRehydration,
 		slotPodReplacement,
 		adapterLeakedSlots,
-		llmProxyActiveConnections,
 		credentialLeasesSwept)
-	llmProxyConns := llmProxyActiveConnections.WithLabelValues()
 	m.credentialLeasesSwept = credentialLeasesSwept.WithLabelValues()
 	m.credentialPreclaimMismatch = credentialPreclaimMismatch
 	m.credentialLeaseAssignments = credentialLeaseAssignments
 	m.credentialLeaseDuration = credentialLeaseDuration
-	m.credentialRotation = credentialRotation
-	m.credentialFallbackExhausted = credentialFallbackExhausted
 	m.credentialPoolUtilization = credentialPoolUtilization
-	m.llmProxyActiveConnections = llmProxyConns
-	m.llmTranslationDuration = llmTranslationDuration
-	m.llmTranslationErrors = llmTranslationErrors
 	m.slotFailure = slotFailure
 	m.slotCompensationSuperseded = slotCompensationSuperseded
 	m.slotPodReplacement = slotPodReplacement

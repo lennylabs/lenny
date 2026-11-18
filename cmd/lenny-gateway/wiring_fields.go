@@ -24,6 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -165,8 +166,12 @@ type gatewayWiringFields struct {
 	sqliteFlushCancel   context.CancelFunc
 	experimentProviders *experimentprovider.Cache
 	gwMetrics           *gatewaymetrics.Metrics
-	opsEmitter          events.EventEmitter
-	replica             string
+	// meteringMetrics is the metering proxy's own metric set, registered on
+	// the gateway's registry, so the metering proxy holds no value of the
+	// replica's gateway metrics.
+	meteringMetrics *llmproxy.PromMetrics
+	opsEmitter      events.EventEmitter
+	replica         string
 	// coordHolder is the §10.1.1 Replica address holder value every
 	// REG-COORDLEASE and REG-COORDMIRROR consumer receives: the session
 	// server, the coordination Sweeper, the barrier mirror lister, the

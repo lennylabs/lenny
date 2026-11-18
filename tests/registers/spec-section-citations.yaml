@@ -442,7 +442,7 @@ packages:
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
     - package: pkg/gateway/llmproxy/llmproxy
-      count: 64
+      count: 67
     - package: pkg/gateway/llmproxy/proxycache
       count: 1
     - package: pkg/gateway/llmproxy/semanticcache
@@ -576,7 +576,7 @@ packages:
     - package: pkg/gateway/replica/gatewayleader
       count: 4
     - package: pkg/gateway/replica/gatewaymetrics
-      count: 235
+      count: 228
     - package: pkg/gateway/replica/pdbwatcher
       count: 7
     - package: pkg/gateway/replica/tlsprobe

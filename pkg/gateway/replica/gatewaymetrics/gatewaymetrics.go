@@ -1105,31 +1105,6 @@ func (m *Metrics) IncCredentialLeaseAssignment(provider, pool, source string) {
 	m.credentialLeaseAssignments.WithLabelValues(provider, pool, source).Inc()
 }
 
-// IncCredentialRotation increments the §16.1
-// `lenny_credential_rotation_total` counter for errorType. Called by the
-// §4.9 LLM-proxy Fallback Flow each time a faulted lease is rotated to
-// the chain's next pool.
-// spec: §16.1.
-func (m *Metrics) IncCredentialRotation(errorType string) {
-	if m == nil {
-		return
-	}
-	m.credentialRotation.WithLabelValues(errorType).Inc()
-}
-
-// IncCredentialFallbackExhausted increments the §4.9
-// `lenny_gateway_credential_fallback_exhausted_total` counter for the
-// (pool, provider, errorType) tuple. Called when the fallback chain is
-// exhausted and the session is terminated with
-// CREDENTIAL_FALLBACK_EXHAUSTED.
-// spec: §4.9.
-func (m *Metrics) IncCredentialFallbackExhausted(pool, provider, errorType string) {
-	if m == nil {
-		return
-	}
-	m.credentialFallbackExhausted.WithLabelValues(pool, provider, errorType).Inc()
-}
-
 // ObserveCredentialLeaseDuration records the §16.1
 // `lenny_credential_lease_duration_seconds` histogram for a lease's
 // wall-clock duration from assignment to release. Called by the
@@ -1152,52 +1127,6 @@ func (m *Metrics) SetCredentialPoolUtilization(pool string, ratio float64) {
 		return
 	}
 	m.credentialPoolUtilization.WithLabelValues(pool).Set(ratio)
-}
-
-// IncLLMProxyConnections / DecLLMProxyConnections move the §16.1
-// `lenny_gateway_llm_proxy_active_connections` gauge. The proxy handler
-// increments on request entry and decrements on exit so the gauge
-// reflects in-flight requests on the replica.
-// spec: §16.1.
-func (m *Metrics) IncLLMProxyConnections() {
-	if m == nil {
-		return
-	}
-	m.llmProxyActiveConnections.Inc()
-}
-
-// DecLLMProxyConnections decrements the §16.1 LLM-proxy active-connection
-// gauge.
-// spec: §16.1.
-func (m *Metrics) DecLLMProxyConnections() {
-	if m == nil {
-		return
-	}
-	m.llmProxyActiveConnections.Dec()
-}
-
-// ObserveLLMTranslation records the §16.1
-// `lenny_gateway_llm_translation_duration_seconds` histogram for one
-// translator leg. direction is `request` or `response`. Called by the
-// proxy handler around each TranslateRequest / TranslateResponse call.
-// spec: §16.1.
-func (m *Metrics) ObserveLLMTranslation(pool, provider, proxyDialect, direction string, seconds float64) {
-	if m == nil {
-		return
-	}
-	m.llmTranslationDuration.WithLabelValues(pool, provider, proxyDialect, direction).Observe(seconds)
-}
-
-// IncLLMTranslationError increments the §16.1
-// `lenny_gateway_llm_translation_errors_total` counter for the
-// (pool, provider, error_type) tuple. errorType is the §4.9 translator
-// taxonomy value carried by a *llmproxy.TranslationError.
-// spec: §16.1.
-func (m *Metrics) IncLLMTranslationError(pool, provider, errorType string) {
-	if m == nil {
-		return
-	}
-	m.llmTranslationErrors.WithLabelValues(pool, provider, errorType).Inc()
 }
 
 // IncSlotFailure increments the §5.2
@@ -1717,13 +1646,6 @@ func (m *Metrics) RecordSessionTerminal(tenantID, sessionType, variantID string,
 // scored session was not enrolled).
 func (m *Metrics) ObserveEvalScore(tenantID, scorer, variantID string, score float64) {
 	m.evalScore.WithLabelValues(tenantID, scorer, variantID).Observe(score)
-}
-
-// IncSessionBudgetExceeded increments
-// lenny_gateway_session_budget_exceeded_total when the §11.2 mid-session
-// enforcer terminates a session for token-budget exhaustion. spec: §11.2.
-func (m *Metrics) IncSessionBudgetExceeded(tenantID string) {
-	m.sessionBudgetExceeded.WithLabelValues(tenantID).Inc()
 }
 
 // IncErasureJobFailed increments lenny_erasure_job_failed_total for a

@@ -20,7 +20,6 @@ type experimentMetrics struct {
 	sessionDuration            *prometheus.HistogramVec
 	evalScore                  *prometheus.HistogramVec
 	noEnvPolicyAllowAll        *prometheus.CounterVec
-	sessionBudgetExceeded      *prometheus.CounterVec
 }
 
 // newExperimentMetrics constructs, registers, and materializes the experiment metric subsystem
@@ -130,16 +129,6 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §11.2 — count sessions terminated mid-flight because
-	// their cumulative proxy-recorded LLM token usage exhausted the
-	// session's token budget (the §4.9 LLM-proxy enforcer fast path).
-	sessionBudgetExceeded, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_gateway_session_budget_exceeded_total",
-		Help: "§11.2 sessions terminated mid-session for token-budget exhaustion, by tenant.",
-	}, []string{"tenant_id"})
-	if err != nil {
-		return m, err
-	}
 	reg.MustRegister(experimentIsoRej,
 		experimentTargetingDur,
 		experimentTargetingErr,
@@ -149,8 +138,7 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 		sessionError,
 		sessionDuration,
 		evalScore,
-		noEnvPolicyAllowAll,
-		sessionBudgetExceeded)
+		noEnvPolicyAllowAll)
 	m.experimentIsoRej = experimentIsoRej
 	m.experimentTargetingDur = experimentTargetingDur
 	m.experimentTargetingErr = experimentTargetingErr
@@ -161,6 +149,5 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	m.sessionDuration = sessionDuration
 	m.evalScore = evalScore
 	m.noEnvPolicyAllowAll = noEnvPolicyAllowAll
-	m.sessionBudgetExceeded = sessionBudgetExceeded
 	return m, nil
 }
