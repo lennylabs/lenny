@@ -326,7 +326,7 @@ func TestHandlerRejectsNonPost(t *testing.T) {
 }
 
 // fakeUsage is a UsageRecorder capturing the last recorded usage. It stands
-// in for the cmd/lenny-gateway proxyUsageRecorder: it detects exhaustion and
+// in for the metering proxy's usage recorder: it detects exhaustion and
 // surfaces the §8.6 extension Outcome the real record path resolves inside the
 // enforcer, so the handler drives its write-path branch off the returned
 // Outcome without any second extension dispatch (proposal 0023 S4).
@@ -336,7 +336,7 @@ func TestHandlerRejectsNonPost(t *testing.T) {
 // the record path resolves, consumed in order; when it runs out the last
 // value is reused, and OutcomeTerminal is the default. onExhaust, when set,
 // runs the out-of-band episode effect (raise/terminate) a real leasecontrol
-// fan-out would apply through the SessionReclaimer, so a test can model a
+// fan-out would apply through the metering proxy's budgets, so a test can model a
 // deferred grant recovering a Pending session by flipping the pre-flight gate.
 type fakeUsage struct {
 	mu            sync.Mutex

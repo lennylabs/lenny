@@ -24,7 +24,7 @@ import (
 
 // This test wires the full production §8.6 budget-exhaustion path end to end
 // with the REAL leasecontrol.Service (no seam fake): llmproxy.Handler ->
-// proxyUsageRecorder -> sessionbudget.Enforcer whose seam is
+// metering.Recorder -> sessionbudget.Enforcer whose seam is
 // leaseExtendSeam(leasecontrol.Service), exactly the S6 composition-root
 // wiring. It closes the proposal 0023 chicken-and-egg gap: a proxied LLM call
 // whose settlement exhausts the session budget triggers an in-process lease

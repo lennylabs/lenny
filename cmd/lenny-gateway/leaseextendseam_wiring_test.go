@@ -186,7 +186,7 @@ func (e *blockingElicitor) Elicit(ctx context.Context, _ /*tenantID*/, _ /*sessi
 // episode is unresolved) onto sessionbudget.Pending: the enforcer denies the
 // session's next request but does NOT terminate it, and when the out-of-band
 // episode later grants, the fan-out reclaims the detached session through the
-// SessionReclaimer (the enforcer) so its budget is raised and its next request
+// metering proxy's budgets over the enforcer, so its budget is raised and its next request
 // is admitted. This covers the Pending mapping and the SetReclaimer fan-out
 // that the buildControlServer wiring installs.
 func TestLeaseExtendSeamPendingDeniesWithoutTerminating_spec_8_6_line_629(t *testing.T) {

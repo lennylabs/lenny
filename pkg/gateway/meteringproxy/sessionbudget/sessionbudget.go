@@ -239,7 +239,7 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 	case Granted:
 		// The extension resolved GRANTED/PARTIALLY_GRANTED within the in-path
 		// wait and the seam's ExtendForBudget already applied the raise
-		// through the SessionReclaimer (RaiseBudget), which raised this
+		// through the metering proxy's budgets (RaiseBudget), which raised this
 		// session's c.budget by the granted delta and cleared its
 		// deny/exhausted state. The session continues: nothing to deny or
 		// terminate here. spec: §8.6; proposal 0023 S3/S4.
@@ -247,7 +247,7 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 		// The in-path deadline elapsed with an elicitation still unresolved.
 		// Deny the session's next request but do NOT terminate it: the
 		// out-of-band episode fan-out later raises its budget or terminates
-		// it through the SessionReclaimer. spec: §8.6.
+		// it through the metering proxy's budgets. spec: §8.6.
 		e.setDeny(sessionID)
 	default:
 		// Terminal, or a nil seam / non-extendable path. Deny and terminate.
@@ -299,7 +299,7 @@ func (e *Enforcer) setTerminating(sessionID string) {
 // suppressed as an already-seen exhaustion. delta is the granted token
 // amount for the session. It is called on a GRANTED/PARTIALLY_GRANTED
 // extension: by the in-path seam on an in-path Granted outcome, and by the
-// per-tree episode's completion fan-out (through the SessionReclaimer)
+// per-tree episode's completion fan-out (through the metering proxy's budgets)
 // once per joined session on a deferred grant after a Pending outcome.
 // Raising an unknown or already-forgotten session is a no-op. A session
 // whose terminating flag is set keeps its deny flag and its exhausted flag:

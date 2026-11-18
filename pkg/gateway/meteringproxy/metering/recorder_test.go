@@ -163,7 +163,7 @@ func TestProxyUsageRecorderNilUsageReturnsNil(t *testing.T) {
 	}
 }
 
-// recordTerminator captures sessionbudget.Terminator calls.
+// recordTerminator captures seam.SessionExpiry calls.
 type recordTerminator struct{ calls []string }
 
 func (r *recordTerminator) ExpireSession(sessionID, _ string) {
@@ -225,8 +225,8 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 }
 
 // grantingReclaimSeam simulates the production in-path §8.6 grant: on the
-// exhaustion boundary it applies the raise through the recorder (the
-// SessionReclaimer), exactly as leasecontrol.ExtendForBudget's in-path Granted
+// exhaustion boundary it applies the raise through the recorder (as the
+// metering proxy's budgets do), exactly as leasecontrol.ExtendForBudget's in-path Granted
 // path does through the wired reclaimer, then returns Granted. It records how
 // many times the enforcer consulted it so a test can assert a request under
 // the raised budget does not re-dispatch a second extension.
@@ -239,7 +239,7 @@ type grantingReclaimSeam struct {
 func (s *grantingReclaimSeam) fn(_, _ context.Context, _, sessionID string, _, _ int64) sessionbudget.Outcome {
 	s.calls++
 	// The in-path grant raises the enforcer budget AND accumulates the delta
-	// on the recorder (the SessionReclaimer), so the next RecordUsage passes
+	// on the recorder (the metering proxy's budgets), so the next RecordUsage passes
 	// base + delta to Record.
 	s.rec.RaiseBudget(sessionID, s.delta)
 	return sessionbudget.Granted
@@ -253,8 +253,8 @@ func (s *grantingReclaimSeam) fn(_, _ context.Context, _, sessionID string, _, _
 // the pre-fix recorder, which read tokenBudget straight from the stale
 // sess.DelegationLease.MaxTokenBudget and passed it unchanged to Record, so the
 // enforcer clobbered the raise on the next settlement and immediately
-// re-exhausted the session. The recorder is wired as its own SessionReclaimer,
-// so the grant delta the seam applies is accumulated and added to the base
+// re-exhausted the session. The recorder applies the raise itself, as the
+// metering proxy's budgets do, so the grant delta the seam applies is accumulated and added to the base
 // budget by RecordUsage.
 //
 // spec: 8.6 (in-process budget-exhaustion extension and raise-survival), 11.2 (mid-session budget enforcement)
@@ -323,15 +323,15 @@ func TestProxyUsageRecorderRaiseSurvivesNextRecord_spec_8_6(t *testing.T) {
 	}
 }
 
-// TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6 proves the recorder's
-// SessionReclaimer clears a session's accumulated grant delta on
+// TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6 proves the recorder
+// clears a session's accumulated grant delta on
 // TerminateSession, so a terminated session does not retain a raised budget in
 // the recorder's per-session map. It pins the fan-out terminal path
 // (TerminateSession) the recorder implements for a detached session whose
 // deferred extension outcome is terminal.
 //
-// spec: 8.6 (SessionReclaimer terminal fan-out), 11.2 (budget accounting cleanup)
-// diagnosis: the recorder's SessionReclaimer does not drop a terminated session's accumulated grant delta, leaking a raised budget entry for a torn-down session (proposal 0023 S3/S4 reclaimer cleanup broken).
+// spec: 8.6 (terminal fan-out through the metering proxy's budgets), 11.2 (budget accounting cleanup)
+// diagnosis: the recorder's TerminateSession does not drop a terminated session's accumulated grant delta, leaking a raised budget entry for a torn-down session (proposal 0023 S3/S4 reclaimer cleanup broken).
 func TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6(t *testing.T) {
 	sessions := memstore.New()
 	term := &recordTerminator{}
@@ -350,7 +350,7 @@ func TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6(t *testing.T) {
 		t.Fatalf("TerminateSession must terminate the session through the enforcer, got %v", term.calls)
 	}
 
-	// The SessionReclaimer methods are nil-safe on the recorder and on an
+	// The methods the metering proxy's budgets call are nil-safe on the recorder and on an
 	// empty session id: the leasecontrol fan-out or the in-path applier must
 	// never panic against a recorder that is not wired.
 	var nilRec *Recorder

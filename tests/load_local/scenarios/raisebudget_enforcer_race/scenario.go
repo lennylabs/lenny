@@ -8,9 +8,9 @@
 //
 // The enforcer gains a tri-state §8.6 extension seam, a deny-next-request
 // flag decoupled from termination, and RaiseBudget/TerminateSession
-// methods that structurally satisfy leasecontrol.SessionReclaimer. The
+// methods that the metering proxy's budgets call. The
 // per-tree episode fan-out calls RaiseBudget/TerminateSession per joined
-// session out-of-band (through the SessionReclaimer), while in-path proxy
+// session out-of-band (through the metering proxy's budgets), while in-path proxy
 // goroutines call Record (which consults the seam and may itself call
 // back into the enforcer's reclaimer methods) and the pre-flight gate
 // calls Allow. Both the seam and the terminator run OUTSIDE the enforcer
@@ -128,7 +128,7 @@ func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 // Run drives one mixed iteration. Odd/even virtual users split into
 // in-path traffic (Record + Allow, with the seam consulted at exhaustion)
 // and out-of-band fan-out traffic (RaiseBudget/TerminateSession, as the
-// episode fan-out calls through the SessionReclaimer), plus occasional
+// episode fan-out calls through the metering proxy's budgets), plus occasional
 // Forget from the terminal pipeline and the raise-only monotonicity load.
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	j := vu*7 + iter
@@ -146,7 +146,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	case 1:
 		// Out-of-band fan-out: raise a joined session's budget (a grant) and
 		// clear its deny flag, as the episode fan-out does through the
-		// SessionReclaimer, concurrently with the in-path Record/Allow above.
+		// metering proxy's budgets, concurrently with the in-path Record/Allow above.
 		id := inPathID(j)
 		s.enforcer.RaiseBudget(id, raiseDelta)
 		s.counters.Inc("raised")

@@ -37,8 +37,8 @@ import (
 // listener, the watchdog, and the watchdog context (plus its cancel) on the
 // accumulator for the run loop. It also wires the leasecontrol.Service it
 // builds into the proxy's sessionbudget enforcer as the §8.6 in-process
-// budget-exhaustion extension seam and takes that enforcer as the episode
-// fan-out's SessionReclaimer (proposal 0023 S6).
+// budget-exhaustion extension seam, and gives the episode fan-out the
+// metering proxy's budgets over that enforcer (proposal 0023 S6).
 //
 // The process-lifetime defers the original inline block registered (the
 // watchdog-context cancel and the hold and recycle coordinator

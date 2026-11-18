@@ -159,7 +159,7 @@ func Start(t testing.TB, opts Options) *Fixture {
 	// Point the anthropic_direct translator at the upstream stub. The
 	// gateway's flag surface has no anthropic base-URL override, so the
 	// helper constructs the registry directly rather than through
-	// buildLLMTranslatorRegistry; the Handler wiring below otherwise
+	// llmproxy.Flags.Translators; the Handler wiring below otherwise
 	// mirrors cmd/lenny-gateway's newLLMProxyServer.
 	registry := llmproxy.NewTranslatorRegistry(
 		&llmproxy.AnthropicDirectTranslator{

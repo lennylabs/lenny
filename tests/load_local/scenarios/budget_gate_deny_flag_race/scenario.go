@@ -116,7 +116,7 @@ func (s *Scenario) Setup(_ context.Context) error {
 	}))
 
 	// The enforcer is the real §11.2 mid-session gate and the
-	// leasecontrol.SessionReclaimer the episode fan-out calls. Its Allow
+	// the metering proxy's budgets the episode fan-out calls. Its Allow
 	// method satisfies llmproxy.BudgetGate directly.
 	s.enforcer = sessionbudget.New(nopTerminator{}, nil, nil)
 
@@ -218,7 +218,7 @@ func (s *Scenario) Run(_ context.Context, vu, iter int) error {
 		}
 	case 1:
 		// Out-of-band fan-out grant: raise the session's budget and clear its
-		// deny flag, as the episode fan-out does through the SessionReclaimer.
+		// deny flag, as the episode fan-out does through the metering proxy's budgets.
 		s.enforcer.RaiseBudget(sessionID(j), 1000)
 		s.counters.Inc("raised")
 	default:
