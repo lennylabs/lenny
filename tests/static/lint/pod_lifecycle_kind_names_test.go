@@ -113,6 +113,16 @@ var retiredKindIdentifierAllowed = map[string]bool{
 	retired("assertScheduledOn@SGvisorNode"): true, // a gVisor sandbox node
 	retired("TestT4@SKMSFailClosedTestbed"):  true, // the sandboxed isolation profile
 	retired("require@SIsolationProfile"):     true, // the sandboxed isolation profile
+	// The journeys harness runs its agent in a Docker sandbox, an isolation
+	// sandbox rather than the per-pod kind.
+	retired("@sNames"):    true,
+	retired("setup@S"):    true,
+	retired("@sCommands"): true,
+	retired("@sRun"):      true,
+	retired("Test@SPutsTheAgentOnAnInternalNetworkBehindTheProxy"):    true,
+	retired("Test@SHolderMountsNoHarnessKubeconfigWithoutTheGateway"): true,
+	retired("Test@SRefusesANetworkThatIsNotInternalAndCleansUp"):      true,
+	retired("Test@SFailsWhenTheGatewayForwardDoesNotStart"):           true,
 }
 
 // maskKeptNames removes from text the names that keep the word in another

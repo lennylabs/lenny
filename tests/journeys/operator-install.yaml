@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: MIT
 #
 # Persona journey: an operator installs Lenny with Helm and configures a
-# warm pool for the echo reference runtime. TESTING.md ("Persona
+# pool for the echo reference runtime. TESTING.md ("Persona
 # journeys") describes the format.
 name: operator-install
 persona: operator
-summary: An operator installs Lenny with Helm into an empty cluster and configures a warm pool for the echo runtime.
+summary: An operator installs Lenny with Helm into an empty cluster and configures a pool for the echo runtime.
 target: kind
 setup: prerequisites
 docs:
@@ -16,7 +16,7 @@ docs:
 goal: |
   I run the platform team, and our developers want to start agent sessions
   on Lenny. Install Lenny on our cluster with Helm, using the chart we
-  downloaded to {{chart}}, and set up a warm pool for the echo reference
+  downloaded to {{chart}}, and set up a pool for the echo reference
   runtime so that at least one pod is always warm and ready to take a
   session. Tell me when Lenny is running and the pool has warm pods.
 steps:
@@ -70,17 +70,17 @@ postconditions:
     kubectl: [-n, lenny-system, get, deployment, lenny-controller, -o, "jsonpath={.status.readyReplicas}"]
     expect:
       atLeast: 1
-  - name: warm-pool-has-ready-pods
-    description: A SandboxWarmPool in lenny-agents reports at least one ready warm pod.
+  - name: pod-set-has-ready-pods
+    description: A PodSet in lenny-agents reports at least one ready warm pod.
     within: 10m
-    kubectl: [-n, lenny-agents, get, sandboxwarmpools, -o, json]
+    kubectl: [-n, lenny-agents, get, podsets, -o, json]
     expect:
       path: items.*.status.readyCount
       atLeast: 1
-  - name: echo-sandbox-idle
-    description: A Sandbox in lenny-agents is idle, warm and claimable.
+  - name: echo-agent-pod-idle
+    description: An AgentPod in lenny-agents is idle, warm, and claimable.
     within: 10m
-    kubectl: [-n, lenny-agents, get, sandboxes, -o, json]
+    kubectl: [-n, lenny-agents, get, agentpods, -o, json]
     expect:
       path: items.*.status.phase
       equals: idle
